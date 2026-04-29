@@ -14,6 +14,7 @@ def generate_docs(manifests: dict[str, Any]) -> list[Path]:
         write_skills_doc(manifests, docs_dir / "skills.md"),
         write_profiles_doc(manifests, docs_dir / "profiles.md"),
         write_dependencies_doc(manifests, docs_dir / "dependencies.md"),
+        write_static_doc(docs_dir / "system-profile.md", system_profile_text()),
         write_verification_doc(docs_dir / "verification.md"),
         write_static_doc(docs_dir / "architecture.md", architecture_text()),
         write_static_doc(docs_dir / "installation.md", installation_text()),
@@ -32,12 +33,45 @@ def write_readme(manifests: dict[str, Any]) -> Path:
     path.write_text(
         f"""# AI Agents Skills
 
+<div align="center">
+  <a href="https://www.buymeacoffee.com/hoanganhduc" target="_blank" rel="noopener noreferrer">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40" />
+  </a>
+  <a href="https://ko-fi.com/hoanganhduc" target="_blank" rel="noopener noreferrer">
+    <img src="https://storage.ko-fi.com/cdn/kofi3.png?v=3" alt="Ko-fi" height="40" />
+  </a>
+  <a href="https://bmacc.app/tip/hoanganhduc" target="_blank" rel="noopener noreferrer">
+    <img src="https://bmacc.app/images/bmacc-logo.png" alt="Buy Me a Crypto Coffee" height="40" />
+  </a>
+</div>
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
+![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek-black)
+![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
+![Status](https://img.shields.io/badge/status-active-yellow)
+
 Shared, manifest-driven skills and settings for Codex, Claude, and DeepSeek.
 
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
-skills.
+skills. Reusable skill bodies live under `canonical/skills`; the installer
+copies those bodies into each supported agent and adds managed metadata.
+
+## Documentation
+
+- `docs/installation.md`: install, dry-run, conflict, and migration modes.
+- `docs/skills.md`: skill catalog and descriptions.
+- `docs/profiles.md`: selectable profiles such as `research-core` and
+  `full-research`.
+- `docs/dependencies.md`: logical tools and dependency categories.
+- `docs/system-profile.md`: sanitized maintainer-system profile and how local
+  tools map to skills.
+- `docs/verification.md`: installed-artifact verification model.
+
+The GitHub Pages site is built from `docs/source` and deployed by
+`.github/workflows/docs.yml`.
 
 ## Quick Start
 
@@ -95,6 +129,15 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
     lines = ["# Dependencies", "", "| Logical Tool | Description |", "|---|---|"]
     for name in sorted(tools):
         lines.append(f"| `{name}` | {tools[name]['description']} |")
+    lines.extend(
+        [
+            "",
+            "Dependencies are declared as logical capabilities rather than personal",
+            "paths. `doctor` resolves them from environment overrides, repo-local",
+            "runtimes, `PATH`, native Windows commands, and WSL-backed commands where",
+            "appropriate.",
+        ]
+    )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 
@@ -173,6 +216,70 @@ Conflict modes:
 - `--backup-replace`: back up and replace an unmanaged target file
 - `--migrate`: copy a detected legacy skill into the canonical target while
   leaving the legacy source in place
+"""
+
+
+def system_profile_text() -> str:
+    return """# Sanitized Maintainer System Profile
+
+This document records the real development setup observed during dry-run and
+doctor checks. Personal paths, usernames, emails, credentials, local libraries,
+and secrets are intentionally omitted or replaced with placeholders.
+
+## Roots
+
+| Substrate | Placeholder | Notes |
+|---|---|---|
+| Linux home | `<LINUX_HOME>` | Primary development root used for local tests. |
+| Mounted Windows home | `<WINDOWS_HOME>` | Windows profile inspected from Linux/WSL-style mount. |
+
+## Detected Agents
+
+| Substrate | Codex | Claude | DeepSeek |
+|---|---|---|---|
+| Linux | present at `<LINUX_HOME>/.codex` | present at `<LINUX_HOME>/.claude` | present at `<LINUX_HOME>/.deepseek` |
+| Windows profile | present at `<WINDOWS_HOME>/.codex` | present at `<WINDOWS_HOME>/.claude` | not detected |
+
+If an agent home is absent, the installer skips that agent and does not require
+its dependencies.
+
+## Existing Skill Layouts
+
+| Agent | Existing layout observed | Installer behavior |
+|---|---|---|
+| Codex | Existing skills under `<HOME>/.codex/skills` | Treated as legacy/self-contained skills; skipped by default or copied to `<HOME>/.agents/skills` only with `--migrate`. |
+| Claude | Existing skills under `<HOME>/.claude/skills`; some legacy aliases such as `deep-research` | Canonical names are used for new installs; aliases are detected and skipped unless migrated. |
+| DeepSeek | Existing skills under `<HOME>/.deepseek/skills` | Existing unmanaged skills are skipped by default. |
+
+The dry-run state had no managed `ai-agents-skills` instruction blocks yet.
+
+## Tool Detection Summary
+
+| Tool | Linux observation | Windows-profile observation | Related skills |
+|---|---|---|---|
+| `python-runtime` | system Python 3.10 with `ssl`, `venv`, and `pip` | WSL/POSIX Python 3.10 detected; native Windows Python candidates not detected from this check | `deep-research-workflow`, `zotero`, `docling`, digest skills, `graph-verifier`, `tikz-draw`, `session-logs` |
+| `tex-runtime` | `pdflatex` from TeX Live detected | native Windows TeX candidates not detected from this check | `tikz-draw` |
+| `sage-runtime` | not detected on Linux `PATH` | WSL-backed Sage candidate declared, but native Windows verification must run on Windows | `sagemath`, optional `tikz-draw` graph mode |
+
+## Skill-To-Software Relationship
+
+| Skill area | Main software or capability |
+|---|---|
+| Research planning and synthesis | agent instructions plus optional Python helper runtime |
+| Paper/library workflows | Zotero credentials and local library access are external configuration, not repo content |
+| External paper retrieval | `getscipapers`-style helper/runtime is treated as an external or runtime-backed dependency |
+| Document parsing | Python plus optional `docling` package and OCR tools |
+| Database lookup | public HTTP APIs; API keys, when needed, are supplied externally |
+| Digest workflows | Python runtime and user-managed topic/feed files outside the repo |
+| TikZ figures | TeX engine; optional SageMath and graph helpers |
+| Math verification | SageMath when available; Python/NetworkX for lightweight graph checks |
+| Multi-agent workflows | agent orchestration instructions; no extra binary required by default |
+
+## Privacy Boundary
+
+The repo should contain reusable skill logic, docs, and installers. It should
+not contain personal paths, auth files, credentials, session logs, downloaded
+papers/books, Zotero databases, Calibre libraries, or local runtime state.
 """
 
 

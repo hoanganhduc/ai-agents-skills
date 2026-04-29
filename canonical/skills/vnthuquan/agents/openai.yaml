@@ -1,0 +1,7 @@
+interface:
+  display_name: "Vietnam Thu Quan"
+  short_description: "Vietnam Thu Quan ebook workflows"
+  default_prompt: "Use $vnthuquan to search Vietnam Thu Quan and inspect ebook metadata."
+
+policy:
+  allow_implicit_invocation: true

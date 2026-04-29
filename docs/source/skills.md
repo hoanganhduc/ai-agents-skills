@@ -1,0 +1,2 @@
+```{include} ../skills.md
+```
