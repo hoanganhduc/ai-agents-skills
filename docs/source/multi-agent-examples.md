@@ -211,3 +211,6 @@ reproducible workflow, explicit tracks, or a reusable process. Good examples:
 
 `prose` is still an adapter here. It describes the workflow and maps it to the
 available agent tools; it is not a bundled OpenProse virtual machine.
+
+Related pages: [Workflow Overview](workflow-overview.md), [Skills](skills.md),
+[Profiles](profiles.md), [Verification](verification.md).

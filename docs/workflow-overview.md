@@ -52,3 +52,6 @@ Examples:
   bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
   capabilities, so the dependency graph records the substrate instead of
   hardcoding a personal path.
+
+Related pages: [Installation](installation.md), [Skills](skills.md),
+[Dependencies](dependencies.md), [Multi-Agent Examples](multi-agent-examples.md).

@@ -1,8 +1,33 @@
 # Architecture
 
-The manifests are the source of truth. The installer resolves canonical skills
-to per-agent target artifacts and records ownership in a journal. Existing
-unmanaged files are skipped by default.
+This page explains how the repository turns one canonical skill catalog into
+agent-specific files for Codex, Claude, and DeepSeek.
+
+The manifests are the source of truth:
+
+- `manifest/skills.yaml` defines canonical skill names, descriptions,
+  supported agents, dependencies, and aliases.
+- `manifest/profiles.yaml` defines selectable skill bundles.
+- `manifest/artifacts.yaml` defines optional templates, personas,
+  instruction docs, entrypoints, and management notices.
+- `manifest/dependencies.yaml` and `manifest/system-dependencies.yaml` define
+  logical tools and sanitized maintainer-system dependency observations.
+
+The installer resolves those manifests into per-agent target artifacts and
+records ownership in `.ai-agents-skills/state.json` under the selected root.
+Existing unmanaged files are skipped by default.
+
+Install flow:
+
+1. Resolve selected skills and artifacts from `--skill`, `--skills`,
+   `--profile`, `--artifact`, `--artifacts`, or `--artifact-profile`.
+2. Detect available agent homes under the selected `--root`.
+3. Render canonical skill bodies and optional artifacts into each supported
+   target format.
+4. Add managed instruction blocks only for skills or artifacts that are
+   installed, adopted, migrated, updated, or already managed.
+5. Record hashes and ownership metadata for verification, uninstall, and
+   rollback.
 
 Artifact classes:
 
@@ -22,3 +47,14 @@ Artifact classes:
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
 detected, not as the default global Codex target.
+
+Safety boundary:
+
+- auth files, API keys, provider config, session logs, downloaded libraries,
+  and local runtime state are not managed by this repo
+- unmanaged user files are skipped unless `--adopt`, `--backup-replace`, or
+  `--migrate` is selected explicitly
+- uninstall and rollback remove only managed files and managed marker blocks
+
+Related pages: [Installation](installation.md), [Agent Locations](agent-locations.md),
+[Verification](verification.md), [Uninstall And Rollback](uninstall-rollback.md).

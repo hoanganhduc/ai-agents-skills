@@ -1,5 +1,36 @@
 # Dependencies
 
+Dependencies are logical capabilities used by skills and artifacts. The
+installer does not hardcode personal paths; `precheck` resolves each
+capability from environment overrides, repo-local runtimes, `PATH`,
+Python import checks, native Windows locations, WSL-backed commands,
+or remote-service placeholders.
+
+Use this page to understand what software may be needed before an
+install. Use [Profiles](profiles.md) or [Skills](skills.md) to see
+which capabilities are selected for a workflow, and use
+[Windows](windows.md) or [Linux](linux.md) for platform-specific
+detection notes.
+
+Common commands:
+
+```bash
+make doctor ARGS="--profile research-core"
+make precheck ARGS="--profile research-core"
+make precheck ARGS="--profile full-research --interactive"
+make precheck ARGS="--profile math --json"
+```
+
+Status vocabulary used by `precheck`:
+
+- `present`: the capability was found and can be used from the current substrate.
+- `missing`: the capability was not found and may need installation.
+- `degraded`: the capability appears to exist, but some part could not be executed or fully inspected.
+- `present-unverified`: the capability was found as a file or install root, but the current substrate cannot safely execute it.
+- `manual`: the capability depends on credentials, local databases, or service setup outside this repo.
+
+## Logical Tools
+
 | Logical Tool | Description |
 |---|---|
 | `calibre-cli` | Calibre command line tools for ebook metadata and conversion. |
@@ -147,18 +178,18 @@ Evidence inspected:
 - Windows wrapper commands may use PowerShell, .bat launchers, native Python venvs, and WSL in the same workflow.
 
 
-Dependencies are declared as logical capabilities rather than personal
-paths. `precheck` resolves them from environment overrides, repo-local
-runtimes, `PATH`, native Windows commands, Python imports, remote-service
-placeholders, and WSL-backed commands where appropriate. Python package
-checks use root-relative candidate sets, including agent virtualenvs,
-user-local site-package directories, Codex runtime site-package
-directories, dedicated Docling environments, official Windows Python
-install roots, and per-user Windows package directories.
+## Detection Notes
+
+Python package checks use root-relative candidate sets, including
+agent virtualenvs, user-local site-package directories, Codex runtime
+site-package directories, dedicated Docling environments, official
+Windows Python install roots, and per-user Windows package directories.
 When inspecting a mounted Windows home from Linux, `precheck` can
 verify package markers in `site-packages`, find common TeX Live and
 MiKTeX install roots, detect Sage in the current WSL/Linux
 filesystem, and detect mounted WSL rootfs Sage paths or WSL VHDX
 presence. It still marks native Windows executables as
-present-unverified instead of trying
-to execute them.
+present-unverified instead of trying to execute them.
+
+Related pages: [Installation](installation.md), [Windows](windows.md),
+[Linux](linux.md), [Troubleshooting](troubleshooting.md).
