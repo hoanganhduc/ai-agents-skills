@@ -64,7 +64,7 @@ Do not touch Zotero beyond lookup/retrieval unless the user explicitly asks.
 - When useful, use the imported `references/common_issues.md` and `references/reporting_standards.md` as internal checklists.
 - Summarize the main issues clearly, with evidence from the provided or retrieved document.
 - If the document cannot be found in Zotero or Calibre, report that before attempting online retrieval.
-- If you need a narrow internal checklist for proof auditing or single-reviewer critique, adapt the imported specialist briefs in `~/.codex/skills/openclaw-research/references/specialist-subagents.md` without turning the task into a multi-agent run unless the user asked for one.
+- If you need a narrow internal checklist for proof auditing or single-reviewer critique, adapt the specialist briefs in `~/.codex/skills/source-research/references/specialist-subagents.md` without turning the task into a multi-agent run unless the user asked for one.
 
 ## Recommended output format
 

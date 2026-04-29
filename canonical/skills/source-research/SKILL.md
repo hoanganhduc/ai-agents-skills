@@ -1,13 +1,13 @@
 ---
-name: openclaw-research
-description: Use when the user wants research, source gathering, current-information lookups, cross-source synthesis, or extraction from URLs/PDFs/videos. Mirrors OpenClaw's research workflow in Codex using web search, page inspection, local tools, and sub-agents.
+name: source-research
+description: Use when the user wants research, source gathering, current-information lookups, cross-source synthesis, or extraction from URLs/PDFs/videos using web search, page inspection, local tools, and sub-agents.
 metadata:
-  short-description: OpenClaw-style research workflow for Codex
+  short-description: Source-gathering research workflow
 ---
 
-# OpenClaw Research
+# Source Research
 
-Use this as the default research router for Codex.
+Use this as the default source-gathering research router.
 
 ## Supporting files
 
@@ -15,14 +15,14 @@ Open these only when relevant:
 
 - `references/specialist-subagents.md` for focused single-specialist delegation briefs imported from the local Claude setup
 
-## Tool mapping
+## Legacy tool mapping
 
-- OpenClaw `web_search` -> Codex `web.search_query`
-- OpenClaw `web_fetch` -> Codex `web.open`
-- OpenClaw task/session spawning -> Codex `spawn_agent`
-- OpenClaw `exec` -> Codex `functions.exec_command`
+- legacy `web_search` -> Codex `web.search_query`
+- legacy `web_fetch` -> Codex `web.open`
+- legacy task/session spawning -> Codex `spawn_agent`
+- legacy `exec` -> Codex `functions.exec_command`
 
-## Live workspace routing imported from the bot
+## Live workspace routing
 
 - Generic paper, article, preprint, DOI, ISBN, and book retrieval or sharing requests route to `zotero` first.
 - Explicit Calibre-library ebook operations route to `calibre`.

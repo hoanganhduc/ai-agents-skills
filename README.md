@@ -125,7 +125,7 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 | `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
 | `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier` |
 | `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose` |
-| `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `deep-research-workflow`, `openclaw-research`, `research-report-reviewer`, `research-verification-gate` |
+| `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate` |
 
 ## Skills
 
@@ -141,7 +141,6 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 | `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `full-research` |
 | `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
 | `modal-research-compute` | Route heavy compute jobs to Modal through a local broker. | `full-research` |
-| `openclaw-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `full-research` |
 | `paper-lookup` | External paper metadata and discovery fallback. | `library`, `full-research` |
 | `paper-review` | Single-agent paper review workflow. | `full-research` |
 | `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `full-research` |
@@ -153,6 +152,7 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 | `sagemath` | Sage-backed math, graph theory, algebra, and verification. | `math`, `full-research` |
 | `self-improving-agent` | Log durable learnings, failures, and missing capabilities. | `full-research` |
 | `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
+| `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `full-research` |
