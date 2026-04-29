@@ -17,7 +17,7 @@ from .render import (
     render_reference_skill_md,
     render_skill_md,
 )
-from .state import sha256_file, sha256_text
+from .state import load_state, sha256_file, sha256_text
 
 
 SKILL_FILE_SYMLINK_SUPPORTED = {
@@ -36,11 +36,12 @@ def build_plan(
     backup_replace: bool = False,
     migrate: bool = False,
     artifacts: list[tuple[str, str]] | None = None,
-    install_mode: str = "symlink",
+    install_mode: str = "auto",
 ) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
     skipped_agents = []
     skill_specs = manifests["skills"]["skills"]
+    state = load_state(root)
     detected_agent_names = {agent.name for agent in agents}
     for agent_name in ("codex", "claude", "deepseek"):
         if agent_name not in detected_agent_names:
@@ -79,6 +80,8 @@ def build_plan(
             actions.append(file_action)
             skill_actions[(agent.name, skill)] = file_action
             if skill_action_is_active(file_action):
+                if file_action["install_mode"] == "reference":
+                    actions.extend(obsolete_support_file_actions(state, agent.name, skill))
                 actions.extend(
                     support_file_actions(
                         agent=agent,
@@ -120,13 +123,43 @@ def build_plan(
 
 
 def effective_install_mode(agent: str, requested_mode: str, source_path: Path) -> str:
+    if requested_mode == "auto":
+        if not source_path.exists():
+            return "copy"
+        if not SKILL_FILE_SYMLINK_SUPPORTED.get(agent, True):
+            return "reference"
+        return "symlink"
     if requested_mode != "symlink":
         return requested_mode
     if not source_path.exists():
         return "copy"
-    if not SKILL_FILE_SYMLINK_SUPPORTED.get(agent, True):
-        return "reference"
     return "symlink"
+
+
+def obsolete_support_file_actions(state: dict[str, Any], agent: str, skill: str) -> list[dict[str, Any]]:
+    actions = []
+    for item in state.get("artifacts", []):
+        if item.get("agent") != agent:
+            continue
+        if item.get("skill") != skill:
+            continue
+        if item.get("artifact_type") != "skill-support-file":
+            continue
+        actions.append(
+            {
+                "kind": "managed-file-remove",
+                "agent": agent,
+                "skill": skill,
+                "path": item["artifact"],
+                "classification": "managed",
+                "operation": "remove-obsolete",
+                "artifact_type": "skill-support-file",
+                "install_mode": item.get("install_mode"),
+                "source_path": item.get("source_path"),
+                "reason": "reference install mode does not use installed support files",
+            }
+        )
+    return actions
 
 
 def artifact_action(
