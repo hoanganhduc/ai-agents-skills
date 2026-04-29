@@ -109,25 +109,28 @@ copies those bodies into each supported agent and adds managed metadata.
 
 ## Documentation
 
-- `docs/installation.md`: install, dry-run, conflict, and migration modes.
-- `docs/skills.md`: skill catalog and descriptions.
-- `docs/artifacts.md`: optional templates, instruction docs, personas, and
+- [docs/installation.md](docs/installation.md): install, dry-run, conflict,
+  and migration modes.
+- [docs/skills.md](docs/skills.md): skill catalog and descriptions.
+- [docs/artifacts.md](docs/artifacts.md): optional templates, instruction
+  docs, personas, and
   entrypoint aliases.
-- `docs/profiles.md`: selectable profiles such as `research-core` and
+- [docs/profiles.md](docs/profiles.md): selectable profiles such as
+  `research-core` and
   `full-research`.
-- `docs/dependencies.md`: logical tools, current Linux/Windows extra
+- [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
   software, Python packages, Node packages, and manual integrations.
-- `docs/workflow-overview.md`: how agents, skills, runtimes, and research
+- [docs/workflow-overview.md](docs/workflow-overview.md): how agents, skills, runtimes, and research
   tools connect during real workflows.
-- `docs/multi-agent-examples.md`: multi-agent process examples, spawn/wait
+- [docs/multi-agent-examples.md](docs/multi-agent-examples.md): multi-agent process examples, spawn/wait
   lifecycle, and available research templates.
-- `docs/system-profile.md`: sanitized maintainer-system profile and how local
+- [docs/system-profile.md](docs/system-profile.md): sanitized maintainer-system profile and how local
   tools map to skills.
-- `docs/agent-locations.md`: supported agent config, skill, template, command,
+- [docs/agent-locations.md](docs/agent-locations.md): supported agent config, skill, template, command,
   persona, and tool-shim locations.
-- `docs/audit-and-migration.md`: audit output, staged migration, unmanaged
+- [docs/audit-and-migration.md](docs/audit-and-migration.md): audit output, staged migration, unmanaged
   local skill handling, and Windows-native verification notes.
-- `docs/verification.md`: installed-artifact verification model.
+- [docs/verification.md](docs/verification.md): installed-artifact verification model.
 
 The GitHub Pages site is built from `docs/source` and deployed by
 `.github/workflows/docs.yml`.
@@ -234,16 +237,55 @@ make install ARGS="--skills zotero,docling --dry-run"
 
 
 def write_skills_doc(manifests: dict[str, Any], path: Path) -> Path:
-    path.write_text("# Skills\n\n" + skill_table(manifests) + "\n", encoding="utf-8")
+    path.write_text(
+        "# Skills\n\n"
+        "A skill is an installable agent capability. Each skill has one "
+        "canonical name in this repository, one canonical body under "
+        "`canonical/skills/<skill>/`, and generated target files for every "
+        "supported agent that is detected on the machine.\n\n"
+        "Use this page when you already know which capability you want. Use "
+        "[Profiles](profiles.md) when you want a bundle, and "
+        "[Optional Artifacts](artifacts.md) when you want templates, personas, "
+        "or command-style entrypoints in addition to skills.\n\n"
+        "Common commands:\n\n"
+        "```bash\n"
+        "make list-skills\n"
+        "make plan ARGS=\"--skill zotero\"\n"
+        "make install ARGS=\"--skills zotero,docling --dry-run\"\n"
+        "make verify ARGS=\"--skill zotero --root /tmp/aas-fake-home\"\n"
+        "```\n\n"
+        "Installation is partial by default: selecting one skill installs only "
+        "that skill, its support files, and the managed instruction block for "
+        "that installed or adopted skill. Skipped skills do not receive "
+        "instruction blocks.\n\n"
+        + skill_table(manifests)
+        + "\n\n"
+        "Related pages: [Installation](installation.md), "
+        "[Verification](verification.md), [Agent Locations](agent-locations.md).\n",
+        encoding="utf-8",
+    )
     return path
 
 
 def write_artifacts_doc(manifests: dict[str, Any], path: Path) -> Path:
     path.write_text(
         "# Optional Artifacts\n\n"
-        "Artifacts are opt-in files outside normal skill directories. They are "
-        "installed only when selected with `--artifact`, `--artifacts`, or "
-        "`--artifact-profile`.\n\n"
+        "Artifacts are opt-in files outside normal skill directories. They add "
+        "supporting workflow material such as templates, instruction docs, "
+        "reviewer personas, entrypoint aliases, and repository-management "
+        "notices. They are not installed by default because they can change "
+        "agent behavior outside a single skill folder.\n\n"
+        "Use artifacts after deciding which skills or profiles you want. If an "
+        "artifact depends on a skill, the installer creates it only when that "
+        "skill is selected, already managed, adopted, migrated, or added with "
+        "`--with-deps`.\n\n"
+        "Common commands:\n\n"
+        "```bash\n"
+        "make list-artifacts\n"
+        "make plan ARGS=\"--no-skills --artifact-profile workflow-templates\"\n"
+        "make plan ARGS=\"--no-skills --artifact entrypoint-alias:zotero --with-deps\"\n"
+        "make install ARGS=\"--no-skills --artifact-profile repo-management --dry-run\"\n"
+        "```\n\n"
         + artifact_profiles_table_text(manifests)
         + "\n\n"
         + artifact_table(manifests)
@@ -251,20 +293,79 @@ def write_artifacts_doc(manifests: dict[str, Any], path: Path) -> Path:
         "Artifacts with dependencies are installed only when their backing "
         "skill is selected, already managed, or added with `--with-deps`. DeepSeek "
         "personas are installed as reference prompts because native persona-file "
-        "loading has not been verified.\n",
+        "loading has not been verified.\n\n"
+        "Related pages: [Skills](skills.md), [Profiles](profiles.md), "
+        "[Agent Locations](agent-locations.md), [Uninstall And Rollback](uninstall-rollback.md).\n",
         encoding="utf-8",
     )
     return path
 
 
 def write_profiles_doc(manifests: dict[str, Any], path: Path) -> Path:
-    path.write_text("# Profiles\n\n" + profiles_table_text(manifests) + "\n", encoding="utf-8")
+    path.write_text(
+        "# Profiles\n\n"
+        "A profile is a named bundle of skills. Profiles are the easiest way to "
+        "install a coherent workflow without listing every skill manually. The "
+        "default profile is `research-core`; the broadest profile is "
+        "`full-research`.\n\n"
+        "Profiles do not automatically install optional artifacts. Add "
+        "`--artifact-profile ...` when you also want templates, personas, "
+        "entrypoint aliases, or management notices.\n\n"
+        "Common commands:\n\n"
+        "```bash\n"
+        "make precheck ARGS=\"--profile research-core\"\n"
+        "make plan ARGS=\"--profile research-core\"\n"
+        "make install ARGS=\"--profile research-core --dry-run\"\n"
+        "make plan ARGS=\"--profile library --artifact-profile research-entrypoints --with-deps\"\n"
+        "```\n\n"
+        + profiles_table_text(manifests)
+        + "\n\n"
+        "Related pages: [Skills](skills.md), [Optional Artifacts](artifacts.md), "
+        "[Dependencies](dependencies.md), [Installation](installation.md).\n",
+        encoding="utf-8",
+    )
     return path
 
 
 def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
     tools = manifests["dependencies"]["tools"]
-    lines = ["# Dependencies", "", "| Logical Tool | Description |", "|---|---|"]
+    lines = [
+        "# Dependencies",
+        "",
+        "Dependencies are logical capabilities used by skills and artifacts. The",
+        "installer does not hardcode personal paths; `precheck` resolves each",
+        "capability from environment overrides, repo-local runtimes, `PATH`,",
+        "Python import checks, native Windows locations, WSL-backed commands,",
+        "or remote-service placeholders.",
+        "",
+        "Use this page to understand what software may be needed before an",
+        "install. Use [Profiles](profiles.md) or [Skills](skills.md) to see",
+        "which capabilities are selected for a workflow, and use",
+        "[Windows](windows.md) or [Linux](linux.md) for platform-specific",
+        "detection notes.",
+        "",
+        "Common commands:",
+        "",
+        "```bash",
+        "make doctor ARGS=\"--profile research-core\"",
+        "make precheck ARGS=\"--profile research-core\"",
+        "make precheck ARGS=\"--profile full-research --interactive\"",
+        "make precheck ARGS=\"--profile math --json\"",
+        "```",
+        "",
+        "Status vocabulary used by `precheck`:",
+        "",
+        "- `present`: the capability was found and can be used from the current substrate.",
+        "- `missing`: the capability was not found and may need installation.",
+        "- `degraded`: the capability appears to exist, but some part could not be executed or fully inspected.",
+        "- `present-unverified`: the capability was found as a file or install root, but the current substrate cannot safely execute it.",
+        "- `manual`: the capability depends on credentials, local databases, or service setup outside this repo.",
+        "",
+        "## Logical Tools",
+        "",
+        "| Logical Tool | Description |",
+        "|---|---|",
+    ]
     for name in sorted(tools):
         lines.append(f"| `{name}` | {tools[name]['description']} |")
     packages = manifests["dependencies"].get("packages", {})
@@ -280,21 +381,21 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
     lines.extend(
         [
             "",
-            "Dependencies are declared as logical capabilities rather than personal",
-            "paths. `precheck` resolves them from environment overrides, repo-local",
-            "runtimes, `PATH`, native Windows commands, Python imports, remote-service",
-            "placeholders, and WSL-backed commands where appropriate. Python package",
-            "checks use root-relative candidate sets, including agent virtualenvs,",
-            "user-local site-package directories, Codex runtime site-package",
-            "directories, dedicated Docling environments, official Windows Python",
-            "install roots, and per-user Windows package directories.",
+            "## Detection Notes",
+            "",
+            "Python package checks use root-relative candidate sets, including",
+            "agent virtualenvs, user-local site-package directories, Codex runtime",
+            "site-package directories, dedicated Docling environments, official",
+            "Windows Python install roots, and per-user Windows package directories.",
             "When inspecting a mounted Windows home from Linux, `precheck` can",
             "verify package markers in `site-packages`, find common TeX Live and",
             "MiKTeX install roots, detect Sage in the current WSL/Linux",
             "filesystem, and detect mounted WSL rootfs Sage paths or WSL VHDX",
             "presence. It still marks native Windows executables as",
-            "present-unverified instead of trying",
-            "to execute them.",
+            "present-unverified instead of trying to execute them.",
+            "",
+            "Related pages: [Installation](installation.md), [Windows](windows.md),",
+            "[Linux](linux.md), [Troubleshooting](troubleshooting.md).",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -430,6 +531,25 @@ installer state are checked.
 If no managed artifacts match the requested scope, `verify` returns
 `no-managed-artifacts` instead of `ok`.
 
+Use verification after any applied install, uninstall, migration, adoption, or
+rollback. It is intentionally narrower than `precheck`: `precheck` checks
+software availability, while `verify` checks whether this installer still owns
+the files and managed instruction blocks it recorded.
+
+Common commands:
+
+```bash
+make verify ARGS="--root /tmp/aas-fake-home"
+make verify ARGS="--skill zotero --root /tmp/aas-fake-home"
+make verify ARGS="--skills zotero,docling --root /tmp/aas-fake-home"
+```
+
+Result meanings:
+
+- `ok`: all selected managed artifacts passed their checks.
+- `no-managed-artifacts`: the selected scope has no installer-managed files to check.
+- `missing` or failed checks: a managed file, marker, block, or format-specific condition no longer matches recorded state.
+
 Current skill checks:
 
 - `L1 file-exists`
@@ -461,6 +581,9 @@ The verifier intentionally skips skills and artifacts that were not installed.
 Runtime smoke tests, runner-specific `doctor` commands, and direct
 `agent-loads-config` checks are not automatic yet; use `precheck` and the
 agent's own diagnostics for those layers.
+
+Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
+[Uninstall And Rollback](uninstall-rollback.md), [Troubleshooting](troubleshooting.md).
 """,
         encoding="utf-8",
     )
@@ -522,6 +645,9 @@ Examples:
   bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
   capabilities, so the dependency graph records the substrate instead of
   hardcoding a personal path.
+
+Related pages: [Installation](installation.md), [Skills](skills.md),
+[Dependencies](dependencies.md), [Multi-Agent Examples](multi-agent-examples.md).
 """
 
 
@@ -739,6 +865,9 @@ reproducible workflow, explicit tracks, or a reusable process. Good examples:
 
 `prose` is still an adapter here. It describes the workflow and maps it to the
 available agent tools; it is not a bundled OpenProse virtual machine.
+
+Related pages: [Workflow Overview](workflow-overview.md), [Skills](skills.md),
+[Profiles](profiles.md), [Verification](verification.md).
 """
 
 
@@ -787,9 +916,34 @@ def write_static_doc(path: Path, text: str) -> Path:
 def architecture_text() -> str:
     return """# Architecture
 
-The manifests are the source of truth. The installer resolves canonical skills
-to per-agent target artifacts and records ownership in a journal. Existing
-unmanaged files are skipped by default.
+This page explains how the repository turns one canonical skill catalog into
+agent-specific files for Codex, Claude, and DeepSeek.
+
+The manifests are the source of truth:
+
+- `manifest/skills.yaml` defines canonical skill names, descriptions,
+  supported agents, dependencies, and aliases.
+- `manifest/profiles.yaml` defines selectable skill bundles.
+- `manifest/artifacts.yaml` defines optional templates, personas,
+  instruction docs, entrypoints, and management notices.
+- `manifest/dependencies.yaml` and `manifest/system-dependencies.yaml` define
+  logical tools and sanitized maintainer-system dependency observations.
+
+The installer resolves those manifests into per-agent target artifacts and
+records ownership in `.ai-agents-skills/state.json` under the selected root.
+Existing unmanaged files are skipped by default.
+
+Install flow:
+
+1. Resolve selected skills and artifacts from `--skill`, `--skills`,
+   `--profile`, `--artifact`, `--artifacts`, or `--artifact-profile`.
+2. Detect available agent homes under the selected `--root`.
+3. Render canonical skill bodies and optional artifacts into each supported
+   target format.
+4. Add managed instruction blocks only for skills or artifacts that are
+   installed, adopted, migrated, updated, or already managed.
+5. Record hashes and ownership metadata for verification, uninstall, and
+   rollback.
 
 Artifact classes:
 
@@ -809,11 +963,26 @@ Artifact classes:
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
 detected, not as the default global Codex target.
+
+Safety boundary:
+
+- auth files, API keys, provider config, session logs, downloaded libraries,
+  and local runtime state are not managed by this repo
+- unmanaged user files are skipped unless `--adopt`, `--backup-replace`, or
+  `--migrate` is selected explicitly
+- uninstall and rollback remove only managed files and managed marker blocks
+
+Related pages: [Installation](installation.md), [Agent Locations](agent-locations.md),
+[Verification](verification.md), [Uninstall And Rollback](uninstall-rollback.md).
 """
 
 
 def installation_text() -> str:
     return """# Installation
+
+This page describes safe installation flows. The installer is conservative:
+planning and dry-run previews are the default workflow, and real home-directory
+writes require both `--apply` and `--real-system`.
 
 Use `make precheck` or `make.bat precheck` first when installing on a new
 machine. Use `plan` before `install`. Partial installs are first-class: select
@@ -837,7 +1006,52 @@ hint, lets the user skip or ignore a dependency, and tells them to rerun
 `install --apply` is required before any writes occur. Real home-directory
 writes additionally require `--real-system`.
 
-Conflict modes:
+## Safe First Install
+
+Linux:
+
+```bash
+make doctor
+make precheck ARGS="--profile research-core"
+make plan ARGS="--profile research-core"
+make install ARGS="--profile research-core --dry-run"
+```
+
+Windows:
+
+```bat
+make.bat doctor
+make.bat precheck --profile research-core
+make.bat plan --profile research-core
+make.bat install --profile research-core --dry-run
+```
+
+To test file writes without touching a real agent home, use a fake root:
+
+```bash
+make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
+make verify ARGS="--root /tmp/aas-fake-home"
+```
+
+Real-system writes should be a final step after reviewing `plan` output:
+
+```bash
+make install ARGS="--profile research-core --apply --real-system"
+```
+
+## Selection Model
+
+- `--profile research-core` selects a workflow bundle.
+- `--skill zotero` selects one skill.
+- `--skills zotero,docling` selects a comma-separated skill set.
+- `--no-skills --artifact-profile workflow-templates` installs only optional
+  artifacts.
+- `--with-deps` lets dependency-bound artifacts bring in their backing skills.
+
+See [Profiles](profiles.md), [Skills](skills.md), and
+[Optional Artifacts](artifacts.md) for the available selectors.
+
+## Conflict Modes
 
 - default: create missing managed files and skip unmanaged or legacy files
 - `--adopt`: record an existing target file as user-owned managed state
@@ -878,6 +1092,9 @@ Scenario summary:
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
+
+Related pages: [Dependencies](dependencies.md), [Audit And Migration](audit-and-migration.md),
+[Verification](verification.md), [Troubleshooting](troubleshooting.md).
 """
 
 
@@ -887,6 +1104,19 @@ def audit_and_migration_text() -> str:
 `audit-system` is a read-only comparison between the selected repo profile and
 the current agent homes. It is intended for existing systems where skills may
 already exist under canonical names, legacy aliases, or local-only names.
+
+Use this page before touching an existing personal setup. Audit output helps
+separate files this repo can safely manage from local experiments, legacy
+aliases, and user-owned settings that should stay outside the repo.
+
+Common commands:
+
+```bash
+make audit-system ARGS="--profile full-research"
+make audit-system ARGS="--profile full-research --json"
+make plan ARGS="--profile full-research --migrate"
+make plan ARGS="--profile full-research --adopt"
+```
 
 The audit reports:
 
@@ -923,6 +1153,9 @@ programs can often be found but not safely executed. Treat degraded Windows
 tool results as presence checks only. To fully verify Windows-native tools, run
 the same `make.bat precheck --profile ...` command from a native Windows shell
 and compare the output with the mounted-profile audit.
+
+Related pages: [Installation](installation.md), [Dependencies](dependencies.md),
+[Agent Locations](agent-locations.md), [Uninstall And Rollback](uninstall-rollback.md).
 """
 
 
@@ -932,6 +1165,12 @@ def system_profile_text() -> str:
 This document records the real development setup observed during dry-run and
 doctor checks. Personal paths, usernames, emails, credentials, local libraries,
 and secrets are intentionally omitted or replaced with placeholders.
+
+This page is not required for normal installation. It explains the environment
+that motivated the repository design, so readers can understand why the
+installer supports Linux, mounted Windows profiles, WSL-backed SageMath, and
+multiple agent homes. Treat it as an example deployment, not as a requirement
+for your own machine.
 
 ## Roots
 
@@ -1007,6 +1246,9 @@ The dry-run state had no managed `ai-agents-skills` instruction blocks yet.
 The repo should contain reusable skill logic, docs, and installers. It should
 not contain personal paths, auth files, credentials, session logs, downloaded
 papers/books, Zotero databases, Calibre libraries, or local runtime state.
+
+Related pages: [Dependencies](dependencies.md), [Windows](windows.md),
+[Linux](linux.md), [Audit And Migration](audit-and-migration.md).
 """
 
 
@@ -1015,6 +1257,10 @@ def agent_locations_text() -> str:
 
 The installer detects agent homes first. If an agent home is absent, that agent
 is skipped and its target-specific files are not planned.
+
+Use this page when checking where files will be installed or why one agent was
+skipped. The paths below are target locations, not source locations. Canonical
+source content stays in this repository under `canonical/` and `manifest/`.
 
 | Agent | Home | Skill target | Instruction file |
 |---|---|---|---|
@@ -1050,6 +1296,9 @@ Instruction files are modified through managed marker blocks only. Uninstall
 and rollback remove only those managed blocks and managed files.
 The optional `management-notice:repo-management` artifact is also a managed
 block in the instruction file; it does not replace existing user instructions.
+
+Related pages: [Architecture](architecture.md), [Installation](installation.md),
+[Optional Artifacts](artifacts.md), [Verification](verification.md).
 """
 
 
@@ -1065,6 +1314,20 @@ dependency is native Windows, WSL-backed, missing, degraded, or manual. A
 missing DeepSeek home on Windows is not an error; DeepSeek-specific artifacts
 and dependencies are skipped when the agent is absent.
 
+Common commands from a native Windows shell:
+
+```bat
+make.bat doctor
+make.bat precheck --profile research-core
+make.bat plan --profile research-core
+make.bat install --profile research-core --dry-run
+make.bat install --profile research-core --apply --root %TEMP%\\aas-fake-home
+make.bat verify --root %TEMP%\\aas-fake-home
+```
+
+Use `--real-system` only when you intentionally want to write to the detected
+Windows agent homes.
+
 For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`
 may be satisfied by `sage` inside WSL even if no native Windows `sage.exe`
@@ -1078,6 +1341,17 @@ the precheck itself is running from that substrate, then mounted WSL rootfs
 locations when they exist. If only a WSL distro `ext4.vhdx` is visible, the
 result is degraded: the distro exists, but Sage inside the image cannot be
 verified without WSL, a local WSL filesystem, or a mounted rootfs.
+
+Practical interpretation:
+
+- missing DeepSeek on Windows means DeepSeek targets and dependencies are ignored
+- native Python and TeX can be detected from common install roots even when
+  inspected from Linux
+- WSL-backed SageMath should be verified from WSL or native Windows when a
+  mounted profile reports only degraded evidence
+
+Related pages: [Dependencies](dependencies.md), [Installation](installation.md),
+[Agent Locations](agent-locations.md), [Troubleshooting](troubleshooting.md).
 """
 
 
@@ -1087,6 +1361,31 @@ def linux_text() -> str:
 Linux checks resolve logical tools from installed commands, repo-local runtimes,
 and user overrides such as `AAS_PYTHON` or `AAS_SAGE`. `precheck` also checks
 selected optional Python packages where a skill declares them.
+
+Common commands:
+
+```bash
+make doctor
+make precheck ARGS="--profile research-core"
+make plan ARGS="--profile research-core"
+make install ARGS="--profile research-core --dry-run"
+make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
+make verify ARGS="--root /tmp/aas-fake-home"
+```
+
+Useful overrides:
+
+- `AAS_PYTHON`: preferred Python interpreter for `python-runtime` checks
+- `AAS_SAGE`: preferred SageMath executable for `sage-runtime` checks
+- `PATH`: command discovery for TeX, Git, ripgrep, OCR, Calibre, and other tools
+
+The Linux path is also used when inspecting a mounted Windows profile from WSL
+or a Linux host. In that case, native Windows executables may be reported as
+`present-unverified` because they can be found but not safely executed from the
+current substrate.
+
+Related pages: [Dependencies](dependencies.md), [Windows](windows.md),
+[Installation](installation.md), [Troubleshooting](troubleshooting.md).
 """
 
 
@@ -1104,6 +1403,29 @@ content in the target path and will skip it unless `--adopt` or
 `--backup-replace` is used. If a plan reports `classification=legacy`, the
 installer found a compatibility or alias path and will skip it unless
 `--migrate` is used.
+
+Useful inspection commands:
+
+```bash
+make precheck ARGS="--profile full-research --json"
+make audit-system ARGS="--profile full-research --json"
+make plan ARGS="--profile full-research --migrate"
+make verify ARGS="--root /tmp/aas-fake-home"
+```
+
+Common cases:
+
+| Symptom | Likely meaning | Next step |
+|---|---|---|
+| Agent is listed under skipped agents | The agent home was not detected under `--root`. | Install that agent first, change `--root`, or ignore it. |
+| Required dependency is missing | A selected installed skill needs software that was not found. | Install the package, use an override, or select fewer skills. |
+| Dependency is degraded | The tool or install root was found but not fully executable from this substrate. | Re-run precheck from the native substrate, such as Windows or WSL. |
+| Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
+| Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
+| Verify returns `no-managed-artifacts` | The selected scope has no state recorded by this installer. | Run install/adopt/migrate first, or verify a different scope. |
+
+Related pages: [Installation](installation.md), [Dependencies](dependencies.md),
+[Audit And Migration](audit-and-migration.md), [Verification](verification.md).
 """
 
 
@@ -1120,4 +1442,35 @@ and managed instruction blocks. Rollback can target one run, one skill,
 multiple skills, one artifact, multiple artifacts, or one agent. If a managed
 instruction file was created by the installer and becomes empty after block
 removal, it is removed.
+
+Use uninstall when the current installed state is no longer wanted. Use
+rollback when you want to reverse a specific recorded run and restore previous
+managed content or remove files that were created from an empty state.
+
+Dry-run examples:
+
+```bash
+make uninstall ARGS="--skill zotero"
+make uninstall ARGS="--artifacts entrypoint-alias:zotero"
+make rollback ARGS="--skill zotero"
+make rollback ARGS="--run 20260429-080620"
+```
+
+Applied examples:
+
+```bash
+make uninstall ARGS="--skill zotero --apply"
+make rollback ARGS="--run 20260429-080620 --apply"
+```
+
+Safety rules:
+
+- uninstall never removes unmanaged files
+- uninstall removes only selected managed files and managed instruction blocks
+- rollback uses the journal for the selected run or scope
+- instruction files are removed only when the installer created them and they
+  become empty after managed block removal
+
+Related pages: [Installation](installation.md), [Verification](verification.md),
+[Audit And Migration](audit-and-migration.md), [Agent Locations](agent-locations.md).
 """

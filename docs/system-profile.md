@@ -4,6 +4,12 @@ This document records the real development setup observed during dry-run and
 doctor checks. Personal paths, usernames, emails, credentials, local libraries,
 and secrets are intentionally omitted or replaced with placeholders.
 
+This page is not required for normal installation. It explains the environment
+that motivated the repository design, so readers can understand why the
+installer supports Linux, mounted Windows profiles, WSL-backed SageMath, and
+multiple agent homes. Treat it as an example deployment, not as a requirement
+for your own machine.
+
 ## Roots
 
 | Substrate | Placeholder | Notes |
@@ -78,3 +84,6 @@ The dry-run state had no managed `ai-agents-skills` instruction blocks yet.
 The repo should contain reusable skill logic, docs, and installers. It should
 not contain personal paths, auth files, credentials, session logs, downloaded
 papers/books, Zotero databases, Calibre libraries, or local runtime state.
+
+Related pages: [Dependencies](dependencies.md), [Windows](windows.md),
+[Linux](linux.md), [Audit And Migration](audit-and-migration.md).

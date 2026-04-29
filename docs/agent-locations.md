@@ -3,6 +3,10 @@
 The installer detects agent homes first. If an agent home is absent, that agent
 is skipped and its target-specific files are not planned.
 
+Use this page when checking where files will be installed or why one agent was
+skipped. The paths below are target locations, not source locations. Canonical
+source content stays in this repository under `canonical/` and `manifest/`.
+
 | Agent | Home | Skill target | Instruction file |
 |---|---|---|---|
 | Codex | `~/.codex` | `~/.codex/skills/<skill>/` | `~/.codex/AGENTS.md` |
@@ -37,3 +41,6 @@ Instruction files are modified through managed marker blocks only. Uninstall
 and rollback remove only those managed blocks and managed files.
 The optional `management-notice:repo-management` artifact is also a managed
 block in the instruction file; it does not replace existing user instructions.
+
+Related pages: [Architecture](architecture.md), [Installation](installation.md),
+[Optional Artifacts](artifacts.md), [Verification](verification.md).

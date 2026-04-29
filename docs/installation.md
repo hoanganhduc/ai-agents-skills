@@ -1,5 +1,9 @@
 # Installation
 
+This page describes safe installation flows. The installer is conservative:
+planning and dry-run previews are the default workflow, and real home-directory
+writes require both `--apply` and `--real-system`.
+
 Use `make precheck` or `make.bat precheck` first when installing on a new
 machine. Use `plan` before `install`. Partial installs are first-class: select
 `--skill`, `--skills`, or `--profile`. Artifact installs are also partial:
@@ -22,7 +26,52 @@ hint, lets the user skip or ignore a dependency, and tells them to rerun
 `install --apply` is required before any writes occur. Real home-directory
 writes additionally require `--real-system`.
 
-Conflict modes:
+## Safe First Install
+
+Linux:
+
+```bash
+make doctor
+make precheck ARGS="--profile research-core"
+make plan ARGS="--profile research-core"
+make install ARGS="--profile research-core --dry-run"
+```
+
+Windows:
+
+```bat
+make.bat doctor
+make.bat precheck --profile research-core
+make.bat plan --profile research-core
+make.bat install --profile research-core --dry-run
+```
+
+To test file writes without touching a real agent home, use a fake root:
+
+```bash
+make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
+make verify ARGS="--root /tmp/aas-fake-home"
+```
+
+Real-system writes should be a final step after reviewing `plan` output:
+
+```bash
+make install ARGS="--profile research-core --apply --real-system"
+```
+
+## Selection Model
+
+- `--profile research-core` selects a workflow bundle.
+- `--skill zotero` selects one skill.
+- `--skills zotero,docling` selects a comma-separated skill set.
+- `--no-skills --artifact-profile workflow-templates` installs only optional
+  artifacts.
+- `--with-deps` lets dependency-bound artifacts bring in their backing skills.
+
+See [Profiles](profiles.md), [Skills](skills.md), and
+[Optional Artifacts](artifacts.md) for the available selectors.
+
+## Conflict Modes
 
 - default: create missing managed files and skip unmanaged or legacy files
 - `--adopt`: record an existing target file as user-owned managed state
@@ -63,3 +112,6 @@ Scenario summary:
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
+
+Related pages: [Dependencies](dependencies.md), [Audit And Migration](audit-and-migration.md),
+[Verification](verification.md), [Troubleshooting](troubleshooting.md).
