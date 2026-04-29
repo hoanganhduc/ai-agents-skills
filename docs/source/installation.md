@@ -32,8 +32,8 @@ actually installed, adopted, updated, already managed, or migrated. A skipped
 skill does not receive an `AGENTS.md` or `CLAUDE.md` block.
 
 Optional artifacts are not installed by default. Use `--no-skills` when you
-want an artifact-only install. Use `--with-deps` when selected entrypoint
-aliases should bring in their required backing skills.
+want an artifact-only install. Use `--with-deps` when selected dependency-bound
+artifacts should bring in their required backing skills.
 
 Scenario summary:
 
@@ -44,6 +44,6 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` copies canonical content under the canonical name. |
-| Artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
+| Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |

@@ -1,46 +1,63 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
+from glob import glob
 from pathlib import Path
 from typing import Any
 
 from .manifest import REPO_ROOT
 
 
-def discover_tool(name: str, spec: dict[str, Any], platform: str) -> dict[str, Any]:
+def discover_tool(
+    name: str,
+    spec: dict[str, Any],
+    platform: str,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    root = root or Path.home()
     candidates = spec.get("candidates", {}).get(platform, [])
     checked: list[dict[str, Any]] = []
     for raw in candidates:
-        expanded = expand_candidate(raw)
+        expanded = expand_candidate(raw, root, platform)
         if not expanded:
             continue
         if expanded.startswith("wsl:"):
             wsl_result = discover_wsl_candidate(name, expanded.removeprefix("wsl:"), raw)
-            checked.append(wsl_result)
+            checked.append({key: value for key, value in wsl_result.items() if key != "checked"})
+            if wsl_result["status"] == "degraded":
+                return {**wsl_result, "checked": checked}
             if wsl_result["status"] in {"ok", "degraded"} and wsl_result.get("command"):
-                wsl_result["checked"] = checked
-                return wsl_result
+                return {**wsl_result, "checked": checked}
             continue
-        command = resolve_command(expanded)
+        command = resolve_command(expanded, platform, root)
         if command is None:
-            checked.append({"candidate": raw, "status": "missing"})
+            checked.append(unresolved_candidate(raw, platform))
             continue
-        capabilities = check_capabilities(name, command)
+        capabilities = check_capabilities(name, command, platform)
         selected = {
             "logical_name": name,
             "command": command,
-            "version": detect_version(command),
-            "scope": infer_scope(command),
+            "version": detect_version(command, platform),
+            "scope": infer_scope(command, root),
             "substrate": substrate_for(platform, command),
             "capabilities": capabilities,
             "status": "ok" if all(capabilities.values()) else "degraded",
             "checked": checked,
         }
         return selected
+    if any(item.get("status") == "unverified" for item in checked):
+        return {
+            "logical_name": name,
+            "status": "degraded",
+            "checked": checked,
+            "substrate": substrate_for(platform),
+            "reason": "native Windows PATH cannot be inspected from this host",
+        }
     return {
         "logical_name": name,
         "status": "missing",
@@ -49,30 +66,109 @@ def discover_tool(name: str, spec: dict[str, Any], platform: str) -> dict[str, A
     }
 
 
-def expand_candidate(raw: str) -> str:
-    if raw.startswith("${") and raw.endswith("}"):
-        return os.environ.get(raw[2:-1], "")
-    if raw.startswith("%") and raw.endswith("%"):
-        return os.environ.get(raw[1:-1], "")
-    return os.path.expanduser(os.path.expandvars(raw))
+def expand_candidate(raw: str, root: Path | None = None, platform: str | None = None) -> str:
+    root = root or Path.home()
+    value = raw.replace("<ROOT>", str(root))
+    value = value.replace("<LINUX_HOME>", str(root))
+    value = value.replace("<WINDOWS_HOME>", str(root))
+
+    def expand_braced(match: re.Match[str]) -> str:
+        return os.environ.get(match.group(1), "")
+
+    def expand_percent(match: re.Match[str]) -> str:
+        name = match.group(1)
+        fallback = {
+            "HOME": str(root),
+            "USERPROFILE": str(root),
+        }.get(name.upper(), "")
+        return os.environ.get(name, fallback)
+
+    value = re.sub(r"\$\{([^}]+)\}", expand_braced, value)
+    value = re.sub(r"%([^%]+)%", expand_percent, value)
+    if value.startswith("~/") or value == "~":
+        value = str(root / value[2:]) if value != "~" else str(root)
+    return os.path.expandvars(value)
 
 
-def resolve_command(candidate: str) -> str | None:
-    parts = shlex.split(candidate, posix=os.name != "nt")
+def resolve_command(candidate: str, platform: str | None = None, root: Path | None = None) -> str | None:
+    platform = current_platform(platform)
+    root = root or Path.home()
+    parts = split_candidate(candidate, platform)
+    if not parts:
+        return None
     first = parts[0]
-    path = Path(first)
-    if path.is_absolute() or first.startswith("."):
-        resolved = (REPO_ROOT / path).resolve() if first.startswith(".") else path
-        return str(resolved) if resolved.exists() else None
+    for path in candidate_path_options(first, root, platform):
+        if path.exists():
+            return render_command(str(path), parts[1:])
+    if is_path_candidate(first):
+        return None
+    if platform == "windows" and not host_is_windows():
+        return None
     found = shutil.which(first)
     if not found:
         return None
-    if len(parts) > 1:
-        return " ".join([found, *parts[1:]])
-    return found
+    return render_command(found, parts[1:])
 
 
-def detect_version(command: str) -> str:
+def split_candidate(candidate: str, platform: str) -> list[str]:
+    try:
+        return shlex.split(candidate, posix=platform != "windows")
+    except ValueError:
+        return []
+
+
+def render_command(executable: str, args: list[str]) -> str:
+    if not args:
+        return executable
+    return " ".join([shlex.quote(executable), *args])
+
+
+def candidate_path_options(first: str, root: Path, platform: str) -> list[Path]:
+    token = first.strip("\"'")
+    if platform == "windows" and not host_is_windows():
+        token = token.replace("\\", "/")
+    if token.startswith("~/") or token == "~":
+        suffix = token[2:] if token != "~" else ""
+        return [root / suffix]
+    if re.match(r"^[A-Za-z]:[\\/]", token):
+        return [Path(token)] if host_is_windows() else []
+    path = Path(token)
+    if path.is_absolute():
+        return [path]
+    if is_path_candidate(first):
+        options = [root / path]
+        if token.startswith("."):
+            options.append(REPO_ROOT / path)
+        return options
+    return []
+
+
+def is_path_candidate(first: str) -> bool:
+    return (
+        first.startswith(".")
+        or first.startswith("~")
+        or "/" in first
+        or "\\" in first
+        or re.match(r"^[A-Za-z]:[\\/]", first) is not None
+    )
+
+
+def unresolved_candidate(raw: str, platform: str) -> dict[str, Any]:
+    if platform == "windows" and not host_is_windows():
+        parts = split_candidate(raw, platform)
+        first = parts[0] if parts else raw
+        if not is_path_candidate(first) or re.match(r"^[A-Za-z]:[\\/]", first):
+            return {
+                "candidate": raw,
+                "status": "unverified",
+                "reason": "native Windows PATH cannot be inspected from this host",
+            }
+    return {"candidate": raw, "status": "missing"}
+
+
+def detect_version(command: str, platform: str | None = None) -> str:
+    if not can_execute_host(command, platform):
+        return "present-unverified"
     parts = shlex.split(command, posix=os.name != "nt")
     for args in (["--version"], ["-V"]):
         try:
@@ -92,10 +188,16 @@ def detect_version(command: str) -> str:
     return "unknown"
 
 
-def check_capabilities(name: str, command: str) -> dict[str, bool]:
+def check_capabilities(name: str, command: str, platform: str | None = None) -> dict[str, bool]:
+    if not can_execute_host(command, platform):
+        return {"executable": True, "host-executable": False}
     if name == "python-runtime":
         code = "import ssl, venv, pip; print('ok')"
-        return {"ssl": run_python(command, code), "venv": run_python(command, "import venv"), "pip": run_python(command, "import pip")}
+        return {
+            "ssl": run_python(command, code, platform),
+            "venv": run_python(command, "import venv", platform),
+            "pip": run_python(command, "import pip", platform),
+        }
     if name == "powershell-runtime":
         return {"script-execution": True, "utf8-output": True}
     if name == "node-runtime":
@@ -103,7 +205,9 @@ def check_capabilities(name: str, command: str) -> dict[str, bool]:
     return {"executable": True}
 
 
-def run_python(command: str, code: str) -> bool:
+def run_python(command: str, code: str, platform: str | None = None) -> bool:
+    if not can_execute_host(command, platform):
+        return False
     parts = shlex.split(command, posix=os.name != "nt")
     try:
         result = subprocess.run(
@@ -118,7 +222,9 @@ def run_python(command: str, code: str) -> bool:
     return result.returncode == 0
 
 
-def infer_scope(command: str) -> str:
+def infer_scope(command: str, root: Path | None = None) -> str:
+    if "wsl" in command.lower():
+        return "wsl"
     path = Path(shlex.split(command, posix=os.name != "nt")[0])
     try:
         resolved = path.resolve()
@@ -126,11 +232,9 @@ def infer_scope(command: str) -> str:
         return "system"
     if str(resolved).startswith(str(REPO_ROOT)):
         return "repo-local"
-    home = Path.home()
+    home = root or Path.home()
     if str(resolved).startswith(str(home)):
         return "user-local"
-    if "wsl" in command.lower():
-        return "wsl"
     return "system"
 
 
@@ -149,6 +253,21 @@ def is_posix_command(command: str) -> bool:
     return executable.startswith("/") and not executable.lower().endswith(".exe")
 
 
+def host_is_windows() -> bool:
+    return sys.platform.startswith("win")
+
+
+def can_execute_host(command: str, platform: str | None = None) -> bool:
+    platform = current_platform(platform)
+    parts = shlex.split(command, posix=os.name != "nt")
+    if not parts:
+        return False
+    executable = parts[0].lower()
+    if platform == "windows" and not host_is_windows() and executable.endswith(".exe"):
+        return False
+    return True
+
+
 def current_platform(override: str | None = None) -> str:
     if override:
         return override
@@ -160,6 +279,15 @@ def current_platform(override: str | None = None) -> str:
 def discover_wsl_candidate(name: str, command_name: str, raw: str) -> dict[str, Any]:
     wsl = shutil.which("wsl.exe") or shutil.which("wsl")
     if not wsl:
+        if not host_is_windows():
+            return {
+                "logical_name": name,
+                "candidate": raw,
+                "status": "degraded",
+                "reason": "WSL command cannot be verified from this host",
+                "scope": "wsl",
+                "substrate": "wsl",
+            }
         return {
             "logical_name": name,
             "candidate": raw,
@@ -228,31 +356,212 @@ cmd=$1
     return result.stdout.strip() or "unknown"
 
 
-def discover_python_package(package_name: str, module: str, python_command: str | None) -> dict[str, Any]:
-    if not python_command:
+def discover_python_package(
+    package_name: str,
+    module: str,
+    python_command: str | None,
+    *,
+    platform: str | None = None,
+    root: Path | None = None,
+    python_candidates: list[str] | None = None,
+    site_candidates: list[str] | None = None,
+) -> dict[str, Any]:
+    platform = current_platform(platform)
+    root = root or Path.home()
+    candidates = python_candidates or (["python-runtime"] if python_command else [])
+    site_candidates = site_candidates or []
+    checked: list[dict[str, Any]] = []
+    if not candidates and not site_candidates:
         return {
             "logical_name": package_name,
             "status": "missing",
             "reason": "python runtime unavailable",
             "module": module,
+            "checked": checked,
         }
-    parts = shlex.split(python_command, posix=os.name != "nt")
-    code = (
-        "import importlib.util, sys; "
-        f"spec = importlib.util.find_spec({module!r}); "
-        "sys.exit(0 if spec else 1)"
-    )
-    result = subprocess.run(
-        [parts[0], *parts[1:], "-c", code],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=10,
-        check=False,
-    )
+
+    for raw in candidates:
+        command = python_command if raw == "python-runtime" else None
+        if raw != "python-runtime":
+            expanded = expand_candidate(raw, root, platform)
+            command = resolve_command(expanded, platform, root) if expanded else None
+        if not command:
+            checked.append({"candidate": raw, "status": "missing"})
+            continue
+        check = check_python_module(command, module, platform)
+        check["candidate"] = raw
+        checked.append(check)
+        if check["status"] == "ok":
+            return {
+                "logical_name": package_name,
+                "type": "python",
+                "module": module,
+                "status": "ok",
+                "python": command,
+                "detection": check.get("detection"),
+                "checked": checked,
+            }
+
+    for raw in site_candidates:
+        site_paths = resolve_site_candidate(raw, root, platform)
+        if not site_paths:
+            checked.append({"candidate": raw, "type": "site-packages", "status": "missing"})
+            continue
+        found_in_candidate = False
+        for site_path in site_paths:
+            hit = module_marker(site_path, module)
+            if hit:
+                checked.append(
+                    {
+                        "candidate": raw,
+                        "type": "site-packages",
+                        "status": "ok",
+                        "site_package": str(hit),
+                    }
+                )
+                return {
+                    "logical_name": package_name,
+                    "type": "python",
+                    "module": module,
+                    "status": "ok",
+                    "detection": "site-packages",
+                    "site_package": str(hit),
+                    "checked": checked,
+                }
+            if site_path.exists():
+                found_in_candidate = True
+        checked.append(
+            {
+                "candidate": raw,
+                "type": "site-packages",
+                "status": "missing",
+                "reason": "site-packages path exists but module marker was not found"
+                if found_in_candidate
+                else "site-packages path not found",
+            }
+        )
+
     return {
         "logical_name": package_name,
         "type": "python",
         "module": module,
-        "status": "ok" if result.returncode == 0 else "missing",
-        "python": python_command,
+        "status": "missing",
+        "reason": "module not found in any checked Python environment",
+        "checked": checked,
     }
+
+
+def check_python_module(command: str, module: str, platform: str) -> dict[str, Any]:
+    if can_execute_host(command, platform):
+        parts = shlex.split(command, posix=os.name != "nt")
+        code = (
+            "import importlib.util, sys; "
+            f"spec = importlib.util.find_spec({module!r}); "
+            "sys.exit(0 if spec else 1)"
+        )
+        try:
+            result = subprocess.run(
+                [parts[0], *parts[1:], "-c", code],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+            )
+        except Exception as exc:
+            site_hit = find_module_in_site_packages(command, module, platform)
+            if site_hit:
+                return {
+                    "python": command,
+                    "status": "ok",
+                    "detection": "site-packages",
+                    "site_package": site_hit,
+                    "reason": f"import probe failed: {exc}",
+                }
+            return {"python": command, "status": "missing", "reason": f"import probe failed: {exc}"}
+        return {
+            "python": command,
+            "status": "ok" if result.returncode == 0 else "missing",
+            "detection": "import",
+        }
+
+    site_hit = find_module_in_site_packages(command, module, platform)
+    if site_hit:
+        return {
+            "python": command,
+            "status": "ok",
+            "detection": "site-packages",
+            "site_package": site_hit,
+            "reason": "native executable is not runnable from this host",
+        }
+    return {
+        "python": command,
+        "status": "missing",
+        "reason": "native executable is not runnable from this host and site-packages marker was not found",
+    }
+
+
+def find_module_in_site_packages(command: str, module: str, platform: str) -> str | None:
+    parts = shlex.split(command, posix=os.name != "nt")
+    if not parts:
+        return None
+    executable = parts[0].replace("\\", "/") if platform == "windows" and not host_is_windows() else parts[0]
+    exe_path = Path(executable)
+    venv_roots = []
+    if exe_path.parent.name.lower() in {"bin", "scripts"}:
+        venv_roots.append(exe_path.parent.parent)
+    site_dirs: list[Path] = []
+    for venv_root in venv_roots:
+        site_dirs.append(venv_root / "Lib" / "site-packages")
+        site_dirs.append(venv_root / "lib" / "site-packages")
+        site_dirs.extend(sorted((venv_root / "lib").glob("python*/site-packages")))
+    for site_dir in site_dirs:
+        hit = module_marker(site_dir, module)
+        if hit:
+            return str(hit)
+    return None
+
+
+def resolve_site_candidate(raw: str, root: Path, platform: str) -> list[Path]:
+    expanded = expand_candidate(raw, root, platform)
+    if not expanded:
+        return []
+    if platform == "windows" and not host_is_windows():
+        expanded = expanded.replace("\\", "/")
+    path = Path(expanded)
+    if not path.is_absolute():
+        path = root / path
+    matches = [Path(item) for item in glob(str(path))]
+    if matches:
+        return sorted(matches)
+    return [path] if path.exists() else []
+
+
+def module_marker(site_dir: Path, module: str) -> Path | None:
+    if not site_dir.exists():
+        return None
+    parts = module.split(".")
+    module_path = site_dir.joinpath(*parts)
+    if module_path.exists():
+        return module_path
+    module_file = module_path.with_suffix(".py")
+    if module_file.exists():
+        return module_file
+    aliases = {
+        "fitz": ["fitz", "PyMuPDF", "pymupdf"],
+        "PyPDF2": ["PyPDF2", "pypdf2"],
+        "google.oauth2": ["google/oauth2", "google_auth", "google-auth"],
+    }
+    names = aliases.get(module, [parts[0], parts[0].replace("_", "-")])
+    for name in names:
+        path_name = name.replace("/", os.sep)
+        path = site_dir / path_name
+        if path.exists():
+            return path
+        py_file = path.with_suffix(".py")
+        if py_file.exists():
+            return py_file
+        for pattern in (f"{name}*.dist-info", f"{name}*.egg-info"):
+            matches = list(site_dir.glob(pattern))
+            if matches:
+                return matches[0]
+    return None
