@@ -10,7 +10,7 @@
       "optional_capabilities": ["zotero-cross-check", "figure-handoff"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
-    "openclaw-research": {
+    "source-research": {
       "description": "General web and source-gathering research workflow for current-information synthesis.",
       "profiles": ["research-core", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
@@ -235,6 +235,7 @@
     "getscipapers-requester": ["getscipapers_requester"],
     "graph-verifier": ["graph_verifier"],
     "agent-group-discuss": ["agent_group_discuss"],
-    "self-improving-agent": ["self_improving_agent"]
+    "self-improving-agent": ["self_improving_agent"],
+    "source-research": ["openclaw-research"]
   }
 }

@@ -25,7 +25,7 @@ This skill is primarily:
 It is **not** a replacement for:
 - `zotero` for library lookup
 - `paper-lookup` for literature discovery
-- `openclaw-research` for general synthesis
+- `source-research` for general synthesis
 
 ## High-value references
 
@@ -50,4 +50,4 @@ Start with:
 
 - Use `database-lookup` when the user is asking for data records or identifiers.
 - Use `paper-lookup` when the user is asking for papers.
-- Use `openclaw-research` when the user wants broader explanation or synthesis.
+- Use `source-research` when the user wants broader explanation or synthesis.
