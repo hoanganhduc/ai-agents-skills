@@ -135,7 +135,7 @@ Use `DOCLING_ARTIFACTS_PATH` when models are prefetched or when you want offline
 
 ## Integration guidance
 
-- `openclaw-research`: use this skill for local PDF/document parsing before ad hoc extraction.
+- `source-research`: use this skill for local PDF/document parsing before ad hoc extraction.
 - `paper-review`: prefer this skill when a retrieved PDF/book file is available.
 - `annotated-review`: use this skill for structural extraction before annotation/review when helpful.
 

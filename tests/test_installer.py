@@ -43,9 +43,9 @@ class ManifestTests(unittest.TestCase):
     def test_legacy_alias_resolves_to_canonical(self) -> None:
         manifests = load_manifests()
         args = Args()
-        args.skills = "deep-research,research_digest_wrapper"
+        args.skills = "deep-research,research_digest_wrapper,openclaw-research"
         selected = resolve_skills(args, manifests)
-        self.assertEqual(selected, ["deep-research-workflow", "research-digest-wrapper"])
+        self.assertEqual(selected, ["deep-research-workflow", "research-digest-wrapper", "source-research"])
 
 
 class PlanInstallVerifyTests(unittest.TestCase):
@@ -218,8 +218,9 @@ class DocsAndLauncherTests(unittest.TestCase):
         written = generate_docs(manifests)
         self.assertIn(REPO_ROOT / "README.md", written)
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-        for skill in ("deep-research-workflow", "zotero", "vnthuquan"):
+        for skill in ("deep-research-workflow", "source-research", "zotero", "vnthuquan"):
             self.assertIn(f"`{skill}`", readme)
+        self.assertNotIn("`openclaw-research`", readme)
         self.assertIn("docs/workflow-overview.md", readme)
         self.assertIn("docs/multi-agent-examples.md", readme)
         self.assertIn("Graph Reconfiguration Specialist", readme)

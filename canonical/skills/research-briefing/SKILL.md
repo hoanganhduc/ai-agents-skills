@@ -13,7 +13,7 @@ Use this as a lightweight gate before nontrivial research.
 
 - the task needs deeper research, not a quick factual answer
 - the user asks for a report, survey, comparison, or careful investigation
-- the task may branch into `openclaw-research`, `deep-research-workflow`, `prose`, or `agent_group_discuss`
+- the task may branch into `source-research`, `deep-research-workflow`, `prose`, or `agent_group_discuss`
 - you want to surface scope, assumptions, and evidence needs before spending time
 
 ## When not to use

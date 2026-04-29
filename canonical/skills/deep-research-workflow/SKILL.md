@@ -56,7 +56,7 @@ bash ~/.codex/runtime/run_skill.sh \
 
 ## Routing boundary
 
-Prefer `openclaw-research` for lightweight browse-and-synthesize work.
+Prefer `source-research` for lightweight browse-and-synthesize work.
 
 Prefer this skill when:
 
