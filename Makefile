@@ -1,4 +1,4 @@
-.PHONY: doctor precheck plan install verify rollback uninstall list-skills docs docs-site sanitize-check test
+.PHONY: doctor precheck audit-system plan install verify rollback uninstall list-skills docs docs-site sanitize-check test
 
 ARGS ?=
 
@@ -7,6 +7,9 @@ doctor:
 
 precheck:
 	./installer/bootstrap.sh precheck $(ARGS)
+
+audit-system:
+	./installer/bootstrap.sh audit-system $(ARGS)
 
 plan:
 	./installer/bootstrap.sh plan $(ARGS)

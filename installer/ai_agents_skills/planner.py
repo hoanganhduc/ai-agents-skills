@@ -11,6 +11,7 @@ from .render import (
     block_id,
     render_artifact_content,
     render_instruction_block,
+    render_management_notice,
     render_skill_md,
 )
 from .state import sha256_file, sha256_text
@@ -96,6 +97,21 @@ def artifact_action(
     adopt: bool,
     backup_replace: bool,
 ) -> dict[str, Any]:
+    if artifact_type == "management-notice":
+        action = {
+            "kind": "managed-block",
+            "agent": agent.name,
+            "skill": "repo-management",
+            "path": str(agent.instructions_file),
+            "block_id": block_id("repo-management"),
+            "content": render_management_notice(agent.name),
+            "classification": classify_block(agent.instructions_file, "repo-management"),
+            "operation": "upsert",
+            "artifact_type": "management-notice",
+            "artifact_id": f"{artifact_type}:{name}",
+            "artifact_name": name,
+        }
+        return action
     dependencies = spec.get("depends_on_skills", [])
     missing = [
         skill for skill in dependencies

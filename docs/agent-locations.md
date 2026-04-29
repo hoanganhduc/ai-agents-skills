@@ -35,3 +35,5 @@ tool shims can affect behavior more broadly than a normal skill directory.
 
 Instruction files are modified through managed marker blocks only. Uninstall
 and rollback remove only those managed blocks and managed files.
+The optional `management-notice:repo-management` artifact is also a managed
+block in the instruction file; it does not replace existing user instructions.

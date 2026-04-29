@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
 from .manifest import load_manifests, skill_names
 from .planner import build_plan
+from .render import MANAGED_MARKER
 from .selectors import (
     artifact_dependency_skills,
     canonical_artifact_name,
@@ -22,6 +24,7 @@ from .selectors import (
     resolve_skills,
     split_csv,
 )
+from .state import load_state
 from .verify import verify as verify_state
 
 
@@ -67,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     precheck.add_argument("--skip", help="comma-separated dependency names to skip for this run")
     precheck.add_argument("--interactive", action="store_true")
     precheck.add_argument("--save-state", action="store_true")
+
+    audit = sub.add_parser("audit-system")
+    add_selection_args(audit)
+    add_conflict_args(audit)
 
     plan = sub.add_parser("plan")
     add_selection_args(plan)
@@ -140,6 +147,8 @@ def run(args: argparse.Namespace) -> int:
         return doctor(args, manifests)
     if args.command == "precheck":
         return precheck(args, manifests)
+    if args.command == "audit-system":
+        return audit_system(args, manifests)
     if args.command == "plan":
         plan = make_plan(args, manifests)
         return output(summarize_plan(plan), args)
@@ -233,6 +242,18 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
 
 
 def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    result = build_precheck_result(args, manifests)
+    if getattr(args, "interactive", False) and not args.json:
+        interactive_precheck(result)
+    if getattr(args, "save_state", False):
+        path = args.root / ".ai-agents-skills" / "precheck.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        result["state_file"] = str(path)
+    return output(result, args)
+
+
+def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, Any]:
     platform = current_platform(args.platform)
     selected, selected_artifacts = resolve_install_selection(args, manifests)
     agent_filter = split_csv(args.agents) if args.agents else None
@@ -243,8 +264,8 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         if detected_agent_names
         and detected_agent_names.intersection(manifests["skills"]["skills"][skill]["supported_agents"])
     ]
-    ignored = set(split_csv(args.ignore))
-    skipped = set(split_csv(args.skip))
+    ignored = set(split_csv(getattr(args, "ignore", None)))
+    skipped = set(split_csv(getattr(args, "skip", None)))
     required = required_dependencies_for(active_skills, manifests) - skipped
     optional = (optional_dependencies_for(active_skills, manifests) - required) - skipped
     results = []
@@ -254,11 +275,13 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     ordered_optional = sorted(optional, key=lambda item: (item != "python-runtime", item))
     for name in ordered_required:
         result = discover_dependency(name, True, manifests, platform, python_command, args.root)
+        result.update(dependency_context(name, active_skills, manifests))
         if name == "python-runtime" and result.get("command"):
             python_command = result["command"]
         results.append(result)
     for name in ordered_optional:
         result = discover_dependency(name, False, manifests, platform, python_command, args.root)
+        result.update(dependency_context(name, active_skills, manifests))
         if name == "python-runtime" and result.get("command"):
             python_command = result["command"]
         results.append(result)
@@ -277,7 +300,7 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         status = "missing-required"
     elif degraded_required:
         status = "degraded"
-    result = {
+    return {
         "status": status,
         "platform": platform,
         "root": str(args.root),
@@ -298,14 +321,6 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         ],
         "resume_hint": "install missing software, then rerun precheck; use --ignore or --skip for accepted gaps",
     }
-    if args.interactive and not args.json:
-        interactive_precheck(result)
-    if args.save_state:
-        path = args.root / ".ai-agents-skills" / "precheck.json"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        result["state_file"] = str(path)
-    return output(result, args)
 
 
 def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, Any]:
@@ -322,6 +337,180 @@ def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, 
         args.migrate,
         selected_artifacts,
     )
+
+
+def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    platform = current_platform(args.platform)
+    selected, selected_artifacts = resolve_install_selection(args, manifests)
+    agent_filter = split_csv(args.agents) if args.agents else None
+    agents = detect_agents(args.root, agent_filter)
+    precheck_result = build_precheck_result(args, manifests)
+    default_plan = build_plan(args.root, manifests, selected, agents, artifacts=selected_artifacts)
+    requested_plan = build_plan(
+        args.root,
+        manifests,
+        selected,
+        agents,
+        args.adopt,
+        args.backup_replace,
+        args.migrate,
+        selected_artifacts,
+    )
+    adopt_plan = build_plan(args.root, manifests, selected, agents, adopt=True, artifacts=selected_artifacts)
+    migrate_plan = build_plan(args.root, manifests, selected, agents, migrate=True, artifacts=selected_artifacts)
+    adopt_migrate_plan = build_plan(
+        args.root,
+        manifests,
+        selected,
+        agents,
+        adopt=True,
+        migrate=True,
+        artifacts=selected_artifacts,
+    )
+    state = load_state(args.root)
+    result = {
+        "status": audit_status(default_plan, precheck_result, state),
+        "platform": platform,
+        "root": str(args.root),
+        "selected_skills": selected,
+        "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
+        "detected_agents": [agent.name for agent in agents],
+        "skipped_agents": [
+            agent for agent in all_agent_names() if agent not in {target.name for target in agents}
+        ],
+        "managed_state": {
+            "artifact_count": len(state.get("artifacts", [])),
+            "run_count": len(state.get("runs", [])),
+        },
+        "instruction_files": [instruction_file_status(agent.instructions_file, agent.name) for agent in agents],
+        "skill_coverage": [skill_coverage(agent, manifests) for agent in agents],
+        "plan_summaries": {
+            "default": plan_counts(default_plan),
+            "requested": plan_counts(requested_plan),
+            "adopt": plan_counts(adopt_plan),
+            "migrate": plan_counts(migrate_plan),
+            "adopt_and_migrate": plan_counts(adopt_migrate_plan),
+        },
+        "missing_by_agent": missing_by_agent(default_plan),
+        "dependency_summary": {
+            "status": precheck_result["status"],
+            "missing_required": [item["dependency"] for item in precheck_result["missing_required"]],
+            "degraded_required": [
+                item["dependency"]
+                for item in precheck_result["dependencies"]
+                if item.get("required") and item.get("status") == "degraded"
+            ],
+            "missing_optional": [item["dependency"] for item in precheck_result["missing_optional"]],
+            "manual": [
+                item["dependency"]
+                for item in precheck_result["dependencies"]
+                if item.get("status") == "manual"
+            ],
+        },
+        "recommendations": audit_recommendations(default_plan, precheck_result, state),
+    }
+    return output(result, args)
+
+
+def audit_status(plan: dict[str, Any], precheck_result: dict[str, Any], state: dict[str, Any]) -> str:
+    if not state.get("artifacts"):
+        return "not-managed"
+    if precheck_result["status"] in {"missing-required", "degraded"}:
+        return "attention-required"
+    counts = plan_counts(plan)
+    if counts["operations"].get("create") or counts["operations"].get("upsert"):
+        return "drift-detected"
+    return "ok"
+
+
+def instruction_file_status(path: Path, agent: str) -> dict[str, Any]:
+    if not path.exists():
+        return {"agent": agent, "path": str(path), "exists": False, "managed_marker_count": 0, "size": 0}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return {
+        "agent": agent,
+        "path": str(path),
+        "exists": True,
+        "managed_marker_count": text.count("<!-- ai-agents-skills:"),
+        "has_repo_management_notice": "ai-agents-skills:repo-management:start" in text,
+        "size": len(text.encode("utf-8")),
+    }
+
+
+def skill_coverage(agent: Any, manifests: dict[str, Any]) -> dict[str, Any]:
+    canonical = set(manifests["skills"]["skills"])
+    aliases = manifests["skills"].get("legacy_aliases", {})
+    alias_to_canonical = {
+        alias: skill
+        for skill, skill_aliases in aliases.items()
+        for alias in skill_aliases
+    }
+    names = {
+        path.parent.name
+        for path in agent.skills_dir.glob("*/SKILL.md")
+        if path.is_file()
+    } if agent.skills_dir.exists() else set()
+    legacy_present = {
+        alias_to_canonical[name]: name
+        for name in names
+        if name in alias_to_canonical
+    }
+    managed = []
+    unmanaged = []
+    for name in sorted(names & canonical):
+        path = agent.skills_dir / name / "SKILL.md"
+        text = path.read_text(encoding="utf-8", errors="replace")
+        (managed if MANAGED_MARKER in text else unmanaged).append(name)
+    return {
+        "agent": agent.name,
+        "skills_dir": str(agent.skills_dir),
+        "canonical_present": sorted(names & canonical),
+        "canonical_missing": sorted(canonical - names),
+        "managed_canonical": managed,
+        "unmanaged_canonical": unmanaged,
+        "legacy_aliases_present": legacy_present,
+        "extra_local": sorted(names - canonical - set(alias_to_canonical)),
+    }
+
+
+def plan_counts(plan: dict[str, Any]) -> dict[str, Any]:
+    operations = Counter(action["operation"] for action in plan["actions"])
+    classifications = Counter(action.get("classification") for action in plan["actions"])
+    artifact_types = Counter(action.get("artifact_type") for action in plan["actions"])
+    return {
+        "action_count": len(plan["actions"]),
+        "operations": dict(sorted(operations.items())),
+        "classifications": dict(sorted(classifications.items(), key=lambda item: str(item[0]))),
+        "artifact_types": dict(sorted(artifact_types.items(), key=lambda item: str(item[0]))),
+    }
+
+
+def missing_by_agent(plan: dict[str, Any]) -> dict[str, list[str]]:
+    missing: dict[str, set[str]] = defaultdict(set)
+    for action in plan["actions"]:
+        if action.get("operation") in {"create", "upsert"}:
+            missing[action["agent"]].add(action.get("skill", action.get("artifact_name", "")))
+    return {agent: sorted(skills) for agent, skills in sorted(missing.items())}
+
+
+def audit_recommendations(
+    plan: dict[str, Any],
+    precheck_result: dict[str, Any],
+    state: dict[str, Any],
+) -> list[str]:
+    recommendations = []
+    counts = plan_counts(plan)
+    if not state.get("artifacts"):
+        recommendations.append("No managed artifacts are recorded; install or adopt selected artifacts before relying on verify.")
+    if counts["classifications"].get("legacy"):
+        recommendations.append("Run a reviewed --migrate dry-run for legacy aliases before canonicalizing names.")
+    if counts["classifications"].get("unmanaged"):
+        recommendations.append("Review unmanaged canonical files and choose --adopt or --backup-replace per skill.")
+    if precheck_result["status"] == "degraded":
+        recommendations.append("Run native-substrate checks for degraded Windows executables before treating them as fully verified.")
+    if precheck_result["missing_required"]:
+        recommendations.append("Install or explicitly skip/ignore missing required dependencies before installing affected skills.")
+    return recommendations
 
 
 def resolve_install_selection(
@@ -421,6 +610,22 @@ def optional_dependencies_for(skills: list[str], manifests: dict[str, Any]) -> s
     for skill in skills:
         dependencies.update(specs[skill].get("optional_dependencies", []))
     return dependencies
+
+
+def dependency_context(name: str, skills: list[str], manifests: dict[str, Any]) -> dict[str, Any]:
+    specs = manifests["skills"]["skills"]
+    required_by = sorted(
+        skill for skill in skills if name in specs[skill].get("required_dependencies", [])
+    )
+    optional_for = sorted(
+        skill for skill in skills if name in specs[skill].get("optional_dependencies", [])
+    )
+    related = sorted(set(required_by) | set(optional_for))
+    return {
+        "required_by": required_by,
+        "optional_for": optional_for,
+        "related_skills": related,
+    }
 
 
 def discover_dependency(
