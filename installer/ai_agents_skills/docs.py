@@ -105,9 +105,10 @@ This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
 skills. Reusable skill bodies live under `canonical/skills`; the default
-install links supported agents back to those canonical files, with reference
-adapter and copy modes available when an agent or filesystem cannot use
-symlinks.
+install links supported agents back to those canonical files when their
+loaders support symlinked skill files, and writes reference adapters for known
+incompatible loaders such as Codex. Copy mode remains available when an agent
+or filesystem must have regular files inside the settings directory.
 
 ## Documentation
 
@@ -182,10 +183,12 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 `--backup-replace`, or `--migrate` only after reviewing `plan` output.
 
 Skills install in `--install-mode symlink` by default so the repo remains the
-single maintained source. If an agent cannot follow symlinked skill files, use
-`--install-mode reference` to install thin adapters that tell the agent where
-the canonical skill lives. Use `--install-mode copy` only when files must be
-materialized inside the agent settings directory.
+single maintained source. The planner resolves that mode per agent: Claude and
+DeepSeek receive symlinked skill files, while Codex receives thin reference
+adapters because current Codex skill discovery ignores file-symlinked user
+`SKILL.md` files. Use `--install-mode reference` to force adapters for every
+agent, or `--install-mode copy` only when files must be materialized inside the
+agent settings directory.
 
 Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
@@ -230,9 +233,10 @@ skills they depend on.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets are symlinks to `canonical/skills`; `reference` mode writes a thin
-adapter, and `copy` mode writes regular files. Use `--skill` or `--skills` for
-narrow installs.
+targets are symlinks to `canonical/skills` when the agent loader supports them;
+Codex targets are reference adapters in the default mode. `reference` mode
+writes a thin adapter for every agent, and `copy` mode writes regular files.
+Use `--skill` or `--skills` for narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"
@@ -268,9 +272,10 @@ def write_skills_doc(manifests: dict[str, Any], path: Path) -> Path:
         "that skill, its support files when the selected install mode needs "
         "them, and the managed instruction block for that installed or adopted "
         "skill. Skipped skills do not receive instruction blocks. Default "
-        "`symlink` mode points agent skill files at `canonical/skills`; "
-        "`reference` mode writes thin adapters that tell agents where to read "
-        "the canonical skill; `copy` mode writes regular files.\n\n"
+        "`symlink` mode points agent skill files at `canonical/skills` when "
+        "the loader supports symlinked skills; Codex receives reference "
+        "adapters in that mode. `reference` mode writes thin adapters for "
+        "every agent; `copy` mode writes regular files.\n\n"
         + skill_table(manifests)
         + "\n\n"
         "Related pages: [Installation](installation.md), "
@@ -955,8 +960,9 @@ Install flow:
 1. Resolve selected skills and artifacts from `--skill`, `--skills`,
    `--profile`, `--artifact`, `--artifacts`, or `--artifact-profile`.
 2. Detect available agent homes under the selected `--root`.
-3. Resolve the requested install mode, then link, reference, or copy canonical
-   skill bodies into each supported target format.
+3. Resolve the requested install mode, then apply per-agent loader
+   compatibility before linking, referencing, or copying canonical skill bodies
+   into each supported target format.
 4. Add managed instruction blocks only for skills or artifacts that are
    installed, adopted, migrated, updated, or already managed.
 5. Record hashes, source paths, install modes, and ownership metadata for
@@ -966,8 +972,8 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Symlinks canonical `SKILL.md` into the agent skill directory by default; reference and copy modes are available. |
-| `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes by default; copied in copy mode; skipped in reference mode. |
+| `skill-file` | Default `symlink` mode links canonical `SKILL.md` where the loader supports it. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. Reference and copy modes are available for all agents. |
+| `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
 | `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, and DeepSeek receives reference prompts. |
@@ -1058,13 +1064,20 @@ make install ARGS="--profile research-core --apply --real-system"
 
 ## Install Modes
 
-`--install-mode symlink` is the default. Skill files and support files are
-installed as symlinks to `canonical/skills`, so editing the repo updates what
-the agents read without duplicating every skill body into every settings
-directory.
+`--install-mode symlink` is the default. The installer resolves that request
+per agent based on the checked skill-loader behavior. Claude and DeepSeek skill
+files and support files are installed as symlinks to `canonical/skills`, so
+editing the repo updates what those agents read without duplicating every skill
+body into every settings directory.
+
+Codex is the compatibility exception: current Codex skill discovery loads
+regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md` files.
+In default symlink mode, Codex skill files therefore resolve to reference
+adapters that tell Codex where to read the canonical repo skill. `plan --json`
+shows the effective `install_mode` for each target before anything is written.
 
 Use `--install-mode reference` for agents or environments that should not load
-symlinked skills. This mode writes a thin `SKILL.md` adapter into the agent
+symlinked skills. This mode writes a thin `SKILL.md` adapter into every agent
 settings directory. The adapter tells the agent where the canonical repo skill
 file is and does not copy support files.
 
@@ -1127,7 +1140,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Use `--install-mode reference`; if regular files are unavoidable, use `--install-mode copy`. |
+| Agent rejects symlinked skills | Default mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
@@ -1445,10 +1458,12 @@ installer found a compatibility or alias path and will skip it unless
 `--migrate` is used. A reviewed `--migrate` plan installs the canonical target
 and removes the legacy alias directory.
 
-Default installs use `--install-mode symlink`. If an agent does not load
-symlinked skills correctly, use `--install-mode reference` so the installed
-adapter tells the agent where the canonical repo skill lives. If the agent
-requires regular files in its settings directory, use `--install-mode copy`.
+Default installs use `--install-mode symlink`, resolved per agent. Claude and
+DeepSeek receive symlinked skill files when the filesystem supports them.
+Codex receives reference adapters by default because current Codex discovery
+ignores file-symlinked user `SKILL.md` files. Use `--install-mode reference` to
+force adapters for every agent. If an agent requires regular files in its
+settings directory, use `--install-mode copy`.
 
 Useful inspection commands:
 
@@ -1468,7 +1483,7 @@ Common cases:
 | Dependency is degraded | The tool or install root was found but not fully executable from this substrate. | Re-run precheck from the native substrate, such as Windows or WSL. |
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
-| Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
+| Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled this way by default. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
 | Verify returns `no-managed-artifacts` | The selected scope has no state recorded by this installer. | Run install/adopt/migrate first, or verify a different scope. |
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),

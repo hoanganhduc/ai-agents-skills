@@ -22,8 +22,9 @@ Install flow:
 1. Resolve selected skills and artifacts from `--skill`, `--skills`,
    `--profile`, `--artifact`, `--artifacts`, or `--artifact-profile`.
 2. Detect available agent homes under the selected `--root`.
-3. Resolve the requested install mode, then link, reference, or copy canonical
-   skill bodies into each supported target format.
+3. Resolve the requested install mode, then apply per-agent loader
+   compatibility before linking, referencing, or copying canonical skill bodies
+   into each supported target format.
 4. Add managed instruction blocks only for skills or artifacts that are
    installed, adopted, migrated, updated, or already managed.
 5. Record hashes, source paths, install modes, and ownership metadata for
@@ -33,8 +34,8 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Symlinks canonical `SKILL.md` into the agent skill directory by default; reference and copy modes are available. |
-| `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes by default; copied in copy mode; skipped in reference mode. |
+| `skill-file` | Default `symlink` mode links canonical `SKILL.md` where the loader supports it. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. Reference and copy modes are available for all agents. |
+| `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
 | `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, and DeepSeek receives reference prompts. |
