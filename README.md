@@ -48,6 +48,19 @@ fall back to `calibre` for books, parse files with `docling`, and then run
 See `docs/workflow-overview.md` for the full sanitized system description and
 workflow examples.
 
+Multi-agent work is documented separately in `docs/multi-agent-examples.md`.
+That page explains how the orchestrator selects templates, spawns bounded role
+agents, waits for round outputs, runs verification, and merges the result. It
+also summarizes the available templates:
+
+- Lakatos Proof and Refutation: proof stress-testing.
+- Polya Multi-Strategy Problem Solving: open problem exploration.
+- Knuth Structured Manuscript Review: mathematical draft review.
+- Structured Research Team: high-stakes claim and proof review.
+- Graph Reconfiguration Specialist: gadgets, reductions, and PSPACE/NP-hardness checks.
+- Lean Formalization Team: Lean skeleton and proof-blocker analysis.
+- Prose / OpenProse-style workflow: reproducible decomposition and synthesis.
+
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
@@ -63,6 +76,8 @@ copies those bodies into each supported agent and adds managed metadata.
 - `docs/dependencies.md`: logical tools and dependency categories.
 - `docs/workflow-overview.md`: how agents, skills, runtimes, and research
   tools connect during real workflows.
+- `docs/multi-agent-examples.md`: multi-agent process examples, spawn/wait
+  lifecycle, and available research templates.
 - `docs/system-profile.md`: sanitized maintainer-system profile and how local
   tools map to skills.
 - `docs/verification.md`: installed-artifact verification model.

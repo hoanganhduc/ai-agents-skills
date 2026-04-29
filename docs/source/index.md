@@ -15,6 +15,7 @@ Latest update: {sub-ref}`today`
 
 overview
 workflow-overview
+multi-agent-examples
 installation
 skills
 profiles
