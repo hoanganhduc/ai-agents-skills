@@ -247,10 +247,14 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
             "placeholders, and WSL-backed commands where appropriate. Python package",
             "checks use root-relative candidate sets, including agent virtualenvs,",
             "user-local site-package directories, Codex runtime site-package",
-            "directories, and dedicated Docling environments.",
+            "directories, dedicated Docling environments, official Windows Python",
+            "install roots, and per-user Windows package directories.",
             "When inspecting a mounted Windows home from Linux, `precheck` can",
-            "verify package markers in `site-packages` but",
-            "marks native Windows executables as present-unverified instead of trying",
+            "verify package markers in `site-packages`, find common TeX Live and",
+            "MiKTeX install roots, detect Sage in the current WSL/Linux",
+            "filesystem, and detect mounted WSL rootfs Sage paths or WSL VHDX",
+            "presence. It still marks native Windows executables as",
+            "present-unverified instead of trying",
             "to execute them.",
         ]
     )
@@ -877,9 +881,9 @@ The dry-run state had no managed `ai-agents-skills` instruction blocks yet.
 
 | Tool | Linux observation | Windows-profile observation | Related skills |
 |---|---|---|---|
-| `python-runtime` | system Python 3.10 with `ssl`, `venv`, and `pip` | WSL/POSIX Python 3.10 detected; native Windows Python candidates not detected from this check | `deep-research-workflow`, `zotero`, `docling`, digest skills, `graph-verifier`, `tikz-draw`, `session-logs` |
-| `tex-runtime` | `pdflatex` from TeX Live detected | native Windows TeX candidates not detected from this check | `tikz-draw` |
-| `sage-runtime` | not detected on Linux `PATH` | WSL-backed Sage candidate declared, but native Windows verification must run on Windows | `sagemath`, optional `tikz-draw` graph mode |
+| `python-runtime` | system Python 3.10 with `ssl`, `venv`, and `pip` | native Windows Python can be detected from `C:\\Python3*`, per-user Python installs, Program Files installs, or PATH-style candidates; mounted checks can verify package markers without running `python.exe` | `deep-research-workflow`, `zotero`, `docling`, digest skills, `graph-verifier`, `tikz-draw`, `session-logs` |
+| `tex-runtime` | `pdflatex` from TeX Live detected | TeX Live under `C:\\texlive\\*\\bin\\windows` and common MiKTeX roots can be detected as present-unverified from a mounted Windows filesystem | `tikz-draw` |
+| `sage-runtime` | not detected on Linux `PATH` | WSL-backed Sage is checked via `wsl.exe` when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when present, and WSL `ext4.vhdx` presence as a degraded inspection gap | `sagemath`, optional `tikz-draw` graph mode |
 
 ## Skill-To-Software Relationship
 
@@ -960,6 +964,15 @@ For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`
 may be satisfied by `sage` inside WSL even if no native Windows `sage.exe`
 exists.
+
+When a Windows profile is inspected from Linux through a mounted drive,
+`precheck` also looks for official or common native install locations such as
+`C:\\Python3*`, per-user Python installs, `C:\\texlive\\*\\bin\\windows`, and
+MiKTeX roots. For SageMath, it checks current local WSL/Linux paths first when
+the precheck itself is running from that substrate, then mounted WSL rootfs
+locations when they exist. If only a WSL distro `ext4.vhdx` is visible, the
+result is degraded: the distro exists, but Sage inside the image cannot be
+verified without WSL, a local WSL filesystem, or a mounted rootfs.
 """
 
 

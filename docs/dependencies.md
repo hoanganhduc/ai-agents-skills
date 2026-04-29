@@ -87,11 +87,11 @@ Evidence inspected:
 | `node-runtime` | required for Node-backed MCP servers and optional Zotero translation-server workflows | Node.js 18+ with npm. | Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server. | `Codex MCP`, `zotero translation server` |
 | `ocr-runtime` | optional for scanned-document OCR | Tesseract with tessdata available; current Claude docling docs use TESSDATA_PREFIX=/usr/share/tessdata/. | Current Windows docling flow prefers rapidocr Python extras; Tesseract may be used through WSL if needed. | `docling` |
 | `powershell-runtime` | required for Windows bootstrap and Windows wrapper execution | not required | PowerShell 5.1+ or PowerShell 7+. | `make.bat`, `installer bootstrap`, `Windows runtime wrappers` |
-| `python-runtime` | required for runtime-backed skills and the installer | Native Python 3.10+ detected from environment override, repo venv, python3, or python. | Native Python 3.10+ detected from environment override, repo venv, py -3, python.exe, or python. | `installer`, `zotero`, `calibre`, `docling`, `get-available-resources`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `graph-verifier`, `annotated-review`, `modal-research-compute`, `session-logs` |
+| `python-runtime` | required for runtime-backed skills and the installer | Native Python 3.10+ detected from environment override, repo venv, python3, or python. | Native Python 3.10+ detected from environment override, repo venv, C:\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python. | `installer`, `zotero`, `calibre`, `docling`, `get-available-resources`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `graph-verifier`, `annotated-review`, `modal-research-compute`, `session-logs` |
 | `ripgrep-cli` | optional but expected by local search/session workflows | rg on PATH. | rg.exe or rg on PATH. | `session-logs`, `research workflows`, `repo inspection` |
-| `sagemath` | required for the sagemath skill and optional Sage-backed graph/TikZ workflows | Native executable via SAGE_BIN, sage on PATH, or a local Sage install. | WSL-backed SageMath inside Ubuntu 24.04. | `sagemath`, `tikz-draw`, `openclaw/source research math verification` |
+| `sagemath` | required for the sagemath skill and optional Sage-backed graph/TikZ workflows | Native executable via SAGE_BIN, sage on PATH, or a local Sage install. | WSL-backed SageMath inside Ubuntu 24.04, detected through wsl.exe when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when available, or an ext4.vhdx presence warning when the distro image is not inspectable. | `sagemath`, `tikz-draw`, `openclaw/source research math verification` |
 | `tex-runtime` | required for TikZ compile checks and optional annotated-review LaTeX/PDF output | TeX Live or compatible distribution providing pdflatex, lualatex, or xelatex. | MiKTeX, TeX Live, or compatible distribution providing pdflatex.exe, lualatex.exe, or xelatex.exe. | `tikz-draw`, `annotated-review` |
-| `wsl-runtime` | required when a Windows skill delegates to Linux-only tools | not applicable | Current SageMath flow uses direct WSL execution with an Ubuntu 24.04 distro. Docker is explicitly not required by the current Windows Sage config. | `sagemath`, `tikz-draw optional Sage graph mode` |
+| `wsl-runtime` | required when a Windows skill delegates to Linux-only tools | not applicable | Current SageMath flow uses direct WSL execution with an Ubuntu 24.04 distro. When precheck is run from WSL/Linux against a mounted Windows profile, the current local WSL filesystem is also inspected. Mounted rootfs directories are inspected when present; ext4.vhdx presence is reported as a degraded inspection gap because Sage inside the image cannot be verified without WSL, a local WSL filesystem, or a mounted rootfs. Docker is explicitly not required by the current Windows Sage config. | `sagemath`, `tikz-draw optional Sage graph mode` |
 
 ### Python Packages
 
@@ -153,8 +153,12 @@ runtimes, `PATH`, native Windows commands, Python imports, remote-service
 placeholders, and WSL-backed commands where appropriate. Python package
 checks use root-relative candidate sets, including agent virtualenvs,
 user-local site-package directories, Codex runtime site-package
-directories, and dedicated Docling environments.
+directories, dedicated Docling environments, official Windows Python
+install roots, and per-user Windows package directories.
 When inspecting a mounted Windows home from Linux, `precheck` can
-verify package markers in `site-packages` but
-marks native Windows executables as present-unverified instead of trying
+verify package markers in `site-packages`, find common TeX Live and
+MiKTeX install roots, detect Sage in the current WSL/Linux
+filesystem, and detect mounted WSL rootfs Sage paths or WSL VHDX
+presence. It still marks native Windows executables as
+present-unverified instead of trying
 to execute them.

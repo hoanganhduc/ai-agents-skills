@@ -18,6 +18,11 @@
           ".codex\\.venv\\Scripts\\python.exe",
           ".claude\\.venv\\Scripts\\python.exe",
           ".venv\\Scripts\\python.exe",
+          "C:\\Python3*\\python.exe",
+          "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\python.exe",
+          "%PROGRAMFILES%\\Python3*\\python.exe",
+          "%PROGRAMFILES(X86)%\\Python3*\\python.exe",
+          "%WINDIR%\\py.exe",
           "py -3",
           "python.exe",
           "python"
@@ -55,7 +60,27 @@
       "version_constraint": ">=10.0",
       "candidates": {
         "linux": ["${AAS_SAGE}", "sage", "~/sage/sage", "~/sage/src/bin/sage", "~/sage-10.4/sage"],
-        "windows": ["%AAS_SAGE%", "wsl:sage", "wsl:~/sage/sage", "wsl:~/sage/src/bin/sage", "wsl:~/sage-10.4/sage"]
+        "windows": [
+          "%AAS_SAGE%",
+          "wsl:sage",
+          "wsl:~/sage/sage",
+          "wsl:~/sage/src/bin/sage",
+          "wsl:~/sage-10.4/sage",
+          "wsl-local:${AAS_SAGE}",
+          "wsl-local:sage",
+          "wsl-local:~/sage/sage",
+          "wsl-local:~/sage/src/bin/sage",
+          "wsl-local:~/sage-*/*/sage",
+          "wsl-local:~/sage-*/sage",
+          "wsl-local:/usr/bin/sage",
+          "wsl-local:/usr/local/bin/sage",
+          "wsl-local:/opt/sage*/sage",
+          "wsl-rootfs:%LOCALAPPDATA%\\Packages\\*\\LocalState\\rootfs\\usr\\bin\\sage",
+          "wsl-rootfs:%LOCALAPPDATA%\\Packages\\*\\LocalState\\rootfs\\home\\*\\sage\\sage",
+          "wsl-rootfs:%LOCALAPPDATA%\\Packages\\*\\LocalState\\rootfs\\home\\*\\sage\\src\\bin\\sage",
+          "wsl-rootfs:%LOCALAPPDATA%\\Packages\\*\\LocalState\\rootfs\\home\\*\\sage-*\\sage",
+          "wsl-vhdx:%LOCALAPPDATA%\\Packages\\*\\LocalState\\ext4.vhdx"
+        ]
       },
       "capabilities": ["graph-theory", "algebra"]
     },
@@ -64,7 +89,32 @@
       "version_constraint": "any",
       "candidates": {
         "linux": ["pdflatex", "lualatex", "xelatex"],
-        "windows": ["pdflatex.exe", "lualatex.exe", "xelatex.exe"]
+        "windows": [
+          "C:\\texlive\\*\\bin\\windows\\pdflatex.exe",
+          "C:\\texlive\\*\\bin\\windows\\lualatex.exe",
+          "C:\\texlive\\*\\bin\\windows\\xelatex.exe",
+          "C:\\texlive\\*\\bin\\win32\\pdflatex.exe",
+          "C:\\texlive\\*\\bin\\win32\\lualatex.exe",
+          "C:\\texlive\\*\\bin\\win32\\xelatex.exe",
+          "%PROGRAMFILES%\\MiKTeX\\miktex\\bin\\x64\\pdflatex.exe",
+          "%PROGRAMFILES%\\MiKTeX\\miktex\\bin\\x64\\lualatex.exe",
+          "%PROGRAMFILES%\\MiKTeX\\miktex\\bin\\x64\\xelatex.exe",
+          "%PROGRAMFILES%\\MiKTeX\\miktex\\bin\\pdflatex.exe",
+          "%PROGRAMFILES%\\MiKTeX\\miktex\\bin\\lualatex.exe",
+          "%PROGRAMFILES%\\MiKTeX\\miktex\\bin\\xelatex.exe",
+          "%PROGRAMFILES(X86)%\\MiKTeX\\miktex\\bin\\pdflatex.exe",
+          "%PROGRAMFILES(X86)%\\MiKTeX\\miktex\\bin\\lualatex.exe",
+          "%PROGRAMFILES(X86)%\\MiKTeX\\miktex\\bin\\xelatex.exe",
+          "%LOCALAPPDATA%\\Programs\\MiKTeX\\miktex\\bin\\x64\\pdflatex.exe",
+          "%LOCALAPPDATA%\\Programs\\MiKTeX\\miktex\\bin\\x64\\lualatex.exe",
+          "%LOCALAPPDATA%\\Programs\\MiKTeX\\miktex\\bin\\x64\\xelatex.exe",
+          "%LOCALAPPDATA%\\Programs\\MiKTeX\\miktex\\bin\\pdflatex.exe",
+          "%LOCALAPPDATA%\\Programs\\MiKTeX\\miktex\\bin\\lualatex.exe",
+          "%LOCALAPPDATA%\\Programs\\MiKTeX\\miktex\\bin\\xelatex.exe",
+          "pdflatex.exe",
+          "lualatex.exe",
+          "xelatex.exe"
+        ]
       },
       "capabilities": ["compile"]
     },
@@ -146,7 +196,11 @@
         ".codex\\.venv\\Scripts\\python.exe",
         ".claude\\.venv\\Scripts\\python.exe",
         ".venv-docling\\Scripts\\python.exe",
-        ".venv\\Scripts\\python.exe"
+        ".venv\\Scripts\\python.exe",
+        "C:\\Python3*\\python.exe",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\python.exe",
+        "%PROGRAMFILES%\\Python3*\\python.exe",
+        "%PROGRAMFILES(X86)%\\Python3*\\python.exe"
       ]
     },
     "docling": {
@@ -162,7 +216,11 @@
         ".codex\\.venv\\Scripts\\python.exe",
         ".claude\\.venv\\Scripts\\python.exe",
         "python-runtime",
-        ".venv\\Scripts\\python.exe"
+        ".venv\\Scripts\\python.exe",
+        "C:\\Python3*\\python.exe",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\python.exe",
+        "%PROGRAMFILES%\\Python3*\\python.exe",
+        "%PROGRAMFILES(X86)%\\Python3*\\python.exe"
       ]
     },
     "agent": {
@@ -176,7 +234,11 @@
         ".codex\\.venv\\Scripts\\python.exe",
         ".claude\\.venv\\Scripts\\python.exe",
         "python-runtime",
-        ".venv\\Scripts\\python.exe"
+        ".venv\\Scripts\\python.exe",
+        "C:\\Python3*\\python.exe",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\python.exe",
+        "%PROGRAMFILES%\\Python3*\\python.exe",
+        "%PROGRAMFILES(X86)%\\Python3*\\python.exe"
       ]
     }
   },
@@ -194,7 +256,13 @@
       "windows": [
         ".codex\\.venv\\Lib\\site-packages",
         ".claude\\.venv\\Lib\\site-packages",
-        ".venv-docling\\Lib\\site-packages"
+        ".venv-docling\\Lib\\site-packages",
+        ".venv\\Lib\\site-packages",
+        "C:\\Python3*\\Lib\\site-packages",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES%\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES(X86)%\\Python3*\\Lib\\site-packages",
+        "%APPDATA%\\Python\\Python3*\\site-packages"
       ]
     },
     "docling": {
@@ -207,7 +275,13 @@
       "windows": [
         ".venv-docling\\Lib\\site-packages",
         ".codex\\.venv\\Lib\\site-packages",
-        ".claude\\.venv\\Lib\\site-packages"
+        ".claude\\.venv\\Lib\\site-packages",
+        ".venv\\Lib\\site-packages",
+        "C:\\Python3*\\Lib\\site-packages",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES%\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES(X86)%\\Python3*\\Lib\\site-packages",
+        "%APPDATA%\\Python\\Python3*\\site-packages"
       ]
     },
     "agent": {
@@ -219,7 +293,13 @@
       ],
       "windows": [
         ".codex\\.venv\\Lib\\site-packages",
-        ".claude\\.venv\\Lib\\site-packages"
+        ".claude\\.venv\\Lib\\site-packages",
+        ".venv\\Lib\\site-packages",
+        "C:\\Python3*\\Lib\\site-packages",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES%\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES(X86)%\\Python3*\\Lib\\site-packages",
+        "%APPDATA%\\Python\\Python3*\\site-packages"
       ]
     }
   },

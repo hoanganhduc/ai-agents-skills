@@ -13,3 +13,12 @@ For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`
 may be satisfied by `sage` inside WSL even if no native Windows `sage.exe`
 exists.
+
+When a Windows profile is inspected from Linux through a mounted drive,
+`precheck` also looks for official or common native install locations such as
+`C:\Python3*`, per-user Python installs, `C:\texlive\*\bin\windows`, and
+MiKTeX roots. For SageMath, it checks current local WSL/Linux paths first when
+the precheck itself is running from that substrate, then mounted WSL rootfs
+locations when they exist. If only a WSL distro `ext4.vhdx` is visible, the
+result is degraded: the distro exists, but Sage inside the image cannot be
+verified without WSL, a local WSL filesystem, or a mounted rootfs.

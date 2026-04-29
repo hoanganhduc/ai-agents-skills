@@ -55,9 +55,9 @@ The dry-run state had no managed `ai-agents-skills` instruction blocks yet.
 
 | Tool | Linux observation | Windows-profile observation | Related skills |
 |---|---|---|---|
-| `python-runtime` | system Python 3.10 with `ssl`, `venv`, and `pip` | WSL/POSIX Python 3.10 detected; native Windows Python candidates not detected from this check | `deep-research-workflow`, `zotero`, `docling`, digest skills, `graph-verifier`, `tikz-draw`, `session-logs` |
-| `tex-runtime` | `pdflatex` from TeX Live detected | native Windows TeX candidates not detected from this check | `tikz-draw` |
-| `sage-runtime` | not detected on Linux `PATH` | WSL-backed Sage candidate declared, but native Windows verification must run on Windows | `sagemath`, optional `tikz-draw` graph mode |
+| `python-runtime` | system Python 3.10 with `ssl`, `venv`, and `pip` | native Windows Python can be detected from `C:\Python3*`, per-user Python installs, Program Files installs, or PATH-style candidates; mounted checks can verify package markers without running `python.exe` | `deep-research-workflow`, `zotero`, `docling`, digest skills, `graph-verifier`, `tikz-draw`, `session-logs` |
+| `tex-runtime` | `pdflatex` from TeX Live detected | TeX Live under `C:\texlive\*\bin\windows` and common MiKTeX roots can be detected as present-unverified from a mounted Windows filesystem | `tikz-draw` |
+| `sage-runtime` | not detected on Linux `PATH` | WSL-backed Sage is checked via `wsl.exe` when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when present, and WSL `ext4.vhdx` presence as a degraded inspection gap | `sagemath`, optional `tikz-draw` graph mode |
 
 ## Skill-To-Software Relationship
 
