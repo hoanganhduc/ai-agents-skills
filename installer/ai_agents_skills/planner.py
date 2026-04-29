@@ -9,6 +9,7 @@ from .render import (
     MANAGED_MARKER,
     add_managed_support_header,
     block_id,
+    render_artifact_content,
     render_instruction_block,
     render_skill_md,
 )
@@ -23,6 +24,7 @@ def build_plan(
     adopt: bool = False,
     backup_replace: bool = False,
     migrate: bool = False,
+    artifacts: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
     skipped_agents = []
@@ -32,6 +34,7 @@ def build_plan(
         if agent_name not in detected_agent_names:
             skipped_agents.append({"agent": agent_name, "reason": "agent home not detected"})
 
+    skill_actions: dict[tuple[str, str], dict[str, Any]] = {}
     for skill in skills:
         spec = skill_specs[skill]
         for agent in agents:
@@ -51,6 +54,7 @@ def build_plan(
                 migrate=migrate,
             )
             actions.append(file_action)
+            skill_actions[(agent.name, skill)] = file_action
             if skill_action_is_active(file_action):
                 actions.extend(
                     support_file_actions(
@@ -62,7 +66,92 @@ def build_plan(
                 )
             block = render_instruction_block(skill, spec)
             actions.append(classify_instruction_block(agent, skill, block, file_action))
+    for artifact_type, name in artifacts or []:
+        spec = manifests["artifacts"]["artifacts"][artifact_type][name]
+        for agent in agents:
+            if agent.name not in spec["supported_agents"]:
+                continue
+            actions.append(
+                artifact_action(
+                    agent=agent,
+                    artifact_type=artifact_type,
+                    name=name,
+                    spec=spec,
+                    skill_specs=skill_specs,
+                    skill_actions=skill_actions,
+                    adopt=adopt,
+                    backup_replace=backup_replace,
+                )
+            )
     return {"actions": actions, "skipped_agents": skipped_agents, "root": str(root)}
+
+
+def artifact_action(
+    agent: AgentTarget,
+    artifact_type: str,
+    name: str,
+    spec: dict[str, Any],
+    skill_specs: dict[str, Any],
+    skill_actions: dict[tuple[str, str], dict[str, Any]],
+    adopt: bool,
+    backup_replace: bool,
+) -> dict[str, Any]:
+    dependencies = spec.get("depends_on_skills", [])
+    missing = [
+        skill for skill in dependencies
+        if not backing_skill_available(agent, skill, skill_specs, skill_actions)
+    ]
+    path = artifact_target_path(agent, artifact_type, name, spec)
+    content = render_artifact_content(artifact_type, name, spec, agent.name)
+    action = classify_file_action(
+        agent=agent.name,
+        skill=dependencies[0] if len(dependencies) == 1 else name,
+        path=path,
+        content=content,
+        artifact_type=artifact_type,
+        adopt=adopt,
+        backup_replace=backup_replace,
+    )
+    action["artifact_id"] = f"{artifact_type}:{name}"
+    action["artifact_name"] = name
+    if missing:
+        action["operation"] = "skip"
+        action["classification"] = "blocked"
+        action["reason"] = "missing managed backing skill: " + ", ".join(missing)
+    return action
+
+
+def artifact_target_path(
+    agent: AgentTarget,
+    artifact_type: str,
+    name: str,
+    spec: dict[str, Any],
+) -> Path:
+    target_dir = agent.target_dir_for(artifact_type)
+    if artifact_type == "agent-persona":
+        suffix = ".toml" if agent.name == "codex" else ".md"
+        return target_dir / f"{name}{suffix}"
+    if artifact_type == "entrypoint-alias":
+        return target_dir / f"{name}.md"
+    return target_dir / spec["source"]
+
+
+def backing_skill_available(
+    agent: AgentTarget,
+    skill: str,
+    skill_specs: dict[str, Any],
+    skill_actions: dict[tuple[str, str], dict[str, Any]],
+) -> bool:
+    action = skill_actions.get((agent.name, skill))
+    if action and skill_action_is_active(action):
+        return True
+    path = agent.skills_dir / skill / "SKILL.md"
+    if not path.exists():
+        return False
+    current = path.read_text(encoding="utf-8", errors="replace")
+    if MANAGED_MARKER in current:
+        return True
+    return sha256_text(current) == sha256_text(render_skill_md(skill, skill_specs[skill], agent.name))
 
 
 def support_file_actions(

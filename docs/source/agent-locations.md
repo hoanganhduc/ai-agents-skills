@@ -25,8 +25,13 @@ Optional artifact-class target directories:
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 
 These optional artifact classes are intentionally not installed by default.
-They are reserved for explicit profiles because commands, personas, hooks, and
-tool shims can affect behavior more broadly than a normal skill directory.
+Instruction docs target each agent's `instructions` directory. Entrypoint
+aliases target Claude commands, but Codex and DeepSeek receive reference docs
+under `instructions/entrypoints` because equivalent slash-command loading is
+not assumed.
+
+They require explicit profiles because commands, personas, hooks, and tool
+shims can affect behavior more broadly than a normal skill directory.
 
 Instruction files are modified through managed marker blocks only. Uninstall
 and rollback remove only those managed blocks and managed files.

@@ -71,6 +71,8 @@ copies those bodies into each supported agent and adds managed metadata.
 
 - `docs/installation.md`: install, dry-run, conflict, and migration modes.
 - `docs/skills.md`: skill catalog and descriptions.
+- `docs/artifacts.md`: optional templates, instruction docs, personas, and
+  entrypoint aliases.
 - `docs/profiles.md`: selectable profiles such as `research-core` and
   `full-research`.
 - `docs/dependencies.md`: logical tools and dependency categories.
@@ -95,7 +97,9 @@ Linux:
 make doctor
 make precheck ARGS="--profile research-core"
 make list-skills
+make list-artifacts
 make plan ARGS="--profile research-core"
+make plan ARGS="--no-skills --artifact-profile workflow-templates"
 make install ARGS="--profile research-core --dry-run"
 make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
 make verify ARGS="--root /tmp/aas-fake-home"
@@ -107,7 +111,9 @@ Windows:
 make.bat doctor
 make.bat precheck --profile research-core
 make.bat list-skills
+make.bat list-artifacts
 make.bat plan --profile research-core
+make.bat plan --no-skills --artifact-profile workflow-templates
 make.bat install --profile research-core --dry-run
 make.bat install --profile research-core --apply --root %TEMP%\aas-fake-home
 make.bat verify --root %TEMP%\aas-fake-home
@@ -116,6 +122,12 @@ make.bat verify --root %TEMP%\aas-fake-home
 Real-system writes require explicit `--apply --real-system`. Tests and examples
 use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 `--backup-replace`, or `--migrate` only after reviewing `plan` output.
+
+Optional workflow artifacts are not installed by default. Use
+`--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
+`--artifact-profile workflow-instructions`, or
+`--artifact-profile research-entrypoints` explicitly. Use `--with-deps` when
+dependency-bound artifacts should also install their backing skills.
 
 ## Profiles
 
@@ -128,8 +140,19 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 | `full-research` | All research-related skills. | `*` |
 | `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
 | `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier` |
-| `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose` |
+| `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router` |
 | `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate` |
+| `workflow-tools` | Reusable planning helpers for resources, model routing, formal skeletons, and workspace organization. | `get-available-resources`, `model-router`, `formal-skeleton-helper`, `workspace-rearranger` |
+
+## Artifact Profiles
+
+| Artifact Profile | Description | Artifacts |
+|---|---|---|
+| `research-entrypoints` | Optional command or quick-action aliases that point to backing skills. | `entrypoint-alias:deep-research`, `entrypoint-alias:research-team`, `entrypoint-alias:review`, `entrypoint-alias:tikz`, `entrypoint-alias:sage`, `entrypoint-alias:zotero`, `entrypoint-alias:docling`, `entrypoint-alias:calibre`, `entrypoint-alias:vnthuquan`, `entrypoint-alias:research-compute`, `entrypoint-alias:rss`, `entrypoint-alias:digest`, `entrypoint-alias:getscipapers` |
+| `review-personas` | Reviewer and research role personas rendered to each agent's supported format. | `agent-persona:literature-scout`, `agent-persona:math-explorer`, `agent-persona:proof-checker`, `agent-persona:paper-reviewer`, `agent-persona:code-reviewer`, `agent-persona:test-reviewer`, `agent-persona:security-reviewer` |
+| `workflow-artifacts` | All portable templates, workflow docs, personas, and entrypoint aliases. | `template:spec`, `template:tasks-plan`, `template:tasks-todo`, `template:deep-research-sources`, `template:deep-research-analysis`, `template:deep-research-report`, `instruction-doc:engineering-lifecycle`, `instruction-doc:research-quick-actions`, `instruction-doc:python-quality-gates`, `instruction-doc:modal-offload-routing`, `instruction-doc:scrapling-integration`, `instruction-doc:language-style-rules`, `agent-persona:literature-scout`, `agent-persona:math-explorer`, `agent-persona:proof-checker`, `agent-persona:paper-reviewer`, `agent-persona:code-reviewer`, `agent-persona:test-reviewer`, `agent-persona:security-reviewer`, `entrypoint-alias:deep-research`, `entrypoint-alias:research-team`, `entrypoint-alias:review`, `entrypoint-alias:tikz`, `entrypoint-alias:sage`, `entrypoint-alias:zotero`, `entrypoint-alias:docling`, `entrypoint-alias:calibre`, `entrypoint-alias:vnthuquan`, `entrypoint-alias:research-compute`, `entrypoint-alias:rss`, `entrypoint-alias:digest`, `entrypoint-alias:getscipapers` |
+| `workflow-instructions` | Agent-readable workflow guidance documents copied outside skill folders. | `instruction-doc:engineering-lifecycle`, `instruction-doc:research-quick-actions`, `instruction-doc:python-quality-gates`, `instruction-doc:modal-offload-routing`, `instruction-doc:scrapling-integration`, `instruction-doc:language-style-rules` |
+| `workflow-templates` | Reusable research, specification, and task templates. | `template:spec`, `template:tasks-plan`, `template:tasks-todo`, `template:deep-research-sources`, `template:deep-research-analysis`, `template:deep-research-report` |
 
 ## Skills
 
@@ -142,9 +165,12 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 | `deep-research-workflow` | Phased source-preserving research workflow: search, analyze, write, with citation handoff. | `research-core`, `full-research` |
 | `digest-bridge` | Convert digest output into paper retrieval manifests. | `digest`, `full-research` |
 | `docling` | Parse, convert, OCR, chunk, and analyze documents. | `document`, `full-research` |
+| `formal-skeleton-helper` | Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs. | `workflow-tools`, `math`, `full-research` |
+| `get-available-resources` | Detect CPU, memory, disk, and optional accelerator availability before heavy local work. | `workflow-tools`, `full-research` |
 | `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `full-research` |
 | `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
 | `modal-research-compute` | Route heavy compute jobs to Modal through a local broker. | `full-research` |
+| `model-router` | Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work. | `workflow-tools`, `multi-agent`, `full-research` |
 | `paper-lookup` | External paper metadata and discovery fallback. | `library`, `full-research` |
 | `paper-review` | Single-agent paper review workflow. | `full-research` |
 | `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `full-research` |
@@ -159,4 +185,5 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 | `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
+| `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `full-research` |

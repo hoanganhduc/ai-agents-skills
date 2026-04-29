@@ -12,10 +12,11 @@ def uninstall(
     root: Path,
     skills: set[str] | None = None,
     agents: set[str] | None = None,
+    artifacts: set[str] | None = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
     state = load_state(root)
-    targets = filter_artifacts(state.get("artifacts", []), skills, agents)
+    targets = filter_artifacts(state.get("artifacts", []), skills, agents, artifacts)
     if dry_run:
         return {"dry_run": True, "actions": [{"operation": "remove", **item} for item in targets]}
     remaining = []
@@ -36,6 +37,7 @@ def rollback(
     run_id: str | None = None,
     skills: set[str] | None = None,
     agents: set[str] | None = None,
+    artifacts: set[str] | None = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
     state = load_state(root)
@@ -47,7 +49,7 @@ def rollback(
     else:
         actions = state.get("artifacts", [])
     targets = [
-        item for item in filter_artifacts(actions, skills, agents)
+        item for item in filter_artifacts(actions, skills, agents, artifacts)
         if item.get("managed") and item.get("applied", True)
     ]
     if dry_run:
@@ -69,12 +71,15 @@ def filter_artifacts(
     artifacts: list[dict[str, Any]],
     skills: set[str] | None,
     agents: set[str] | None,
+    artifact_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     selected = []
     for item in artifacts:
         if skills and item.get("skill") not in skills:
             continue
         if agents and item.get("agent") not in agents:
+            continue
+        if artifact_ids and item.get("artifact_id") not in artifact_ids:
             continue
         selected.append(item)
     return selected
@@ -95,6 +100,18 @@ def remove_artifact(item: dict[str, Any]) -> None:
         return
     if item.get("artifact_type") == "instruction-block":
         remove_managed_block(path, item["skill"], delete_if_empty=item.get("created_file", False))
+        return
+    if item.get("artifact_type") in {
+        "template",
+        "instruction-doc",
+        "agent-persona",
+        "entrypoint-alias",
+        "command",
+        "tool-shim",
+    }:
+        if path.exists():
+            path.unlink()
+        cleanup_empty_parents(path.parent, stop_at=path.parent)
 
 
 def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) -> None:

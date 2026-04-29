@@ -9,5 +9,6 @@
 | `full-research` | All research-related skills. | `*` |
 | `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
 | `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier` |
-| `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose` |
+| `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router` |
 | `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate` |
+| `workflow-tools` | Reusable planning helpers for resources, model routing, formal skeletons, and workspace organization. | `get-available-resources`, `model-router`, `formal-skeleton-helper`, `workspace-rearranger` |
