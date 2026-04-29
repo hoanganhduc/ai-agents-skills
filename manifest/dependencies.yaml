@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "tools": {
+    "python-runtime": {
+      "description": "Python runtime with venv, pip, and ssl support.",
+      "version_constraint": ">=3.10",
+      "candidates": {
+        "linux": ["${AAS_PYTHON}", "./.venv/bin/python", "python3", "python"],
+        "windows": ["%AAS_PYTHON%", ".venv\\Scripts\\python.exe", "py -3", "python.exe", "python"]
+      },
+      "capabilities": ["venv", "pip", "ssl"]
+    },
+    "powershell-runtime": {
+      "description": "PowerShell runtime for Windows bootstrap and argument forwarding.",
+      "version_constraint": ">=5.1",
+      "candidates": {
+        "windows": ["pwsh", "powershell.exe"]
+      },
+      "capabilities": ["script-execution", "utf8-output"]
+    },
+    "node-runtime": {
+      "description": "Node runtime for MCP servers that use npx.",
+      "version_constraint": ">=18",
+      "candidates": {
+        "linux": ["node"],
+        "windows": ["node.exe", "node"]
+      },
+      "capabilities": ["npm"]
+    },
+    "wsl-runtime": {
+      "description": "Windows Subsystem for Linux runtime.",
+      "version_constraint": ">=2",
+      "candidates": {
+        "windows": ["wsl.exe", "wsl"]
+      },
+      "capabilities": ["distro-list", "command-exec"]
+    },
+    "sage-runtime": {
+      "description": "SageMath runtime, local on Linux or WSL-backed on Windows.",
+      "version_constraint": ">=10.0",
+      "candidates": {
+        "linux": ["${AAS_SAGE}", "sage"],
+        "windows": ["%AAS_SAGE%", "wsl:sage"]
+      },
+      "capabilities": ["graph-theory", "algebra"]
+    },
+    "tex-runtime": {
+      "description": "TeX engine for TikZ compile checks.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["pdflatex", "lualatex", "xelatex"],
+        "windows": ["pdflatex.exe", "lualatex.exe", "xelatex.exe"]
+      },
+      "capabilities": ["compile"]
+    }
+  },
+  "packages": {
+    "docling-python-package": {"type": "python", "module": "docling"},
+    "networkx-python-package": {"type": "python", "module": "networkx"},
+    "ocr-runtime": {"type": "tool", "logical_tool": "ocr-runtime"},
+    "zotero-credentials": {"type": "remote-service"},
+    "modal-auth": {"type": "remote-service"},
+    "calibre-cli": {"type": "tool", "logical_tool": "calibre-cli"}
+  }
+}
