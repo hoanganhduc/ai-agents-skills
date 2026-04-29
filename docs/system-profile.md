@@ -11,6 +11,25 @@ and secrets are intentionally omitted or replaced with placeholders.
 | Linux home | `<LINUX_HOME>` | Primary development root used for local tests. |
 | Mounted Windows home | `<WINDOWS_HOME>` | Windows profile inspected from Linux/WSL-style mount. |
 
+## Execution Topology
+
+The observed setup is best understood as shared research logic plus
+agent-local installation targets:
+
+- Codex, Claude, and DeepSeek each load skills from their own supported local
+  skill/config locations.
+- This repository holds the reusable skill bodies and dependency metadata.
+- The installer detects which agent homes exist, installs only those targets,
+  and skips absent agents without requiring their tools.
+- Runtime-backed workflows use logical dependencies, not personal paths. For
+  example, a skill asks for `python-runtime`, `tex-runtime`, or `sage-runtime`;
+  `doctor` decides whether that capability is local, WSL-backed, missing, or
+  degraded.
+
+For a research task, the agent instruction layer chooses the workflow, while
+the software layer supplies concrete capabilities such as library lookup,
+document parsing, database access, figure compilation, and math verification.
+
 ## Detected Agents
 
 | Substrate | Codex | Claude | DeepSeek |
