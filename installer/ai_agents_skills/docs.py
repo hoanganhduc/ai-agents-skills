@@ -182,13 +182,14 @@ Real-system writes require explicit `--apply --real-system`. Tests and examples
 use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 `--backup-replace`, or `--migrate` only after reviewing `plan` output.
 
-Skills install in `--install-mode symlink` by default so the repo remains the
-single maintained source. The planner resolves that mode per agent: Claude and
-DeepSeek receive symlinked skill files, while Codex receives thin reference
-adapters because current Codex skill discovery ignores file-symlinked user
-`SKILL.md` files. Use `--install-mode reference` to force adapters for every
-agent, or `--install-mode copy` only when files must be materialized inside the
-agent settings directory.
+Skills install in `--install-mode auto` by default so the repo remains the
+single maintained source without hiding agent-loader differences. Auto mode
+uses symlinked skill files for Claude and DeepSeek, and thin reference adapters
+for Codex because current Codex skill discovery ignores file-symlinked user
+`SKILL.md` files. Use `--install-mode symlink` to force symlinks for every
+agent, `--install-mode reference` to force adapters for every agent, or
+`--install-mode copy` only when files must be materialized inside the agent
+settings directory.
 
 Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
@@ -233,10 +234,10 @@ skills they depend on.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets are symlinks to `canonical/skills` when the agent loader supports them;
-Codex targets are reference adapters in the default mode. `reference` mode
-writes a thin adapter for every agent, and `copy` mode writes regular files.
-Use `--skill` or `--skills` for narrow installs.
+targets follow auto mode: symlinks to `canonical/skills` for loaders that
+support them, and reference adapters for Codex. Explicit `symlink`,
+`reference`, and `copy` modes force the same strategy for every agent. Use
+`--skill` or `--skills` for narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"
@@ -272,10 +273,10 @@ def write_skills_doc(manifests: dict[str, Any], path: Path) -> Path:
         "that skill, its support files when the selected install mode needs "
         "them, and the managed instruction block for that installed or adopted "
         "skill. Skipped skills do not receive instruction blocks. Default "
-        "`symlink` mode points agent skill files at `canonical/skills` when "
-        "the loader supports symlinked skills; Codex receives reference "
-        "adapters in that mode. `reference` mode writes thin adapters for "
-        "every agent; `copy` mode writes regular files.\n\n"
+        "`auto` mode points agent skill files at `canonical/skills` when "
+        "the loader supports symlinked skills and writes reference adapters "
+        "for Codex. Explicit `symlink`, `reference`, and `copy` modes force "
+        "the same strategy for every agent.\n\n"
         + skill_table(manifests)
         + "\n\n"
         "Related pages: [Installation](installation.md), "
@@ -972,7 +973,7 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `symlink` mode links canonical `SKILL.md` where the loader supports it. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. Reference and copy modes are available for all agents. |
+| `skill-file` | Default `auto` mode links canonical `SKILL.md` where the loader supports it. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. Explicit symlink, reference, and copy modes are available for all agents. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
@@ -1064,17 +1065,21 @@ make install ARGS="--profile research-core --apply --real-system"
 
 ## Install Modes
 
-`--install-mode symlink` is the default. The installer resolves that request
-per agent based on the checked skill-loader behavior. Claude and DeepSeek skill
+`--install-mode auto` is the default. The installer resolves that request per
+agent based on the checked skill-loader behavior. Claude and DeepSeek skill
 files and support files are installed as symlinks to `canonical/skills`, so
 editing the repo updates what those agents read without duplicating every skill
 body into every settings directory.
 
 Codex is the compatibility exception: current Codex skill discovery loads
 regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md` files.
-In default symlink mode, Codex skill files therefore resolve to reference
+In default auto mode, Codex skill files therefore resolve to reference
 adapters that tell Codex where to read the canonical repo skill. `plan --json`
 shows the effective `install_mode` for each target before anything is written.
+
+Use `--install-mode symlink` to force symlinked skill files for every agent.
+This is useful for testing future loader behavior, but it can produce Codex
+skill targets that current Codex will not discover.
 
 Use `--install-mode reference` for agents or environments that should not load
 symlinked skills. This mode writes a thin `SKILL.md` adapter into every agent
@@ -1140,7 +1145,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Default mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
@@ -1458,12 +1463,13 @@ installer found a compatibility or alias path and will skip it unless
 `--migrate` is used. A reviewed `--migrate` plan installs the canonical target
 and removes the legacy alias directory.
 
-Default installs use `--install-mode symlink`, resolved per agent. Claude and
+Default installs use `--install-mode auto`, resolved per agent. Claude and
 DeepSeek receive symlinked skill files when the filesystem supports them.
 Codex receives reference adapters by default because current Codex discovery
-ignores file-symlinked user `SKILL.md` files. Use `--install-mode reference` to
-force adapters for every agent. If an agent requires regular files in its
-settings directory, use `--install-mode copy`.
+ignores file-symlinked user `SKILL.md` files. Use `--install-mode symlink` only
+when you intentionally want to force links for every agent. Use
+`--install-mode reference` to force adapters for every agent. If an agent
+requires regular files in its settings directory, use `--install-mode copy`.
 
 Useful inspection commands:
 
@@ -1508,6 +1514,15 @@ removal, it is removed.
 Use uninstall when the current installed state is no longer wanted. Use
 rollback when you want to reverse a specific recorded run and restore previous
 managed content or remove files that were created from an empty state.
+
+Install mode is not an uninstall input. Uninstall reads the managed-state
+journal and removes the selected managed artifacts regardless of whether they
+were installed as `auto`, `symlink`, `reference`, or `copy`. When a later
+install switches a skill to `reference`, previously managed support files for
+that skill are planned as obsolete removals because reference adapters point at
+the canonical repo directory instead of local support-file copies or links.
+Rollback uses the recorded run and preserves symlink backups when reversing a
+mode switch.
 
 Dry-run examples:
 

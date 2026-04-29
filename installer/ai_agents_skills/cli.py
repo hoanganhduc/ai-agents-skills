@@ -136,11 +136,12 @@ def add_conflict_args(parser: argparse.ArgumentParser) -> None:
 def add_install_mode_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--install-mode",
-        choices=["symlink", "reference", "copy"],
-        default="symlink",
+        choices=["auto", "symlink", "reference", "copy"],
+        default="auto",
         help=(
-            "skill installation mode; symlink is the default and resolves per "
-            "agent, reference writes thin adapters, copy writes full files"
+            "skill installation mode; auto is the default and resolves per "
+            "agent, symlink forces links, reference writes thin adapters, copy "
+            "writes full files"
         ),
     )
 

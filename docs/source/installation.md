@@ -61,17 +61,21 @@ make install ARGS="--profile research-core --apply --real-system"
 
 ## Install Modes
 
-`--install-mode symlink` is the default. The installer resolves that request
-per agent based on the checked skill-loader behavior. Claude and DeepSeek skill
+`--install-mode auto` is the default. The installer resolves that request per
+agent based on the checked skill-loader behavior. Claude and DeepSeek skill
 files and support files are installed as symlinks to `canonical/skills`, so
 editing the repo updates what those agents read without duplicating every skill
 body into every settings directory.
 
 Codex is the compatibility exception: current Codex skill discovery loads
 regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md` files.
-In default symlink mode, Codex skill files therefore resolve to reference
+In default auto mode, Codex skill files therefore resolve to reference
 adapters that tell Codex where to read the canonical repo skill. `plan --json`
 shows the effective `install_mode` for each target before anything is written.
+
+Use `--install-mode symlink` to force symlinked skill files for every agent.
+This is useful for testing future loader behavior, but it can produce Codex
+skill targets that current Codex will not discover.
 
 Use `--install-mode reference` for agents or environments that should not load
 symlinked skills. This mode writes a thin `SKILL.md` adapter into every agent
@@ -137,7 +141,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Default mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |

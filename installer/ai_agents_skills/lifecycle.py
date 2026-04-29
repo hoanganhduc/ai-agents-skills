@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
 
-from .state import load_state, run_record_path, save_state, sha256_file
+from .state import load_state, run_record_path, save_state, sha256_file, upsert_artifact
 
 
 def uninstall(
@@ -63,6 +64,10 @@ def rollback(
         if item.get("key") not in {target.get("key") for target in targets}
     ]
     state["artifacts"] = remaining
+    for target in targets:
+        previous = target.get("previous_state_artifact")
+        if previous:
+            upsert_artifact(state, previous)
     save_state(root, state)
     return {"dry_run": False, "restored": restored}
 
@@ -141,9 +146,21 @@ def rollback_artifact(item: dict[str, Any]) -> None:
     if backup:
         backup_path = Path(backup)
         path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(backup_path, path)
+        restore_backup(backup_path, path)
     else:
         remove_artifact(item)
+
+
+def restore_backup(backup_path: Path, path: Path) -> None:
+    if path.exists() or path.is_symlink():
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    if backup_path.is_symlink():
+        os.symlink(os.readlink(backup_path), path)
+    else:
+        shutil.copy2(backup_path, path)
 
 
 def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
