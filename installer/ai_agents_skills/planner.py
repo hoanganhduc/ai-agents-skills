@@ -20,6 +20,13 @@ from .render import (
 from .state import sha256_file, sha256_text
 
 
+SKILL_FILE_SYMLINK_SUPPORTED = {
+    "codex": False,
+    "claude": True,
+    "deepseek": True,
+}
+
+
 def build_plan(
     root: Path,
     manifests: dict[str, Any],
@@ -48,7 +55,7 @@ def build_plan(
             skill_file = agent.skills_dir / skill / "SKILL.md"
             source_path = canonical_skill_path(skill)
             source = source_path if source_path.exists() else None
-            action_install_mode = install_mode if source is not None or install_mode != "symlink" else "copy"
+            action_install_mode = effective_install_mode(agent.name, install_mode, source_path)
             content = skill_content_for_mode(skill, spec, agent.name, action_install_mode, source_path)
             fallback_content = (
                 render_reference_skill_md(skill, spec, agent.name, source_path)
@@ -78,7 +85,7 @@ def build_plan(
                         skill=skill,
                         adopt=adopt,
                         backup_replace=backup_replace,
-                        install_mode=install_mode,
+                        install_mode=file_action["install_mode"],
                     )
                 )
             block = render_instruction_block(skill, spec)
@@ -110,6 +117,16 @@ def build_plan(
                 )
             )
     return {"actions": actions, "skipped_agents": skipped_agents, "root": str(root)}
+
+
+def effective_install_mode(agent: str, requested_mode: str, source_path: Path) -> str:
+    if requested_mode != "symlink":
+        return requested_mode
+    if not source_path.exists():
+        return "copy"
+    if not SKILL_FILE_SYMLINK_SUPPORTED.get(agent, True):
+        return "reference"
+    return "symlink"
 
 
 def artifact_action(
@@ -221,7 +238,6 @@ def support_file_actions(
             continue
         content = add_managed_support_header(raw, agent.name, str(relative).replace("\\", "/"))
         path = agent.skills_dir / skill / relative
-        source_path = source if install_mode == "symlink" else None
         actions.append(
             classify_file_action(
                 agent=agent.name,
@@ -232,7 +248,7 @@ def support_file_actions(
                 adopt=adopt,
                 backup_replace=backup_replace,
                 install_mode=install_mode,
-                source_path=source_path,
+                source_path=source,
             )
         )
     return actions
@@ -275,14 +291,17 @@ def classify_file_action(
             operation = "create"
     else:
         current_hash = sha256_file(path)
-        is_expected_symlink = (
-            can_symlink
+        is_canonical_symlink = (
+            source_path is not None
             and path.is_symlink()
             and path.resolve() == source_path.resolve()
         )
-        if is_expected_symlink:
+        if can_symlink and is_canonical_symlink:
             classification = "managed"
             operation = "noop"
+        elif install_mode != "symlink" and is_canonical_symlink:
+            classification = "managed"
+            operation = "update"
         else:
             current = path.read_text(encoding="utf-8", errors="replace")
             if install_mode != "symlink" and current_hash == expected_hash:

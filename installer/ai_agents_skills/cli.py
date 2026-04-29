@@ -138,7 +138,10 @@ def add_install_mode_args(parser: argparse.ArgumentParser) -> None:
         "--install-mode",
         choices=["symlink", "reference", "copy"],
         default="symlink",
-        help="skill installation mode; symlink is the default, reference writes thin adapters, copy writes full files",
+        help=(
+            "skill installation mode; symlink is the default and resolves per "
+            "agent, reference writes thin adapters, copy writes full files"
+        ),
     )
 
 
