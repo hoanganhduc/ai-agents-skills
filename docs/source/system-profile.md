@@ -1,0 +1,2 @@
+```{include} ../system-profile.md
+```

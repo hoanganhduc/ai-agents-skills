@@ -1,11 +1,44 @@
 # AI Agents Skills
 
+<div align="center">
+  <a href="https://www.buymeacoffee.com/hoanganhduc" target="_blank" rel="noopener noreferrer">
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40" />
+  </a>
+  <a href="https://ko-fi.com/hoanganhduc" target="_blank" rel="noopener noreferrer">
+    <img src="https://storage.ko-fi.com/cdn/kofi3.png?v=3" alt="Ko-fi" height="40" />
+  </a>
+  <a href="https://bmacc.app/tip/hoanganhduc" target="_blank" rel="noopener noreferrer">
+    <img src="https://bmacc.app/images/bmacc-logo.png" alt="Buy Me a Crypto Coffee" height="40" />
+  </a>
+</div>
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
+![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek-black)
+![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
+![Status](https://img.shields.io/badge/status-active-yellow)
+
 Shared, manifest-driven skills and settings for Codex, Claude, and DeepSeek.
 
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
-skills.
+skills. Reusable skill bodies live under `canonical/skills`; the installer
+copies those bodies into each supported agent and adds managed metadata.
+
+## Documentation
+
+- `docs/installation.md`: install, dry-run, conflict, and migration modes.
+- `docs/skills.md`: skill catalog and descriptions.
+- `docs/profiles.md`: selectable profiles such as `research-core` and
+  `full-research`.
+- `docs/dependencies.md`: logical tools and dependency categories.
+- `docs/system-profile.md`: sanitized maintainer-system profile and how local
+  tools map to skills.
+- `docs/verification.md`: installed-artifact verification model.
+
+The GitHub Pages site is built from `docs/source` and deployed by
+`.github/workflows/docs.yml`.
 
 ## Quick Start
 
