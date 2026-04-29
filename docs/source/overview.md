@@ -9,7 +9,9 @@ only the parts that fit their own machines.
 The repository is a generator and installer, not a copied dotfiles folder. It
 keeps reusable skill bodies, dependency metadata, profiles, optional artifacts,
 and target-specific rendering logic in one source tree. Agent homes such as
-`~/.codex`, `~/.claude`, and `~/.deepseek` are runtime targets.
+`~/.codex`, `~/.claude`, and `~/.deepseek` are runtime targets. Default skill
+installs are symlinks back to the canonical repo files; reference and copy
+modes are available when an agent or filesystem cannot use symlinked skills.
 
 ## Main Ideas
 
@@ -19,6 +21,8 @@ and target-specific rendering logic in one source tree. Agent homes such as
   aliases, and management notices outside normal skill directories.
 - `precheck` detects tools and Python packages from the current substrate.
 - `plan` and `install --dry-run` preview writes before anything is changed.
+- `--install-mode symlink` is the default; `reference` writes thin adapters and
+  `copy` writes regular files.
 - Real home-directory writes require explicit `--apply --real-system`.
 - Verification checks only installed managed artifacts.
 

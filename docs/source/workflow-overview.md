@@ -4,8 +4,9 @@ This repository is designed for an experimental personal multi-agent research
 workstation, with an emphasis on combinatorics and graph theory workflows. It
 is not guaranteed to work as desired in every environment. Codex, Claude, and
 DeepSeek each keep their own local configuration directory, but the reusable
-research instructions live here as canonical skill bodies. The installer copies
-those skill bodies into whichever agents are present and leaves absent agents
+research instructions live here as canonical skill bodies. The installer links
+those skill bodies into whichever agents are present by default, can write thin
+reference adapters when symlinks are not suitable, and leaves absent agents
 alone.
 
 The system has three layers:
