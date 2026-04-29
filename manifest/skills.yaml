@@ -6,7 +6,7 @@
       "profiles": ["research-core", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
       "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["zotero-credentials"],
+      "optional_dependencies": ["zotero-credentials", "requests-python-package"],
       "optional_capabilities": ["zotero-cross-check", "figure-handoff"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -50,8 +50,21 @@
       "description": "Zotero paper search, retrieval, ingest, and collection workflow.",
       "profiles": ["library", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["zotero-credentials"],
+      "required_dependencies": [
+        "python-runtime",
+        "pyzotero-python-package",
+        "requests-python-package",
+        "pypdf2-python-package",
+        "pdfplumber-python-package"
+      ],
+      "optional_dependencies": [
+        "zotero-credentials",
+        "google-api-python-client-package",
+        "google-auth-python-package",
+        "node-runtime",
+        "pytest-python-package",
+        "responses-python-package"
+      ],
       "optional_capabilities": ["library-auth", "webdav-sync"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -59,8 +72,17 @@
       "description": "Calibre ebook lookup and library helper workflows.",
       "profiles": ["library", "ebook", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["calibre-cli"],
+      "required_dependencies": [
+        "python-runtime",
+        "requests-python-package",
+        "pypdf2-python-package"
+      ],
+      "optional_dependencies": [
+        "calibre-cli",
+        "ebooklib-python-package",
+        "google-api-python-client-package",
+        "google-auth-python-package"
+      ],
       "optional_capabilities": ["library-sync"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -95,8 +117,14 @@
       "description": "Parse, convert, OCR, chunk, and analyze documents.",
       "profiles": ["document", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["docling-python-package", "ocr-runtime"],
+      "required_dependencies": ["python-runtime", "docling-python-package"],
+      "optional_dependencies": [
+        "ocr-runtime",
+        "docling-mcp-python-package",
+        "rapidocr-python-package",
+        "torch-python-package",
+        "torchvision-python-package"
+      ],
       "optional_capabilities": ["ocr", "mcp-server"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -104,8 +132,8 @@
       "description": "Detect CPU, memory, disk, and optional accelerator availability before heavy local work.",
       "profiles": ["workflow-tools", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": [],
+      "required_dependencies": ["python-runtime", "psutil-python-package"],
+      "optional_dependencies": ["nvidia-smi-tool", "rocm-smi-tool"],
       "optional_capabilities": ["resource-planning"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -140,7 +168,11 @@
       "description": "Run tracked-topic research digests.",
       "profiles": ["digest", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime"],
+      "required_dependencies": [
+        "python-runtime",
+        "requests-python-package",
+        "feedparser-python-package"
+      ],
       "optional_dependencies": [],
       "optional_capabilities": ["topic-management"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
@@ -149,7 +181,7 @@
       "description": "Run and manage RSS digest workflows.",
       "profiles": ["digest", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime"],
+      "required_dependencies": ["python-runtime", "feedparser-python-package"],
       "optional_dependencies": [],
       "optional_capabilities": ["feed-management"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
@@ -167,8 +199,17 @@
       "description": "Structural TikZ figure generation, compile, review, and semantic checks.",
       "profiles": ["figure", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime", "tex-runtime"],
-      "optional_dependencies": ["sage-runtime"],
+      "required_dependencies": [
+        "python-runtime",
+        "tex-runtime",
+        "pymupdf-python-package",
+        "shapely-python-package"
+      ],
+      "optional_dependencies": [
+        "sage-runtime",
+        "svgelements-python-package",
+        "numpy-python-package"
+      ],
       "optional_capabilities": ["sage-backed-graph-mode"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -185,8 +226,8 @@
       "description": "Lightweight graph sanity checks.",
       "profiles": ["math", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["networkx-python-package"],
+      "required_dependencies": ["python-runtime", "networkx-python-package"],
+      "optional_dependencies": [],
       "optional_capabilities": ["networkx-checks"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -213,7 +254,7 @@
       "profiles": ["full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
       "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["modal-auth"],
+      "optional_dependencies": ["modal-python-package", "modal-auth"],
       "optional_capabilities": ["remote-cpu", "remote-gpu"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -230,8 +271,12 @@
       "description": "Annotated paper review workflow when both annotation and review are requested.",
       "profiles": ["full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["zotero-credentials"],
+      "required_dependencies": [
+        "python-runtime",
+        "pymupdf-python-package",
+        "pylatexenc-python-package"
+      ],
+      "optional_dependencies": ["zotero-credentials", "tex-runtime"],
       "optional_capabilities": ["pdf-annotation"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },

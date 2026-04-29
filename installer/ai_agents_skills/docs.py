@@ -114,7 +114,8 @@ copies those bodies into each supported agent and adds managed metadata.
   entrypoint aliases.
 - `docs/profiles.md`: selectable profiles such as `research-core` and
   `full-research`.
-- `docs/dependencies.md`: logical tools and dependency categories.
+- `docs/dependencies.md`: logical tools, current Linux/Windows extra
+  software, Python packages, Node packages, and manual integrations.
 - `docs/workflow-overview.md`: how agents, skills, runtimes, and research
   tools connect during real workflows.
 - `docs/multi-agent-examples.md`: multi-agent process examples, spawn/wait
@@ -234,6 +235,7 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
             spec = packages[name]
             detail = spec.get("module") or spec.get("logical_tool") or spec.get("type", "")
             lines.append(f"| `{name}` | `{spec.get('type')}` | {detail} |")
+    lines.extend(current_config_dependency_sections(manifests))
     lines.extend(
         [
             "",
@@ -245,6 +247,126 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def current_config_dependency_sections(manifests: dict[str, Any]) -> list[str]:
+    inventory = manifests.get("system_dependencies", {})
+    if not inventory:
+        return []
+    lines = [
+        "",
+        "## Current Linux And Windows Config Inventory",
+        "",
+        "This sanitized inventory is derived from the maintainer's current Linux",
+        "and Windows Codex, Claude, and DeepSeek configs. It intentionally excludes",
+        "auth files, provider secrets, session/history/log files, local library",
+        "databases, caches, backups, and file-history snapshots.",
+        "",
+        "Personal paths are represented as `<LINUX_HOME>` or `<WINDOWS_HOME>`.",
+        "",
+    ]
+
+    scope = inventory.get("scope", {})
+    included = scope.get("included_evidence", [])
+    if included:
+        lines.extend(["Evidence inspected:", ""])
+        lines.extend(f"- {item}" for item in included)
+        lines.append("")
+
+    software = inventory.get("software", {})
+    if software:
+        lines.extend(
+            [
+                "### Extra Software",
+                "",
+                "| Software | Requirement | Linux | Windows | Used By |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for name, spec in sorted(software.items()):
+            used_by = ", ".join(f"`{item}`" for item in spec.get("used_by", []))
+            lines.append(
+                "| "
+                f"`{name}`"
+                f" | {md_cell(spec.get('requirement', ''))}"
+                f" | {md_cell(spec.get('linux', ''))}"
+                f" | {md_cell(spec.get('windows', ''))}"
+                f" | {used_by}"
+                " |"
+            )
+        lines.append("")
+
+    python_packages = inventory.get("python_packages", {})
+    if python_packages:
+        lines.extend(
+            [
+                "### Python Packages",
+                "",
+                "| Package | Import | Requirement | Platforms | Used By |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for name, spec in sorted(python_packages.items()):
+            platforms = ", ".join(f"`{item}`" for item in spec.get("platforms", []))
+            used_by = ", ".join(f"`{item}`" for item in spec.get("used_by", []))
+            lines.append(
+                "| "
+                f"`{name}`"
+                f" | `{spec.get('import_name', '')}`"
+                f" | {md_cell(spec.get('requirement', ''))}"
+                f" | {platforms}"
+                f" | {used_by}"
+                " |"
+            )
+        lines.append("")
+
+    node_packages = inventory.get("node_packages", {})
+    if node_packages:
+        lines.extend(
+            [
+                "### Node Packages",
+                "",
+                "| Package | Requirement | Used By | Notes |",
+                "|---|---|---|---|",
+            ]
+        )
+        for name, spec in sorted(node_packages.items()):
+            used_by = ", ".join(f"`{item}`" for item in spec.get("used_by", []))
+            notes = spec.get("source", "")
+            runtime_deps = spec.get("runtime_dependencies", [])
+            if runtime_deps:
+                notes = f"{notes} Runtime deps: " + ", ".join(f"`{item}`" for item in runtime_deps)
+            lines.append(
+                "| "
+                f"`{name}`"
+                f" | {md_cell(spec.get('requirement', ''))}"
+                f" | {used_by}"
+                f" | {md_cell(notes)}"
+                " |"
+            )
+        lines.append("")
+
+    manual = inventory.get("manual_integrations", {})
+    if manual:
+        lines.extend(
+            [
+                "### Manual Integrations",
+                "",
+                "| Integration | Description | Used By |",
+                "|---|---|---|",
+            ]
+        )
+        for name, spec in sorted(manual.items()):
+            used_by = ", ".join(f"`{item}`" for item in spec.get("used_by", []))
+            lines.append(f"| `{name}` | {md_cell(spec.get('description', ''))} | {used_by} |")
+        lines.append("")
+
+    notes = inventory.get("windows_substrate_notes", [])
+    if notes:
+        lines.extend(["### Windows Substrate Notes", ""])
+        lines.extend(f"- {item}" for item in notes)
+        lines.append("")
+    return lines
 
 
 def write_verification_doc(path: Path) -> Path:
@@ -597,6 +719,10 @@ def profiles_table_text(manifests: dict[str, Any]) -> str:
         skills = ", ".join(f"`{s}`" for s in spec["skills"])
         rows.append(f"| `{name}` | {spec['description']} | {skills} |")
     return "\n".join(rows)
+
+
+def md_cell(value: str) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ")
 
 
 def write_static_doc(path: Path, text: str) -> Path:
