@@ -145,6 +145,17 @@ dependency-bound artifacts should also install their backing skills.
 
 ## Profiles
 
+Profiles are named presets for installing groups of related skills. Use a
+profile when you want a workflow bundle instead of selecting every skill by
+hand. For example, `research-core` installs the normal research
+planning/source/review/delivery path, while `full-research` selects every
+canonical research skill.
+
+```bash
+make plan ARGS="--profile research-core"
+make install ARGS="--profile research-core --dry-run"
+```
+
 | Profile | Description | Skills |
 |---|---|---|
 | `digest` | Tracked-topic and RSS digest workflows. | `research-digest-wrapper`, `rss-news-digest`, `digest-bridge` |
@@ -160,6 +171,19 @@ dependency-bound artifacts should also install their backing skills.
 
 ## Artifact Profiles
 
+Artifact profiles install optional support files outside normal skill folders:
+templates, instruction docs, reviewer personas, entrypoint aliases, and
+repo-management notices. They are opt-in because these files can affect agent
+behavior more broadly than a single skill.
+
+```bash
+make plan ARGS="--no-skills --artifact-profile workflow-templates"
+make plan ARGS="--no-skills --artifact-profile repo-management"
+```
+
+Use `--with-deps` when selected artifacts should also bring in the backing
+skills they depend on.
+
 | Artifact Profile | Description | Artifacts |
 |---|---|---|
 | `repo-management` | Top-level managed notice blocks for agent instruction files. | `management-notice:repo-management` |
@@ -170,6 +194,16 @@ dependency-bound artifacts should also install their backing skills.
 | `workflow-templates` | Reusable research, specification, and task templates. | `template:spec`, `template:tasks-plan`, `template:tasks-todo`, `template:deep-research-sources`, `template:deep-research-analysis`, `template:deep-research-report` |
 
 ## Skills
+
+Skills are the installable agent capabilities. Installing a skill creates the
+per-agent `SKILL.md` files and support files, then adds managed instruction
+blocks only for installed, adopted, or migrated skills. Use `--skill` or
+`--skills` for narrow installs.
+
+```bash
+make plan ARGS="--skill zotero"
+make install ARGS="--skills zotero,docling --dry-run"
+```
 
 | Skill | Description | Profiles |
 |---|---|---|
