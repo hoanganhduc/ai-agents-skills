@@ -234,6 +234,8 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
         for name in sorted(packages):
             spec = packages[name]
             detail = spec.get("module") or spec.get("logical_tool") or spec.get("type", "")
+            if spec.get("candidate_set"):
+                detail = f"{detail}; candidate set `{spec['candidate_set']}`"
             lines.append(f"| `{name}` | `{spec.get('type')}` | {detail} |")
     lines.extend(current_config_dependency_sections(manifests))
     lines.extend(
@@ -242,7 +244,14 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
             "Dependencies are declared as logical capabilities rather than personal",
             "paths. `precheck` resolves them from environment overrides, repo-local",
             "runtimes, `PATH`, native Windows commands, Python imports, remote-service",
-            "placeholders, and WSL-backed commands where appropriate.",
+            "placeholders, and WSL-backed commands where appropriate. Python package",
+            "checks use root-relative candidate sets, including agent virtualenvs,",
+            "user-local site-package directories, Codex runtime site-package",
+            "directories, and dedicated Docling environments.",
+            "When inspecting a mounted Windows home from Linux, `precheck` can",
+            "verify package markers in `site-packages` but",
+            "marks native Windows executables as present-unverified instead of trying",
+            "to execute them.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -21,8 +21,8 @@
 | Dependency | Type | Detail |
 |---|---|---|
 | `calibre-cli` | `tool` | calibre-cli |
-| `docling-mcp-python-package` | `python` | docling_mcp |
-| `docling-python-package` | `python` | docling |
+| `docling-mcp-python-package` | `python` | docling_mcp; candidate set `docling` |
+| `docling-python-package` | `python` | docling; candidate set `docling` |
 | `ebooklib-python-package` | `python` | ebooklib |
 | `feedparser-python-package` | `python` | feedparser |
 | `git-cli` | `tool` | git-cli |
@@ -30,7 +30,7 @@
 | `google-api-python-client-package` | `python` | googleapiclient |
 | `google-auth-python-package` | `python` | google.oauth2 |
 | `modal-auth` | `remote-service` | remote-service |
-| `modal-python-package` | `python` | modal |
+| `modal-python-package` | `python` | modal; candidate set `agent` |
 | `networkx-python-package` | `python` | networkx |
 | `numpy-python-package` | `python` | numpy |
 | `nvidia-smi-tool` | `tool` | nvidia-smi-tool |
@@ -42,15 +42,15 @@
 | `pypdf2-python-package` | `python` | PyPDF2 |
 | `pytest-python-package` | `python` | pytest |
 | `pyzotero-python-package` | `python` | pyzotero |
-| `rapidocr-python-package` | `python` | rapidocr |
+| `rapidocr-python-package` | `python` | rapidocr; candidate set `docling` |
 | `requests-python-package` | `python` | requests |
 | `responses-python-package` | `python` | responses |
 | `ripgrep-cli` | `tool` | ripgrep-cli |
 | `rocm-smi-tool` | `tool` | rocm-smi-tool |
 | `shapely-python-package` | `python` | shapely |
 | `svgelements-python-package` | `python` | svgelements |
-| `torch-python-package` | `python` | torch |
-| `torchvision-python-package` | `python` | torchvision |
+| `torch-python-package` | `python` | torch; candidate set `docling` |
+| `torchvision-python-package` | `python` | torchvision; candidate set `docling` |
 | `zotero-credentials` | `remote-service` | remote-service |
 
 ## Current Linux And Windows Config Inventory
@@ -150,4 +150,11 @@ Evidence inspected:
 Dependencies are declared as logical capabilities rather than personal
 paths. `precheck` resolves them from environment overrides, repo-local
 runtimes, `PATH`, native Windows commands, Python imports, remote-service
-placeholders, and WSL-backed commands where appropriate.
+placeholders, and WSL-backed commands where appropriate. Python package
+checks use root-relative candidate sets, including agent virtualenvs,
+user-local site-package directories, Codex runtime site-package
+directories, and dedicated Docling environments.
+When inspecting a mounted Windows home from Linux, `precheck` can
+verify package markers in `site-packages` but
+marks native Windows executables as present-unverified instead of trying
+to execute them.

@@ -24,14 +24,14 @@ Optional artifact-class target directories:
 | Claude | `~/.claude/agents` | `~/.claude/templates` | `~/.claude/commands` | `~/.claude/tools` |
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 
-These optional artifact classes are intentionally not installed by default.
 Instruction docs target each agent's `instructions` directory. Entrypoint
 aliases target Claude commands, but Codex and DeepSeek receive reference docs
 under `instructions/entrypoints` because equivalent slash-command loading is
 not assumed.
 
-They require explicit profiles because commands, personas, hooks, and tool
-shims can affect behavior more broadly than a normal skill directory.
+These optional artifact classes are intentionally not installed by default.
+They require explicit artifact selection because commands, personas, hooks, and
+tool shims can affect behavior more broadly than a normal skill directory.
 
 Instruction files are modified through managed marker blocks only. Uninstall
 and rollback remove only those managed blocks and managed files.

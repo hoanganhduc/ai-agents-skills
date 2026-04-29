@@ -4,7 +4,7 @@
 removes current managed artifacts. Both support skill and agent scopes and both
 support dry-run previews.
 
-Applied uninstall requires an explicit scope: use `--skill`, `--skills`,
+Applied uninstall requires an explicit scope: use `--skill`, `--skills`, or
 `--artifact`, `--artifacts`, or `--all`. Uninstall removes only managed files
 and managed instruction blocks. Rollback can target one run, one skill,
 multiple skills, one artifact, multiple artifacts, or one agent. If a managed

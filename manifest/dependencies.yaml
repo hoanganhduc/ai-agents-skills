@@ -5,8 +5,23 @@
       "description": "Python runtime with venv, pip, and ssl support.",
       "version_constraint": ">=3.10",
       "candidates": {
-        "linux": ["${AAS_PYTHON}", "./.venv/bin/python", "python3", "python"],
-        "windows": ["%AAS_PYTHON%", ".venv\\Scripts\\python.exe", "py -3", "python.exe", "python"]
+        "linux": [
+          "${AAS_PYTHON}",
+          "./.venv/bin/python",
+          "~/.codex/.venv/bin/python",
+          "~/.claude/.venv/bin/python",
+          "python3",
+          "python"
+        ],
+        "windows": [
+          "%AAS_PYTHON%",
+          ".codex\\.venv\\Scripts\\python.exe",
+          ".claude\\.venv\\Scripts\\python.exe",
+          ".venv\\Scripts\\python.exe",
+          "py -3",
+          "python.exe",
+          "python"
+        ]
       },
       "capabilities": ["venv", "pip", "ssl"]
     },
@@ -117,10 +132,101 @@
       "capabilities": ["gpu-detection"]
     }
   },
+  "python_candidate_sets": {
+    "default": {
+      "linux": [
+        "python-runtime",
+        "~/.codex/.venv/bin/python",
+        "~/.claude/.venv/bin/python",
+        "~/.local/share/docling-venv/bin/python",
+        "./.venv/bin/python"
+      ],
+      "windows": [
+        "python-runtime",
+        ".codex\\.venv\\Scripts\\python.exe",
+        ".claude\\.venv\\Scripts\\python.exe",
+        ".venv-docling\\Scripts\\python.exe",
+        ".venv\\Scripts\\python.exe"
+      ]
+    },
+    "docling": {
+      "linux": [
+        "~/.local/share/docling-venv/bin/python",
+        "python-runtime",
+        "~/.codex/.venv/bin/python",
+        "~/.claude/.venv/bin/python",
+        "./.venv/bin/python"
+      ],
+      "windows": [
+        ".venv-docling\\Scripts\\python.exe",
+        ".codex\\.venv\\Scripts\\python.exe",
+        ".claude\\.venv\\Scripts\\python.exe",
+        "python-runtime",
+        ".venv\\Scripts\\python.exe"
+      ]
+    },
+    "agent": {
+      "linux": [
+        "~/.codex/.venv/bin/python",
+        "~/.claude/.venv/bin/python",
+        "python-runtime",
+        "./.venv/bin/python"
+      ],
+      "windows": [
+        ".codex\\.venv\\Scripts\\python.exe",
+        ".claude\\.venv\\Scripts\\python.exe",
+        "python-runtime",
+        ".venv\\Scripts\\python.exe"
+      ]
+    }
+  },
+  "python_site_candidate_sets": {
+    "default": {
+      "linux": [
+        "~/.codex/.local/lib/python*/site-packages",
+        "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
+        "~/.codex/runtime/workspace/.local/local/lib/python*/dist-packages",
+        "~/.claude/.local/lib/python*/site-packages",
+        "~/.claude/.local",
+        "~/.local/lib/python*/site-packages",
+        "~/.local/share/docling-venv/lib/python*/site-packages"
+      ],
+      "windows": [
+        ".codex\\.venv\\Lib\\site-packages",
+        ".claude\\.venv\\Lib\\site-packages",
+        ".venv-docling\\Lib\\site-packages"
+      ]
+    },
+    "docling": {
+      "linux": [
+        "~/.local/share/docling-venv/lib/python*/site-packages",
+        "~/.codex/.local/lib/python*/site-packages",
+        "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
+        "~/.claude/.local/lib/python*/site-packages"
+      ],
+      "windows": [
+        ".venv-docling\\Lib\\site-packages",
+        ".codex\\.venv\\Lib\\site-packages",
+        ".claude\\.venv\\Lib\\site-packages"
+      ]
+    },
+    "agent": {
+      "linux": [
+        "~/.codex/.local/lib/python*/site-packages",
+        "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
+        "~/.claude/.local/lib/python*/site-packages",
+        "~/.local/lib/python*/site-packages"
+      ],
+      "windows": [
+        ".codex\\.venv\\Lib\\site-packages",
+        ".claude\\.venv\\Lib\\site-packages"
+      ]
+    }
+  },
   "packages": {
-    "docling-python-package": {"type": "python", "module": "docling"},
-    "docling-mcp-python-package": {"type": "python", "module": "docling_mcp"},
-    "rapidocr-python-package": {"type": "python", "module": "rapidocr"},
+    "docling-python-package": {"type": "python", "module": "docling", "candidate_set": "docling"},
+    "docling-mcp-python-package": {"type": "python", "module": "docling_mcp", "candidate_set": "docling"},
+    "rapidocr-python-package": {"type": "python", "module": "rapidocr", "candidate_set": "docling"},
     "networkx-python-package": {"type": "python", "module": "networkx"},
     "psutil-python-package": {"type": "python", "module": "psutil"},
     "pymupdf-python-package": {"type": "python", "module": "fitz"},
@@ -138,9 +244,9 @@
     "google-api-python-client-package": {"type": "python", "module": "googleapiclient"},
     "google-auth-python-package": {"type": "python", "module": "google.oauth2"},
     "ebooklib-python-package": {"type": "python", "module": "ebooklib"},
-    "modal-python-package": {"type": "python", "module": "modal"},
-    "torch-python-package": {"type": "python", "module": "torch"},
-    "torchvision-python-package": {"type": "python", "module": "torchvision"},
+    "modal-python-package": {"type": "python", "module": "modal", "candidate_set": "agent"},
+    "torch-python-package": {"type": "python", "module": "torch", "candidate_set": "docling"},
+    "torchvision-python-package": {"type": "python", "module": "torchvision", "candidate_set": "docling"},
     "ocr-runtime": {"type": "tool", "logical_tool": "ocr-runtime"},
     "zotero-credentials": {"type": "remote-service"},
     "modal-auth": {"type": "remote-service"},
