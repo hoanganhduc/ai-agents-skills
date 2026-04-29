@@ -1,0 +1,368 @@
+{
+  "schema_version": 1,
+  "scope": {
+    "purpose": "Sanitized dependency inventory derived from the current Linux and Windows agent configs.",
+    "platforms": ["linux", "windows"],
+    "included_evidence": [
+      "Linux Codex AGENTS/instruction/skill docs",
+      "Linux DeepSeek AGENTS/skill docs",
+      "Linux Claude CLAUDE/command/skill docs",
+      "Linux Codex runtime skill requirement files and Python imports",
+      "Windows Codex AGENTS/config/skill docs",
+      "Windows Claude CLAUDE/command/skill docs",
+      "Windows Claude skill requirement files and Python imports"
+    ],
+    "excluded_evidence": [
+      "auth files",
+      "provider secrets",
+      "session/history/log files",
+      "file-history snapshots",
+      "local library databases",
+      "node_modules caches",
+      "backup and temporary folders"
+    ],
+    "path_policy": "Personal home paths are represented as <LINUX_HOME> or <WINDOWS_HOME>."
+  },
+  "software": {
+    "python-runtime": {
+      "display_name": "Python runtime with pip, venv, and ssl",
+      "requirement": "required for runtime-backed skills and the installer",
+      "linux": "Native Python 3.10+ detected from environment override, repo venv, python3, or python.",
+      "windows": "Native Python 3.10+ detected from environment override, repo venv, py -3, python.exe, or python.",
+      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "annotated-review", "modal-research-compute", "session-logs"]
+    },
+    "bash-or-posix-shell": {
+      "display_name": "Bash or POSIX-compatible shell",
+      "requirement": "required on Linux and inside WSL-backed Windows flows",
+      "linux": "Used by shared runtime runner and shell skill wrappers.",
+      "windows": "Used through WSL for SageMath and other Linux-substrate commands.",
+      "used_by": ["runtime wrappers", "sagemath", "make"]
+    },
+    "powershell-runtime": {
+      "display_name": "PowerShell",
+      "requirement": "required for Windows bootstrap and Windows wrapper execution",
+      "linux": "not required",
+      "windows": "PowerShell 5.1+ or PowerShell 7+.",
+      "used_by": ["make.bat", "installer bootstrap", "Windows runtime wrappers"]
+    },
+    "wsl-runtime": {
+      "display_name": "Windows Subsystem for Linux 2",
+      "requirement": "required when a Windows skill delegates to Linux-only tools",
+      "linux": "not applicable",
+      "windows": "Current SageMath flow uses direct WSL execution with an Ubuntu 24.04 distro. Docker is explicitly not required by the current Windows Sage config.",
+      "used_by": ["sagemath", "tikz-draw optional Sage graph mode"]
+    },
+    "sagemath": {
+      "display_name": "SageMath",
+      "requirement": "required for the sagemath skill and optional Sage-backed graph/TikZ workflows",
+      "linux": "Native executable via SAGE_BIN, sage on PATH, or a local Sage install.",
+      "windows": "WSL-backed SageMath inside Ubuntu 24.04.",
+      "used_by": ["sagemath", "tikz-draw", "openclaw/source research math verification"]
+    },
+    "tex-runtime": {
+      "display_name": "TeX distribution",
+      "requirement": "required for TikZ compile checks and optional annotated-review LaTeX/PDF output",
+      "linux": "TeX Live or compatible distribution providing pdflatex, lualatex, or xelatex.",
+      "windows": "MiKTeX, TeX Live, or compatible distribution providing pdflatex.exe, lualatex.exe, or xelatex.exe.",
+      "used_by": ["tikz-draw", "annotated-review"]
+    },
+    "node-runtime": {
+      "display_name": "Node.js with npm/npx",
+      "requirement": "required for Node-backed MCP servers and optional Zotero translation-server workflows",
+      "linux": "Node.js 18+ with npm.",
+      "windows": "Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server.",
+      "used_by": ["Codex MCP", "zotero translation server"]
+    },
+    "git-cli": {
+      "display_name": "Git",
+      "requirement": "required for repository workflows and publishing",
+      "linux": "git on PATH.",
+      "windows": "git.exe or git on PATH.",
+      "used_by": ["GitHub workflows", "repo install/update examples"]
+    },
+    "github-cli": {
+      "display_name": "GitHub CLI",
+      "requirement": "optional for GitHub workflows that need local gh commands",
+      "linux": "gh on PATH with auth configured when needed.",
+      "windows": "gh.exe or gh on PATH with auth configured when needed.",
+      "used_by": ["github", "gh-fix-ci", "yeet"]
+    },
+    "ripgrep-cli": {
+      "display_name": "ripgrep",
+      "requirement": "optional but expected by local search/session workflows",
+      "linux": "rg on PATH.",
+      "windows": "rg.exe or rg on PATH.",
+      "used_by": ["session-logs", "research workflows", "repo inspection"]
+    },
+    "calibre-cli": {
+      "display_name": "Calibre command line tools",
+      "requirement": "optional for richer ebook library operations",
+      "linux": "calibredb and ebook-convert on PATH.",
+      "windows": "calibredb.exe and ebook-convert.exe on PATH.",
+      "used_by": ["calibre", "vnthuquan"]
+    },
+    "ocr-runtime": {
+      "display_name": "OCR runtime",
+      "requirement": "optional for scanned-document OCR",
+      "linux": "Tesseract with tessdata available; current Claude docling docs use TESSDATA_PREFIX=/usr/share/tessdata/.",
+      "windows": "Current Windows docling flow prefers rapidocr Python extras; Tesseract may be used through WSL if needed.",
+      "used_by": ["docling"]
+    },
+    "docling-cli": {
+      "display_name": "Docling CLI in a dedicated virtualenv",
+      "requirement": "optional CLI layer for docling workflows",
+      "linux": "Current Claude docs use <LINUX_HOME>/.local/share/docling-venv/bin/docling.",
+      "windows": "Current Claude docs use <WINDOWS_HOME>/.venv-docling/Scripts/docling.exe.",
+      "used_by": ["docling"]
+    },
+    "modal-cli": {
+      "display_name": "Modal CLI",
+      "requirement": "optional until submit/deploy/wait/fetch are used",
+      "linux": "Installed by the modal Python package and authenticated with modal token set/new.",
+      "windows": "Installed into the agent virtualenv; wrappers add the venv Scripts directory to PATH.",
+      "used_by": ["modal-research-compute"]
+    },
+    "gpu-inspection-tools": {
+      "display_name": "GPU inspection tools",
+      "requirement": "optional resource preflight enhancement",
+      "linux": "nvidia-smi for NVIDIA or rocm-smi for AMD when present.",
+      "windows": "nvidia-smi.exe or rocm-smi.exe when present; WSL GPU visibility depends on host driver support.",
+      "used_by": ["get-available-resources"]
+    },
+    "make-or-command-wrapper": {
+      "display_name": "Make or platform wrapper",
+      "requirement": "optional convenience entrypoint",
+      "linux": "make invokes installer commands.",
+      "windows": "make.bat invokes installer commands without requiring GNU Make.",
+      "used_by": ["installation"]
+    }
+  },
+  "python_packages": {
+    "docling": {
+      "requirement": "docling>=2.88.0,<3",
+      "import_name": "docling",
+      "platforms": ["linux", "windows"],
+      "used_by": ["docling"],
+      "source": "Linux Codex runtime docling requirements; Windows Claude docling command docs."
+    },
+    "docling-mcp": {
+      "requirement": "docling-mcp",
+      "import_name": "docling_mcp",
+      "platforms": ["windows"],
+      "used_by": ["docling MCP integration"],
+      "source": "Windows Claude docling installation instructions."
+    },
+    "rapidocr": {
+      "requirement": "docling[rapidocr] extra",
+      "import_name": "rapidocr",
+      "platforms": ["windows"],
+      "used_by": ["docling OCR"],
+      "source": "Windows Claude docling installation instructions."
+    },
+    "torch": {
+      "requirement": "torch CPU wheel for Windows docling; torch in Modal GPU image",
+      "import_name": "torch",
+      "platforms": ["windows", "remote-modal"],
+      "used_by": ["docling Windows setup", "modal GPU jobs"],
+      "source": "Windows Claude docling installation instructions and Modal app image."
+    },
+    "torchvision": {
+      "requirement": "torchvision CPU wheel for Windows docling",
+      "import_name": "torchvision",
+      "platforms": ["windows"],
+      "used_by": ["docling Windows setup"],
+      "source": "Windows Claude docling installation instructions."
+    },
+    "PyMuPDF": {
+      "requirement": "pymupdf; tikz semantic verifier pins PyMuPDF==1.27.2.2",
+      "import_name": "fitz",
+      "platforms": ["linux", "windows"],
+      "used_by": ["annotated-review", "tikz-draw"],
+      "source": "Annotated-review requirements and TikZ semantic verifier requirements."
+    },
+    "pylatexenc": {
+      "requirement": "pylatexenc",
+      "import_name": "pylatexenc",
+      "platforms": ["linux", "windows"],
+      "used_by": ["annotated-review"],
+      "source": "Annotated-review requirements."
+    },
+    "shapely": {
+      "requirement": "shapely==2.1.2 for TikZ semantic verifier",
+      "import_name": "shapely",
+      "platforms": ["linux", "windows"],
+      "used_by": ["tikz-draw"],
+      "source": "TikZ semantic verifier requirements and imports."
+    },
+    "svgelements": {
+      "requirement": "svgelements==1.9.6 for optional SVG parsing parity",
+      "import_name": "svgelements",
+      "platforms": ["linux", "windows"],
+      "used_by": ["tikz-draw"],
+      "source": "TikZ semantic verifier requirements and integration notes."
+    },
+    "numpy": {
+      "requirement": "numpy==1.26.4 for TikZ semantic verifier; numpy in Modal CPU image",
+      "import_name": "numpy",
+      "platforms": ["linux", "windows", "remote-modal"],
+      "used_by": ["tikz-draw", "modal-research-compute"],
+      "source": "TikZ semantic verifier requirements and Modal app image."
+    },
+    "networkx": {
+      "requirement": "networkx",
+      "import_name": "networkx",
+      "platforms": ["linux", "windows", "remote-modal"],
+      "used_by": ["graph-verifier", "modal-research-compute"],
+      "source": "Graph verifier imports and Modal app image."
+    },
+    "psutil": {
+      "requirement": "psutil",
+      "import_name": "psutil",
+      "platforms": ["linux", "windows"],
+      "used_by": ["get-available-resources"],
+      "source": "Resource detector imports."
+    },
+    "requests": {
+      "requirement": "requests>=2.28.0",
+      "import_name": "requests",
+      "platforms": ["linux", "windows"],
+      "used_by": ["zotero", "calibre", "research-digest-wrapper"],
+      "source": "Zotero/calibre requirements and research digest imports."
+    },
+    "feedparser": {
+      "requirement": "feedparser",
+      "import_name": "feedparser",
+      "platforms": ["linux", "windows"],
+      "used_by": ["research-digest-wrapper", "rss-news-digest"],
+      "source": "Research digest and RSS digest runtime checks."
+    },
+    "pyzotero": {
+      "requirement": "pyzotero>=1.10.0",
+      "import_name": "pyzotero",
+      "platforms": ["linux", "windows"],
+      "used_by": ["zotero"],
+      "source": "Zotero requirements and imports."
+    },
+    "PyPDF2": {
+      "requirement": "PyPDF2>=3.0.0",
+      "import_name": "PyPDF2",
+      "platforms": ["linux", "windows"],
+      "used_by": ["zotero", "calibre"],
+      "source": "Zotero/calibre requirements and PDF verifier imports."
+    },
+    "pdfplumber": {
+      "requirement": "pdfplumber>=0.10.0",
+      "import_name": "pdfplumber",
+      "platforms": ["linux", "windows"],
+      "used_by": ["zotero"],
+      "source": "Zotero requirements and PDF verifier imports."
+    },
+    "pytest": {
+      "requirement": "pytest>=7.0.0",
+      "import_name": "pytest",
+      "platforms": ["linux", "windows"],
+      "used_by": ["zotero test suite"],
+      "source": "Zotero requirements and tests."
+    },
+    "responses": {
+      "requirement": "responses>=0.23.0",
+      "import_name": "responses",
+      "platforms": ["linux", "windows"],
+      "used_by": ["zotero test suite"],
+      "source": "Zotero requirements and mocked tests."
+    },
+    "google-api-python-client": {
+      "requirement": "google-api-python-client>=2.100.0",
+      "import_name": "googleapiclient",
+      "platforms": ["linux", "windows"],
+      "used_by": ["calibre Google Drive sync", "zotero Google Drive helpers"],
+      "source": "Calibre requirements and Google Drive helper imports."
+    },
+    "google-auth": {
+      "requirement": "google-auth>=2.23.0",
+      "import_name": "google.oauth2",
+      "platforms": ["linux", "windows"],
+      "used_by": ["calibre Google Drive sync", "zotero Google Drive helpers"],
+      "source": "Calibre requirements and Google Drive helper imports."
+    },
+    "ebooklib": {
+      "requirement": "ebooklib>=0.18",
+      "import_name": "ebooklib",
+      "platforms": ["linux", "windows"],
+      "used_by": ["calibre EPUB metadata"],
+      "source": "Calibre requirements and doctor checks."
+    },
+    "modal": {
+      "requirement": "modal",
+      "import_name": "modal",
+      "platforms": ["linux", "windows"],
+      "used_by": ["modal-research-compute"],
+      "source": "Modal research-compute docs and Modal app imports."
+    },
+    "local-getscipapers-helper": {
+      "requirement": "optional local helper package with a maintainer-specific import name",
+      "import_name": "redacted",
+      "platforms": ["windows"],
+      "used_by": ["zotero metadata fallback"],
+      "source": "Windows Zotero metadata fallback import; exact package name is excluded because it embeds maintainer identity."
+    }
+  },
+  "node_packages": {
+    "sequential-thinking-mcp": {
+      "requirement": "@modelcontextprotocol/server-sequential-thinking via npx",
+      "used_by": ["Windows Codex MCP sequentialThinking server"],
+      "source": "Windows Codex config.toml."
+    },
+    "zotero-translation-server": {
+      "requirement": "Vendored Zotero translation-server package.json",
+      "used_by": ["zotero metadata translation"],
+      "runtime_dependencies": [
+        "aws-sdk",
+        "config",
+        "iconv-lite",
+        "jsdom",
+        "koa",
+        "koa-bodyparser",
+        "koa-route",
+        "md5",
+        "request",
+        "request-promise-native",
+        "serverless-http",
+        "w3c-xmlserializer",
+        "wicked-good-xpath",
+        "xregexp",
+        "yargs"
+      ],
+      "dev_dependencies": ["@zotero/eslint-config", "chai", "eslint", "mocha", "sinon", "supertest"],
+      "source": "Linux Codex Zotero translation-server-src/package.json."
+    }
+  },
+  "manual_integrations": {
+    "zotero": {
+      "description": "Zotero API/library/WebDAV credentials are configured outside this repo.",
+      "used_by": ["zotero", "annotated-review", "paper-review"]
+    },
+    "modal": {
+      "description": "Modal token file and workspace credentials are configured outside this repo.",
+      "used_by": ["modal-research-compute"]
+    },
+    "google-drive": {
+      "description": "Google Drive service-account or OAuth credentials are configured outside this repo.",
+      "used_by": ["calibre", "zotero optional Google Drive helpers"]
+    },
+    "github": {
+      "description": "GitHub app/CLI authentication is configured outside this repo.",
+      "used_by": ["github", "gh-fix-ci", "yeet"]
+    },
+    "provider-configs": {
+      "description": "OpenAI, Claude, DeepSeek, and other provider auth/config files are intentionally excluded.",
+      "used_by": ["agent frontends"]
+    }
+  },
+  "windows_substrate_notes": [
+    "SageMath is WSL-backed on the inspected Windows config, not native Windows.",
+    "Docling OCR is Windows-native through rapidocr extras; Tesseract is a Linux/WSL option.",
+    "Docker is explicitly not required by the inspected Windows Sage config.",
+    "Windows wrapper commands may use PowerShell, .bat launchers, native Python venvs, and WSL in the same workflow."
+  ]
+}

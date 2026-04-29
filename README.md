@@ -76,7 +76,8 @@ copies those bodies into each supported agent and adds managed metadata.
   entrypoint aliases.
 - `docs/profiles.md`: selectable profiles such as `research-core` and
   `full-research`.
-- `docs/dependencies.md`: logical tools and dependency categories.
+- `docs/dependencies.md`: logical tools, current Linux/Windows extra
+  software, Python packages, Node packages, and manual integrations.
 - `docs/workflow-overview.md`: how agents, skills, runtimes, and research
   tools connect during real workflows.
 - `docs/multi-agent-examples.md`: multi-agent process examples, spawn/wait

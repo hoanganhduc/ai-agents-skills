@@ -37,12 +37,14 @@ def load_manifests() -> dict[str, Any]:
     profiles = load_json_yaml(MANIFEST_DIR / "profiles.yaml")
     dependencies = load_json_yaml(MANIFEST_DIR / "dependencies.yaml")
     artifacts = load_json_yaml(MANIFEST_DIR / "artifacts.yaml")
-    validate_manifests(skills, profiles, dependencies, artifacts)
+    system_dependencies = load_json_yaml(MANIFEST_DIR / "system-dependencies.yaml")
+    validate_manifests(skills, profiles, dependencies, artifacts, system_dependencies)
     return {
         "skills": skills,
         "profiles": profiles,
         "dependencies": dependencies,
         "artifacts": artifacts,
+        "system_dependencies": system_dependencies,
     }
 
 
@@ -51,6 +53,7 @@ def validate_manifests(
     profiles: dict[str, Any],
     dependencies: dict[str, Any],
     artifacts: dict[str, Any],
+    system_dependencies: dict[str, Any],
 ) -> None:
     if "skills" not in skills or not isinstance(skills["skills"], dict):
         raise ManifestError("skills.yaml must contain a skills object")
@@ -65,6 +68,9 @@ def validate_manifests(
         raise ManifestError("artifacts.yaml must contain an artifacts object")
     if "artifact_profiles" not in artifacts or not isinstance(artifacts["artifact_profiles"], dict):
         raise ManifestError("artifacts.yaml must contain an artifact_profiles object")
+    for field in ("software", "python_packages"):
+        if field not in system_dependencies or not isinstance(system_dependencies[field], dict):
+            raise ManifestError(f"system-dependencies.yaml must contain a {field} object")
 
     for name, spec in skills["skills"].items():
         if not isinstance(spec, dict):
