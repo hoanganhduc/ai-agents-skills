@@ -246,7 +246,7 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     ignored = set(split_csv(args.ignore))
     skipped = set(split_csv(args.skip))
     required = required_dependencies_for(active_skills, manifests) - skipped
-    optional = optional_dependencies_for(active_skills, manifests) - skipped
+    optional = (optional_dependencies_for(active_skills, manifests) - required) - skipped
     results = []
     python_command: str | None = None
 
@@ -480,8 +480,34 @@ def install_hint(name: str, result: dict[str, Any]) -> str:
         "tex-runtime": "install TeX Live, MiKTeX, or another TeX distribution",
         "ocr-runtime": "install Tesseract OCR if OCR support is needed",
         "calibre-cli": "install Calibre command line tools",
+        "git-cli": "install Git",
+        "github-cli": "install GitHub CLI and authenticate it if needed",
+        "ripgrep-cli": "install ripgrep",
+        "nvidia-smi-tool": "install NVIDIA drivers/tools if NVIDIA GPU detection is needed",
+        "rocm-smi-tool": "install ROCm tools if AMD GPU detection is needed",
         "docling-python-package": "install the Python package in the selected Python environment: python -m pip install docling",
+        "docling-mcp-python-package": "install the Python package in the selected Python environment: python -m pip install docling-mcp",
+        "rapidocr-python-package": "install Docling rapidocr support in the selected Python environment: python -m pip install 'docling[rapidocr]'",
         "networkx-python-package": "install the Python package in the selected Python environment: python -m pip install networkx",
+        "psutil-python-package": "install the Python package in the selected Python environment: python -m pip install psutil",
+        "pymupdf-python-package": "install the Python package in the selected Python environment: python -m pip install pymupdf",
+        "pylatexenc-python-package": "install the Python package in the selected Python environment: python -m pip install pylatexenc",
+        "shapely-python-package": "install the Python package in the selected Python environment: python -m pip install shapely",
+        "svgelements-python-package": "install the Python package in the selected Python environment: python -m pip install svgelements",
+        "numpy-python-package": "install the Python package in the selected Python environment: python -m pip install numpy",
+        "requests-python-package": "install the Python package in the selected Python environment: python -m pip install requests",
+        "feedparser-python-package": "install the Python package in the selected Python environment: python -m pip install feedparser",
+        "pyzotero-python-package": "install the Python package in the selected Python environment: python -m pip install pyzotero",
+        "pypdf2-python-package": "install the Python package in the selected Python environment: python -m pip install PyPDF2",
+        "pdfplumber-python-package": "install the Python package in the selected Python environment: python -m pip install pdfplumber",
+        "pytest-python-package": "install the Python package in the selected Python environment: python -m pip install pytest",
+        "responses-python-package": "install the Python package in the selected Python environment: python -m pip install responses",
+        "google-api-python-client-package": "install the Python package in the selected Python environment: python -m pip install google-api-python-client",
+        "google-auth-python-package": "install the Python package in the selected Python environment: python -m pip install google-auth",
+        "ebooklib-python-package": "install the Python package in the selected Python environment: python -m pip install ebooklib",
+        "modal-python-package": "install the Python package in the selected Python environment: python -m pip install modal",
+        "torch-python-package": "install torch in the selected Python environment; use the platform-appropriate PyTorch index",
+        "torchvision-python-package": "install torchvision in the selected Python environment; use the platform-appropriate PyTorch index",
         "zotero-credentials": "configure Zotero credentials outside this repo",
         "modal-auth": "configure Modal authentication outside this repo",
     }

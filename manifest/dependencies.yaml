@@ -39,8 +39,8 @@
       "description": "SageMath runtime, local on Linux or WSL-backed on Windows.",
       "version_constraint": ">=10.0",
       "candidates": {
-        "linux": ["${AAS_SAGE}", "sage"],
-        "windows": ["%AAS_SAGE%", "wsl:sage"]
+        "linux": ["${AAS_SAGE}", "sage", "~/sage/sage", "~/sage/src/bin/sage", "~/sage-10.4/sage"],
+        "windows": ["%AAS_SAGE%", "wsl:sage", "wsl:~/sage/sage", "wsl:~/sage/src/bin/sage", "wsl:~/sage-10.4/sage"]
       },
       "capabilities": ["graph-theory", "algebra"]
     },
@@ -70,14 +70,85 @@
         "windows": ["calibredb.exe", "ebook-convert.exe", "calibredb", "ebook-convert"]
       },
       "capabilities": ["ebook-library"]
+    },
+    "git-cli": {
+      "description": "Git command line client for repository-backed workflows and GitHub publishing.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["git"],
+        "windows": ["git.exe", "git"]
+      },
+      "capabilities": ["repository"]
+    },
+    "github-cli": {
+      "description": "GitHub CLI for workflows that need local Actions, PR, issue, or authentication commands.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["gh"],
+        "windows": ["gh.exe", "gh"]
+      },
+      "capabilities": ["github"]
+    },
+    "ripgrep-cli": {
+      "description": "ripgrep command line search used by local research and session-inspection workflows.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["rg"],
+        "windows": ["rg.exe", "rg"]
+      },
+      "capabilities": ["fast-search"]
+    },
+    "nvidia-smi-tool": {
+      "description": "NVIDIA GPU inspection tool used by resource preflight when available.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["nvidia-smi"],
+        "windows": ["nvidia-smi.exe", "nvidia-smi"]
+      },
+      "capabilities": ["gpu-detection"]
+    },
+    "rocm-smi-tool": {
+      "description": "AMD ROCm GPU inspection tool used by resource preflight when available.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["rocm-smi"],
+        "windows": ["rocm-smi.exe", "rocm-smi"]
+      },
+      "capabilities": ["gpu-detection"]
     }
   },
   "packages": {
     "docling-python-package": {"type": "python", "module": "docling"},
+    "docling-mcp-python-package": {"type": "python", "module": "docling_mcp"},
+    "rapidocr-python-package": {"type": "python", "module": "rapidocr"},
     "networkx-python-package": {"type": "python", "module": "networkx"},
+    "psutil-python-package": {"type": "python", "module": "psutil"},
+    "pymupdf-python-package": {"type": "python", "module": "fitz"},
+    "pylatexenc-python-package": {"type": "python", "module": "pylatexenc"},
+    "shapely-python-package": {"type": "python", "module": "shapely"},
+    "svgelements-python-package": {"type": "python", "module": "svgelements"},
+    "numpy-python-package": {"type": "python", "module": "numpy"},
+    "requests-python-package": {"type": "python", "module": "requests"},
+    "feedparser-python-package": {"type": "python", "module": "feedparser"},
+    "pyzotero-python-package": {"type": "python", "module": "pyzotero"},
+    "pypdf2-python-package": {"type": "python", "module": "PyPDF2"},
+    "pdfplumber-python-package": {"type": "python", "module": "pdfplumber"},
+    "pytest-python-package": {"type": "python", "module": "pytest"},
+    "responses-python-package": {"type": "python", "module": "responses"},
+    "google-api-python-client-package": {"type": "python", "module": "googleapiclient"},
+    "google-auth-python-package": {"type": "python", "module": "google.oauth2"},
+    "ebooklib-python-package": {"type": "python", "module": "ebooklib"},
+    "modal-python-package": {"type": "python", "module": "modal"},
+    "torch-python-package": {"type": "python", "module": "torch"},
+    "torchvision-python-package": {"type": "python", "module": "torchvision"},
     "ocr-runtime": {"type": "tool", "logical_tool": "ocr-runtime"},
     "zotero-credentials": {"type": "remote-service"},
     "modal-auth": {"type": "remote-service"},
-    "calibre-cli": {"type": "tool", "logical_tool": "calibre-cli"}
+    "calibre-cli": {"type": "tool", "logical_tool": "calibre-cli"},
+    "git-cli": {"type": "tool", "logical_tool": "git-cli"},
+    "github-cli": {"type": "tool", "logical_tool": "github-cli"},
+    "ripgrep-cli": {"type": "tool", "logical_tool": "ripgrep-cli"},
+    "nvidia-smi-tool": {"type": "tool", "logical_tool": "nvidia-smi-tool"},
+    "rocm-smi-tool": {"type": "tool", "logical_tool": "rocm-smi-tool"}
   }
 }

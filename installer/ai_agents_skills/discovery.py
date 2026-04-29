@@ -54,7 +54,7 @@ def expand_candidate(raw: str) -> str:
         return os.environ.get(raw[2:-1], "")
     if raw.startswith("%") and raw.endswith("%"):
         return os.environ.get(raw[1:-1], "")
-    return raw
+    return os.path.expanduser(os.path.expandvars(raw))
 
 
 def resolve_command(candidate: str) -> str | None:
@@ -168,8 +168,21 @@ def discover_wsl_candidate(name: str, command_name: str, raw: str) -> dict[str, 
             "scope": "wsl",
             "substrate": "wsl",
         }
+    resolve_script = r'''
+cmd=$1
+case "$cmd" in
+  "~/"*) cmd="$HOME/${cmd#~/}" ;;
+esac
+if [ -x "$cmd" ]; then
+  printf '%s\n' "$cmd"
+elif command -v "$cmd" >/dev/null 2>&1; then
+  command -v "$cmd"
+else
+  exit 1
+fi
+'''
     probe = subprocess.run(
-        [wsl, "sh", "-lc", f"command -v {shlex.quote(command_name)}"],
+        [wsl, "sh", "-lc", resolve_script, "sh", command_name],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -185,12 +198,13 @@ def discover_wsl_candidate(name: str, command_name: str, raw: str) -> dict[str, 
             "scope": "wsl",
             "substrate": "wsl",
         }
-    command = f"{wsl} sh -lc {shlex.quote(command_name)}"
+    resolved = probe.stdout.strip().splitlines()[0]
+    command = f"{wsl} sh -lc {shlex.quote(resolved)}"
     return {
         "logical_name": name,
         "candidate": raw,
         "command": command,
-        "version": detect_wsl_version(wsl, command_name),
+        "version": detect_wsl_version(wsl, resolved),
         "scope": "wsl",
         "substrate": "wsl",
         "capabilities": {"executable": True, "wsl-command-exec": True},
@@ -199,8 +213,12 @@ def discover_wsl_candidate(name: str, command_name: str, raw: str) -> dict[str, 
 
 
 def detect_wsl_version(wsl: str, command_name: str) -> str:
+    version_script = r'''
+cmd=$1
+"$cmd" --version 2>&1 | head -n 1
+'''
     result = subprocess.run(
-        [wsl, "sh", "-lc", f"{shlex.quote(command_name)} --version 2>&1 | head -n 1"],
+        [wsl, "sh", "-lc", version_script, "sh", command_name],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
