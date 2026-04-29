@@ -1,0 +1,240 @@
+{
+  "schema_version": 1,
+  "skills": {
+    "deep-research-workflow": {
+      "description": "Phased source-preserving research workflow: search, analyze, write, with citation handoff.",
+      "profiles": ["research-core", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["zotero"],
+      "optional_capabilities": ["zotero-cross-check", "figure-handoff"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "openclaw-research": {
+      "description": "General web and source-gathering research workflow for current-information synthesis.",
+      "profiles": ["research-core", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["web-source-synthesis"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "research-briefing": {
+      "description": "Scope nontrivial research before execution with evidence plan and workflow recommendation.",
+      "profiles": ["research-core", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": [],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "research-report-reviewer": {
+      "description": "Review draft research reports for unsupported claims, ambiguity, and evidence gaps.",
+      "profiles": ["research-core", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": [],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "research-verification-gate": {
+      "description": "Final evidence, date, and gap check before delivery.",
+      "profiles": ["research-core", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": [],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "zotero": {
+      "description": "Zotero paper search, retrieval, ingest, and collection workflow.",
+      "profiles": ["library", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["zotero-credentials"],
+      "optional_capabilities": ["library-auth", "webdav-sync"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "calibre": {
+      "description": "Calibre ebook lookup and library helper workflows.",
+      "profiles": ["library", "ebook", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["calibre-cli"],
+      "optional_capabilities": ["library-sync"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "getscipapers-requester": {
+      "description": "External paper retrieval fallback after local library checks.",
+      "profiles": ["library", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["external-retrieval"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "paper-lookup": {
+      "description": "External paper metadata and discovery fallback.",
+      "profiles": ["library", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["metadata-lookup"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "database-lookup": {
+      "description": "Structured public scientific, biomedical, regulatory, materials, and economic database lookups.",
+      "profiles": ["document", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["record-oriented-lookup"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "docling": {
+      "description": "Parse, convert, OCR, chunk, and analyze documents.",
+      "profiles": ["document", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["docling-python-package", "ocr-runtime"],
+      "optional_capabilities": ["ocr", "mcp-server"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "research-digest-wrapper": {
+      "description": "Run tracked-topic research digests.",
+      "profiles": ["digest", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["topic-management"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "rss-news-digest": {
+      "description": "Run and manage RSS digest workflows.",
+      "profiles": ["digest", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["feed-management"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "digest-bridge": {
+      "description": "Convert digest output into paper retrieval manifests.",
+      "profiles": ["digest", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["manifest-generation"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "tikz-draw": {
+      "description": "Structural TikZ figure generation, compile, review, and semantic checks.",
+      "profiles": ["figure", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime", "tex-runtime"],
+      "optional_dependencies": ["sage-runtime"],
+      "optional_capabilities": ["sage-backed-graph-mode"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "sagemath": {
+      "description": "Sage-backed math, graph theory, algebra, and verification.",
+      "profiles": ["math", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["sage-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["wsl-backed-sage"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "graph-verifier": {
+      "description": "Lightweight graph sanity checks.",
+      "profiles": ["math", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["networkx-python-package"],
+      "optional_capabilities": ["networkx-checks"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "agent-group-discuss": {
+      "description": "Multi-agent discussion, review, and research orchestration.",
+      "profiles": ["multi-agent", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["role-templates"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "prose": {
+      "description": "Structured reproducible research and workflow orchestration.",
+      "profiles": ["multi-agent", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["structured-workflow"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "modal-research-compute": {
+      "description": "Route heavy compute jobs to Modal through a local broker.",
+      "profiles": ["full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["modal-auth"],
+      "optional_capabilities": ["remote-cpu", "remote-gpu"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "paper-review": {
+      "description": "Single-agent paper review workflow.",
+      "profiles": ["full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": ["zotero"],
+      "optional_capabilities": ["library-document-routing"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "annotated-review": {
+      "description": "Annotated paper review workflow when both annotation and review are requested.",
+      "profiles": ["full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["zotero"],
+      "optional_capabilities": ["pdf-annotation"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "vnthuquan": {
+      "description": "Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff.",
+      "profiles": ["ebook", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["calibre"],
+      "optional_capabilities": ["calibre-dry-run-handoff"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "self-improving-agent": {
+      "description": "Log durable learnings, failures, and missing capabilities.",
+      "profiles": ["full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["learning-log"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "session-logs": {
+      "description": "Search prior local agent session logs when explicitly requested.",
+      "profiles": ["full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["local-history-search"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    }
+  },
+  "legacy_aliases": {
+    "deep-research-workflow": ["deep-research"],
+    "research-digest-wrapper": ["research_digest_wrapper"],
+    "rss-news-digest": ["rss_news_digest"],
+    "digest-bridge": ["digest_bridge"],
+    "getscipapers-requester": ["getscipapers_requester"],
+    "graph-verifier": ["graph_verifier"],
+    "agent-group-discuss": ["agent_group_discuss"],
+    "self-improving-agent": ["self_improving_agent"]
+  }
+}
