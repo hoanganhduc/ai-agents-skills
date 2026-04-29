@@ -213,7 +213,7 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     ]
     required_tools = sorted(required_tools_for(active_skills, manifests))
     tool_results = {
-        name: discover_tool(name, manifests["dependencies"]["tools"][name], platform)
+        name: discover_tool(name, manifests["dependencies"]["tools"][name], platform, args.root)
         for name in required_tools
         if name in manifests["dependencies"]["tools"]
     }
@@ -253,12 +253,12 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     ordered_required = sorted(required, key=lambda item: (item != "python-runtime", item))
     ordered_optional = sorted(optional, key=lambda item: (item != "python-runtime", item))
     for name in ordered_required:
-        result = discover_dependency(name, True, manifests, platform, python_command)
+        result = discover_dependency(name, True, manifests, platform, python_command, args.root)
         if name == "python-runtime" and result.get("command"):
             python_command = result["command"]
         results.append(result)
     for name in ordered_optional:
-        result = discover_dependency(name, False, manifests, platform, python_command)
+        result = discover_dependency(name, False, manifests, platform, python_command, args.root)
         if name == "python-runtime" and result.get("command"):
             python_command = result["command"]
         results.append(result)
@@ -429,22 +429,31 @@ def discover_dependency(
     manifests: dict[str, Any],
     platform: str,
     python_command: str | None,
+    root: Path,
 ) -> dict[str, Any]:
     tools = manifests["dependencies"].get("tools", {})
     packages = manifests["dependencies"].get("packages", {})
     if name in tools:
-        result = discover_tool(name, tools[name], platform)
+        result = discover_tool(name, tools[name], platform, root)
     elif name in packages:
         package = packages[name]
         if package.get("type") == "python":
             if not python_command:
-                python = discover_tool("python-runtime", tools["python-runtime"], platform)
+                python = discover_tool("python-runtime", tools["python-runtime"], platform, root)
                 python_command = python.get("command")
-            result = discover_python_package(name, package["module"], python_command)
+            result = discover_python_package(
+                name,
+                package["module"],
+                python_command,
+                platform=platform,
+                root=root,
+                python_candidates=python_candidates_for(package, manifests, platform),
+                site_candidates=python_site_candidates_for(package, manifests, platform),
+            )
         elif package.get("type") == "tool":
             logical_tool = package.get("logical_tool")
             if logical_tool in tools:
-                result = discover_tool(logical_tool, tools[logical_tool], platform)
+                result = discover_tool(logical_tool, tools[logical_tool], platform, root)
                 result["logical_name"] = name
             else:
                 result = {
@@ -466,6 +475,40 @@ def discover_dependency(
     result["required"] = required
     result["install_hint"] = install_hint(name, result)
     return result
+
+
+def python_candidates_for(
+    package: dict[str, Any],
+    manifests: dict[str, Any],
+    platform: str,
+) -> list[str]:
+    candidate_sets = manifests["dependencies"].get("python_candidate_sets", {})
+    selected: list[str] = []
+    candidate_set = package.get("candidate_set", "default")
+    if candidate_set in candidate_sets:
+        selected.extend(candidate_sets[candidate_set].get(platform, []))
+    explicit = package.get("python_candidates", {})
+    if isinstance(explicit, dict):
+        selected.extend(explicit.get(platform, []))
+    if "python-runtime" not in selected:
+        selected.append("python-runtime")
+    return selected
+
+
+def python_site_candidates_for(
+    package: dict[str, Any],
+    manifests: dict[str, Any],
+    platform: str,
+) -> list[str]:
+    candidate_sets = manifests["dependencies"].get("python_site_candidate_sets", {})
+    selected: list[str] = []
+    candidate_set = package.get("candidate_set", "default")
+    if candidate_set in candidate_sets:
+        selected.extend(candidate_sets[candidate_set].get(platform, []))
+    explicit = package.get("python_site_candidates", {})
+    if isinstance(explicit, dict):
+        selected.extend(explicit.get(platform, []))
+    return selected
 
 
 def install_hint(name: str, result: dict[str, Any]) -> str:
