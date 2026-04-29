@@ -2,6 +2,8 @@
 
 Verification is selective. Only installed and enabled managed artifacts from the
 installer state are checked.
+If no managed artifacts match the requested scope, `verify` returns
+`no-managed-artifacts` instead of `ok`.
 
 Current skill checks:
 

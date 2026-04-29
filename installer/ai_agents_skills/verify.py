@@ -19,6 +19,13 @@ def verify(root: Path, skill_filter: set[str] | None = None, agent_filter: set[s
         if agent_filter and agent not in agent_filter:
             continue
         results.append(verify_artifact(artifact))
+    if not results:
+        return {
+            "status": "no-managed-artifacts",
+            "checked": 0,
+            "results": [],
+            "reason": "no managed ai-agents-skills artifacts matched this scope",
+        }
     status = "ok" if all(item["status"] == "ok" for item in results) else "failed"
     return {"status": status, "checked": len(results), "results": results}
 
@@ -37,7 +44,7 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
-    if artifact.get("artifact_type") == "instruction-block" and path.exists():
+    if artifact.get("artifact_type") in {"instruction-block", "management-notice"} and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "managed-block-present", "ok": block_id(artifact["skill"]) in text})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})

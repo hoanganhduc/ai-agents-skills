@@ -2,7 +2,9 @@
 
 Run `precheck --json` to inspect detected agents, selected tools, optional
 packages, skipped agents, missing required dependencies, and degraded optional
-capabilities. Use `plan` to preview every file change.
+capabilities. Use `audit-system --json` to inspect repo-vs-system drift,
+managed marker counts, unmanaged files, and legacy aliases. Use `plan` to
+preview every file change.
 
 If a plan reports `classification=unmanaged`, the installer found user-owned
 content in the target path and will skip it unless `--adopt` or

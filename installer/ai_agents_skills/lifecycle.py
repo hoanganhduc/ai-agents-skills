@@ -98,7 +98,7 @@ def remove_artifact(item: dict[str, Any]) -> None:
         skill_dir = next((parent for parent in path.parents if parent.name == item["skill"]), path.parent)
         cleanup_empty_parents(path.parent, stop_at=skill_dir)
         return
-    if item.get("artifact_type") == "instruction-block":
+    if item.get("artifact_type") in {"instruction-block", "management-notice"}:
         remove_managed_block(path, item["skill"], delete_if_empty=item.get("created_file", False))
         return
     if item.get("artifact_type") in {

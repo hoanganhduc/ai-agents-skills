@@ -19,6 +19,7 @@ def generate_docs(manifests: dict[str, Any]) -> list[Path]:
         write_static_doc(docs_dir / "multi-agent-examples.md", multi_agent_examples_text()),
         write_static_doc(docs_dir / "system-profile.md", system_profile_text()),
         write_static_doc(docs_dir / "agent-locations.md", agent_locations_text()),
+        write_static_doc(docs_dir / "audit-and-migration.md", audit_and_migration_text()),
         write_verification_doc(docs_dir / "verification.md"),
         write_static_doc(docs_dir / "architecture.md", architecture_text()),
         write_static_doc(docs_dir / "installation.md", installation_text()),
@@ -124,6 +125,8 @@ copies those bodies into each supported agent and adds managed metadata.
   tools map to skills.
 - `docs/agent-locations.md`: supported agent config, skill, template, command,
   persona, and tool-shim locations.
+- `docs/audit-and-migration.md`: audit output, staged migration, unmanaged
+  local skill handling, and Windows-native verification notes.
 - `docs/verification.md`: installed-artifact verification model.
 
 The GitHub Pages site is built from `docs/source` and deployed by
@@ -144,6 +147,7 @@ Linux:
 ```bash
 make doctor
 make precheck ARGS="--profile research-core"
+make audit-system ARGS="--profile research-core"
 make list-skills
 make list-artifacts
 make plan ARGS="--profile research-core"
@@ -158,6 +162,7 @@ Windows:
 ```bat
 make.bat doctor
 make.bat precheck --profile research-core
+make.bat audit-system --profile research-core
 make.bat list-skills
 make.bat list-artifacts
 make.bat plan --profile research-core
@@ -388,6 +393,8 @@ def write_verification_doc(path: Path) -> Path:
 
 Verification is selective. Only installed and enabled managed artifacts from the
 installer state are checked.
+If no managed artifacts match the requested scope, `verify` returns
+`no-managed-artifacts` instead of `ok`.
 
 Current skill checks:
 
@@ -757,6 +764,7 @@ Artifact classes:
 | `skill-file` | Installs canonical `SKILL.md` into the agent skill directory. |
 | `skill-support-file` | Installs canonical references, scripts, assets, templates, and agent notes inside the skill directory. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
+| `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
 | `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
@@ -782,6 +790,9 @@ select `--artifact`, `--artifacts`, or `--artifact-profile`.
 required tools, optional tools, Python packages, remote-service configuration
 placeholders, detected agents, skipped agents, ignored dependencies, and
 Windows/WSL substrate information where possible.
+`audit-system` is read-only and compares the selected repo profile with the
+current agent homes, managed state, legacy aliases, unmanaged files, dependency
+status, and install-plan summaries.
 
 Use `precheck --interactive` for a guided one-by-one pass through missing
 dependencies. It does not install packages automatically; it shows the install
@@ -808,6 +819,18 @@ Optional artifacts are not installed by default. Use `--no-skills` when you
 want an artifact-only install. Use `--with-deps` when selected dependency-bound
 artifacts should bring in their required backing skills.
 
+For an existing personal system, prefer staged migration:
+
+1. Run `precheck --profile full-research`.
+2. Run `audit-system --profile full-research`.
+3. Review `plan --profile full-research --migrate` for legacy aliases.
+4. Review `plan --profile full-research --adopt` for canonical files that
+   already exist but are not managed.
+5. Apply one small selected scope at a time, then run `verify`.
+
+Use `--artifact-profile repo-management` when you want a top-level managed
+notice in `AGENTS.md` or `CLAUDE.md` without installing every skill.
+
 Scenario summary:
 
 | Scenario | Result |
@@ -817,9 +840,55 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` copies canonical content under the canonical name. |
+| Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
+"""
+
+
+def audit_and_migration_text() -> str:
+    return """# Audit And Migration
+
+`audit-system` is a read-only comparison between the selected repo profile and
+the current agent homes. It is intended for existing systems where skills may
+already exist under canonical names, legacy aliases, or local-only names.
+
+The audit reports:
+
+- detected and skipped agents
+- managed state counts from `.ai-agents-skills/state.json`
+- instruction-file managed marker counts
+- canonical skills present, missing, managed, unmanaged, and legacy aliases
+- extra local skills outside this repo's canonical catalog
+- default, adopt, migrate, and adopt+migrate plan summaries
+- dependency status and selected skills related to each dependency
+
+Recommended staged migration for a current personal system:
+
+1. Run `precheck --profile full-research` and resolve missing required
+   dependencies.
+2. Run `audit-system --profile full-research` and review unmanaged and legacy
+   counts.
+3. Run `plan --profile full-research --migrate` and migrate only reviewed
+   legacy aliases, such as underscore-to-hyphen skill names.
+4. Run `plan --profile full-research --adopt` and adopt only canonical files
+   that should remain user-owned but tracked by this installer.
+5. Install missing skills in small batches, then run `verify`.
+6. Add optional artifacts such as `repo-management`, `workflow-templates`, or
+   `research-entrypoints` only after the backing skill state is clear.
+
+The repo intentionally does not manage every local skill found in Codex or
+Claude. Local engineering workflows, one-off experiments, downloaded runtime
+state, provider config, secrets, and session/history databases should remain
+outside the repo unless they are deliberately promoted into a canonical skill or
+artifact.
+
+When auditing a mounted Windows profile from Linux or WSL, native `.exe`
+programs can often be found but not safely executed. Treat degraded Windows
+tool results as presence checks only. To fully verify Windows-native tools, run
+the same `make.bat precheck --profile ...` command from a native Windows shell
+and compare the output with the mounted-profile audit.
 """
 
 
@@ -945,6 +1014,8 @@ tool shims can affect behavior more broadly than a normal skill directory.
 
 Instruction files are modified through managed marker blocks only. Uninstall
 and rollback remove only those managed blocks and managed files.
+The optional `management-notice:repo-management` artifact is also a managed
+block in the instruction file; it does not replace existing user instructions.
 """
 
 
@@ -990,7 +1061,9 @@ def troubleshooting_text() -> str:
 
 Run `precheck --json` to inspect detected agents, selected tools, optional
 packages, skipped agents, missing required dependencies, and degraded optional
-capabilities. Use `plan` to preview every file change.
+capabilities. Use `audit-system --json` to inspect repo-vs-system drift,
+managed marker counts, unmanaged files, and legacy aliases. Use `plan` to
+preview every file change.
 
 If a plan reports `classification=unmanaged`, the installer found user-owned
 content in the target path and will skip it unless `--adopt` or

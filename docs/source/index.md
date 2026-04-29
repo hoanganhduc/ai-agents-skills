@@ -23,6 +23,7 @@ profiles
 dependencies
 system-profile
 agent-locations
+audit-and-migration
 verification
 architecture
 windows
