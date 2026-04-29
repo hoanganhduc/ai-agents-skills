@@ -1,9 +1,12 @@
-.PHONY: doctor plan install verify rollback uninstall list-skills docs docs-site sanitize-check test
+.PHONY: doctor precheck plan install verify rollback uninstall list-skills docs docs-site sanitize-check test
 
 ARGS ?=
 
 doctor:
 	./installer/bootstrap.sh doctor $(ARGS)
+
+precheck:
+	./installer/bootstrap.sh precheck $(ARGS)
 
 plan:
 	./installer/bootstrap.sh plan $(ARGS)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -64,7 +66,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(apply_result["dry_run"])
 
             self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
-            self.assertTrue((root / ".agents" / "skills" / "zotero" / "SKILL.md").exists())
+            self.assertTrue((root / ".codex" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertFalse((root / ".claude" / "skills" / "tikz-draw" / "SKILL.md").exists())
 
             result = verify(root)
@@ -99,17 +101,19 @@ class PlanInstallVerifyTests(unittest.TestCase):
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, detect_agents(root))
             file_actions = [a for a in plan["actions"] if a["kind"] == "file"]
+            block_actions = [a for a in plan["actions"] if a["kind"] == "managed-block"]
             self.assertEqual(file_actions[0]["classification"], "unmanaged")
             self.assertEqual(file_actions[0]["operation"], "skip")
+            self.assertEqual(block_actions[0]["operation"], "skip")
 
-    def test_codex_legacy_skill_dir_is_skipped_by_default(self) -> None:
+    def test_codex_optional_agents_skill_dir_is_skipped_by_default(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
             create_agent_homes(root, "codex")
-            legacy = root / ".codex" / "skills" / "zotero" / "SKILL.md"
+            legacy = root / ".agents" / "skills" / "zotero" / "SKILL.md"
             legacy.parent.mkdir(parents=True)
-            legacy.write_text("legacy codex skill\n", encoding="utf-8")
+            legacy.write_text("optional workspace codex skill\n", encoding="utf-8")
 
             from installer.ai_agents_skills.agents import detect_agents
 
@@ -149,7 +153,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
         with fake_root() as tmp:
             root = Path(tmp)
             create_agent_homes(root, "codex")
-            legacy = root / ".codex" / "skills" / "research_digest_wrapper" / "SKILL.md"
+            legacy = root / ".agents" / "skills" / "research_digest_wrapper" / "SKILL.md"
             legacy.parent.mkdir(parents=True)
             legacy.write_text("legacy alias skill\n", encoding="utf-8")
 
@@ -165,7 +169,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(file_actions[0]["legacy_path"], str(legacy))
 
             apply_plan(root, plan, dry_run=False)
-            target = root / ".agents" / "skills" / "research-digest-wrapper" / "SKILL.md"
+            target = root / ".codex" / "skills" / "research-digest-wrapper" / "SKILL.md"
             self.assertTrue(target.exists())
             self.assertTrue(legacy.exists())
 
@@ -183,13 +187,16 @@ class PlanInstallVerifyTests(unittest.TestCase):
             apply_plan(root, plan, dry_run=False)
 
             target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            instructions = root / ".claude" / "CLAUDE.md"
             self.assertTrue(target.exists())
+            self.assertTrue(instructions.exists())
             dry = uninstall(root, skills={"zotero"}, dry_run=True)
             self.assertTrue(dry["dry_run"])
             self.assertTrue(target.exists())
             applied = uninstall(root, skills={"zotero"}, dry_run=False)
             self.assertFalse(applied["dry_run"])
             self.assertFalse(target.exists())
+            self.assertFalse(instructions.exists())
 
     def test_rollback_dry_run_and_apply(self) -> None:
         manifests = load_manifests()
@@ -204,12 +211,55 @@ class PlanInstallVerifyTests(unittest.TestCase):
             plan = build_plan(root, manifests, selected, detect_agents(root))
             result = apply_plan(root, plan, dry_run=False)
             target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            instructions = root / ".claude" / "CLAUDE.md"
             self.assertTrue(target.exists())
+            self.assertTrue(instructions.exists())
             dry = rollback(root, run_id=result["run_id"], dry_run=True)
             self.assertTrue(dry["dry_run"])
             applied = rollback(root, run_id=result["run_id"], dry_run=False)
             self.assertFalse(applied["dry_run"])
             self.assertFalse(target.exists())
+            self.assertFalse(instructions.exists())
+
+    def test_support_files_are_installed_and_verified(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            support_actions = [a for a in plan["actions"] if a["artifact_type"] == "skill-support-file"]
+            self.assertTrue(support_actions)
+            apply_plan(root, plan, dry_run=False)
+            support = root / ".claude" / "skills" / "deep-research-workflow" / "references" / "output-structure.md"
+            self.assertTrue(support.exists())
+            self.assertIn("Managed by ai-agents-skills", support.read_text(encoding="utf-8"))
+            result = verify(root)
+            self.assertEqual(result["status"], "ok")
+
+    def test_uninstall_can_remove_one_skill_without_touching_another(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "source-research,zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            apply_plan(root, plan, dry_run=False)
+            uninstall(root, skills={"zotero"}, dry_run=False)
+
+            self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
+            self.assertTrue((root / ".claude" / "skills" / "source-research" / "SKILL.md").exists())
+            instructions = (root / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+            self.assertNotIn("ai-agents-skills:zotero", instructions)
+            self.assertIn("ai-agents-skills:source-research", instructions)
 
 
 class DocsAndLauncherTests(unittest.TestCase):
@@ -225,6 +275,8 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("docs/multi-agent-examples.md", readme)
         self.assertIn("Graph Reconfiguration Specialist", readme)
         self.assertIn("docs/system-profile.md", readme)
+        self.assertIn("docs/agent-locations.md", readme)
+        self.assertTrue((REPO_ROOT / "docs" / "agent-locations.md").exists())
 
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
         text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")
@@ -282,6 +334,59 @@ class DocsAndLauncherTests(unittest.TestCase):
                 "--apply",
             ])
             self.assertEqual(code, 0)
+
+    def test_cli_uninstall_apply_requires_scope(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            code = main([
+                "--json",
+                "--root",
+                str(root),
+                "uninstall",
+                "--apply",
+            ])
+            self.assertEqual(code, 1)
+
+    def test_cli_precheck_reports_selected_dependencies(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "precheck",
+                    "--skill",
+                    "graph-verifier",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["active_skills"], ["graph-verifier"])
+            self.assertTrue(payload["dependencies"])
+
+    def test_precheck_ignores_dependencies_for_absent_agent_filter(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "deepseek",
+                    "precheck",
+                    "--skill",
+                    "graph-verifier",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["detected_agents"], [])
+            self.assertEqual(payload["active_skills"], [])
+            self.assertEqual(payload["dependencies"], [])
 
     def test_cli_accepts_global_options_after_subcommand(self) -> None:
         with fake_root() as tmp:

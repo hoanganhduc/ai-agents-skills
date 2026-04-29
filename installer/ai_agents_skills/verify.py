@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .render import MANAGED_MARKER, block_id
+from .sanitize import has_sensitive_material
 from .state import load_state
 
 
@@ -30,10 +31,16 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "metadata-valid", "ok": f"name: {artifact['skill']}" in text})
         checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
+        checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
         checks.append({"name": "agent-visible", "ok": path.parent.name == artifact["skill"]})
+    if artifact.get("artifact_type") == "skill-support-file" and path.exists():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
+        checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
     if artifact.get("artifact_type") == "instruction-block" and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "managed-block-present", "ok": block_id(artifact["skill"]) in text})
+        checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
     return {
         "agent": artifact.get("agent"),
         "skill": artifact.get("skill"),

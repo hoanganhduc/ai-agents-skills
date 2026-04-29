@@ -23,7 +23,7 @@ agent-local installation targets:
   and skips absent agents without requiring their tools.
 - Runtime-backed workflows use logical dependencies, not personal paths. For
   example, a skill asks for `python-runtime`, `tex-runtime`, or `sage-runtime`;
-  `doctor` decides whether that capability is local, WSL-backed, missing, or
+  `precheck` decides whether that capability is local, WSL-backed, missing, or
   degraded.
 
 For a research task, the agent instruction layer chooses the workflow, while
@@ -44,7 +44,8 @@ its dependencies.
 
 | Agent | Existing layout observed | Installer behavior |
 |---|---|---|
-| Codex | Existing skills under `<HOME>/.codex/skills` | Treated as legacy/self-contained skills; skipped by default or copied to `<HOME>/.agents/skills` only with `--migrate`. |
+| Codex | Existing skills under `<HOME>/.codex/skills` | Primary Codex target. Existing unmanaged files are skipped by default; canonical installs and migrations write here. |
+| Codex optional workspace | Optional `<HOME>/.agents/skills` when present | Compatibility or workspace-local target, not the default global target. |
 | Claude | Existing skills under `<HOME>/.claude/skills`; some legacy aliases such as `deep-research` | Canonical names are used for new installs; aliases are detected and skipped unless migrated. |
 | DeepSeek | Existing skills under `<HOME>/.deepseek/skills` | Existing unmanaged skills are skipped by default. |
 

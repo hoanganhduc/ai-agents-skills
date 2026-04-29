@@ -80,6 +80,8 @@ copies those bodies into each supported agent and adds managed metadata.
   lifecycle, and available research templates.
 - `docs/system-profile.md`: sanitized maintainer-system profile and how local
   tools map to skills.
+- `docs/agent-locations.md`: supported agent config, skill, template, command,
+  persona, and tool-shim locations.
 - `docs/verification.md`: installed-artifact verification model.
 
 The GitHub Pages site is built from `docs/source` and deployed by
@@ -91,6 +93,7 @@ Linux:
 
 ```bash
 make doctor
+make precheck ARGS="--profile research-core"
 make list-skills
 make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
@@ -102,6 +105,7 @@ Windows:
 
 ```bat
 make.bat doctor
+make.bat precheck --profile research-core
 make.bat list-skills
 make.bat plan --profile research-core
 make.bat install --profile research-core --dry-run

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -18,15 +19,11 @@ def discover_tool(name: str, spec: dict[str, Any], platform: str) -> dict[str, A
         if not expanded:
             continue
         if expanded.startswith("wsl:"):
-            checked.append(
-                {
-                    "candidate": raw,
-                    "status": "degraded",
-                    "reason": "WSL candidates require native Windows verification",
-                    "scope": "wsl",
-                    "substrate": "wsl",
-                }
-            )
+            wsl_result = discover_wsl_candidate(name, expanded.removeprefix("wsl:"), raw)
+            checked.append(wsl_result)
+            if wsl_result["status"] in {"ok", "degraded"} and wsl_result.get("command"):
+                wsl_result["checked"] = checked
+                return wsl_result
             continue
         command = resolve_command(expanded)
         if command is None:
@@ -61,7 +58,7 @@ def expand_candidate(raw: str) -> str:
 
 
 def resolve_command(candidate: str) -> str | None:
-    parts = candidate.split()
+    parts = shlex.split(candidate, posix=os.name != "nt")
     first = parts[0]
     path = Path(first)
     if path.is_absolute() or first.startswith("."):
@@ -76,7 +73,7 @@ def resolve_command(candidate: str) -> str | None:
 
 
 def detect_version(command: str) -> str:
-    parts = command.split()
+    parts = shlex.split(command, posix=os.name != "nt")
     for args in (["--version"], ["-V"]):
         try:
             result = subprocess.run(
@@ -107,7 +104,7 @@ def check_capabilities(name: str, command: str) -> dict[str, bool]:
 
 
 def run_python(command: str, code: str) -> bool:
-    parts = command.split()
+    parts = shlex.split(command, posix=os.name != "nt")
     try:
         result = subprocess.run(
             [parts[0], *parts[1:], "-c", code],
@@ -122,7 +119,7 @@ def run_python(command: str, code: str) -> bool:
 
 
 def infer_scope(command: str) -> str:
-    path = Path(command.split()[0])
+    path = Path(shlex.split(command, posix=os.name != "nt")[0])
     try:
         resolved = path.resolve()
     except OSError:
@@ -148,7 +145,7 @@ def substrate_for(platform: str, command: str | None = None) -> str:
 
 
 def is_posix_command(command: str) -> bool:
-    executable = command.split()[0]
+    executable = shlex.split(command, posix=os.name != "nt")[0]
     return executable.startswith("/") and not executable.lower().endswith(".exe")
 
 
@@ -158,3 +155,86 @@ def current_platform(override: str | None = None) -> str:
     if sys.platform.startswith("win"):
         return "windows"
     return "linux"
+
+
+def discover_wsl_candidate(name: str, command_name: str, raw: str) -> dict[str, Any]:
+    wsl = shutil.which("wsl.exe") or shutil.which("wsl")
+    if not wsl:
+        return {
+            "logical_name": name,
+            "candidate": raw,
+            "status": "missing",
+            "reason": "wsl executable not found from this substrate",
+            "scope": "wsl",
+            "substrate": "wsl",
+        }
+    probe = subprocess.run(
+        [wsl, "sh", "-lc", f"command -v {shlex.quote(command_name)}"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+        check=False,
+    )
+    if probe.returncode != 0 or not probe.stdout.strip():
+        return {
+            "logical_name": name,
+            "candidate": raw,
+            "status": "missing",
+            "reason": f"{command_name} not found inside default WSL distro",
+            "scope": "wsl",
+            "substrate": "wsl",
+        }
+    command = f"{wsl} sh -lc {shlex.quote(command_name)}"
+    return {
+        "logical_name": name,
+        "candidate": raw,
+        "command": command,
+        "version": detect_wsl_version(wsl, command_name),
+        "scope": "wsl",
+        "substrate": "wsl",
+        "capabilities": {"executable": True, "wsl-command-exec": True},
+        "status": "ok",
+    }
+
+
+def detect_wsl_version(wsl: str, command_name: str) -> str:
+    result = subprocess.run(
+        [wsl, "sh", "-lc", f"{shlex.quote(command_name)} --version 2>&1 | head -n 1"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=10,
+        check=False,
+    )
+    return result.stdout.strip() or "unknown"
+
+
+def discover_python_package(package_name: str, module: str, python_command: str | None) -> dict[str, Any]:
+    if not python_command:
+        return {
+            "logical_name": package_name,
+            "status": "missing",
+            "reason": "python runtime unavailable",
+            "module": module,
+        }
+    parts = shlex.split(python_command, posix=os.name != "nt")
+    code = (
+        "import importlib.util, sys; "
+        f"spec = importlib.util.find_spec({module!r}); "
+        "sys.exit(0 if spec else 1)"
+    )
+    result = subprocess.run(
+        [parts[0], *parts[1:], "-c", code],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+        check=False,
+    )
+    return {
+        "logical_name": package_name,
+        "type": "python",
+        "module": module,
+        "status": "ok" if result.returncode == 0 else "missing",
+        "python": python_command,
+    }

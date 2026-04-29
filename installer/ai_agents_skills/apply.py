@@ -47,6 +47,7 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
     path = Path(action["path"])
     op = action["operation"]
     result = base_result(run_id, action)
+    result["created_file"] = not path.exists()
     result["previous_hash"] = sha256_file(path)
     if op in {"skip", "noop"}:
         result["managed"] = op == "noop"
@@ -72,6 +73,7 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
 def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
     path = Path(action["path"])
     result = base_result(run_id, action)
+    result["created_file"] = not path.exists()
     before = path.read_text(encoding="utf-8") if path.exists() else ""
     result["previous_hash"] = sha256_text(before)
     if action.get("operation") in {"skip", "noop"}:

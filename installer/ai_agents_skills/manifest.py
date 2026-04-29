@@ -53,6 +53,9 @@ def validate_manifests(
         raise ManifestError("profiles.yaml must contain a profiles object")
     if "tools" not in dependencies or not isinstance(dependencies["tools"], dict):
         raise ManifestError("dependencies.yaml must contain a tools object")
+    packages = dependencies.get("packages", {})
+    if not isinstance(packages, dict):
+        raise ManifestError("dependencies.yaml packages must be an object")
 
     for name, spec in skills["skills"].items():
         if not isinstance(spec, dict):
@@ -62,6 +65,11 @@ def validate_manifests(
                 raise ManifestError(f"skill {name} is missing {field}")
         if "_" in name:
             raise ManifestError(f"skill {name} must use canonical kebab-case")
+        declared_dependencies = set(dependencies["tools"]) | set(packages)
+        for field in ("required_dependencies", "optional_dependencies"):
+            for dependency in spec.get(field, []):
+                if dependency not in declared_dependencies:
+                    raise ManifestError(f"skill {name} references unknown dependency {dependency}")
 
 
 def skill_names(manifests: dict[str, Any]) -> list[str]:

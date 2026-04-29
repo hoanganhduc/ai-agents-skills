@@ -67,6 +67,22 @@ def add_managed_header(content: str, agent: str) -> str:
     return header + "\n\n" + content
 
 
+def add_managed_support_header(content: str, agent: str, relative_path: str) -> str:
+    if MANAGED_MARKER in content:
+        return content
+    marker = f"{MANAGED_MARKER}. Generated target: {agent}. Source: {relative_path}."
+    if relative_path.endswith(".md"):
+        header = f"<!-- {marker} -->"
+        return header + "\n\n" + content
+    if relative_path.endswith((".sh", ".py", ".yaml", ".yml", ".sage", ".toml", ".ps1")):
+        header = f"# {marker}"
+        if content.startswith("#!"):
+            first, _, rest = content.partition("\n")
+            return first + "\n" + header + ("\n" + rest if rest else "\n")
+        return header + "\n" + content
+    return content
+
+
 def block_id(skill: str) -> str:
     return f"ai-agents-skills:{skill}"
 

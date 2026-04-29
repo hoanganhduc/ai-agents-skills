@@ -52,6 +52,24 @@
         "windows": ["pdflatex.exe", "lualatex.exe", "xelatex.exe"]
       },
       "capabilities": ["compile"]
+    },
+    "ocr-runtime": {
+      "description": "OCR command line runtime, normally Tesseract.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["tesseract"],
+        "windows": ["tesseract.exe", "tesseract"]
+      },
+      "capabilities": ["ocr"]
+    },
+    "calibre-cli": {
+      "description": "Calibre command line tools for ebook metadata and conversion.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["calibredb", "ebook-convert"],
+        "windows": ["calibredb.exe", "ebook-convert.exe", "calibredb", "ebook-convert"]
+      },
+      "capabilities": ["ebook-library"]
     }
   },
   "packages": {
