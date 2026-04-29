@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,8 @@ def apply_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, A
         return apply_file_action(root, run_id, action)
     if action["kind"] == "managed-block":
         return apply_block_action(root, run_id, action)
+    if action["kind"] == "legacy-dir":
+        return apply_legacy_dir_action(root, run_id, action)
     raise ValueError(f"unknown action kind: {action['kind']}")
 
 
@@ -60,14 +63,41 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
         return result
     backup = backup_file(root, run_id, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(action["content"], encoding="utf-8")
-    os.replace(tmp, path)
+    actual_mode = action.get("install_mode", "copy")
+    try:
+        if actual_mode == "symlink":
+            replace_with_symlink(path, Path(action["source_path"]))
+        else:
+            replace_with_text(path, action["content"])
+    except OSError as exc:
+        fallback_mode = action.get("fallback_mode")
+        if action.get("install_mode") != "symlink" or fallback_mode not in {"reference", "copy"}:
+            raise
+        actual_mode = fallback_mode
+        replace_with_text(path, action.get("fallback_content", action["content"]))
+        result["fallback_reason"] = str(exc)
     result["managed"] = True
     result["applied"] = True
     result["backup"] = str(backup) if backup else None
     result["new_hash"] = sha256_file(path)
+    result["install_mode"] = actual_mode
     return result
+
+
+def replace_with_text(path: Path, content: str) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def replace_with_symlink(path: Path, source_path: Path) -> None:
+    if not source_path.exists():
+        raise FileNotFoundError(f"symlink source does not exist: {source_path}")
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    if tmp.exists() or tmp.is_symlink():
+        tmp.unlink()
+    os.symlink(source_path, tmp)
+    os.replace(tmp, path)
 
 
 def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
@@ -94,6 +124,34 @@ def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[
     return result
 
 
+def apply_legacy_dir_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
+    path = Path(action["path"])
+    legacy_path = Path(action["legacy_path"])
+    result = base_result(run_id, action)
+    result["managed"] = False
+    result["created_file"] = False
+    result["previous_hash"] = None
+    result["new_hash"] = None
+    result["backup"] = None
+    if action["operation"] != "remove-legacy":
+        result["applied"] = False
+        return result
+    if legacy_path.parent != path:
+        raise ValueError(f"legacy path does not belong to planned legacy directory: {legacy_path}")
+    if not path.exists():
+        result["applied"] = False
+        return result
+    if not path.is_dir():
+        raise ValueError(f"refusing to remove non-directory legacy path: {path}")
+    root_resolved = root.resolve()
+    path_resolved = path.resolve()
+    if not path_resolved.is_relative_to(root_resolved):
+        raise ValueError(f"refusing to remove legacy path outside root: {path}")
+    shutil.rmtree(path)
+    result["applied"] = True
+    return result
+
+
 def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
     result = {
         "key": artifact_key(action),
@@ -109,6 +167,12 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
     }
     if action.get("legacy_path"):
         result["legacy_path"] = action["legacy_path"]
+    if action.get("source_path"):
+        result["source_path"] = action["source_path"]
+    if action.get("install_mode"):
+        result["install_mode"] = action["install_mode"]
+    if action.get("fallback_mode"):
+        result["fallback_mode"] = action["fallback_mode"]
     return result
 
 

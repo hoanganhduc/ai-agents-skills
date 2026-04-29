@@ -104,8 +104,10 @@ also summarizes the available templates:
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
-skills. Reusable skill bodies live under `canonical/skills`; the installer
-copies those bodies into each supported agent and adds managed metadata.
+skills. Reusable skill bodies live under `canonical/skills`; the default
+install links supported agents back to those canonical files, with reference
+adapter and copy modes available when an agent or filesystem cannot use
+symlinks.
 
 ## Documentation
 
@@ -179,6 +181,12 @@ Real-system writes require explicit `--apply --real-system`. Tests and examples
 use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 `--backup-replace`, or `--migrate` only after reviewing `plan` output.
 
+Skills install in `--install-mode symlink` by default so the repo remains the
+single maintained source. If an agent cannot follow symlinked skill files, use
+`--install-mode reference` to install thin adapters that tell the agent where
+the canonical skill lives. Use `--install-mode copy` only when files must be
+materialized inside the agent settings directory.
+
 Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
 `--artifact-profile workflow-instructions`, or
@@ -220,9 +228,11 @@ skills they depend on.
 ## Skills
 
 Skills are the installable agent capabilities. Installing a skill creates the
-per-agent `SKILL.md` files and support files, then adds managed instruction
-blocks only for installed, adopted, or migrated skills. Use `--skill` or
-`--skills` for narrow installs.
+per-agent `SKILL.md` target, support files when needed, and managed instruction
+blocks only for installed, adopted, or migrated skills. By default those skill
+targets are symlinks to `canonical/skills`; `reference` mode writes a thin
+adapter, and `copy` mode writes regular files. Use `--skill` or `--skills` for
+narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"
@@ -255,9 +265,12 @@ def write_skills_doc(manifests: dict[str, Any], path: Path) -> Path:
         "make verify ARGS=\"--skill zotero --root /tmp/aas-fake-home\"\n"
         "```\n\n"
         "Installation is partial by default: selecting one skill installs only "
-        "that skill, its support files, and the managed instruction block for "
-        "that installed or adopted skill. Skipped skills do not receive "
-        "instruction blocks.\n\n"
+        "that skill, its support files when the selected install mode needs "
+        "them, and the managed instruction block for that installed or adopted "
+        "skill. Skipped skills do not receive instruction blocks. Default "
+        "`symlink` mode points agent skill files at `canonical/skills`; "
+        "`reference` mode writes thin adapters that tell agents where to read "
+        "the canonical skill; `copy` mode writes regular files.\n\n"
         + skill_table(manifests)
         + "\n\n"
         "Related pages: [Installation](installation.md), "
@@ -554,21 +567,24 @@ Current skill checks:
 
 - `L1 file-exists`
 - `L2 metadata-valid`
-- `L3 managed-marker`
-- `L4 no-secret-leak`
-- `L5 agent-visible`
+- `L3 managed-marker` for copy and reference installs
+- `L4 symlink`, `source-exists`, and `source-match` for symlink installs
+- `L5 no-secret-leak`
+- `L6 agent-visible`
 
 Current instruction-block checks:
 
 - `S1 file-exists`
 - `S2 managed-block-present`
-- `S3 no-secret-leak`
+- `S3 no-secret-leak` for the managed block text only; surrounding user
+  instructions are outside installer ownership
 
 Current support-file checks:
 
 - `A1 file-exists`
-- `A2 managed-marker`
-- `A3 no-secret-leak`
+- `A2 managed-marker` for copied support files
+- `A3 symlink`, `source-exists`, and `source-match` for symlinked support files
+- `A4 no-secret-leak`
 
 Current optional artifact checks:
 
@@ -597,8 +613,9 @@ This repository is designed for an experimental personal multi-agent research
 workstation, with an emphasis on combinatorics and graph theory workflows. It
 is not guaranteed to work as desired in every environment. Codex, Claude, and
 DeepSeek each keep their own local configuration directory, but the reusable
-research instructions live here as canonical skill bodies. The installer copies
-those skill bodies into whichever agents are present and leaves absent agents
+research instructions live here as canonical skill bodies. The installer links
+those skill bodies into whichever agents are present by default, can write thin
+reference adapters when symlinks are not suitable, and leaves absent agents
 alone.
 
 The system has three layers:
@@ -938,19 +955,19 @@ Install flow:
 1. Resolve selected skills and artifacts from `--skill`, `--skills`,
    `--profile`, `--artifact`, `--artifacts`, or `--artifact-profile`.
 2. Detect available agent homes under the selected `--root`.
-3. Render canonical skill bodies and optional artifacts into each supported
-   target format.
+3. Resolve the requested install mode, then link, reference, or copy canonical
+   skill bodies into each supported target format.
 4. Add managed instruction blocks only for skills or artifacts that are
    installed, adopted, migrated, updated, or already managed.
-5. Record hashes and ownership metadata for verification, uninstall, and
-   rollback.
+5. Record hashes, source paths, install modes, and ownership metadata for
+   verification, uninstall, and rollback.
 
 Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Installs canonical `SKILL.md` into the agent skill directory. |
-| `skill-support-file` | Installs canonical references, scripts, assets, templates, and agent notes inside the skill directory. |
+| `skill-file` | Symlinks canonical `SKILL.md` into the agent skill directory by default; reference and copy modes are available. |
+| `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes by default; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
 | `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, and DeepSeek receives reference prompts. |
@@ -1039,6 +1056,28 @@ Real-system writes should be a final step after reviewing `plan` output:
 make install ARGS="--profile research-core --apply --real-system"
 ```
 
+## Install Modes
+
+`--install-mode symlink` is the default. Skill files and support files are
+installed as symlinks to `canonical/skills`, so editing the repo updates what
+the agents read without duplicating every skill body into every settings
+directory.
+
+Use `--install-mode reference` for agents or environments that should not load
+symlinked skills. This mode writes a thin `SKILL.md` adapter into the agent
+settings directory. The adapter tells the agent where the canonical repo skill
+file is and does not copy support files.
+
+Use `--install-mode copy` only when the agent must have regular files inside
+its settings directory. Copy mode materializes skill files and support files
+with managed metadata, so it uses more space and needs reinstalling after repo
+skill changes.
+
+If symlink creation fails during an applied symlink install, skill files fall
+back to reference adapters and support files fall back to copied files. Optional
+artifacts outside skill directories are always copied because agents do not
+load them as canonical skill source.
+
 ## Selection Model
 
 - `--profile research-core` selects a workflow bundle.
@@ -1056,8 +1095,8 @@ See [Profiles](profiles.md), [Skills](skills.md), and
 - default: create missing managed files and skip unmanaged or legacy files
 - `--adopt`: record an existing target file as user-owned managed state
 - `--backup-replace`: back up and replace an unmanaged target file
-- `--migrate`: copy a detected legacy skill into the canonical target while
-  leaving the legacy source in place
+- `--migrate`: install a detected legacy skill under the canonical name using
+  the selected install mode, then remove the legacy alias directory
 
 Instruction blocks are installed only when the corresponding skill artifact is
 actually installed, adopted, updated, already managed, or migrated. A skipped
@@ -1087,7 +1126,8 @@ Scenario summary:
 | Skill absent | Managed skill files and support files are created. |
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
-| Legacy alias exists | Default plan skips; `--migrate` copies canonical content under the canonical name. |
+| Legacy alias exists | Default plan skips; `--migrate` installs the canonical target and removes the legacy alias directory. |
+| Agent rejects symlinked skills | Use `--install-mode reference`; if regular files are unavoidable, use `--install-mode copy`. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
@@ -1402,7 +1442,13 @@ If a plan reports `classification=unmanaged`, the installer found user-owned
 content in the target path and will skip it unless `--adopt` or
 `--backup-replace` is used. If a plan reports `classification=legacy`, the
 installer found a compatibility or alias path and will skip it unless
-`--migrate` is used.
+`--migrate` is used. A reviewed `--migrate` plan installs the canonical target
+and removes the legacy alias directory.
+
+Default installs use `--install-mode symlink`. If an agent does not load
+symlinked skills correctly, use `--install-mode reference` so the installed
+adapter tells the agent where the canonical repo skill lives. If the agent
+requires regular files in its settings directory, use `--install-mode copy`.
 
 Useful inspection commands:
 
@@ -1422,6 +1468,7 @@ Common cases:
 | Dependency is degraded | The tool or install root was found but not fully executable from this substrate. | Re-run precheck from the native substrate, such as Windows or WSL. |
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
+| Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
 | Verify returns `no-managed-artifacts` | The selected scope has no state recorded by this installer. | Run install/adopt/migrate first, or verify a different scope. |
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),
