@@ -1,0 +1,29 @@
+# Skills
+
+| Skill | Description | Profiles |
+|---|---|---|
+| `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `full-research` |
+| `annotated-review` | Annotated paper review workflow when both annotation and review are requested. | `full-research` |
+| `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `full-research` |
+| `database-lookup` | Structured public scientific, biomedical, regulatory, materials, and economic database lookups. | `document`, `full-research` |
+| `deep-research-workflow` | Phased source-preserving research workflow: search, analyze, write, with citation handoff. | `research-core`, `full-research` |
+| `digest-bridge` | Convert digest output into paper retrieval manifests. | `digest`, `full-research` |
+| `docling` | Parse, convert, OCR, chunk, and analyze documents. | `document`, `full-research` |
+| `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `full-research` |
+| `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
+| `modal-research-compute` | Route heavy compute jobs to Modal through a local broker. | `full-research` |
+| `openclaw-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `full-research` |
+| `paper-lookup` | External paper metadata and discovery fallback. | `library`, `full-research` |
+| `paper-review` | Single-agent paper review workflow. | `full-research` |
+| `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `full-research` |
+| `research-briefing` | Scope nontrivial research before execution with evidence plan and workflow recommendation. | `research-core`, `full-research` |
+| `research-digest-wrapper` | Run tracked-topic research digests. | `digest`, `full-research` |
+| `research-report-reviewer` | Review draft research reports for unsupported claims, ambiguity, and evidence gaps. | `research-core`, `full-research` |
+| `research-verification-gate` | Final evidence, date, and gap check before delivery. | `research-core`, `full-research` |
+| `rss-news-digest` | Run and manage RSS digest workflows. | `digest`, `full-research` |
+| `sagemath` | Sage-backed math, graph theory, algebra, and verification. | `math`, `full-research` |
+| `self-improving-agent` | Log durable learnings, failures, and missing capabilities. | `full-research` |
+| `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
+| `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
+| `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
+| `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `full-research` |

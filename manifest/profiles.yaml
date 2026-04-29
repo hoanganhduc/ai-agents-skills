@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "research-core": {
+      "description": "Default research planning, source gathering, report review, and delivery verification.",
+      "skills": [
+        "research-briefing",
+        "deep-research-workflow",
+        "openclaw-research",
+        "research-report-reviewer",
+        "research-verification-gate"
+      ]
+    },
+    "library": {
+      "description": "Paper and ebook library workflows.",
+      "skills": ["zotero", "calibre", "getscipapers-requester", "paper-lookup"]
+    },
+    "document": {
+      "description": "Document conversion and structured database lookup.",
+      "skills": ["docling", "database-lookup"]
+    },
+    "digest": {
+      "description": "Tracked-topic and RSS digest workflows.",
+      "skills": ["research-digest-wrapper", "rss-news-digest", "digest-bridge"]
+    },
+    "math": {
+      "description": "Math and graph verification workflows.",
+      "skills": ["sagemath", "graph-verifier"]
+    },
+    "figure": {
+      "description": "Structural figure generation and checking.",
+      "skills": ["tikz-draw"]
+    },
+    "multi-agent": {
+      "description": "Multi-agent and structured workflow orchestration.",
+      "skills": ["agent-group-discuss", "prose"]
+    },
+    "ebook": {
+      "description": "Ebook discovery and library handoff.",
+      "skills": ["calibre", "vnthuquan"]
+    },
+    "full-research": {
+      "description": "All research-related skills.",
+      "skills": ["*"]
+    }
+  },
+  "default_profile": "research-core"
+}
