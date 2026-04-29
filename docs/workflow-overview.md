@@ -18,9 +18,9 @@ The system has three layers:
 
 The installer links these layers without embedding private state. It does not
 store credentials, session logs, local library databases, downloaded papers, or
-machine-specific paths. Instead, `doctor` detects logical capabilities such as
-`python-runtime`, `tex-runtime`, `sage-runtime`, library access, and optional
-Python packages on the current system.
+machine-specific paths. Instead, `precheck` detects logical capabilities such
+as `python-runtime`, `tex-runtime`, `sage-runtime`, library access, and
+optional Python packages on the current system.
 
 A typical research workflow looks like this:
 

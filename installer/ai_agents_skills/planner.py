@@ -4,7 +4,14 @@ from pathlib import Path
 from typing import Any
 
 from .agents import AgentTarget
-from .render import MANAGED_MARKER, block_id, render_instruction_block, render_skill_md
+from .manifest import REPO_ROOT
+from .render import (
+    MANAGED_MARKER,
+    add_managed_support_header,
+    block_id,
+    render_instruction_block,
+    render_skill_md,
+)
 from .state import sha256_file, sha256_text
 
 
@@ -44,9 +51,52 @@ def build_plan(
                 migrate=migrate,
             )
             actions.append(file_action)
+            if skill_action_is_active(file_action):
+                actions.extend(
+                    support_file_actions(
+                        agent=agent,
+                        skill=skill,
+                        adopt=adopt,
+                        backup_replace=backup_replace,
+                    )
+                )
             block = render_instruction_block(skill, spec)
             actions.append(classify_instruction_block(agent, skill, block, file_action))
     return {"actions": actions, "skipped_agents": skipped_agents, "root": str(root)}
+
+
+def support_file_actions(
+    agent: AgentTarget,
+    skill: str,
+    adopt: bool,
+    backup_replace: bool,
+) -> list[dict[str, Any]]:
+    canonical_dir = REPO_ROOT / "canonical" / "skills" / skill
+    if not canonical_dir.exists():
+        return []
+    actions: list[dict[str, Any]] = []
+    for source in sorted(canonical_dir.rglob("*")):
+        if not source.is_file() or source.name == "SKILL.md":
+            continue
+        relative = source.relative_to(canonical_dir)
+        try:
+            raw = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        content = add_managed_support_header(raw, agent.name, str(relative).replace("\\", "/"))
+        path = agent.skills_dir / skill / relative
+        actions.append(
+            classify_file_action(
+                agent=agent.name,
+                skill=skill,
+                path=path,
+                content=content,
+                artifact_type="skill-support-file",
+                adopt=adopt,
+                backup_replace=backup_replace,
+            )
+        )
+    return actions
 
 
 def classify_file_action(
@@ -70,9 +120,13 @@ def classify_file_action(
             operation = "create"
     else:
         current = path.read_text(encoding="utf-8", errors="replace")
-        if MANAGED_MARKER in current:
+        current_hash = sha256_text(current)
+        if current_hash == expected_hash:
             classification = "managed"
-            operation = "noop" if sha256_text(current) == expected_hash else "update"
+            operation = "noop"
+        elif MANAGED_MARKER in current:
+            classification = "managed"
+            operation = "update"
         elif adopt:
             classification = "unmanaged"
             operation = "adopt"
@@ -129,8 +183,8 @@ def classify_instruction_block(
     block: str,
     file_action: dict[str, Any],
 ) -> dict[str, Any]:
-    operation = "upsert"
-    reason = None
+    operation = "upsert" if skill_action_is_active(file_action) else "skip"
+    reason = None if operation == "upsert" else "skill artifact is not installed or adopted"
     legacy_path = file_action.get("legacy_path")
     if (
         file_action["classification"] == "legacy"
@@ -155,3 +209,14 @@ def classify_instruction_block(
     if reason:
         action["reason"] = reason
     return action
+
+
+def skill_action_is_active(action: dict[str, Any]) -> bool:
+    return action.get("operation") in {
+        "create",
+        "update",
+        "noop",
+        "adopt",
+        "backup-replace",
+        "migrate-copy",
+    }

@@ -17,6 +17,7 @@ def generate_docs(manifests: dict[str, Any]) -> list[Path]:
         write_static_doc(docs_dir / "workflow-overview.md", workflow_overview_text()),
         write_static_doc(docs_dir / "multi-agent-examples.md", multi_agent_examples_text()),
         write_static_doc(docs_dir / "system-profile.md", system_profile_text()),
+        write_static_doc(docs_dir / "agent-locations.md", agent_locations_text()),
         write_verification_doc(docs_dir / "verification.md"),
         write_static_doc(docs_dir / "architecture.md", architecture_text()),
         write_static_doc(docs_dir / "installation.md", installation_text()),
@@ -115,6 +116,8 @@ copies those bodies into each supported agent and adds managed metadata.
   lifecycle, and available research templates.
 - `docs/system-profile.md`: sanitized maintainer-system profile and how local
   tools map to skills.
+- `docs/agent-locations.md`: supported agent config, skill, template, command,
+  persona, and tool-shim locations.
 - `docs/verification.md`: installed-artifact verification model.
 
 The GitHub Pages site is built from `docs/source` and deployed by
@@ -126,6 +129,7 @@ Linux:
 
 ```bash
 make doctor
+make precheck ARGS="--profile research-core"
 make list-skills
 make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
@@ -137,6 +141,7 @@ Windows:
 
 ```bat
 make.bat doctor
+make.bat precheck --profile research-core
 make.bat list-skills
 make.bat plan --profile research-core
 make.bat install --profile research-core --dry-run
@@ -176,13 +181,20 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
     lines = ["# Dependencies", "", "| Logical Tool | Description |", "|---|---|"]
     for name in sorted(tools):
         lines.append(f"| `{name}` | {tools[name]['description']} |")
+    packages = manifests["dependencies"].get("packages", {})
+    if packages:
+        lines.extend(["", "## Packages And Services", "", "| Dependency | Type | Detail |", "|---|---|---|"])
+        for name in sorted(packages):
+            spec = packages[name]
+            detail = spec.get("module") or spec.get("logical_tool") or spec.get("type", "")
+            lines.append(f"| `{name}` | `{spec.get('type')}` | {detail} |")
     lines.extend(
         [
             "",
             "Dependencies are declared as logical capabilities rather than personal",
-            "paths. `doctor` resolves them from environment overrides, repo-local",
-            "runtimes, `PATH`, native Windows commands, and WSL-backed commands where",
-            "appropriate.",
+            "paths. `precheck` resolves them from environment overrides, repo-local",
+            "runtimes, `PATH`, native Windows commands, Python imports, remote-service",
+            "placeholders, and WSL-backed commands where appropriate.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -196,21 +208,30 @@ def write_verification_doc(path: Path) -> Path:
 Verification is selective. Only installed and enabled managed artifacts from the
 installer state are checked.
 
-Skill checks:
+Current skill checks:
 
 - `L1 file-exists`
 - `L2 metadata-valid`
-- `L3 agent-visible`
-- `L4 runner-doctor`
-- `L5 smoke-test`
+- `L3 managed-marker`
+- `L4 no-secret-leak`
+- `L5 agent-visible`
 
-Settings checks:
+Current instruction-block checks:
 
 - `S1 file-exists`
-- `S2 parse-valid`
-- `S3 managed-block-present`
-- `S4 no-secret-leak`
-- `S5 agent-loads-config`
+- `S2 managed-block-present`
+- `S3 no-secret-leak`
+
+Current support-file checks:
+
+- `A1 file-exists`
+- `A2 managed-marker`
+- `A3 no-secret-leak`
+
+The verifier intentionally skips skills and artifacts that were not installed.
+Runtime smoke tests, runner-specific `doctor` commands, and direct
+`agent-loads-config` checks are not automatic yet; use `precheck` and the
+agent's own diagnostics for those layers.
 """,
         encoding="utf-8",
     )
@@ -238,9 +259,9 @@ The system has three layers:
 
 The installer links these layers without embedding private state. It does not
 store credentials, session logs, local library databases, downloaded papers, or
-machine-specific paths. Instead, `doctor` detects logical capabilities such as
-`python-runtime`, `tex-runtime`, `sage-runtime`, library access, and optional
-Python packages on the current system.
+machine-specific paths. Instead, `precheck` detects logical capabilities such
+as `python-runtime`, `tex-runtime`, `sage-runtime`, library access, and
+optional Python packages on the current system.
 
 A typical research workflow looks like this:
 
@@ -518,19 +539,47 @@ def architecture_text() -> str:
 
 The manifests are the source of truth. The installer resolves canonical skills
 to per-agent target artifacts and records ownership in a journal. Existing
-unmanaged files are skipped by default. Agent-specific legacy locations, such as
-Codex's historical `~/.codex/skills`, are detected during planning so existing
-skills are not duplicated unless the user explicitly chooses `--migrate`.
+unmanaged files are skipped by default.
+
+Artifact classes:
+
+| Artifact class | Current behavior |
+|---|---|
+| `skill-file` | Installs canonical `SKILL.md` into the agent skill directory. |
+| `skill-support-file` | Installs canonical references, scripts, assets, templates, and agent notes inside the skill directory. |
+| `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
+| `agent-persona` | Reserved optional target class for reviewer/persona files. |
+| `template` | Reserved optional target class for research, report, and task templates. |
+| `command` | Reserved optional target class for command wrappers such as Claude slash commands. |
+| `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
+
+Codex user-level skills target `~/.codex/skills` in this setup. The optional
+`.agents/skills` layout is treated as a compatibility or workspace target when
+detected, not as the default global Codex target.
 """
 
 
 def installation_text() -> str:
     return """# Installation
 
-Use `make doctor` or `make.bat doctor` first. Use `plan` before `install`.
-Partial installs are first-class: select `--skill`, `--skills`, or `--profile`.
+Use `make precheck` or `make.bat precheck` first when installing on a new
+machine. Use `plan` before `install`. Partial installs are first-class: select
+`--skill`, `--skills`, or `--profile`.
+
+`doctor` is a quick required-tool check. `precheck` is broader: it detects
+required tools, optional tools, Python packages, remote-service configuration
+placeholders, detected agents, skipped agents, ignored dependencies, and
+Windows/WSL substrate information where possible.
+
+Use `precheck --interactive` for a guided one-by-one pass through missing
+dependencies. It does not install packages automatically; it shows the install
+hint, lets the user skip or ignore a dependency, and tells them to rerun
+`precheck` after installing software.
+
 `install --dry-run` previews the same actions as a default install preview;
-`install --apply` is required before any writes occur.
+`install --apply` is required before any writes occur. Real home-directory
+writes additionally require `--real-system`.
+
 Conflict modes:
 
 - default: create missing managed files and skip unmanaged or legacy files
@@ -538,6 +587,21 @@ Conflict modes:
 - `--backup-replace`: back up and replace an unmanaged target file
 - `--migrate`: copy a detected legacy skill into the canonical target while
   leaving the legacy source in place
+
+Instruction blocks are installed only when the corresponding skill artifact is
+actually installed, adopted, updated, already managed, or migrated. A skipped
+skill does not receive an `AGENTS.md` or `CLAUDE.md` block.
+
+Scenario summary:
+
+| Scenario | Result |
+|---|---|
+| Agent home absent | Agent is skipped; its dependencies are not required. |
+| Skill absent | Managed skill files and support files are created. |
+| Skill already managed | Files are updated or left unchanged according to hashes. |
+| Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
+| Legacy alias exists | Default plan skips; `--migrate` copies canonical content under the canonical name. |
+| Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
 """
 
 
@@ -567,7 +631,7 @@ agent-local installation targets:
   and skips absent agents without requiring their tools.
 - Runtime-backed workflows use logical dependencies, not personal paths. For
   example, a skill asks for `python-runtime`, `tex-runtime`, or `sage-runtime`;
-  `doctor` decides whether that capability is local, WSL-backed, missing, or
+  `precheck` decides whether that capability is local, WSL-backed, missing, or
   degraded.
 
 For a research task, the agent instruction layer chooses the workflow, while
@@ -588,7 +652,8 @@ its dependencies.
 
 | Agent | Existing layout observed | Installer behavior |
 |---|---|---|
-| Codex | Existing skills under `<HOME>/.codex/skills` | Treated as legacy/self-contained skills; skipped by default or copied to `<HOME>/.agents/skills` only with `--migrate`. |
+| Codex | Existing skills under `<HOME>/.codex/skills` | Primary Codex target. Existing unmanaged files are skipped by default; canonical installs and migrations write here. |
+| Codex optional workspace | Optional `<HOME>/.agents/skills` when present | Compatibility or workspace-local target, not the default global target. |
 | Claude | Existing skills under `<HOME>/.claude/skills`; some legacy aliases such as `deep-research` | Canonical names are used for new installs; aliases are detected and skipped unless migrated. |
 | DeepSeek | Existing skills under `<HOME>/.deepseek/skills` | Existing unmanaged skills are skipped by default. |
 
@@ -624,12 +689,58 @@ papers/books, Zotero databases, Calibre libraries, or local runtime state.
 """
 
 
+def agent_locations_text() -> str:
+    return """# Agent Locations
+
+The installer detects agent homes first. If an agent home is absent, that agent
+is skipped and its target-specific files are not planned.
+
+| Agent | Home | Skill target | Instruction file |
+|---|---|---|---|
+| Codex | `~/.codex` | `~/.codex/skills/<skill>/` | `~/.codex/AGENTS.md` |
+| Claude | `~/.claude` | `~/.claude/skills/<skill>/` | `~/.claude/CLAUDE.md` |
+| DeepSeek | `~/.deepseek` | `~/.deepseek/skills/<skill>/` | `~/.deepseek/AGENTS.md` |
+
+Optional or compatibility skill locations:
+
+| Agent | Optional location | Meaning |
+|---|---|---|
+| Codex | `~/.agents/skills` | Optional workspace/local target where supported; not the default global target. |
+| DeepSeek | `~/.agents/skills`, `./skills` | Workspace-local locations that may shadow global DeepSeek skills. |
+
+Optional artifact-class target directories:
+
+| Agent | Personas | Templates | Commands | Tool shims |
+|---|---|---|---|---|
+| Codex | `~/.codex/agents` | `~/.codex/templates` | `~/.codex/commands` | `~/.codex/tools` |
+| Claude | `~/.claude/agents` | `~/.claude/templates` | `~/.claude/commands` | `~/.claude/tools` |
+| DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
+
+These optional artifact classes are intentionally not installed by default.
+They are reserved for explicit profiles because commands, personas, hooks, and
+tool shims can affect behavior more broadly than a normal skill directory.
+
+Instruction files are modified through managed marker blocks only. Uninstall
+and rollback remove only those managed blocks and managed files.
+"""
+
+
 def windows_text() -> str:
     return """# Windows
 
 Windows is multi-substrate. Native Windows, PowerShell/CMD, Git Bash/MSYS, WSL,
 and remote services are checked separately. SageMath is usually WSL-backed and
 must not be treated as a normal Windows package.
+
+Use `make.bat precheck` before installation. The precheck reports whether each
+dependency is native Windows, WSL-backed, missing, degraded, or manual. A
+missing DeepSeek home on Windows is not an error; DeepSeek-specific artifacts
+and dependencies are skipped when the agent is absent.
+
+For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
+command is available inside the default WSL distro. For example, `sage-runtime`
+may be satisfied by `sage` inside WSL even if no native Windows `sage.exe`
+exists.
 """
 
 
@@ -637,17 +748,23 @@ def linux_text() -> str:
     return """# Linux
 
 Linux checks resolve logical tools from installed commands, repo-local runtimes,
-and user overrides such as `AAS_PYTHON` or `AAS_SAGE`.
+and user overrides such as `AAS_PYTHON` or `AAS_SAGE`. `precheck` also checks
+selected optional Python packages where a skill declares them.
 """
 
 
 def troubleshooting_text() -> str:
     return """# Troubleshooting
 
-Run `doctor --json` to inspect detected agents, selected tools, skipped agents,
-and degraded optional capabilities. Use `plan` to preview every file change.
-If a plan reports `classification=legacy`, the installer found a skill in an
-older or agent-specific location and will skip it unless `--migrate` is used.
+Run `precheck --json` to inspect detected agents, selected tools, optional
+packages, skipped agents, missing required dependencies, and degraded optional
+capabilities. Use `plan` to preview every file change.
+
+If a plan reports `classification=unmanaged`, the installer found user-owned
+content in the target path and will skip it unless `--adopt` or
+`--backup-replace` is used. If a plan reports `classification=legacy`, the
+installer found a compatibility or alias path and will skip it unless
+`--migrate` is used.
 """
 
 
@@ -657,4 +774,10 @@ def uninstall_text() -> str:
 `rollback` restores previous managed state from a recorded run. `uninstall`
 removes current managed artifacts. Both support skill and agent scopes and both
 support dry-run previews.
+
+Applied uninstall requires an explicit scope: use `--skill`, `--skills`, or
+`--all`. Uninstall removes only managed files and managed instruction blocks.
+Rollback can target one run, one skill, multiple skills, or one agent. If a
+managed instruction file was created by the installer and becomes empty after
+block removal, it is removed.
 """
