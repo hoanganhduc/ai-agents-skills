@@ -28,7 +28,7 @@
       "display_name": "Python runtime with pip, venv, and ssl",
       "requirement": "required for runtime-backed skills and the installer",
       "linux": "Native Python 3.10+ detected from environment override, repo venv, python3, or python.",
-      "windows": "Native Python 3.10+ detected from environment override, repo venv, py -3, python.exe, or python.",
+      "windows": "Native Python 3.10+ detected from environment override, repo venv, C:\\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python.",
       "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "annotated-review", "modal-research-compute", "session-logs"]
     },
     "bash-or-posix-shell": {
@@ -49,14 +49,14 @@
       "display_name": "Windows Subsystem for Linux 2",
       "requirement": "required when a Windows skill delegates to Linux-only tools",
       "linux": "not applicable",
-      "windows": "Current SageMath flow uses direct WSL execution with an Ubuntu 24.04 distro. Docker is explicitly not required by the current Windows Sage config.",
+      "windows": "Current SageMath flow uses direct WSL execution with an Ubuntu 24.04 distro. When precheck is run from WSL/Linux against a mounted Windows profile, the current local WSL filesystem is also inspected. Mounted rootfs directories are inspected when present; ext4.vhdx presence is reported as a degraded inspection gap because Sage inside the image cannot be verified without WSL, a local WSL filesystem, or a mounted rootfs. Docker is explicitly not required by the current Windows Sage config.",
       "used_by": ["sagemath", "tikz-draw optional Sage graph mode"]
     },
     "sagemath": {
       "display_name": "SageMath",
       "requirement": "required for the sagemath skill and optional Sage-backed graph/TikZ workflows",
       "linux": "Native executable via SAGE_BIN, sage on PATH, or a local Sage install.",
-      "windows": "WSL-backed SageMath inside Ubuntu 24.04.",
+      "windows": "WSL-backed SageMath inside Ubuntu 24.04, detected through wsl.exe when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when available, or an ext4.vhdx presence warning when the distro image is not inspectable.",
       "used_by": ["sagemath", "tikz-draw", "openclaw/source research math verification"]
     },
     "tex-runtime": {

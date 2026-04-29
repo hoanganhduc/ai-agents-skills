@@ -29,10 +29,42 @@ def discover_tool(
         if expanded.startswith("wsl:"):
             wsl_result = discover_wsl_candidate(name, expanded.removeprefix("wsl:"), raw)
             checked.append({key: value for key, value in wsl_result.items() if key != "checked"})
-            if wsl_result["status"] == "degraded":
+            if wsl_result["status"] == "ok" and wsl_result.get("command"):
                 return {**wsl_result, "checked": checked}
-            if wsl_result["status"] in {"ok", "degraded"} and wsl_result.get("command"):
-                return {**wsl_result, "checked": checked}
+            continue
+        if expanded.startswith("wsl-rootfs:"):
+            rootfs_result = discover_wsl_rootfs_candidate(
+                name,
+                expanded.removeprefix("wsl-rootfs:"),
+                raw,
+                root,
+                platform,
+            )
+            checked.append({key: value for key, value in rootfs_result.items() if key != "checked"})
+            if rootfs_result["status"] in {"ok", "degraded"}:
+                return {**rootfs_result, "checked": checked}
+            continue
+        if expanded.startswith("wsl-local:"):
+            local_wsl_result = discover_wsl_local_candidate(
+                name,
+                expanded.removeprefix("wsl-local:"),
+                raw,
+            )
+            checked.append({key: value for key, value in local_wsl_result.items() if key != "checked"})
+            if local_wsl_result["status"] in {"ok", "degraded"}:
+                return {**local_wsl_result, "checked": checked}
+            continue
+        if expanded.startswith("wsl-vhdx:"):
+            vhdx_result = discover_wsl_vhdx_candidate(
+                name,
+                expanded.removeprefix("wsl-vhdx:"),
+                raw,
+                root,
+                platform,
+            )
+            checked.append({key: value for key, value in vhdx_result.items() if key != "checked"})
+            if vhdx_result["status"] in {"ok", "degraded"}:
+                return {**vhdx_result, "checked": checked}
             continue
         command = resolve_command(expanded, platform, root)
         if command is None:
@@ -58,6 +90,16 @@ def discover_tool(
             "substrate": substrate_for(platform),
             "reason": "native Windows PATH cannot be inspected from this host",
         }
+    degraded = next((item for item in checked if item.get("status") == "degraded"), None)
+    if degraded:
+        return {
+            "logical_name": name,
+            "status": "degraded",
+            "checked": checked,
+            "scope": degraded.get("scope"),
+            "substrate": degraded.get("substrate", substrate_for(platform)),
+            "reason": degraded.get("reason", "candidate is present but could not be fully verified"),
+        }
     return {
         "logical_name": name,
         "status": "missing",
@@ -68,6 +110,7 @@ def discover_tool(
 
 def expand_candidate(raw: str, root: Path | None = None, platform: str | None = None) -> str:
     root = root or Path.home()
+    platform = current_platform(platform)
     value = raw.replace("<ROOT>", str(root))
     value = value.replace("<LINUX_HOME>", str(root))
     value = value.replace("<WINDOWS_HOME>", str(root))
@@ -77,10 +120,12 @@ def expand_candidate(raw: str, root: Path | None = None, platform: str | None = 
 
     def expand_percent(match: re.Match[str]) -> str:
         name = match.group(1)
-        fallback = {
-            "HOME": str(root),
-            "USERPROFILE": str(root),
-        }.get(name.upper(), "")
+        fallback = windows_env_fallback(name, root) if platform == "windows" else ""
+        if not fallback:
+            fallback = {
+                "HOME": str(root),
+                "USERPROFILE": str(root),
+            }.get(name.upper(), "")
         return os.environ.get(name, fallback)
 
     value = re.sub(r"\$\{([^}]+)\}", expand_braced, value)
@@ -93,6 +138,12 @@ def expand_candidate(raw: str, root: Path | None = None, platform: str | None = 
 def resolve_command(candidate: str, platform: str | None = None, root: Path | None = None) -> str | None:
     platform = current_platform(platform)
     root = root or Path.home()
+    path_candidate = candidate.strip("\"'")
+    if is_path_candidate(path_candidate):
+        for path in candidate_path_options(path_candidate, root, platform):
+            if path.exists():
+                return render_command(str(path), [])
+        return None
     parts = split_candidate(candidate, platform)
     if not parts:
         return None
@@ -118,9 +169,10 @@ def split_candidate(candidate: str, platform: str) -> list[str]:
 
 
 def render_command(executable: str, args: list[str]) -> str:
+    rendered = shlex.quote(executable)
     if not args:
-        return executable
-    return " ".join([shlex.quote(executable), *args])
+        return rendered
+    return " ".join([rendered, *args])
 
 
 def candidate_path_options(first: str, root: Path, platform: str) -> list[Path]:
@@ -129,18 +181,69 @@ def candidate_path_options(first: str, root: Path, platform: str) -> list[Path]:
         token = token.replace("\\", "/")
     if token.startswith("~/") or token == "~":
         suffix = token[2:] if token != "~" else ""
-        return [root / suffix]
+        return expand_path_glob(root / suffix)
     if re.match(r"^[A-Za-z]:[\\/]", token):
-        return [Path(token)] if host_is_windows() else []
+        if host_is_windows():
+            return expand_path_glob(Path(token))
+        return expand_path_glob(windows_drive_path_to_mount(token, root))
     path = Path(token)
     if path.is_absolute():
-        return [path]
+        return expand_path_glob(path)
     if is_path_candidate(first):
         options = [root / path]
         if token.startswith("."):
             options.append(REPO_ROOT / path)
-        return options
+        expanded: list[Path] = []
+        for option in options:
+            expanded.extend(expand_path_glob(option))
+        return expanded
     return []
+
+
+def expand_path_glob(path: Path) -> list[Path]:
+    text = str(path)
+    if any(char in text for char in "*?["):
+        return [Path(item) for item in sorted(glob(text), reverse=True)]
+    return [path]
+
+
+def existing_candidate_paths(expr: str, root: Path, platform: str) -> list[Path]:
+    paths = candidate_path_options(expr, root, platform)
+    return [path for path in paths if path.exists()]
+
+
+def windows_env_fallback(name: str, root: Path) -> str:
+    drive_root = windows_drive_root(root)
+    mapping = {
+        "APPDATA": root / "AppData" / "Roaming",
+        "LOCALAPPDATA": root / "AppData" / "Local",
+        "PROGRAMFILES": drive_root / "Program Files",
+        "PROGRAMFILES(X86)": drive_root / "Program Files (x86)",
+        "PROGRAMDATA": drive_root / "ProgramData",
+        "SYSTEMROOT": drive_root / "Windows",
+        "WINDIR": drive_root / "Windows",
+        "USERPROFILE": root,
+        "HOME": root,
+    }
+    if name.upper() == "SYSTEMDRIVE":
+        return "C:"
+    value = mapping.get(name.upper())
+    return str(value) if value else ""
+
+
+def windows_drive_root(root: Path) -> Path:
+    parts = root.resolve().parts
+    for index, part in enumerate(parts):
+        if part.lower() == "users" and index > 0:
+            return Path(*parts[:index])
+    if len(parts) >= 2:
+        return Path(*parts[:2])
+    return root
+
+
+def windows_drive_path_to_mount(token: str, root: Path) -> Path:
+    rest = re.sub(r"^[A-Za-z]:[\\/]*", "", token)
+    return windows_drive_root(root) / rest
 
 
 def is_path_candidate(first: str) -> bool:
@@ -340,6 +443,116 @@ fi
     }
 
 
+def discover_wsl_rootfs_candidate(
+    name: str,
+    path_expr: str,
+    raw: str,
+    root: Path,
+    platform: str,
+) -> dict[str, Any]:
+    paths = existing_candidate_paths(path_expr, root, platform)
+    if not paths:
+        return {
+            "logical_name": name,
+            "candidate": raw,
+            "status": "missing",
+            "reason": "SageMath path not found in mounted WSL rootfs",
+            "scope": "wsl-rootfs",
+            "substrate": "wsl",
+        }
+    selected = paths[0]
+    return {
+        "logical_name": name,
+        "candidate": raw,
+        "command": str(selected),
+        "version": "present-unverified",
+        "scope": "wsl-rootfs",
+        "substrate": "wsl",
+        "capabilities": {
+            "rootfs-present": True,
+            "sage-path-present": True,
+            "launch-via-wsl-unverified": True,
+        },
+        "status": "degraded",
+        "reason": "SageMath path exists in a mounted WSL rootfs, but command execution still requires WSL",
+    }
+
+
+def discover_wsl_local_candidate(name: str, path_expr: str, raw: str) -> dict[str, Any]:
+    if host_is_windows():
+        return {
+            "logical_name": name,
+            "candidate": raw,
+            "status": "missing",
+            "reason": "local WSL filesystem is not directly inspectable from native Windows",
+            "scope": "wsl-local",
+            "substrate": "wsl",
+        }
+    paths: list[Path] = []
+    if path_expr and not is_path_candidate(path_expr):
+        found = shutil.which(path_expr)
+        if found:
+            paths.append(Path(found))
+    if not paths:
+        paths = existing_candidate_paths(path_expr, Path.home(), "linux")
+    executable_paths = [path for path in paths if path.is_file() and os.access(path, os.X_OK)]
+    if not executable_paths:
+        return {
+            "logical_name": name,
+            "candidate": raw,
+            "status": "missing",
+            "reason": "SageMath path not found in the current WSL/Linux filesystem",
+            "scope": "wsl-local",
+            "substrate": "wsl",
+        }
+    selected = executable_paths[0]
+    command = render_command(str(selected), [])
+    return {
+        "logical_name": name,
+        "candidate": raw,
+        "command": command,
+        "version": detect_version(command, "linux"),
+        "scope": "wsl-local",
+        "substrate": "wsl",
+        "capabilities": check_capabilities(name, command, "linux"),
+        "status": "ok",
+    }
+
+
+def discover_wsl_vhdx_candidate(
+    name: str,
+    path_expr: str,
+    raw: str,
+    root: Path,
+    platform: str,
+) -> dict[str, Any]:
+    paths = existing_candidate_paths(path_expr, root, platform)
+    if not paths:
+        return {
+            "logical_name": name,
+            "candidate": raw,
+            "status": "missing",
+            "reason": "WSL distro VHDX not found",
+            "scope": "wsl-vhdx",
+            "substrate": "wsl",
+        }
+    selected = paths[0]
+    return {
+        "logical_name": name,
+        "candidate": raw,
+        "path": str(selected),
+        "version": "present-unverified",
+        "scope": "wsl-vhdx",
+        "substrate": "wsl",
+        "capabilities": {
+            "wsl-vhdx-present": True,
+            "sage-inspection": False,
+        },
+        "status": "degraded",
+        "reason": "WSL distro VHDX found, but SageMath inside cannot be inspected without WSL or a mounted rootfs",
+    }
+
+
 def detect_wsl_version(wsl: str, command_name: str) -> str:
     version_script = r'''
 cmd=$1
@@ -525,15 +738,7 @@ def resolve_site_candidate(raw: str, root: Path, platform: str) -> list[Path]:
     expanded = expand_candidate(raw, root, platform)
     if not expanded:
         return []
-    if platform == "windows" and not host_is_windows():
-        expanded = expanded.replace("\\", "/")
-    path = Path(expanded)
-    if not path.is_absolute():
-        path = root / path
-    matches = [Path(item) for item in glob(str(path))]
-    if matches:
-        return sorted(matches)
-    return [path] if path.exists() else []
+    return existing_candidate_paths(expanded, root, platform)
 
 
 def module_marker(site_dir: Path, module: str) -> Path | None:
