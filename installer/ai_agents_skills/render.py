@@ -203,6 +203,29 @@ def render_instruction_block(skill: str, spec: dict[str, Any]) -> str:
     )
 
 
+def render_management_notice(agent: str) -> str:
+    bid = block_id("repo-management")
+    return dedent(
+        f"""\
+        <!-- {bid}:start -->
+        ## ai-agents-skills management notice
+
+        This agent home may contain files managed by the `ai-agents-skills`
+        repository. The repository is the source for reusable skill bodies,
+        optional workflow artifacts, dependency metadata, and installer state.
+        Local agent directories remain runtime targets and may still contain
+        user-owned files outside this managed block.
+
+        Use `plan` or `audit-system` before applying changes. Uninstall and
+        rollback remove only managed files and managed blocks recorded by this
+        installer.
+
+        Generated target: {agent}.
+        <!-- {bid}:end -->
+        """
+    )
+
+
 def replace_or_append_block(content: str, skill: str, block: str) -> str:
     bid = block_id(skill)
     start = f"<!-- {bid}:start -->"

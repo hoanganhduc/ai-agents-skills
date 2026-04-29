@@ -93,7 +93,10 @@ def validate_manifests(
         for name, spec in by_name.items():
             if "_" in name:
                 raise ManifestError(f"artifact {artifact_type}:{name} must use canonical kebab-case")
-            for field in ("description", "source", "supported_agents"):
+            required_fields = ["description", "supported_agents"]
+            if artifact_type != "management-notice":
+                required_fields.append("source")
+            for field in required_fields:
                 if field not in spec:
                     raise ManifestError(f"artifact {artifact_type}:{name} is missing {field}")
             for skill in spec.get("depends_on_skills", []):

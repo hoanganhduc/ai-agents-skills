@@ -91,6 +91,13 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(plan["actions"], [])
             self.assertEqual(len(plan["skipped_agents"]), 3)
 
+    def test_verify_reports_no_managed_artifacts_explicitly(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            result = verify(root)
+            self.assertEqual(result["status"], "no-managed-artifacts")
+            self.assertEqual(result["checked"], 0)
+
     def test_unmanaged_existing_file_is_skipped_by_default(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -340,6 +347,32 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue((root / ".claude" / "skills" / "deep-research-workflow" / "SKILL.md").exists())
             self.assertFalse((root / ".claude" / "commands" / "deep-research.md").exists())
 
+    def test_management_notice_artifact_adds_and_removes_instruction_block(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.no_skills = True
+            args.artifact_profile = "repo-management"
+            plan = build_plan(
+                root,
+                manifests,
+                resolve_skills(args, manifests),
+                detect_agents(root),
+                artifacts=resolve_artifacts(args, manifests),
+            )
+            self.assertEqual(plan["actions"][0]["artifact_type"], "management-notice")
+            apply_plan(root, plan, dry_run=False)
+            instructions = root / ".codex" / "AGENTS.md"
+            self.assertIn("ai-agents-skills:repo-management", instructions.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+            uninstall(root, artifacts={"management-notice:repo-management"}, dry_run=False)
+            self.assertFalse(instructions.exists())
+
 
 class DocsAndLauncherTests(unittest.TestCase):
     def test_generated_docs_include_manifest_skills(self) -> None:
@@ -355,7 +388,9 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("Graph Reconfiguration Specialist", readme)
         self.assertIn("docs/system-profile.md", readme)
         self.assertIn("docs/agent-locations.md", readme)
+        self.assertIn("docs/audit-and-migration.md", readme)
         self.assertTrue((REPO_ROOT / "docs" / "agent-locations.md").exists())
+        self.assertTrue((REPO_ROOT / "docs" / "audit-and-migration.md").exists())
 
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
         text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")
@@ -444,6 +479,32 @@ class DocsAndLauncherTests(unittest.TestCase):
             payload = json.loads(stream.getvalue())
             self.assertEqual(payload["active_skills"], ["graph-verifier"])
             self.assertTrue(payload["dependencies"])
+            dependency = next(item for item in payload["dependencies"] if item["dependency"] == "python-runtime")
+            self.assertIn("graph-verifier", dependency["required_by"])
+
+    def test_cli_audit_system_reports_unmanaged_and_no_state(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            existing = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("user-owned zotero\n", encoding="utf-8")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "audit-system",
+                    "--skill",
+                    "zotero",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "not-managed")
+            self.assertEqual(payload["managed_state"]["artifact_count"], 0)
+            coverage = payload["skill_coverage"][0]
+            self.assertEqual(coverage["unmanaged_canonical"], ["zotero"])
 
     def test_cli_with_deps_installs_entrypoint_backing_skill(self) -> None:
         with fake_root() as tmp:

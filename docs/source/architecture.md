@@ -11,6 +11,7 @@ Artifact classes:
 | `skill-file` | Installs canonical `SKILL.md` into the agent skill directory. |
 | `skill-support-file` | Installs canonical references, scripts, assets, templates, and agent notes inside the skill directory. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
+| `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
 | `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |

@@ -53,6 +53,12 @@
         "entrypoint-alias:getscipapers"
       ]
     },
+    "repo-management": {
+      "description": "Top-level managed notice blocks for agent instruction files.",
+      "artifacts": [
+        "management-notice:repo-management"
+      ]
+    },
     "workflow-artifacts": {
       "description": "All portable templates, workflow docs, personas, and entrypoint aliases.",
       "artifacts": [
@@ -87,7 +93,8 @@
         "entrypoint-alias:research-compute",
         "entrypoint-alias:rss",
         "entrypoint-alias:digest",
-        "entrypoint-alias:getscipapers"
+        "entrypoint-alias:getscipapers",
+        "management-notice:repo-management"
       ]
     }
   },
@@ -194,6 +201,12 @@
       "security-reviewer": {
         "description": "Reviews security-sensitive changes and configuration boundaries.",
         "source": "security-reviewer.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      }
+    },
+    "management-notice": {
+      "repo-management": {
+        "description": "Managed notice explaining that ai-agents-skills is the source repo and local agent homes are runtime targets.",
         "supported_agents": ["codex", "claude", "deepseek"]
       }
     },
