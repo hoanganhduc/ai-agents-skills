@@ -8,3 +8,8 @@
 | `sage-runtime` | SageMath runtime, local on Linux or WSL-backed on Windows. |
 | `tex-runtime` | TeX engine for TikZ compile checks. |
 | `wsl-runtime` | Windows Subsystem for Linux runtime. |
+
+Dependencies are declared as logical capabilities rather than personal
+paths. `doctor` resolves them from environment overrides, repo-local
+runtimes, `PATH`, native Windows commands, and WSL-backed commands where
+appropriate.

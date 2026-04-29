@@ -1,4 +1,4 @@
-.PHONY: doctor plan install verify rollback uninstall list-skills docs test
+.PHONY: doctor plan install verify rollback uninstall list-skills docs docs-site sanitize-check test
 
 ARGS ?=
 
@@ -25,6 +25,13 @@ list-skills:
 
 docs:
 	./installer/bootstrap.sh generate-docs
+
+docs-site:
+	sphinx-build -b html docs/source docs/_build/html
+
+sanitize-check:
+	PYTHONPATH=. python tools/sanitization_check.py
+	PYTHONPATH=. python -m unittest discover -s tests -p 'test_sanitization.py' -v
 
 test:
 	PYTHONPATH=. python -m unittest discover -s tests -v

@@ -3,11 +3,16 @@ from __future__ import annotations
 from textwrap import dedent
 from typing import Any
 
+from .manifest import REPO_ROOT
+
 
 MANAGED_MARKER = "Managed by ai-agents-skills"
 
 
 def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
+    canonical = load_canonical_skill(skill)
+    if canonical is not None:
+        return add_managed_header(canonical, agent)
     description = spec["description"]
     optional = spec.get("optional_capabilities", [])
     optional_text = "\n".join(f"- {item}" for item in optional) or "- none"
@@ -41,6 +46,25 @@ def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
         canonical workflow while preserving per-agent installation boundaries.
         """
     )
+
+
+def load_canonical_skill(skill: str) -> str | None:
+    path = REPO_ROOT / "canonical" / "skills" / skill / "SKILL.md"
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def add_managed_header(content: str, agent: str) -> str:
+    header = f"<!-- {MANAGED_MARKER}. Generated target: {agent}. -->"
+    if MANAGED_MARKER in content:
+        return content
+    if content.startswith("---\n"):
+        end = content.find("\n---", 4)
+        if end != -1:
+            insert_at = end + len("\n---")
+            return content[:insert_at] + "\n\n" + header + content[insert_at:]
+    return header + "\n\n" + content
 
 
 def block_id(skill: str) -> str:

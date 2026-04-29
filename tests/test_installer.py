@@ -220,6 +220,7 @@ class DocsAndLauncherTests(unittest.TestCase):
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         for skill in ("deep-research-workflow", "zotero", "vnthuquan"):
             self.assertIn(f"`{skill}`", readme)
+        self.assertIn("docs/system-profile.md", readme)
 
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
         text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")
@@ -291,6 +292,21 @@ class DocsAndLauncherTests(unittest.TestCase):
                 "--json",
             ])
             self.assertEqual(code, 0)
+
+    def test_plan_uses_canonical_skill_body_when_available(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            file_actions = [a for a in plan["actions"] if a["kind"] == "file"]
+            self.assertIn("Phased deep research", file_actions[0]["content"])
+            self.assertIn("Managed by ai-agents-skills", file_actions[0]["content"])
 
 
 if __name__ == "__main__":
