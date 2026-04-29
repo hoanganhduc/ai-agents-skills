@@ -23,6 +23,13 @@ Current support-file checks:
 - `A2 managed-marker`
 - `A3 no-secret-leak`
 
+Current optional artifact checks:
+
+- `O1 file-exists`
+- `O2 managed-marker`
+- `O3 no-secret-leak`
+- `O4 format-specific checks for Codex TOML personas and Claude frontmatter`
+
 The verifier intentionally skips skills and artifacts that were not installed.
 Runtime smoke tests, runner-specific `doctor` commands, and direct
 `agent-loads-config` checks are not automatic yet; use `precheck` and the

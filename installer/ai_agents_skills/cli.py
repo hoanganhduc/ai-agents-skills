@@ -14,7 +14,14 @@ from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
 from .manifest import load_manifests, skill_names
 from .planner import build_plan
-from .selectors import canonical_skill_name, resolve_skills, split_csv
+from .selectors import (
+    artifact_dependency_skills,
+    canonical_artifact_name,
+    canonical_skill_name,
+    resolve_artifacts,
+    resolve_skills,
+    split_csv,
+)
 from .verify import verify as verify_state
 
 
@@ -44,21 +51,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("list-skills")
+    sub.add_parser("list-artifacts")
     describe = sub.add_parser("describe")
     describe.add_argument("skill")
+    describe_artifact = sub.add_parser("describe-artifact")
+    describe_artifact.add_argument("artifact")
     sub.add_parser("generate-docs")
 
     doctor = sub.add_parser("doctor")
-    doctor.add_argument("--skill")
-    doctor.add_argument("--skills")
-    doctor.add_argument("--profile")
-    doctor.add_argument("--exclude")
+    add_selection_args(doctor)
 
     precheck = sub.add_parser("precheck")
-    precheck.add_argument("--skill")
-    precheck.add_argument("--skills")
-    precheck.add_argument("--profile")
-    precheck.add_argument("--exclude")
+    add_selection_args(precheck)
     precheck.add_argument("--ignore", help="comma-separated dependency names to ignore")
     precheck.add_argument("--skip", help="comma-separated dependency names to skip for this run")
     precheck.add_argument("--interactive", action="store_true")
@@ -83,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
     rollback.add_argument("--run")
     rollback.add_argument("--skill")
     rollback.add_argument("--skills")
+    rollback.add_argument("--artifact")
+    rollback.add_argument("--artifacts")
     rollback.add_argument("--apply", action="store_true")
     rollback.add_argument("--dry-run", action="store_true")
 
@@ -90,6 +96,8 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall.add_argument("--all", action="store_true")
     uninstall.add_argument("--skill")
     uninstall.add_argument("--skills")
+    uninstall.add_argument("--artifact")
+    uninstall.add_argument("--artifacts")
     uninstall.add_argument("--apply", action="store_true")
     uninstall.add_argument("--remove-owned-dependencies", action="store_true")
 
@@ -101,6 +109,12 @@ def add_selection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skills")
     parser.add_argument("--profile")
     parser.add_argument("--exclude")
+    parser.add_argument("--no-skills", action="store_true", help="do not select default skills")
+    parser.add_argument("--artifact", help="single artifact in type:name form")
+    parser.add_argument("--artifacts", help="comma-separated artifacts in type:name form")
+    parser.add_argument("--artifact-profile", help="comma-separated artifact profiles")
+    parser.add_argument("--exclude-artifact", help="comma-separated artifacts to exclude")
+    parser.add_argument("--with-deps", action="store_true", help="include skills required by selected artifacts")
 
 
 def add_conflict_args(parser: argparse.ArgumentParser) -> None:
@@ -113,8 +127,12 @@ def run(args: argparse.Namespace) -> int:
     manifests = load_manifests()
     if args.command == "list-skills":
         return output({"skills": skill_names(manifests)}, args)
+    if args.command == "list-artifacts":
+        return output(list_artifacts(manifests), args)
     if args.command == "describe":
         return describe(args, manifests)
+    if args.command == "describe-artifact":
+        return describe_artifact(args, manifests)
     if args.command == "generate-docs":
         written = generate_docs(manifests)
         return output({"written": [str(path) for path in written]}, args)
@@ -134,17 +152,19 @@ def run(args: argparse.Namespace) -> int:
         return verify(args, manifests)
     if args.command == "rollback":
         skills = resolve_skill_filter(args, manifests)
+        artifacts = resolve_artifact_filter(args, manifests)
         agents = set(split_csv(args.agents)) if args.agents else None
         dry_run = not args.apply
-        result = rollback_artifacts(args.root, args.run, skills, agents, dry_run=dry_run)
+        result = rollback_artifacts(args.root, args.run, skills, agents, artifacts, dry_run=dry_run)
         return output(result, args)
     if args.command == "uninstall":
-        if args.apply and not args.all and not args.skill and not args.skills:
-            raise ValueError("applied uninstall requires --all, --skill, or --skills")
+        if args.apply and not args.all and not args.skill and not args.skills and not args.artifact and not args.artifacts:
+            raise ValueError("applied uninstall requires --all, --skill, --skills, --artifact, or --artifacts")
         skills = resolve_skill_filter(args, manifests)
+        artifacts = resolve_artifact_filter(args, manifests)
         agents = set(split_csv(args.agents)) if args.agents else None
         dry_run = not args.apply
-        result = uninstall_artifacts(args.root, skills, agents, dry_run=dry_run)
+        result = uninstall_artifacts(args.root, skills, agents, artifacts, dry_run=dry_run)
         return output(result, args)
     raise ValueError(f"unknown command: {args.command}")
 
@@ -156,9 +176,33 @@ def describe(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     return output({"skill": canonical, **manifests["skills"]["skills"][canonical]}, args)
 
 
+def describe_artifact(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    artifact_type, name = canonical_artifact_name(args.artifact, manifests)
+    return output(
+        {
+            "artifact": f"{artifact_type}:{name}",
+            "artifact_type": artifact_type,
+            "name": name,
+            **manifests["artifacts"]["artifacts"][artifact_type][name],
+        },
+        args,
+    )
+
+
+def list_artifacts(manifests: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "artifact_profiles": sorted(manifests["artifacts"]["artifact_profiles"]),
+        "artifacts": [
+            f"{artifact_type}:{name}"
+            for artifact_type, specs in sorted(manifests["artifacts"]["artifacts"].items())
+            for name in sorted(specs)
+        ],
+    }
+
+
 def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     platform = current_platform(args.platform)
-    selected = resolve_skills(args, manifests)
+    selected, selected_artifacts = resolve_install_selection(args, manifests)
     agent_filter = split_csv(args.agents) if args.agents else None
     agents = detect_agents(args.root, agent_filter)
     detected_agent_names = {agent.name for agent in agents}
@@ -177,6 +221,7 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         "platform": platform,
         "root": str(args.root),
         "selected_skills": selected,
+        "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
         "active_skills": active_skills,
         "detected_agents": [agent.name for agent in agents],
         "skipped_agents": [
@@ -189,7 +234,7 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
 
 def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     platform = current_platform(args.platform)
-    selected = resolve_skills(args, manifests)
+    selected, selected_artifacts = resolve_install_selection(args, manifests)
     agent_filter = split_csv(args.agents) if args.agents else None
     agents = detect_agents(args.root, agent_filter)
     detected_agent_names = {agent.name for agent in agents}
@@ -237,6 +282,7 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         "platform": platform,
         "root": str(args.root),
         "selected_skills": selected,
+        "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
         "active_skills": active_skills,
         "detected_agents": [agent.name for agent in agents],
         "skipped_agents": [
@@ -263,7 +309,7 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
 
 
 def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, Any]:
-    selected = resolve_skills(args, manifests)
+    selected, selected_artifacts = resolve_install_selection(args, manifests)
     agent_filter = split_csv(args.agents) if args.agents else None
     agents = detect_agents(args.root, agent_filter)
     return build_plan(
@@ -274,7 +320,19 @@ def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, 
         args.adopt,
         args.backup_replace,
         args.migrate,
+        selected_artifacts,
     )
+
+
+def resolve_install_selection(
+    args: argparse.Namespace,
+    manifests: dict[str, Any],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    selected_artifacts = resolve_artifacts(args, manifests)
+    selected_skills = set(resolve_skills(args, manifests))
+    if getattr(args, "with_deps", False):
+        selected_skills.update(artifact_dependency_skills(selected_artifacts, manifests))
+    return sorted(selected_skills), selected_artifacts
 
 
 def summarize_plan(plan: dict[str, Any]) -> dict[str, Any]:
@@ -288,6 +346,8 @@ def summarize_plan(plan: dict[str, Any]) -> dict[str, Any]:
                     "kind",
                     "agent",
                     "skill",
+                    "artifact_id",
+                    "artifact_name",
                     "path",
                     "legacy_path",
                     "classification",
@@ -324,6 +384,20 @@ def resolve_skill_filter(args: argparse.Namespace, manifests: dict[str, Any]) ->
             raise ValueError(f"unknown skill: {item}")
         resolved.add(canonical)
     return resolved
+
+
+def resolve_artifact_filter(args: argparse.Namespace, manifests: dict[str, Any]) -> set[str] | None:
+    raw = []
+    if getattr(args, "artifact", None):
+        raw.append(args.artifact)
+    if getattr(args, "artifacts", None):
+        raw.extend(split_csv(args.artifacts))
+    if not raw:
+        return None
+    return {
+        f"{artifact_type}:{name}"
+        for artifact_type, name in (canonical_artifact_name(item, manifests) for item in raw)
+    }
 
 
 def required_tools_for(skills: list[str], manifests: dict[str, Any]) -> set[str]:

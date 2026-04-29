@@ -9,9 +9,12 @@
 | `deep-research-workflow` | Phased source-preserving research workflow: search, analyze, write, with citation handoff. | `research-core`, `full-research` |
 | `digest-bridge` | Convert digest output into paper retrieval manifests. | `digest`, `full-research` |
 | `docling` | Parse, convert, OCR, chunk, and analyze documents. | `document`, `full-research` |
+| `formal-skeleton-helper` | Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs. | `workflow-tools`, `math`, `full-research` |
+| `get-available-resources` | Detect CPU, memory, disk, and optional accelerator availability before heavy local work. | `workflow-tools`, `full-research` |
 | `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `full-research` |
 | `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
 | `modal-research-compute` | Route heavy compute jobs to Modal through a local broker. | `full-research` |
+| `model-router` | Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work. | `workflow-tools`, `multi-agent`, `full-research` |
 | `paper-lookup` | External paper metadata and discovery fallback. | `library`, `full-research` |
 | `paper-review` | Single-agent paper review workflow. | `full-research` |
 | `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `full-research` |
@@ -26,4 +29,5 @@
 | `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
+| `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `full-research` |

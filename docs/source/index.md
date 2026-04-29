@@ -18,6 +18,7 @@ workflow-overview
 multi-agent-examples
 installation
 skills
+artifacts
 profiles
 dependencies
 system-profile

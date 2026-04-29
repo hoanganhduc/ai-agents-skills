@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "artifact_profiles": {
+    "workflow-templates": {
+      "description": "Reusable research, specification, and task templates.",
+      "artifacts": [
+        "template:spec",
+        "template:tasks-plan",
+        "template:tasks-todo",
+        "template:deep-research-sources",
+        "template:deep-research-analysis",
+        "template:deep-research-report"
+      ]
+    },
+    "workflow-instructions": {
+      "description": "Agent-readable workflow guidance documents copied outside skill folders.",
+      "artifacts": [
+        "instruction-doc:engineering-lifecycle",
+        "instruction-doc:research-quick-actions",
+        "instruction-doc:python-quality-gates",
+        "instruction-doc:modal-offload-routing",
+        "instruction-doc:scrapling-integration",
+        "instruction-doc:language-style-rules"
+      ]
+    },
+    "review-personas": {
+      "description": "Reviewer and research role personas rendered to each agent's supported format.",
+      "artifacts": [
+        "agent-persona:literature-scout",
+        "agent-persona:math-explorer",
+        "agent-persona:proof-checker",
+        "agent-persona:paper-reviewer",
+        "agent-persona:code-reviewer",
+        "agent-persona:test-reviewer",
+        "agent-persona:security-reviewer"
+      ]
+    },
+    "research-entrypoints": {
+      "description": "Optional command or quick-action aliases that point to backing skills.",
+      "artifacts": [
+        "entrypoint-alias:deep-research",
+        "entrypoint-alias:research-team",
+        "entrypoint-alias:review",
+        "entrypoint-alias:tikz",
+        "entrypoint-alias:sage",
+        "entrypoint-alias:zotero",
+        "entrypoint-alias:docling",
+        "entrypoint-alias:calibre",
+        "entrypoint-alias:vnthuquan",
+        "entrypoint-alias:research-compute",
+        "entrypoint-alias:rss",
+        "entrypoint-alias:digest",
+        "entrypoint-alias:getscipapers"
+      ]
+    },
+    "workflow-artifacts": {
+      "description": "All portable templates, workflow docs, personas, and entrypoint aliases.",
+      "artifacts": [
+        "template:spec",
+        "template:tasks-plan",
+        "template:tasks-todo",
+        "template:deep-research-sources",
+        "template:deep-research-analysis",
+        "template:deep-research-report",
+        "instruction-doc:engineering-lifecycle",
+        "instruction-doc:research-quick-actions",
+        "instruction-doc:python-quality-gates",
+        "instruction-doc:modal-offload-routing",
+        "instruction-doc:scrapling-integration",
+        "instruction-doc:language-style-rules",
+        "agent-persona:literature-scout",
+        "agent-persona:math-explorer",
+        "agent-persona:proof-checker",
+        "agent-persona:paper-reviewer",
+        "agent-persona:code-reviewer",
+        "agent-persona:test-reviewer",
+        "agent-persona:security-reviewer",
+        "entrypoint-alias:deep-research",
+        "entrypoint-alias:research-team",
+        "entrypoint-alias:review",
+        "entrypoint-alias:tikz",
+        "entrypoint-alias:sage",
+        "entrypoint-alias:zotero",
+        "entrypoint-alias:docling",
+        "entrypoint-alias:calibre",
+        "entrypoint-alias:vnthuquan",
+        "entrypoint-alias:research-compute",
+        "entrypoint-alias:rss",
+        "entrypoint-alias:digest",
+        "entrypoint-alias:getscipapers"
+      ]
+    }
+  },
+  "artifacts": {
+    "template": {
+      "spec": {
+        "description": "Project or research specification template.",
+        "source": "SPEC.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "tasks-plan": {
+        "description": "Planning template for decomposing a scoped task.",
+        "source": "tasks-plan.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "tasks-todo": {
+        "description": "Execution checklist template.",
+        "source": "tasks-todo.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "deep-research-sources": {
+        "description": "Source handoff table for phased deep research.",
+        "source": "deep-research-sources.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["deep-research-workflow"]
+      },
+      "deep-research-analysis": {
+        "description": "Analysis-phase note template for source-preserving synthesis.",
+        "source": "deep-research-analysis.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["deep-research-workflow"]
+      },
+      "deep-research-report": {
+        "description": "Final report template for research synthesis.",
+        "source": "deep-research-report.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["deep-research-workflow"]
+      }
+    },
+    "instruction-doc": {
+      "engineering-lifecycle": {
+        "description": "Spec-plan-tasks-implement-verify lifecycle guide.",
+        "source": "engineering-lifecycle.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "research-quick-actions": {
+        "description": "Short command and routing references for common research actions.",
+        "source": "research-quick-actions.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "python-quality-gates": {
+        "description": "Suggested Python verification gates for research and installer code.",
+        "source": "python-quality-gates.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "modal-offload-routing": {
+        "description": "When to keep work local and when to route heavy compute elsewhere.",
+        "source": "modal-offload-routing.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["modal-research-compute"]
+      },
+      "scrapling-integration": {
+        "description": "Guidance for browser-heavy extraction when default web tooling is insufficient.",
+        "source": "scrapling-integration.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "language-style-rules": {
+        "description": "Portable language and file-type style notes adapted from local agent rules.",
+        "source": "language-style-rules.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      }
+    },
+    "agent-persona": {
+      "literature-scout": {
+        "description": "Finds relevant literature, missing citations, and source-quality risks.",
+        "source": "literature-scout.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "math-explorer": {
+        "description": "Explores examples, counterexamples, invariants, and graph-theory structure.",
+        "source": "math-explorer.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "proof-checker": {
+        "description": "Audits mathematical proofs for gaps, hidden assumptions, and invalid reductions.",
+        "source": "proof-checker.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "paper-reviewer": {
+        "description": "Reviews papers and drafts for correctness, evidence, organization, and contribution clarity.",
+        "source": "paper-reviewer.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "code-reviewer": {
+        "description": "Reviews code for bugs, regressions, security risks, and missing tests.",
+        "source": "code-reviewer.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "test-reviewer": {
+        "description": "Reviews test plans and coverage for meaningful behavioral protection.",
+        "source": "test-reviewer.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "security-reviewer": {
+        "description": "Reviews security-sensitive changes and configuration boundaries.",
+        "source": "security-reviewer.md",
+        "supported_agents": ["codex", "claude", "deepseek"]
+      }
+    },
+    "entrypoint-alias": {
+      "deep-research": {
+        "description": "Start source-preserving phased research.",
+        "source": "deep-research.md",
+        "depends_on_skills": ["deep-research-workflow"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "research-team": {
+        "description": "Start template-based multi-agent research or review.",
+        "source": "research-team.md",
+        "depends_on_skills": ["agent-group-discuss"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "review": {
+        "description": "Run a review-oriented workflow.",
+        "source": "review.md",
+        "depends_on_skills": ["paper-review"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "tikz": {
+        "description": "Route structural figure work to TikZ workflow.",
+        "source": "tikz.md",
+        "depends_on_skills": ["tikz-draw"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "sage": {
+        "description": "Route graph theory or algebra computation to SageMath workflow.",
+        "source": "sage.md",
+        "depends_on_skills": ["sagemath"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "zotero": {
+        "description": "Route paper library work to Zotero workflow.",
+        "source": "zotero.md",
+        "depends_on_skills": ["zotero"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "docling": {
+        "description": "Route document parsing to Docling workflow.",
+        "source": "docling.md",
+        "depends_on_skills": ["docling"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "calibre": {
+        "description": "Route ebook and Calibre-library work.",
+        "source": "calibre.md",
+        "depends_on_skills": ["calibre"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "vnthuquan": {
+        "description": "Route Vietnam Thu Quan ebook discovery.",
+        "source": "vnthuquan.md",
+        "depends_on_skills": ["vnthuquan"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "research-compute": {
+        "description": "Route heavy compute planning and offload decisions.",
+        "source": "research-compute.md",
+        "depends_on_skills": ["modal-research-compute"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "rss": {
+        "description": "Route RSS digest workflows.",
+        "source": "rss.md",
+        "depends_on_skills": ["rss-news-digest"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "digest": {
+        "description": "Route tracked-topic research digest workflows.",
+        "source": "digest.md",
+        "depends_on_skills": ["research-digest-wrapper"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "getscipapers": {
+        "description": "Route external paper retrieval fallback.",
+        "source": "getscipapers.md",
+        "depends_on_skills": ["getscipapers-requester"],
+        "supported_agents": ["codex", "claude", "deepseek"]
+      }
+    }
+  }
+}
