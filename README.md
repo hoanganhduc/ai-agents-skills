@@ -66,9 +66,10 @@ This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
 skills. Reusable skill bodies live under `canonical/skills`; the default
-install links supported agents back to those canonical files, with reference
-adapter and copy modes available when an agent or filesystem cannot use
-symlinks.
+install links supported agents back to those canonical files when their
+loaders support symlinked skill files, and writes reference adapters for known
+incompatible loaders such as Codex. Copy mode remains available when an agent
+or filesystem must have regular files inside the settings directory.
 
 ## Documentation
 
@@ -143,10 +144,12 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 `--backup-replace`, or `--migrate` only after reviewing `plan` output.
 
 Skills install in `--install-mode symlink` by default so the repo remains the
-single maintained source. If an agent cannot follow symlinked skill files, use
-`--install-mode reference` to install thin adapters that tell the agent where
-the canonical skill lives. Use `--install-mode copy` only when files must be
-materialized inside the agent settings directory.
+single maintained source. The planner resolves that mode per agent: Claude and
+DeepSeek receive symlinked skill files, while Codex receives thin reference
+adapters because current Codex skill discovery ignores file-symlinked user
+`SKILL.md` files. Use `--install-mode reference` to force adapters for every
+agent, or `--install-mode copy` only when files must be materialized inside the
+agent settings directory.
 
 Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
@@ -209,9 +212,10 @@ skills they depend on.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets are symlinks to `canonical/skills`; `reference` mode writes a thin
-adapter, and `copy` mode writes regular files. Use `--skill` or `--skills` for
-narrow installs.
+targets are symlinks to `canonical/skills` when the agent loader supports them;
+Codex targets are reference adapters in the default mode. `reference` mode
+writes a thin adapter for every agent, and `copy` mode writes regular files.
+Use `--skill` or `--skills` for narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"

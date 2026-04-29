@@ -76,7 +76,9 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertTrue((root / ".codex" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").is_symlink())
-            self.assertTrue((root / ".codex" / "skills" / "zotero" / "SKILL.md").is_symlink())
+            codex_skill = root / ".codex" / "skills" / "zotero" / "SKILL.md"
+            self.assertFalse(codex_skill.is_symlink())
+            self.assertIn("Install mode: reference", codex_skill.read_text(encoding="utf-8"))
             self.assertFalse((root / ".claude" / "skills" / "tikz-draw" / "SKILL.md").exists())
 
             result = verify(root)
@@ -186,7 +188,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             legacy_removal_actions = [a for a in plan["actions"] if a["operation"] == "remove-legacy"]
             self.assertEqual(file_actions[0]["classification"], "legacy")
             self.assertEqual(file_actions[0]["operation"], "migrate-install")
-            self.assertEqual(file_actions[0]["install_mode"], "symlink")
+            self.assertEqual(file_actions[0]["install_mode"], "reference")
             self.assertEqual(file_actions[0]["legacy_path"], str(legacy))
             self.assertEqual(len(legacy_removal_actions), 1)
             self.assertEqual(legacy_removal_actions[0]["path"], str(legacy.parent))
@@ -194,7 +196,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
             apply_result = apply_plan(root, plan, dry_run=False)
             target = root / ".codex" / "skills" / "research-digest-wrapper" / "SKILL.md"
             self.assertTrue(target.exists())
-            self.assertTrue(target.is_symlink())
+            self.assertFalse(target.is_symlink())
+            self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
             self.assertFalse(legacy.parent.exists())
             remove_results = [a for a in apply_result["actions"] if a["operation"] == "remove-legacy"]
             self.assertEqual(len(remove_results), 1)
@@ -222,6 +225,31 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("Managed by ai-agents-skills", target.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    def test_codex_existing_canonical_symlink_is_replaced_with_reference_adapter(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = root / ".codex" / "skills" / "zotero" / "SKILL.md"
+            target.parent.mkdir(parents=True)
+            target.symlink_to(REPO_ROOT / "canonical" / "skills" / "zotero" / "SKILL.md")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            file_actions = [a for a in plan["actions"] if a["kind"] == "file" and a["artifact_type"] == "skill-file"]
+            self.assertEqual(file_actions[0]["classification"], "managed")
+            self.assertEqual(file_actions[0]["operation"], "update")
+            self.assertEqual(file_actions[0]["install_mode"], "reference")
+            apply_plan(root, plan, dry_run=False)
+
+            self.assertTrue(target.exists())
+            self.assertFalse(target.is_symlink())
+            self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
     def test_reference_install_mode_writes_thin_adapter_without_support_files(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -246,6 +274,27 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("canonical/skills/deep-research-workflow/SKILL.md", text)
             self.assertNotIn("/home/", text)
             self.assertFalse((target.parent / "references").exists())
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_deepseek_default_symlink_mode_keeps_canonical_link(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "deepseek")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            file_actions = [a for a in plan["actions"] if a["kind"] == "file" and a["artifact_type"] == "skill-file"]
+            self.assertEqual(file_actions[0]["install_mode"], "symlink")
+            apply_plan(root, plan, dry_run=False)
+
+            target = root / ".deepseek" / "skills" / "zotero" / "SKILL.md"
+            self.assertTrue(target.exists())
+            self.assertTrue(target.is_symlink())
+            self.assertIn("canonical/skills/zotero/SKILL.md", str(target.resolve()))
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_symlink_failure_falls_back_to_reference_adapter(self) -> None:
@@ -298,7 +347,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             apply_plan(root, migrate_plan, dry_run=False)
             target = root / ".codex" / "skills" / "research-digest-wrapper" / "SKILL.md"
-            self.assertTrue(target.is_symlink())
+            self.assertFalse(target.is_symlink())
+            self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
             self.assertFalse(legacy.parent.exists())
             self.assertEqual(verify(root)["status"], "ok")
 
