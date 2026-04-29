@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from textwrap import dedent
 from typing import Any
 
@@ -48,8 +49,51 @@ def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
     )
 
 
+def canonical_skill_path(skill: str) -> Path:
+    return REPO_ROOT / "canonical" / "skills" / skill / "SKILL.md"
+
+
+def canonical_skill_dir(skill: str) -> Path:
+    return REPO_ROOT / "canonical" / "skills" / skill
+
+
+def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, source_path: Path) -> str:
+    display_source = display_path_for_agent(source_path)
+    return dedent(
+        f"""\
+        ---
+        name: {skill}
+        description: {spec["description"]}
+        metadata:
+          short-description: {spec.get("short_description", spec["description"])}
+        ---
+
+        <!-- {MANAGED_MARKER}. Generated target: {agent}. Install mode: reference. -->
+
+        # {skill}
+
+        This is a thin adapter for agents that cannot load symlinked skills.
+
+        Canonical skill source:
+
+        - `{display_source}`
+
+        Before using this skill, read the canonical source file above and follow
+        its instructions. Related reference files live next to that source file
+        in the same skill directory.
+        """
+    )
+
+
+def display_path_for_agent(path: Path) -> str:
+    try:
+        return "~/" + str(path.resolve().relative_to(Path.home().resolve()))
+    except ValueError:
+        return str(path)
+
+
 def load_canonical_skill(skill: str) -> str | None:
-    path = REPO_ROOT / "canonical" / "skills" / skill / "SKILL.md"
+    path = canonical_skill_path(skill)
     if not path.exists():
         return None
     return path.read_text(encoding="utf-8")

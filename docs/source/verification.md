@@ -28,21 +28,24 @@ Current skill checks:
 
 - `L1 file-exists`
 - `L2 metadata-valid`
-- `L3 managed-marker`
-- `L4 no-secret-leak`
-- `L5 agent-visible`
+- `L3 managed-marker` for copy and reference installs
+- `L4 symlink`, `source-exists`, and `source-match` for symlink installs
+- `L5 no-secret-leak`
+- `L6 agent-visible`
 
 Current instruction-block checks:
 
 - `S1 file-exists`
 - `S2 managed-block-present`
-- `S3 no-secret-leak`
+- `S3 no-secret-leak` for the managed block text only; surrounding user
+  instructions are outside installer ownership
 
 Current support-file checks:
 
 - `A1 file-exists`
-- `A2 managed-marker`
-- `A3 no-secret-leak`
+- `A2 managed-marker` for copied support files
+- `A3 symlink`, `source-exists`, and `source-match` for symlinked support files
+- `A4 no-secret-leak`
 
 Current optional artifact checks:
 

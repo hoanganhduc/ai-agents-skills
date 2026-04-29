@@ -65,8 +65,10 @@ also summarizes the available templates:
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
-skills. Reusable skill bodies live under `canonical/skills`; the installer
-copies those bodies into each supported agent and adds managed metadata.
+skills. Reusable skill bodies live under `canonical/skills`; the default
+install links supported agents back to those canonical files, with reference
+adapter and copy modes available when an agent or filesystem cannot use
+symlinks.
 
 ## Documentation
 
@@ -140,6 +142,12 @@ Real-system writes require explicit `--apply --real-system`. Tests and examples
 use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 `--backup-replace`, or `--migrate` only after reviewing `plan` output.
 
+Skills install in `--install-mode symlink` by default so the repo remains the
+single maintained source. If an agent cannot follow symlinked skill files, use
+`--install-mode reference` to install thin adapters that tell the agent where
+the canonical skill lives. Use `--install-mode copy` only when files must be
+materialized inside the agent settings directory.
+
 Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
 `--artifact-profile workflow-instructions`, or
@@ -199,9 +207,11 @@ skills they depend on.
 ## Skills
 
 Skills are the installable agent capabilities. Installing a skill creates the
-per-agent `SKILL.md` files and support files, then adds managed instruction
-blocks only for installed, adopted, or migrated skills. Use `--skill` or
-`--skills` for narrow installs.
+per-agent `SKILL.md` target, support files when needed, and managed instruction
+blocks only for installed, adopted, or migrated skills. By default those skill
+targets are symlinks to `canonical/skills`; `reference` mode writes a thin
+adapter, and `copy` mode writes regular files. Use `--skill` or `--skills` for
+narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"
