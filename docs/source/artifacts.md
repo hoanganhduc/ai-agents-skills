@@ -1,6 +1,17 @@
 # Optional Artifacts
 
-Artifacts are opt-in files outside normal skill directories. They are installed only when selected with `--artifact`, `--artifacts`, or `--artifact-profile`.
+Artifacts are opt-in files outside normal skill directories. They add supporting workflow material such as templates, instruction docs, reviewer personas, entrypoint aliases, and repository-management notices. They are not installed by default because they can change agent behavior outside a single skill folder.
+
+Use artifacts after deciding which skills or profiles you want. If an artifact depends on a skill, the installer creates it only when that skill is selected, already managed, adopted, migrated, or added with `--with-deps`.
+
+Common commands:
+
+```bash
+make list-artifacts
+make plan ARGS="--no-skills --artifact-profile workflow-templates"
+make plan ARGS="--no-skills --artifact entrypoint-alias:zotero --with-deps"
+make install ARGS="--no-skills --artifact-profile repo-management --dry-run"
+```
 
 | Artifact Profile | Description | Artifacts |
 |---|---|---|
@@ -48,3 +59,5 @@ Artifacts are opt-in files outside normal skill directories. They are installed 
 | `template:tasks-todo` | Execution checklist template. |  |
 
 Artifacts with dependencies are installed only when their backing skill is selected, already managed, or added with `--with-deps`. DeepSeek personas are installed as reference prompts because native persona-file loading has not been verified.
+
+Related pages: [Skills](skills.md), [Profiles](profiles.md), [Agent Locations](agent-locations.md), [Uninstall And Rollback](uninstall-rollback.md).

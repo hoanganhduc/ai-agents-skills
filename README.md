@@ -70,25 +70,28 @@ copies those bodies into each supported agent and adds managed metadata.
 
 ## Documentation
 
-- `docs/installation.md`: install, dry-run, conflict, and migration modes.
-- `docs/skills.md`: skill catalog and descriptions.
-- `docs/artifacts.md`: optional templates, instruction docs, personas, and
+- [docs/installation.md](docs/installation.md): install, dry-run, conflict,
+  and migration modes.
+- [docs/skills.md](docs/skills.md): skill catalog and descriptions.
+- [docs/artifacts.md](docs/artifacts.md): optional templates, instruction
+  docs, personas, and
   entrypoint aliases.
-- `docs/profiles.md`: selectable profiles such as `research-core` and
+- [docs/profiles.md](docs/profiles.md): selectable profiles such as
+  `research-core` and
   `full-research`.
-- `docs/dependencies.md`: logical tools, current Linux/Windows extra
+- [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
   software, Python packages, Node packages, and manual integrations.
-- `docs/workflow-overview.md`: how agents, skills, runtimes, and research
+- [docs/workflow-overview.md](docs/workflow-overview.md): how agents, skills, runtimes, and research
   tools connect during real workflows.
-- `docs/multi-agent-examples.md`: multi-agent process examples, spawn/wait
+- [docs/multi-agent-examples.md](docs/multi-agent-examples.md): multi-agent process examples, spawn/wait
   lifecycle, and available research templates.
-- `docs/system-profile.md`: sanitized maintainer-system profile and how local
+- [docs/system-profile.md](docs/system-profile.md): sanitized maintainer-system profile and how local
   tools map to skills.
-- `docs/agent-locations.md`: supported agent config, skill, template, command,
+- [docs/agent-locations.md](docs/agent-locations.md): supported agent config, skill, template, command,
   persona, and tool-shim locations.
-- `docs/audit-and-migration.md`: audit output, staged migration, unmanaged
+- [docs/audit-and-migration.md](docs/audit-and-migration.md): audit output, staged migration, unmanaged
   local skill handling, and Windows-native verification notes.
-- `docs/verification.md`: installed-artifact verification model.
+- [docs/verification.md](docs/verification.md): installed-artifact verification model.
 
 The GitHub Pages site is built from `docs/source` and deployed by
 `.github/workflows/docs.yml`.

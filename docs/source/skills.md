@@ -1,5 +1,20 @@
 # Skills
 
+A skill is an installable agent capability. Each skill has one canonical name in this repository, one canonical body under `canonical/skills/<skill>/`, and generated target files for every supported agent that is detected on the machine.
+
+Use this page when you already know which capability you want. Use [Profiles](profiles.md) when you want a bundle, and [Optional Artifacts](artifacts.md) when you want templates, personas, or command-style entrypoints in addition to skills.
+
+Common commands:
+
+```bash
+make list-skills
+make plan ARGS="--skill zotero"
+make install ARGS="--skills zotero,docling --dry-run"
+make verify ARGS="--skill zotero --root /tmp/aas-fake-home"
+```
+
+Installation is partial by default: selecting one skill installs only that skill, its support files, and the managed instruction block for that installed or adopted skill. Skipped skills do not receive instruction blocks.
+
 | Skill | Description | Profiles |
 |---|---|---|
 | `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `full-research` |
@@ -31,3 +46,5 @@
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
 | `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `full-research` |
+
+Related pages: [Installation](installation.md), [Verification](verification.md), [Agent Locations](agent-locations.md).

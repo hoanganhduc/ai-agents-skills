@@ -4,6 +4,19 @@
 the current agent homes. It is intended for existing systems where skills may
 already exist under canonical names, legacy aliases, or local-only names.
 
+Use this page before touching an existing personal setup. Audit output helps
+separate files this repo can safely manage from local experiments, legacy
+aliases, and user-owned settings that should stay outside the repo.
+
+Common commands:
+
+```bash
+make audit-system ARGS="--profile full-research"
+make audit-system ARGS="--profile full-research --json"
+make plan ARGS="--profile full-research --migrate"
+make plan ARGS="--profile full-research --adopt"
+```
+
 The audit reports:
 
 - detected and skipped agents
@@ -39,3 +52,6 @@ programs can often be found but not safely executed. Treat degraded Windows
 tool results as presence checks only. To fully verify Windows-native tools, run
 the same `make.bat precheck --profile ...` command from a native Windows shell
 and compare the output with the mounted-profile audit.
+
+Related pages: [Installation](installation.md), [Dependencies](dependencies.md),
+[Agent Locations](agent-locations.md), [Uninstall And Rollback](uninstall-rollback.md).

@@ -5,6 +5,25 @@ installer state are checked.
 If no managed artifacts match the requested scope, `verify` returns
 `no-managed-artifacts` instead of `ok`.
 
+Use verification after any applied install, uninstall, migration, adoption, or
+rollback. It is intentionally narrower than `precheck`: `precheck` checks
+software availability, while `verify` checks whether this installer still owns
+the files and managed instruction blocks it recorded.
+
+Common commands:
+
+```bash
+make verify ARGS="--root /tmp/aas-fake-home"
+make verify ARGS="--skill zotero --root /tmp/aas-fake-home"
+make verify ARGS="--skills zotero,docling --root /tmp/aas-fake-home"
+```
+
+Result meanings:
+
+- `ok`: all selected managed artifacts passed their checks.
+- `no-managed-artifacts`: the selected scope has no installer-managed files to check.
+- `missing` or failed checks: a managed file, marker, block, or format-specific condition no longer matches recorded state.
+
 Current skill checks:
 
 - `L1 file-exists`
@@ -36,3 +55,6 @@ The verifier intentionally skips skills and artifacts that were not installed.
 Runtime smoke tests, runner-specific `doctor` commands, and direct
 `agent-loads-config` checks are not automatic yet; use `precheck` and the
 agent's own diagnostics for those layers.
+
+Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
+[Uninstall And Rollback](uninstall-rollback.md), [Troubleshooting](troubleshooting.md).
