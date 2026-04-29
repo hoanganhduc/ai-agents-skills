@@ -29,7 +29,7 @@ class Args:
     artifact_profile = None
     exclude_artifact = None
     with_deps = False
-    install_mode = "symlink"
+    install_mode = "auto"
 
 
 def fake_root() -> tempfile.TemporaryDirectory[str]:
@@ -250,6 +250,28 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    def test_codex_force_symlink_mode_keeps_canonical_link(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            args.install_mode = "symlink"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), install_mode=args.install_mode)
+            file_actions = [a for a in plan["actions"] if a["kind"] == "file" and a["artifact_type"] == "skill-file"]
+            self.assertEqual(file_actions[0]["install_mode"], "symlink")
+            apply_plan(root, plan, dry_run=False)
+
+            target = root / ".codex" / "skills" / "zotero" / "SKILL.md"
+            self.assertTrue(target.exists())
+            self.assertTrue(target.is_symlink())
+            self.assertIn("canonical/skills/zotero/SKILL.md", str(target.resolve()))
+            self.assertEqual(verify(root)["status"], "ok")
+
     def test_reference_install_mode_writes_thin_adapter_without_support_files(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -274,6 +296,39 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("canonical/skills/deep-research-workflow/SKILL.md", text)
             self.assertNotIn("/home/", text)
             self.assertFalse((target.parent / "references").exists())
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_switching_to_reference_removes_managed_support_files(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            initial_plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="symlink")
+            apply_plan(root, initial_plan, dry_run=False)
+            support = root / ".claude" / "skills" / "deep-research-workflow" / "references" / "output-structure.md"
+            self.assertTrue(support.is_symlink())
+
+            reference_plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="reference")
+            remove_actions = [a for a in reference_plan["actions"] if a["operation"] == "remove-obsolete"]
+            self.assertTrue(remove_actions)
+            result = apply_plan(root, reference_plan, dry_run=False)
+
+            target = root / ".claude" / "skills" / "deep-research-workflow" / "SKILL.md"
+            self.assertTrue(target.exists())
+            self.assertFalse(target.is_symlink())
+            self.assertFalse(support.exists())
+            state = (root / ".ai-agents-skills" / "state.json").read_text(encoding="utf-8")
+            self.assertNotIn("output-structure.md", state)
+            self.assertEqual(verify(root)["status"], "ok")
+
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertTrue(target.is_symlink())
+            self.assertTrue(support.is_symlink())
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_deepseek_default_symlink_mode_keeps_canonical_link(self) -> None:
@@ -350,6 +405,31 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(target.is_symlink())
             self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
             self.assertFalse(legacy.parent.exists())
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_rollback_mode_switch_restores_previous_symlink(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            symlink_plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="symlink")
+            apply_plan(root, symlink_plan, dry_run=False)
+            target = root / ".codex" / "skills" / "zotero" / "SKILL.md"
+            self.assertTrue(target.is_symlink())
+
+            auto_plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="auto")
+            result = apply_plan(root, auto_plan, dry_run=False)
+            self.assertFalse(target.is_symlink())
+            self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
+
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertTrue(target.is_symlink())
+            self.assertIn("canonical/skills/zotero/SKILL.md", str(target.resolve()))
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_uninstall_is_dry_run_by_default_then_apply_removes(self) -> None:

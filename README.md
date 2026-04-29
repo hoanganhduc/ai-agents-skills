@@ -143,13 +143,14 @@ Real-system writes require explicit `--apply --real-system`. Tests and examples
 use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 `--backup-replace`, or `--migrate` only after reviewing `plan` output.
 
-Skills install in `--install-mode symlink` by default so the repo remains the
-single maintained source. The planner resolves that mode per agent: Claude and
-DeepSeek receive symlinked skill files, while Codex receives thin reference
-adapters because current Codex skill discovery ignores file-symlinked user
-`SKILL.md` files. Use `--install-mode reference` to force adapters for every
-agent, or `--install-mode copy` only when files must be materialized inside the
-agent settings directory.
+Skills install in `--install-mode auto` by default so the repo remains the
+single maintained source without hiding agent-loader differences. Auto mode
+uses symlinked skill files for Claude and DeepSeek, and thin reference adapters
+for Codex because current Codex skill discovery ignores file-symlinked user
+`SKILL.md` files. Use `--install-mode symlink` to force symlinks for every
+agent, `--install-mode reference` to force adapters for every agent, or
+`--install-mode copy` only when files must be materialized inside the agent
+settings directory.
 
 Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
@@ -212,10 +213,10 @@ skills they depend on.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets are symlinks to `canonical/skills` when the agent loader supports them;
-Codex targets are reference adapters in the default mode. `reference` mode
-writes a thin adapter for every agent, and `copy` mode writes regular files.
-Use `--skill` or `--skills` for narrow installs.
+targets follow auto mode: symlinks to `canonical/skills` for loaders that
+support them, and reference adapters for Codex. Explicit `symlink`,
+`reference`, and `copy` modes force the same strategy for every agent. Use
+`--skill` or `--skills` for narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"

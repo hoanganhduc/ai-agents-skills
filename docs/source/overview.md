@@ -10,10 +10,10 @@ The repository is a generator and installer, not a copied dotfiles folder. It
 keeps reusable skill bodies, dependency metadata, profiles, optional artifacts,
 and target-specific rendering logic in one source tree. Agent homes such as
 `~/.codex`, `~/.claude`, and `~/.deepseek` are runtime targets. Default skill
-installs are symlinks back to the canonical repo files where the agent loader
-supports them; Codex uses reference adapters in the default mode. Reference and
-copy modes are available when an agent or filesystem cannot use symlinked
-skills.
+installs use auto mode: symlinks back to the canonical repo files where the
+agent loader supports them, and reference adapters for Codex. Explicit
+symlink, reference, and copy modes are available when you need to force one
+strategy.
 
 ## Main Ideas
 
@@ -23,10 +23,10 @@ skills.
   aliases, and management notices outside normal skill directories.
 - `precheck` detects tools and Python packages from the current substrate.
 - `plan` and `install --dry-run` preview writes before anything is changed.
-- `--install-mode symlink` is the default and resolves per agent: Claude and
+- `--install-mode auto` is the default and resolves per agent: Claude and
   DeepSeek use symlinked skill files, while Codex uses reference adapters
   because current Codex discovery ignores file-symlinked user `SKILL.md` files.
-  `reference` forces adapters for every agent, and `copy` writes regular files.
+  `symlink`, `reference`, and `copy` force one strategy for every agent.
 - Real home-directory writes require explicit `--apply --real-system`.
 - Verification checks only installed managed artifacts.
 
