@@ -8,7 +8,7 @@ from typing import Any
 
 from .agents import all_agent_names, detect_agents
 from .apply import apply_plan
-from .discovery import current_platform, discover_tool
+from .discovery import current_platform, discover_python_package, discover_tool
 from .docs import generate_docs
 from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
@@ -53,6 +53,16 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--skills")
     doctor.add_argument("--profile")
     doctor.add_argument("--exclude")
+
+    precheck = sub.add_parser("precheck")
+    precheck.add_argument("--skill")
+    precheck.add_argument("--skills")
+    precheck.add_argument("--profile")
+    precheck.add_argument("--exclude")
+    precheck.add_argument("--ignore", help="comma-separated dependency names to ignore")
+    precheck.add_argument("--skip", help="comma-separated dependency names to skip for this run")
+    precheck.add_argument("--interactive", action="store_true")
+    precheck.add_argument("--save-state", action="store_true")
 
     plan = sub.add_parser("plan")
     add_selection_args(plan)
@@ -110,6 +120,8 @@ def run(args: argparse.Namespace) -> int:
         return output({"written": [str(path) for path in written]}, args)
     if args.command == "doctor":
         return doctor(args, manifests)
+    if args.command == "precheck":
+        return precheck(args, manifests)
     if args.command == "plan":
         plan = make_plan(args, manifests)
         return output(summarize_plan(plan), args)
@@ -127,6 +139,8 @@ def run(args: argparse.Namespace) -> int:
         result = rollback_artifacts(args.root, args.run, skills, agents, dry_run=dry_run)
         return output(result, args)
     if args.command == "uninstall":
+        if args.apply and not args.all and not args.skill and not args.skills:
+            raise ValueError("applied uninstall requires --all, --skill, or --skills")
         skills = resolve_skill_filter(args, manifests)
         agents = set(split_csv(args.agents)) if args.agents else None
         dry_run = not args.apply
@@ -147,7 +161,13 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     selected = resolve_skills(args, manifests)
     agent_filter = split_csv(args.agents) if args.agents else None
     agents = detect_agents(args.root, agent_filter)
-    required_tools = sorted(required_tools_for(selected, manifests))
+    detected_agent_names = {agent.name for agent in agents}
+    active_skills = [
+        skill for skill in selected
+        if detected_agent_names
+        and detected_agent_names.intersection(manifests["skills"]["skills"][skill]["supported_agents"])
+    ]
+    required_tools = sorted(required_tools_for(active_skills, manifests))
     tool_results = {
         name: discover_tool(name, manifests["dependencies"]["tools"][name], platform)
         for name in required_tools
@@ -157,12 +177,88 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         "platform": platform,
         "root": str(args.root),
         "selected_skills": selected,
+        "active_skills": active_skills,
         "detected_agents": [agent.name for agent in agents],
         "skipped_agents": [
             agent for agent in all_agent_names() if agent not in {target.name for target in agents}
         ],
         "tools": tool_results,
     }
+    return output(result, args)
+
+
+def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    platform = current_platform(args.platform)
+    selected = resolve_skills(args, manifests)
+    agent_filter = split_csv(args.agents) if args.agents else None
+    agents = detect_agents(args.root, agent_filter)
+    detected_agent_names = {agent.name for agent in agents}
+    active_skills = [
+        skill for skill in selected
+        if detected_agent_names
+        and detected_agent_names.intersection(manifests["skills"]["skills"][skill]["supported_agents"])
+    ]
+    ignored = set(split_csv(args.ignore))
+    skipped = set(split_csv(args.skip))
+    required = required_dependencies_for(active_skills, manifests) - skipped
+    optional = optional_dependencies_for(active_skills, manifests) - skipped
+    results = []
+    python_command: str | None = None
+
+    ordered_required = sorted(required, key=lambda item: (item != "python-runtime", item))
+    ordered_optional = sorted(optional, key=lambda item: (item != "python-runtime", item))
+    for name in ordered_required:
+        result = discover_dependency(name, True, manifests, platform, python_command)
+        if name == "python-runtime" and result.get("command"):
+            python_command = result["command"]
+        results.append(result)
+    for name in ordered_optional:
+        result = discover_dependency(name, False, manifests, platform, python_command)
+        if name == "python-runtime" and result.get("command"):
+            python_command = result["command"]
+        results.append(result)
+
+    actionable = [item for item in results if item["dependency"] not in ignored]
+    missing_required = [
+        item for item in actionable
+        if item["required"] and item["status"] in {"missing", "unknown"}
+    ]
+    degraded_required = [
+        item for item in actionable
+        if item["required"] and item["status"] == "degraded"
+    ]
+    status = "ok"
+    if missing_required:
+        status = "missing-required"
+    elif degraded_required:
+        status = "degraded"
+    result = {
+        "status": status,
+        "platform": platform,
+        "root": str(args.root),
+        "selected_skills": selected,
+        "active_skills": active_skills,
+        "detected_agents": [agent.name for agent in agents],
+        "skipped_agents": [
+            agent for agent in all_agent_names() if agent not in {target.name for target in agents}
+        ],
+        "ignored_dependencies": sorted(ignored),
+        "skipped_dependencies": sorted(skipped),
+        "dependencies": results,
+        "missing_required": missing_required,
+        "missing_optional": [
+            item for item in actionable
+            if not item["required"] and item["status"] in {"missing", "unknown"}
+        ],
+        "resume_hint": "install missing software, then rerun precheck; use --ignore or --skip for accepted gaps",
+    }
+    if args.interactive and not args.json:
+        interactive_precheck(result)
+    if args.save_state:
+        path = args.root / ".ai-agents-skills" / "precheck.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        result["state_file"] = str(path)
     return output(result, args)
 
 
@@ -231,11 +327,114 @@ def resolve_skill_filter(args: argparse.Namespace, manifests: dict[str, Any]) ->
 
 
 def required_tools_for(skills: list[str], manifests: dict[str, Any]) -> set[str]:
+    return {
+        item for item in required_dependencies_for(skills, manifests)
+        if item in manifests["dependencies"]["tools"]
+    }
+
+
+def required_dependencies_for(skills: list[str], manifests: dict[str, Any]) -> set[str]:
     specs = manifests["skills"]["skills"]
-    tools: set[str] = set()
+    dependencies: set[str] = set()
     for skill in skills:
-        tools.update(specs[skill].get("required_dependencies", []))
-    return tools
+        dependencies.update(specs[skill].get("required_dependencies", []))
+    return dependencies
+
+
+def optional_dependencies_for(skills: list[str], manifests: dict[str, Any]) -> set[str]:
+    specs = manifests["skills"]["skills"]
+    dependencies: set[str] = set()
+    for skill in skills:
+        dependencies.update(specs[skill].get("optional_dependencies", []))
+    return dependencies
+
+
+def discover_dependency(
+    name: str,
+    required: bool,
+    manifests: dict[str, Any],
+    platform: str,
+    python_command: str | None,
+) -> dict[str, Any]:
+    tools = manifests["dependencies"].get("tools", {})
+    packages = manifests["dependencies"].get("packages", {})
+    if name in tools:
+        result = discover_tool(name, tools[name], platform)
+    elif name in packages:
+        package = packages[name]
+        if package.get("type") == "python":
+            if not python_command:
+                python = discover_tool("python-runtime", tools["python-runtime"], platform)
+                python_command = python.get("command")
+            result = discover_python_package(name, package["module"], python_command)
+        elif package.get("type") == "tool":
+            logical_tool = package.get("logical_tool")
+            if logical_tool in tools:
+                result = discover_tool(logical_tool, tools[logical_tool], platform)
+                result["logical_name"] = name
+            else:
+                result = {
+                    "logical_name": name,
+                    "status": "unknown",
+                    "reason": f"logical tool is not declared: {logical_tool}",
+                }
+        elif package.get("type") == "remote-service":
+            result = {
+                "logical_name": name,
+                "status": "manual",
+                "reason": "remote credentials or account state must be configured outside this repo",
+            }
+        else:
+            result = {"logical_name": name, "status": "unknown", "reason": "unknown package type"}
+    else:
+        result = {"logical_name": name, "status": "unknown", "reason": "dependency is not declared"}
+    result["dependency"] = name
+    result["required"] = required
+    result["install_hint"] = install_hint(name, result)
+    return result
+
+
+def install_hint(name: str, result: dict[str, Any]) -> str:
+    if result.get("status") == "ok":
+        return "already available"
+    hints = {
+        "python-runtime": "install Python 3.10+ with ssl, venv, and pip",
+        "powershell-runtime": "install PowerShell 5.1+ or PowerShell 7+",
+        "node-runtime": "install Node.js 18+ with npm",
+        "wsl-runtime": "enable WSL 2 and install a Linux distro",
+        "sage-runtime": "install SageMath locally on Linux or inside WSL on Windows",
+        "tex-runtime": "install TeX Live, MiKTeX, or another TeX distribution",
+        "ocr-runtime": "install Tesseract OCR if OCR support is needed",
+        "calibre-cli": "install Calibre command line tools",
+        "docling-python-package": "install the Python package in the selected Python environment: python -m pip install docling",
+        "networkx-python-package": "install the Python package in the selected Python environment: python -m pip install networkx",
+        "zotero-credentials": "configure Zotero credentials outside this repo",
+        "modal-auth": "configure Modal authentication outside this repo",
+    }
+    return hints.get(name, "install or configure this dependency, then rerun precheck")
+
+
+def interactive_precheck(result: dict[str, Any]) -> None:
+    missing = [*result.get("missing_required", []), *result.get("missing_optional", [])]
+    if not missing:
+        print("precheck: no missing required or optional dependencies")
+        return
+    ignored = set(result.get("ignored_dependencies", []))
+    skipped = set(result.get("skipped_dependencies", []))
+    for item in missing:
+        name = item["dependency"]
+        print(f"missing dependency: {name}")
+        print(f"hint: {item.get('install_hint')}")
+        answer = input("press Enter after installing, 's' to skip this run, 'i' to ignore, 'q' to stop: ").strip().lower()
+        if answer == "q":
+            break
+        if answer == "s":
+            skipped.add(name)
+        elif answer == "i":
+            ignored.add(name)
+    result["ignored_dependencies"] = sorted(ignored)
+    result["skipped_dependencies"] = sorted(skipped)
+    result["resume_hint"] = "rerun precheck to verify newly installed software"
 
 
 def ensure_apply_allowed(args: argparse.Namespace) -> None:

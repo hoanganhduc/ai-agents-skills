@@ -21,6 +21,7 @@ skills
 profiles
 dependencies
 system-profile
+agent-locations
 verification
 architecture
 windows

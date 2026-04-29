@@ -56,6 +56,12 @@ def rollback(
     for item in targets:
         rollback_artifact(item)
         restored.append(item)
+    remaining = [
+        item for item in state.get("artifacts", [])
+        if item.get("key") not in {target.get("key") for target in targets}
+    ]
+    state["artifacts"] = remaining
+    save_state(root, state)
     return {"dry_run": False, "restored": restored}
 
 
@@ -81,11 +87,17 @@ def remove_artifact(item: dict[str, Any]) -> None:
         if skill_dir.exists():
             shutil.rmtree(skill_dir)
         return
+    if item.get("artifact_type") == "skill-support-file":
+        if path.exists():
+            path.unlink()
+        skill_dir = next((parent for parent in path.parents if parent.name == item["skill"]), path.parent)
+        cleanup_empty_parents(path.parent, stop_at=skill_dir)
+        return
     if item.get("artifact_type") == "instruction-block":
-        remove_managed_block(path, item["skill"])
+        remove_managed_block(path, item["skill"], delete_if_empty=item.get("created_file", False))
 
 
-def remove_managed_block(path: Path, skill: str) -> None:
+def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) -> None:
     if not path.exists():
         return
     marker = f"ai-agents-skills:{skill}"
@@ -95,7 +107,11 @@ def remove_managed_block(path: Path, skill: str) -> None:
     if start in text and end in text:
         before, rest = text.split(start, 1)
         _, after = rest.split(end, 1)
-        path.write_text((before.rstrip() + "\n" + after.lstrip()).strip() + "\n", encoding="utf-8")
+        cleaned = (before.rstrip() + "\n" + after.lstrip()).strip()
+        if delete_if_empty and not cleaned:
+            path.unlink()
+            return
+        path.write_text(cleaned + "\n", encoding="utf-8")
 
 
 def rollback_artifact(item: dict[str, Any]) -> None:
@@ -111,3 +127,15 @@ def rollback_artifact(item: dict[str, Any]) -> None:
         shutil.copy2(backup_path, path)
     else:
         remove_artifact(item)
+
+
+def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
+    current = path
+    while current != stop_at.parent and current.exists():
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        if current == stop_at:
+            return
+        current = current.parent

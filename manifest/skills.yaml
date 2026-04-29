@@ -6,7 +6,7 @@
       "profiles": ["research-core", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
       "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["zotero"],
+      "optional_dependencies": ["zotero-credentials"],
       "optional_capabilities": ["zotero-cross-check", "figure-handoff"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -186,7 +186,7 @@
       "profiles": ["full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
       "required_dependencies": [],
-      "optional_dependencies": ["zotero"],
+      "optional_dependencies": ["zotero-credentials"],
       "optional_capabilities": ["library-document-routing"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -195,7 +195,7 @@
       "profiles": ["full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
       "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["zotero"],
+      "optional_dependencies": ["zotero-credentials"],
       "optional_capabilities": ["pdf-annotation"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -204,7 +204,7 @@
       "profiles": ["ebook", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
       "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["calibre"],
+      "optional_dependencies": ["calibre-cli"],
       "optional_capabilities": ["calibre-dry-run-handoff"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
