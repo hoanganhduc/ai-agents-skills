@@ -3,6 +3,7 @@ name = "ai-agents-skills"
 version = "0.1.0"
 description = "Manifest-driven shared skills installer for Codex, Claude, and DeepSeek"
 requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
 
 [tool.ai-agents-skills]
 real_system_writes_require_flag = true
