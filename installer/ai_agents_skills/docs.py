@@ -55,6 +55,7 @@ def write_readme(manifests: dict[str, Any]) -> Path:
 ![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
+![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
 Shared, manifest-driven skills and settings for Codex, Claude, and DeepSeek.
 
@@ -126,6 +127,14 @@ copies those bodies into each supported agent and adds managed metadata.
 
 The GitHub Pages site is built from `docs/source` and deployed by
 `.github/workflows/docs.yml`.
+
+## Acknowledgements
+
+This repository was implemented and maintained with help from ChatGPT Codex.
+
+## License
+
+This project is licensed under GPL-3.0-or-later. See `LICENSE`.
 
 ## Quick Start
 
