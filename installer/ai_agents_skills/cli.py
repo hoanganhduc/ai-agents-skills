@@ -74,14 +74,17 @@ def build_parser() -> argparse.ArgumentParser:
     audit = sub.add_parser("audit-system")
     add_selection_args(audit)
     add_conflict_args(audit)
+    add_install_mode_args(audit)
 
     plan = sub.add_parser("plan")
     add_selection_args(plan)
     add_conflict_args(plan)
+    add_install_mode_args(plan)
 
     install = sub.add_parser("install")
     add_selection_args(install)
     add_conflict_args(install)
+    add_install_mode_args(install)
     install.add_argument("--dry-run", action="store_true")
     install.add_argument("--apply", action="store_true")
     install.add_argument("--real-system", action="store_true")
@@ -128,6 +131,19 @@ def add_conflict_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--adopt", action="store_true")
     parser.add_argument("--backup-replace", action="store_true")
     parser.add_argument("--migrate", action="store_true")
+
+
+def add_install_mode_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--install-mode",
+        choices=["auto", "symlink", "reference", "copy"],
+        default="auto",
+        help=(
+            "skill installation mode; auto is the default and resolves per "
+            "agent, symlink forces links, reference writes thin adapters, copy "
+            "writes full files"
+        ),
+    )
 
 
 def run(args: argparse.Namespace) -> int:
@@ -336,6 +352,7 @@ def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, 
         args.backup_replace,
         args.migrate,
         selected_artifacts,
+        args.install_mode,
     )
 
 
@@ -345,7 +362,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     agent_filter = split_csv(args.agents) if args.agents else None
     agents = detect_agents(args.root, agent_filter)
     precheck_result = build_precheck_result(args, manifests)
-    default_plan = build_plan(args.root, manifests, selected, agents, artifacts=selected_artifacts)
+    default_plan = build_plan(args.root, manifests, selected, agents, artifacts=selected_artifacts, install_mode=args.install_mode)
     requested_plan = build_plan(
         args.root,
         manifests,
@@ -355,9 +372,10 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         args.backup_replace,
         args.migrate,
         selected_artifacts,
+        args.install_mode,
     )
-    adopt_plan = build_plan(args.root, manifests, selected, agents, adopt=True, artifacts=selected_artifacts)
-    migrate_plan = build_plan(args.root, manifests, selected, agents, migrate=True, artifacts=selected_artifacts)
+    adopt_plan = build_plan(args.root, manifests, selected, agents, adopt=True, artifacts=selected_artifacts, install_mode=args.install_mode)
+    migrate_plan = build_plan(args.root, manifests, selected, agents, migrate=True, artifacts=selected_artifacts, install_mode=args.install_mode)
     adopt_migrate_plan = build_plan(
         args.root,
         manifests,
@@ -366,6 +384,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         adopt=True,
         migrate=True,
         artifacts=selected_artifacts,
+        install_mode=args.install_mode,
     )
     state = load_state(args.root)
     result = {
@@ -539,8 +558,11 @@ def summarize_plan(plan: dict[str, Any]) -> dict[str, Any]:
                     "artifact_name",
                     "path",
                     "legacy_path",
+                    "source_path",
                     "classification",
                     "operation",
+                    "install_mode",
+                    "fallback_mode",
                     "reason",
                     "artifact_type",
                 )

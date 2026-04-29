@@ -10,7 +10,16 @@ If a plan reports `classification=unmanaged`, the installer found user-owned
 content in the target path and will skip it unless `--adopt` or
 `--backup-replace` is used. If a plan reports `classification=legacy`, the
 installer found a compatibility or alias path and will skip it unless
-`--migrate` is used.
+`--migrate` is used. A reviewed `--migrate` plan installs the canonical target
+and removes the legacy alias directory.
+
+Default installs use `--install-mode auto`, resolved per agent. Claude and
+DeepSeek receive symlinked skill files when the filesystem supports them.
+Codex receives reference adapters by default because current Codex discovery
+ignores file-symlinked user `SKILL.md` files. Use `--install-mode symlink` only
+when you intentionally want to force links for every agent. Use
+`--install-mode reference` to force adapters for every agent. If an agent
+requires regular files in its settings directory, use `--install-mode copy`.
 
 Useful inspection commands:
 
@@ -30,6 +39,7 @@ Common cases:
 | Dependency is degraded | The tool or install root was found but not fully executable from this substrate. | Re-run precheck from the native substrate, such as Windows or WSL. |
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
+| Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled this way by default. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
 | Verify returns `no-managed-artifacts` | The selected scope has no state recorded by this installer. | Run install/adopt/migrate first, or verify a different scope. |
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),

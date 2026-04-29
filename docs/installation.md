@@ -59,6 +59,39 @@ Real-system writes should be a final step after reviewing `plan` output:
 make install ARGS="--profile research-core --apply --real-system"
 ```
 
+## Install Modes
+
+`--install-mode auto` is the default. The installer resolves that request per
+agent based on the checked skill-loader behavior. Claude and DeepSeek skill
+files and support files are installed as symlinks to `canonical/skills`, so
+editing the repo updates what those agents read without duplicating every skill
+body into every settings directory.
+
+Codex is the compatibility exception: current Codex skill discovery loads
+regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md` files.
+In default auto mode, Codex skill files therefore resolve to reference
+adapters that tell Codex where to read the canonical repo skill. `plan --json`
+shows the effective `install_mode` for each target before anything is written.
+
+Use `--install-mode symlink` to force symlinked skill files for every agent.
+This is useful for testing future loader behavior, but it can produce Codex
+skill targets that current Codex will not discover.
+
+Use `--install-mode reference` for agents or environments that should not load
+symlinked skills. This mode writes a thin `SKILL.md` adapter into every agent
+settings directory. The adapter tells the agent where the canonical repo skill
+file is and does not copy support files.
+
+Use `--install-mode copy` only when the agent must have regular files inside
+its settings directory. Copy mode materializes skill files and support files
+with managed metadata, so it uses more space and needs reinstalling after repo
+skill changes.
+
+If symlink creation fails during an applied symlink install, skill files fall
+back to reference adapters and support files fall back to copied files. Optional
+artifacts outside skill directories are always copied because agents do not
+load them as canonical skill source.
+
 ## Selection Model
 
 - `--profile research-core` selects a workflow bundle.
@@ -76,8 +109,8 @@ See [Profiles](profiles.md), [Skills](skills.md), and
 - default: create missing managed files and skip unmanaged or legacy files
 - `--adopt`: record an existing target file as user-owned managed state
 - `--backup-replace`: back up and replace an unmanaged target file
-- `--migrate`: copy a detected legacy skill into the canonical target while
-  leaving the legacy source in place
+- `--migrate`: install a detected legacy skill under the canonical name using
+  the selected install mode, then remove the legacy alias directory
 
 Instruction blocks are installed only when the corresponding skill artifact is
 actually installed, adopted, updated, already managed, or migrated. A skipped
@@ -107,7 +140,8 @@ Scenario summary:
 | Skill absent | Managed skill files and support files are created. |
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
-| Legacy alias exists | Default plan skips; `--migrate` copies canonical content under the canonical name. |
+| Legacy alias exists | Default plan skips; `--migrate` installs the canonical target and removes the legacy alias directory. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |

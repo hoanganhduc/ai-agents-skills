@@ -51,12 +51,15 @@ def save_state(root: Path, data: dict[str, Any]) -> None:
 
 
 def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
-    if not path.exists():
+    if not path.exists() and not path.is_symlink():
         return None
     rel = str(path).replace(":", "").replace("\\", "/").lstrip("/")
     dest = state_dir(root) / "backups" / run_id / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(path, dest)
+    if path.is_symlink():
+        os.symlink(os.readlink(path), dest)
+    else:
+        shutil.copy2(path, dest)
     return dest
 
 

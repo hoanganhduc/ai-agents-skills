@@ -15,6 +15,15 @@ Use uninstall when the current installed state is no longer wanted. Use
 rollback when you want to reverse a specific recorded run and restore previous
 managed content or remove files that were created from an empty state.
 
+Install mode is not an uninstall input. Uninstall reads the managed-state
+journal and removes the selected managed artifacts regardless of whether they
+were installed as `auto`, `symlink`, `reference`, or `copy`. When a later
+install switches a skill to `reference`, previously managed support files for
+that skill are planned as obsolete removals because reference adapters point at
+the canonical repo directory instead of local support-file copies or links.
+Rollback uses the recorded run and preserves symlink backups when reversing a
+mode switch.
+
 Dry-run examples:
 
 ```bash

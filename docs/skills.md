@@ -13,7 +13,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 make verify ARGS="--skill zotero --root /tmp/aas-fake-home"
 ```
 
-Installation is partial by default: selecting one skill installs only that skill, its support files, and the managed instruction block for that installed or adopted skill. Skipped skills do not receive instruction blocks.
+Installation is partial by default: selecting one skill installs only that skill, its support files when the selected install mode needs them, and the managed instruction block for that installed or adopted skill. Skipped skills do not receive instruction blocks. Default `auto` mode points agent skill files at `canonical/skills` when the loader supports symlinked skills and writes reference adapters for Codex. Explicit `symlink`, `reference`, and `copy` modes force the same strategy for every agent.
 
 | Skill | Description | Profiles |
 |---|---|---|
