@@ -220,6 +220,7 @@ class DocsAndLauncherTests(unittest.TestCase):
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         for skill in ("deep-research-workflow", "zotero", "vnthuquan"):
             self.assertIn(f"`{skill}`", readme)
+        self.assertIn("docs/workflow-overview.md", readme)
         self.assertIn("docs/system-profile.md", readme)
 
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:

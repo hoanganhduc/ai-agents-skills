@@ -20,6 +20,34 @@
 
 Shared, manifest-driven skills and settings for Codex, Claude, and DeepSeek.
 
+## System Summary
+
+This is an experimental, personal-use configuration for research workflows,
+especially combinatorics and graph theory work. It is not a polished general
+product, and it may not behave as desired on other machines, other agent
+versions, or research tasks outside the assumptions documented here.
+
+This repo turns a multi-agent research setup into one maintainable skill source.
+Codex, Claude, and DeepSeek can each load local skills, while this repository
+keeps the shared research workflows, profiles, dependency metadata, and
+installer logic in one place.
+
+The research stack is organized as:
+
+- agent frontends: Codex, Claude, and DeepSeek
+- shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
+- external capabilities: Python, TeX, optional SageMath, local library tools,
+  document parsers, public databases, and retrieval helpers
+
+For example, a literature-review request can route through
+`research-briefing`, `deep-research-workflow`, `paper-lookup`, and
+`research-verification-gate`; a paper-review request can check `zotero` first,
+fall back to `calibre` for books, parse files with `docling`, and then run
+`paper-review`.
+
+See `docs/workflow-overview.md` for the full sanitized system description and
+workflow examples.
+
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
@@ -33,6 +61,8 @@ copies those bodies into each supported agent and adds managed metadata.
 - `docs/profiles.md`: selectable profiles such as `research-core` and
   `full-research`.
 - `docs/dependencies.md`: logical tools and dependency categories.
+- `docs/workflow-overview.md`: how agents, skills, runtimes, and research
+  tools connect during real workflows.
 - `docs/system-profile.md`: sanitized maintainer-system profile and how local
   tools map to skills.
 - `docs/verification.md`: installed-artifact verification model.

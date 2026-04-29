@@ -14,6 +14,7 @@ def generate_docs(manifests: dict[str, Any]) -> list[Path]:
         write_skills_doc(manifests, docs_dir / "skills.md"),
         write_profiles_doc(manifests, docs_dir / "profiles.md"),
         write_dependencies_doc(manifests, docs_dir / "dependencies.md"),
+        write_static_doc(docs_dir / "workflow-overview.md", workflow_overview_text()),
         write_static_doc(docs_dir / "system-profile.md", system_profile_text()),
         write_verification_doc(docs_dir / "verification.md"),
         write_static_doc(docs_dir / "architecture.md", architecture_text()),
@@ -53,6 +54,34 @@ def write_readme(manifests: dict[str, Any]) -> Path:
 
 Shared, manifest-driven skills and settings for Codex, Claude, and DeepSeek.
 
+## System Summary
+
+This is an experimental, personal-use configuration for research workflows,
+especially combinatorics and graph theory work. It is not a polished general
+product, and it may not behave as desired on other machines, other agent
+versions, or research tasks outside the assumptions documented here.
+
+This repo turns a multi-agent research setup into one maintainable skill source.
+Codex, Claude, and DeepSeek can each load local skills, while this repository
+keeps the shared research workflows, profiles, dependency metadata, and
+installer logic in one place.
+
+The research stack is organized as:
+
+- agent frontends: Codex, Claude, and DeepSeek
+- shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
+- external capabilities: Python, TeX, optional SageMath, local library tools,
+  document parsers, public databases, and retrieval helpers
+
+For example, a literature-review request can route through
+`research-briefing`, `deep-research-workflow`, `paper-lookup`, and
+`research-verification-gate`; a paper-review request can check `zotero` first,
+fall back to `calibre` for books, parse files with `docling`, and then run
+`paper-review`.
+
+See `docs/workflow-overview.md` for the full sanitized system description and
+workflow examples.
+
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
@@ -66,6 +95,8 @@ copies those bodies into each supported agent and adds managed metadata.
 - `docs/profiles.md`: selectable profiles such as `research-core` and
   `full-research`.
 - `docs/dependencies.md`: logical tools and dependency categories.
+- `docs/workflow-overview.md`: how agents, skills, runtimes, and research
+  tools connect during real workflows.
 - `docs/system-profile.md`: sanitized maintainer-system profile and how local
   tools map to skills.
 - `docs/verification.md`: installed-artifact verification model.
@@ -170,6 +201,64 @@ Settings checks:
     return path
 
 
+def workflow_overview_text() -> str:
+    return """# System And Research Workflow Overview
+
+This repository is designed for an experimental personal multi-agent research
+workstation, with an emphasis on combinatorics and graph theory workflows. It
+is not guaranteed to work as desired in every environment. Codex, Claude, and
+DeepSeek each keep their own local configuration directory, but the reusable
+research instructions live here as canonical skill bodies. The installer copies
+those skill bodies into whichever agents are present and leaves absent agents
+alone.
+
+The system has three layers:
+
+| Layer | Role |
+|---|---|
+| Agent frontends | Codex, Claude, and DeepSeek receive user requests and load installed skill instructions. |
+| Shared skill repository | `manifest/` selects skills and profiles; `canonical/skills/` stores reusable workflows; `targets/` holds agent-specific notes. |
+| Runtime and software tools | Python, TeX, optional SageMath, local library tools, document parsers, public databases, and external retrieval helpers do the actual work when a skill needs them. |
+
+The installer links these layers without embedding private state. It does not
+store credentials, session logs, local library databases, downloaded papers, or
+machine-specific paths. Instead, `doctor` detects logical capabilities such as
+`python-runtime`, `tex-runtime`, `sage-runtime`, library access, and optional
+Python packages on the current system.
+
+A typical research workflow looks like this:
+
+1. A request enters one installed agent, for example Codex, Claude, or DeepSeek.
+2. The agent loads a shared skill such as `research-briefing`,
+   `deep-research-workflow`, `zotero`, `docling`, or `tikz-draw`.
+3. The skill routes to the right software capability: local libraries first,
+   document parsing when files are involved, public databases for structured
+   records, TeX for figures, and SageMath or Python for math checks.
+4. The final answer passes through review or verification skills when the task
+   needs stronger evidence control.
+
+Examples:
+
+- **Current literature brief:** `research-briefing` scopes the question,
+  `deep-research-workflow` preserves source IDs across search and synthesis,
+  `paper-lookup` or `database-lookup` fills metadata gaps, then
+  `research-report-reviewer` and `research-verification-gate` check the final
+  report.
+- **Paper review from a local library:** `zotero` checks the paper library
+  first, `calibre` is used for book-like review inputs, `docling` parses local
+  documents when structure matters, and `paper-review` or
+  `annotated-review` performs the review workflow.
+- **Research figure or math-heavy answer:** `deep-research-workflow` produces a
+  figure brief, `tikz-draw` turns it into a structural diagram using TeX, and
+  `sagemath` or `graph-verifier` handles graph or algebra checks when
+  available.
+- **Windows plus WSL-backed tools:** Windows agents can receive the same skill
+  bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
+  capabilities, so the dependency graph records the substrate instead of
+  hardcoding a personal path.
+"""
+
+
 def skill_table(manifests: dict[str, Any]) -> str:
     rows = ["| Skill | Description | Profiles |", "|---|---|---|"]
     for name, spec in sorted(manifests["skills"]["skills"].items()):
@@ -232,6 +321,25 @@ and secrets are intentionally omitted or replaced with placeholders.
 |---|---|---|
 | Linux home | `<LINUX_HOME>` | Primary development root used for local tests. |
 | Mounted Windows home | `<WINDOWS_HOME>` | Windows profile inspected from Linux/WSL-style mount. |
+
+## Execution Topology
+
+The observed setup is best understood as shared research logic plus
+agent-local installation targets:
+
+- Codex, Claude, and DeepSeek each load skills from their own supported local
+  skill/config locations.
+- This repository holds the reusable skill bodies and dependency metadata.
+- The installer detects which agent homes exist, installs only those targets,
+  and skips absent agents without requiring their tools.
+- Runtime-backed workflows use logical dependencies, not personal paths. For
+  example, a skill asks for `python-runtime`, `tex-runtime`, or `sage-runtime`;
+  `doctor` decides whether that capability is local, WSL-backed, missing, or
+  degraded.
+
+For a research task, the agent instruction layer chooses the workflow, while
+the software layer supplies concrete capabilities such as library lookup,
+document parsing, database access, figure compilation, and math verification.
 
 ## Detected Agents
 
