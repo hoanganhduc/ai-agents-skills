@@ -33,7 +33,16 @@
     },
     "multi-agent": {
       "description": "Multi-agent and structured workflow orchestration.",
-      "skills": ["agent-group-discuss", "prose"]
+      "skills": ["agent-group-discuss", "prose", "model-router"]
+    },
+    "workflow-tools": {
+      "description": "Reusable planning helpers for resources, model routing, formal skeletons, and workspace organization.",
+      "skills": [
+        "get-available-resources",
+        "model-router",
+        "formal-skeleton-helper",
+        "workspace-rearranger"
+      ]
     },
     "ebook": {
       "description": "Ebook discovery and library handoff.",

@@ -102,6 +102,8 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         "skill": action["skill"],
         "artifact": action["path"],
         "artifact_type": action.get("artifact_type"),
+        "artifact_id": action.get("artifact_id"),
+        "artifact_name": action.get("artifact_name"),
         "classification": action.get("classification"),
         "operation": action.get("operation", action["kind"]),
     }
@@ -113,4 +115,6 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
 def artifact_key(action: dict[str, Any]) -> str:
     if action["kind"] == "managed-block":
         return f"{action['agent']}:{action['skill']}:{action['block_id']}:{action['path']}"
+    if action.get("artifact_id"):
+        return f"{action['agent']}:{action['artifact_id']}:{action['path']}"
     return f"{action['agent']}:{action['skill']}:{action['path']}"

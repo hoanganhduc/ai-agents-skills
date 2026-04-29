@@ -13,7 +13,7 @@ from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
-from installer.ai_agents_skills.selectors import resolve_skills
+from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
 from installer.ai_agents_skills.verify import verify
 
 
@@ -22,6 +22,12 @@ class Args:
     skills = None
     profile = None
     exclude = None
+    no_skills = False
+    artifact = None
+    artifacts = None
+    artifact_profile = None
+    exclude_artifact = None
+    with_deps = False
 
 
 def fake_root() -> tempfile.TemporaryDirectory[str]:
@@ -261,6 +267,79 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertNotIn("ai-agents-skills:zotero", instructions)
             self.assertIn("ai-agents-skills:source-research", instructions)
 
+    def test_artifact_profile_installs_templates_and_personas(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex", "claude", "deepseek")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.no_skills = True
+            args.artifact_profile = "workflow-templates,review-personas"
+            selected = resolve_skills(args, manifests)
+            artifacts = resolve_artifacts(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), artifacts=artifacts)
+            apply_plan(root, plan, dry_run=False)
+
+            self.assertTrue((root / ".codex" / "templates" / "SPEC.md").exists())
+            codex_persona = root / ".codex" / "agents" / "literature-scout.toml"
+            claude_persona = root / ".claude" / "agents" / "literature-scout.md"
+            deepseek_persona = root / ".deepseek" / "agents" / "literature-scout.md"
+            self.assertIn("developer_instructions", codex_persona.read_text(encoding="utf-8"))
+            self.assertTrue(claude_persona.read_text(encoding="utf-8").lstrip().startswith("---"))
+            self.assertIn("reference document", deepseek_persona.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_entrypoint_alias_requires_backing_skill(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.no_skills = True
+            args.artifact = "entrypoint-alias:deep-research"
+            plan = build_plan(
+                root,
+                manifests,
+                resolve_skills(args, manifests),
+                detect_agents(root),
+                artifacts=resolve_artifacts(args, manifests),
+            )
+            action = plan["actions"][0]
+            self.assertEqual(action["operation"], "skip")
+            self.assertEqual(action["classification"], "blocked")
+
+            args.no_skills = False
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), artifacts=resolve_artifacts(args, manifests))
+            apply_plan(root, plan, dry_run=False)
+            command = root / ".claude" / "commands" / "deep-research.md"
+            self.assertTrue(command.exists())
+            self.assertIn("Backing skill", command.read_text(encoding="utf-8"))
+
+    def test_uninstall_can_remove_one_artifact_without_removing_skill(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "deep-research-workflow"
+            args.artifact = "entrypoint-alias:deep-research"
+            selected = resolve_skills(args, manifests)
+            artifacts = resolve_artifacts(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), artifacts=artifacts)
+            apply_plan(root, plan, dry_run=False)
+
+            uninstall(root, artifacts={"entrypoint-alias:deep-research"}, dry_run=False)
+            self.assertTrue((root / ".claude" / "skills" / "deep-research-workflow" / "SKILL.md").exists())
+            self.assertFalse((root / ".claude" / "commands" / "deep-research.md").exists())
+
 
 class DocsAndLauncherTests(unittest.TestCase):
     def test_generated_docs_include_manifest_skills(self) -> None:
@@ -365,6 +444,25 @@ class DocsAndLauncherTests(unittest.TestCase):
             payload = json.loads(stream.getvalue())
             self.assertEqual(payload["active_skills"], ["graph-verifier"])
             self.assertTrue(payload["dependencies"])
+
+    def test_cli_with_deps_installs_entrypoint_backing_skill(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            code = main([
+                "--json",
+                "--root",
+                str(root),
+                "install",
+                "--no-skills",
+                "--artifact",
+                "entrypoint-alias:deep-research",
+                "--with-deps",
+                "--apply",
+            ])
+            self.assertEqual(code, 0)
+            self.assertTrue((root / ".claude" / "skills" / "deep-research-workflow" / "SKILL.md").exists())
+            self.assertTrue((root / ".claude" / "commands" / "deep-research.md").exists())
 
     def test_precheck_ignores_dependencies_for_absent_agent_filter(self) -> None:
         with fake_root() as tmp:

@@ -100,6 +100,42 @@
       "optional_capabilities": ["ocr", "mcp-server"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "get-available-resources": {
+      "description": "Detect CPU, memory, disk, and optional accelerator availability before heavy local work.",
+      "profiles": ["workflow-tools", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["resource-planning"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "formal-skeleton-helper": {
+      "description": "Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs.",
+      "profiles": ["workflow-tools", "math", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["lean-skeleton"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "model-router": {
+      "description": "Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work.",
+      "profiles": ["workflow-tools", "multi-agent", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["subagent-routing"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "workspace-rearranger": {
+      "description": "Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion.",
+      "profiles": ["workflow-tools", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["workspace-cleanup"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
     "research-digest-wrapper": {
       "description": "Run tracked-topic research digests.",
       "profiles": ["digest", "full-research"],
@@ -236,6 +272,9 @@
     "graph-verifier": ["graph_verifier"],
     "agent-group-discuss": ["agent_group_discuss"],
     "self-improving-agent": ["self_improving_agent"],
+    "formal-skeleton-helper": ["formal_skeleton_helper"],
+    "model-router": ["smart_model_router"],
+    "workspace-rearranger": ["workspace_rearranger"],
     "source-research": ["openclaw-research"]
   }
 }

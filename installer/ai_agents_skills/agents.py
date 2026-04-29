@@ -31,6 +31,8 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             artifact_dirs={
                 "agent-persona": root / ".codex" / "agents",
                 "template": root / ".codex" / "templates",
+                "instruction-doc": root / ".codex" / "instructions",
+                "entrypoint-alias": root / ".codex" / "instructions" / "entrypoints",
                 "command": root / ".codex" / "commands",
                 "tool-shim": root / ".codex" / "tools",
             },
@@ -44,6 +46,8 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             artifact_dirs={
                 "agent-persona": root / ".claude" / "agents",
                 "template": root / ".claude" / "templates",
+                "instruction-doc": root / ".claude" / "instructions",
+                "entrypoint-alias": root / ".claude" / "commands",
                 "command": root / ".claude" / "commands",
                 "tool-shim": root / ".claude" / "tools",
             },
@@ -58,6 +62,8 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             artifact_dirs={
                 "agent-persona": root / ".deepseek" / "agents",
                 "template": root / ".deepseek" / "templates",
+                "instruction-doc": root / ".deepseek" / "instructions",
+                "entrypoint-alias": root / ".deepseek" / "instructions" / "entrypoints",
                 "command": root / ".deepseek" / "commands",
                 "tool-shim": root / ".deepseek" / "tools",
             },

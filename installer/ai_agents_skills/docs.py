@@ -12,6 +12,7 @@ def generate_docs(manifests: dict[str, Any]) -> list[Path]:
     written = [
         write_readme(manifests),
         write_skills_doc(manifests, docs_dir / "skills.md"),
+        write_artifacts_doc(manifests, docs_dir / "artifacts.md"),
         write_profiles_doc(manifests, docs_dir / "profiles.md"),
         write_dependencies_doc(manifests, docs_dir / "dependencies.md"),
         write_static_doc(docs_dir / "workflow-overview.md", workflow_overview_text()),
@@ -33,6 +34,7 @@ def write_readme(manifests: dict[str, Any]) -> Path:
     path = REPO_ROOT / "README.md"
     skills_table = skill_table(manifests)
     profiles_table = profiles_table_text(manifests)
+    artifact_profiles_table = artifact_profiles_table_text(manifests)
     path.write_text(
         f"""# AI Agents Skills
 
@@ -107,6 +109,8 @@ copies those bodies into each supported agent and adds managed metadata.
 
 - `docs/installation.md`: install, dry-run, conflict, and migration modes.
 - `docs/skills.md`: skill catalog and descriptions.
+- `docs/artifacts.md`: optional templates, instruction docs, personas, and
+  entrypoint aliases.
 - `docs/profiles.md`: selectable profiles such as `research-core` and
   `full-research`.
 - `docs/dependencies.md`: logical tools and dependency categories.
@@ -131,7 +135,9 @@ Linux:
 make doctor
 make precheck ARGS="--profile research-core"
 make list-skills
+make list-artifacts
 make plan ARGS="--profile research-core"
+make plan ARGS="--no-skills --artifact-profile workflow-templates"
 make install ARGS="--profile research-core --dry-run"
 make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
 make verify ARGS="--root /tmp/aas-fake-home"
@@ -143,7 +149,9 @@ Windows:
 make.bat doctor
 make.bat precheck --profile research-core
 make.bat list-skills
+make.bat list-artifacts
 make.bat plan --profile research-core
+make.bat plan --no-skills --artifact-profile workflow-templates
 make.bat install --profile research-core --dry-run
 make.bat install --profile research-core --apply --root %TEMP%\\aas-fake-home
 make.bat verify --root %TEMP%\\aas-fake-home
@@ -153,9 +161,19 @@ Real-system writes require explicit `--apply --real-system`. Tests and examples
 use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 `--backup-replace`, or `--migrate` only after reviewing `plan` output.
 
+Optional workflow artifacts are not installed by default. Use
+`--artifact-profile workflow-templates`, `--artifact-profile review-personas`,
+`--artifact-profile workflow-instructions`, or
+`--artifact-profile research-entrypoints` explicitly. Use `--with-deps` when
+dependency-bound artifacts should also install their backing skills.
+
 ## Profiles
 
 {profiles_table}
+
+## Artifact Profiles
+
+{artifact_profiles_table}
 
 ## Skills
 
@@ -168,6 +186,25 @@ use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
 
 def write_skills_doc(manifests: dict[str, Any], path: Path) -> Path:
     path.write_text("# Skills\n\n" + skill_table(manifests) + "\n", encoding="utf-8")
+    return path
+
+
+def write_artifacts_doc(manifests: dict[str, Any], path: Path) -> Path:
+    path.write_text(
+        "# Optional Artifacts\n\n"
+        "Artifacts are opt-in files outside normal skill directories. They are "
+        "installed only when selected with `--artifact`, `--artifacts`, or "
+        "`--artifact-profile`.\n\n"
+        + artifact_profiles_table_text(manifests)
+        + "\n\n"
+        + artifact_table(manifests)
+        + "\n\n"
+        "Artifacts with dependencies are installed only when their backing "
+        "skill is selected, already managed, or added with `--with-deps`. DeepSeek "
+        "personas are installed as reference prompts because native persona-file "
+        "loading has not been verified.\n",
+        encoding="utf-8",
+    )
     return path
 
 
@@ -227,6 +264,13 @@ Current support-file checks:
 - `A1 file-exists`
 - `A2 managed-marker`
 - `A3 no-secret-leak`
+
+Current optional artifact checks:
+
+- `O1 file-exists`
+- `O2 managed-marker`
+- `O3 no-secret-leak`
+- `O4 format-specific checks for Codex TOML personas and Claude frontmatter`
 
 The verifier intentionally skips skills and artifacts that were not installed.
 Runtime smoke tests, runner-specific `doctor` commands, and direct
@@ -521,6 +565,23 @@ def skill_table(manifests: dict[str, Any]) -> str:
     return "\n".join(rows)
 
 
+def artifact_table(manifests: dict[str, Any]) -> str:
+    rows = ["| Artifact | Description | Depends On Skills |", "|---|---|---|"]
+    for artifact_type, specs in sorted(manifests["artifacts"]["artifacts"].items()):
+        for name, spec in sorted(specs.items()):
+            dependencies = ", ".join(f"`{item}`" for item in spec.get("depends_on_skills", [])) or ""
+            rows.append(f"| `{artifact_type}:{name}` | {spec['description']} | {dependencies} |")
+    return "\n".join(rows)
+
+
+def artifact_profiles_table_text(manifests: dict[str, Any]) -> str:
+    rows = ["| Artifact Profile | Description | Artifacts |", "|---|---|---|"]
+    for name, spec in sorted(manifests["artifacts"]["artifact_profiles"].items()):
+        artifacts = ", ".join(f"`{item}`" for item in spec["artifacts"])
+        rows.append(f"| `{name}` | {spec['description']} | {artifacts} |")
+    return "\n".join(rows)
+
+
 def profiles_table_text(manifests: dict[str, Any]) -> str:
     rows = ["| Profile | Description | Skills |", "|---|---|---|"]
     for name, spec in sorted(manifests["profiles"]["profiles"].items()):
@@ -548,9 +609,11 @@ Artifact classes:
 | `skill-file` | Installs canonical `SKILL.md` into the agent skill directory. |
 | `skill-support-file` | Installs canonical references, scripts, assets, templates, and agent notes inside the skill directory. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
-| `agent-persona` | Reserved optional target class for reviewer/persona files. |
-| `template` | Reserved optional target class for research, report, and task templates. |
-| `command` | Reserved optional target class for command wrappers such as Claude slash commands. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, and DeepSeek receives reference prompts. |
+| `template` | Optional research, report, specification, and task templates. |
+| `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
+| `entrypoint-alias` | Optional quick-action aliases. Claude receives command files; Codex and DeepSeek receive reference documents. |
+| `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
@@ -564,7 +627,8 @@ def installation_text() -> str:
 
 Use `make precheck` or `make.bat precheck` first when installing on a new
 machine. Use `plan` before `install`. Partial installs are first-class: select
-`--skill`, `--skills`, or `--profile`.
+`--skill`, `--skills`, or `--profile`. Artifact installs are also partial:
+select `--artifact`, `--artifacts`, or `--artifact-profile`.
 
 `doctor` is a quick required-tool check. `precheck` is broader: it detects
 required tools, optional tools, Python packages, remote-service configuration
@@ -592,6 +656,10 @@ Instruction blocks are installed only when the corresponding skill artifact is
 actually installed, adopted, updated, already managed, or migrated. A skipped
 skill does not receive an `AGENTS.md` or `CLAUDE.md` block.
 
+Optional artifacts are not installed by default. Use `--no-skills` when you
+want an artifact-only install. Use `--with-deps` when selected dependency-bound
+artifacts should bring in their required backing skills.
+
 Scenario summary:
 
 | Scenario | Result |
@@ -601,6 +669,8 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` copies canonical content under the canonical name. |
+| Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
+| Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
 """
 
@@ -716,8 +786,13 @@ Optional artifact-class target directories:
 | Claude | `~/.claude/agents` | `~/.claude/templates` | `~/.claude/commands` | `~/.claude/tools` |
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 
+Instruction docs target each agent's `instructions` directory. Entrypoint
+aliases target Claude commands, but Codex and DeepSeek receive reference docs
+under `instructions/entrypoints` because equivalent slash-command loading is
+not assumed.
+
 These optional artifact classes are intentionally not installed by default.
-They are reserved for explicit profiles because commands, personas, hooks, and
+They require explicit artifact selection because commands, personas, hooks, and
 tool shims can affect behavior more broadly than a normal skill directory.
 
 Instruction files are modified through managed marker blocks only. Uninstall
@@ -776,8 +851,9 @@ removes current managed artifacts. Both support skill and agent scopes and both
 support dry-run previews.
 
 Applied uninstall requires an explicit scope: use `--skill`, `--skills`, or
-`--all`. Uninstall removes only managed files and managed instruction blocks.
-Rollback can target one run, one skill, multiple skills, or one agent. If a
-managed instruction file was created by the installer and becomes empty after
-block removal, it is removed.
+`--artifact`, `--artifacts`, or `--all`. Uninstall removes only managed files
+and managed instruction blocks. Rollback can target one run, one skill,
+multiple skills, one artifact, multiple artifacts, or one agent. If a managed
+instruction file was created by the installer and becomes empty after block
+removal, it is removed.
 """

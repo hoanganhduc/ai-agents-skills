@@ -41,6 +41,18 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "managed-block-present", "ok": block_id(artifact["skill"]) in text})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
+    if artifact.get("artifact_type") in {"template", "instruction-doc", "entrypoint-alias"} and path.exists():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
+        checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
+    if artifact.get("artifact_type") == "agent-persona" and path.exists():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
+        checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
+        if artifact.get("agent") == "codex":
+            checks.append({"name": "codex-persona-schema", "ok": "developer_instructions" in text})
+        if artifact.get("agent") == "claude":
+            checks.append({"name": "claude-persona-frontmatter", "ok": text.lstrip().startswith("---")})
     return {
         "agent": artifact.get("agent"),
         "skill": artifact.get("skill"),
