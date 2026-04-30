@@ -25,6 +25,8 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
     applied: list[dict[str, Any]] = []
     if dry_run:
         return {"run_id": run_id, "dry_run": True, "actions": plan["actions"]}
+    if not plan["actions"]:
+        return {"run_id": run_id, "dry_run": False, "actions": []}
 
     state = load_state(root)
     for action in plan["actions"]:

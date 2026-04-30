@@ -16,7 +16,7 @@ from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
-from installer.ai_agents_skills.state import save_state
+from installer.ai_agents_skills.state import artifact_signature, save_state, write_run_record
 from installer.ai_agents_skills.verify import verify
 
 
@@ -114,6 +114,22 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(plan["actions"], [])
             self.assertEqual(len(plan["skipped_agents"]), 3)
 
+    def test_apply_with_no_detected_agent_writes_no_state_run(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, [])
+
+            result = apply_plan(root, plan, dry_run=False)
+
+            self.assertFalse(result["dry_run"])
+            self.assertEqual(result["actions"], [])
+            self.assertFalse((root / ".ai-agents-skills" / "state.json").exists())
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
+
     def test_verify_reports_no_managed_artifacts_explicitly(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -183,6 +199,50 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(file_actions[0]["operation"], "skip")
             self.assertEqual(file_actions[0]["legacy_path"], str(legacy))
             self.assertEqual(block_actions[0]["operation"], "skip")
+
+    def test_windows_unmanaged_and_legacy_fixture_requires_adopt_migrate(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex", "claude", "deepseek")
+            (root / ".codex" / "skills" / "zotero").mkdir(parents=True)
+            (root / ".codex" / "skills" / "zotero" / "SKILL.md").write_text("codex zotero\n", encoding="utf-8")
+            (root / ".claude" / "skills" / "zotero").mkdir(parents=True)
+            (root / ".claude" / "skills" / "zotero" / "SKILL.md").write_text("claude zotero\n", encoding="utf-8")
+            (root / ".deepseek" / "skills" / "zotero").mkdir(parents=True)
+            (root / ".deepseek" / "skills" / "zotero" / "SKILL.md").write_text("deepseek zotero\n", encoding="utf-8")
+            (root / ".agents" / "skills" / "openclaw-research").mkdir(parents=True)
+            (root / ".agents" / "skills" / "openclaw-research" / "SKILL.md").write_text(
+                "legacy source research\n",
+                encoding="utf-8",
+            )
+            (root / ".claude" / "skills" / "deep-research").mkdir(parents=True)
+            (root / ".claude" / "skills" / "deep-research" / "SKILL.md").write_text(
+                "legacy deep research\n",
+                encoding="utf-8",
+            )
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "source-research,zotero,deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            default_plan = build_plan(root, manifests, selected, detect_agents(root))
+            default_file_actions = [
+                action for action in default_plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            ]
+            self.assertIn("skip", {action["operation"] for action in default_file_actions})
+            self.assertIn("unmanaged", {action["classification"] for action in default_file_actions})
+            self.assertIn("legacy", {action["classification"] for action in default_file_actions})
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
+
+            reviewed_plan = build_plan(root, manifests, selected, detect_agents(root), adopt=True, migrate=True)
+            operations = {action["operation"] for action in reviewed_plan["actions"]}
+            self.assertIn("adopt", operations)
+            self.assertIn("migrate-install", operations)
+            self.assertIn("remove-legacy", operations)
+            self.assertFalse((root / ".ai-agents-skills" / "state.json").exists())
 
     def test_codex_legacy_alias_can_be_migrated_to_canonical_target(self) -> None:
         manifests = load_manifests()
@@ -389,6 +449,34 @@ class PlanInstallVerifyTests(unittest.TestCase):
             }
             self.assertEqual(modes, {"codex": "reference", "claude": "symlink", "deepseek": "symlink"})
 
+    def test_all_agent_fake_root_install_verify_uninstall_lifecycle(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex", "claude", "deepseek")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "source-research,zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            apply_plan(root, plan, dry_run=False)
+
+            self.assertEqual(verify(root)["status"], "ok")
+            codex_skill = root / ".codex" / "skills" / "zotero" / "SKILL.md"
+            claude_skill = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            deepseek_skill = root / ".deepseek" / "skills" / "zotero" / "SKILL.md"
+            self.assertFalse(codex_skill.is_symlink())
+            self.assertTrue(claude_skill.is_symlink())
+            self.assertTrue(deepseek_skill.is_symlink())
+
+            uninstall(root, dry_run=False)
+
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
+            self.assertFalse((root / ".codex" / "AGENTS.md").exists())
+            self.assertFalse((root / ".claude" / "CLAUDE.md").exists())
+            self.assertFalse((root / ".deepseek" / "AGENTS.md").exists())
+
     def test_symlink_failure_falls_back_to_reference_adapter(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -516,6 +604,113 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(applied["dry_run"])
             self.assertFalse(target.exists())
             self.assertFalse(instructions.exists())
+
+    def test_multi_skill_rollback_removes_shared_instruction_blocks_atomically(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "source-research,zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            result = apply_plan(root, plan, dry_run=False)
+            self.assertEqual(verify(root)["status"], "ok")
+
+            rollback(root, run_id=result["run_id"], dry_run=False)
+
+            self.assertFalse((root / ".claude" / "skills" / "source-research" / "SKILL.md").exists())
+            self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
+            self.assertFalse((root / ".claude" / "CLAUDE.md").exists())
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
+
+    def test_rollback_conflict_preflight_prevents_partial_mutation(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "source-research,zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            result = apply_plan(root, plan, dry_run=False)
+            before = root_snapshot(root)
+            instructions = root / ".claude" / "CLAUDE.md"
+            instructions.write_text(instructions.read_text(encoding="utf-8") + "\nuser edit\n", encoding="utf-8")
+            after_user_edit = root_snapshot(root)
+
+            with self.assertRaises(ValueError):
+                rollback(root, run_id=result["run_id"], dry_run=False)
+
+            self.assertEqual(root_snapshot(root), after_user_edit)
+            self.assertNotEqual(before, after_user_edit)
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_rollback_refuses_run_artifact_outside_root_before_mutation(self) -> None:
+        with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp) / "outside.txt"
+            outside.write_text("do not remove\n", encoding="utf-8")
+            run_id = "rollback-boundary"
+            write_run_record(
+                root,
+                run_id,
+                [
+                    {
+                        "key": "tampered",
+                        "run_id": run_id,
+                        "agent": "claude",
+                        "skill": "zotero",
+                        "artifact": str(outside),
+                        "artifact_type": "skill-file",
+                        "managed": True,
+                        "applied": True,
+                        "installed_signature": artifact_signature(outside),
+                    }
+                ],
+            )
+
+            with self.assertRaises(ValueError):
+                rollback(root, run_id=run_id, dry_run=False)
+
+            self.assertEqual(outside.read_text(encoding="utf-8"), "do not remove\n")
+
+    def test_rollback_refuses_backup_outside_installer_state_before_mutation(self) -> None:
+        with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            target.parent.mkdir(parents=True)
+            target.write_text("managed\n", encoding="utf-8")
+            outside_backup = Path(outside_tmp) / "backup.txt"
+            outside_backup.write_text("outside backup\n", encoding="utf-8")
+            run_id = "rollback-backup-boundary"
+            write_run_record(
+                root,
+                run_id,
+                [
+                    {
+                        "key": "tampered",
+                        "run_id": run_id,
+                        "agent": "claude",
+                        "skill": "zotero",
+                        "artifact": str(target),
+                        "artifact_type": "skill-file",
+                        "managed": True,
+                        "applied": True,
+                        "backup": str(outside_backup),
+                        "installed_signature": artifact_signature(target),
+                    }
+                ],
+            )
+
+            with self.assertRaises(ValueError):
+                rollback(root, run_id=run_id, dry_run=False)
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "managed\n")
 
     def test_support_files_are_installed_and_verified(self) -> None:
         manifests = load_manifests()
