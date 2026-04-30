@@ -87,7 +87,7 @@ def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, sour
 
 def display_path_for_agent(path: Path) -> str:
     try:
-        return "~/" + str(path.resolve().relative_to(Path.home().resolve()))
+        return "~/" + path.resolve().relative_to(Path.home().resolve()).as_posix()
     except ValueError:
         return str(path)
 

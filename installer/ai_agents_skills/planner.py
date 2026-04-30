@@ -337,6 +337,8 @@ def classify_file_action(
             operation = "update"
         else:
             current = path.read_text(encoding="utf-8", errors="replace")
+            if not path.is_symlink():
+                current_hash = sha256_text(current)
             if install_mode != "symlink" and current_hash == expected_hash:
                 classification = "managed"
                 operation = "noop"
@@ -361,7 +363,7 @@ def classify_file_action(
         "path": str(path),
         "content": content,
         "expected_hash": expected_hash,
-        "current_hash": sha256_file(path),
+        "current_hash": current_hash if path.exists() else None,
         "classification": classification,
         "operation": operation,
         "artifact_type": artifact_type,

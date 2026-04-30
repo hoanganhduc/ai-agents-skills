@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,7 @@ def sha256_text(text: str) -> str:
 
 
 def sha256_file(path: Path) -> str | None:
-    if not path.exists() or not path.is_file():
+    if not path.exists() or path.is_symlink() or not path.is_file():
         return None
     digest = hashlib.sha256()
     with path.open("rb") as fh:
@@ -24,7 +25,65 @@ def sha256_file(path: Path) -> str | None:
 
 
 def now_run_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"{timestamp}-{uuid.uuid4().hex[:8]}"
+
+
+def artifact_signature(path: Path) -> dict[str, Any]:
+    if path.is_symlink():
+        return {
+            "exists": True,
+            "kind": "symlink",
+            "target": os.readlink(path),
+        }
+    if not path.exists():
+        return {"exists": False, "kind": "missing"}
+    if path.is_dir():
+        return {
+            "exists": True,
+            "kind": "directory",
+            "tree_hash": sha256_tree(path),
+        }
+    if path.is_file():
+        return {
+            "exists": True,
+            "kind": "file",
+            "hash": sha256_file(path),
+        }
+    return {"exists": True, "kind": "other"}
+
+
+def signatures_match(left: dict[str, Any] | None, right: dict[str, Any] | None) -> bool:
+    return normalize_signature(left) == normalize_signature(right)
+
+
+def normalize_signature(signature: dict[str, Any] | None) -> dict[str, Any] | None:
+    if signature is None:
+        return None
+    normalized = dict(signature)
+    if normalized.get("kind") == "symlink" and "target" in normalized:
+        normalized["target"] = str(normalized["target"])
+    return normalized
+
+
+def sha256_tree(path: Path) -> str:
+    digest = hashlib.sha256()
+    for child in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix()):
+        rel = child.relative_to(path).as_posix()
+        digest.update(rel.encode("utf-8"))
+        if child.is_symlink():
+            digest.update(b"\0symlink\0")
+            digest.update(os.readlink(child).encode("utf-8"))
+        elif child.is_dir():
+            digest.update(b"\0dir\0")
+        elif child.is_file():
+            digest.update(b"\0file\0")
+            with child.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    digest.update(chunk)
+        else:
+            digest.update(b"\0other\0")
+    return "sha256:" + digest.hexdigest()
 
 
 def state_dir(root: Path) -> Path:
@@ -65,14 +124,21 @@ def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
     return dest
 
 
-def upsert_artifact(data: dict[str, Any], artifact: dict[str, Any]) -> None:
-    artifacts = data.setdefault("artifacts", [])
-    key = artifact["key"]
-    for i, existing in enumerate(artifacts):
+def upsert_record(records: list[dict[str, Any]], record: dict[str, Any]) -> None:
+    key = record["key"]
+    for i, existing in enumerate(records):
         if existing.get("key") == key:
-            artifacts[i] = artifact
+            records[i] = record
             return
-    artifacts.append(artifact)
+    records.append(record)
+
+
+def upsert_artifact(data: dict[str, Any], artifact: dict[str, Any]) -> None:
+    upsert_record(data.setdefault("artifacts", []), artifact)
+
+
+def upsert_uninstall_record(data: dict[str, Any], record: dict[str, Any]) -> None:
+    upsert_record(data.setdefault("uninstall_records", []), record)
 
 
 def run_record_path(root: Path, run_id: str) -> Path:
