@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
+from installer.ai_agents_skills.state import save_state
 from installer.ai_agents_skills.verify import verify
 
 
@@ -39,6 +41,21 @@ def fake_root() -> tempfile.TemporaryDirectory[str]:
 def create_agent_homes(root: Path, *agents: str) -> None:
     for agent in agents:
         (root / f".{agent}").mkdir(parents=True, exist_ok=True)
+
+
+def root_snapshot(root: Path) -> dict[str, tuple[str, str | bytes | None]]:
+    snapshot: dict[str, tuple[str, str | bytes | None]] = {}
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        rel = path.relative_to(root).as_posix()
+        if rel == ".ai-agents-skills" or rel.startswith(".ai-agents-skills/"):
+            continue
+        if path.is_symlink():
+            snapshot[rel] = ("symlink", os.readlink(path))
+        elif path.is_dir():
+            snapshot[rel] = ("dir", None)
+        elif path.is_file():
+            snapshot[rel] = ("file", path.read_bytes())
+    return snapshot
 
 
 class ManifestTests(unittest.TestCase):
@@ -270,7 +287,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             target = root / ".codex" / "skills" / "zotero" / "SKILL.md"
             self.assertTrue(target.exists())
             self.assertTrue(target.is_symlink())
-            self.assertIn("canonical/skills/zotero/SKILL.md", str(target.resolve()))
+            self.assertIn("canonical/skills/zotero/SKILL.md", target.resolve().as_posix())
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_reference_install_mode_writes_thin_adapter_without_support_files(self) -> None:
@@ -350,7 +367,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             target = root / ".deepseek" / "skills" / "zotero" / "SKILL.md"
             self.assertTrue(target.exists())
             self.assertTrue(target.is_symlink())
-            self.assertIn("canonical/skills/zotero/SKILL.md", str(target.resolve()))
+            self.assertIn("canonical/skills/zotero/SKILL.md", target.resolve().as_posix())
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_all_agent_fake_root_detects_deepseek_when_home_exists(self) -> None:
@@ -449,7 +466,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             rollback(root, run_id=result["run_id"], dry_run=False)
             self.assertTrue(target.is_symlink())
-            self.assertIn("canonical/skills/zotero/SKILL.md", str(target.resolve()))
+            self.assertIn("canonical/skills/zotero/SKILL.md", target.resolve().as_posix())
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_uninstall_is_dry_run_by_default_then_apply_removes(self) -> None:
@@ -517,7 +534,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             support = root / ".claude" / "skills" / "deep-research-workflow" / "references" / "output-structure.md"
             self.assertTrue(support.exists())
             self.assertTrue(support.is_symlink())
-            self.assertIn("canonical/skills/deep-research-workflow/references/output-structure.md", str(support.resolve()))
+            self.assertIn("canonical/skills/deep-research-workflow/references/output-structure.md", support.resolve().as_posix())
             result = verify(root)
             self.assertEqual(result["status"], "ok")
 
@@ -578,6 +595,165 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertTrue(extra.exists())
+
+    def test_uninstall_restores_backup_replaced_preinstall_snapshot(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            existing = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("user-owned zotero\n", encoding="utf-8")
+            instructions = root / ".claude" / "CLAUDE.md"
+            instructions.write_text("user instructions\n", encoding="utf-8")
+            before = root_snapshot(root)
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), backup_replace=True)
+            apply_plan(root, plan, dry_run=False)
+            uninstall(root, skills={"zotero"}, dry_run=False)
+
+            self.assertEqual(root_snapshot(root), before)
+
+    def test_uninstall_preserves_changed_managed_skill_file(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="copy")
+            apply_plan(root, plan, dry_run=False)
+
+            target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            target.write_text("user edit after install\n", encoding="utf-8")
+            result = uninstall(root, skills={"zotero"}, dry_run=False)
+
+            self.assertTrue(target.exists())
+            self.assertEqual(target.read_text(encoding="utf-8"), "user edit after install\n")
+            self.assertIn("skip-conflict", {action["operation"] for action in result["actions"]})
+            self.assertNotEqual(verify(root)["status"], "no-managed-artifacts")
+
+    def test_uninstall_unmanages_adopted_file_without_deleting_it(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            existing = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("user-owned zotero\n", encoding="utf-8")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), adopt=True)
+            apply_plan(root, plan, dry_run=False)
+            uninstall(root, skills={"zotero"}, dry_run=False)
+
+            self.assertTrue(existing.exists())
+            self.assertEqual(existing.read_text(encoding="utf-8"), "user-owned zotero\n")
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
+
+    def test_uninstall_removes_managed_block_and_preserves_user_text(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            apply_plan(root, plan, dry_run=False)
+
+            instructions = root / ".claude" / "CLAUDE.md"
+            instructions.write_text(
+                "prefix user text\n" + instructions.read_text(encoding="utf-8") + "suffix user text\n",
+                encoding="utf-8",
+            )
+            uninstall(root, skills={"zotero"}, dry_run=False)
+
+            text = instructions.read_text(encoding="utf-8")
+            self.assertIn("prefix user text", text)
+            self.assertIn("suffix user text", text)
+            self.assertNotIn("ai-agents-skills:zotero", text)
+
+    def test_uninstall_restores_tombstoned_backup_with_missing_parent(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            support = root / ".claude" / "skills" / "deep-research-workflow" / "references" / "output-structure.md"
+            support.parent.mkdir(parents=True)
+            support.write_text("user-owned support\n", encoding="utf-8")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root),
+                backup_replace=True,
+                install_mode="copy",
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="reference")
+            apply_plan(root, plan, dry_run=False)
+            self.assertFalse(support.parent.exists())
+
+            uninstall(root, skills={"deep-research-workflow"}, dry_run=False)
+
+            self.assertTrue(support.exists())
+            self.assertEqual(support.read_text(encoding="utf-8"), "user-owned support\n")
+
+    def test_uninstall_refuses_state_artifact_outside_root(self) -> None:
+        with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp) / "outside.txt"
+            outside.write_text("do not remove\n", encoding="utf-8")
+            save_state(
+                root,
+                {
+                    "schema_version": 1,
+                    "runs": [],
+                    "artifacts": [
+                        {
+                            "key": "tampered",
+                            "agent": "claude",
+                            "skill": "zotero",
+                            "artifact": str(outside),
+                            "artifact_type": "skill-file",
+                            "managed": True,
+                            "uninstall": {"action": "delete-created"},
+                            "installed_signature": {
+                                "exists": True,
+                                "kind": "file",
+                                "hash": "sha256:tampered",
+                            },
+                        }
+                    ],
+                },
+            )
+
+            result = uninstall(root, skills={"zotero"}, dry_run=False)
+
+            self.assertEqual(outside.read_text(encoding="utf-8"), "do not remove\n")
+            self.assertEqual(result["actions"][0]["operation"], "skip-conflict")
+            state = json.loads((root / ".ai-agents-skills" / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["artifacts"][0]["key"], "tampered")
 
     def test_adopted_existing_file_verifies_by_recorded_hash(self) -> None:
         manifests = load_manifests()
@@ -930,9 +1106,10 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(install_code, 0)
 
             stream = io.StringIO()
+            err = io.StringIO()
             with (
                 contextlib.redirect_stdout(stream),
-                contextlib.redirect_stderr(io.StringIO()),
+                contextlib.redirect_stderr(err),
                 patch("sys.stdin", io.StringIO("")),
             ):
                 code = main([
@@ -947,6 +1124,15 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(code, 1)
             payload = json.loads(stream.getvalue())
             self.assertIn("uninstall confirmation required", payload["error"])
+            prompt = err.getvalue()
+            self.assertIn("Uninstall confirmation required", prompt)
+            self.assertIn(f"root: {root}", prompt)
+            self.assertIn("scope: skill=zotero", prompt)
+            self.assertIn("planned uninstall actions:", prompt)
+            self.assertIn("planned operations:", prompt)
+            self.assertIn("What uninstall does:", prompt)
+            self.assertIn("Safety boundary:", prompt)
+            self.assertIn("skips changed or suspicious artifacts", prompt)
             self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
 
     def test_cli_uninstall_apply_requires_scope(self) -> None:

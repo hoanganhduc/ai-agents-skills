@@ -6,7 +6,15 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .state import load_state, run_record_path, save_state, sha256_file, upsert_artifact
+from .state import (
+    artifact_signature,
+    load_state,
+    run_record_path,
+    save_state,
+    signatures_match,
+    state_dir,
+    upsert_artifact,
+)
 
 
 def uninstall(
@@ -17,20 +25,29 @@ def uninstall(
     dry_run: bool = True,
 ) -> dict[str, Any]:
     state = load_state(root)
-    targets = filter_artifacts(state.get("artifacts", []), skills, agents, artifacts)
+    targets = filter_artifacts(lifecycle_records(state), skills, agents, artifacts)
+    actions = [plan_uninstall_action(item, root) for item in targets]
     if dry_run:
-        return {"dry_run": True, "actions": [{"operation": "remove", **item} for item in targets]}
-    remaining = []
+        return {"dry_run": True, "actions": actions}
+    completed_keys: set[str | None] = set()
     removed = []
-    for item in state.get("artifacts", []):
-        if item in targets:
-            remove_artifact(item)
-            removed.append(item)
-        else:
-            remaining.append(item)
-    state["artifacts"] = remaining
+    results = []
+    for action in actions:
+        result = apply_uninstall_action(action, root)
+        results.append(result)
+        if result.get("completed"):
+            completed_keys.add(action.get("key"))
+            removed.append(action)
+    state["artifacts"] = [
+        item for item in state.get("artifacts", [])
+        if item.get("key") not in completed_keys
+    ]
+    state["uninstall_records"] = [
+        item for item in state.get("uninstall_records", [])
+        if item.get("key") not in completed_keys
+    ]
     save_state(root, state)
-    return {"dry_run": False, "removed": removed}
+    return {"dry_run": False, "actions": results, "removed": removed}
 
 
 def rollback(
@@ -90,6 +107,112 @@ def filter_artifacts(
     return selected
 
 
+def lifecycle_records(state: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        *state.get("artifacts", []),
+        *state.get("uninstall_records", []),
+    ]
+
+
+def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
+    action = dict(item)
+    origin = item.get("uninstall", {})
+    path = Path(item["artifact"])
+    if root is not None and not path_within(root, path):
+        action["operation"] = "skip-conflict"
+        action["reason"] = "artifact path outside selected root"
+        return action
+    action["current_signature"] = artifact_signature(path)
+    if item.get("artifact_type") in {"instruction-block", "management-notice"}:
+        action["operation"] = plan_block_uninstall(item)
+        return action
+    origin_action = origin.get("action")
+    if origin_action == "unmanage-only":
+        action["operation"] = "unmanage-only"
+    elif origin_action == "restore-removed":
+        action["operation"] = "restore-removed" if not path.exists() and not path.is_symlink() else "skip-conflict"
+    elif origin_action == "restore-backup":
+        installed = item.get("installed_signature")
+        current = artifact_signature(path)
+        if not current.get("exists") or signatures_match(current, installed):
+            action["operation"] = "restore-backup"
+        else:
+            action["operation"] = "skip-conflict"
+    elif origin_action == "delete-created":
+        current = artifact_signature(path)
+        if not current.get("exists"):
+            action["operation"] = "forget-missing"
+        elif signatures_match(current, item.get("installed_signature")):
+            action["operation"] = "delete-created"
+        else:
+            action["operation"] = "skip-conflict"
+    elif origin_action == "forget-missing":
+        action["operation"] = "forget-missing"
+    else:
+        action["operation"] = "skip-conflict"
+        action["reason"] = "missing uninstall origin metadata"
+    return action
+
+
+def plan_block_uninstall(item: dict[str, Any]) -> str:
+    path = Path(item["artifact"])
+    if not path.exists():
+        return "forget-missing"
+    if (
+        item.get("uninstall", {}).get("action") == "restore-backup"
+        and signatures_match(artifact_signature(path), item.get("installed_signature"))
+    ):
+        text_for_count = path.read_text(encoding="utf-8", errors="replace")
+        if text_for_count.count("<!-- ai-agents-skills:") == 2:
+            return "restore-backup"
+    text = path.read_text(encoding="utf-8", errors="replace")
+    current_block = extract_managed_block(text, item["skill"])
+    if current_block is None:
+        return "forget-missing"
+    expected = item.get("managed_block")
+    if expected is not None and current_block.strip() != expected.strip():
+        return "skip-conflict"
+    return "remove-managed-block"
+
+
+def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
+    result = dict(action)
+    operation = action["operation"]
+    result["completed"] = False
+    if root is not None and not path_within(root, Path(action["artifact"])):
+        result["operation"] = "skip-conflict"
+        result["reason"] = "artifact path outside selected root"
+        return result
+    if operation in {"unmanage-only", "forget-missing"}:
+        result["completed"] = True
+        return result
+    if operation == "skip-conflict":
+        result["reason"] = result.get("reason", "artifact changed since install")
+        return result
+    if operation == "remove-managed-block":
+        remove_managed_block_precise(action)
+        result["completed"] = True
+        return result
+    if operation == "delete-created":
+        remove_artifact(action)
+        result["completed"] = True
+        return result
+    if operation in {"restore-backup", "restore-removed"}:
+        backup = action.get("uninstall", {}).get("backup") or action.get("backup")
+        if not backup or not Path(backup).exists() and not Path(backup).is_symlink():
+            result["operation"] = "skip-conflict"
+            result["reason"] = "backup missing"
+            return result
+        if root is not None and not path_within(state_dir(root) / "backups", Path(backup)):
+            result["operation"] = "skip-conflict"
+            result["reason"] = "backup path outside installer backup directory"
+            return result
+        restore_backup(Path(backup), Path(action["artifact"]))
+        result["completed"] = True
+        return result
+    raise ValueError(f"unknown uninstall operation: {operation}")
+
+
 def remove_artifact(item: dict[str, Any]) -> None:
     path = Path(item["artifact"])
     if item.get("artifact_type") == "skill-file":
@@ -133,12 +256,49 @@ def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) 
         path.write_text(cleaned + "\n", encoding="utf-8")
 
 
+def remove_managed_block_precise(item: dict[str, Any]) -> None:
+    path = Path(item["artifact"])
+    text = path.read_text(encoding="utf-8")
+    span = managed_block_span(text, item["skill"])
+    if span is None:
+        return
+    start, end = span
+    if end < len(text) and text[end] == "\n":
+        end += 1
+    cleaned = text[:start] + text[end:]
+    if item.get("uninstall", {}).get("action") == "delete-created" and not cleaned.strip():
+        path.unlink()
+        return
+    path.write_text(cleaned, encoding="utf-8")
+
+
+def extract_managed_block(text: str, skill: str) -> str | None:
+    span = managed_block_span(text, skill)
+    if span is None:
+        return None
+    start, end = span
+    return text[start:end]
+
+
+def managed_block_span(text: str, skill: str) -> tuple[int, int] | None:
+    marker = f"ai-agents-skills:{skill}"
+    start_marker = f"<!-- {marker}:start -->"
+    end_marker = f"<!-- {marker}:end -->"
+    start = text.find(start_marker)
+    if start == -1:
+        return None
+    end = text.find(end_marker, start)
+    if end == -1:
+        return None
+    return start, end + len(end_marker)
+
+
 def rollback_artifact(item: dict[str, Any]) -> None:
     path = Path(item["artifact"])
     backup = item.get("backup")
-    current_hash = sha256_file(path) if path.exists() and path.is_file() else None
-    expected_hash = item.get("new_hash")
-    if expected_hash and current_hash and current_hash != expected_hash:
+    installed_signature = item.get("installed_signature")
+    current_signature = artifact_signature(path)
+    if installed_signature and current_signature.get("exists") and not signatures_match(current_signature, installed_signature):
         raise ValueError(f"refusing rollback because artifact changed since install: {path}")
     if backup:
         backup_path = Path(backup)
@@ -154,6 +314,7 @@ def restore_backup(backup_path: Path, path: Path) -> None:
             remove_tree(path)
         else:
             path.unlink()
+    path.parent.mkdir(parents=True, exist_ok=True)
     if backup_path.is_symlink():
         os.symlink(os.readlink(backup_path), path)
     elif backup_path.is_dir():
@@ -187,3 +348,11 @@ def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
         if current == stop_at:
             return
         current = current.parent
+
+
+def path_within(root: Path, path: Path) -> bool:
+    try:
+        Path(os.path.abspath(path)).relative_to(Path(os.path.abspath(root)))
+    except ValueError:
+        return False
+    return True
