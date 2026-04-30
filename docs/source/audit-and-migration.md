@@ -23,7 +23,8 @@ The audit reports:
 - managed state counts from `.ai-agents-skills/state.json`
 - instruction-file managed marker counts
 - canonical skills present, missing, managed, unmanaged, and legacy aliases
-- extra local skills outside this repo's canonical catalog
+- extra local skills outside this repo's canonical catalog in the primary
+  agent skills directory
 - default, adopt, migrate, and adopt+migrate plan summaries
 - dependency status and selected skills related to each dependency
 
@@ -46,6 +47,11 @@ Claude. Local engineering workflows, one-off experiments, downloaded runtime
 state, provider config, secrets, and session/history databases should remain
 outside the repo unless they are deliberately promoted into a canonical skill or
 artifact.
+
+Audit `extra_local` coverage is limited to the primary agent skills directory,
+such as `~/.codex/skills` or `~/.claude/skills`. Compatibility and workspace
+skill directories are used for legacy detection during planning, but are not
+reported as primary extra-local inventory.
 
 When auditing a mounted Windows profile from Linux or WSL, native `.exe`
 programs can often be found but not safely executed. Treat degraded Windows

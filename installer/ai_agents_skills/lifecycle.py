@@ -93,13 +93,11 @@ def filter_artifacts(
 def remove_artifact(item: dict[str, Any]) -> None:
     path = Path(item["artifact"])
     if item.get("artifact_type") == "skill-file":
-        skill_dir = path.parent
-        if skill_dir.exists():
-            shutil.rmtree(skill_dir)
+        remove_file(path)
+        cleanup_empty_parents(path.parent, stop_at=path.parent)
         return
     if item.get("artifact_type") == "skill-support-file":
-        if path.exists():
-            path.unlink()
+        remove_file(path)
         skill_dir = next((parent for parent in path.parents if parent.name == item["skill"]), path.parent)
         cleanup_empty_parents(path.parent, stop_at=skill_dir)
         return
@@ -114,8 +112,7 @@ def remove_artifact(item: dict[str, Any]) -> None:
         "command",
         "tool-shim",
     }:
-        if path.exists():
-            path.unlink()
+        remove_file(path)
         cleanup_empty_parents(path.parent, stop_at=path.parent)
 
 
@@ -154,13 +151,30 @@ def rollback_artifact(item: dict[str, Any]) -> None:
 def restore_backup(backup_path: Path, path: Path) -> None:
     if path.exists() or path.is_symlink():
         if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
+            remove_tree(path)
         else:
             path.unlink()
     if backup_path.is_symlink():
         os.symlink(os.readlink(backup_path), path)
+    elif backup_path.is_dir():
+        copy_tree(backup_path, path)
     else:
         shutil.copy2(backup_path, path)
+
+
+def remove_file(path: Path) -> None:
+    if path.exists() or path.is_symlink():
+        if path.is_dir() and not path.is_symlink():
+            raise ValueError(f"refusing to remove directory as managed file: {path}")
+        path.unlink()
+
+
+def remove_tree(path: Path) -> None:
+    shutil.rmtree(path)
+
+
+def copy_tree(source: Path, destination: Path) -> None:
+    shutil.copytree(source, destination, symlinks=True)
 
 
 def cleanup_empty_parents(path: Path, stop_at: Path) -> None:

@@ -55,7 +55,8 @@ Safety boundary:
   and local runtime state are not managed by this repo
 - unmanaged user files are skipped unless `--adopt`, `--backup-replace`, or
   `--migrate` is selected explicitly
-- uninstall and rollback remove only managed files and managed marker blocks
+- uninstall and rollback require confirmation when applied and affect only
+  recorded managed artifact paths and managed marker blocks
 
 Related pages: [Installation](installation.md), [Agent Locations](agent-locations.md),
 [Verification](verification.md), [Uninstall And Rollback](uninstall-rollback.md).

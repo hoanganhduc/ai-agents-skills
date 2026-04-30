@@ -58,6 +58,8 @@ def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
         os.symlink(os.readlink(path), dest)
+    elif path.is_dir():
+        shutil.copytree(path, dest, symlinks=True)
     else:
         shutil.copy2(path, dest)
     return dest

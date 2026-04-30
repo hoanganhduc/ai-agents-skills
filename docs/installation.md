@@ -23,8 +23,11 @@ hint, lets the user skip or ignore a dependency, and tells them to rerun
 `precheck` after installing software.
 
 `install --dry-run` previews the same actions as a default install preview;
-`install --apply` is required before any writes occur. Real home-directory
-writes additionally require `--real-system`.
+`install --apply` is required before any writes occur. Applied installs,
+uninstalls, and rollbacks are interactive: before writing files, the installer
+explains the install, uninstall, and rollback process and requires the user to
+type the displayed confirmation phrase. Real home-directory writes additionally
+require `--real-system`.
 
 ## Safe First Install
 
@@ -49,6 +52,10 @@ make.bat install --profile research-core --dry-run
 To test file writes without touching a real agent home, use a fake root:
 
 ```bash
+rm -rf /tmp/aas-fake-home
+mkdir -p /tmp/aas-fake-home/.codex /tmp/aas-fake-home/.claude
+# Optional when testing DeepSeek targets:
+# mkdir -p /tmp/aas-fake-home/.deepseek
 make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
 make verify ARGS="--root /tmp/aas-fake-home"
 ```
@@ -107,10 +114,11 @@ See [Profiles](profiles.md), [Skills](skills.md), and
 ## Conflict Modes
 
 - default: create missing managed files and skip unmanaged or legacy files
-- `--adopt`: record an existing target file as user-owned managed state
+- `--adopt`: record an existing target file as user-owned managed state; verify
+  tracks its recorded hash instead of requiring managed marker text
 - `--backup-replace`: back up and replace an unmanaged target file
 - `--migrate`: install a detected legacy skill under the canonical name using
-  the selected install mode, then remove the legacy alias directory
+  the selected install mode, then back up and remove the legacy alias directory
 
 Instruction blocks are installed only when the corresponding skill artifact is
 actually installed, adopted, updated, already managed, or migrated. A skipped
@@ -140,7 +148,7 @@ Scenario summary:
 | Skill absent | Managed skill files and support files are created. |
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
-| Legacy alias exists | Default plan skips; `--migrate` installs the canonical target and removes the legacy alias directory. |
+| Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
 | Agent rejects symlinked skills | Auto mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |

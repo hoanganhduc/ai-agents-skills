@@ -135,13 +135,21 @@ make.bat list-artifacts
 make.bat plan --profile research-core
 make.bat plan --no-skills --artifact-profile workflow-templates
 make.bat install --profile research-core --dry-run
+mkdir %TEMP%\aas-fake-home\.codex
+mkdir %TEMP%\aas-fake-home\.claude
+rem Optional when testing DeepSeek targets:
+rem mkdir %TEMP%\aas-fake-home\.deepseek
 make.bat install --profile research-core --apply --root %TEMP%\aas-fake-home
 make.bat verify --root %TEMP%\aas-fake-home
 ```
 
-Real-system writes require explicit `--apply --real-system`. Tests and examples
-use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
-`--backup-replace`, or `--migrate` only after reviewing `plan` output.
+Applied installs, uninstalls, and rollbacks are interactive: before any
+`--apply` writes files, the installer explains the install, uninstall, and
+rollback process and requires the user to type the displayed confirmation
+phrase. Real-system writes also require explicit `--apply --real-system`. Tests
+and examples use fake roots. Existing unmanaged files are skipped by default;
+use `--adopt`, `--backup-replace`, or `--migrate` only after reviewing `plan`
+output.
 
 Skills install in `--install-mode auto` by default so the repo remains the
 single maintained source without hiding agent-loader differences. Auto mode
