@@ -1409,12 +1409,15 @@ rem Optional when testing DeepSeek targets:
 rem mkdir %TEMP%\\aas-fake-home\\.deepseek
 make.bat install --profile research-core --apply --root %TEMP%\\aas-fake-home
 make.bat verify --root %TEMP%\\aas-fake-home
+make.bat uninstall --all --apply --root %TEMP%\\aas-fake-home
+make.bat verify --root %TEMP%\\aas-fake-home
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected
 Windows agent homes. The installer detects only agent homes that already exist
 under `--root`, so fake-root tests must create `.codex`, `.claude`, or
-`.deepseek` before planning or applying.
+`.deepseek` before planning or applying. A fake root with no detected agent
+homes produces no install actions and does not create managed installer state.
 
 For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`
@@ -1554,6 +1557,10 @@ settings it replaced. If you modify a managed file after installation, uninstall
 keeps that changed file and leaves the corresponding state record for review.
 Use rollback when you want to reverse a specific recorded run and restore
 previous managed content or remove files that were created from an empty state.
+Rollback preflights the selected artifacts before mutating anything, so a
+conflict in a shared instruction file does not partially remove other files.
+Run `verify` after every applied install, uninstall, migration, adoption, or
+rollback.
 
 Install mode is not an uninstall input. Uninstall reads the managed-state
 journal and uses recorded signatures to decide whether a selected artifact is
@@ -1574,11 +1581,29 @@ make rollback ARGS="--skill zotero"
 make rollback ARGS="--run 20260429-080620"
 ```
 
+Windows dry-run examples:
+
+```bat
+make.bat uninstall --skill zotero
+make.bat uninstall --artifacts entrypoint-alias:zotero
+make.bat rollback --skill zotero
+make.bat rollback --run 20260429-080620
+```
+
 Applied examples:
 
 ```bash
 make uninstall ARGS="--skill zotero --apply"
 make rollback ARGS="--run 20260429-080620 --apply"
+make verify ARGS="--root /tmp/aas-fake-home"
+```
+
+Windows applied examples:
+
+```bat
+make.bat uninstall --skill zotero --apply --root %TEMP%\\aas-fake-home
+make.bat rollback --run 20260429-080620 --apply --root %TEMP%\\aas-fake-home
+make.bat verify --root %TEMP%\\aas-fake-home
 ```
 
 Safety rules:
@@ -1592,6 +1617,10 @@ Safety rules:
   still matches the recorded managed block content
 - rollback uses the journal for the selected run or scope and restores recorded
   backups where available
+- rollback preflights all selected artifacts before mutation and refuses the
+  whole rollback when a selected artifact has changed
+- rollback refuses artifacts outside the selected root and backups outside the
+  installer state backup directory
 - `--apply` and `--dry-run` cannot be combined
 - instruction files are removed only when the installer created them and they
   become empty after managed block removal

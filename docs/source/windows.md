@@ -22,12 +22,15 @@ rem Optional when testing DeepSeek targets:
 rem mkdir %TEMP%\aas-fake-home\.deepseek
 make.bat install --profile research-core --apply --root %TEMP%\aas-fake-home
 make.bat verify --root %TEMP%\aas-fake-home
+make.bat uninstall --all --apply --root %TEMP%\aas-fake-home
+make.bat verify --root %TEMP%\aas-fake-home
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected
 Windows agent homes. The installer detects only agent homes that already exist
 under `--root`, so fake-root tests must create `.codex`, `.claude`, or
-`.deepseek` before planning or applying.
+`.deepseek` before planning or applying. A fake root with no detected agent
+homes produces no install actions and does not create managed installer state.
 
 For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`
