@@ -194,11 +194,13 @@ def run(args: argparse.Namespace) -> int:
         ensure_apply_allowed(args)
         if args.apply and not args.all and not args.skill and not args.skills and not args.artifact and not args.artifacts:
             raise ValueError("applied uninstall requires --all, --skill, --skills, --artifact, or --artifacts")
-        confirm_lifecycle_process_understood(args, "uninstall")
         skills = resolve_skill_filter(args, manifests)
         artifacts = resolve_artifact_filter(args, manifests)
         agents = set(split_csv(args.agents)) if args.agents else None
         dry_run = not args.apply
+        if args.apply:
+            preview = uninstall_artifacts(args.root, skills, agents, artifacts, dry_run=True)
+            confirm_uninstall_process_understood(args, preview)
         result = uninstall_artifacts(args.root, skills, agents, artifacts, dry_run=dry_run)
         return output(result, args)
     raise ValueError(f"unknown command: {args.command}")
@@ -884,8 +886,9 @@ Uninstall and rollback process:
 - `uninstall` is a dry-run by default; applying it requires `--apply` and an
   explicit scope such as `--all`, `--skill`, `--skills`, `--artifact`, or
   `--artifacts`.
-- `uninstall` removes selected managed files and managed instruction blocks; it
-  does not remove unmanaged files.
+- `uninstall` restores installer backups when the installed artifact is
+  unchanged, removes repo-managed blocks when user text was added around them,
+  and leaves changed user-owned content in place.
 - `rollback` uses the installer journal to reverse a recorded run or selected
   managed scope.
 
@@ -914,8 +917,9 @@ Process summary:
 - `{operation}` is a dry-run by default; `--apply` performs file changes.
 - Applied lifecycle commands affect only artifacts recorded in the installer
   state journal, scoped by the command arguments.
-- Uninstall removes selected managed files and managed instruction blocks; it
-  does not remove unmanaged files outside recorded managed artifact paths.
+- Uninstall restores installer backups when the installed artifact is
+  unchanged, removes repo-managed blocks when user text was added around them,
+  and preserves changed user-owned content.
 - Rollback reverses a recorded run or selected managed scope from the journal.
 - Real home-directory writes require `--real-system`.
 
@@ -930,6 +934,82 @@ Confirmation: """
         raise ValueError(f"{operation} confirmation required before applying changes")
     if answer.strip() != INSTALL_CONFIRMATION_PHRASE:
         raise ValueError(f"{operation} aborted: confirmation phrase did not match")
+
+
+def confirm_uninstall_process_understood(args: argparse.Namespace, preview: dict[str, Any]) -> None:
+    if not args.apply:
+        return
+    counts = uninstall_counts(preview)
+    operations = ", ".join(
+        f"{name}={count}" for name, count in sorted(counts["operations"].items())
+    ) or "none"
+    scope = uninstall_scope_summary(args)
+    message = f"""Uninstall confirmation required
+
+You are about to apply an ai-agents-skills uninstall for:
+  root: {args.root}
+  scope: {scope}
+  planned uninstall actions: {counts["action_count"]}
+  planned operations: {operations}
+
+What uninstall does:
+- `uninstall` reads `.ai-agents-skills/state.json` under the selected root.
+- It acts only on recorded managed artifacts that match the requested scope.
+- It restores installer backups when the installed artifact is missing or still
+  matches the recorded installed signature.
+- It deletes installer-created files only when they still match the recorded
+  installed signature.
+- It removes managed instruction blocks only when the block still matches the
+  recorded managed block content.
+- It unmanages adopted files without deleting them.
+- It skips changed or suspicious artifacts and keeps their state records so you
+  can inspect them later.
+
+Safety boundary:
+- Dry-run is the default; `--apply` is required to change files.
+- Applied uninstall requires an explicit scope such as `--all`, `--skill`,
+  `--skills`, `--artifact`, or `--artifacts`.
+- Real home-directory writes require both `--apply` and `--real-system`.
+- Uninstall does not roll back unrelated user edits outside recorded managed
+  artifact paths.
+
+To confirm that you understand the installation and uninstall process, type
+exactly:
+{INSTALL_CONFIRMATION_PHRASE}
+
+Confirmation: """
+    print(message, file=sys.stderr, end="")
+    answer = sys.stdin.readline()
+    if not answer:
+        raise ValueError("uninstall confirmation required before applying changes")
+    if answer.strip() != INSTALL_CONFIRMATION_PHRASE:
+        raise ValueError("uninstall aborted: confirmation phrase did not match")
+
+
+def uninstall_counts(preview: dict[str, Any]) -> dict[str, Any]:
+    actions = preview.get("actions", [])
+    operations = Counter(action.get("operation") for action in actions)
+    return {
+        "action_count": len(actions),
+        "operations": dict(sorted(operations.items(), key=lambda item: str(item[0]))),
+    }
+
+
+def uninstall_scope_summary(args: argparse.Namespace) -> str:
+    parts = []
+    if getattr(args, "all", False):
+        parts.append("all managed artifacts")
+    if getattr(args, "skill", None):
+        parts.append(f"skill={args.skill}")
+    if getattr(args, "skills", None):
+        parts.append(f"skills={args.skills}")
+    if getattr(args, "artifact", None):
+        parts.append(f"artifact={args.artifact}")
+    if getattr(args, "artifacts", None):
+        parts.append(f"artifacts={args.artifacts}")
+    if getattr(args, "agents", None):
+        parts.append(f"agents={args.agents}")
+    return ", ".join(parts) if parts else "unspecified"
 
 
 def output(data: Any, args: argparse.Namespace) -> int:

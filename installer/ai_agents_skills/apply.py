@@ -7,6 +7,7 @@ from typing import Any
 
 from .render import replace_or_append_block
 from .state import (
+    artifact_signature,
     backup_file,
     load_state,
     now_run_id,
@@ -14,6 +15,7 @@ from .state import (
     sha256_file,
     sha256_text,
     upsert_artifact,
+    upsert_uninstall_record,
     write_run_record,
 )
 
@@ -31,14 +33,17 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
         recorded_result = dict(result)
         if previous_state_artifact is not None:
             recorded_result["previous_state_artifact"] = previous_state_artifact
+        recorded_result["uninstall"] = uninstall_origin(recorded_result, previous_state_artifact)
         applied.append(recorded_result)
-        if result.get("state_operation") == "remove":
+        if recorded_result.get("state_operation") == "remove":
             state["artifacts"] = [
                 item for item in state.get("artifacts", [])
-                if item.get("key") != result.get("key")
+                if item.get("key") != recorded_result.get("key")
             ]
-        elif result.get("managed"):
-            upsert_artifact(state, result)
+            if should_keep_uninstall_record(recorded_result):
+                upsert_uninstall_record(state, recorded_result)
+        elif recorded_result.get("managed"):
+            upsert_artifact(state, recorded_result)
     state.setdefault("runs", []).append({"run_id": run_id, "action_count": len(applied)})
     save_state(root, state)
     write_run_record(root, run_id, applied)
@@ -71,15 +76,18 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
     result = base_result(run_id, action)
     result["created_file"] = not path.exists()
     result["previous_hash"] = sha256_file(path)
+    result["previous_signature"] = artifact_signature(path)
     if op in {"skip", "noop"}:
         result["managed"] = op == "noop"
         result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
         return result
     if op == "adopt":
         result["managed"] = True
         result["applied"] = False
         result["adopted"] = True
         result["new_hash"] = sha256_file(path)
+        result["installed_signature"] = artifact_signature(path)
         return result
     backup = backup_file(root, run_id, path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +109,7 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
     result["backup"] = str(backup) if backup else None
     result["new_hash"] = sha256_file(path)
     result["install_mode"] = actual_mode
+    result["installed_signature"] = artifact_signature(path)
     return result
 
 
@@ -126,9 +135,11 @@ def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[
     result["created_file"] = not path.exists()
     before = path.read_text(encoding="utf-8") if path.exists() else ""
     result["previous_hash"] = sha256_text(before)
+    result["previous_signature"] = artifact_signature(path)
     if action.get("operation") in {"skip", "noop"}:
         result["managed"] = False
         result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
         return result
     backup = backup_file(root, run_id, path)
     after = replace_or_append_block(before, action["skill"], action["content"])
@@ -139,8 +150,10 @@ def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[
     result["managed"] = True
     result["applied"] = before != after
     result["backup"] = str(backup) if backup else None
-    result["new_hash"] = sha256_text(after)
+    result["new_hash"] = sha256_file(path)
+    result["installed_signature"] = artifact_signature(path)
     result["block_id"] = action.get("block_id")
+    result["managed_block"] = action["content"].strip()
     return result
 
 
@@ -153,9 +166,11 @@ def apply_legacy_dir_action(root: Path, run_id: str, action: dict[str, Any]) -> 
     result["previous_hash"] = None
     result["new_hash"] = None
     result["backup"] = None
+    result["previous_signature"] = artifact_signature(path)
     result["state_operation"] = "remove"
     if action["operation"] != "remove-legacy":
         result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
         return result
     if legacy_path.parent != path:
         raise ValueError(f"legacy path does not belong to planned legacy directory: {legacy_path}")
@@ -172,6 +187,7 @@ def apply_legacy_dir_action(root: Path, run_id: str, action: dict[str, Any]) -> 
     result["backup"] = str(backup) if backup else None
     shutil.rmtree(path)
     result["applied"] = True
+    result["installed_signature"] = artifact_signature(path)
     return result
 
 
@@ -181,10 +197,12 @@ def apply_managed_file_remove_action(root: Path, run_id: str, action: dict[str, 
     result["managed"] = True
     result["created_file"] = False
     result["previous_hash"] = sha256_file(path)
+    result["previous_signature"] = artifact_signature(path)
     result["new_hash"] = None
     result["state_operation"] = "remove"
     if action["operation"] != "remove-obsolete":
         result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
         return result
     backup = backup_file(root, run_id, path)
     result["backup"] = str(backup) if backup else None
@@ -196,6 +214,7 @@ def apply_managed_file_remove_action(root: Path, run_id: str, action: dict[str, 
         result["applied"] = True
     else:
         result["applied"] = False
+    result["installed_signature"] = artifact_signature(path)
     return result
 
 
@@ -241,3 +260,46 @@ def artifact_key(action: dict[str, Any]) -> str:
     if action.get("artifact_id"):
         return f"{action['agent']}:{action['artifact_id']}:{action['path']}"
     return f"{action['agent']}:{action['skill']}:{action['path']}"
+
+
+def uninstall_origin(
+    result: dict[str, Any],
+    previous_state_artifact: dict[str, Any] | None,
+) -> dict[str, Any]:
+    previous_origin = previous_state_artifact.get("uninstall") if previous_state_artifact else None
+    if previous_origin and not (
+        previous_origin.get("action") == "unmanage-only"
+        and result.get("applied")
+        and result.get("backup")
+    ):
+        return previous_origin
+    if result.get("state_operation") == "remove":
+        if previous_origin and previous_origin.get("action") == "delete-created":
+            return {"action": "forget-missing"}
+        if previous_origin and previous_origin.get("action") != "delete-created":
+            return previous_origin
+        if result.get("backup"):
+            return {
+                "action": "restore-removed",
+                "backup": result["backup"],
+                "original_signature": result.get("previous_signature"),
+            }
+        return {"action": "forget-missing"}
+    if result.get("adopted") or (result.get("operation") == "noop" and not result.get("applied")):
+        return {"action": "unmanage-only"}
+    if result.get("backup"):
+        return {
+            "action": "restore-backup",
+            "backup": result["backup"],
+            "original_signature": result.get("previous_signature"),
+        }
+    if result.get("created_file"):
+        return {"action": "delete-created"}
+    return {"action": "unmanage-only"}
+
+
+def should_keep_uninstall_record(result: dict[str, Any]) -> bool:
+    if not result.get("applied"):
+        return False
+    origin = result.get("uninstall", {})
+    return origin.get("action") in {"restore-backup", "restore-removed"}
