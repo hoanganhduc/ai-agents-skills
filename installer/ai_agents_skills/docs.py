@@ -8,27 +8,36 @@ from .manifest import REPO_ROOT
 
 def generate_docs(manifests: dict[str, Any]) -> list[Path]:
     docs_dir = REPO_ROOT / "docs"
+    source_dir = docs_dir / "source"
     docs_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
     written = [
         write_readme(manifests),
-        write_skills_doc(manifests, docs_dir / "skills.md"),
-        write_artifacts_doc(manifests, docs_dir / "artifacts.md"),
-        write_profiles_doc(manifests, docs_dir / "profiles.md"),
-        write_dependencies_doc(manifests, docs_dir / "dependencies.md"),
-        write_static_doc(docs_dir / "workflow-overview.md", workflow_overview_text()),
-        write_static_doc(docs_dir / "multi-agent-examples.md", multi_agent_examples_text()),
-        write_static_doc(docs_dir / "system-profile.md", system_profile_text()),
-        write_static_doc(docs_dir / "agent-locations.md", agent_locations_text()),
-        write_static_doc(docs_dir / "audit-and-migration.md", audit_and_migration_text()),
-        write_verification_doc(docs_dir / "verification.md"),
-        write_static_doc(docs_dir / "architecture.md", architecture_text()),
-        write_static_doc(docs_dir / "installation.md", installation_text()),
-        write_static_doc(docs_dir / "windows.md", windows_text()),
-        write_static_doc(docs_dir / "linux.md", linux_text()),
-        write_static_doc(docs_dir / "troubleshooting.md", troubleshooting_text()),
-        write_static_doc(docs_dir / "uninstall-rollback.md", uninstall_text()),
+        *write_doc_pair(docs_dir, source_dir, "skills.md", skills_text(manifests)),
+        *write_doc_pair(docs_dir, source_dir, "artifacts.md", artifacts_text(manifests)),
+        *write_doc_pair(docs_dir, source_dir, "profiles.md", profiles_text(manifests)),
+        *write_doc_pair(docs_dir, source_dir, "dependencies.md", dependencies_text(manifests)),
+        *write_doc_pair(docs_dir, source_dir, "workflow-overview.md", workflow_overview_text()),
+        *write_doc_pair(docs_dir, source_dir, "multi-agent-examples.md", multi_agent_examples_text()),
+        *write_doc_pair(docs_dir, source_dir, "system-profile.md", system_profile_text()),
+        *write_doc_pair(docs_dir, source_dir, "agent-locations.md", agent_locations_text()),
+        *write_doc_pair(docs_dir, source_dir, "audit-and-migration.md", audit_and_migration_text()),
+        *write_doc_pair(docs_dir, source_dir, "verification.md", verification_text()),
+        *write_doc_pair(docs_dir, source_dir, "architecture.md", architecture_text()),
+        *write_doc_pair(docs_dir, source_dir, "installation.md", installation_text()),
+        *write_doc_pair(docs_dir, source_dir, "windows.md", windows_text()),
+        *write_doc_pair(docs_dir, source_dir, "linux.md", linux_text()),
+        *write_doc_pair(docs_dir, source_dir, "troubleshooting.md", troubleshooting_text()),
+        *write_doc_pair(docs_dir, source_dir, "uninstall-rollback.md", uninstall_text()),
     ]
     return written
+
+
+def write_doc_pair(docs_dir: Path, source_dir: Path, name: str, text: str) -> list[Path]:
+    return [
+        write_static_doc(docs_dir / name, text),
+        write_static_doc(source_dir / name, text),
+    ]
 
 
 def write_readme(manifests: dict[str, Any]) -> Path:
@@ -259,8 +268,8 @@ make install ARGS="--skills zotero,docling --dry-run"
     return path
 
 
-def write_skills_doc(manifests: dict[str, Any], path: Path) -> Path:
-    path.write_text(
+def skills_text(manifests: dict[str, Any]) -> str:
+    return (
         "# Skills\n\n"
         "A skill is an installable agent capability. Each skill has one "
         "canonical name in this repository, one canonical body under "
@@ -288,14 +297,12 @@ def write_skills_doc(manifests: dict[str, Any], path: Path) -> Path:
         + skill_table(manifests)
         + "\n\n"
         "Related pages: [Installation](installation.md), "
-        "[Verification](verification.md), [Agent Locations](agent-locations.md).\n",
-        encoding="utf-8",
+        "[Verification](verification.md), [Agent Locations](agent-locations.md).\n"
     )
-    return path
 
 
-def write_artifacts_doc(manifests: dict[str, Any], path: Path) -> Path:
-    path.write_text(
+def artifacts_text(manifests: dict[str, Any]) -> str:
+    return (
         "# Optional Artifacts\n\n"
         "Artifacts are opt-in files outside normal skill directories. They add "
         "supporting workflow material such as templates, instruction docs, "
@@ -322,14 +329,12 @@ def write_artifacts_doc(manifests: dict[str, Any], path: Path) -> Path:
         "personas are installed as reference prompts because native persona-file "
         "loading has not been verified.\n\n"
         "Related pages: [Skills](skills.md), [Profiles](profiles.md), "
-        "[Agent Locations](agent-locations.md), [Uninstall And Rollback](uninstall-rollback.md).\n",
-        encoding="utf-8",
+        "[Agent Locations](agent-locations.md), [Uninstall And Rollback](uninstall-rollback.md).\n"
     )
-    return path
 
 
-def write_profiles_doc(manifests: dict[str, Any], path: Path) -> Path:
-    path.write_text(
+def profiles_text(manifests: dict[str, Any]) -> str:
+    return (
         "# Profiles\n\n"
         "A profile is a named bundle of skills. Profiles are the easiest way to "
         "install a coherent workflow without listing every skill manually. The "
@@ -348,13 +353,11 @@ def write_profiles_doc(manifests: dict[str, Any], path: Path) -> Path:
         + profiles_table_text(manifests)
         + "\n\n"
         "Related pages: [Skills](skills.md), [Optional Artifacts](artifacts.md), "
-        "[Dependencies](dependencies.md), [Installation](installation.md).\n",
-        encoding="utf-8",
+        "[Dependencies](dependencies.md), [Installation](installation.md).\n"
     )
-    return path
 
 
-def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
+def dependencies_text(manifests: dict[str, Any]) -> str:
     tools = manifests["dependencies"]["tools"]
     lines = [
         "# Dependencies",
@@ -425,8 +428,7 @@ def write_dependencies_doc(manifests: dict[str, Any], path: Path) -> Path:
             "[Linux](linux.md), [Troubleshooting](troubleshooting.md).",
         ]
     )
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
+    return "\n".join(lines) + "\n"
 
 
 def current_config_dependency_sections(manifests: dict[str, Any]) -> list[str]:
@@ -549,9 +551,8 @@ def current_config_dependency_sections(manifests: dict[str, Any]) -> list[str]:
     return lines
 
 
-def write_verification_doc(path: Path) -> Path:
-    path.write_text(
-        """# Verification
+def verification_text() -> str:
+    return """# Verification
 
 Verification is selective. Only installed and enabled managed artifacts from the
 installer state are checked.
@@ -617,10 +618,7 @@ agent's own diagnostics for those layers.
 
 Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
 [Uninstall And Rollback](uninstall-rollback.md), [Troubleshooting](troubleshooting.md).
-""",
-        encoding="utf-8",
-    )
-    return path
+"""
 
 
 def workflow_overview_text() -> str:
