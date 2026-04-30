@@ -27,6 +27,7 @@ def uninstall(
     state = load_state(root)
     targets = filter_artifacts(lifecycle_records(state), skills, agents, artifacts)
     actions = [plan_uninstall_action(item, root) for item in targets]
+    mark_created_instruction_file_groups(actions)
     if dry_run:
         return {"dry_run": True, "actions": actions}
     completed_keys: set[str | None] = set()
@@ -70,8 +71,10 @@ def rollback(
         item for item in filter_artifacts(actions, skills, agents, artifacts)
         if item.get("managed") and item.get("applied", True)
     ]
+    mark_created_instruction_file_groups(targets)
     if dry_run:
         return {"dry_run": True, "actions": [{"operation": "rollback", **item} for item in targets]}
+    preflight_rollback_targets(root, state, targets)
     restored = []
     for item in targets:
         rollback_artifact(item)
@@ -266,7 +269,10 @@ def remove_managed_block_precise(item: dict[str, Any]) -> None:
     if end < len(text) and text[end] == "\n":
         end += 1
     cleaned = text[:start] + text[end:]
-    if item.get("uninstall", {}).get("action") == "delete-created" and not cleaned.strip():
+    if (
+        item.get("uninstall", {}).get("action") == "delete-created"
+        or item.get("delete_instruction_file_if_empty")
+    ) and not cleaned.strip():
         path.unlink()
         return
     path.write_text(cleaned, encoding="utf-8")
@@ -295,6 +301,13 @@ def managed_block_span(text: str, skill: str) -> tuple[int, int] | None:
 
 def rollback_artifact(item: dict[str, Any]) -> None:
     path = Path(item["artifact"])
+    if item.get("artifact_type") in {"instruction-block", "management-notice"}:
+        previous = item.get("previous_state_artifact")
+        if previous and item.get("backup"):
+            restore_backup(Path(item["backup"]), path)
+        else:
+            remove_managed_block_precise(item)
+        return
     backup = item.get("backup")
     installed_signature = item.get("installed_signature")
     current_signature = artifact_signature(path)
@@ -356,3 +369,65 @@ def path_within(root: Path, path: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def mark_created_instruction_file_groups(actions: list[dict[str, Any]]) -> None:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for action in actions:
+        if action.get("artifact_type") in {"instruction-block", "management-notice"}:
+            grouped.setdefault(action["artifact"], []).append(action)
+    for group in grouped.values():
+        if any(item.get("created_file") for item in group):
+            for item in group:
+                item["delete_instruction_file_if_empty"] = True
+
+
+def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[dict[str, Any]]) -> None:
+    block_groups: dict[str, list[dict[str, Any]]] = {}
+    for item in targets:
+        path = Path(item["artifact"])
+        if not path_within(root, path):
+            raise ValueError(f"refusing rollback for artifact outside selected root: {path}")
+        backup = item.get("backup")
+        if backup and not path_within(state_dir(root) / "backups", Path(backup)):
+            raise ValueError(f"refusing rollback because backup is outside installer state: {backup}")
+        if backup and not Path(backup).exists() and not Path(backup).is_symlink():
+            raise ValueError(f"refusing rollback because backup is missing: {backup}")
+        if item.get("artifact_type") in {"instruction-block", "management-notice"}:
+            block_groups.setdefault(item["artifact"], []).append(item)
+            continue
+        installed_signature = item.get("installed_signature")
+        current_signature = artifact_signature(path)
+        if installed_signature and current_signature.get("exists") and not signatures_match(current_signature, installed_signature):
+            raise ValueError(f"refusing rollback because artifact changed since install: {path}")
+    for path_text, group in block_groups.items():
+        path = Path(path_text)
+        if not path.exists():
+            raise ValueError(f"refusing rollback because instruction file is missing: {path}")
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for item in group:
+            current_block = extract_managed_block(text, item["skill"])
+            expected_block = item.get("managed_block")
+            if current_block is None:
+                raise ValueError(f"refusing rollback because managed block is missing: {path}")
+            if expected_block is not None and current_block.strip() != expected_block.strip():
+                raise ValueError(f"refusing rollback because managed block changed since install: {path}")
+        known_skills = [
+            item["skill"]
+            for item in state.get("artifacts", [])
+            if item.get("artifact") == path_text
+            and item.get("artifact_type") in {"instruction-block", "management-notice"}
+        ]
+        if any(item.get("created_file") for item in group) and strip_managed_blocks(text, known_skills).strip():
+            raise ValueError(f"refusing rollback because instruction file changed since install: {path}")
+
+
+def strip_managed_blocks(text: str, skills: list[str]) -> str:
+    spans = [managed_block_span(text, skill) for skill in skills]
+    existing_spans = sorted((span for span in spans if span is not None), reverse=True)
+    stripped = text
+    for start, end in existing_spans:
+        if end < len(stripped) and stripped[end] == "\n":
+            end += 1
+        stripped = stripped[:start] + stripped[end:]
+    return stripped
