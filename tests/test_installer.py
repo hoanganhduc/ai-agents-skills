@@ -923,6 +923,20 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertTrue((REPO_ROOT / "docs" / "agent-locations.md").exists())
         self.assertTrue((REPO_ROOT / "docs" / "audit-and-migration.md").exists())
 
+    def test_generated_root_and_sphinx_docs_do_not_drift(self) -> None:
+        generate_docs(load_manifests())
+        shared_docs = sorted(
+            path.name
+            for path in (REPO_ROOT / "docs").glob("*.md")
+            if (REPO_ROOT / "docs" / "source" / path.name).exists()
+        )
+        self.assertTrue(shared_docs)
+        for name in shared_docs:
+            with self.subTest(name=name):
+                root_text = (REPO_ROOT / "docs" / name).read_text(encoding="utf-8")
+                source_text = (REPO_ROOT / "docs" / "source" / name).read_text(encoding="utf-8")
+                self.assertEqual(root_text, source_text)
+
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
         text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")
         self.assertIn("where pwsh", text)
