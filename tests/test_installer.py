@@ -9,7 +9,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan
-from installer.ai_agents_skills.cli import main
+from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
 from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
@@ -202,7 +202,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
             remove_results = [a for a in apply_result["actions"] if a["operation"] == "remove-legacy"]
             self.assertEqual(len(remove_results), 1)
             self.assertTrue(remove_results[0]["applied"])
-            self.assertFalse(remove_results[0]["managed"])
+            self.assertTrue(remove_results[0]["managed"])
+            self.assertIsNotNone(remove_results[0]["backup"])
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_copy_install_mode_writes_regular_skill_files(self) -> None:
@@ -351,6 +352,25 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue(target.is_symlink())
             self.assertIn("canonical/skills/zotero/SKILL.md", str(target.resolve()))
             self.assertEqual(verify(root)["status"], "ok")
+
+    def test_all_agent_fake_root_detects_deepseek_when_home_exists(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex", "claude", "deepseek")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            self.assertEqual(plan["skipped_agents"], [])
+            modes = {
+                action["agent"]: action["install_mode"]
+                for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            }
+            self.assertEqual(modes, {"codex": "reference", "claude": "symlink", "deepseek": "symlink"})
 
     def test_symlink_failure_falls_back_to_reference_adapter(self) -> None:
         manifests = load_manifests()
@@ -539,6 +559,76 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertNotIn("ai-agents-skills:zotero", instructions)
             self.assertIn("ai-agents-skills:source-research", instructions)
 
+    def test_uninstall_preserves_unmanaged_extra_files_inside_skill_dir(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            apply_plan(root, plan, dry_run=False)
+
+            extra = root / ".claude" / "skills" / "zotero" / "user-note.txt"
+            extra.write_text("user-owned note\n", encoding="utf-8")
+            uninstall(root, skills={"zotero"}, dry_run=False)
+
+            self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
+            self.assertTrue(extra.exists())
+
+    def test_adopted_existing_file_verifies_by_recorded_hash(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            existing = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("user-owned zotero\n", encoding="utf-8")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), adopt=True)
+            result = apply_plan(root, plan, dry_run=False)
+            adopted = [
+                action for action in result["actions"]
+                if action["operation"] == "adopt" and action["artifact_type"] == "skill-file"
+            ]
+            self.assertTrue(adopted)
+            self.assertTrue(adopted[0]["adopted"])
+            self.assertEqual(verify(root)["status"], "ok")
+
+            existing.write_text("changed user-owned zotero\n", encoding="utf-8")
+            self.assertEqual(verify(root)["status"], "failed")
+
+    def test_migration_rollback_restores_legacy_alias_directory(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            legacy = root / ".agents" / "skills" / "research_digest_wrapper" / "SKILL.md"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("legacy alias skill\n", encoding="utf-8")
+            legacy_extra = legacy.parent / "notes.md"
+            legacy_extra.write_text("legacy support file\n", encoding="utf-8")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "research-digest-wrapper"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), migrate=True)
+            result = apply_plan(root, plan, dry_run=False)
+            self.assertFalse(legacy.parent.exists())
+
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertTrue(legacy.exists())
+            self.assertEqual(legacy.read_text(encoding="utf-8"), "legacy alias skill\n")
+            self.assertTrue(legacy_extra.exists())
+
     def test_artifact_profile_installs_templates_and_personas(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -699,20 +789,165 @@ class DocsAndLauncherTests(unittest.TestCase):
             ])
             self.assertEqual(code, 1)
 
-    def test_cli_install_fake_root_succeeds(self) -> None:
+    def test_cli_rollback_rejects_dry_run_with_apply(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
-            create_agent_homes(root, "claude")
             code = main([
                 "--json",
                 "--root",
                 str(root),
-                "install",
-                "--skill",
-                "zotero",
+                "rollback",
+                "--dry-run",
                 "--apply",
             ])
+            self.assertEqual(code, 1)
+
+    def test_cli_install_apply_requires_process_confirmation(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO("")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertIn("confirmation required", payload["error"])
+            self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
+
+    def test_cli_install_apply_rejects_wrong_process_confirmation(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO("yes\n")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertIn("confirmation phrase did not match", payload["error"])
+            self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
+
+    def test_cli_install_fake_root_succeeds_with_process_confirmation(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            with (
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
             self.assertEqual(code, 0)
+
+    def test_cli_rollback_apply_requires_process_confirmation(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            with (
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+            ):
+                install_code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(install_code, 0)
+            state = json.loads((root / ".ai-agents-skills" / "state.json").read_text(encoding="utf-8"))
+            run_id = state["runs"][0]["run_id"]
+
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO("")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "rollback",
+                    "--run",
+                    run_id,
+                    "--apply",
+                ])
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertIn("rollback confirmation required", payload["error"])
+            self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
+
+    def test_cli_uninstall_apply_requires_process_confirmation(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            with (
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+            ):
+                install_code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(install_code, 0)
+
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO("")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "uninstall",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertIn("uninstall confirmation required", payload["error"])
+            self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
 
     def test_cli_uninstall_apply_requires_scope(self) -> None:
         with fake_root() as tmp:
@@ -725,6 +960,20 @@ class DocsAndLauncherTests(unittest.TestCase):
                 "--apply",
             ])
             self.assertEqual(code, 1)
+
+    def test_cli_uninstall_refuses_real_system_without_flag(self) -> None:
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = main([
+                "--json",
+                "uninstall",
+                "--skill",
+                "zotero",
+                "--apply",
+            ])
+        self.assertEqual(code, 1)
+        payload = json.loads(stream.getvalue())
+        self.assertIn("real-system writes require --real-system", payload["error"])
 
     def test_cli_precheck_reports_selected_dependencies(self) -> None:
         with fake_root() as tmp:
@@ -771,21 +1020,60 @@ class DocsAndLauncherTests(unittest.TestCase):
             coverage = payload["skill_coverage"][0]
             self.assertEqual(coverage["unmanaged_canonical"], ["zotero"])
 
+    def test_cli_audit_system_reports_symlink_install_as_managed(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            with (
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(code, 0)
+
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                audit_code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "audit-system",
+                    "--skill",
+                    "zotero",
+                ])
+            self.assertEqual(audit_code, 0)
+            payload = json.loads(stream.getvalue())
+            coverage = payload["skill_coverage"][0]
+            self.assertEqual(coverage["managed_canonical"], ["zotero"])
+            self.assertEqual(coverage["unmanaged_canonical"], [])
+
     def test_cli_with_deps_installs_entrypoint_backing_skill(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
             create_agent_homes(root, "claude")
-            code = main([
-                "--json",
-                "--root",
-                str(root),
-                "install",
-                "--no-skills",
-                "--artifact",
-                "entrypoint-alias:deep-research",
-                "--with-deps",
-                "--apply",
-            ])
+            with (
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--no-skills",
+                    "--artifact",
+                    "entrypoint-alias:deep-research",
+                    "--with-deps",
+                    "--apply",
+                ])
             self.assertEqual(code, 0)
             self.assertTrue((root / ".claude" / "skills" / "deep-research-workflow" / "SKILL.md").exists())
             self.assertTrue((root / ".claude" / "commands" / "deep-research.md").exists())

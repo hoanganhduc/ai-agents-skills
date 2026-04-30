@@ -78,6 +78,7 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
     if op == "adopt":
         result["managed"] = True
         result["applied"] = False
+        result["adopted"] = True
         result["new_hash"] = sha256_file(path)
         return result
     backup = backup_file(root, run_id, path)
@@ -147,11 +148,12 @@ def apply_legacy_dir_action(root: Path, run_id: str, action: dict[str, Any]) -> 
     path = Path(action["path"])
     legacy_path = Path(action["legacy_path"])
     result = base_result(run_id, action)
-    result["managed"] = False
+    result["managed"] = True
     result["created_file"] = False
     result["previous_hash"] = None
     result["new_hash"] = None
     result["backup"] = None
+    result["state_operation"] = "remove"
     if action["operation"] != "remove-legacy":
         result["applied"] = False
         return result
@@ -166,6 +168,8 @@ def apply_legacy_dir_action(root: Path, run_id: str, action: dict[str, Any]) -> 
     path_resolved = path.resolve()
     if not path_resolved.is_relative_to(root_resolved):
         raise ValueError(f"refusing to remove legacy path outside root: {path}")
+    backup = backup_file(root, run_id, path)
+    result["backup"] = str(backup) if backup else None
     shutil.rmtree(path)
     result["applied"] = True
     return result

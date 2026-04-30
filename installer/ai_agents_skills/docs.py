@@ -174,13 +174,21 @@ make.bat list-artifacts
 make.bat plan --profile research-core
 make.bat plan --no-skills --artifact-profile workflow-templates
 make.bat install --profile research-core --dry-run
+mkdir %TEMP%\\aas-fake-home\\.codex
+mkdir %TEMP%\\aas-fake-home\\.claude
+rem Optional when testing DeepSeek targets:
+rem mkdir %TEMP%\\aas-fake-home\\.deepseek
 make.bat install --profile research-core --apply --root %TEMP%\\aas-fake-home
 make.bat verify --root %TEMP%\\aas-fake-home
 ```
 
-Real-system writes require explicit `--apply --real-system`. Tests and examples
-use fake roots. Existing unmanaged files are skipped by default; use `--adopt`,
-`--backup-replace`, or `--migrate` only after reviewing `plan` output.
+Applied installs, uninstalls, and rollbacks are interactive: before any
+`--apply` writes files, the installer explains the install, uninstall, and
+rollback process and requires the user to type the displayed confirmation
+phrase. Real-system writes also require explicit `--apply --real-system`. Tests
+and examples use fake roots. Existing unmanaged files are skipped by default;
+use `--adopt`, `--backup-replace`, or `--migrate` only after reviewing `plan`
+output.
 
 Skills install in `--install-mode auto` by default so the repo remains the
 single maintained source without hiding agent-loader differences. Auto mode
@@ -553,7 +561,9 @@ If no managed artifacts match the requested scope, `verify` returns
 Use verification after any applied install, uninstall, migration, adoption, or
 rollback. It is intentionally narrower than `precheck`: `precheck` checks
 software availability, while `verify` checks whether this installer still owns
-the files and managed instruction blocks it recorded.
+the files and managed instruction blocks it recorded. For adopted user-owned
+files, verification checks that the file still matches the hash recorded at
+adoption time.
 
 Common commands:
 
@@ -577,6 +587,7 @@ Current skill checks:
 - `L4 symlink`, `source-exists`, and `source-match` for symlink installs
 - `L5 no-secret-leak`
 - `L6 agent-visible`
+- `L7 adopted-hash-match` for adopted user-owned files
 
 Current instruction-block checks:
 
@@ -994,7 +1005,8 @@ Safety boundary:
   and local runtime state are not managed by this repo
 - unmanaged user files are skipped unless `--adopt`, `--backup-replace`, or
   `--migrate` is selected explicitly
-- uninstall and rollback remove only managed files and managed marker blocks
+- uninstall and rollback require confirmation when applied and affect only
+  recorded managed artifact paths and managed marker blocks
 
 Related pages: [Installation](installation.md), [Agent Locations](agent-locations.md),
 [Verification](verification.md), [Uninstall And Rollback](uninstall-rollback.md).
@@ -1027,8 +1039,11 @@ hint, lets the user skip or ignore a dependency, and tells them to rerun
 `precheck` after installing software.
 
 `install --dry-run` previews the same actions as a default install preview;
-`install --apply` is required before any writes occur. Real home-directory
-writes additionally require `--real-system`.
+`install --apply` is required before any writes occur. Applied installs,
+uninstalls, and rollbacks are interactive: before writing files, the installer
+explains the install, uninstall, and rollback process and requires the user to
+type the displayed confirmation phrase. Real home-directory writes additionally
+require `--real-system`.
 
 ## Safe First Install
 
@@ -1053,6 +1068,10 @@ make.bat install --profile research-core --dry-run
 To test file writes without touching a real agent home, use a fake root:
 
 ```bash
+rm -rf /tmp/aas-fake-home
+mkdir -p /tmp/aas-fake-home/.codex /tmp/aas-fake-home/.claude
+# Optional when testing DeepSeek targets:
+# mkdir -p /tmp/aas-fake-home/.deepseek
 make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
 make verify ARGS="--root /tmp/aas-fake-home"
 ```
@@ -1111,10 +1130,11 @@ See [Profiles](profiles.md), [Skills](skills.md), and
 ## Conflict Modes
 
 - default: create missing managed files and skip unmanaged or legacy files
-- `--adopt`: record an existing target file as user-owned managed state
+- `--adopt`: record an existing target file as user-owned managed state; verify
+  tracks its recorded hash instead of requiring managed marker text
 - `--backup-replace`: back up and replace an unmanaged target file
 - `--migrate`: install a detected legacy skill under the canonical name using
-  the selected install mode, then remove the legacy alias directory
+  the selected install mode, then back up and remove the legacy alias directory
 
 Instruction blocks are installed only when the corresponding skill artifact is
 actually installed, adopted, updated, already managed, or migrated. A skipped
@@ -1144,7 +1164,7 @@ Scenario summary:
 | Skill absent | Managed skill files and support files are created. |
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
-| Legacy alias exists | Default plan skips; `--migrate` installs the canonical target and removes the legacy alias directory. |
+| Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
 | Agent rejects symlinked skills | Auto mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
@@ -1182,7 +1202,8 @@ The audit reports:
 - managed state counts from `.ai-agents-skills/state.json`
 - instruction-file managed marker counts
 - canonical skills present, missing, managed, unmanaged, and legacy aliases
-- extra local skills outside this repo's canonical catalog
+- extra local skills outside this repo's canonical catalog in the primary
+  agent skills directory
 - default, adopt, migrate, and adopt+migrate plan summaries
 - dependency status and selected skills related to each dependency
 
@@ -1205,6 +1226,11 @@ Claude. Local engineering workflows, one-off experiments, downloaded runtime
 state, provider config, secrets, and session/history databases should remain
 outside the repo unless they are deliberately promoted into a canonical skill or
 artifact.
+
+Audit `extra_local` coverage is limited to the primary agent skills directory,
+such as `~/.codex/skills` or `~/.claude/skills`. Compatibility and workspace
+skill directories are used for legacy detection during planning, but are not
+reported as primary extra-local inventory.
 
 When auditing a mounted Windows profile from Linux or WSL, native `.exe`
 programs can often be found but not safely executed. Treat degraded Windows
@@ -1379,12 +1405,18 @@ make.bat doctor
 make.bat precheck --profile research-core
 make.bat plan --profile research-core
 make.bat install --profile research-core --dry-run
+mkdir %TEMP%\\aas-fake-home\\.codex
+mkdir %TEMP%\\aas-fake-home\\.claude
+rem Optional when testing DeepSeek targets:
+rem mkdir %TEMP%\\aas-fake-home\\.deepseek
 make.bat install --profile research-core --apply --root %TEMP%\\aas-fake-home
 make.bat verify --root %TEMP%\\aas-fake-home
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected
-Windows agent homes.
+Windows agent homes. The installer detects only agent homes that already exist
+under `--root`, so fake-root tests must create `.codex`, `.claude`, or
+`.deepseek` before planning or applying.
 
 For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`
@@ -1511,6 +1543,10 @@ multiple skills, one artifact, multiple artifacts, or one agent. If a managed
 instruction file was created by the installer and becomes empty after block
 removal, it is removed.
 
+Applied uninstall and rollback are interactive and require the same confirmation
+phrase as install. Real home-directory writes additionally require
+`--real-system`.
+
 Use uninstall when the current installed state is no longer wanted. Use
 rollback when you want to reverse a specific recorded run and restore previous
 managed content or remove files that were created from an empty state.
@@ -1521,8 +1557,8 @@ were installed as `auto`, `symlink`, `reference`, or `copy`. When a later
 install switches a skill to `reference`, previously managed support files for
 that skill are planned as obsolete removals because reference adapters point at
 the canonical repo directory instead of local support-file copies or links.
-Rollback uses the recorded run and preserves symlink backups when reversing a
-mode switch.
+Rollback uses the recorded run and preserves symlink and legacy-directory
+backups when reversing a mode switch or migration.
 
 Dry-run examples:
 
@@ -1543,8 +1579,11 @@ make rollback ARGS="--run 20260429-080620 --apply"
 Safety rules:
 
 - uninstall never removes unmanaged files
-- uninstall removes only selected managed files and managed instruction blocks
-- rollback uses the journal for the selected run or scope
+- uninstall removes only selected managed file paths and managed instruction
+  blocks, then prunes empty directories
+- rollback uses the journal for the selected run or scope and restores recorded
+  backups where available
+- `--apply` and `--dry-run` cannot be combined
 - instruction files are removed only when the installer created them and they
   become empty after managed block removal
 

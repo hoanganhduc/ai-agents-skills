@@ -15,7 +15,7 @@ from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
 from .manifest import load_manifests, skill_names
 from .planner import build_plan
-from .render import MANAGED_MARKER
+from .render import MANAGED_MARKER, canonical_skill_path
 from .selectors import (
     artifact_dependency_skills,
     canonical_artifact_name,
@@ -26,6 +26,9 @@ from .selectors import (
 )
 from .state import load_state
 from .verify import verify as verify_state
+
+
+INSTALL_CONFIRMATION_PHRASE = "I understand the installation and uninstall process"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     rollback.add_argument("--artifacts")
     rollback.add_argument("--apply", action="store_true")
     rollback.add_argument("--dry-run", action="store_true")
+    rollback.add_argument("--real-system", action="store_true")
 
     uninstall = sub.add_parser("uninstall")
     uninstall.add_argument("--all", action="store_true")
@@ -109,7 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
     uninstall.add_argument("--artifact")
     uninstall.add_argument("--artifacts")
     uninstall.add_argument("--apply", action="store_true")
-    uninstall.add_argument("--remove-owned-dependencies", action="store_true")
+    uninstall.add_argument("--dry-run", action="store_true")
+    uninstall.add_argument("--real-system", action="store_true")
 
     return parser
 
@@ -171,11 +176,14 @@ def run(args: argparse.Namespace) -> int:
     if args.command == "install":
         ensure_apply_allowed(args)
         plan = make_plan(args, manifests)
+        confirm_install_process_understood(args, plan)
         result = apply_plan(args.root, plan, dry_run=not args.apply)
         return output(result, args)
     if args.command == "verify":
         return verify(args, manifests)
     if args.command == "rollback":
+        ensure_apply_allowed(args)
+        confirm_lifecycle_process_understood(args, "rollback")
         skills = resolve_skill_filter(args, manifests)
         artifacts = resolve_artifact_filter(args, manifests)
         agents = set(split_csv(args.agents)) if args.agents else None
@@ -183,8 +191,10 @@ def run(args: argparse.Namespace) -> int:
         result = rollback_artifacts(args.root, args.run, skills, agents, artifacts, dry_run=dry_run)
         return output(result, args)
     if args.command == "uninstall":
+        ensure_apply_allowed(args)
         if args.apply and not args.all and not args.skill and not args.skills and not args.artifact and not args.artifacts:
             raise ValueError("applied uninstall requires --all, --skill, --skills, --artifact, or --artifacts")
+        confirm_lifecycle_process_understood(args, "uninstall")
         skills = resolve_skill_filter(args, manifests)
         artifacts = resolve_artifact_filter(args, manifests)
         agents = set(split_csv(args.agents)) if args.agents else None
@@ -402,7 +412,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
             "run_count": len(state.get("runs", [])),
         },
         "instruction_files": [instruction_file_status(agent.instructions_file, agent.name) for agent in agents],
-        "skill_coverage": [skill_coverage(agent, manifests) for agent in agents],
+        "skill_coverage": [skill_coverage(agent, manifests, state) for agent in agents],
         "plan_summaries": {
             "default": plan_counts(default_plan),
             "requested": plan_counts(requested_plan),
@@ -456,7 +466,7 @@ def instruction_file_status(path: Path, agent: str) -> dict[str, Any]:
     }
 
 
-def skill_coverage(agent: Any, manifests: dict[str, Any]) -> dict[str, Any]:
+def skill_coverage(agent: Any, manifests: dict[str, Any], state: dict[str, Any] | None = None) -> dict[str, Any]:
     canonical = set(manifests["skills"]["skills"])
     aliases = manifests["skills"].get("legacy_aliases", {})
     alias_to_canonical = {
@@ -474,12 +484,22 @@ def skill_coverage(agent: Any, manifests: dict[str, Any]) -> dict[str, Any]:
         for name in names
         if name in alias_to_canonical
     }
+    state = state or {"artifacts": []}
+    state_managed = {
+        item.get("skill")
+        for item in state.get("artifacts", [])
+        if item.get("agent") == agent.name
+        and item.get("artifact_type") == "skill-file"
+        and item.get("managed")
+    }
     managed = []
     unmanaged = []
     for name in sorted(names & canonical):
         path = agent.skills_dir / name / "SKILL.md"
-        text = path.read_text(encoding="utf-8", errors="replace")
-        (managed if MANAGED_MARKER in text else unmanaged).append(name)
+        if skill_is_managed(name, path, state_managed):
+            managed.append(name)
+        else:
+            unmanaged.append(name)
     return {
         "agent": agent.name,
         "skills_dir": str(agent.skills_dir),
@@ -490,6 +510,16 @@ def skill_coverage(agent: Any, manifests: dict[str, Any]) -> dict[str, Any]:
         "legacy_aliases_present": legacy_present,
         "extra_local": sorted(names - canonical - set(alias_to_canonical)),
     }
+
+
+def skill_is_managed(skill: str, path: Path, state_managed: set[str | None]) -> bool:
+    if skill in state_managed:
+        return True
+    source_path = canonical_skill_path(skill)
+    if path.is_symlink() and source_path.exists() and path.resolve() == source_path.resolve():
+        return True
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return MANAGED_MARKER in text
 
 
 def plan_counts(plan: dict[str, Any]) -> dict[str, Any]:
@@ -812,8 +842,94 @@ def ensure_apply_allowed(args: argparse.Namespace) -> None:
         raise ValueError("--apply and --dry-run cannot be used together")
     if not args.apply:
         return
-    if args.root.resolve() == Path.home().resolve() and not args.real_system:
+    if is_real_system_root(args.root) and not getattr(args, "real_system", False):
         raise ValueError("real-system writes require --real-system")
+
+
+def is_real_system_root(root: Path) -> bool:
+    resolved = root.resolve()
+    if resolved == Path.home().resolve():
+        return True
+    parts = [part.lower() for part in resolved.parts]
+    if len(parts) >= 3 and parts[-2] == "users":
+        return True
+    if len(parts) == 3 and parts[1] == "home":
+        return True
+    return False
+
+
+def confirm_install_process_understood(args: argparse.Namespace, plan: dict[str, Any]) -> None:
+    if not args.apply:
+        return
+    counts = plan_counts(plan)
+    operations = ", ".join(
+        f"{name}={count}" for name, count in sorted(counts["operations"].items())
+    ) or "none"
+    message = f"""Install confirmation required
+
+You are about to apply an ai-agents-skills install for:
+  root: {args.root}
+  planned actions: {counts["action_count"]}
+  planned operations: {operations}
+
+Installation process:
+- Run `plan` or `install --dry-run` first to preview what will change.
+- `install --apply` writes the planned managed skill files, support files,
+  instruction blocks, and selected artifacts.
+- Real home-directory writes require both `--apply` and `--real-system`.
+- Existing unmanaged files are skipped unless you explicitly selected
+  `--adopt`, `--backup-replace`, or `--migrate`.
+
+Uninstall and rollback process:
+- `uninstall` is a dry-run by default; applying it requires `--apply` and an
+  explicit scope such as `--all`, `--skill`, `--skills`, `--artifact`, or
+  `--artifacts`.
+- `uninstall` removes selected managed files and managed instruction blocks; it
+  does not remove unmanaged files.
+- `rollback` uses the installer journal to reverse a recorded run or selected
+  managed scope.
+
+To confirm that you understand the installation and uninstall process, type
+exactly:
+{INSTALL_CONFIRMATION_PHRASE}
+
+Confirmation: """
+    print(message, file=sys.stderr, end="")
+    answer = sys.stdin.readline()
+    if not answer:
+        raise ValueError("install confirmation required before applying changes")
+    if answer.strip() != INSTALL_CONFIRMATION_PHRASE:
+        raise ValueError("install aborted: confirmation phrase did not match")
+
+
+def confirm_lifecycle_process_understood(args: argparse.Namespace, operation: str) -> None:
+    if not args.apply:
+        return
+    message = f"""{operation.title()} confirmation required
+
+You are about to apply an ai-agents-skills {operation} for:
+  root: {args.root}
+
+Process summary:
+- `{operation}` is a dry-run by default; `--apply` performs file changes.
+- Applied lifecycle commands affect only artifacts recorded in the installer
+  state journal, scoped by the command arguments.
+- Uninstall removes selected managed files and managed instruction blocks; it
+  does not remove unmanaged files outside recorded managed artifact paths.
+- Rollback reverses a recorded run or selected managed scope from the journal.
+- Real home-directory writes require `--real-system`.
+
+To confirm that you understand the installation and uninstall process, type
+exactly:
+{INSTALL_CONFIRMATION_PHRASE}
+
+Confirmation: """
+    print(message, file=sys.stderr, end="")
+    answer = sys.stdin.readline()
+    if not answer:
+        raise ValueError(f"{operation} confirmation required before applying changes")
+    if answer.strip() != INSTALL_CONFIRMATION_PHRASE:
+        raise ValueError(f"{operation} aborted: confirmation phrase did not match")
 
 
 def output(data: Any, args: argparse.Namespace) -> int:

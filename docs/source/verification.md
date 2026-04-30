@@ -8,7 +8,9 @@ If no managed artifacts match the requested scope, `verify` returns
 Use verification after any applied install, uninstall, migration, adoption, or
 rollback. It is intentionally narrower than `precheck`: `precheck` checks
 software availability, while `verify` checks whether this installer still owns
-the files and managed instruction blocks it recorded.
+the files and managed instruction blocks it recorded. For adopted user-owned
+files, verification checks that the file still matches the hash recorded at
+adoption time.
 
 Common commands:
 
@@ -32,6 +34,7 @@ Current skill checks:
 - `L4 symlink`, `source-exists`, and `source-match` for symlink installs
 - `L5 no-secret-leak`
 - `L6 agent-visible`
+- `L7 adopted-hash-match` for adopted user-owned files
 
 Current instruction-block checks:
 
