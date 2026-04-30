@@ -5,7 +5,7 @@ from typing import Any
 
 from .render import MANAGED_MARKER, block_id
 from .sanitize import has_sensitive_material
-from .state import load_state
+from .state import load_state, sha256_file
 
 
 def verify(root: Path, skill_filter: set[str] | None = None, agent_filter: set[str] | None = None) -> dict[str, Any]:
@@ -34,6 +34,21 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
     path = Path(artifact["artifact"])
     checks: list[dict[str, Any]] = []
     checks.append({"name": "file-exists", "ok": path.exists()})
+    if artifact.get("adopted"):
+        expected_hash = artifact.get("new_hash")
+        checks.append({
+            "name": "adopted-hash-match",
+            "ok": expected_hash is not None and sha256_file(path) == expected_hash,
+        })
+        if artifact.get("artifact_type") == "skill-file" and path.exists():
+            checks.append({"name": "agent-visible", "ok": path.parent.name == artifact["skill"]})
+        return {
+            "agent": artifact.get("agent"),
+            "skill": artifact.get("skill"),
+            "artifact": artifact.get("artifact"),
+            "status": "ok" if all(check["ok"] for check in checks) else "failed",
+            "checks": checks,
+        }
     if artifact.get("install_mode") == "symlink":
         verify_symlink_artifact(path, artifact, checks)
         return {
