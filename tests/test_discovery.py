@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -92,10 +94,13 @@ class DiscoveryTests(unittest.TestCase):
             }
             result = discover_tool("python-runtime", spec, "linux", root)
             self.assertIn(result["status"], {"ok", "degraded"})
-            self.assertTrue(str(result["command"]).startswith(str(root)))
+            executable = shlex.split(str(result["command"]), posix=os.name != "nt")[0].strip("'\"")
+            self.assertTrue(Path(executable).resolve().is_relative_to(root.resolve()))
             self.assertEqual(result["scope"], "user-local")
 
     def test_windows_python_package_can_be_detected_from_mounted_venv(self) -> None:
+        if sys.platform.startswith("win"):
+            self.skipTest("host-native Windows does not use mounted drive mapping")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             python = root / ".venv-docling" / "Scripts" / "python.exe"
@@ -116,6 +121,8 @@ class DiscoveryTests(unittest.TestCase):
             self.assertTrue(result["checked"])
 
     def test_windows_python_package_can_be_detected_from_system_site_packages(self) -> None:
+        if sys.platform.startswith("win"):
+            self.skipTest("host-native Windows does not use mounted drive mapping")
         with tempfile.TemporaryDirectory() as tmp:
             drive = Path(tmp)
             root = drive / "Users" / "alice"
@@ -136,6 +143,8 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn("Python310", result["site_package"])
 
     def test_windows_sage_detects_mounted_wsl_rootfs_candidate(self) -> None:
+        if sys.platform.startswith("win"):
+            self.skipTest("host-native Windows does not use mounted drive mapping")
         with tempfile.TemporaryDirectory() as tmp:
             drive = Path(tmp)
             root = drive / "Users" / "alice"
@@ -179,6 +188,8 @@ class DiscoveryTests(unittest.TestCase):
             self.assertIn("SageMath", result["version"])
 
     def test_windows_sage_reports_wsl_vhdx_as_degraded_inspection_gap(self) -> None:
+        if sys.platform.startswith("win"):
+            self.skipTest("host-native Windows does not use mounted drive mapping")
         with tempfile.TemporaryDirectory() as tmp:
             drive = Path(tmp)
             root = drive / "Users" / "alice"
