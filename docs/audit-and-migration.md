@@ -63,4 +63,5 @@ the same `make.bat precheck --profile ...` command from a native Windows shell
 and compare the output with the mounted-profile audit.
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),
-[Agent Locations](agent-locations.md), [Uninstall And Rollback](uninstall-rollback.md).
+[Agent Locations](agent-locations.md), [OpenClaw Integration Plan](openclaw-integration-plan.md),
+[Uninstall And Rollback](uninstall-rollback.md).

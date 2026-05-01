@@ -1,0 +1,279 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/apply-manifest.schema.json",
+  "title": "OpenClaw Dry-Run Apply Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_schema_version",
+    "manifest_id",
+    "generator_version",
+    "created_at",
+    "source_inventory_id",
+    "denylist_version",
+    "redaction_version",
+    "source_agent_refs",
+    "target_agent_refs",
+    "apply_policy",
+    "actions",
+    "approval"
+  ],
+  "properties": {
+    "manifest_schema_version": {
+      "const": "openclaw.apply-manifest.v1"
+    },
+    "manifest_id": {
+      "type": "string",
+      "pattern": "^manifest_[A-Za-z0-9_.-]+$"
+    },
+    "generator_version": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_inventory_id": {
+      "type": "string",
+      "pattern": "^inv_[A-Za-z0-9_.-]+$"
+    },
+    "denylist_version": {
+      "type": "string",
+      "pattern": "^openclaw.denylist.v[0-9]+$"
+    },
+    "redaction_version": {
+      "type": "string",
+      "pattern": "^openclaw.redaction.v[0-9]+$"
+    },
+    "source_agent_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "target_agent_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "apply_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_serialization",
+        "no_recompute",
+        "fail_closed_on_drift",
+        "content_addressed"
+      ],
+      "properties": {
+        "canonical_serialization": {
+          "const": "json-canonical-sorted-actions"
+        },
+        "no_recompute": {
+          "const": true
+        },
+        "fail_closed_on_drift": {
+          "const": true
+        },
+        "content_addressed": {
+          "const": true
+        }
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action_id",
+          "operation",
+          "target",
+          "precondition",
+          "collision",
+          "backup_strategy",
+          "rollback_refs"
+        ],
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "pattern": "^action_[A-Za-z0-9_.-]+$"
+          },
+          "operation": {
+            "enum": [
+              "create-reference-doc",
+              "create-template",
+              "create-file",
+              "update-managed-file",
+              "delete-managed-file",
+              "restore-backup",
+              "no-op"
+            ]
+          },
+          "source_ref": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "root_id",
+              "target_agent",
+              "path_style",
+              "relative_path",
+              "containment_policy"
+            ],
+            "properties": {
+              "root_id": {
+                "type": "string"
+              },
+              "target_agent": {
+                "enum": [
+                  "codex",
+                  "claude",
+                  "deepseek"
+                ]
+              },
+              "path_style": {
+                "enum": [
+                  "posix",
+                  "windows-drive",
+                  "windows-unc",
+                  "wsl-posix",
+                  "mounted-windows"
+                ]
+              },
+              "relative_path": {
+                "type": "string"
+              },
+              "containment_policy": {
+                "const": "must-stay-under-target-root"
+              }
+            }
+          },
+          "precondition": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "exists",
+              "kind",
+              "owner_policy"
+            ],
+            "properties": {
+              "exists": {
+                "type": "boolean"
+              },
+              "kind": {
+                "enum": [
+                  "absent",
+                  "regular-file",
+                  "directory",
+                  "symlink",
+                  "special-file"
+                ]
+              },
+              "content_hash": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              },
+              "owner_policy": {
+                "enum": [
+                  "managed-created",
+                  "managed-modified",
+                  "unmanaged-preserve",
+                  "expected-absent"
+                ]
+              },
+              "symlink_target": {
+                "type": "string"
+              },
+              "absence_reason": {
+                "type": "string"
+              }
+            }
+          },
+          "collision": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "policy"
+            ],
+            "properties": {
+              "collision_id": {
+                "type": "string"
+              },
+              "policy": {
+                "enum": [
+                  "none",
+                  "skip-report",
+                  "fail-closed",
+                  "explicit-approval-required"
+                ]
+              },
+              "approved_by": {
+                "type": "string"
+              }
+            }
+          },
+          "backup_strategy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "required",
+              "location_policy"
+            ],
+            "properties": {
+              "required": {
+                "type": "boolean"
+              },
+              "location_policy": {
+                "enum": [
+                  "outside-target-tree",
+                  "not-needed"
+                ]
+              },
+              "backup_hash": {
+                "type": "string"
+              }
+            }
+          },
+          "rollback_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "review_status"
+      ],
+      "properties": {
+        "review_status": {
+          "enum": [
+            "unreviewed",
+            "approved",
+            "rejected"
+          ]
+        },
+        "reviewer": {
+          "type": "string"
+        },
+        "reviewed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "approval_hash": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
