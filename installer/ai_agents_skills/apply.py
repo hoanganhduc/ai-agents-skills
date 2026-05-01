@@ -251,6 +251,10 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         result["source_path"] = action["source_path"]
     if action.get("install_mode"):
         result["install_mode"] = action["install_mode"]
+    if action.get("mode_reason"):
+        result["mode_reason"] = action["mode_reason"]
+    if action.get("capability_evidence"):
+        result["capability_evidence"] = action["capability_evidence"]
     if action.get("fallback_mode"):
         result["fallback_mode"] = action["fallback_mode"]
     return result

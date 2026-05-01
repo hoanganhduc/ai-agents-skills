@@ -113,11 +113,10 @@ also summarizes the available templates:
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
-skills. Reusable skill bodies live under `canonical/skills`; the default
-install links supported agents back to those canonical files when their
-loaders support symlinked skill files, and writes reference adapters for known
-incompatible loaders such as Codex. Copy mode remains available when an agent
-or filesystem must have regular files inside the settings directory.
+skills. Reusable skill bodies live under `canonical/skills`; default installs
+record the agent policy and fallback behavior used to choose symlink,
+reference, or copy mode. Copy mode remains available when an agent or
+filesystem must have regular files inside the settings directory.
 
 ## Documentation
 
@@ -168,8 +167,8 @@ make list-artifacts
 make plan ARGS="--profile research-core"
 make plan ARGS="--no-skills --artifact-profile workflow-templates"
 make install ARGS="--profile research-core --dry-run"
-make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix default --platform-shape all"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
 ```
 
 Windows:
@@ -183,12 +182,8 @@ make.bat list-artifacts
 make.bat plan --profile research-core
 make.bat plan --no-skills --artifact-profile workflow-templates
 make.bat install --profile research-core --dry-run
-mkdir %TEMP%\\aas-fake-home\\.codex
-mkdir %TEMP%\\aas-fake-home\\.claude
-rem Optional when testing DeepSeek targets:
-rem mkdir %TEMP%\\aas-fake-home\\.deepseek
-make.bat install --profile research-core --apply --root %TEMP%\\aas-fake-home
-make.bat verify --root %TEMP%\\aas-fake-home
+make.bat lifecycle-test --matrix default --platform-shape windows
+make.bat fake-root-lifecycle --profile research-core --platform-shape windows
 ```
 
 Applied installs, uninstalls, and rollbacks are interactive: before any
@@ -200,11 +195,10 @@ use `--adopt`, `--backup-replace`, or `--migrate` only after reviewing `plan`
 output.
 
 Skills install in `--install-mode auto` by default so the repo remains the
-single maintained source without hiding agent-loader differences. Auto mode
-uses symlinked skill files for Claude and DeepSeek, and thin reference adapters
-for Codex because current Codex skill discovery ignores file-symlinked user
-`SKILL.md` files. Use `--install-mode symlink` to force symlinks for every
-agent, `--install-mode reference` to force adapters for every agent, or
+single maintained source without hiding agent-loader differences. `plan --json`
+shows the effective mode, agent policy evidence, apply-time symlink fallback,
+and reason for each target. Use `--install-mode symlink` to force symlinks for
+every agent, `--install-mode reference` to force adapters for every agent, or
 `--install-mode copy` only when files must be materialized inside the agent
 settings directory.
 
@@ -284,7 +278,8 @@ def skills_text(manifests: dict[str, Any]) -> str:
         "make list-skills\n"
         "make plan ARGS=\"--skill zotero\"\n"
         "make install ARGS=\"--skills zotero,docling --dry-run\"\n"
-        "make verify ARGS=\"--skill zotero --root /tmp/aas-fake-home\"\n"
+        "make lifecycle-test ARGS=\"--scenario clean-auto --platform-shape linux\"\n"
+        "make fake-root-lifecycle ARGS=\"--skill zotero --platform-shape linux\"\n"
         "```\n\n"
         "Installation is partial by default: selecting one skill installs only "
         "that skill, its support files when the selected install mode needs "
@@ -559,6 +554,11 @@ installer state are checked.
 If no managed artifacts match the requested scope, `verify` returns
 `no-managed-artifacts` instead of `ok`.
 
+`verify` checks installer ownership and file integrity. It does not prove that
+an agent runtime has loaded a skill. Use `smoke` for the separate
+agent-discovery compatibility check; smoke results can be `ok`, `degraded`,
+`unsupported`, or `skipped` with reasons.
+
 Use verification after any applied install, uninstall, migration, adoption, or
 rollback. It is intentionally narrower than `precheck`: `precheck` checks
 software availability, while `verify` checks whether this installer still owns
@@ -566,12 +566,31 @@ the files and managed instruction blocks it recorded. For adopted user-owned
 files, verification checks that the file still matches the hash recorded at
 adoption time.
 
+Use `lifecycle-test` as the default installer acceptance gate. It creates fake
+roots, runs dry-run install, confirms the dry-run did not write files, applies
+the install, compares normalized dry-run and applied actions, runs `verify` and
+`smoke`, dry-runs uninstall, applies uninstall, and confirms the fake root
+returns to its baseline outside installer state. `fake-root-lifecycle` runs the
+same checks for a caller-selected install scope.
+The matrix treats forced symlink mode as an expected-degraded smoke scenario
+when Codex is included, because Codex user skill discovery does not load
+file-symlinked `SKILL.md` files.
+Use `--matrix stress` for broader local coverage: all skills, all portable
+workflow artifacts with backing skills, individual-agent installs, paths with
+spaces, changed managed files, missing managed files, outside-root state
+tampering, and corrupt state reporting.
+
 Common commands:
 
 ```bash
-make verify ARGS="--root /tmp/aas-fake-home"
-make verify ARGS="--skill zotero --root /tmp/aas-fake-home"
-make verify ARGS="--skills zotero,docling --root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix default --platform-shape all"
+make lifecycle-test ARGS="--matrix full --platform-shape linux"
+make lifecycle-test ARGS="--matrix stress --platform-shape linux"
+make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
+make verify ARGS="--root <fake-or-real-root>"
+make verify ARGS="--skill zotero --root <fake-or-real-root>"
+make verify ARGS="--skills zotero,docling --root <fake-or-real-root>"
+make smoke ARGS="--skill zotero --root <fake-or-real-root>"
 ```
 
 Result meanings:
@@ -1019,9 +1038,10 @@ planning and dry-run previews are the default workflow, and real home-directory
 writes require both `--apply` and `--real-system`.
 
 Use `make precheck` or `make.bat precheck` first when installing on a new
-machine. Use `plan` before `install`. Partial installs are first-class: select
-`--skill`, `--skills`, or `--profile`. Artifact installs are also partial:
-select `--artifact`, `--artifacts`, or `--artifact-profile`.
+machine. The launchers detect a usable runtime instead of requiring a specific
+command name. Use `plan` before `install`. Partial installs are first-class:
+select `--skill`, `--skills`, or `--profile`. Artifact installs are also
+partial: select `--artifact`, `--artifacts`, or `--artifact-profile`.
 
 `doctor` is a quick required-tool check. `precheck` is broader: it detects
 required tools, optional tools, Python packages, remote-service configuration
@@ -1052,6 +1072,7 @@ make doctor
 make precheck ARGS="--profile research-core"
 make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
+make lifecycle-test ARGS="--matrix default --platform-shape all"
 ```
 
 Windows:
@@ -1061,17 +1082,15 @@ make.bat doctor
 make.bat precheck --profile research-core
 make.bat plan --profile research-core
 make.bat install --profile research-core --dry-run
+make.bat lifecycle-test --matrix default --platform-shape windows
 ```
 
 To test file writes without touching a real agent home, use a fake root:
 
 ```bash
-rm -rf /tmp/aas-fake-home
-mkdir -p /tmp/aas-fake-home/.codex /tmp/aas-fake-home/.claude
-# Optional when testing DeepSeek targets:
-# mkdir -p /tmp/aas-fake-home/.deepseek
-make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix default --platform-shape all"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
 Real-system writes should be a final step after reviewing `plan` output:
@@ -1083,16 +1102,17 @@ make install ARGS="--profile research-core --apply --real-system"
 ## Install Modes
 
 `--install-mode auto` is the default. The installer resolves that request per
-agent based on the checked skill-loader behavior. Claude and DeepSeek skill
-files and support files are installed as symlinks to `canonical/skills`, so
-editing the repo updates what those agents read without duplicating every skill
-body into every settings directory.
+agent based on recorded agent-loader policy and source availability, and it
+records the reason in `plan --json`. Symlink creation itself is verified during
+apply; if a symlink cannot be created, skill files fall back to reference
+adapters and support files fall back to copied files.
 
 Codex is the compatibility exception: current Codex skill discovery loads
 regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md` files.
 In default auto mode, Codex skill files therefore resolve to reference
 adapters that tell Codex where to read the canonical repo skill. `plan --json`
-shows the effective `install_mode` for each target before anything is written.
+shows the effective `install_mode`, `mode_reason`, `capability_evidence`, and
+fallback mode for each target before anything is written.
 
 Use `--install-mode symlink` to force symlinked skill files for every agent.
 This is useful for testing future loader behavior, but it can produce Codex
@@ -1108,10 +1128,8 @@ its settings directory. Copy mode materializes skill files and support files
 with managed metadata, so it uses more space and needs reinstalling after repo
 skill changes.
 
-If symlink creation fails during an applied symlink install, skill files fall
-back to reference adapters and support files fall back to copied files. Optional
-artifacts outside skill directories are always copied because agents do not
-load them as canonical skill source.
+Optional artifacts outside skill directories are always copied because agents
+do not load them as canonical skill source.
 
 ## Selection Model
 
@@ -1190,6 +1208,7 @@ Common commands:
 ```bash
 make audit-system ARGS="--profile full-research"
 make audit-system ARGS="--profile full-research --json"
+make audit-system ARGS="--profile full-research --migration-report --json"
 make plan ARGS="--profile full-research --migrate"
 make plan ARGS="--profile full-research --adopt"
 ```
@@ -1203,14 +1222,16 @@ The audit reports:
 - extra local skills outside this repo's canonical catalog in the primary
   agent skills directory
 - default, adopt, migrate, and adopt+migrate plan summaries
+- optional `--migration-report` groups managed, canonical unmanaged, legacy,
+  missing, and extra-local skills with dry-run commands to review next
 - dependency status and selected skills related to each dependency
 
 Recommended staged migration for a current personal system:
 
 1. Run `precheck --profile full-research` and resolve missing required
    dependencies.
-2. Run `audit-system --profile full-research` and review unmanaged and legacy
-   counts.
+2. Run `audit-system --profile full-research --migration-report --json` and
+   review unmanaged, legacy, missing, and extra-local groups.
 3. Run `plan --profile full-research --migrate` and migrate only reviewed
    legacy aliases, such as underscore-to-hyphen skill names.
 4. Run `plan --profile full-research --adopt` and adopt only canonical files
@@ -1403,14 +1424,9 @@ make.bat doctor
 make.bat precheck --profile research-core
 make.bat plan --profile research-core
 make.bat install --profile research-core --dry-run
-mkdir %TEMP%\\aas-fake-home\\.codex
-mkdir %TEMP%\\aas-fake-home\\.claude
-rem Optional when testing DeepSeek targets:
-rem mkdir %TEMP%\\aas-fake-home\\.deepseek
-make.bat install --profile research-core --apply --root %TEMP%\\aas-fake-home
-make.bat verify --root %TEMP%\\aas-fake-home
-make.bat uninstall --all --apply --root %TEMP%\\aas-fake-home
-make.bat verify --root %TEMP%\\aas-fake-home
+make.bat lifecycle-test --matrix default --platform-shape windows
+make.bat fake-root-lifecycle --profile research-core --platform-shape windows
+make.bat verify --root <fake-or-real-root>
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected
@@ -1460,8 +1476,9 @@ make doctor
 make precheck ARGS="--profile research-core"
 make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
-make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix default --platform-shape linux"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
+make verify ARGS="--root <fake-or-real-root>"
 ```
 
 Useful overrides:
@@ -1508,9 +1525,11 @@ Useful inspection commands:
 
 ```bash
 make precheck ARGS="--profile full-research --json"
-make audit-system ARGS="--profile full-research --json"
+make audit-system ARGS="--profile full-research --migration-report --json"
 make plan ARGS="--profile full-research --migrate"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix full --platform-shape all"
+make lifecycle-test ARGS="--matrix stress --platform-shape linux"
+make fake-root-lifecycle ARGS="--profile full-research --platform-shape all"
 ```
 
 Common cases:
@@ -1595,15 +1614,15 @@ Applied examples:
 ```bash
 make uninstall ARGS="--skill zotero --apply"
 make rollback ARGS="--run 20260429-080620 --apply"
-make verify ARGS="--root /tmp/aas-fake-home"
+make verify ARGS="--root <fake-or-real-root>"
 ```
 
 Windows applied examples:
 
 ```bat
-make.bat uninstall --skill zotero --apply --root %TEMP%\\aas-fake-home
-make.bat rollback --run 20260429-080620 --apply --root %TEMP%\\aas-fake-home
-make.bat verify --root %TEMP%\\aas-fake-home
+make.bat uninstall --skill zotero --apply --root <fake-or-real-root>
+make.bat rollback --run 20260429-080620 --apply --root <fake-or-real-root>
+make.bat verify --root <fake-or-real-root>
 ```
 
 Safety rules:
