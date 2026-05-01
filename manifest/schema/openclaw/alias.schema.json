@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/alias.schema.json",
+  "title": "OpenClaw Alias Mapping",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "alias_schema_version",
+    "aliases"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "openclaw.alias.v1"
+    },
+    "alias_schema_version": {
+      "const": "openclaw.alias.v1"
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "alias_id",
+          "alias_type",
+          "source_agent",
+          "target_agent",
+          "source_name",
+          "canonical_name",
+          "conflict_policy",
+          "status"
+        ],
+        "properties": {
+          "alias_id": {
+            "type": "string",
+            "pattern": "^alias_[A-Za-z0-9_.-]+$"
+          },
+          "alias_type": {
+            "enum": [
+              "display-alias",
+              "agent-id-alias",
+              "skill-alias",
+              "command-alias",
+              "path-alias",
+              "unsupported",
+              "excluded-private"
+            ]
+          },
+          "source_agent": {
+            "enum": [
+              "openclaw",
+              "codex",
+              "claude",
+              "deepseek",
+              "unknown"
+            ]
+          },
+          "target_agent": {
+            "enum": [
+              "codex",
+              "claude",
+              "deepseek",
+              "all",
+              "none"
+            ]
+          },
+          "source_name": {
+            "type": "string"
+          },
+          "canonical_name": {
+            "type": "string"
+          },
+          "target_name": {
+            "type": "string"
+          },
+          "conflict_policy": {
+            "enum": [
+              "skip-report",
+              "fail-closed",
+              "explicit-approval-required",
+              "unsupported"
+            ]
+          },
+          "status": {
+            "enum": [
+              "candidate",
+              "skipped",
+              "approved",
+              "rejected"
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

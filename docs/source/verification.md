@@ -87,4 +87,5 @@ Runtime smoke tests, runner-specific `doctor` commands, and direct
 agent's own diagnostics for those layers.
 
 Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
+[OpenClaw Integration Plan](openclaw-integration-plan.md),
 [Uninstall And Rollback](uninstall-rollback.md), [Troubleshooting](troubleshooting.md).
