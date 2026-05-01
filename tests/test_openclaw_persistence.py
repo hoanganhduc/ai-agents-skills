@@ -5,13 +5,12 @@ import io
 import json
 import tempfile
 import unittest
-from pathlib import Path
 
 from installer.ai_agents_skills.cli import main
 from installer.ai_agents_skills.openclaw_inventory import build_inventory
 from installer.ai_agents_skills.openclaw_manifest import build_manifest, canonical_manifest_payload, stable_digest
 from installer.ai_agents_skills.openclaw_persistence import check_persistence_manifest
-from tests.test_openclaw_inventory import make_source_root
+from tests.test_openclaw_inventory import fake_root_path, make_source_root
 from tests.test_openclaw_manifest import CREATED_AT, write_inventory
 
 
@@ -22,8 +21,8 @@ def refresh_manifest_id(manifest: dict[str, object]) -> None:
 class OpenClawPersistenceTests(unittest.TestCase):
     def test_hook_metadata_remains_inert_no_op(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -37,8 +36,8 @@ class OpenClawPersistenceTests(unittest.TestCase):
 
     def test_persistent_action_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -54,9 +53,9 @@ class OpenClawPersistenceTests(unittest.TestCase):
 
     def test_cli_persistence_check_accepts_inert_manifest_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
-            manifest_path = Path(tmp) / "manifest.json"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
+            manifest_path = fake_root_path(tmp, "manifest.json")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
