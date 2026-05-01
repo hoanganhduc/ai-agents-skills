@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/inventory.schema.json",
+  "title": "OpenClaw Sanitized Inventory",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "inventory_id",
+    "generated_at",
+    "source_root",
+    "denylist_version",
+    "redaction_version",
+    "evidence_class",
+    "content_read_policy",
+    "contains_raw_paths",
+    "items",
+    "denied_categories"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "openclaw.inventory.v1"
+    },
+    "inventory_id": {
+      "type": "string",
+      "pattern": "^inv_[A-Za-z0-9_.-]+$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_id",
+        "explicit_input",
+        "canonicalization_policy",
+        "display_label"
+      ],
+      "properties": {
+        "root_id": {
+          "type": "string",
+          "pattern": "^root_[A-Za-z0-9_.-]+$"
+        },
+        "explicit_input": {
+          "const": true
+        },
+        "canonicalization_policy": {
+          "enum": [
+            "platform-native-realpath-no-symlink-prefix",
+            "fixture-only"
+          ]
+        },
+        "display_label": {
+          "type": "string",
+          "enum": [
+            "<OPENCLAW_ROOT>",
+            "<FAKE_OPENCLAW_ROOT>"
+          ]
+        }
+      }
+    },
+    "denylist_version": {
+      "type": "string",
+      "pattern": "^openclaw.denylist.v[0-9]+$"
+    },
+    "redaction_version": {
+      "type": "string",
+      "pattern": "^openclaw.redaction.v[0-9]+$"
+    },
+    "evidence_class": {
+      "enum": [
+        "fixture-only",
+        "ci-container",
+        "native-linux",
+        "native-macos",
+        "native-windows",
+        "wsl-native",
+        "wsl-mounted-windows"
+      ]
+    },
+    "content_read_policy": {
+      "const": "deny-by-default"
+    },
+    "contains_raw_paths": {
+      "const": false
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "item_id",
+          "category",
+          "kind",
+          "safe_label",
+          "relative_path_token",
+          "metadata"
+        ],
+        "properties": {
+          "item_id": {
+            "type": "string",
+            "pattern": "^item_[A-Za-z0-9_.-]+$"
+          },
+          "category": {
+            "enum": [
+              "skill-metadata",
+              "instruction-metadata",
+              "template-metadata",
+              "alias-metadata",
+              "hook-metadata-detected-only",
+              "unknown-count-only"
+            ]
+          },
+          "kind": {
+            "enum": [
+              "directory",
+              "regular-file",
+              "symlink-metadata-only",
+              "special-file-denied",
+              "unknown"
+            ]
+          },
+          "safe_label": {
+            "type": "string"
+          },
+          "relative_path_token": {
+            "type": "string",
+            "pattern": "^<OPENCLAW_ROOT>/"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "size_class": {
+                "enum": [
+                  "empty",
+                  "small",
+                  "medium",
+                  "large",
+                  "oversized",
+                  "unknown"
+                ]
+              },
+              "read_policy": {
+                "enum": [
+                  "not-opened",
+                  "bounded-allowlisted-fields",
+                  "lstat-only"
+                ]
+              },
+              "reason_code": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "denied_categories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category_id",
+          "reason_code",
+          "count",
+          "read_policy"
+        ],
+        "properties": {
+          "category_id": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "read_policy": {
+            "enum": [
+              "not-opened",
+              "lstat-only"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

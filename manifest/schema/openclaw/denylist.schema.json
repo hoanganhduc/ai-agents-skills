@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/denylist.schema.json",
+  "title": "OpenClaw Denylist Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "denylist_version",
+    "rules"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "openclaw.denylist.v1"
+    },
+    "denylist_version": {
+      "const": "openclaw.denylist.v1"
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rule_id",
+          "category",
+          "match_type",
+          "pattern",
+          "applies_to",
+          "action",
+          "reason_code",
+          "test_fixture_refs"
+        ],
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "pattern": "^deny_[A-Za-z0-9_.-]+$"
+          },
+          "category": {
+            "enum": [
+              "secret",
+              "auth",
+              "provider-config",
+              "runtime-state",
+              "log-history-memory",
+              "scheduler-hook",
+              "private-workspace",
+              "browser-gateway",
+              "database-cache",
+              "special-file",
+              "path-traversal"
+            ]
+          },
+          "match_type": {
+            "enum": [
+              "path-component",
+              "path-glob",
+              "file-extension",
+              "file-kind",
+              "env-key",
+              "config-key",
+              "agent-surface",
+              "persistence-location"
+            ]
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "applies_to": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "openclaw-source",
+                "codex-target",
+                "claude-target",
+                "deepseek-target",
+                "all-targets"
+              ]
+            }
+          },
+          "action": {
+            "enum": [
+              "deny-with-reason",
+              "count-only",
+              "reject-root",
+              "require-explicit-gate"
+            ]
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "test_fixture_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

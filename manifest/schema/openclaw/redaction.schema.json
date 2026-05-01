@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/redaction.schema.json",
+  "title": "OpenClaw Redaction Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "redaction_version",
+    "allowed_output_fields",
+    "rules"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "openclaw.redaction.v1"
+    },
+    "redaction_version": {
+      "const": "openclaw.redaction.v1"
+    },
+    "allowed_output_fields": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "rule_id",
+          "target",
+          "match_type",
+          "replacement_token",
+          "forbidden_in_outputs",
+          "test_fixture_refs"
+        ],
+        "properties": {
+          "rule_id": {
+            "type": "string",
+            "pattern": "^redact_[A-Za-z0-9_.-]+$"
+          },
+          "target": {
+            "enum": [
+              "path",
+              "value",
+              "key",
+              "diagnostic",
+              "environment",
+              "command"
+            ]
+          },
+          "match_type": {
+            "enum": [
+              "regex",
+              "category",
+              "exact",
+              "path-segment"
+            ]
+          },
+          "replacement_token": {
+            "type": "string",
+            "pattern": "^<[A-Z0-9_]+>$"
+          },
+          "forbidden_in_outputs": {
+            "const": true
+          },
+          "test_fixture_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
