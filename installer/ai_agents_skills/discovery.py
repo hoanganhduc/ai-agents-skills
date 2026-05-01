@@ -333,9 +333,11 @@ def infer_scope(command: str, root: Path | None = None) -> str:
         resolved = path.resolve()
     except OSError:
         return "system"
+    home = root or Path.home()
+    if root is not None and path_within(resolved, resolved_path(home)):
+        return "user-local"
     if path_within(resolved, resolved_path(REPO_ROOT)):
         return "repo-local"
-    home = root or Path.home()
     if path_within(resolved, resolved_path(home)):
         return "user-local"
     return "system"
