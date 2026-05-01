@@ -105,9 +105,9 @@ class DiscoveryTests(unittest.TestCase):
             self.assertEqual(result["scope"], "user-local")
 
     def test_split_command_strips_windows_executable_quotes(self) -> None:
-        command = r"'C:\Users\agent\AppData\Local\Temp\.venv\Scripts\python.exe' --version"
+        command = r"'C:\Temp\agent-root\.venv\Scripts\python.exe' --version"
         parts = split_command(command, windows_host=True)
-        self.assertEqual(parts[0], r"C:\Users\agent\AppData\Local\Temp\.venv\Scripts\python.exe")
+        self.assertEqual(parts[0], r"C:\Temp\agent-root\.venv\Scripts\python.exe")
         self.assertEqual(parts[1], "--version")
 
     def test_windows_python_package_can_be_detected_from_mounted_venv(self) -> None:
