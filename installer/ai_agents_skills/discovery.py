@@ -20,7 +20,7 @@ def discover_tool(
     root: Path | None = None,
 ) -> dict[str, Any]:
     root = root or Path.home()
-    candidates = spec.get("candidates", {}).get(platform, [])
+    candidates = candidates_for_platform(spec.get("candidates", {}), platform)
     checked: list[dict[str, Any]] = []
     for raw in candidates:
         expanded = expand_candidate(raw, root, platform)
@@ -376,7 +376,17 @@ def current_platform(override: str | None = None) -> str:
         return override
     if sys.platform.startswith("win"):
         return "windows"
+    if sys.platform == "darwin":
+        return "macos"
     return "linux"
+
+
+def candidates_for_platform(candidates: dict[str, list[str]], platform: str) -> list[str]:
+    if platform in candidates:
+        return candidates[platform]
+    if platform == "macos":
+        return candidates.get("linux", [])
+    return []
 
 
 def discover_wsl_candidate(name: str, command_name: str, raw: str) -> dict[str, Any]:

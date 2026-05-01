@@ -9,10 +9,12 @@ from typing import Any
 
 from .agents import all_agent_names, detect_agents
 from .apply import apply_plan
-from .discovery import current_platform, discover_python_package, discover_tool
+from .capabilities import smoke_artifact
+from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
 from .docs import generate_docs
 from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
+from .lifecycle_matrix import run_lifecycle_matrix
 from .manifest import load_manifests, skill_names
 from .planner import build_plan
 from .render import MANAGED_MARKER, canonical_skill_path
@@ -50,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-agents-skills")
     parser.add_argument("--root", type=Path, default=Path.home(), help="home root to inspect or manage")
-    parser.add_argument("--platform", choices=["linux", "windows"], default=None)
+    parser.add_argument("--platform", choices=["linux", "windows", "macos"], default=None)
     parser.add_argument("--agent", dest="agents", help="single agent filter")
     parser.add_argument("--agents", help="comma-separated agent filter")
     parser.add_argument("--json", action="store_true")
@@ -78,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_selection_args(audit)
     add_conflict_args(audit)
     add_install_mode_args(audit)
+    audit.add_argument("--migration-report", action="store_true")
 
     plan = sub.add_parser("plan")
     add_selection_args(plan)
@@ -95,6 +98,34 @@ def build_parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify")
     verify.add_argument("--skill")
     verify.add_argument("--skills")
+
+    smoke = sub.add_parser("smoke")
+    smoke.add_argument("--skill")
+    smoke.add_argument("--skills")
+
+    fake = sub.add_parser("fake-root-lifecycle")
+    add_selection_args(fake)
+    add_conflict_args(fake)
+    add_install_mode_args(fake)
+    fake.add_argument(
+        "--platform-shape",
+        choices=["linux", "macos", "windows", "wsl", "all"],
+        default="all",
+        help="fake-root shape to exercise; all runs every supported shape",
+    )
+    fake.add_argument("--keep-fake-roots", action="store_true")
+
+    lifecycle_test = sub.add_parser("lifecycle-test")
+    lifecycle_test.add_argument("--matrix", choices=["default", "full", "stress"], default="default")
+    lifecycle_test.add_argument("--scenario")
+    lifecycle_test.add_argument("--scenarios")
+    lifecycle_test.add_argument(
+        "--platform-shape",
+        choices=["linux", "macos", "windows", "wsl", "all"],
+        default="all",
+        help="fake-root shape to exercise; all runs every supported shape",
+    )
+    lifecycle_test.add_argument("--keep-fake-roots", action="store_true")
 
     rollback = sub.add_parser("rollback")
     rollback.add_argument("--run")
@@ -181,6 +212,12 @@ def run(args: argparse.Namespace) -> int:
         return output(result, args)
     if args.command == "verify":
         return verify(args, manifests)
+    if args.command == "smoke":
+        return smoke(args, manifests)
+    if args.command == "fake-root-lifecycle":
+        return fake_root_lifecycle(args, manifests)
+    if args.command == "lifecycle-test":
+        return lifecycle_test(args, manifests)
     if args.command == "rollback":
         ensure_apply_allowed(args)
         confirm_lifecycle_process_understood(args, "rollback")
@@ -440,6 +477,8 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         },
         "recommendations": audit_recommendations(default_plan, precheck_result, state),
     }
+    if getattr(args, "migration_report", False):
+        result["migration_report"] = migration_report(result, args)
     return output(result, args)
 
 
@@ -564,6 +603,59 @@ def audit_recommendations(
     return recommendations
 
 
+def migration_report(audit: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    scope = selected_scope_args(args)
+    agents = []
+    for coverage in audit.get("skill_coverage", []):
+        agent = coverage["agent"]
+        canonical_unmanaged = coverage.get("unmanaged_canonical", [])
+        legacy_aliases = coverage.get("legacy_aliases_present", {})
+        missing = coverage.get("canonical_missing", [])
+        extra_local = coverage.get("extra_local", [])
+        commands = []
+        if legacy_aliases:
+            commands.append(f"plan {scope} --agent {agent} --migrate".strip())
+        if canonical_unmanaged:
+            commands.append(f"plan {scope} --agent {agent} --adopt".strip())
+        if missing:
+            commands.append(f"plan {scope} --agent {agent}".strip())
+        agents.append(
+            {
+                "agent": agent,
+                "managed": coverage.get("managed_canonical", []),
+                "canonical_unmanaged": canonical_unmanaged,
+                "legacy_aliases": legacy_aliases,
+                "missing": missing,
+                "extra_local": extra_local,
+                "recommended_dry_runs": commands,
+            }
+        )
+    return {
+        "summary": "Review these dry-run commands before any adopt, migrate, or replace operation.",
+        "agents": agents,
+        "blocked_artifacts": "see audit plan summaries and run plan --json for per-artifact blocking reasons",
+    }
+
+
+def selected_scope_args(args: argparse.Namespace) -> str:
+    parts = []
+    if getattr(args, "skill", None):
+        parts.append(f"--skill {args.skill}")
+    if getattr(args, "skills", None):
+        parts.append(f"--skills {args.skills}")
+    if getattr(args, "profile", None):
+        parts.append(f"--profile {args.profile}")
+    if getattr(args, "no_skills", False):
+        parts.append("--no-skills")
+    if getattr(args, "artifact", None):
+        parts.append(f"--artifact {args.artifact}")
+    if getattr(args, "artifacts", None):
+        parts.append(f"--artifacts {args.artifacts}")
+    if getattr(args, "artifact_profile", None):
+        parts.append(f"--artifact-profile {args.artifact_profile}")
+    return " ".join(parts) or "--profile research-core"
+
+
 def resolve_install_selection(
     args: argparse.Namespace,
     manifests: dict[str, Any],
@@ -594,6 +686,8 @@ def summarize_plan(plan: dict[str, Any]) -> dict[str, Any]:
                     "classification",
                     "operation",
                     "install_mode",
+                    "mode_reason",
+                    "capability_evidence",
                     "fallback_mode",
                     "reason",
                     "artifact_type",
@@ -610,6 +704,58 @@ def verify(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     agents = set(split_csv(args.agents)) if args.agents else None
     result = verify_state(args.root, skills, agents)
     return output(result, args)
+
+
+def smoke(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    skills = resolve_skill_filter(args, manifests)
+    agents = set(split_csv(args.agents)) if args.agents else None
+    state = load_state(args.root)
+    results = [
+        smoke_artifact(item)
+        for item in state.get("artifacts", [])
+        if item.get("artifact_type") == "skill-file"
+        and (not skills or item.get("skill") in skills)
+        and (not agents or item.get("agent") in agents)
+    ]
+    if not results:
+        return output(
+            {
+                "status": "no-managed-artifacts",
+                "checked": 0,
+                "results": [],
+                "reason": "no managed skill-file artifacts matched this scope",
+            },
+            args,
+        )
+    status = "ok" if all(item["status"] == "ok" for item in results) else "degraded"
+    return output({"status": status, "checked": len(results), "results": results}, args)
+
+
+def fake_root_lifecycle(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    result = run_lifecycle_matrix(
+        manifests,
+        matrix="custom",
+        platform_shape=args.platform_shape,
+        agents=args.agents,
+        keep_fake_roots=args.keep_fake_roots,
+        custom_args=args,
+    )
+    output(result, args)
+    return 0 if result["status"] == "ok" else 1
+
+
+def lifecycle_test(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    scenarios = [*split_csv(args.scenario), *split_csv(args.scenarios)]
+    result = run_lifecycle_matrix(
+        manifests,
+        matrix=args.matrix,
+        scenario_names=scenarios or None,
+        platform_shape=args.platform_shape,
+        agents=args.agents,
+        keep_fake_roots=args.keep_fake_roots,
+    )
+    output(result, args)
+    return 0 if result["status"] == "ok" else 1
 
 
 def resolve_skill_filter(args: argparse.Namespace, manifests: dict[str, Any]) -> set[str] | None:
@@ -745,10 +891,10 @@ def python_candidates_for(
     selected: list[str] = []
     candidate_set = package.get("candidate_set", "default")
     if candidate_set in candidate_sets:
-        selected.extend(candidate_sets[candidate_set].get(platform, []))
+        selected.extend(candidates_for_platform(candidate_sets[candidate_set], platform))
     explicit = package.get("python_candidates", {})
     if isinstance(explicit, dict):
-        selected.extend(explicit.get(platform, []))
+            selected.extend(candidates_for_platform(explicit, platform))
     if "python-runtime" not in selected:
         selected.append("python-runtime")
     return selected
@@ -763,10 +909,10 @@ def python_site_candidates_for(
     selected: list[str] = []
     candidate_set = package.get("candidate_set", "default")
     if candidate_set in candidate_sets:
-        selected.extend(candidate_sets[candidate_set].get(platform, []))
+        selected.extend(candidates_for_platform(candidate_sets[candidate_set], platform))
     explicit = package.get("python_site_candidates", {})
     if isinstance(explicit, dict):
-        selected.extend(explicit.get(platform, []))
+            selected.extend(candidates_for_platform(explicit, platform))
     return selected
 
 
@@ -787,27 +933,27 @@ def install_hint(name: str, result: dict[str, Any]) -> str:
         "ripgrep-cli": "install ripgrep",
         "nvidia-smi-tool": "install NVIDIA drivers/tools if NVIDIA GPU detection is needed",
         "rocm-smi-tool": "install ROCm tools if AMD GPU detection is needed",
-        "docling-python-package": "install the Python package in the selected Python environment: python -m pip install docling",
-        "docling-mcp-python-package": "install the Python package in the selected Python environment: python -m pip install docling-mcp",
-        "rapidocr-python-package": "install Docling rapidocr support in the selected Python environment: python -m pip install 'docling[rapidocr]'",
-        "networkx-python-package": "install the Python package in the selected Python environment: python -m pip install networkx",
-        "psutil-python-package": "install the Python package in the selected Python environment: python -m pip install psutil",
-        "pymupdf-python-package": "install the Python package in the selected Python environment: python -m pip install pymupdf",
-        "pylatexenc-python-package": "install the Python package in the selected Python environment: python -m pip install pylatexenc",
-        "shapely-python-package": "install the Python package in the selected Python environment: python -m pip install shapely",
-        "svgelements-python-package": "install the Python package in the selected Python environment: python -m pip install svgelements",
-        "numpy-python-package": "install the Python package in the selected Python environment: python -m pip install numpy",
-        "requests-python-package": "install the Python package in the selected Python environment: python -m pip install requests",
-        "feedparser-python-package": "install the Python package in the selected Python environment: python -m pip install feedparser",
-        "pyzotero-python-package": "install the Python package in the selected Python environment: python -m pip install pyzotero",
-        "pypdf2-python-package": "install the Python package in the selected Python environment: python -m pip install PyPDF2",
-        "pdfplumber-python-package": "install the Python package in the selected Python environment: python -m pip install pdfplumber",
-        "pytest-python-package": "install the Python package in the selected Python environment: python -m pip install pytest",
-        "responses-python-package": "install the Python package in the selected Python environment: python -m pip install responses",
-        "google-api-python-client-package": "install the Python package in the selected Python environment: python -m pip install google-api-python-client",
-        "google-auth-python-package": "install the Python package in the selected Python environment: python -m pip install google-auth",
-        "ebooklib-python-package": "install the Python package in the selected Python environment: python -m pip install ebooklib",
-        "modal-python-package": "install the Python package in the selected Python environment: python -m pip install modal",
+        "docling-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install docling",
+        "docling-mcp-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install docling-mcp",
+        "rapidocr-python-package": "install Docling rapidocr support in the selected Python environment: <selected-python> -m pip install 'docling[rapidocr]'",
+        "networkx-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install networkx",
+        "psutil-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install psutil",
+        "pymupdf-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install pymupdf",
+        "pylatexenc-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install pylatexenc",
+        "shapely-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install shapely",
+        "svgelements-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install svgelements",
+        "numpy-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install numpy",
+        "requests-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install requests",
+        "feedparser-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install feedparser",
+        "pyzotero-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install pyzotero",
+        "pypdf2-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install PyPDF2",
+        "pdfplumber-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install pdfplumber",
+        "pytest-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install pytest",
+        "responses-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install responses",
+        "google-api-python-client-package": "install the Python package in the selected Python environment: <selected-python> -m pip install google-api-python-client",
+        "google-auth-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install google-auth",
+        "ebooklib-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install ebooklib",
+        "modal-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install modal",
         "torch-python-package": "install torch in the selected Python environment; use the platform-appropriate PyTorch index",
         "torchvision-python-package": "install torchvision in the selected Python environment; use the platform-appropriate PyTorch index",
         "zotero-credentials": "configure Zotero credentials outside this repo",
