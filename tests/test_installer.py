@@ -1302,10 +1302,14 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("%*", text)
         self.assertIn('if "%~1"=="help"', text)
         self.assertIn("list-artifacts", text)
+        self.assertIn('if /I "%~1"=="sanitize-check"', text)
+        self.assertIn('if /I "%~1"=="test"', text)
+        self.assertIn("--run-python tools/sanitization_check.py", text)
+        self.assertIn("--run-python -m unittest discover -s tests -v", text)
         self.assertIn("no PowerShell runtime found", text)
-        self.assertLess(text.index("where pwsh"), text.index("powershell.exe"))
-        self.assertIn(":use_pwsh", text)
-        self.assertIn(":use_powershell", text)
+        self.assertLess(text.index("where pwsh"), text.index("where powershell.exe"))
+        self.assertIn("set \"AAS_PS=pwsh\"", text)
+        self.assertIn("set \"AAS_PS=powershell.exe\"", text)
         self.assertNotIn("if %ERRORLEVEL% EQU 0 (\n", text)
 
     def test_makefile_uses_bootstrap_python_contract_for_tests(self) -> None:

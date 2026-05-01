@@ -9,16 +9,37 @@ if "%~1"=="help" (
   exit /b 0
 )
 where pwsh >nul 2>nul
-if %ERRORLEVEL% EQU 0 goto use_pwsh
+if %ERRORLEVEL% EQU 0 goto found_pwsh
 where powershell.exe >nul 2>nul
-if %ERRORLEVEL% EQU 0 goto use_powershell
+if %ERRORLEVEL% EQU 0 goto found_powershell
 echo error: no PowerShell runtime found. Install PowerShell or run installer/bootstrap.sh from a POSIX shell. 1>&2
 exit /b 1
 
-:use_pwsh
-pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" %*
+:found_pwsh
+set "AAS_PS=pwsh"
+goto dispatch
+
+:found_powershell
+set "AAS_PS=powershell.exe"
+goto dispatch
+
+:dispatch
+if /I "%~1"=="docs" goto docs
+if /I "%~1"=="sanitize-check" goto sanitize_check
+if /I "%~1"=="test" goto test
+%AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" %*
 exit /b %ERRORLEVEL%
 
-:use_powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" %*
+:docs
+%AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" generate-docs
+exit /b %ERRORLEVEL%
+
+:sanitize_check
+%AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" --run-python tools/sanitization_check.py
+if errorlevel 1 exit /b %ERRORLEVEL%
+%AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" --run-python -m unittest discover -s tests -p "test_sanitization.py" -v
+exit /b %ERRORLEVEL%
+
+:test
+%AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" --run-python -m unittest discover -s tests -v
 exit /b %ERRORLEVEL%
