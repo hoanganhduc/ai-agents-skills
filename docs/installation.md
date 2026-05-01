@@ -5,9 +5,10 @@ planning and dry-run previews are the default workflow, and real home-directory
 writes require both `--apply` and `--real-system`.
 
 Use `make precheck` or `make.bat precheck` first when installing on a new
-machine. Use `plan` before `install`. Partial installs are first-class: select
-`--skill`, `--skills`, or `--profile`. Artifact installs are also partial:
-select `--artifact`, `--artifacts`, or `--artifact-profile`.
+machine. The launchers detect a usable runtime instead of requiring a specific
+command name. Use `plan` before `install`. Partial installs are first-class:
+select `--skill`, `--skills`, or `--profile`. Artifact installs are also
+partial: select `--artifact`, `--artifacts`, or `--artifact-profile`.
 
 `doctor` is a quick required-tool check. `precheck` is broader: it detects
 required tools, optional tools, Python packages, remote-service configuration
@@ -38,6 +39,7 @@ make doctor
 make precheck ARGS="--profile research-core"
 make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
+make lifecycle-test ARGS="--matrix default --platform-shape all"
 ```
 
 Windows:
@@ -47,17 +49,15 @@ make.bat doctor
 make.bat precheck --profile research-core
 make.bat plan --profile research-core
 make.bat install --profile research-core --dry-run
+make.bat lifecycle-test --matrix default --platform-shape windows
 ```
 
 To test file writes without touching a real agent home, use a fake root:
 
 ```bash
-rm -rf /tmp/aas-fake-home
-mkdir -p /tmp/aas-fake-home/.codex /tmp/aas-fake-home/.claude
-# Optional when testing DeepSeek targets:
-# mkdir -p /tmp/aas-fake-home/.deepseek
-make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix default --platform-shape all"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
 Real-system writes should be a final step after reviewing `plan` output:
@@ -69,16 +69,17 @@ make install ARGS="--profile research-core --apply --real-system"
 ## Install Modes
 
 `--install-mode auto` is the default. The installer resolves that request per
-agent based on the checked skill-loader behavior. Claude and DeepSeek skill
-files and support files are installed as symlinks to `canonical/skills`, so
-editing the repo updates what those agents read without duplicating every skill
-body into every settings directory.
+agent based on recorded agent-loader policy and source availability, and it
+records the reason in `plan --json`. Symlink creation itself is verified during
+apply; if a symlink cannot be created, skill files fall back to reference
+adapters and support files fall back to copied files.
 
 Codex is the compatibility exception: current Codex skill discovery loads
 regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md` files.
 In default auto mode, Codex skill files therefore resolve to reference
 adapters that tell Codex where to read the canonical repo skill. `plan --json`
-shows the effective `install_mode` for each target before anything is written.
+shows the effective `install_mode`, `mode_reason`, `capability_evidence`, and
+fallback mode for each target before anything is written.
 
 Use `--install-mode symlink` to force symlinked skill files for every agent.
 This is useful for testing future loader behavior, but it can produce Codex
@@ -94,10 +95,8 @@ its settings directory. Copy mode materializes skill files and support files
 with managed metadata, so it uses more space and needs reinstalling after repo
 skill changes.
 
-If symlink creation fails during an applied symlink install, skill files fall
-back to reference adapters and support files fall back to copied files. Optional
-artifacts outside skill directories are always copied because agents do not
-load them as canonical skill source.
+Optional artifacts outside skill directories are always copied because agents
+do not load them as canonical skill source.
 
 ## Selection Model
 
