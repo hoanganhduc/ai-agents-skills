@@ -21,11 +21,12 @@ Use `lifecycle-test` as the default installer acceptance gate. It creates fake
 roots, runs dry-run install, confirms the dry-run did not write files, applies
 the install, compares normalized dry-run and applied actions, runs `verify` and
 `smoke`, dry-runs uninstall, applies uninstall, and confirms the fake root
-returns to its baseline outside installer state. `fake-root-lifecycle` runs the
-same checks for a caller-selected install scope.
+returns to its baseline outside installer state, including directories. Fake
+roots are deleted after successful cases unless `--keep-fake-roots` is passed.
+`fake-root-lifecycle` runs the same checks for a caller-selected install scope.
 The matrix treats forced symlink mode as an expected-degraded smoke scenario
-when Codex is included, because Codex user skill discovery does not load
-file-symlinked `SKILL.md` files.
+when Codex or DeepSeek is included, because those adapters may not load
+file-symlinked `SKILL.md` files without native evidence.
 Use `--matrix stress` for broader local coverage: all skills, all portable
 workflow artifacts with backing skills, individual-agent installs, paths with
 spaces, changed managed files, missing managed files, outside-root state
@@ -53,12 +54,13 @@ Result meanings:
 Current skill checks:
 
 - `L1 file-exists`
-- `L2 metadata-valid`
-- `L3 managed-marker` for copy and reference installs
-- `L4 symlink`, `source-exists`, and `source-match` for symlink installs
-- `L5 no-secret-leak`
-- `L6 agent-visible`
-- `L7 adopted-hash-match` for adopted user-owned files
+- `L2 installed-signature-match`
+- `L3 metadata-valid`
+- `L4 managed-marker` for copy and reference installs
+- `L5 symlink`, `source-exists`, and `source-match` for symlink installs
+- `L6 no-secret-leak`
+- `L7 agent-visible`
+- `L8 adopted-hash-match` for adopted user-owned files
 
 Current instruction-block checks:
 
@@ -70,16 +72,18 @@ Current instruction-block checks:
 Current support-file checks:
 
 - `A1 file-exists`
-- `A2 managed-marker` for copied support files
-- `A3 symlink`, `source-exists`, and `source-match` for symlinked support files
-- `A4 no-secret-leak`
+- `A2 installed-signature-match`
+- `A3 managed-marker` for copied support files
+- `A4 symlink`, `source-exists`, and `source-match` for symlinked support files
+- `A5 no-secret-leak`
 
 Current optional artifact checks:
 
 - `O1 file-exists`
-- `O2 managed-marker`
-- `O3 no-secret-leak`
-- `O4 format-specific checks for Codex TOML personas and Claude frontmatter`
+- `O2 installed-signature-match`
+- `O3 managed-marker`
+- `O4 no-secret-leak`
+- `O5 format-specific checks for Codex TOML personas and Claude frontmatter`
 
 The verifier intentionally skips skills and artifacts that were not installed.
 Runtime smoke tests, runner-specific `doctor` commands, and direct
