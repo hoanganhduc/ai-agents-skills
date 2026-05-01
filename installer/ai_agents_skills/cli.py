@@ -16,6 +16,15 @@ from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
 from .lifecycle_matrix import run_lifecycle_matrix
 from .manifest import load_manifests, skill_names
+from .openclaw_apply import apply_manifest_file as apply_openclaw_manifest_file
+from .openclaw_apply import uninstall_manifest as uninstall_openclaw_manifest
+from .openclaw_evidence import AGENTS as OPENCLAW_EVIDENCE_AGENTS
+from .openclaw_evidence import EVIDENCE_TYPES, INSTALL_MODES, PLATFORMS, SHELLS
+from .openclaw_evidence import PATH_STYLES as EVIDENCE_PATH_STYLES
+from .openclaw_evidence import build_evidence, load_evidence, native_support_summary
+from .openclaw_inventory import DEFAULT_MAX_ENTRIES, EVIDENCE_CLASSES, build_inventory
+from .openclaw_manifest import PATH_STYLES, TARGET_AGENTS, approve_manifest, build_manifest, load_inventory, load_manifest
+from .openclaw_persistence import check_persistence_manifest_file
 from .planner import build_plan
 from .render import MANAGED_MARKER, canonical_skill_path
 from .selectors import (
@@ -65,6 +74,80 @@ def build_parser() -> argparse.ArgumentParser:
     describe_artifact = sub.add_parser("describe-artifact")
     describe_artifact.add_argument("artifact")
     sub.add_parser("generate-docs")
+
+    openclaw_inventory = sub.add_parser("openclaw-inventory")
+    openclaw_inventory.add_argument(
+        "--source-root",
+        type=Path,
+        required=True,
+        help="explicit OpenClaw source root to inspect read-only",
+    )
+    openclaw_inventory.add_argument(
+        "--evidence-class",
+        choices=EVIDENCE_CLASSES,
+        default="fixture-only",
+        help="evidence class for the inspected source root; defaults to fixture-only",
+    )
+    openclaw_inventory.add_argument("--max-entries", type=int, default=DEFAULT_MAX_ENTRIES)
+
+    openclaw_manifest = sub.add_parser("openclaw-dry-run-manifest")
+    openclaw_manifest.add_argument(
+        "--inventory",
+        type=Path,
+        required=True,
+        help="saved sanitized OpenClaw inventory JSON to convert into a review manifest",
+    )
+    openclaw_manifest.add_argument(
+        "--target-root",
+        type=Path,
+        required=True,
+        help="explicit target home root to inspect read-only for dry-run preconditions",
+    )
+    openclaw_manifest.add_argument(
+        "--target-agents",
+        default=",".join(TARGET_AGENTS),
+        help="comma-separated target agents; defaults to codex,claude,deepseek",
+    )
+    openclaw_manifest.add_argument("--path-style", choices=PATH_STYLES, default="posix")
+    openclaw_manifest.add_argument(
+        "--created-at",
+        help="optional RFC3339 timestamp for reproducible tests; defaults to current UTC time",
+    )
+
+    openclaw_approve = sub.add_parser("openclaw-approve-manifest")
+    openclaw_approve.add_argument("--manifest", type=Path, required=True)
+    openclaw_approve.add_argument("--reviewer", required=True)
+    openclaw_approve.add_argument("--reviewed-at")
+
+    openclaw_apply = sub.add_parser("openclaw-apply-manifest")
+    openclaw_apply.add_argument("--manifest", type=Path, required=True)
+    openclaw_apply.add_argument("--target-root", type=Path, required=True)
+    openclaw_apply.add_argument("--apply", action="store_true")
+
+    openclaw_uninstall = sub.add_parser("openclaw-uninstall-manifest")
+    openclaw_uninstall.add_argument("--target-root", type=Path, required=True)
+    openclaw_uninstall.add_argument("--manifest-id")
+    openclaw_uninstall.add_argument("--apply", action="store_true")
+
+    openclaw_record_evidence = sub.add_parser("openclaw-record-evidence")
+    openclaw_record_evidence.add_argument("--evidence-type", choices=EVIDENCE_TYPES, required=True)
+    openclaw_record_evidence.add_argument("--evidence-agent", choices=OPENCLAW_EVIDENCE_AGENTS, required=True)
+    openclaw_record_evidence.add_argument("--agent-version")
+    openclaw_record_evidence.add_argument("--evidence-platform", choices=PLATFORMS, required=True)
+    openclaw_record_evidence.add_argument("--install-mode", choices=INSTALL_MODES, required=True)
+    openclaw_record_evidence.add_argument("--path-style", choices=EVIDENCE_PATH_STYLES, required=True)
+    openclaw_record_evidence.add_argument("--shell", choices=SHELLS, default="none")
+    openclaw_record_evidence.add_argument("--observed-behavior", required=True)
+    openclaw_record_evidence.add_argument("--limitation", action="append", default=[])
+    openclaw_record_evidence.add_argument("--command-summary")
+    openclaw_record_evidence.add_argument("--artifact-hash", action="append", default=[])
+    openclaw_record_evidence.add_argument("--captured-at")
+
+    openclaw_validate_evidence = sub.add_parser("openclaw-validate-evidence")
+    openclaw_validate_evidence.add_argument("--evidence", type=Path, action="append", required=True)
+
+    openclaw_persistence = sub.add_parser("openclaw-persistence-check")
+    openclaw_persistence.add_argument("--manifest", type=Path, required=True)
 
     doctor = sub.add_parser("doctor")
     add_selection_args(doctor)
@@ -195,6 +278,78 @@ def run(args: argparse.Namespace) -> int:
     if args.command == "generate-docs":
         written = generate_docs(manifests)
         return output({"written": [str(path) for path in written]}, args)
+    if args.command == "openclaw-inventory":
+        return output(
+            build_inventory(
+                args.source_root,
+                evidence_class=args.evidence_class,
+                max_entries=args.max_entries,
+            ),
+            args,
+        )
+    if args.command == "openclaw-dry-run-manifest":
+        return output(
+            build_manifest(
+                load_inventory(args.inventory),
+                args.target_root,
+                target_agents=split_csv(args.target_agents),
+                path_style=args.path_style,
+                created_at=args.created_at,
+            ),
+            args,
+        )
+    if args.command == "openclaw-approve-manifest":
+        return output(
+            approve_manifest(
+                load_manifest(args.manifest),
+                reviewer=args.reviewer,
+                reviewed_at=args.reviewed_at,
+            ),
+            args,
+        )
+    if args.command == "openclaw-apply-manifest":
+        return output(
+            apply_openclaw_manifest_file(
+                args.manifest,
+                args.target_root,
+                dry_run=not args.apply,
+            ),
+            args,
+        )
+    if args.command == "openclaw-uninstall-manifest":
+        return output(
+            uninstall_openclaw_manifest(
+                args.target_root,
+                manifest_id=args.manifest_id,
+                dry_run=not args.apply,
+            ),
+            args,
+        )
+    if args.command == "openclaw-record-evidence":
+        return output(
+            build_evidence(
+                evidence_type=args.evidence_type,
+                agent=args.evidence_agent,
+                agent_version=args.agent_version,
+                platform=args.evidence_platform,
+                install_mode=args.install_mode,
+                path_style=args.path_style,
+                shell=args.shell,
+                observed_behavior=args.observed_behavior,
+                limitations=args.limitation,
+                command_summary=args.command_summary,
+                artifact_hashes=args.artifact_hash,
+                captured_at=args.captured_at,
+            ),
+            args,
+        )
+    if args.command == "openclaw-validate-evidence":
+        evidence_items = [load_evidence(path) for path in args.evidence]
+        return output(native_support_summary(evidence_items), args)
+    if args.command == "openclaw-persistence-check":
+        result = check_persistence_manifest_file(args.manifest)
+        output(result, args)
+        return 0 if result["status"] == "inert-only" else 1
     if args.command == "doctor":
         return doctor(args, manifests)
     if args.command == "precheck":

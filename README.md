@@ -93,6 +93,8 @@ filesystem must have regular files inside the settings directory.
   persona, and tool-shim locations.
 - [docs/audit-and-migration.md](docs/audit-and-migration.md): audit output, staged migration, unmanaged
   local skill handling, and Windows-native verification notes.
+- [docs/openclaw-integration-plan.md](docs/openclaw-integration-plan.md): gated OpenClaw integration plan,
+  risk fixes, and acceptance criteria.
 - [docs/verification.md](docs/verification.md): installed-artifact verification model.
 
 The GitHub Pages site is built from `docs/source` and deployed by

@@ -1,0 +1,132 @@
+{
+  "schema_version": "openclaw.fixture-catalog.v1",
+  "fixture_catalog_id": "openclaw_phase0_adversarial",
+  "purpose": "Define Phase 0 fake-root fixture classes without adding a production scanner.",
+  "source_root_fixtures": [
+    {
+      "fixture_id": "absent-root",
+      "purpose": "Inventory reports absent explicit root without falling back to ~/.openclaw.",
+      "expected_source_writes": false
+    },
+    {
+      "fixture_id": "sensitive-root",
+      "purpose": "Denied categories are counted by sanitized reason code only.",
+      "denied_categories": [
+        "secret",
+        "auth",
+        "provider-config",
+        "log-history-memory",
+        "scheduler-hook",
+        "private-workspace",
+        "browser-gateway",
+        "database-cache"
+      ],
+      "expected_content_reads": false,
+      "canary_secret_label": "<CANARY_SECRET>"
+    },
+    {
+      "fixture_id": "path-trap-root",
+      "purpose": "Reject symlink, hardlink, traversal, mount, reparse, and special-file escapes.",
+      "path_cases": [
+        "symlink-prefix",
+        "symlink-loop",
+        "hardlink-to-denied-file",
+        "relative-parent-traversal",
+        "windows-junction",
+        "macos-alias",
+        "device-file",
+        "fifo",
+        "socket"
+      ]
+    },
+    {
+      "fixture_id": "malformed-root",
+      "purpose": "Malformed configs produce sanitized reason codes and no raw parse excerpts.",
+      "expected_diagnostics": "reason-code-only"
+    }
+  ],
+  "target_home_fixtures": [
+    {
+      "fixture_id": "codex-target-surfaces",
+      "surfaces": [
+        "skills",
+        "runtime-workspace-skills",
+        "AGENTS.md",
+        "templates",
+        "agents",
+        "instructions"
+      ]
+    },
+    {
+      "fixture_id": "claude-target-surfaces",
+      "surfaces": [
+        "skills",
+        "commands",
+        "CLAUDE.md",
+        "settings-hooks"
+      ]
+    },
+    {
+      "fixture_id": "deepseek-target-surfaces",
+      "surfaces": [
+        "skills",
+        "workspace-skills",
+        "AGENTS.md",
+        "config",
+        "mcp",
+        "hooks",
+        "memory",
+        "tasks",
+        "snapshots"
+      ]
+    }
+  ],
+  "environment_cases": [
+    "OPENCLAW_WORKSPACE",
+    "OPENCLAW_SECRETS_FILE",
+    "DEEPSEEK_CONFIG",
+    "DEEPSEEK_API_KEY",
+    "provider-api-key",
+    "provider-base-url",
+    "RUST_LOG",
+    "workspace-dot-env"
+  ],
+  "path_style_cases": [
+    "linux-posix",
+    "macos-case-insensitive",
+    "windows-drive",
+    "windows-unc",
+    "wsl-native",
+    "wsl-mounted-windows",
+    "unicode-confusable",
+    "reserved-windows-name",
+    "path-with-spaces",
+    "crlf-file",
+    "lf-file"
+  ],
+  "failure_injection_cases": [
+    "precondition-drift-before-apply",
+    "permission-denied-during-backup",
+    "failure-after-each-action",
+    "backup-corruption",
+    "rollback-failure",
+    "concurrent-target-drift",
+    "outside-root-write-attempt"
+  ],
+  "ci_tiers": {
+    "pr_blocking": [
+      "schema-validation",
+      "static-forbidden-patterns",
+      "core-fake-root-smoke"
+    ],
+    "release_blocking": [
+      "canary-redaction",
+      "dry-run-manifest-contract",
+      "selected-apply-rollback-lifecycle"
+    ],
+    "scheduled": [
+      "extended-os-path-shell-matrix",
+      "native-loader-evidence-refresh"
+    ]
+  }
+}
