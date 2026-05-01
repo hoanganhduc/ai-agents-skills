@@ -257,7 +257,7 @@ def run_lifecycle_case(
         selected_artifacts = scenario_artifacts(scenario, manifests)
         seed_fixture(root, agents, scenario, selected, manifests)
         baseline_with_state = root_snapshot(root, include_installer_state=True)
-        baseline_without_state = root_snapshot(root, include_installer_state=False, include_dirs=False)
+        baseline_without_state = root_snapshot(root, include_installer_state=False, include_dirs=True)
 
         plan = build_plan(
             root,
@@ -314,7 +314,7 @@ def run_lifecycle_case(
         if uninstall_verify["status"] != "no-managed-artifacts":
             failures.append(f"uninstall verify status {uninstall_verify['status']} != no-managed-artifacts")
 
-        final_without_state = root_snapshot(root, include_installer_state=False, include_dirs=False)
+        final_without_state = root_snapshot(root, include_installer_state=False, include_dirs=True)
         final_preserved = final_without_state == baseline_without_state
         if not final_preserved:
             failures.append("final fake root differs from baseline outside installer state")

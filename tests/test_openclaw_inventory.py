@@ -16,6 +16,10 @@ from installer.ai_agents_skills.openclaw_inventory import build_inventory
 CANARY_TEXT = "OPENCLAW_CANARY_VALUE_DO_NOT_LEAK"
 
 
+def fake_root_path(tmp: str, name: str) -> Path:
+    return Path(tmp).resolve() / name
+
+
 def snapshot(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
     state: dict[str, tuple[str, bytes | str | None]] = {}
     for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
@@ -51,7 +55,7 @@ def make_source_root(root: Path) -> None:
 class OpenClawInventoryTests(unittest.TestCase):
     def test_inventory_is_read_only_sanitized_and_schema_shaped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "fake-openclaw"
+            root = fake_root_path(tmp, "fake-openclaw")
             root.mkdir()
             make_source_root(root)
             before = snapshot(root)
@@ -83,7 +87,7 @@ class OpenClawInventoryTests(unittest.TestCase):
 
     def test_absent_source_root_produces_sanitized_denial_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "missing-openclaw"
+            root = fake_root_path(tmp, "missing-openclaw")
 
             inventory = build_inventory(root)
 
@@ -104,10 +108,11 @@ class OpenClawInventoryTests(unittest.TestCase):
     @unittest.skipUnless(hasattr(os, "symlink"), "symlink support is required")
     def test_symlink_source_root_is_denied_without_traversal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            real_root = Path(tmp) / "real-openclaw"
+            base = Path(tmp).resolve()
+            real_root = base / "real-openclaw"
             real_root.mkdir()
             (real_root / "skills").mkdir()
-            link_root = Path(tmp) / "linked-openclaw"
+            link_root = base / "linked-openclaw"
             try:
                 link_root.symlink_to(real_root, target_is_directory=True)
             except OSError as exc:
@@ -121,7 +126,7 @@ class OpenClawInventoryTests(unittest.TestCase):
 
     def test_cli_openclaw_inventory_ignores_hostile_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "fake-openclaw"
+            root = fake_root_path(tmp, "fake-openclaw")
             root.mkdir()
             make_source_root(root)
             output = io.StringIO()
@@ -143,7 +148,7 @@ class OpenClawInventoryTests(unittest.TestCase):
 
     def test_inventory_max_entries_is_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp) / "fake-openclaw"
+            root = fake_root_path(tmp, "fake-openclaw")
             (root / "skills").mkdir(parents=True)
             for index in range(5):
                 (root / "skills" / f"skill-{index}.md").write_text("metadata\n", encoding="utf-8")
