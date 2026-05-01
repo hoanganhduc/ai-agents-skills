@@ -5,8 +5,9 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
 from .openclaw_manifest import load_manifest, target_precondition, validate_manifest
-from .state import now_run_id, sha256_text
+from .state import existing_contained_parents, now_run_id, preflight_state_path, sha256_text, write_text_atomic
 
 
 OPENCLAW_STATE_VERSION = 1
@@ -28,7 +29,7 @@ def apply_manifest(manifest: dict[str, Any], target_root: Path, *, dry_run: bool
             "manifest_id": manifest["manifest_id"],
             "actions": planned,
         }
-    preflight_apply(planned)
+    preflight_apply(root, planned)
     state = load_openclaw_state(root)
     run_id = now_run_id()
     applied = []
@@ -49,6 +50,7 @@ def apply_manifest(manifest: dict[str, Any], target_root: Path, *, dry_run: bool
         result["created_parent_dirs"] = [item.as_posix() for item in created_parents]
         applied.append(result)
         state.setdefault("artifacts", []).append(state_record(result))
+        save_openclaw_state(root, state)
     state.setdefault("runs", []).append(
         {
             "run_id": run_id,
@@ -112,7 +114,15 @@ def uninstall_manifest(
 def plan_apply_action(root: Path, manifest: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
     relative_path = checked_relative_path(action["target"]["relative_path"])
     path = root / relative_path
-    current = target_precondition(path, root.resolve())
+    try:
+        current = target_precondition(path, root.resolve())
+    except ValueError as exc:
+        current = {
+            "exists": True,
+            "kind": "unsafe-path",
+            "owner_policy": "unmanaged-preserve",
+            "reason": str(exc),
+        }
     planned = {
         "key": f"{manifest['manifest_id']}:{action['action_id']}",
         "manifest_id": manifest["manifest_id"],
@@ -126,22 +136,27 @@ def plan_apply_action(root: Path, manifest: dict[str, Any], action: dict[str, An
         "collision": action["collision"],
         "source_ref": action.get("source_ref"),
     }
+    safety_reason = target_path_safety_reason(root, path)
     if action["operation"] not in SUPPORTED_WRITE_OPERATIONS and action["operation"] != "no-op":
         planned["blocked"] = True
         planned["reason"] = "unsupported-openclaw-operation"
-    elif planned["drift"]:
-        planned["blocked"] = True
-        planned["reason"] = "target-precondition-drift"
     elif action["operation"] == "no-op":
         planned["blocked"] = False
         planned["reason"] = "no-op"
+    elif safety_reason is not None:
+        planned["blocked"] = True
+        planned["reason"] = safety_reason
+    elif planned["drift"]:
+        planned["blocked"] = True
+        planned["reason"] = "target-precondition-drift"
     else:
         planned["blocked"] = False
         planned["reason"] = "ready"
     return planned
 
 
-def preflight_apply(planned: list[dict[str, Any]]) -> None:
+def preflight_apply(root: Path, planned: list[dict[str, Any]]) -> None:
+    preflight_state_path(root, openclaw_state_file(root))
     blocked = [action for action in planned if action.get("blocked")]
     if blocked:
         reasons = ", ".join(sorted({action["reason"] for action in blocked}))
@@ -182,6 +197,11 @@ def apply_uninstall_action(root: Path, action: dict[str, Any]) -> dict[str, Any]
     if operation != "delete-created":
         raise ValueError(f"unsupported OpenClaw uninstall operation: {operation}")
     path = root / checked_relative_path(action["relative_path"])
+    reason = target_path_safety_reason(root, path)
+    if reason is not None:
+        result["operation"] = "skip-conflict"
+        result["reason"] = reason
+        return result
     if path.exists() or path.is_symlink():
         path.unlink()
     result["completed"] = True
@@ -224,20 +244,13 @@ def checked_fake_target_root(root: Path) -> Path:
         raise ValueError("OpenClaw target root must be an existing directory")
     if is_real_system_root(expanded):
         raise ValueError("OpenClaw Phase 3 refuses real-system target roots")
+    if expanded.is_symlink():
+        raise ValueError("OpenClaw target root must not be a symlink")
     return expanded
 
 
 def is_real_system_root(root: Path) -> bool:
-    resolved = root.resolve()
-    home = Path.home().resolve()
-    if resolved == home:
-        return True
-    parts = [part.lower() for part in resolved.parts]
-    if len(parts) >= 3 and parts[-2] == "users":
-        return True
-    if len(parts) == 3 and parts[1] == "home":
-        return True
-    return False
+    return looks_like_real_system_root(root)
 
 
 def checked_relative_path(value: str) -> Path:
@@ -265,12 +278,6 @@ def cleanup_created_parents(root: Path, relative_dirs: list[str]) -> None:
             continue
 
 
-def write_text_atomic(path: Path, content: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
-
-
 def sha256_file_text(path: Path) -> str | None:
     if not path.exists() or path.is_symlink() or not path.is_file():
         return None
@@ -283,6 +290,7 @@ def openclaw_state_file(root: Path) -> Path:
 
 def load_openclaw_state(root: Path) -> dict[str, Any]:
     path = openclaw_state_file(root)
+    preflight_state_path(root, path)
     if not path.exists():
         return {"schema_version": OPENCLAW_STATE_VERSION, "artifacts": [], "runs": []}
     try:
@@ -296,14 +304,14 @@ def load_openclaw_state(root: Path) -> dict[str, Any]:
 
 def save_openclaw_state(root: Path, state: dict[str, Any]) -> None:
     path = openclaw_state_file(root)
+    preflight_state_path(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    write_text_atomic(path, json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
 def remove_openclaw_state(root: Path) -> None:
     path = openclaw_state_file(root)
+    preflight_state_path(root, path)
     if path.exists():
         path.unlink()
     state_dir = path.parent
@@ -312,3 +320,18 @@ def remove_openclaw_state(root: Path) -> None:
             state_dir.rmdir()
         except OSError:
             pass
+
+
+def target_path_safety_reason(root: Path, path: Path) -> str | None:
+    if not normalized_path_within(root, path):
+        return "target-path-escapes-root"
+    for parent in existing_contained_parents(path.parent, root):
+        if parent.is_symlink():
+            return "target-parent-is-symlink"
+        if not parent.is_dir():
+            return "target-parent-is-not-directory"
+    if not resolved_path_within(root, path.parent):
+        return "target-path-escapes-root"
+    if path.exists() and path.is_dir() and not path.is_symlink():
+        return "target-path-is-directory"
+    return None

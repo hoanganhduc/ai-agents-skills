@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
-from .capabilities import normalized_path_within
+from .capabilities import normalized_path_within, resolved_path_within
 from .state import (
     artifact_signature,
     load_state,
@@ -15,6 +16,7 @@ from .state import (
     signatures_match,
     state_dir,
     upsert_artifact,
+    write_text_atomic,
 )
 
 
@@ -31,24 +33,28 @@ def uninstall(
     mark_created_instruction_file_groups(actions)
     if dry_run:
         return {"dry_run": True, "actions": actions}
+    preflight_uninstall_actions(root, actions)
     completed_keys: set[str | None] = set()
     removed = []
     results = []
+    created_parent_dirs: list[str] = []
     for action in actions:
         result = apply_uninstall_action(action, root)
         results.append(result)
         if result.get("completed"):
             completed_keys.add(action.get("key"))
             removed.append(action)
-    state["artifacts"] = [
-        item for item in state.get("artifacts", [])
-        if item.get("key") not in completed_keys
-    ]
-    state["uninstall_records"] = [
-        item for item in state.get("uninstall_records", [])
-        if item.get("key") not in completed_keys
-    ]
-    save_state(root, state)
+            created_parent_dirs.extend(action.get("created_parent_dirs", []))
+            state["artifacts"] = [
+                item for item in state.get("artifacts", [])
+                if item.get("key") != action.get("key")
+            ]
+            state["uninstall_records"] = [
+                item for item in state.get("uninstall_records", [])
+                if item.get("key") != action.get("key")
+            ]
+            save_state(root, state)
+    cleanup_created_dirs(root, created_parent_dirs)
     return {"dry_run": False, "actions": results, "removed": removed}
 
 
@@ -77,9 +83,11 @@ def rollback(
         return {"dry_run": True, "actions": [{"operation": "rollback", **item} for item in targets]}
     preflight_rollback_targets(root, state, targets)
     restored = []
+    created_parent_dirs: list[str] = []
     for item in targets:
-        rollback_artifact(item)
+        rollback_artifact(item, root)
         restored.append(item)
+        created_parent_dirs.extend(item.get("created_parent_dirs", []))
     remaining = [
         item for item in state.get("artifacts", [])
         if item.get("key") not in {target.get("key") for target in targets}
@@ -89,6 +97,7 @@ def rollback(
         previous = target.get("previous_state_artifact")
         if previous:
             upsert_artifact(state, previous)
+    cleanup_created_dirs(root, created_parent_dirs)
     save_state(root, state)
     return {"dry_run": False, "restored": restored}
 
@@ -198,7 +207,7 @@ def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> 
         result["completed"] = True
         return result
     if operation == "delete-created":
-        remove_artifact(action)
+        remove_artifact(action, root)
         result["completed"] = True
         return result
     if operation in {"restore-backup", "restore-removed"}:
@@ -217,19 +226,19 @@ def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> 
     raise ValueError(f"unknown uninstall operation: {operation}")
 
 
-def remove_artifact(item: dict[str, Any]) -> None:
+def remove_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     path = Path(item["artifact"])
     if item.get("artifact_type") == "skill-file":
         remove_file(path)
-        cleanup_empty_parents(path.parent, stop_at=path.parent)
+        cleanup_recorded_parent_dirs(root, item)
         return
     if item.get("artifact_type") == "skill-support-file":
         remove_file(path)
-        skill_dir = next((parent for parent in path.parents if parent.name == item["skill"]), path.parent)
-        cleanup_empty_parents(path.parent, stop_at=skill_dir)
+        cleanup_recorded_parent_dirs(root, item)
         return
     if item.get("artifact_type") in {"instruction-block", "management-notice"}:
         remove_managed_block(path, item["skill"], delete_if_empty=item.get("created_file", False))
+        cleanup_recorded_parent_dirs(root, item)
         return
     if item.get("artifact_type") in {
         "template",
@@ -240,7 +249,7 @@ def remove_artifact(item: dict[str, Any]) -> None:
         "tool-shim",
     }:
         remove_file(path)
-        cleanup_empty_parents(path.parent, stop_at=path.parent)
+        cleanup_recorded_parent_dirs(root, item)
 
 
 def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) -> None:
@@ -257,7 +266,7 @@ def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) 
         if delete_if_empty and not cleaned:
             path.unlink()
             return
-        path.write_text(cleaned + "\n", encoding="utf-8")
+        write_text_atomic(path, cleaned + "\n")
 
 
 def remove_managed_block_precise(item: dict[str, Any]) -> None:
@@ -276,7 +285,7 @@ def remove_managed_block_precise(item: dict[str, Any]) -> None:
     ) and not cleaned.strip():
         path.unlink()
         return
-    path.write_text(cleaned, encoding="utf-8")
+    write_text_atomic(path, cleaned)
 
 
 def extract_managed_block(text: str, skill: str) -> str | None:
@@ -300,7 +309,7 @@ def managed_block_span(text: str, skill: str) -> tuple[int, int] | None:
     return start, end + len(end_marker)
 
 
-def rollback_artifact(item: dict[str, Any]) -> None:
+def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     path = Path(item["artifact"])
     if item.get("artifact_type") in {"instruction-block", "management-notice"}:
         previous = item.get("previous_state_artifact")
@@ -319,22 +328,50 @@ def rollback_artifact(item: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         restore_backup(backup_path, path)
     else:
-        remove_artifact(item)
+        remove_artifact(item, root)
 
 
 def restore_backup(backup_path: Path, path: Path) -> None:
+    temp = materialize_backup_temp(backup_path, path)
+    if path.exists() or path.is_symlink():
+        previous = unique_sibling(path, "previous")
+        path.rename(previous)
+        try:
+            temp.rename(path)
+        except Exception:
+            previous.rename(path)
+            raise
+        remove_any(previous)
+        return
+    temp.rename(path)
+
+
+def materialize_backup_temp(backup_path: Path, path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = unique_sibling(path, "restore")
+    if backup_path.is_symlink():
+        os.symlink(os.readlink(backup_path), temp)
+    elif backup_path.is_dir():
+        copy_tree(backup_path, temp)
+    else:
+        shutil.copy2(backup_path, temp)
+    return temp
+
+
+def unique_sibling(path: Path, label: str) -> Path:
+    for _ in range(100):
+        candidate = path.parent / f".{path.name}.{label}.{uuid.uuid4().hex}"
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+    raise FileExistsError(f"could not allocate temporary path near {path}")
+
+
+def remove_any(path: Path) -> None:
     if path.exists() or path.is_symlink():
         if path.is_dir() and not path.is_symlink():
             remove_tree(path)
         else:
             path.unlink()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if backup_path.is_symlink():
-        os.symlink(os.readlink(backup_path), path)
-    elif backup_path.is_dir():
-        copy_tree(backup_path, path)
-    else:
-        shutil.copy2(backup_path, path)
 
 
 def remove_file(path: Path) -> None:
@@ -364,8 +401,46 @@ def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
         current = current.parent
 
 
+def cleanup_recorded_parent_dirs(root: Path | None, item: dict[str, Any]) -> None:
+    if root is None:
+        return
+    cleanup_created_dirs(root, item.get("created_parent_dirs", []))
+
+
+def cleanup_created_dirs(root: Path, relative_dirs: list[str]) -> None:
+    for relative in sorted(relative_dirs, key=lambda value: value.count("/"), reverse=True):
+        path = root / relative
+        if not normalized_path_within(root, path) or not resolved_path_within(root, path):
+            continue
+        if not path.exists() or path.is_symlink() or not path.is_dir():
+            continue
+        try:
+            path.rmdir()
+        except OSError:
+            continue
+
+
 def path_within(root: Path, path: Path) -> bool:
-    return normalized_path_within(root, path)
+    return normalized_path_within(root, path) and resolved_path_within(root, path.parent)
+
+
+def preflight_uninstall_actions(root: Path, actions: list[dict[str, Any]]) -> None:
+    for action in actions:
+        operation = action.get("operation")
+        if operation in {"skip-conflict", "unmanage-only", "forget-missing"}:
+            continue
+        path = Path(action["artifact"])
+        if not path_within(root, path):
+            raise ValueError(f"refusing uninstall for artifact outside selected root: {path}")
+        if operation in {"restore-backup", "restore-removed"}:
+            backup = action.get("uninstall", {}).get("backup") or action.get("backup")
+            if not backup:
+                raise ValueError(f"refusing uninstall because backup is missing: {path}")
+            backup_path = Path(backup)
+            if not path_within(state_dir(root) / "backups", backup_path):
+                raise ValueError(f"refusing uninstall because backup is outside installer state: {backup}")
+            if not backup_path.exists() and not backup_path.is_symlink():
+                raise ValueError(f"refusing uninstall because backup is missing: {backup}")
 
 
 def mark_created_instruction_file_groups(actions: list[dict[str, Any]]) -> None:

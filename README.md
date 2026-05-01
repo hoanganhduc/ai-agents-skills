@@ -217,10 +217,10 @@ skills they depend on.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets follow auto mode: symlinks to `canonical/skills` for loaders that
-support them, and reference adapters for Codex. Explicit `symlink`,
-`reference`, and `copy` modes force the same strategy for every agent. Use
-`--skill` or `--skills` for narrow installs.
+targets follow auto mode: Claude links to `canonical/skills`, while Codex and
+DeepSeek receive reference adapters unless native loader evidence justifies a
+different policy. Explicit `symlink`, `reference`, and `copy` modes force the
+same strategy for every agent. Use `--skill` or `--skills` for narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"

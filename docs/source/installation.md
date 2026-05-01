@@ -74,12 +74,13 @@ records the reason in `plan --json`. Symlink creation itself is verified during
 apply; if a symlink cannot be created, skill files fall back to reference
 adapters and support files fall back to copied files.
 
-Codex is the compatibility exception: current Codex skill discovery loads
-regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md` files.
-In default auto mode, Codex skill files therefore resolve to reference
-adapters that tell Codex where to read the canonical repo skill. `plan --json`
-shows the effective `install_mode`, `mode_reason`, `capability_evidence`, and
-fallback mode for each target before anything is written.
+Codex and DeepSeek are compatibility exceptions. Current Codex skill discovery
+loads regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md`
+files. DeepSeek native symlinked `SKILL.md` loading has not been verified. In
+default auto mode, both agents therefore resolve skill files to reference
+adapters that point at the canonical repo skill. `plan --json` shows the
+effective `install_mode`, `mode_reason`, `capability_evidence`, and fallback
+mode for each target before anything is written.
 
 Use `--install-mode symlink` to force symlinked skill files for every agent.
 This is useful for testing future loader behavior, but it can produce Codex
@@ -148,7 +149,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex and DeepSeek skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
