@@ -248,10 +248,10 @@ skills they depend on.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets follow auto mode: symlinks to `canonical/skills` for loaders that
-support them, and reference adapters for Codex. Explicit `symlink`,
-`reference`, and `copy` modes force the same strategy for every agent. Use
-`--skill` or `--skills` for narrow installs.
+targets follow auto mode: Claude links to `canonical/skills`, while Codex and
+DeepSeek receive reference adapters unless native loader evidence justifies a
+different policy. Explicit `symlink`, `reference`, and `copy` modes force the
+same strategy for every agent. Use `--skill` or `--skills` for narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"
@@ -288,10 +288,11 @@ def skills_text(manifests: dict[str, Any]) -> str:
         "that skill, its support files when the selected install mode needs "
         "them, and the managed instruction block for that installed or adopted "
         "skill. Skipped skills do not receive instruction blocks. Default "
-        "`auto` mode points agent skill files at `canonical/skills` when "
-        "the loader supports symlinked skills and writes reference adapters "
-        "for Codex. Explicit `symlink`, `reference`, and `copy` modes force "
-        "the same strategy for every agent.\n\n"
+        "`auto` mode links Claude skill files to `canonical/skills`, while "
+        "Codex and DeepSeek receive reference adapters unless native loader "
+        "evidence justifies a different policy. Explicit `symlink`, "
+        "`reference`, and `copy` modes force the same strategy for every "
+        "agent.\n\n"
         + skill_table(manifests)
         + "\n\n"
         "Related pages: [Installation](installation.md), "
@@ -573,11 +574,12 @@ Use `lifecycle-test` as the default installer acceptance gate. It creates fake
 roots, runs dry-run install, confirms the dry-run did not write files, applies
 the install, compares normalized dry-run and applied actions, runs `verify` and
 `smoke`, dry-runs uninstall, applies uninstall, and confirms the fake root
-returns to its baseline outside installer state. `fake-root-lifecycle` runs the
-same checks for a caller-selected install scope.
+returns to its baseline outside installer state, including directories. Fake
+roots are deleted after successful cases unless `--keep-fake-roots` is passed.
+`fake-root-lifecycle` runs the same checks for a caller-selected install scope.
 The matrix treats forced symlink mode as an expected-degraded smoke scenario
-when Codex is included, because Codex user skill discovery does not load
-file-symlinked `SKILL.md` files.
+when Codex or DeepSeek is included, because those adapters may not load
+file-symlinked `SKILL.md` files without native evidence.
 Use `--matrix stress` for broader local coverage: all skills, all portable
 workflow artifacts with backing skills, individual-agent installs, paths with
 spaces, changed managed files, missing managed files, outside-root state
@@ -605,12 +607,13 @@ Result meanings:
 Current skill checks:
 
 - `L1 file-exists`
-- `L2 metadata-valid`
-- `L3 managed-marker` for copy and reference installs
-- `L4 symlink`, `source-exists`, and `source-match` for symlink installs
-- `L5 no-secret-leak`
-- `L6 agent-visible`
-- `L7 adopted-hash-match` for adopted user-owned files
+- `L2 installed-signature-match`
+- `L3 metadata-valid`
+- `L4 managed-marker` for copy and reference installs
+- `L5 symlink`, `source-exists`, and `source-match` for symlink installs
+- `L6 no-secret-leak`
+- `L7 agent-visible`
+- `L8 adopted-hash-match` for adopted user-owned files
 
 Current instruction-block checks:
 
@@ -622,16 +625,18 @@ Current instruction-block checks:
 Current support-file checks:
 
 - `A1 file-exists`
-- `A2 managed-marker` for copied support files
-- `A3 symlink`, `source-exists`, and `source-match` for symlinked support files
-- `A4 no-secret-leak`
+- `A2 installed-signature-match`
+- `A3 managed-marker` for copied support files
+- `A4 symlink`, `source-exists`, and `source-match` for symlinked support files
+- `A5 no-secret-leak`
 
 Current optional artifact checks:
 
 - `O1 file-exists`
-- `O2 managed-marker`
-- `O3 no-secret-leak`
-- `O4 format-specific checks for Codex TOML personas and Claude frontmatter`
+- `O2 installed-signature-match`
+- `O3 managed-marker`
+- `O4 no-secret-leak`
+- `O5 format-specific checks for Codex TOML personas and Claude frontmatter`
 
 The verifier intentionally skips skills and artifacts that were not installed.
 Runtime smoke tests, runner-specific `doctor` commands, and direct
@@ -1442,7 +1447,7 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links canonical `SKILL.md` where the loader supports it. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. Explicit symlink, reference, and copy modes are available for all agents. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. DeepSeek skill files also resolve to reference adapters until native symlink-loading evidence exists. Explicit symlink, reference, and copy modes are available for all agents. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
@@ -1548,12 +1553,13 @@ records the reason in `plan --json`. Symlink creation itself is verified during
 apply; if a symlink cannot be created, skill files fall back to reference
 adapters and support files fall back to copied files.
 
-Codex is the compatibility exception: current Codex skill discovery loads
-regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md` files.
-In default auto mode, Codex skill files therefore resolve to reference
-adapters that tell Codex where to read the canonical repo skill. `plan --json`
-shows the effective `install_mode`, `mode_reason`, `capability_evidence`, and
-fallback mode for each target before anything is written.
+Codex and DeepSeek are compatibility exceptions. Current Codex skill discovery
+loads regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md`
+files. DeepSeek native symlinked `SKILL.md` loading has not been verified. In
+default auto mode, both agents therefore resolve skill files to reference
+adapters that point at the canonical repo skill. `plan --json` shows the
+effective `install_mode`, `mode_reason`, `capability_evidence`, and fallback
+mode for each target before anything is written.
 
 Use `--install-mode symlink` to force symlinked skill files for every agent.
 This is useful for testing future loader behavior, but it can produce Codex
@@ -1622,7 +1628,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex and DeepSeek skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
@@ -1955,11 +1961,12 @@ installer found a compatibility or alias path and will skip it unless
 `--migrate` is used. A reviewed `--migrate` plan installs the canonical target
 and removes the legacy alias directory.
 
-Default installs use `--install-mode auto`, resolved per agent. Claude and
-DeepSeek receive symlinked skill files when the filesystem supports them.
-Codex receives reference adapters by default because current Codex discovery
-ignores file-symlinked user `SKILL.md` files. Use `--install-mode symlink` only
-when you intentionally want to force links for every agent. Use
+Default installs use `--install-mode auto`, resolved per agent. Claude receives
+symlinked skill files when the filesystem supports them. Codex and DeepSeek
+receive reference adapters by default: Codex ignores file-symlinked user
+`SKILL.md` files, and DeepSeek native symlinked skill loading has not been
+verified. Use `--install-mode symlink` only when you intentionally want to
+force links for every agent. Use
 `--install-mode reference` to force adapters for every agent. If an agent
 requires regular files in its settings directory, use `--install-mode copy`.
 
@@ -2054,9 +2061,17 @@ make.bat rollback --run 20260429-080620
 Applied examples:
 
 ```bash
-make uninstall ARGS="--skill zotero --apply"
-make rollback ARGS="--run 20260429-080620 --apply"
+make uninstall ARGS="--skill zotero --apply --root <fake-root>"
+make rollback ARGS="--run 20260429-080620 --apply --root <fake-root>"
 make verify ARGS="--root <fake-or-real-root>"
+```
+
+Applied real-system examples:
+
+```bash
+make uninstall ARGS="--skill zotero --apply --real-system"
+make rollback ARGS="--run 20260429-080620 --apply --real-system"
+make verify ARGS="--real-system"
 ```
 
 Windows applied examples:

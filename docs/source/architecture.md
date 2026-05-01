@@ -34,7 +34,7 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links canonical `SKILL.md` where the loader supports it. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. Explicit symlink, reference, and copy modes are available for all agents. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. DeepSeek skill files also resolve to reference adapters until native symlink-loading evidence exists. Explicit symlink, reference, and copy modes are available for all agents. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |

@@ -14,7 +14,7 @@ make lifecycle-test ARGS="--scenario clean-auto --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
 ```
 
-Installation is partial by default: selecting one skill installs only that skill, its support files when the selected install mode needs them, and the managed instruction block for that installed or adopted skill. Skipped skills do not receive instruction blocks. Default `auto` mode points agent skill files at `canonical/skills` when the loader supports symlinked skills and writes reference adapters for Codex. Explicit `symlink`, `reference`, and `copy` modes force the same strategy for every agent.
+Installation is partial by default: selecting one skill installs only that skill, its support files when the selected install mode needs them, and the managed instruction block for that installed or adopted skill. Skipped skills do not receive instruction blocks. Default `auto` mode links Claude skill files to `canonical/skills`, while Codex and DeepSeek receive reference adapters unless native loader evidence justifies a different policy. Explicit `symlink`, `reference`, and `copy` modes force the same strategy for every agent.
 
 | Skill | Description | Profiles |
 |---|---|---|

@@ -5,7 +5,7 @@ from typing import Any
 
 from .render import MANAGED_MARKER, block_id
 from .sanitize import has_sensitive_material
-from .state import load_state, sha256_file
+from .state import artifact_signature, load_state, sha256_file, signatures_match
 
 
 def verify(root: Path, skill_filter: set[str] | None = None, agent_filter: set[str] | None = None) -> dict[str, Any]:
@@ -33,7 +33,14 @@ def verify(root: Path, skill_filter: set[str] | None = None, agent_filter: set[s
 def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
     path = Path(artifact["artifact"])
     checks: list[dict[str, Any]] = []
-    checks.append({"name": "file-exists", "ok": path.exists()})
+    checks.append({"name": "file-exists", "ok": path.exists() or path.is_symlink()})
+    expected_signature = artifact.get("installed_signature")
+    if expected_signature is not None:
+        if artifact.get("artifact_type") not in {"instruction-block", "management-notice"}:
+            checks.append({
+                "name": "installed-signature-match",
+                "ok": signatures_match(artifact_signature(path), expected_signature),
+            })
     if artifact.get("adopted"):
         expected_hash = artifact.get("new_hash")
         checks.append({

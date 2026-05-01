@@ -60,9 +60,17 @@ make.bat rollback --run 20260429-080620
 Applied examples:
 
 ```bash
-make uninstall ARGS="--skill zotero --apply"
-make rollback ARGS="--run 20260429-080620 --apply"
+make uninstall ARGS="--skill zotero --apply --root <fake-root>"
+make rollback ARGS="--run 20260429-080620 --apply --root <fake-root>"
 make verify ARGS="--root <fake-or-real-root>"
+```
+
+Applied real-system examples:
+
+```bash
+make uninstall ARGS="--skill zotero --apply --real-system"
+make rollback ARGS="--run 20260429-080620 --apply --real-system"
+make verify ARGS="--real-system"
 ```
 
 Windows applied examples:

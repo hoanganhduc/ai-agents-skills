@@ -17,9 +17,9 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "reason": "Claude skill discovery is expected to load symlinked SKILL.md files.",
     },
     "deepseek": {
-        "symlink_skill_file": True,
-        "default_mode": "symlink",
-        "reason": "DeepSeek skill adapters are expected to load symlinked SKILL.md files.",
+        "symlink_skill_file": False,
+        "default_mode": "reference",
+        "reason": "DeepSeek native symlinked SKILL.md loading has not been verified, so auto mode uses reference adapters.",
     },
 }
 
@@ -73,6 +73,28 @@ def normalized_path_within(root: Path, path: Path) -> bool:
         return os.path.commonpath([root_text, path_text]) == root_text
     except ValueError:
         return False
+
+
+def resolved_path_within(root: Path, path: Path) -> bool:
+    root_text = os.path.normcase(str(root.resolve(strict=False)))
+    path_text = os.path.normcase(str(path.resolve(strict=False)))
+    try:
+        return os.path.commonpath([root_text, path_text]) == root_text
+    except ValueError:
+        return False
+
+
+def looks_like_real_system_root(root: Path, home: Path | None = None) -> bool:
+    resolved = root.resolve(strict=False)
+    current_home = (home or Path.home()).resolve(strict=False)
+    if resolved == current_home:
+        return True
+    parts = [part.lower() for part in resolved.parts]
+    if len(parts) == 3 and parts[1] in {"home", "users"}:
+        return True
+    if len(parts) == 5 and parts[1] == "mnt" and len(parts[2]) == 1 and parts[3] == "users":
+        return True
+    return False
 
 
 def smoke_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
