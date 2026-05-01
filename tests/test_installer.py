@@ -492,8 +492,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
             text = target.read_text(encoding="utf-8")
             self.assertIn("Install mode: reference", text)
             self.assertIn("Canonical skill source:", text)
-            self.assertIn("~/", text)
             self.assertIn("canonical/skills/deep-research-workflow/SKILL.md", text)
+            self.assertNotIn("\\canonical\\skills\\deep-research-workflow\\SKILL.md", text)
             self.assertNotIn("/home/", text)
             self.assertFalse((target.parent / "references").exists())
             self.assertEqual(verify(root)["status"], "ok")
@@ -552,6 +552,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             text = target.read_text(encoding="utf-8")
             self.assertIn("Install mode: reference", text)
             self.assertIn("canonical/skills/zotero/SKILL.md", text)
+            self.assertNotIn("\\canonical\\skills\\zotero\\SKILL.md", text)
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_all_agent_fake_root_detects_deepseek_when_home_exists(self) -> None:
