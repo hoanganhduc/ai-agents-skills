@@ -333,12 +333,27 @@ def infer_scope(command: str, root: Path | None = None) -> str:
         resolved = path.resolve()
     except OSError:
         return "system"
-    if str(resolved).startswith(str(REPO_ROOT)):
+    if path_within(resolved, resolved_path(REPO_ROOT)):
         return "repo-local"
     home = root or Path.home()
-    if str(resolved).startswith(str(home)):
+    if path_within(resolved, resolved_path(home)):
         return "user-local"
     return "system"
+
+
+def resolved_path(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except OSError:
+        return path.absolute()
+
+
+def path_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def substrate_for(platform: str, command: str | None = None) -> str:
