@@ -15,6 +15,9 @@ Latest update: {sub-ref}`today`
   [Profile](profiles.md).
 - Existing agent setup: run a read-only audit with
   [Audit And Migration](audit-and-migration.md) before installing anything.
+- OpenClaw integration work: use the
+  [OpenClaw Integration Plan](openclaw-integration-plan.md) before adding
+  migration, hook, or runtime behavior.
 - Dependency questions: use [Dependencies](dependencies.md), then check the
   platform-specific [Windows](windows.md) or [Linux](linux.md) notes.
 - Unsure what will be written: read [Agent Locations](agent-locations.md) and
@@ -46,6 +49,7 @@ dependencies
 system-profile
 agent-locations
 audit-and-migration
+openclaw-integration-plan
 verification
 architecture
 windows

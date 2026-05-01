@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/evidence.schema.json",
+  "title": "Native Agent Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "evidence_type",
+    "agent",
+    "platform",
+    "install_mode",
+    "path_style",
+    "captured_at",
+    "observed_behavior",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "openclaw.evidence.v1"
+    },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^evidence_[A-Za-z0-9_.-]+$"
+    },
+    "evidence_type": {
+      "enum": [
+        "fixture-only",
+        "ci-container",
+        "native-loader",
+        "high-fidelity-loader",
+        "upstream-doc",
+        "manual-review"
+      ]
+    },
+    "agent": {
+      "enum": [
+        "codex",
+        "claude",
+        "deepseek"
+      ]
+    },
+    "agent_version": {
+      "type": "string"
+    },
+    "platform": {
+      "enum": [
+        "linux",
+        "macos",
+        "windows",
+        "wsl-native",
+        "wsl-mounted-windows",
+        "ci-container"
+      ]
+    },
+    "install_mode": {
+      "enum": [
+        "reference",
+        "copy",
+        "symlink",
+        "native-command"
+      ]
+    },
+    "path_style": {
+      "enum": [
+        "posix",
+        "windows-drive",
+        "windows-unc",
+        "wsl-posix",
+        "mounted-windows"
+      ]
+    },
+    "shell": {
+      "enum": [
+        "posix-sh",
+        "bash",
+        "powershell",
+        "cmd",
+        "none"
+      ]
+    },
+    "command_summary": {
+      "type": "string"
+    },
+    "observed_behavior": {
+      "type": "string"
+    },
+    "artifact_hashes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}
