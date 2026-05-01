@@ -272,7 +272,7 @@ def unresolved_candidate(raw: str, platform: str) -> dict[str, Any]:
 def detect_version(command: str, platform: str | None = None) -> str:
     if not can_execute_host(command, platform):
         return "present-unverified"
-    parts = shlex.split(command, posix=os.name != "nt")
+    parts = split_command(command)
     for args in (["--version"], ["-V"]):
         try:
             result = subprocess.run(
@@ -311,7 +311,7 @@ def check_capabilities(name: str, command: str, platform: str | None = None) -> 
 def run_python(command: str, code: str, platform: str | None = None) -> bool:
     if not can_execute_host(command, platform):
         return False
-    parts = shlex.split(command, posix=os.name != "nt")
+    parts = split_command(command)
     try:
         result = subprocess.run(
             [parts[0], *parts[1:], "-c", code],
@@ -328,7 +328,10 @@ def run_python(command: str, code: str, platform: str | None = None) -> bool:
 def infer_scope(command: str, root: Path | None = None) -> str:
     if "wsl" in command.lower():
         return "wsl"
-    path = Path(shlex.split(command, posix=os.name != "nt")[0])
+    parts = split_command(command)
+    if not parts:
+        return "system"
+    path = Path(parts[0])
     try:
         resolved = path.resolve()
     except OSError:
@@ -369,8 +372,22 @@ def substrate_for(platform: str, command: str | None = None) -> str:
 
 
 def is_posix_command(command: str) -> bool:
-    executable = shlex.split(command, posix=os.name != "nt")[0]
+    parts = split_command(command)
+    if not parts:
+        return False
+    executable = parts[0]
     return executable.startswith("/") and not executable.lower().endswith(".exe")
+
+
+def split_command(command: str, *, windows_host: bool | None = None) -> list[str]:
+    posix = os.name != "nt" if windows_host is None else not windows_host
+    try:
+        parts = shlex.split(command, posix=posix)
+    except ValueError:
+        return []
+    if parts:
+        parts[0] = parts[0].strip("\"'")
+    return parts
 
 
 def host_is_windows() -> bool:
@@ -379,7 +396,7 @@ def host_is_windows() -> bool:
 
 def can_execute_host(command: str, platform: str | None = None) -> bool:
     platform = current_platform(platform)
-    parts = shlex.split(command, posix=os.name != "nt")
+    parts = split_command(command)
     if not parts:
         return False
     executable = parts[0].lower()
@@ -693,7 +710,7 @@ def discover_python_package(
 
 def check_python_module(command: str, module: str, platform: str) -> dict[str, Any]:
     if can_execute_host(command, platform):
-        parts = shlex.split(command, posix=os.name != "nt")
+        parts = split_command(command)
         code = (
             "import importlib.util, sys; "
             f"spec = importlib.util.find_spec({module!r}); "
@@ -741,7 +758,7 @@ def check_python_module(command: str, module: str, platform: str) -> dict[str, A
 
 
 def find_module_in_site_packages(command: str, module: str, platform: str) -> str | None:
-    parts = shlex.split(command, posix=os.name != "nt")
+    parts = split_command(command)
     if not parts:
         return None
     executable = parts[0].replace("\\", "/") if platform == "windows" and not host_is_windows() else parts[0]

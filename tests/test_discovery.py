@@ -8,7 +8,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from installer.ai_agents_skills.discovery import candidates_for_platform, discover_python_package, discover_tool, substrate_for
+from installer.ai_agents_skills.discovery import (
+    candidates_for_platform,
+    discover_python_package,
+    discover_tool,
+    split_command,
+    substrate_for,
+)
 from installer.ai_agents_skills.manifest import load_manifests
 
 
@@ -97,6 +103,12 @@ class DiscoveryTests(unittest.TestCase):
             executable = shlex.split(str(result["command"]), posix=os.name != "nt")[0].strip("'\"")
             self.assertTrue(Path(executable).resolve().is_relative_to(root.resolve()))
             self.assertEqual(result["scope"], "user-local")
+
+    def test_split_command_strips_windows_executable_quotes(self) -> None:
+        command = r"'C:\Users\agent\AppData\Local\Temp\.venv\Scripts\python.exe' --version"
+        parts = split_command(command, windows_host=True)
+        self.assertEqual(parts[0], r"C:\Users\agent\AppData\Local\Temp\.venv\Scripts\python.exe")
+        self.assertEqual(parts[1], "--version")
 
     def test_windows_python_package_can_be_detected_from_mounted_venv(self) -> None:
         if sys.platform.startswith("win"):
