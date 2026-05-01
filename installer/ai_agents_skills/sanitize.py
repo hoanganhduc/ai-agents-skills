@@ -9,6 +9,9 @@ TOKEN_PATTERNS = (
     re.compile(r"gh[opsu]_[A-Za-z0-9_]{20,}"),
     re.compile(r"github_pat_[A-Za-z0-9_]+"),
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"(?:AKIA|ASIA)[A-Z0-9]{16}"),
+    re.compile(r"AIza[0-9A-Za-z_-]{35}"),
+    re.compile(r"xox[baprs]-[0-9A-Za-z-]{20,}"),
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |PGP |PRIVATE )?PRIVATE KEY-----.*?-----END (?:RSA |OPENSSH |PGP |PRIVATE )?PRIVATE KEY-----", re.DOTALL),
 )
 

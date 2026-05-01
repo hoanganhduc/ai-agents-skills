@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from .capabilities import normalized_path_within, resolved_path_within
 from .render import replace_or_append_block
 from .state import (
     artifact_signature,
@@ -14,8 +15,10 @@ from .state import (
     save_state,
     sha256_file,
     sha256_text,
+    symlink_atomic,
     upsert_artifact,
     upsert_uninstall_record,
+    write_text_atomic,
     write_run_record,
 )
 
@@ -24,11 +27,13 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
     run_id = now_run_id()
     applied: list[dict[str, Any]] = []
     if dry_run:
+        preflight_plan(root, plan["actions"])
         return {"run_id": run_id, "dry_run": True, "actions": plan["actions"]}
     if not plan["actions"]:
         return {"run_id": run_id, "dry_run": False, "actions": []}
 
     state = load_state(root)
+    preflight_plan(root, plan["actions"])
     for action in plan["actions"]:
         previous_state_artifact = find_state_artifact(state, action)
         result = apply_action(root, run_id, action)
@@ -46,6 +51,8 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
                 upsert_uninstall_record(state, recorded_result)
         elif recorded_result.get("managed"):
             upsert_artifact(state, recorded_result)
+        save_state(root, state)
+        write_run_record(root, run_id, applied)
     state.setdefault("runs", []).append({"run_id": run_id, "action_count": len(applied)})
     save_state(root, state)
     write_run_record(root, run_id, applied)
@@ -72,6 +79,53 @@ def apply_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, A
     raise ValueError(f"unknown action kind: {action['kind']}")
 
 
+def preflight_plan(root: Path, actions: list[dict[str, Any]]) -> None:
+    for action in actions:
+        preflight_action(root, action)
+
+
+def preflight_action(root: Path, action: dict[str, Any]) -> None:
+    path = Path(action["path"])
+    if not normalized_path_within(root, path) or not resolved_path_within(root, path.parent):
+        raise ValueError(f"refusing to apply artifact outside selected root: {path}")
+    for parent in existing_parents(path.parent, root):
+        if parent.is_symlink():
+            raise ValueError(f"refusing to apply through symlinked parent: {parent}")
+        if not parent.is_dir():
+            raise ValueError(f"refusing to apply through non-directory parent: {parent}")
+    if action["kind"] in {"file", "managed-block", "managed-file-remove"}:
+        if path.exists() and path.is_dir() and not path.is_symlink():
+            raise ValueError(f"refusing to write managed file over directory: {path}")
+    if action["kind"] == "managed-block" and path.is_symlink():
+        raise ValueError(f"refusing to read or replace symlinked instruction file: {path}")
+    if action["kind"] == "legacy-dir":
+        legacy_path = Path(action["legacy_path"])
+        if path.is_symlink():
+            raise ValueError(f"refusing to remove symlinked legacy path: {path}")
+        if (
+            not normalized_path_within(root, path)
+            or not normalized_path_within(root, legacy_path)
+            or not resolved_path_within(root, legacy_path.parent)
+        ):
+            raise ValueError(f"refusing to remove legacy path outside selected root: {path}")
+
+
+def existing_parents(path: Path, root: Path | None = None) -> list[Path]:
+    parents: list[Path] = []
+    current = Path(os.path.abspath(path))
+    root_abs = Path(os.path.abspath(root)) if root is not None else None
+    while True:
+        if current.exists() or current.is_symlink():
+            parents.append(current)
+        if root_abs is not None and current == root_abs:
+            break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return parents
+
+
 def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
     path = Path(action["path"])
     op = action["operation"]
@@ -92,6 +146,7 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
         result["installed_signature"] = artifact_signature(path)
         return result
     backup = backup_file(root, run_id, path)
+    created_parent_dirs = missing_parent_dirs(root, path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
     actual_mode = action.get("install_mode", "copy")
     try:
@@ -112,23 +167,19 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
     result["new_hash"] = sha256_file(path)
     result["install_mode"] = actual_mode
     result["installed_signature"] = artifact_signature(path)
+    if created_parent_dirs:
+        result["created_parent_dirs"] = [item.as_posix() for item in created_parent_dirs]
     return result
 
 
 def replace_with_text(path: Path, content: str) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    os.replace(tmp, path)
+    write_text_atomic(path, content)
 
 
 def replace_with_symlink(path: Path, source_path: Path) -> None:
     if not source_path.exists():
         raise FileNotFoundError(f"symlink source does not exist: {source_path}")
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    if tmp.exists() or tmp.is_symlink():
-        tmp.unlink()
-    os.symlink(source_path, tmp)
-    os.replace(tmp, path)
+    symlink_atomic(path, source_path)
 
 
 def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
@@ -145,10 +196,9 @@ def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[
         return result
     backup = backup_file(root, run_id, path)
     after = replace_or_append_block(before, action["skill"], action["content"])
+    created_parent_dirs = missing_parent_dirs(root, path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(after, encoding="utf-8")
-    os.replace(tmp, path)
+    write_text_atomic(path, after)
     result["managed"] = True
     result["applied"] = before != after
     result["backup"] = str(backup) if backup else None
@@ -156,6 +206,8 @@ def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[
     result["installed_signature"] = artifact_signature(path)
     result["block_id"] = action.get("block_id")
     result["managed_block"] = action["content"].strip()
+    if created_parent_dirs:
+        result["created_parent_dirs"] = [item.as_posix() for item in created_parent_dirs]
     return result
 
 
@@ -211,8 +263,7 @@ def apply_managed_file_remove_action(root: Path, run_id: str, action: dict[str, 
     if path.exists() or path.is_symlink():
         path.unlink()
         if action.get("artifact_type") == "skill-support-file":
-            skill_dir = next((parent for parent in path.parents if parent.name == action["skill"]), path.parent)
-            cleanup_empty_parents(path.parent, stop_at=skill_dir)
+            cleanup_created_parent_dirs(root, action.get("created_parent_dirs", []))
         result["applied"] = True
     else:
         result["applied"] = False
@@ -230,6 +281,28 @@ def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
         if current == stop_at:
             return
         current = current.parent
+
+
+def missing_parent_dirs(root: Path, parent: Path) -> list[Path]:
+    missing: list[Path] = []
+    current = parent
+    while current != root and not current.exists():
+        missing.append(current.relative_to(root))
+        current = current.parent
+    return missing
+
+
+def cleanup_created_parent_dirs(root: Path, relative_dirs: list[str]) -> None:
+    for relative in sorted(relative_dirs, key=lambda value: value.count("/"), reverse=True):
+        path = root / relative
+        if not normalized_path_within(root, path) or not resolved_path_within(root, path):
+            continue
+        if not path.exists() or path.is_symlink() or not path.is_dir():
+            continue
+        try:
+            path.rmdir()
+        except OSError:
+            continue
 
 
 def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
@@ -257,6 +330,8 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         result["capability_evidence"] = action["capability_evidence"]
     if action.get("fallback_mode"):
         result["fallback_mode"] = action["fallback_mode"]
+    if action.get("created_parent_dirs"):
+        result["created_parent_dirs"] = action["created_parent_dirs"]
     return result
 
 

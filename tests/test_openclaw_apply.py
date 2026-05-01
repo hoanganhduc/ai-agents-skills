@@ -6,12 +6,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from installer.ai_agents_skills.cli import main
 from installer.ai_agents_skills.openclaw_apply import apply_manifest, uninstall_manifest
 from installer.ai_agents_skills.openclaw_inventory import build_inventory
 from installer.ai_agents_skills.openclaw_manifest import approve_manifest, build_manifest
-from tests.test_openclaw_inventory import CANARY_TEXT, make_source_root, snapshot
+from tests.test_openclaw_inventory import CANARY_TEXT, fake_root_path, make_source_root, snapshot
 from tests.test_openclaw_manifest import CREATED_AT
 
 
@@ -36,8 +37,8 @@ def write_json(path: Path, data: dict[str, object]) -> None:
 class OpenClawApplyTests(unittest.TestCase):
     def test_apply_requires_approved_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -52,8 +53,8 @@ class OpenClawApplyTests(unittest.TestCase):
 
     def test_apply_and_uninstall_roundtrip_restores_fake_target_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -80,10 +81,100 @@ class OpenClawApplyTests(unittest.TestCase):
             self.assertEqual(snapshot(target_root), before_target)
             self.assertEqual(snapshot(source_root), before_source)
 
+    def test_apply_dry_run_and_apply_actions_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
+            source_root.mkdir()
+            target_root.mkdir()
+            make_source_root(source_root)
+            manifest = approved_manifest(source_root, target_root, ["codex"])
+
+            dry_run = apply_manifest(manifest, target_root, dry_run=True)
+            applied = apply_manifest(manifest, target_root, dry_run=False)
+
+            dry_actions = [
+                (action["key"], action["operation"], action["relative_path"], action["reason"], action["blocked"])
+                for action in dry_run["actions"]
+            ]
+            applied_actions = [
+                (action["key"], action["operation"], action["relative_path"], action["reason"], action["blocked"])
+                for action in applied["actions"]
+            ]
+            self.assertEqual(applied_actions, dry_actions)
+
+    def test_apply_refuses_symlinked_state_dir_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
+            outside = fake_root_path(tmp, "outside-state")
+            source_root.mkdir()
+            target_root.mkdir()
+            outside.mkdir()
+            (target_root / ".ai-agents-skills").symlink_to(outside, target_is_directory=True)
+            make_source_root(source_root)
+            before_target = snapshot(target_root)
+            manifest = approved_manifest(source_root, target_root, ["codex"])
+
+            with self.assertRaisesRegex(ValueError, "installer state"):
+                apply_manifest(manifest, target_root, dry_run=False)
+
+            self.assertEqual(snapshot(target_root), before_target)
+            self.assertEqual(snapshot(outside), {})
+
+    def test_apply_refuses_symlinked_target_parent_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
+            outside = fake_root_path(tmp, "outside-codex")
+            source_root.mkdir()
+            target_root.mkdir()
+            outside.mkdir()
+            make_source_root(source_root)
+            manifest = approved_manifest(source_root, target_root, ["codex"])
+            (target_root / ".codex").symlink_to(outside, target_is_directory=True)
+            before_target = snapshot(target_root)
+
+            dry_run = apply_manifest(manifest, target_root, dry_run=True)
+            self.assertIn("target-parent-is-symlink", {action["reason"] for action in dry_run["actions"]})
+            with self.assertRaisesRegex(ValueError, "target-parent-is-symlink"):
+                apply_manifest(manifest, target_root, dry_run=False)
+
+            self.assertEqual(snapshot(target_root), before_target)
+            self.assertEqual(snapshot(outside), {})
+
+    def test_apply_refuses_real_system_target_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
+            source_root.mkdir()
+            target_root.mkdir()
+            make_source_root(source_root)
+            manifest = approved_manifest(source_root, target_root, ["codex"])
+
+            with patch("installer.ai_agents_skills.openclaw_apply.is_real_system_root", return_value=True):
+                with self.assertRaisesRegex(ValueError, "real-system target roots"):
+                    apply_manifest(manifest, target_root, dry_run=True)
+
+    def test_apply_accepts_windows_shaped_fake_target_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "C") / "Users" / "agent"
+            source_root.mkdir()
+            target_root.mkdir(parents=True)
+            make_source_root(source_root)
+            manifest = approved_manifest(source_root, target_root, ["codex"])
+
+            applied = apply_manifest(manifest, target_root, dry_run=False)
+            removed = uninstall_manifest(target_root, manifest_id=manifest["manifest_id"], dry_run=False)
+
+            self.assertTrue(any(action["applied"] for action in applied["actions"]))
+            self.assertTrue(removed["removed"])
+
     def test_apply_fails_closed_on_target_drift_before_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -101,8 +192,8 @@ class OpenClawApplyTests(unittest.TestCase):
 
     def test_uninstall_preserves_changed_generated_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -120,10 +211,10 @@ class OpenClawApplyTests(unittest.TestCase):
 
     def test_cli_openclaw_approve_apply_uninstall_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
-            manifest_path = Path(tmp) / "manifest.json"
-            approved_path = Path(tmp) / "approved.json"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
+            manifest_path = fake_root_path(tmp, "manifest.json")
+            approved_path = fake_root_path(tmp, "approved.json")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)

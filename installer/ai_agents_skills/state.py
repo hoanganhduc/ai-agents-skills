@@ -4,10 +4,13 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from .capabilities import normalized_path_within, resolved_path_within
 
 
 def sha256_text(text: str) -> str:
@@ -96,6 +99,7 @@ def state_file(root: Path) -> Path:
 
 def load_state(root: Path) -> dict[str, Any]:
     path = state_file(root)
+    preflight_state_path(root, path)
     if not path.exists():
         return {"schema_version": 1, "artifacts": [], "runs": []}
     try:
@@ -109,10 +113,9 @@ def load_state(root: Path) -> dict[str, Any]:
 
 def save_state(root: Path, data: dict[str, Any]) -> None:
     path = state_file(root)
+    preflight_state_path(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    write_text_atomic(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
 
 
 def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
@@ -120,9 +123,10 @@ def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
         return None
     rel = str(path).replace(":", "").replace("\\", "/").lstrip("/")
     dest = state_dir(root) / "backups" / run_id / rel
+    preflight_state_path(root, dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
-        os.symlink(os.readlink(path), dest)
+        symlink_atomic(dest, Path(os.readlink(path)))
     elif path.is_dir():
         shutil.copytree(path, dest, symlinks=True)
     else:
@@ -153,8 +157,88 @@ def run_record_path(root: Path, run_id: str) -> Path:
 
 def write_run_record(root: Path, run_id: str, actions: list[dict[str, Any]]) -> None:
     path = run_record_path(root, run_id)
+    preflight_state_path(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"run_id": run_id, "actions": actions}, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    write_text_atomic(path, json.dumps({"run_id": run_id, "actions": actions}, indent=2, sort_keys=True) + "\n")
+
+
+def preflight_state_dir(root: Path) -> None:
+    directory = state_dir(root)
+    if not normalized_path_within(root, directory) or not resolved_path_within(root, directory.parent):
+        raise ValueError(f"installer state directory escapes selected root: {directory}")
+    for parent in existing_contained_parents(directory, root):
+        if parent.is_symlink():
+            raise ValueError(f"refusing to use symlinked installer state path: {parent}")
+        if not parent.is_dir():
+            raise ValueError(f"refusing to use non-directory installer state path: {parent}")
+
+
+def preflight_state_path(root: Path, path: Path) -> None:
+    if not normalized_path_within(state_dir(root), path) or not resolved_path_within(root, path.parent):
+        raise ValueError(f"installer state path escapes selected root: {path}")
+    if path.is_symlink():
+        raise ValueError(f"refusing to use symlinked installer state file: {path}")
+    preflight_state_dir(root)
+    for parent in existing_contained_parents(path.parent, state_dir(root)):
+        if parent.is_symlink():
+            raise ValueError(f"refusing to write installer state through symlinked parent: {parent}")
+        if not parent.is_dir():
+            raise ValueError(f"refusing to write installer state through non-directory parent: {parent}")
+
+
+def existing_contained_parents(path: Path, stop_at: Path) -> list[Path]:
+    parents: list[Path] = []
+    current = Path(os.path.abspath(path))
+    stop = Path(os.path.abspath(stop_at))
+    while True:
+        if current.exists() or current.is_symlink():
+            parents.append(current)
+        if current == stop:
+            break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return parents
+
+
+def write_text_atomic(path: Path, content: str) -> None:
+    tmp_name: str | None = None
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        text=False,
     )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        if tmp_name is not None:
+            try:
+                Path(tmp_name).unlink()
+            except FileNotFoundError:
+                pass
+        raise
+
+
+def symlink_atomic(path: Path, source_path: Path) -> None:
+    for _ in range(100):
+        tmp = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            os.symlink(source_path, tmp)
+        except FileExistsError:
+            continue
+        try:
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+        return
+    raise FileExistsError(f"could not create unique temporary symlink for {path}")

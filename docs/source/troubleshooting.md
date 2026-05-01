@@ -13,11 +13,12 @@ installer found a compatibility or alias path and will skip it unless
 `--migrate` is used. A reviewed `--migrate` plan installs the canonical target
 and removes the legacy alias directory.
 
-Default installs use `--install-mode auto`, resolved per agent. Claude and
-DeepSeek receive symlinked skill files when the filesystem supports them.
-Codex receives reference adapters by default because current Codex discovery
-ignores file-symlinked user `SKILL.md` files. Use `--install-mode symlink` only
-when you intentionally want to force links for every agent. Use
+Default installs use `--install-mode auto`, resolved per agent. Claude receives
+symlinked skill files when the filesystem supports them. Codex and DeepSeek
+receive reference adapters by default: Codex ignores file-symlinked user
+`SKILL.md` files, and DeepSeek native symlinked skill loading has not been
+verified. Use `--install-mode symlink` only when you intentionally want to
+force links for every agent. Use
 `--install-mode reference` to force adapters for every agent. If an agent
 requires regular files in its settings directory, use `--install-mode copy`.
 

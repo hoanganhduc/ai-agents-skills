@@ -4,37 +4,52 @@ $OutputEncoding = [Console]::OutputEncoding
 
 $Root = Split-Path -Parent $PSScriptRoot
 
+function Test-Python {
+    param([string]$Candidate)
+    $Code = "import sys, ssl, venv, pip; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"
+    if ($Candidate -eq "py -3") {
+        & py -3 -c $Code *> $null
+    } else {
+        & $Candidate -c $Code *> $null
+    }
+    return $LASTEXITCODE -eq 0
+}
+
 function Find-Python {
     if ($env:AAS_PYTHON) {
         if (Test-Path -LiteralPath $env:AAS_PYTHON) {
-            return $env:AAS_PYTHON
+            if (Test-Python $env:AAS_PYTHON) {
+                return $env:AAS_PYTHON
+            }
         }
         $Override = Get-Command $env:AAS_PYTHON -ErrorAction SilentlyContinue
         if ($Override) {
-            return $Override.Source
+            if (Test-Python $Override.Source) {
+                return $Override.Source
+            }
         }
     }
     $RepoPython = Join-Path $Root ".venv\Scripts\python.exe"
-    if (Test-Path -LiteralPath $RepoPython) {
+    if ((Test-Path -LiteralPath $RepoPython) -and (Test-Python $RepoPython)) {
         return $RepoPython
     }
     $RepoPosixPython = Join-Path $Root ".venv\bin\python"
-    if (Test-Path -LiteralPath $RepoPosixPython) {
+    if ((Test-Path -LiteralPath $RepoPosixPython) -and (Test-Python $RepoPosixPython)) {
         return $RepoPosixPython
     }
     $Py = Get-Command py -ErrorAction SilentlyContinue
-    if ($Py) {
+    if ($Py -and (Test-Python "py -3")) {
         return "py -3"
     }
     $Python = Get-Command python -ErrorAction SilentlyContinue
-    if ($Python) {
+    if ($Python -and (Test-Python $Python.Source)) {
         return $Python.Source
     }
     $PythonExe = Get-Command python.exe -ErrorAction SilentlyContinue
-    if ($PythonExe) {
+    if ($PythonExe -and (Test-Python $PythonExe.Source)) {
         return $PythonExe.Source
     }
-    throw "No usable Python runtime found. Set AAS_PYTHON to a Python 3.10+ interpreter."
+    throw "No usable Python 3.10+ runtime with ssl, venv, and pip found. Set AAS_PYTHON to a compatible interpreter."
 }
 
 $Python = Find-Python
