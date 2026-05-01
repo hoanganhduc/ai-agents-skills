@@ -11,8 +11,9 @@ make doctor
 make precheck ARGS="--profile research-core"
 make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
-make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix default --platform-shape linux"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
+make verify ARGS="--root <fake-or-real-root>"
 ```
 
 Useful overrides:

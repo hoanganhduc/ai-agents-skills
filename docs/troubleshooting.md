@@ -25,9 +25,11 @@ Useful inspection commands:
 
 ```bash
 make precheck ARGS="--profile full-research --json"
-make audit-system ARGS="--profile full-research --json"
+make audit-system ARGS="--profile full-research --migration-report --json"
 make plan ARGS="--profile full-research --migrate"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix full --platform-shape all"
+make lifecycle-test ARGS="--matrix stress --platform-shape linux"
+make fake-root-lifecycle ARGS="--profile full-research --platform-shape all"
 ```
 
 Common cases:

@@ -62,15 +62,15 @@ Applied examples:
 ```bash
 make uninstall ARGS="--skill zotero --apply"
 make rollback ARGS="--run 20260429-080620 --apply"
-make verify ARGS="--root /tmp/aas-fake-home"
+make verify ARGS="--root <fake-or-real-root>"
 ```
 
 Windows applied examples:
 
 ```bat
-make.bat uninstall --skill zotero --apply --root %TEMP%\aas-fake-home
-make.bat rollback --run 20260429-080620 --apply --root %TEMP%\aas-fake-home
-make.bat verify --root %TEMP%\aas-fake-home
+make.bat uninstall --skill zotero --apply --root <fake-or-real-root>
+make.bat rollback --run 20260429-080620 --apply --root <fake-or-real-root>
+make.bat verify --root <fake-or-real-root>
 ```
 
 Safety rules:
