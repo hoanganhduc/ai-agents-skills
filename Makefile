@@ -1,4 +1,4 @@
-.PHONY: doctor precheck audit-system plan install verify rollback uninstall list-skills docs docs-site sanitize-check test
+.PHONY: doctor precheck audit-system plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test list-skills docs docs-site sanitize-check test
 
 ARGS ?=
 
@@ -20,11 +20,20 @@ install:
 verify:
 	./installer/bootstrap.sh verify $(ARGS)
 
+smoke:
+	./installer/bootstrap.sh smoke $(ARGS)
+
 rollback:
 	./installer/bootstrap.sh rollback $(ARGS)
 
 uninstall:
 	./installer/bootstrap.sh uninstall $(ARGS)
+
+fake-root-lifecycle:
+	./installer/bootstrap.sh fake-root-lifecycle $(ARGS)
+
+lifecycle-test:
+	./installer/bootstrap.sh lifecycle-test $(ARGS)
 
 list-skills:
 	./installer/bootstrap.sh list-skills
@@ -36,8 +45,8 @@ docs-site:
 	sphinx-build -b html docs/source docs/_build/html
 
 sanitize-check:
-	PYTHONPATH=. python tools/sanitization_check.py
-	PYTHONPATH=. python -m unittest discover -s tests -p 'test_sanitization.py' -v
+	./installer/bootstrap.sh --run-python tools/sanitization_check.py
+	./installer/bootstrap.sh --run-python -m unittest discover -s tests -p 'test_sanitization.py' -v
 
 test:
-	PYTHONPATH=. python -m unittest discover -s tests -v
+	./installer/bootstrap.sh --run-python -m unittest discover -s tests -v

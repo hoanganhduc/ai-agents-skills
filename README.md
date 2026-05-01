@@ -65,11 +65,10 @@ also summarizes the available templates:
 This repo is a generator and installer, not a copied dotfiles folder. It uses
 canonical skill names, generates per-agent adapters, supports partial installs,
 detects legacy/self-contained installs, and verifies only installed managed
-skills. Reusable skill bodies live under `canonical/skills`; the default
-install links supported agents back to those canonical files when their
-loaders support symlinked skill files, and writes reference adapters for known
-incompatible loaders such as Codex. Copy mode remains available when an agent
-or filesystem must have regular files inside the settings directory.
+skills. Reusable skill bodies live under `canonical/skills`; default installs
+record the agent policy and fallback behavior used to choose symlink,
+reference, or copy mode. Copy mode remains available when an agent or
+filesystem must have regular files inside the settings directory.
 
 ## Documentation
 
@@ -120,8 +119,8 @@ make list-artifacts
 make plan ARGS="--profile research-core"
 make plan ARGS="--no-skills --artifact-profile workflow-templates"
 make install ARGS="--profile research-core --dry-run"
-make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix default --platform-shape all"
+make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
 ```
 
 Windows:
@@ -135,12 +134,8 @@ make.bat list-artifacts
 make.bat plan --profile research-core
 make.bat plan --no-skills --artifact-profile workflow-templates
 make.bat install --profile research-core --dry-run
-mkdir %TEMP%\aas-fake-home\.codex
-mkdir %TEMP%\aas-fake-home\.claude
-rem Optional when testing DeepSeek targets:
-rem mkdir %TEMP%\aas-fake-home\.deepseek
-make.bat install --profile research-core --apply --root %TEMP%\aas-fake-home
-make.bat verify --root %TEMP%\aas-fake-home
+make.bat lifecycle-test --matrix default --platform-shape windows
+make.bat fake-root-lifecycle --profile research-core --platform-shape windows
 ```
 
 Applied installs, uninstalls, and rollbacks are interactive: before any
@@ -152,11 +147,10 @@ use `--adopt`, `--backup-replace`, or `--migrate` only after reviewing `plan`
 output.
 
 Skills install in `--install-mode auto` by default so the repo remains the
-single maintained source without hiding agent-loader differences. Auto mode
-uses symlinked skill files for Claude and DeepSeek, and thin reference adapters
-for Codex because current Codex skill discovery ignores file-symlinked user
-`SKILL.md` files. Use `--install-mode symlink` to force symlinks for every
-agent, `--install-mode reference` to force adapters for every agent, or
+single maintained source without hiding agent-loader differences. `plan --json`
+shows the effective mode, agent policy evidence, apply-time symlink fallback,
+and reason for each target. Use `--install-mode symlink` to force symlinks for
+every agent, `--install-mode reference` to force adapters for every agent, or
 `--install-mode copy` only when files must be materialized inside the agent
 settings directory.
 

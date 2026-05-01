@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from .capabilities import normalized_path_within
 from .state import (
     artifact_signature,
     load_state,
@@ -364,11 +365,7 @@ def cleanup_empty_parents(path: Path, stop_at: Path) -> None:
 
 
 def path_within(root: Path, path: Path) -> bool:
-    try:
-        Path(os.path.abspath(path)).relative_to(Path(os.path.abspath(root)))
-    except ValueError:
-        return False
-    return True
+    return normalized_path_within(root, path)
 
 
 def mark_created_instruction_file_groups(actions: list[dict[str, Any]]) -> None:

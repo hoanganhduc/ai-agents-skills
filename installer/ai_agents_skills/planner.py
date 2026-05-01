@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .agents import AgentTarget
+from .capabilities import effective_install_mode_with_evidence
 from .manifest import REPO_ROOT
 from .render import (
     MANAGED_MARKER,
@@ -18,13 +19,6 @@ from .render import (
     render_skill_md,
 )
 from .state import load_state, sha256_file, sha256_text
-
-
-SKILL_FILE_SYMLINK_SUPPORTED = {
-    "codex": False,
-    "claude": True,
-    "deepseek": True,
-}
 
 
 def build_plan(
@@ -56,7 +50,11 @@ def build_plan(
             skill_file = agent.skills_dir / skill / "SKILL.md"
             source_path = canonical_skill_path(skill)
             source = source_path if source_path.exists() else None
-            action_install_mode = effective_install_mode(agent.name, install_mode, source_path)
+            action_install_mode, mode_reason, capability_evidence = effective_install_mode(
+                agent.name,
+                install_mode,
+                source_path,
+            )
             content = skill_content_for_mode(skill, spec, agent.name, action_install_mode, source_path)
             fallback_content = (
                 render_reference_skill_md(skill, spec, agent.name, source_path)
@@ -74,6 +72,8 @@ def build_plan(
                 legacy_path=find_legacy_skill(agent, skill, manifests),
                 migrate=migrate,
                 install_mode=action_install_mode,
+                mode_reason=mode_reason,
+                capability_evidence=capability_evidence,
                 source_path=source,
                 fallback_content=fallback_content,
             )
@@ -122,18 +122,8 @@ def build_plan(
     return {"actions": actions, "skipped_agents": skipped_agents, "root": str(root)}
 
 
-def effective_install_mode(agent: str, requested_mode: str, source_path: Path) -> str:
-    if requested_mode == "auto":
-        if not source_path.exists():
-            return "copy"
-        if not SKILL_FILE_SYMLINK_SUPPORTED.get(agent, True):
-            return "reference"
-        return "symlink"
-    if requested_mode != "symlink":
-        return requested_mode
-    if not source_path.exists():
-        return "copy"
-    return "symlink"
+def effective_install_mode(agent: str, requested_mode: str, source_path: Path) -> tuple[str, str, dict[str, Any]]:
+    return effective_install_mode_with_evidence(agent, requested_mode, source_path)
 
 
 def obsolete_support_file_actions(state: dict[str, Any], agent: str, skill: str) -> list[dict[str, Any]]:
@@ -312,6 +302,8 @@ def classify_file_action(
     install_mode: str = "copy",
     source_path: Path | None = None,
     fallback_content: str | None = None,
+    mode_reason: str | None = None,
+    capability_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     can_symlink = install_mode == "symlink" and source_path is not None
     expected_hash = sha256_file(source_path) if can_symlink else sha256_text(content)
@@ -368,6 +360,8 @@ def classify_file_action(
         "operation": operation,
         "artifact_type": artifact_type,
         "install_mode": install_mode,
+        "mode_reason": mode_reason,
+        "capability_evidence": capability_evidence,
     }
     if source_path is not None:
         result["source_path"] = str(source_path)

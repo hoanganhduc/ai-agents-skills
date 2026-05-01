@@ -13,6 +13,7 @@ Common commands:
 ```bash
 make audit-system ARGS="--profile full-research"
 make audit-system ARGS="--profile full-research --json"
+make audit-system ARGS="--profile full-research --migration-report --json"
 make plan ARGS="--profile full-research --migrate"
 make plan ARGS="--profile full-research --adopt"
 ```
@@ -26,14 +27,16 @@ The audit reports:
 - extra local skills outside this repo's canonical catalog in the primary
   agent skills directory
 - default, adopt, migrate, and adopt+migrate plan summaries
+- optional `--migration-report` groups managed, canonical unmanaged, legacy,
+  missing, and extra-local skills with dry-run commands to review next
 - dependency status and selected skills related to each dependency
 
 Recommended staged migration for a current personal system:
 
 1. Run `precheck --profile full-research` and resolve missing required
    dependencies.
-2. Run `audit-system --profile full-research` and review unmanaged and legacy
-   counts.
+2. Run `audit-system --profile full-research --migration-report --json` and
+   review unmanaged, legacy, missing, and extra-local groups.
 3. Run `plan --profile full-research --migrate` and migrate only reviewed
    legacy aliases, such as underscore-to-hyphen skill names.
 4. Run `plan --profile full-research --adopt` and adopt only canonical files

@@ -16,14 +16,9 @@ make.bat doctor
 make.bat precheck --profile research-core
 make.bat plan --profile research-core
 make.bat install --profile research-core --dry-run
-mkdir %TEMP%\aas-fake-home\.codex
-mkdir %TEMP%\aas-fake-home\.claude
-rem Optional when testing DeepSeek targets:
-rem mkdir %TEMP%\aas-fake-home\.deepseek
-make.bat install --profile research-core --apply --root %TEMP%\aas-fake-home
-make.bat verify --root %TEMP%\aas-fake-home
-make.bat uninstall --all --apply --root %TEMP%\aas-fake-home
-make.bat verify --root %TEMP%\aas-fake-home
+make.bat lifecycle-test --matrix default --platform-shape windows
+make.bat fake-root-lifecycle --profile research-core --platform-shape windows
+make.bat verify --root <fake-or-real-root>
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected

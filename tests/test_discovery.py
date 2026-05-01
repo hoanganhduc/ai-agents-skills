@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from installer.ai_agents_skills.discovery import discover_python_package, discover_tool, substrate_for
+from installer.ai_agents_skills.discovery import candidates_for_platform, discover_python_package, discover_tool, substrate_for
 from installer.ai_agents_skills.manifest import load_manifests
 
 
@@ -19,6 +19,10 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("capabilities", result)
         self.assertIn("venv", result["capabilities"])
         self.assertIn("scope", result)
+
+    def test_macos_uses_posix_candidate_fallbacks(self) -> None:
+        candidates = {"linux": ["python3"], "windows": ["python.exe"]}
+        self.assertEqual(candidates_for_platform(candidates, "macos"), ["python3"])
 
     def test_wsl_sage_candidate_is_degraded_not_windows_package(self) -> None:
         manifests = load_manifests()
