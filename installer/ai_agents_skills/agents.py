@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from .capabilities import resolved_path_within
+
 
 @dataclass(frozen=True)
 class AgentTarget:
@@ -76,9 +78,30 @@ def detect_agents(root: Path, requested: Iterable[str] | None = None) -> list[Ag
     targets: list[AgentTarget] = []
     for agent in candidates:
         target = target_for(root, agent)
-        if target.home.exists():
+        if agent_home_is_eligible(root, target):
             targets.append(target)
     return targets
+
+
+def agent_home_statuses(root: Path, requested: Iterable[str] | None = None) -> list[dict[str, str | bool]]:
+    candidates = list(requested) if requested else ["codex", "claude", "deepseek"]
+    return [agent_home_status(root, target_for(root, agent)) for agent in candidates]
+
+
+def agent_home_status(root: Path, target: AgentTarget) -> dict[str, str | bool]:
+    if not target.home.exists() and not target.home.is_symlink():
+        return {"agent": target.name, "eligible": False, "reason": "agent home not detected"}
+    if target.home.is_symlink():
+        return {"agent": target.name, "eligible": False, "reason": "agent home is a symlink"}
+    if not target.home.is_dir():
+        return {"agent": target.name, "eligible": False, "reason": "agent home is not a directory"}
+    if not resolved_path_within(root, target.home):
+        return {"agent": target.name, "eligible": False, "reason": "agent home resolves outside selected root"}
+    return {"agent": target.name, "eligible": True, "reason": "agent home detected"}
+
+
+def agent_home_is_eligible(root: Path, target: AgentTarget) -> bool:
+    return bool(agent_home_status(root, target)["eligible"])
 
 
 def all_agent_names() -> list[str]:

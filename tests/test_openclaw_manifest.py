@@ -10,7 +10,7 @@ from pathlib import Path
 from installer.ai_agents_skills.cli import main
 from installer.ai_agents_skills.openclaw_inventory import build_inventory
 from installer.ai_agents_skills.openclaw_manifest import build_manifest
-from tests.test_openclaw_inventory import CANARY_TEXT, make_source_root, snapshot
+from tests.test_openclaw_inventory import CANARY_TEXT, fake_root_path, make_source_root, snapshot
 
 
 CREATED_AT = "2026-05-01T00:00:00Z"
@@ -23,8 +23,8 @@ def write_inventory(path: Path, inventory: dict[str, object]) -> None:
 class OpenClawDryRunManifestTests(unittest.TestCase):
     def test_manifest_is_review_only_content_addressed_and_sanitized(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -72,8 +72,8 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
 
     def test_manifest_generation_is_deterministic_for_fixed_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -86,8 +86,8 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
 
     def test_existing_target_path_becomes_no_op_collision(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)
@@ -111,7 +111,7 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
 
     def test_manifest_refuses_unsafe_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            target_root = Path(tmp) / "fake-home"
+            target_root = fake_root_path(tmp, "fake-home")
             target_root.mkdir()
             inventory = {
                 "schema_version": "openclaw.inventory.v1",
@@ -142,9 +142,9 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
 
     def test_cli_openclaw_dry_run_manifest_reads_inventory_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            source_root = Path(tmp) / "fake-openclaw"
-            target_root = Path(tmp) / "fake-home"
-            inventory_path = Path(tmp) / "inventory.json"
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
+            inventory_path = fake_root_path(tmp, "inventory.json")
             source_root.mkdir()
             target_root.mkdir()
             make_source_root(source_root)

@@ -9,7 +9,7 @@ from typing import Any
 
 from .agents import all_agent_names, detect_agents
 from .apply import apply_plan
-from .capabilities import smoke_artifact
+from .capabilities import looks_like_real_system_root, smoke_artifact
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
 from .docs import generate_docs
 from .lifecycle import rollback as rollback_artifacts
@@ -67,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("help")
     sub.add_parser("list-skills")
     sub.add_parser("list-artifacts")
     describe = sub.add_parser("describe")
@@ -269,6 +270,8 @@ def run(args: argparse.Namespace) -> int:
     manifests = load_manifests()
     if args.command == "list-skills":
         return output({"skills": skill_names(manifests)}, args)
+    if args.command == "help":
+        return output(command_help(), args)
     if args.command == "list-artifacts":
         return output(list_artifacts(manifests), args)
     if args.command == "describe":
@@ -516,7 +519,9 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
         if item["required"] and item["status"] == "degraded"
     ]
     status = "ok"
-    if missing_required:
+    if not agents:
+        status = "no-agent-homes"
+    elif missing_required:
         status = "missing-required"
     elif degraded_required:
         status = "degraded"
@@ -1117,6 +1122,42 @@ def install_hint(name: str, result: dict[str, Any]) -> str:
     return hints.get(name, "install or configure this dependency, then rerun precheck")
 
 
+def command_help() -> dict[str, Any]:
+    commands = [
+        "doctor",
+        "precheck",
+        "audit-system",
+        "plan",
+        "install",
+        "verify",
+        "smoke",
+        "rollback",
+        "uninstall",
+        "fake-root-lifecycle",
+        "lifecycle-test",
+        "list-skills",
+        "list-artifacts",
+        "generate-docs",
+        "openclaw-inventory",
+        "openclaw-dry-run-manifest",
+        "openclaw-approve-manifest",
+        "openclaw-apply-manifest",
+        "openclaw-uninstall-manifest",
+        "openclaw-record-evidence",
+        "openclaw-validate-evidence",
+        "openclaw-persistence-check",
+    ]
+    return {
+        "usage": "make <target> ARGS=\"...\" or make.bat <command> ...",
+        "commands": commands,
+        "examples": [
+            "make precheck ARGS=\"--profile research-core\"",
+            "make install ARGS=\"--profile research-core --dry-run\"",
+            "make lifecycle-test ARGS=\"--matrix default --platform-shape all\"",
+        ],
+    }
+
+
 def interactive_precheck(result: dict[str, Any]) -> None:
     missing = [*result.get("missing_required", []), *result.get("missing_optional", [])]
     if not missing:
@@ -1150,15 +1191,7 @@ def ensure_apply_allowed(args: argparse.Namespace) -> None:
 
 
 def is_real_system_root(root: Path) -> bool:
-    resolved = root.resolve()
-    if resolved == Path.home().resolve():
-        return True
-    parts = [part.lower() for part in resolved.parts]
-    if len(parts) >= 3 and parts[-2] == "users":
-        return True
-    if len(parts) == 3 and parts[1] == "home":
-        return True
-    return False
+    return looks_like_real_system_root(root)
 
 
 def confirm_install_process_understood(args: argparse.Namespace, plan: dict[str, Any]) -> None:

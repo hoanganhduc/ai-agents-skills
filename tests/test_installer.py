@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from installer.ai_agents_skills.apply import apply_plan
+from installer.ai_agents_skills.apply import apply_plan, replace_with_text
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
 from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
@@ -113,6 +113,128 @@ class PlanInstallVerifyTests(unittest.TestCase):
             plan = build_plan(root, manifests, selected, [])
             self.assertEqual(plan["actions"], [])
             self.assertEqual(len(plan["skipped_agents"]), 3)
+
+    def test_symlinked_agent_home_is_skipped_without_writing_target(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp, fake_root() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            (root / ".claude").symlink_to(outside, target_is_directory=True)
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["claude"]))
+            result = apply_plan(root, plan, dry_run=False)
+
+            self.assertEqual(result["actions"], [])
+            self.assertFalse((outside / "skills" / "zotero" / "SKILL.md").exists())
+            skipped = {item["agent"]: item["reason"] for item in plan["skipped_agents"]}
+            self.assertEqual(skipped["claude"], "agent home is a symlink")
+
+    def test_apply_refuses_symlinked_state_dir_before_writes(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp, fake_root() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            create_agent_homes(root, "codex")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["codex"]))
+            (root / ".ai-agents-skills").symlink_to(outside, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "installer state"):
+                apply_plan(root, plan, dry_run=False)
+
+            self.assertFalse((root / ".codex" / "skills" / "zotero" / "SKILL.md").exists())
+            self.assertFalse((outside / "state.json").exists())
+
+    def test_atomic_text_replace_does_not_follow_existing_target_symlink(self) -> None:
+        with fake_root() as tmp, fake_root() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            target = root / "managed.txt"
+            victim = outside / "victim.txt"
+            victim.write_text("outside\n", encoding="utf-8")
+            target.symlink_to(victim)
+
+            replace_with_text(target, "managed\n")
+
+            self.assertEqual(victim.read_text(encoding="utf-8"), "outside\n")
+            self.assertFalse(target.is_symlink())
+            self.assertEqual(target.read_text(encoding="utf-8"), "managed\n")
+
+    def test_apply_preflight_refuses_blocked_parent_before_partial_writes(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex", "claude")
+            blocked_parent = root / ".claude" / "skills" / "zotero"
+            blocked_parent.parent.mkdir(parents=True)
+            blocked_parent.write_text("blocking file\n", encoding="utf-8")
+            args = Args()
+            args.skills = "zotero"
+            args.install_mode = "copy"
+            selected = resolve_skills(args, manifests)
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["codex", "claude"]), install_mode="copy")
+
+            with self.assertRaisesRegex(ValueError, "non-directory parent"):
+                apply_plan(root, plan, dry_run=False)
+
+            self.assertFalse((root / ".codex" / "skills" / "zotero" / "SKILL.md").exists())
+            self.assertFalse((root / ".ai-agents-skills" / "state.json").exists())
+
+    def test_apply_allows_symlink_prefix_above_selected_root(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            base = Path(tmp)
+            real_parent = base / "real"
+            linked_parent = base / "linked"
+            real_parent.mkdir()
+            linked_parent.symlink_to(real_parent, target_is_directory=True)
+            root = linked_parent / "home" / "agent"
+            create_agent_homes(root, "codex")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["codex"]))
+            apply_plan(root, plan, dry_run=False)
+
+            target = root / ".codex" / "skills" / "zotero" / "SKILL.md"
+            self.assertTrue(target.exists())
+            self.assertFalse(target.is_symlink())
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_directory_at_skill_file_is_reported_as_conflict(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            target.mkdir(parents=True)
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["claude"]), install_mode="copy")
+            file_action = next(action for action in plan["actions"] if action["kind"] == "file")
+
+            self.assertEqual(file_action["classification"], "conflict")
+            self.assertEqual(file_action["operation"], "skip")
+            self.assertEqual(file_action["reason"], "target path is a directory")
 
     def test_apply_with_no_detected_agent_writes_no_state_run(self) -> None:
         manifests = load_manifests()
@@ -370,8 +492,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
             text = target.read_text(encoding="utf-8")
             self.assertIn("Install mode: reference", text)
             self.assertIn("Canonical skill source:", text)
-            self.assertIn("~/", text)
             self.assertIn("canonical/skills/deep-research-workflow/SKILL.md", text)
+            self.assertNotIn("\\canonical\\skills\\deep-research-workflow\\SKILL.md", text)
             self.assertNotIn("/home/", text)
             self.assertFalse((target.parent / "references").exists())
             self.assertEqual(verify(root)["status"], "ok")
@@ -409,7 +531,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue(support.is_symlink())
             self.assertEqual(verify(root)["status"], "ok")
 
-    def test_deepseek_default_symlink_mode_keeps_canonical_link(self) -> None:
+    def test_deepseek_default_reference_mode_writes_adapter(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
@@ -421,13 +543,16 @@ class PlanInstallVerifyTests(unittest.TestCase):
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, detect_agents(root))
             file_actions = [a for a in plan["actions"] if a["kind"] == "file" and a["artifact_type"] == "skill-file"]
-            self.assertEqual(file_actions[0]["install_mode"], "symlink")
+            self.assertEqual(file_actions[0]["install_mode"], "reference")
             apply_plan(root, plan, dry_run=False)
 
             target = root / ".deepseek" / "skills" / "zotero" / "SKILL.md"
             self.assertTrue(target.exists())
-            self.assertTrue(target.is_symlink())
-            self.assertIn("canonical/skills/zotero/SKILL.md", target.resolve().as_posix())
+            self.assertFalse(target.is_symlink())
+            text = target.read_text(encoding="utf-8")
+            self.assertIn("Install mode: reference", text)
+            self.assertIn("canonical/skills/zotero/SKILL.md", text)
+            self.assertNotIn("\\canonical\\skills\\zotero\\SKILL.md", text)
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_all_agent_fake_root_detects_deepseek_when_home_exists(self) -> None:
@@ -447,7 +572,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 for action in plan["actions"]
                 if action["kind"] == "file" and action["artifact_type"] == "skill-file"
             }
-            self.assertEqual(modes, {"codex": "reference", "claude": "symlink", "deepseek": "symlink"})
+            self.assertEqual(modes, {"codex": "reference", "claude": "symlink", "deepseek": "reference"})
             skill_actions = [
                 action for action in plan["actions"]
                 if action["kind"] == "file" and action["artifact_type"] == "skill-file"
@@ -474,7 +599,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             deepseek_skill = root / ".deepseek" / "skills" / "zotero" / "SKILL.md"
             self.assertFalse(codex_skill.is_symlink())
             self.assertTrue(claude_skill.is_symlink())
-            self.assertTrue(deepseek_skill.is_symlink())
+            self.assertFalse(deepseek_skill.is_symlink())
 
             uninstall(root, dry_run=False)
 
@@ -757,6 +882,29 @@ class PlanInstallVerifyTests(unittest.TestCase):
             apply_plan(root, plan, dry_run=False)
             self.assertEqual(verify(root)["status"], "ok")
 
+    def test_verify_detects_changed_managed_file_signature(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="copy")
+            apply_plan(root, plan, dry_run=False)
+            target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            target.write_text(target.read_text(encoding="utf-8") + "\nuser edit\n", encoding="utf-8")
+
+            result = verify(root)
+
+            self.assertEqual(result["status"], "failed")
+            changed = next(item for item in result["results"] if item["artifact"] == str(target))
+            checks = {check["name"]: check["ok"] for check in changed["checks"]}
+            self.assertFalse(checks["installed-signature-match"])
+
     def test_uninstall_can_remove_one_skill_without_touching_another(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -913,6 +1061,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="reference")
             apply_plan(root, plan, dry_run=False)
+            self.assertFalse(support.exists())
+            support.parent.rmdir()
             self.assertFalse(support.parent.exists())
 
             uninstall(root, skills={"deep-research-workflow"}, dry_run=False)
@@ -1125,7 +1275,15 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertTrue((REPO_ROOT / "docs" / "audit-and-migration.md").exists())
 
     def test_generated_root_and_sphinx_docs_do_not_drift(self) -> None:
+        tracked = [
+            REPO_ROOT / "README.md",
+            *((REPO_ROOT / "docs").glob("*.md")),
+            *((REPO_ROOT / "docs" / "source").glob("*.md")),
+        ]
+        before = {path: path.read_text(encoding="utf-8") for path in tracked}
         generate_docs(load_manifests())
+        after = {path: path.read_text(encoding="utf-8") for path in tracked}
+        self.assertEqual(after, before)
         shared_docs = sorted(
             path.name
             for path in (REPO_ROOT / "docs").glob("*.md")
@@ -1143,14 +1301,28 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("where pwsh", text)
         self.assertIn("where powershell.exe", text)
         self.assertIn("%*", text)
+        self.assertIn('if "%~1"=="help"', text)
+        self.assertIn("list-artifacts", text)
+        self.assertIn('if /I "%~1"=="sanitize-check"', text)
+        self.assertIn('if /I "%~1"=="test"', text)
+        self.assertIn("--run-python tools/sanitization_check.py", text)
+        self.assertIn("--run-python -m unittest discover -s tests -v", text)
         self.assertIn("no PowerShell runtime found", text)
-        self.assertLess(text.index("where pwsh"), text.index("powershell.exe"))
+        self.assertLess(text.index("where pwsh"), text.index("where powershell.exe"))
+        self.assertIn("set \"AAS_PS=pwsh\"", text)
+        self.assertIn("set \"AAS_PS=powershell.exe\"", text)
+        self.assertNotIn("if %ERRORLEVEL% EQU 0 (\n", text)
 
     def test_makefile_uses_bootstrap_python_contract_for_tests(self) -> None:
         text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertIn("./installer/bootstrap.sh --run-python -m unittest discover -s tests -v", text)
         self.assertNotIn("PYTHONPATH=. python -m unittest", text)
         self.assertIn("lifecycle-test:", text)
+        self.assertIn("help:", text)
+        self.assertIn("list-artifacts:", text)
+        self.assertIn("./installer/bootstrap.sh list-artifacts $(ARGS)", text)
+        self.assertIn("generate-docs: docs", text)
+        self.assertIn("./installer/bootstrap.sh --run-python -m sphinx", text)
 
     def test_cli_install_refuses_real_system_without_flag(self) -> None:
         code = main(["--json", "install", "--skill", "zotero", "--apply"])
@@ -1404,6 +1576,25 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertTrue(payload["dependencies"])
             dependency = next(item for item in payload["dependencies"] if item["dependency"] == "python-runtime")
             self.assertIn("graph-verifier", dependency["required_by"])
+
+    def test_cli_precheck_reports_no_agent_homes(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "precheck",
+                    "--profile",
+                    "research-core",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "no-agent-homes")
+            self.assertEqual(payload["detected_agents"], [])
+            self.assertEqual(payload["dependencies"], [])
 
     def test_cli_audit_system_reports_unmanaged_and_no_state(self) -> None:
         with fake_root() as tmp:

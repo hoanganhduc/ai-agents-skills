@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .agents import AgentTarget
+from .agents import AgentTarget, agent_home_statuses
 from .capabilities import effective_install_mode_with_evidence
 from .manifest import REPO_ROOT
 from .render import (
@@ -37,9 +37,9 @@ def build_plan(
     skill_specs = manifests["skills"]["skills"]
     state = load_state(root)
     detected_agent_names = {agent.name for agent in agents}
-    for agent_name in ("codex", "claude", "deepseek"):
-        if agent_name not in detected_agent_names:
-            skipped_agents.append({"agent": agent_name, "reason": "agent home not detected"})
+    for status in agent_home_statuses(root):
+        if status["agent"] not in detected_agent_names:
+            skipped_agents.append({"agent": status["agent"], "reason": status["reason"]})
 
     skill_actions: dict[tuple[str, str], dict[str, Any]] = {}
     for skill in skills:
@@ -146,6 +146,7 @@ def obsolete_support_file_actions(state: dict[str, Any], agent: str, skill: str)
                 "artifact_type": "skill-support-file",
                 "install_mode": item.get("install_mode"),
                 "source_path": item.get("source_path"),
+                "created_parent_dirs": item.get("created_parent_dirs", []),
                 "reason": "reference install mode does not use installed support files",
             }
         )
@@ -307,7 +308,9 @@ def classify_file_action(
 ) -> dict[str, Any]:
     can_symlink = install_mode == "symlink" and source_path is not None
     expected_hash = sha256_file(source_path) if can_symlink else sha256_text(content)
-    if not path.exists():
+    current_hash = None
+    reason = None
+    if not path.exists() and not path.is_symlink():
         if legacy_path is not None:
             classification = "legacy"
             operation = "migrate-install" if migrate else "skip"
@@ -315,7 +318,6 @@ def classify_file_action(
             classification = "missing"
             operation = "create"
     else:
-        current_hash = sha256_file(path)
         is_canonical_symlink = (
             source_path is not None
             and path.is_symlink()
@@ -327,10 +329,22 @@ def classify_file_action(
         elif install_mode != "symlink" and is_canonical_symlink:
             classification = "managed"
             operation = "update"
+        elif path.is_symlink():
+            classification = "conflict" if backup_replace else "unmanaged"
+            operation = "backup-replace" if backup_replace else "skip"
+            reason = "target path is an unmanaged symlink"
+        elif path.is_dir():
+            classification = "conflict"
+            operation = "skip"
+            reason = "target path is a directory"
+        elif not path.is_file():
+            classification = "conflict"
+            operation = "skip"
+            reason = "target path is not a regular file"
         else:
+            current_hash = sha256_file(path)
             current = path.read_text(encoding="utf-8", errors="replace")
-            if not path.is_symlink():
-                current_hash = sha256_text(current)
+            current_hash = sha256_text(current)
             if install_mode != "symlink" and current_hash == expected_hash:
                 classification = "managed"
                 operation = "noop"
@@ -371,6 +385,8 @@ def classify_file_action(
             result["fallback_content"] = fallback_content
     if legacy_path is not None:
         result["legacy_path"] = str(legacy_path)
+    if reason is not None:
+        result["reason"] = reason
     return result
 
 
