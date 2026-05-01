@@ -98,7 +98,13 @@ def load_state(root: Path) -> dict[str, Any]:
     path = state_file(root)
     if not path.exists():
         return {"schema_version": 1, "artifacts": [], "runs": []}
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"installer state is not valid JSON: {path}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"installer state must be a JSON object: {path}")
+    return data
 
 
 def save_state(root: Path, data: dict[str, Any]) -> None:

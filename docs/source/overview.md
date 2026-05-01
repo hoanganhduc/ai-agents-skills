@@ -43,8 +43,8 @@ make install ARGS="--profile research-core --dry-run"
 Use a fake root for write testing:
 
 ```bash
-make install ARGS="--profile research-core --apply --root /tmp/aas-fake-home"
-make verify ARGS="--root /tmp/aas-fake-home"
+make lifecycle-test ARGS="--matrix default --platform-shape linux"
+make verify ARGS="--root <fake-or-real-root>"
 ```
 
 ## Where To Go Next

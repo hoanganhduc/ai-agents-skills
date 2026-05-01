@@ -448,6 +448,12 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 if action["kind"] == "file" and action["artifact_type"] == "skill-file"
             }
             self.assertEqual(modes, {"codex": "reference", "claude": "symlink", "deepseek": "symlink"})
+            skill_actions = [
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            ]
+            self.assertTrue(all(action.get("mode_reason") for action in skill_actions))
+            self.assertTrue(all(action.get("capability_evidence") for action in skill_actions))
 
     def test_all_agent_fake_root_install_verify_uninstall_lifecycle(self) -> None:
         manifests = load_manifests()
@@ -1135,8 +1141,16 @@ class DocsAndLauncherTests(unittest.TestCase):
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
         text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")
         self.assertIn("where pwsh", text)
+        self.assertIn("where powershell.exe", text)
         self.assertIn("%*", text)
+        self.assertIn("no PowerShell runtime found", text)
         self.assertLess(text.index("where pwsh"), text.index("powershell.exe"))
+
+    def test_makefile_uses_bootstrap_python_contract_for_tests(self) -> None:
+        text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("./installer/bootstrap.sh --run-python -m unittest discover -s tests -v", text)
+        self.assertNotIn("PYTHONPATH=. python -m unittest", text)
+        self.assertIn("lifecycle-test:", text)
 
     def test_cli_install_refuses_real_system_without_flag(self) -> None:
         code = main(["--json", "install", "--skill", "zotero", "--apply"])
@@ -1415,6 +1429,35 @@ class DocsAndLauncherTests(unittest.TestCase):
             coverage = payload["skill_coverage"][0]
             self.assertEqual(coverage["unmanaged_canonical"], ["zotero"])
 
+    def test_cli_audit_system_migration_report_groups_existing_files(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            existing = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("user-owned zotero\n", encoding="utf-8")
+            legacy = root / ".claude" / "skills" / "deep-research" / "SKILL.md"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("legacy deep research\n", encoding="utf-8")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "audit-system",
+                    "--skills",
+                    "zotero,deep-research-workflow",
+                    "--migration-report",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            report = payload["migration_report"]["agents"][0]
+            self.assertEqual(report["canonical_unmanaged"], ["zotero"])
+            self.assertEqual(report["legacy_aliases"], {"deep-research-workflow": "deep-research"})
+            self.assertTrue(any("--migrate" in command for command in report["recommended_dry_runs"]))
+            self.assertTrue(any("--adopt" in command for command in report["recommended_dry_runs"]))
+
     def test_cli_audit_system_reports_symlink_install_as_managed(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -1449,6 +1492,110 @@ class DocsAndLauncherTests(unittest.TestCase):
             coverage = payload["skill_coverage"][0]
             self.assertEqual(coverage["managed_canonical"], ["zotero"])
             self.assertEqual(coverage["unmanaged_canonical"], [])
+
+    def test_cli_smoke_reports_managed_skill_visibility(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            with (
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(code, 0)
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                smoke_code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "smoke",
+                    "--skill",
+                    "zotero",
+                ])
+            self.assertEqual(smoke_code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["checked"], 1)
+
+    def test_cli_fake_root_lifecycle_runs_without_real_home(self) -> None:
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = main([
+                "--json",
+                "fake-root-lifecycle",
+                "--skill",
+                "zotero",
+                "--platform-shape",
+                "linux",
+            ])
+        self.assertEqual(code, 0)
+        payload = json.loads(stream.getvalue())
+        self.assertEqual(payload["status"], "ok")
+        run = payload["runs"][0]
+        self.assertEqual(run["scenario"], "custom")
+        self.assertTrue(run["install"]["dry_run_preserved_root"])
+        self.assertTrue(run["install"]["dry_apply_actions_match"])
+        self.assertEqual(run["install"]["verify_status"], "ok")
+        self.assertEqual(run["install"]["smoke_status"], "ok")
+        self.assertTrue(run["uninstall"]["dry_run_preserved_root"])
+        self.assertTrue(run["uninstall"]["dry_apply_actions_match"])
+        self.assertTrue(run["uninstall"]["final_preserved_root"])
+        self.assertEqual(run["uninstall"]["verify_status"], "no-managed-artifacts")
+
+    def test_cli_lifecycle_test_runs_named_scenarios(self) -> None:
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = main([
+                "--json",
+                "lifecycle-test",
+                "--scenarios",
+                "clean-auto,adopt-unmanaged,migrate-legacy",
+                "--platform-shape",
+                "linux",
+            ])
+        self.assertEqual(code, 0)
+        payload = json.loads(stream.getvalue())
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["scenario_count"], 3)
+        self.assertEqual(payload["run_count"], 3)
+        self.assertTrue(all(run["install"]["dry_run_preserved_root"] for run in payload["runs"]))
+        self.assertTrue(all(run["install"]["dry_apply_actions_match"] for run in payload["runs"]))
+        self.assertTrue(all(run["uninstall"]["final_preserved_root"] for run in payload["runs"]))
+
+    def test_cli_lifecycle_test_stress_runs_state_checks(self) -> None:
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            code = main([
+                "--json",
+                "lifecycle-test",
+                "--matrix",
+                "stress",
+                "--platform-shape",
+                "linux",
+            ])
+        self.assertEqual(code, 0)
+        payload = json.loads(stream.getvalue())
+        self.assertEqual(payload["status"], "ok")
+        self.assertGreaterEqual(payload["scenario_count"], 18)
+        self.assertEqual(
+            {item["check"] for item in payload["state_checks"]},
+            {
+                "changed-managed-file-preserved",
+                "missing-managed-file-forget",
+                "outside-root-state-refused",
+                "corrupt-state-reports-error",
+            },
+        )
+        self.assertTrue(all(item["status"] == "ok" for item in payload["state_checks"]))
 
     def test_cli_with_deps_installs_entrypoint_backing_skill(self) -> None:
         with fake_root() as tmp:
