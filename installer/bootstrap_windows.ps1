@@ -37,10 +37,6 @@ function Find-Python {
     if ((Test-Path -LiteralPath $RepoPosixPython) -and (Test-Python $RepoPosixPython)) {
         return $RepoPosixPython
     }
-    $Py = Get-Command py -ErrorAction SilentlyContinue
-    if ($Py -and (Test-Python "py -3")) {
-        return "py -3"
-    }
     $Python = Get-Command python -ErrorAction SilentlyContinue
     if ($Python -and (Test-Python $Python.Source)) {
         return $Python.Source
@@ -48,6 +44,10 @@ function Find-Python {
     $PythonExe = Get-Command python.exe -ErrorAction SilentlyContinue
     if ($PythonExe -and (Test-Python $PythonExe.Source)) {
         return $PythonExe.Source
+    }
+    $Py = Get-Command py -ErrorAction SilentlyContinue
+    if ($Py -and (Test-Python "py -3")) {
+        return "py -3"
     }
     throw "No usable Python 3.10+ runtime with ssl, venv, and pip found. Set AAS_PYTHON to a compatible interpreter."
 }

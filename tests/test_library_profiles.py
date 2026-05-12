@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from installer.ai_agents_skills.library_profiles import audit_library_profiles
@@ -35,9 +36,10 @@ class LibraryProfileAuditTests(unittest.TestCase):
             root = Path(tmp)
             db = root / ".codex" / "runtime" / "workspace" / "data" / "calibre" / "cache" / "metadata.db"
             db.parent.mkdir(parents=True)
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn:
                 conn.execute("create table books (id integer primary key, path text)")
                 conn.execute("insert into books (id, path) values (1, 'Author/Book (1)')")
+                conn.commit()
 
             result = audit_library_profiles(root, platform="linux", system_profile="linux-local")
             candidate = result["calibre"]["candidates"][0]
@@ -53,9 +55,10 @@ class LibraryProfileAuditTests(unittest.TestCase):
             db = mounted_root / "Calibre Library" / "metadata.db"
             book_dir = mounted_root / "Calibre Library" / "Author" / "Book (1)"
             book_dir.mkdir(parents=True)
-            with sqlite3.connect(db) as conn:
+            with closing(sqlite3.connect(db)) as conn:
                 conn.execute("create table books (id integer primary key, path text)")
                 conn.execute("insert into books (id, path) values (1, 'Author/Book (1)')")
+                conn.commit()
 
             result = audit_library_profiles(
                 mounted_root,
