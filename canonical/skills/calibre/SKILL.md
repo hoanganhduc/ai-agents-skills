@@ -41,6 +41,39 @@ Shared runner:
 
 - `bash ~/.codex/runtime/run_skill.sh`
 
+## Local Library Profile Gate
+
+Do not assume Calibre settings, library, or `metadata.db` locations. Before
+library-changing work, run or rely on a profile-aware read-only audit from the
+canonical installer:
+
+```bash
+cd ~/ai-agents-skills && make library-profile-audit ARGS="--profile library --json"
+```
+
+Discovery only lists candidates. It must distinguish authoritative Calibre
+libraries from runtime caches before any add, update, remove, convert, or sync
+operation. If no authoritative local Calibre database is found, mark the
+profile `local-db-missing`; do not create a library and do not treat cache DBs
+as writable libraries.
+
+Supported system profiles:
+
+- `linux-local`
+- `windows-mounted` for Linux-side inspection of `/windows/Users/...`
+- `windows-native` for native Windows execution
+
+Calibre candidate validation must check `metadata.db`, quick-check status, book
+count, author/book file-tree consistency, canonical real path, symlink/mount or
+cloud-backed classification, and runtime-cache roots. Runtime caches are never
+mutation-authoritative even when their book count matches the real library.
+
+Writes prefer a detected `calibredb` or `calibredb.exe` backend with an
+explicit library path. Guarded direct SQLite is fallback only and requires
+backup, lock, selected library root, and explicit warning. Windows-mounted or
+cloud-backed Calibre libraries are read-only from Linux unless the profile
+explicitly opts in after dry-run review.
+
 ## Core commands
 
 Use `functions.exec_command`.
@@ -124,7 +157,11 @@ bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh clean
 
 ## Operational model
 
-- The library is Google-Drive-backed and reads/writes `metadata.db` directly; no `calibredb` binary is required for normal operations.
+- Library access is profile-selected. Older Google-Drive-backed direct-SQLite
+  cache workflows may still exist, but profile-aware local-library validation
+  must run before treating any `metadata.db` as authoritative.
+- Prefer a detected `calibredb`/`calibredb.exe` backend for authoritative
+  library writes; direct SQLite is a guarded fallback only.
 - Book files are downloaded to staging on demand rather than stored permanently in the workspace.
 - After write operations, the updated `metadata.db` is pushed back to Drive and the local cache is refreshed.
 - A file lock protects `metadata.db` from concurrent write conflicts.

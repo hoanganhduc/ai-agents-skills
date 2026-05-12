@@ -58,9 +58,9 @@ def has_sensitive_material(text: str) -> bool:
     if EMAIL_PATTERN.search(text):
         return True
     if (
-        LINUX_HOME_PATTERN.search(text)
-        or WINDOWS_HOME_PATTERN.search(text)
-        or WINDOWS_NATIVE_HOME_PATTERN.search(text)
+        has_non_placeholder_match(LINUX_HOME_PATTERN, text)
+        or has_non_placeholder_match(WINDOWS_HOME_PATTERN, text)
+        or has_non_placeholder_match(WINDOWS_NATIVE_HOME_PATTERN, text)
     ):
         return True
     home = str(Path.home())
@@ -69,4 +69,13 @@ def has_sensitive_material(text: str) -> bool:
     for pattern in TOKEN_PATTERNS:
         if pattern.search(text):
             return True
+    return False
+
+
+def has_non_placeholder_match(pattern: re.Pattern[str], text: str) -> bool:
+    for match in pattern.finditer(text):
+        value = match.group(0)
+        if value.endswith("/...") or value.endswith("\\..."):
+            continue
+        return True
     return False

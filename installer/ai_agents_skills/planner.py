@@ -434,6 +434,21 @@ def classify_block(path: Path, skill: str) -> str:
     return "missing"
 
 
+def current_block(path: Path, skill: str) -> str | None:
+    if not path.exists():
+        return None
+    content = path.read_text(encoding="utf-8", errors="replace")
+    start_marker = f"<!-- {block_id(skill)}:start -->"
+    end_marker = f"<!-- {block_id(skill)}:end -->"
+    start = content.find(start_marker)
+    if start == -1:
+        return None
+    end = content.find(end_marker, start)
+    if end == -1:
+        return None
+    return content[start:end + len(end_marker)]
+
+
 def classify_instruction_block(
     agent: AgentTarget,
     skill: str,
@@ -452,6 +467,16 @@ def classify_instruction_block(
         operation = "skip"
         reason = "canonical skill missing; legacy alias not migrated"
 
+    classification = classify_block(agent.instructions_file, skill)
+    existing_block = current_block(agent.instructions_file, skill)
+    if (
+        operation == "upsert"
+        and classification == "managed"
+        and existing_block is not None
+        and existing_block.strip() == block.strip()
+    ):
+        operation = "noop"
+
     action = {
         "kind": "managed-block",
         "agent": agent.name,
@@ -459,7 +484,7 @@ def classify_instruction_block(
         "path": str(agent.instructions_file),
         "block_id": block_id(skill),
         "content": block,
-        "classification": classify_block(agent.instructions_file, skill),
+        "classification": classification,
         "operation": operation,
         "artifact_type": "instruction-block",
     }

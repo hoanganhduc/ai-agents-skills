@@ -40,6 +40,47 @@ Shared runner:
 
 - `bash ~/.codex/runtime/run_skill.sh`
 
+## Local Library Profile Gate
+
+Do not assume Zotero settings, database, storage, Translation Server, or
+WebDAV paths. Before library-changing work, run or rely on a profile-aware
+audit from the canonical installer:
+
+```bash
+cd ~/ai-agents-skills && make library-profile-audit ARGS="--profile library --json"
+```
+
+The audit is read-only. Discovery does not make a path authoritative. A Zotero
+database/storage path becomes mutation-eligible only after validation and
+explicit profile selection.
+
+Supported system profiles:
+
+- `linux-local`
+- `windows-mounted` for Linux-side inspection of `/windows/Users/...`
+- `windows-native` for native Windows execution
+
+Mounted Windows and cloud-backed SQLite databases are read-only by default from
+Linux. If no local Zotero database is found, mark the profile
+`local-db-missing`; do not create a database and do not use runtime caches as
+authoritative state. Remote-only Zotero API/WebDAV workflows may continue only
+when credentials are configured and the result is labeled remote-only.
+
+Default Zotero mutation must use this order:
+
+1. selected local DB/storage diagnostic preflight
+2. Translation Server metadata resolution when metadata is needed
+3. Zotero API mutation bound to explicit library scope
+4. WebDAV sync for attachment-affecting changes
+5. API/WebDAV/local diagnostic verification
+
+Direct `zotero.sqlite` writes are expert repair only. They require Zotero to be
+closed, DB/WAL/SHM/storage backups, a copied working DB, integrity checks
+before and after, a transaction journal, and explicit confirmation.
+
+Storage checks must report local `storage/`, linked files, API attachment
+records, and WebDAV zips separately.
+
 ## Core commands
 
 Use `functions.exec_command`.

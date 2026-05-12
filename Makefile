@@ -1,4 +1,4 @@
-.PHONY: help doctor precheck audit-system openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test list-skills list-artifacts docs generate-docs docs-site sanitize-check test
+.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test list-skills list-artifacts docs generate-docs docs-site sanitize-check test
 
 ARGS ?=
 
@@ -13,6 +13,9 @@ precheck:
 
 audit-system:
 	./installer/bootstrap.sh audit-system $(ARGS)
+
+library-profile-audit:
+	./installer/bootstrap.sh library-profile-audit $(ARGS)
 
 openclaw-inventory:
 	./installer/bootstrap.sh openclaw-inventory $(ARGS)

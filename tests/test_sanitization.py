@@ -39,7 +39,9 @@ class SanitizationTests(unittest.TestCase):
 
     def test_sensitive_material_detector_ignores_placeholders(self) -> None:
         self.assertFalse(has_sensitive_material("<LINUX_HOME> <WINDOWS_HOME> <EMAIL>"))
+        self.assertFalse(has_sensitive_material("inspect `/windows/Users/...` from Linux"))
         self.assertTrue(has_sensitive_material("/home/exampleuser/file"))
+        self.assertTrue(has_sensitive_material("/windows/Users/exampleuser/.codex"))
 
 
 if __name__ == "__main__":
