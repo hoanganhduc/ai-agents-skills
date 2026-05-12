@@ -20,6 +20,8 @@ Latest update: {sub-ref}`today`
   migration, hook, or runtime behavior.
 - Dependency questions: use [Dependencies](dependencies.md), then check the
   platform-specific [Windows](windows.md) or [Linux](linux.md) notes.
+- Zotero/Calibre local-library changes: run
+  [Local Library Profiles](local-library-profiles.md) before choosing paths.
 - Unsure what will be written: read [Agent Locations](agent-locations.md) and
   [Verification](verification.md).
 - Research workflow motivation: start with
@@ -48,6 +50,7 @@ profiles
 dependencies
 system-profile
 agent-locations
+local-library-profiles
 audit-and-migration
 openclaw-integration-plan
 verification
