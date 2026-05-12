@@ -91,6 +91,8 @@ filesystem must have regular files inside the settings directory.
   tools map to skills.
 - [docs/agent-locations.md](docs/agent-locations.md): supported agent config, skill, template, command,
   persona, and tool-shim locations.
+- [docs/local-library-profiles.md](docs/local-library-profiles.md): local Zotero/Calibre
+  discovery, profile selection, and mutation safety rules.
 - [docs/audit-and-migration.md](docs/audit-and-migration.md): audit output, staged migration, unmanaged
   local skill handling, and Windows-native verification notes.
 - [docs/openclaw-integration-plan.md](docs/openclaw-integration-plan.md): gated OpenClaw integration plan,

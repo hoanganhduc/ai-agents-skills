@@ -7,6 +7,7 @@
       "candidates": {
         "linux": [
           "${AAS_PYTHON}",
+          "~/.agents_skills_venv/bin/python",
           "./.venv/bin/python",
           "~/.codex/.venv/bin/python",
           "~/.claude/.venv/bin/python",
@@ -15,6 +16,7 @@
         ],
         "windows": [
           "%AAS_PYTHON%",
+          ".agents_skills_venv\\Scripts\\python.exe",
           ".codex\\.venv\\Scripts\\python.exe",
           ".claude\\.venv\\Scripts\\python.exe",
           ".venv\\Scripts\\python.exe",
@@ -185,6 +187,7 @@
   "python_candidate_sets": {
     "default": {
       "linux": [
+        "~/.agents_skills_venv/bin/python",
         "python-runtime",
         "~/.codex/.venv/bin/python",
         "~/.claude/.venv/bin/python",
@@ -192,6 +195,7 @@
         "./.venv/bin/python"
       ],
       "windows": [
+        ".agents_skills_venv\\Scripts\\python.exe",
         "python-runtime",
         ".codex\\.venv\\Scripts\\python.exe",
         ".claude\\.venv\\Scripts\\python.exe",
@@ -206,6 +210,7 @@
     "docling": {
       "linux": [
         "~/.local/share/docling-venv/bin/python",
+        "~/.agents_skills_venv/bin/python",
         "python-runtime",
         "~/.codex/.venv/bin/python",
         "~/.claude/.venv/bin/python",
@@ -213,6 +218,7 @@
       ],
       "windows": [
         ".venv-docling\\Scripts\\python.exe",
+        ".agents_skills_venv\\Scripts\\python.exe",
         ".codex\\.venv\\Scripts\\python.exe",
         ".claude\\.venv\\Scripts\\python.exe",
         "python-runtime",
@@ -225,12 +231,14 @@
     },
     "agent": {
       "linux": [
+        "~/.agents_skills_venv/bin/python",
         "~/.codex/.venv/bin/python",
         "~/.claude/.venv/bin/python",
         "python-runtime",
         "./.venv/bin/python"
       ],
       "windows": [
+        ".agents_skills_venv\\Scripts\\python.exe",
         ".codex\\.venv\\Scripts\\python.exe",
         ".claude\\.venv\\Scripts\\python.exe",
         "python-runtime",
@@ -245,6 +253,7 @@
   "python_site_candidate_sets": {
     "default": {
       "linux": [
+        "~/.agents_skills_venv/lib/python*/site-packages",
         "~/.codex/.local/lib/python*/site-packages",
         "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
         "~/.codex/runtime/workspace/.local/local/lib/python*/dist-packages",
@@ -254,6 +263,7 @@
         "~/.local/share/docling-venv/lib/python*/site-packages"
       ],
       "windows": [
+        ".agents_skills_venv\\Lib\\site-packages",
         ".codex\\.venv\\Lib\\site-packages",
         ".claude\\.venv\\Lib\\site-packages",
         ".venv-docling\\Lib\\site-packages",
@@ -268,12 +278,14 @@
     "docling": {
       "linux": [
         "~/.local/share/docling-venv/lib/python*/site-packages",
+        "~/.agents_skills_venv/lib/python*/site-packages",
         "~/.codex/.local/lib/python*/site-packages",
         "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
         "~/.claude/.local/lib/python*/site-packages"
       ],
       "windows": [
         ".venv-docling\\Lib\\site-packages",
+        ".agents_skills_venv\\Lib\\site-packages",
         ".codex\\.venv\\Lib\\site-packages",
         ".claude\\.venv\\Lib\\site-packages",
         ".venv\\Lib\\site-packages",
@@ -286,12 +298,14 @@
     },
     "agent": {
       "linux": [
+        "~/.agents_skills_venv/lib/python*/site-packages",
         "~/.codex/.local/lib/python*/site-packages",
         "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
         "~/.claude/.local/lib/python*/site-packages",
         "~/.local/lib/python*/site-packages"
       ],
       "windows": [
+        ".agents_skills_venv\\Lib\\site-packages",
         ".codex\\.venv\\Lib\\site-packages",
         ".claude\\.venv\\Lib\\site-packages",
         ".venv\\Lib\\site-packages",

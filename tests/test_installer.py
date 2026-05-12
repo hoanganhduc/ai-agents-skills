@@ -280,6 +280,23 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(file_actions[0]["operation"], "skip")
             self.assertEqual(block_actions[0]["operation"], "skip")
 
+    def test_matching_instruction_block_replans_as_noop(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            selected = ["zotero"]
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            apply_plan(root, plan, dry_run=False)
+            next_plan = build_plan(root, manifests, selected, detect_agents(root))
+            block_actions = [a for a in next_plan["actions"] if a["kind"] == "managed-block"]
+
+            self.assertEqual(block_actions[0]["classification"], "managed")
+            self.assertEqual(block_actions[0]["operation"], "noop")
+
     def test_codex_optional_agents_skill_dir_is_skipped_by_default(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:

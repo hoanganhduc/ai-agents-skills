@@ -65,7 +65,15 @@
         "pytest-python-package",
         "responses-python-package"
       ],
-      "optional_capabilities": ["library-auth", "webdav-sync"],
+      "optional_capabilities": [
+        "library-auth",
+        "local-library-discovery",
+        "profile-selected-zotero-db",
+        "zotero-translation-server",
+        "zotero-api-mutation",
+        "webdav-mutation-sync",
+        "zotero-repair-mode"
+      ],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "calibre": {
@@ -83,7 +91,12 @@
         "google-api-python-client-package",
         "google-auth-python-package"
       ],
-      "optional_capabilities": ["library-sync"],
+      "optional_capabilities": [
+        "library-sync",
+        "local-library-discovery",
+        "profile-selected-calibre-library",
+        "calibre-cli-write"
+      ],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "getscipapers-requester": {

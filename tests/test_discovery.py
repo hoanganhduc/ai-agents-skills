@@ -32,6 +32,24 @@ class DiscoveryTests(unittest.TestCase):
         candidates = {"linux": ["python3"], "windows": ["python.exe"]}
         self.assertEqual(candidates_for_platform(candidates, "macos"), ["python3"])
 
+    def test_default_python_candidates_include_shared_agents_venv(self) -> None:
+        manifests = load_manifests()
+        candidates = manifests["dependencies"]["python_candidate_sets"]["default"]
+        site_candidates = manifests["dependencies"]["python_site_candidate_sets"]["default"]
+        self.assertIn("~/.agents_skills_venv/bin/python", candidates_for_platform(candidates, "linux"))
+        self.assertIn(
+            "~/.agents_skills_venv/lib/python*/site-packages",
+            candidates_for_platform(site_candidates, "linux"),
+        )
+        self.assertIn(
+            ".agents_skills_venv\\Scripts\\python.exe",
+            candidates_for_platform(candidates, "windows"),
+        )
+        self.assertIn(
+            ".agents_skills_venv\\Lib\\site-packages",
+            candidates_for_platform(site_candidates, "windows"),
+        )
+
     def test_wsl_sage_candidate_is_degraded_not_windows_package(self) -> None:
         manifests = load_manifests()
         spec = manifests["dependencies"]["tools"]["sage-runtime"]

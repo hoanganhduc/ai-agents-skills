@@ -15,6 +15,7 @@ from .docs import generate_docs
 from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
 from .lifecycle_matrix import run_lifecycle_matrix
+from .library_profiles import SYSTEM_PROFILES, audit_library_profiles
 from .manifest import load_manifests, skill_names
 from .openclaw_apply import apply_manifest_file as apply_openclaw_manifest_file
 from .openclaw_apply import uninstall_manifest as uninstall_openclaw_manifest
@@ -75,6 +76,15 @@ def build_parser() -> argparse.ArgumentParser:
     describe_artifact = sub.add_parser("describe-artifact")
     describe_artifact.add_argument("artifact")
     sub.add_parser("generate-docs")
+
+    library_profile_audit = sub.add_parser("library-profile-audit")
+    library_profile_audit.add_argument("--profile", help="optional skill profile label for reporting")
+    library_profile_audit.add_argument("--system-profile", choices=SYSTEM_PROFILES)
+    library_profile_audit.add_argument(
+        "--skip-integrity",
+        action="store_true",
+        help="skip SQLite quick_check for faster read-only candidate discovery",
+    )
 
     openclaw_inventory = sub.add_parser("openclaw-inventory")
     openclaw_inventory.add_argument(
@@ -281,6 +291,16 @@ def run(args: argparse.Namespace) -> int:
     if args.command == "generate-docs":
         written = generate_docs(manifests)
         return output({"written": [str(path) for path in written]}, args)
+    if args.command == "library-profile-audit":
+        result = audit_library_profiles(
+            args.root,
+            platform=args.platform,
+            system_profile=args.system_profile,
+            run_integrity=not args.skip_integrity,
+        )
+        if args.profile:
+            result["selected_skill_profile"] = args.profile
+        return output(result, args)
     if args.command == "openclaw-inventory":
         return output(
             build_inventory(
@@ -1127,6 +1147,7 @@ def command_help() -> dict[str, Any]:
         "doctor",
         "precheck",
         "audit-system",
+        "library-profile-audit",
         "plan",
         "install",
         "verify",
