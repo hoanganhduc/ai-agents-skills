@@ -81,6 +81,55 @@ before and after, a transaction journal, and explicit confirmation.
 Storage checks must report local `storage/`, linked files, API attachment
 records, and WebDAV zips separately.
 
+## Translation Server
+
+The local Translation Server should be available at:
+
+- `http://localhost:1969`
+
+This system uses a locally owned GHCR image built from the fork:
+
+- repo: `https://github.com/hoanganhduc/translation-server`
+- image: `ghcr.io/hoanganhduc/translation-server:latest`
+- container: `zotero-translation-server`
+- port mapping: `1969:1969`
+- restart policy: `unless-stopped`
+
+Do not assume the Docker Hub image is usable on this host. On this AMD64 Linux
+system, `zotero/translation-server:latest` pulled as ARM64 and failed with
+`exec format error`. Prefer the GHCR image above unless the host-specific image
+support has been rechecked.
+
+Status checks:
+
+```bash
+docker ps --filter name=zotero-translation-server --format '{{.Names}} {{.Image}} {{.Status}} {{.Ports}}'
+```
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:1969/
+```
+
+`404` from the root endpoint is acceptable. For a functional metadata smoke
+test, POST a DOI or URL to `/web` and confirm Zotero JSON is returned.
+
+```bash
+curl -s -X POST -H 'Content-Type: text/plain' --data 'https://doi.org/10.1038/nphys1170' http://localhost:1969/web
+```
+
+When starting or repairing the local server, prefer the runtime helper:
+
+```bash
+bash ~/.codex/runtime/workspace/skills/zotero/scripts/start-translation-server.sh
+```
+
+Then run `doctor` and require the Translation Server check to pass before
+metadata-dependent add/update workflows:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh doctor
+```
+
 ## Core commands
 
 Use `functions.exec_command`.
