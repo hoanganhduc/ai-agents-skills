@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -268,7 +269,7 @@ def sqlite_uri(path: Path) -> str:
 
 def sqlite_quick_check(path: Path) -> SqliteCheck:
     try:
-        with sqlite3.connect(sqlite_uri(path), uri=True, timeout=2) as conn:
+        with closing(sqlite3.connect(sqlite_uri(path), uri=True, timeout=2)) as conn:
             row = conn.execute("PRAGMA quick_check").fetchone()
         value = str(row[0]) if row else ""
         return SqliteCheck("ok" if value.lower() == "ok" else "malformed", quick_check=value)
@@ -282,7 +283,7 @@ def sqlite_count(path: Path, table: str) -> int | None:
     if table not in {"items", "books"}:
         raise ValueError(f"unsupported table count: {table}")
     try:
-        with sqlite3.connect(sqlite_uri(path), uri=True, timeout=2) as conn:
+        with closing(sqlite3.connect(sqlite_uri(path), uri=True, timeout=2)) as conn:
             row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()
         return int(row[0]) if row else None
     except (sqlite3.DatabaseError, OSError):
@@ -292,7 +293,7 @@ def sqlite_count(path: Path, table: str) -> int | None:
 def calibre_file_tree_check(db_path: Path, library_root: Path) -> dict[str, Any]:
     checked: list[dict[str, Any]] = []
     try:
-        with sqlite3.connect(sqlite_uri(db_path), uri=True, timeout=2) as conn:
+        with closing(sqlite3.connect(sqlite_uri(db_path), uri=True, timeout=2)) as conn:
             rows = conn.execute(
                 "SELECT id, path FROM books WHERE path IS NOT NULL ORDER BY id LIMIT 5"
             ).fetchall()
