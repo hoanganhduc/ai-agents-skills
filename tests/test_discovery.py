@@ -58,7 +58,10 @@ class DiscoveryTests(unittest.TestCase):
             checked = result.get("checked", [])
             self.assertTrue(any(item.get("scope") == "wsl" for item in checked))
         else:
-            self.assertIn(result["scope"], {"wsl", "wsl-local", "wsl-rootfs", "user-local", "system", "repo-local"})
+            self.assertIn(
+                result["scope"],
+                {"wsl", "wsl-local", "wsl-rootfs", "wsl-vhdx", "user-local", "system", "repo-local"},
+            )
 
     def test_windows_target_posix_command_is_wsl_substrate(self) -> None:
         self.assertEqual(substrate_for("windows", "/usr/bin/python"), "wsl")
