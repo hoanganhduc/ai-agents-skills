@@ -38,13 +38,15 @@ def load_manifests() -> dict[str, Any]:
     dependencies = load_json_yaml(MANIFEST_DIR / "dependencies.yaml")
     artifacts = load_json_yaml(MANIFEST_DIR / "artifacts.yaml")
     system_dependencies = load_json_yaml(MANIFEST_DIR / "system-dependencies.yaml")
-    validate_manifests(skills, profiles, dependencies, artifacts, system_dependencies)
+    runtime = load_json_yaml(MANIFEST_DIR / "runtime.yaml")
+    validate_manifests(skills, profiles, dependencies, artifacts, system_dependencies, runtime)
     return {
         "skills": skills,
         "profiles": profiles,
         "dependencies": dependencies,
         "artifacts": artifacts,
         "system_dependencies": system_dependencies,
+        "runtime": runtime,
     }
 
 
@@ -54,6 +56,7 @@ def validate_manifests(
     dependencies: dict[str, Any],
     artifacts: dict[str, Any],
     system_dependencies: dict[str, Any],
+    runtime: dict[str, Any],
 ) -> None:
     if "skills" not in skills or not isinstance(skills["skills"], dict):
         raise ManifestError("skills.yaml must contain a skills object")
@@ -109,6 +112,34 @@ def validate_manifests(
         for item in spec.get("artifacts", []):
             if item not in declared_artifacts:
                 raise ManifestError(f"artifact profile {profile_name} references unknown artifact {item}")
+
+    if "runtime_profiles" not in runtime or not isinstance(runtime["runtime_profiles"], dict):
+        raise ManifestError("runtime.yaml must contain runtime_profiles")
+    if "skills" not in runtime or not isinstance(runtime["skills"], dict):
+        raise ManifestError("runtime.yaml must contain skills")
+    runtime_source_root = REPO_ROOT / "canonical" / "runtime"
+    for entry in runtime.get("runners", []):
+        validate_runtime_file(entry, runtime_source_root, "runner")
+    for skill, spec in runtime["skills"].items():
+        if skill not in skills["skills"]:
+            raise ManifestError(f"runtime skill {skill} is not declared in skills.yaml")
+        if "_" in spec.get("runtime_dir", ""):
+            raise ManifestError(f"runtime skill {skill} runtime_dir must use canonical kebab-case")
+        for entry in spec.get("files", []):
+            validate_runtime_file(entry, runtime_source_root, f"runtime skill {skill}")
+
+
+def validate_runtime_file(entry: dict[str, Any], runtime_source_root: Path, owner: str) -> None:
+    for field in ("source", "target", "platforms", "type", "newline", "mode"):
+        if field not in entry:
+            raise ManifestError(f"{owner} runtime file is missing {field}")
+    source = runtime_source_root / entry["source"]
+    if not source.is_file():
+        raise ManifestError(f"{owner} runtime source does not exist: {entry['source']}")
+    if Path(entry["source"]).is_absolute() or ".." in Path(entry["source"]).parts:
+        raise ManifestError(f"{owner} runtime source must stay under canonical/runtime: {entry['source']}")
+    if Path(entry["target"]).is_absolute() or ".." in Path(entry["target"]).parts:
+        raise ManifestError(f"{owner} runtime target must be relative and contained: {entry['target']}")
 
 
 def skill_names(manifests: dict[str, Any]) -> list[str]:

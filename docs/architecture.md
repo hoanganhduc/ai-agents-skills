@@ -10,6 +10,8 @@ The manifests are the source of truth:
 - `manifest/profiles.yaml` defines selectable skill bundles.
 - `manifest/artifacts.yaml` defines optional templates, personas,
   instruction docs, entrypoints, and management notices.
+- `manifest/runtime.yaml` defines portable runtime runners and runtime-backed
+  skill files that may be copied into a local runtime root.
 - `manifest/dependencies.yaml` and `manifest/system-dependencies.yaml` define
   logical tools and sanitized maintainer-system dependency observations.
 
@@ -27,7 +29,9 @@ Install flow:
    into each supported target format.
 4. Add managed instruction blocks only for skills or artifacts that are
    installed, adopted, migrated, updated, or already managed.
-5. Record hashes, source paths, install modes, and ownership metadata for
+5. Add root-scoped `runtime-file` actions for selected runtime-backed skills
+   according to `--runtime-profile` and `--runtime-root`.
+6. Record hashes, source paths, install modes, and ownership metadata for
    verification, uninstall, and rollback.
 
 Artifact classes:
@@ -42,6 +46,7 @@ Artifact classes:
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
 | `entrypoint-alias` | Optional quick-action aliases. Claude receives command files; Codex and DeepSeek receive reference documents. |
+| `runtime-file` | Root-scoped copied runtime runners and skill helper files. Runtime files are never installed as per-agent skills and are verified by transformed source hash, newline policy, mode, and secret scan. |
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
@@ -53,6 +58,8 @@ Safety boundary:
 
 - auth files, API keys, provider config, session logs, downloaded libraries,
   and local runtime state are not managed by this repo
+- runtime configs, databases, caches, downloaded documents, symlinks, and
+  persistence-oriented scripts are denied by runtime inventory and source gates
 - unmanaged user files are skipped unless `--adopt`, `--backup-replace`, or
   `--migrate` is selected explicitly
 - uninstall and rollback require confirmation when applied and affect only

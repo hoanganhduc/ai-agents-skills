@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .render import MANAGED_MARKER, block_id
+from .runtime import runtime_mode_ok, runtime_newline_ok
 from .sanitize import has_sensitive_material
 from .state import artifact_signature, load_state, sha256_file, signatures_match
 
@@ -75,6 +76,16 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
+    if artifact.get("artifact_type") == "runtime-file" and path.exists():
+        checks.append({
+            "name": "source-hash-match",
+            "ok": artifact.get("source_sha256") is not None and sha256_file(path) == artifact.get("source_sha256"),
+        })
+        checks.append({"name": "runtime-mode", "ok": runtime_mode_ok(path, artifact.get("mode"))})
+        checks.append({"name": "runtime-newline-policy", "ok": runtime_newline_ok(path, artifact.get("newline_policy"))})
+        if artifact.get("file_type") == "text":
+            text = path.read_text(encoding="utf-8", errors="replace")
+            checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
     if artifact.get("artifact_type") in {"instruction-block", "management-notice"} and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
         managed_block = extract_managed_block(text, block_id(artifact["skill"]))

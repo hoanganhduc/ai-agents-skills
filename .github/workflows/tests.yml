@@ -54,6 +54,12 @@ jobs:
       - name: Run unit tests
         run: make test
 
+      - name: Install runtime smoke dependencies
+        run: python -m pip install networkx psutil
+
+      - name: Run runtime smoke
+        run: make runtime-smoke
+
       - name: Verify generated docs are current
         run: |
           make docs
@@ -84,6 +90,12 @@ jobs:
 
       - name: Run unit tests
         run: make test
+
+      - name: Install runtime smoke dependencies
+        run: python -m pip install networkx psutil
+
+      - name: Run runtime smoke
+        run: make runtime-smoke
 
       - name: Run platform lifecycle smoke
         run: make lifecycle-test ARGS="--matrix default --platform-shape macos"
@@ -122,6 +134,14 @@ jobs:
       - name: Run unit tests
         shell: cmd
         run: make.bat test
+
+      - name: Install runtime smoke dependencies
+        shell: cmd
+        run: python -m pip install networkx psutil
+
+      - name: Run runtime smoke
+        shell: cmd
+        run: make.bat runtime-smoke
 
       - name: Run platform lifecycle smoke
         shell: cmd

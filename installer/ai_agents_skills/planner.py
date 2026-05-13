@@ -18,6 +18,7 @@ from .render import (
     render_reference_skill_md,
     render_skill_md,
 )
+from .runtime import build_runtime_actions
 from .state import load_state, sha256_file, sha256_text
 
 
@@ -31,6 +32,9 @@ def build_plan(
     migrate: bool = False,
     artifacts: list[tuple[str, str]] | None = None,
     install_mode: str = "auto",
+    runtime_profile: str = "auto",
+    runtime_root: Path | None = None,
+    platform: str | None = None,
 ) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
     skipped_agents = []
@@ -119,6 +123,18 @@ def build_plan(
                     backup_replace=backup_replace,
                 )
             )
+    actions.extend(
+        build_runtime_actions(
+            root=root,
+            manifests=manifests,
+            selected_skills=skills,
+            agents=agents,
+            runtime_profile=runtime_profile,
+            runtime_root=runtime_root,
+            platform=platform,
+            backup_replace=backup_replace,
+        )
+    )
     return {"actions": actions, "skipped_agents": skipped_agents, "root": str(root)}
 
 
