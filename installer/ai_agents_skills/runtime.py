@@ -43,7 +43,6 @@ STATE_DENIED_PATTERNS = (
     "**/*.epub",
     "**/*.zip",
 )
-LOCAL_MARKERS = ("hoanganhduc", "/home/ubuntu", "Ubuntu-24.04", "ghcr.io/hoanganhduc")
 PERSISTENCE_MARKERS = (
     ("restart: unless-stopped", "docker restart policy"),
     ("--restart=unless-stopped", "docker restart policy"),
@@ -253,9 +252,6 @@ def runtime_source_block_reason(source: Path, entry: dict[str, Any]) -> str | No
             return "text runtime source is not valid UTF-8"
         if has_sensitive_material(text):
             return "runtime source contains sensitive material or personal paths"
-        for marker in LOCAL_MARKERS:
-            if marker in text:
-                return f"runtime source contains non-portable marker: {marker}"
         persistence_reason = runtime_persistence_block_reason(text)
         if persistence_reason:
             return persistence_reason
@@ -444,9 +440,6 @@ def runtime_inventory(source_root: Path, max_entries: int = 5000) -> dict[str, A
                 if has_sensitive_material(text):
                     entry["classification"] = "blocked"
                     entry["reason"] = "sensitive material or personal path"
-                elif any(marker in text for marker in LOCAL_MARKERS):
-                    entry["classification"] = "blocked"
-                    entry["reason"] = "non-portable local marker"
                 else:
                     persistence_reason = runtime_persistence_block_reason(text)
                     if persistence_reason:
