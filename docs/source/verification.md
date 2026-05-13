@@ -39,10 +39,12 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 make lifecycle-test ARGS="--matrix full --platform-shape linux"
 make lifecycle-test ARGS="--matrix stress --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
+make runtime-smoke
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
 make verify ARGS="--skills zotero,docling --root <fake-or-real-root>"
 make smoke ARGS="--skill zotero --root <fake-or-real-root>"
+python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
 Result meanings:
@@ -77,6 +79,15 @@ Current support-file checks:
 - `A4 symlink`, `source-exists`, and `source-match` for symlinked support files
 - `A5 no-secret-leak`
 
+Current runtime-file checks:
+
+- `R1 file-exists`
+- `R2 installed-signature-match`
+- `R3 source-hash-match` after declared newline normalization
+- `R4 runtime-mode`
+- `R5 runtime-newline-policy`
+- `R6 no-secret-leak`
+
 Current optional artifact checks:
 
 - `O1 file-exists`
@@ -86,9 +97,20 @@ Current optional artifact checks:
 - `O5 format-specific checks for Codex TOML personas and Claude frontmatter`
 
 The verifier intentionally skips skills and artifacts that were not installed.
-Runtime smoke tests, runner-specific `doctor` commands, and direct
-`agent-loads-config` checks are not automatic yet; use `precheck` and the
-agent's own diagnostics for those layers.
+Lifecycle tests include smoke checks for installed runtime-backed skills when a
+smoke command is declared. Runner-specific `doctor` commands and direct
+`agent-loads-config` checks are not automatic yet; use `precheck`, skill
+doctors, and the agent's own diagnostics for those layers.
+
+Use `runtime-smoke` to install the portable runtime files into a temporary
+Codex root and execute the installed native runtime runner for the current host.
+On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
+macOS it exercises `run_skill.sh`.
+
+```bash
+make runtime-smoke
+make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
+```
 
 Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
 [OpenClaw Integration Plan](openclaw-integration-plan.md),

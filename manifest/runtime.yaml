@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "default_runtime_profile": "auto",
+  "runtime_profiles": {
+    "auto": {
+      "description": "Install runtime files required by selected runtime-backed skills.",
+      "mode": "selected-skills"
+    },
+    "full": {
+      "description": "Install every currently portable runtime file declared in this manifest.",
+      "skills": ["formal-skeleton-helper", "get-available-resources", "graph-verifier"]
+    },
+    "none": {
+      "description": "Do not install runtime files.",
+      "skills": []
+    }
+  },
+  "denied_patterns": [
+    "config.json",
+    "**/config.json",
+    "config.toml",
+    "**/config.toml",
+    "secrets.*",
+    "**/secrets.*",
+    ".secrets*",
+    "**/.secrets*",
+    "workspace/config/*.toml",
+    "**/workspace/config/*.toml",
+    "**/config/*.toml",
+    "workspace/data/**",
+    "**/reports/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/*.db",
+    "**/*.db-*",
+    "**/*.sqlite",
+    "**/*.sqlite-*",
+    "**/*.pdf",
+    "**/*.epub",
+    "**/*.zip"
+  ],
+  "runners": [
+    {
+      "source": "runners/run_skill.sh",
+      "target": "run_skill.sh",
+      "platforms": ["linux", "macos", "wsl"],
+      "type": "text",
+      "newline": "lf",
+      "mode": "0755"
+    },
+    {
+      "source": "runners/run_skill.ps1",
+      "target": "run_skill.ps1",
+      "platforms": ["windows"],
+      "type": "text",
+      "newline": "crlf",
+      "mode": "0644"
+    },
+    {
+      "source": "runners/run_skill.bat",
+      "target": "run_skill.bat",
+      "platforms": ["windows"],
+      "type": "text",
+      "newline": "crlf",
+      "mode": "0644"
+    }
+  ],
+  "skills": {
+    "graph-verifier": {
+      "runtime_dir": "graph-verifier",
+      "files": [
+        {
+          "source": "skills/graph-verifier/graph_verifier.py",
+          "target": "workspace/skills/graph-verifier/graph_verifier.py",
+          "platforms": ["linux", "macos", "windows", "wsl"],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/graph-verifier/run_graph_verifier.sh",
+          "target": "workspace/skills/graph-verifier/run_graph_verifier.sh",
+          "platforms": ["linux", "macos", "wsl"],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/graph-verifier/run_graph_verifier.bat",
+          "target": "workspace/skills/graph-verifier/run_graph_verifier.bat",
+          "platforms": ["windows"],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        }
+      ],
+      "smoke": {
+        "command": "workspace/skills/graph-verifier/run_graph_verifier.sh",
+        "args": []
+      }
+    },
+    "formal-skeleton-helper": {
+      "runtime_dir": "formal-skeleton-helper",
+      "files": [
+        {
+          "source": "skills/formal-skeleton-helper/formal_skeleton_helper.py",
+          "target": "workspace/skills/formal-skeleton-helper/formal_skeleton_helper.py",
+          "platforms": ["linux", "macos", "windows", "wsl"],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/formal-skeleton-helper/run_formal_skeleton.sh",
+          "target": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.sh",
+          "platforms": ["linux", "macos", "wsl"],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/formal-skeleton-helper/run_formal_skeleton.bat",
+          "target": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.bat",
+          "platforms": ["windows"],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        }
+      ],
+      "smoke": {
+        "command": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.sh",
+        "args": ["--help"]
+      }
+    },
+    "get-available-resources": {
+      "runtime_dir": "get-available-resources",
+      "files": [
+        {
+          "source": "skills/get-available-resources/detect_resources.py",
+          "target": "workspace/skills/get-available-resources/detect_resources.py",
+          "platforms": ["linux", "macos", "windows", "wsl"],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/get-available-resources/run_get_available_resources.sh",
+          "target": "workspace/skills/get-available-resources/run_get_available_resources.sh",
+          "platforms": ["linux", "macos", "wsl"],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/get-available-resources/run_get_available_resources.bat",
+          "target": "workspace/skills/get-available-resources/run_get_available_resources.bat",
+          "platforms": ["windows"],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        }
+      ],
+      "smoke": {
+        "command": "workspace/skills/get-available-resources/run_get_available_resources.sh",
+        "args": ["--help"]
+      }
+    }
+  }
+}

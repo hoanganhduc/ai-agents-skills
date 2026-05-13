@@ -112,7 +112,7 @@ def filter_artifacts(
     for item in artifacts:
         if skills and item.get("skill") not in skills:
             continue
-        if agents and item.get("agent") not in agents:
+        if agents and item.get("agent") not in agents and item.get("artifact_type") != "runtime-file":
             continue
         if artifact_ids and item.get("artifact_id") not in artifact_ids:
             continue
@@ -233,6 +233,10 @@ def remove_artifact(item: dict[str, Any], root: Path | None = None) -> None:
         cleanup_recorded_parent_dirs(root, item)
         return
     if item.get("artifact_type") == "skill-support-file":
+        remove_file(path)
+        cleanup_recorded_parent_dirs(root, item)
+        return
+    if item.get("artifact_type") == "runtime-file":
         remove_file(path)
         cleanup_recorded_parent_dirs(root, item)
         return
