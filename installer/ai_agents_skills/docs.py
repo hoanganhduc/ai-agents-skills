@@ -595,10 +595,12 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 make lifecycle-test ARGS="--matrix full --platform-shape linux"
 make lifecycle-test ARGS="--matrix stress --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
+make runtime-smoke
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
 make verify ARGS="--skills zotero,docling --root <fake-or-real-root>"
 make smoke ARGS="--skill zotero --root <fake-or-real-root>"
+python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
 Result meanings:
@@ -633,6 +635,15 @@ Current support-file checks:
 - `A4 symlink`, `source-exists`, and `source-match` for symlinked support files
 - `A5 no-secret-leak`
 
+Current runtime-file checks:
+
+- `R1 file-exists`
+- `R2 installed-signature-match`
+- `R3 source-hash-match` after declared newline normalization
+- `R4 runtime-mode`
+- `R5 runtime-newline-policy`
+- `R6 no-secret-leak`
+
 Current optional artifact checks:
 
 - `O1 file-exists`
@@ -642,9 +653,20 @@ Current optional artifact checks:
 - `O5 format-specific checks for Codex TOML personas and Claude frontmatter`
 
 The verifier intentionally skips skills and artifacts that were not installed.
-Runtime smoke tests, runner-specific `doctor` commands, and direct
-`agent-loads-config` checks are not automatic yet; use `precheck` and the
-agent's own diagnostics for those layers.
+Lifecycle tests include smoke checks for installed runtime-backed skills when a
+smoke command is declared. Runner-specific `doctor` commands and direct
+`agent-loads-config` checks are not automatic yet; use `precheck`, skill
+doctors, and the agent's own diagnostics for those layers.
+
+Use `runtime-smoke` to install the portable runtime files into a temporary
+Codex root and execute the installed native runtime runner for the current host.
+On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
+macOS it exercises `run_skill.sh`.
+
+```bash
+make runtime-smoke
+make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
+```
 
 Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
 [OpenClaw Integration Plan](openclaw-integration-plan.md),
@@ -1426,6 +1448,8 @@ The manifests are the source of truth:
 - `manifest/profiles.yaml` defines selectable skill bundles.
 - `manifest/artifacts.yaml` defines optional templates, personas,
   instruction docs, entrypoints, and management notices.
+- `manifest/runtime.yaml` defines portable runtime runners and runtime-backed
+  skill files that may be copied into a local runtime root.
 - `manifest/dependencies.yaml` and `manifest/system-dependencies.yaml` define
   logical tools and sanitized maintainer-system dependency observations.
 
@@ -1443,7 +1467,9 @@ Install flow:
    into each supported target format.
 4. Add managed instruction blocks only for skills or artifacts that are
    installed, adopted, migrated, updated, or already managed.
-5. Record hashes, source paths, install modes, and ownership metadata for
+5. Add root-scoped `runtime-file` actions for selected runtime-backed skills
+   according to `--runtime-profile` and `--runtime-root`.
+6. Record hashes, source paths, install modes, and ownership metadata for
    verification, uninstall, and rollback.
 
 Artifact classes:
@@ -1458,6 +1484,7 @@ Artifact classes:
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
 | `entrypoint-alias` | Optional quick-action aliases. Claude receives command files; Codex and DeepSeek receive reference documents. |
+| `runtime-file` | Root-scoped copied runtime runners and skill helper files. Runtime files are never installed as per-agent skills and are verified by transformed source hash, newline policy, mode, and secret scan. |
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
@@ -1469,6 +1496,8 @@ Safety boundary:
 
 - auth files, API keys, provider config, session logs, downloaded libraries,
   and local runtime state are not managed by this repo
+- runtime configs, databases, caches, downloaded documents, symlinks, and
+  persistence-oriented scripts are denied by runtime inventory and source gates
 - unmanaged user files are skipped unless `--adopt`, `--backup-replace`, or
   `--migrate` is selected explicitly
 - uninstall and rollback require confirmation when applied and affect only
@@ -1547,6 +1576,33 @@ Real-system writes should be a final step after reviewing `plan` output:
 ```bash
 make install ARGS="--profile research-core --apply --real-system"
 ```
+
+## Runtime Files
+
+`--runtime-profile auto` is the default. When a selected skill has declared
+portable runtime files, the installer copies those files into a runtime root
+and records them as root-scoped `runtime-file` artifacts. They are not installed
+inside each agent's skill directory. Use `--no-runtime` or
+`--runtime-profile none` to skip runtime files, and use `--runtime-root` to
+choose a non-default runtime location.
+
+Default runtime roots:
+
+- Codex-only installs: `<root>/.codex/runtime`
+- Windows multi-agent or non-Codex installs: `<root>/AppData/Local/ai-agents-skills/runtime`
+- Linux/macOS multi-agent or non-Codex installs: `<root>/.local/share/ai-agents-skills/runtime`
+
+Before promoting files from an existing local runtime into this repo, inspect
+that source with the read-only inventory command:
+
+```bash
+python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
+```
+
+The inventory denies configs, databases, caches, downloaded documents, SQLite
+sidecars, symlinks, personal paths, sensitive material, and persistence markers
+such as cron, systemd, launchd, scheduled tasks, and Docker
+`restart: unless-stopped`.
 
 ## Install Modes
 
@@ -1883,8 +1939,17 @@ System profiles:
 | Profile | Executor | Path dialect | Default mutation stance |
 |---|---|---|---|
 | `linux-local` | Linux | POSIX | Dry-run only until selected in profile config |
+| `macos-local` | macOS | POSIX | Dry-run only until selected in profile config |
 | `windows-mounted` | Linux inspecting a mounted Windows home | POSIX `/windows/...` | Read-only by default |
 | `windows-native` | Native Windows shell | Windows paths | Requires native Windows verification |
+
+Environment overrides are inspected as candidate evidence, not automatic
+authority. Zotero discovery checks `AAS_ZOTERO_DB`, `ZOTERO_DB`,
+`ZOTERO_SQLITE`, `AAS_ZOTERO_DATA_DIR`, and `ZOTERO_DATA_DIR`; Calibre
+discovery checks `AAS_CALIBRE_DB`, `CALIBRE_DB`,
+`CALIBRE_METADATA_DB`, `AAS_CALIBRE_LIBRARY`, and `CALIBRE_LIBRARY`.
+Zotero `profiles.ini` files are also inspected on Linux, macOS, Windows,
+and mounted Windows-style homes.
 
 Path authority rules:
 
@@ -1901,7 +1966,8 @@ Path authority rules:
 Zotero validation checks:
 
 - SQLite schema readability and item count
-- SQLite quick check when safe
+- SQLite quick check and integrity status when safe
+- WAL/SHM sidecar presence and size
 - local `storage/` directory presence
 - optional Better BibTeX database presence
 - cloud-backed, mounted, cache, or malformed classification
@@ -1921,6 +1987,8 @@ and explicit confirmation.
 Calibre validation checks:
 
 - `metadata.db` quick check and book count
+- SQLite schema and integrity status
+- WAL/SHM sidecar presence and size
 - runtime/cache root denial
 - author/book file-tree consistency
 - symlink, mount, and cloud-backed classification
