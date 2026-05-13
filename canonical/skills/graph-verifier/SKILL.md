@@ -7,7 +7,7 @@ metadata:
 
 # Graph Verifier
 
-This uses the vendored Codex runtime copy of the graph verifier workflow.
+This uses the managed ai-agents-skills runtime copy of the graph verifier workflow.
 
 ## When to use
 
@@ -20,13 +20,15 @@ For heavier graph-theoretic or algebraic computations, route to `sagemath` inste
 
 ## Base path
 
-- `~/.codex/runtime/workspace/skills/graph-verifier/`
+- `$AAS_RUNTIME_ROOT/workspace/skills/graph-verifier/`
 
-Use the Codex runtime runner rather than invoking `run_graph_verifier.sh` directly.
+Use the managed runtime runner rather than invoking `run_graph_verifier.sh` directly.
+If `AAS_RUNTIME_ROOT` is not already set, the default Codex-only install root is
+`$HOME/.codex/runtime`.
 
 Shared runner:
 
-- `bash ~/.codex/runtime/run_skill.sh`
+- `runtime_root="${AAS_RUNTIME_ROOT:-$HOME/.codex/runtime}"; bash "$runtime_root/run_skill.sh"`
 
 ## Workflow
 
@@ -39,5 +41,6 @@ Supported shapes include `graph_data`, `edges`, `adjacency`, and optional `expec
 ## Core command
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/graph-verifier/run_graph_verifier.sh --input /tmp/graph_input.json
+runtime_root="${AAS_RUNTIME_ROOT:-$HOME/.codex/runtime}"
+bash "$runtime_root/run_skill.sh" skills/graph-verifier/run_graph_verifier.sh --input /tmp/graph_input.json
 ```

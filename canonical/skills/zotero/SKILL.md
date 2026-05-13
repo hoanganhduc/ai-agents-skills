@@ -81,6 +81,17 @@ before and after, a transaction journal, and explicit confirmation.
 Storage checks must report local `storage/`, linked files, API attachment
 records, and WebDAV zips separately.
 
+Read-only local access is allowed when it is labeled correctly:
+
+- normal `search` uses the Zotero API first and remains the source of truth
+- `search --local-db` may inspect discovered `zotero.sqlite` candidates in
+  read-only mode for offline/diagnostic use
+- local DB results are degraded when SQLite integrity checks are not clean and
+  must not be used as the only evidence that Zotero lacks an item
+- `get` may return a PDF from local Zotero `storage/` before falling back to
+  WebDAV, because this is read-only and uses the API attachment key
+- use `get --no-local-storage` when WebDAV retrieval needs to be forced
+
 ## Translation Server
 
 The local Translation Server should be available at:
@@ -169,6 +180,14 @@ cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.loc
 ```
 
 ```bash
+cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.local:$PYTHONPATH" python3 skills/zotero/zot.py search --local-db "<query>" --json
+```
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh --json get "<query>" --no-local-storage
+```
+
+```bash
 cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.local:$PYTHONPATH" python3 skills/zotero/zot.py list-collections --tree --json
 ```
 
@@ -191,6 +210,10 @@ cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.loc
   `calibre` before any online retrieval.
 - If `get` returns multiple results, show the numbered candidates and ask the user to pick.
 - Do not guess the intended paper when results are ambiguous.
+- Prefer the default `get` local-storage check before WebDAV. Treat it as a
+  read-only file lookup, not a DB mutation.
+- Use `search --local-db` only as an explicit offline/diagnostic fallback; label
+  malformed SQLite results as degraded.
 - For link sharing, use the Zotero workflow rather than ad hoc file browsing.
 - Use `--index` only after showing the user the numbered candidate list.
 

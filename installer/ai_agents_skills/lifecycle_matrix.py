@@ -36,6 +36,7 @@ class LifecycleScenario:
     expected_smoke_statuses: tuple[str, ...] = ("ok", "no-managed-artifacts")
     agent_subset: tuple[str, ...] | None = None
     path_variant: str = "normal"
+    runtime_profile: str = "auto"
 
 
 DEFAULT_SCENARIOS: tuple[LifecycleScenario, ...] = (
@@ -231,6 +232,7 @@ def custom_scenario(args: Any) -> LifecycleScenario:
         adopt=getattr(args, "adopt", False),
         backup_replace=getattr(args, "backup_replace", False),
         migrate=getattr(args, "migrate", False),
+        runtime_profile="none" if getattr(args, "no_runtime", False) else getattr(args, "runtime_profile", "auto"),
     )
 
 
@@ -269,6 +271,8 @@ def run_lifecycle_case(
             migrate=scenario.migrate,
             artifacts=selected_artifacts,
             install_mode=scenario.install_mode,
+            runtime_profile=scenario.runtime_profile,
+            platform=shape,
         )
         install_dry_run = apply_plan(root, plan, dry_run=True)
         after_install_dry_run = root_snapshot(root, include_installer_state=True)
@@ -539,7 +543,15 @@ def installed_root(
         (root / f".{agent}").mkdir(parents=True, exist_ok=True)
     agents = detect_agents(root, requested_agents)
     scenario = LifecycleScenario(name="state-stress", description="state stress helper", install_mode=install_mode)
-    plan = build_plan(root, manifests, scenario_skills(scenario, manifests), agents, install_mode=install_mode)
+    plan = build_plan(
+        root,
+        manifests,
+        scenario_skills(scenario, manifests),
+        agents,
+        install_mode=install_mode,
+        runtime_profile=scenario.runtime_profile,
+        platform=shape,
+    )
     apply_plan(root, plan, dry_run=False)
     return base, root
 

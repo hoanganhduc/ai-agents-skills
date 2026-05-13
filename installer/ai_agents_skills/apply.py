@@ -7,6 +7,7 @@ from typing import Any
 
 from .capabilities import normalized_path_within, resolved_path_within
 from .render import replace_or_append_block
+from .runtime import apply_runtime_file_action, preflight_runtime_action
 from .state import (
     artifact_signature,
     backup_file,
@@ -70,6 +71,8 @@ def find_state_artifact(state: dict[str, Any], action: dict[str, Any]) -> dict[s
 def apply_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
     if action["kind"] == "file":
         return apply_file_action(root, run_id, action)
+    if action["kind"] == "runtime-file":
+        return apply_runtime_file_action(root, run_id, action, base_result(run_id, action))
     if action["kind"] == "managed-block":
         return apply_block_action(root, run_id, action)
     if action["kind"] == "legacy-dir":
@@ -85,6 +88,9 @@ def preflight_plan(root: Path, actions: list[dict[str, Any]]) -> None:
 
 
 def preflight_action(root: Path, action: dict[str, Any]) -> None:
+    if action["kind"] == "runtime-file":
+        preflight_runtime_action(root, action)
+        return
     path = Path(action["path"])
     if not normalized_path_within(root, path) or not resolved_path_within(root, path.parent):
         raise ValueError(f"refusing to apply artifact outside selected root: {path}")
@@ -332,6 +338,20 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         result["fallback_mode"] = action["fallback_mode"]
     if action.get("created_parent_dirs"):
         result["created_parent_dirs"] = action["created_parent_dirs"]
+    for key in (
+        "owner",
+        "source_relpath",
+        "target_relpath",
+        "source_sha256",
+        "canonical_source_sha256",
+        "mode",
+        "newline_policy",
+        "file_type",
+        "platforms",
+        "runtime_root",
+    ):
+        if key in action:
+            result[key] = action[key]
     return result
 
 
