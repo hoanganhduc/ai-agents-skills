@@ -66,6 +66,33 @@ Real-system writes should be a final step after reviewing `plan` output:
 make install ARGS="--profile research-core --apply --real-system"
 ```
 
+## Runtime Files
+
+`--runtime-profile auto` is the default. When a selected skill has declared
+portable runtime files, the installer copies those files into a runtime root
+and records them as root-scoped `runtime-file` artifacts. They are not installed
+inside each agent's skill directory. Use `--no-runtime` or
+`--runtime-profile none` to skip runtime files, and use `--runtime-root` to
+choose a non-default runtime location.
+
+Default runtime roots:
+
+- Codex-only installs: `<root>/.codex/runtime`
+- Windows multi-agent or non-Codex installs: `<root>/AppData/Local/ai-agents-skills/runtime`
+- Linux/macOS multi-agent or non-Codex installs: `<root>/.local/share/ai-agents-skills/runtime`
+
+Before promoting files from an existing local runtime into this repo, inspect
+that source with the read-only inventory command:
+
+```bash
+python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
+```
+
+The inventory denies configs, databases, caches, downloaded documents, SQLite
+sidecars, symlinks, personal paths, sensitive material, and persistence markers
+such as cron, systemd, launchd, scheduled tasks, and Docker
+`restart: unless-stopped`.
+
 ## Install Modes
 
 `--install-mode auto` is the default. The installer resolves that request per
