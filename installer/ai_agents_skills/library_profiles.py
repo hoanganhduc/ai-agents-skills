@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import configparser
+import glob
 import os
 import sqlite3
 from contextlib import closing
@@ -12,7 +14,7 @@ from .agents import agent_home_statuses
 from .discovery import current_platform, host_is_windows
 
 
-SYSTEM_PROFILES = ("linux-local", "windows-mounted", "windows-native")
+SYSTEM_PROFILES = ("linux-local", "macos-local", "windows-mounted", "windows-native")
 CLOUD_MARKERS = ("Google Drive", "OneDrive", "Dropbox", "MEGAsync")
 CACHE_MARKERS = (
     ("runtime", "workspace", "data", "calibre", "cache"),
@@ -65,6 +67,8 @@ def audit_library_profiles(
 def default_system_profile(root: Path, platform: str) -> str:
     if platform == "windows":
         return "windows-native"
+    if platform == "macos":
+        return "macos-local"
     if is_windows_mounted_path(root):
         return "windows-mounted"
     return "linux-local"
@@ -111,42 +115,110 @@ def audit_calibre(root: Path, profile: str, *, run_integrity: bool) -> dict[str,
 
 
 def discover_zotero_db_candidates(root: Path) -> list[Path]:
+    env_candidates: list[Path] = []
+    for name in ("AAS_ZOTERO_DB", "ZOTERO_DB", "ZOTERO_SQLITE"):
+        value = os.environ.get(name)
+        if value:
+            env_candidates.append(Path(value).expanduser())
+    for name in ("AAS_ZOTERO_DATA_DIR", "ZOTERO_DATA_DIR"):
+        value = os.environ.get(name)
+        if value:
+            env_candidates.append(Path(value).expanduser() / "zotero.sqlite")
+    profile_candidates = zotero_profile_db_candidates(root)
     patterns = [
         "Zotero/zotero.sqlite",
         "ZoteroSync/zotero.sqlite",
         "Google Drive/DATA/Zotero/zotero.sqlite",
         "library/zotero/zotero.sqlite",
+        ".zotero/zotero/zotero.sqlite",
+        ".zotero/zotero/*.default/zotero.sqlite",
+        ".var/app/org.zotero.Zotero/data/zotero/zotero/*.default/zotero.sqlite",
+        "Library/Application Support/Zotero/Profiles/*.default/zotero.sqlite",
+        "Library/Application Support/Zotero/zotero.sqlite",
         "AppData/Roaming/Zotero/Zotero/zotero.sqlite",
+        "AppData/Roaming/Zotero/Zotero/Profiles/*.default/zotero.sqlite",
         "AppData/Roaming/Jurism/Zotero/zotero.sqlite",
     ]
-    return existing_unique(root / pattern for pattern in patterns)
+    return existing_unique([*env_candidates, *profile_candidates, *(root / pattern for pattern in patterns)])
 
 
 def discover_calibre_db_candidates(root: Path) -> list[Path]:
+    env_candidates: list[Path] = []
+    for name in ("AAS_CALIBRE_DB", "CALIBRE_DB", "CALIBRE_METADATA_DB"):
+        value = os.environ.get(name)
+        if value:
+            env_candidates.append(Path(value).expanduser())
+    for name in ("AAS_CALIBRE_LIBRARY", "CALIBRE_LIBRARY"):
+        value = os.environ.get(name)
+        if value:
+            env_candidates.append(Path(value).expanduser() / "metadata.db")
     patterns = [
         "Calibre Library/metadata.db",
         "Google Drive/DATA/Calibre Library/metadata.db",
+        "Documents/Calibre Library/metadata.db",
+        "Library/Calibre Library/metadata.db",
         ".codex/runtime/workspace/data/calibre/cache/metadata.db",
         ".claude/data/calibre/cache/metadata.db",
         "codex-runtime-workspace/data/calibre/cache/metadata.db",
         "openclaw-workspace/workspace/data/calibre/cache/metadata.db",
         "library/calibre/metadata.db",
     ]
-    return existing_unique(root / pattern for pattern in patterns)
+    return existing_unique([*env_candidates, *(root / pattern for pattern in patterns)])
 
 
 def existing_unique(paths: Iterable[Path]) -> list[Path]:
     seen: set[str] = set()
     result: list[Path] = []
     for path in paths:
-        if not path.exists():
-            continue
-        key = str(path.resolve(strict=False))
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(path)
+        for expanded in expand_candidate(path):
+            if not expanded.exists():
+                continue
+            key = str(expanded.resolve(strict=False))
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(expanded)
     return result
+
+
+def expand_candidate(path: Path) -> list[Path]:
+    text = str(path)
+    if "*" not in text and "?" not in text and "[" not in text:
+        return [path]
+    return sorted(Path(match) for match in glob.glob(text))
+
+
+def zotero_profile_db_candidates(root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    for profile_ini in (
+        root / ".zotero" / "zotero" / "profiles.ini",
+        root / "Library" / "Application Support" / "Zotero" / "profiles.ini",
+        root / "AppData" / "Roaming" / "Zotero" / "Zotero" / "profiles.ini",
+    ):
+        candidates.extend(zotero_profile_dbs_from_ini(profile_ini))
+    return candidates
+
+
+def zotero_profile_dbs_from_ini(path: Path) -> list[Path]:
+    if not path.is_file():
+        return []
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(path, encoding="utf-8")
+    except configparser.Error:
+        return []
+    base = path.parent
+    candidates = []
+    for section in parser.sections():
+        if not section.lower().startswith("profile"):
+            continue
+        profile_path = parser.get(section, "Path", fallback="")
+        if not profile_path:
+            continue
+        is_relative = parser.get(section, "IsRelative", fallback="1") != "0"
+        resolved = (base / profile_path) if is_relative else Path(profile_path)
+        candidates.append(resolved / "zotero.sqlite")
+    return candidates
 
 
 def validate_zotero_candidate(path: Path, profile: str, *, run_integrity: bool) -> dict[str, Any]:
@@ -155,8 +227,10 @@ def validate_zotero_candidate(path: Path, profile: str, *, run_integrity: bool) 
     storage_dir = path.parent / "storage"
     better_bibtex = path.parent / "better-bibtex.sqlite"
     classification = classify_path(path, profile, cache=False)
+    sidecars = sqlite_sidecar_status(path)
     allowed = allowed_operations(
         sqlite_check=sqlite_check,
+        schema_valid=item_count is not None,
         classification=classification,
         cache=False,
         profile=profile,
@@ -168,6 +242,10 @@ def validate_zotero_candidate(path: Path, profile: str, *, run_integrity: bool) 
         "size": file_size(path),
         "mtime": file_mtime(path),
         "sqlite": sqlite_check.__dict__,
+        "readable": item_count is not None and sqlite_check.status in {"ok", "skipped"},
+        "schema_valid": item_count is not None,
+        "integrity_valid": sqlite_check.status == "ok",
+        "sidecars": sidecars,
         "item_count": item_count,
         "storage_dir": {
             "path": str(storage_dir),
@@ -190,8 +268,10 @@ def validate_calibre_candidate(path: Path, profile: str, *, run_integrity: bool)
     library_root = path.parent
     file_tree = calibre_file_tree_check(path, library_root)
     classification = classify_path(path, profile, cache=cache)
+    sidecars = sqlite_sidecar_status(path)
     allowed = allowed_operations(
         sqlite_check=sqlite_check,
+        schema_valid=book_count is not None,
         classification=classification,
         cache=cache,
         profile=profile,
@@ -205,6 +285,10 @@ def validate_calibre_candidate(path: Path, profile: str, *, run_integrity: bool)
         "size": file_size(path),
         "mtime": file_mtime(path),
         "sqlite": sqlite_check.__dict__,
+        "readable": book_count is not None and sqlite_check.status in {"ok", "skipped"},
+        "schema_valid": book_count is not None,
+        "integrity_valid": sqlite_check.status == "ok",
+        "sidecars": sidecars,
         "book_count": book_count,
         "library_root": str(library_root),
         "file_tree": file_tree,
@@ -217,12 +301,15 @@ def validate_calibre_candidate(path: Path, profile: str, *, run_integrity: bool)
 def allowed_operations(
     *,
     sqlite_check: SqliteCheck,
+    schema_valid: bool,
     classification: list[str],
     cache: bool,
     profile: str,
 ) -> list[str]:
-    if sqlite_check.status == "malformed":
-        return ["read"]
+    if sqlite_check.status in {"malformed", "unreadable"}:
+        return []
+    if not schema_valid:
+        return []
     if cache:
         return ["read"]
     if "mounted-windows" in classification or "cloud-backed" in classification:
@@ -260,11 +347,34 @@ def contains_subsequence(parts: tuple[str, ...], marker: tuple[str, ...]) -> boo
 
 def is_windows_mounted_path(path: Path) -> bool:
     parts = path.resolve(strict=False).parts
-    return len(parts) >= 3 and parts[1].lower() == "windows" and parts[2].lower() == "users"
+    lowered = [part.lower() for part in parts]
+    return (
+        len(lowered) >= 3
+        and lowered[1] == "windows"
+        and lowered[2] == "users"
+    ) or (
+        len(lowered) >= 4
+        and lowered[1] == "mnt"
+        and len(lowered[2]) == 1
+        and lowered[3] == "users"
+    )
 
 
 def sqlite_uri(path: Path) -> str:
     return f"file:{quote(path.as_posix(), safe='/:')}?mode=ro"
+
+
+def sqlite_sidecar_status(path: Path) -> dict[str, Any]:
+    wal = Path(str(path) + "-wal")
+    shm = Path(str(path) + "-shm")
+    return {
+        "wal_path": str(wal),
+        "wal_exists": wal.is_file(),
+        "shm_path": str(shm),
+        "shm_exists": shm.is_file(),
+        "snapshot_recommended": wal.is_file() or shm.is_file(),
+        "classification": "live-wal" if wal.is_file() or shm.is_file() else "stable-db-file",
+    }
 
 
 def sqlite_quick_check(path: Path) -> SqliteCheck:

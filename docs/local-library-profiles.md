@@ -24,8 +24,17 @@ System profiles:
 | Profile | Executor | Path dialect | Default mutation stance |
 |---|---|---|---|
 | `linux-local` | Linux | POSIX | Dry-run only until selected in profile config |
+| `macos-local` | macOS | POSIX | Dry-run only until selected in profile config |
 | `windows-mounted` | Linux inspecting a mounted Windows home | POSIX `/windows/...` | Read-only by default |
 | `windows-native` | Native Windows shell | Windows paths | Requires native Windows verification |
+
+Environment overrides are inspected as candidate evidence, not automatic
+authority. Zotero discovery checks `AAS_ZOTERO_DB`, `ZOTERO_DB`,
+`ZOTERO_SQLITE`, `AAS_ZOTERO_DATA_DIR`, and `ZOTERO_DATA_DIR`; Calibre
+discovery checks `AAS_CALIBRE_DB`, `CALIBRE_DB`,
+`CALIBRE_METADATA_DB`, `AAS_CALIBRE_LIBRARY`, and `CALIBRE_LIBRARY`.
+Zotero `profiles.ini` files are also inspected on Linux, macOS, Windows,
+and mounted Windows-style homes.
 
 Path authority rules:
 
@@ -42,7 +51,8 @@ Path authority rules:
 Zotero validation checks:
 
 - SQLite schema readability and item count
-- SQLite quick check when safe
+- SQLite quick check and integrity status when safe
+- WAL/SHM sidecar presence and size
 - local `storage/` directory presence
 - optional Better BibTeX database presence
 - cloud-backed, mounted, cache, or malformed classification
@@ -62,6 +72,8 @@ and explicit confirmation.
 Calibre validation checks:
 
 - `metadata.db` quick check and book count
+- SQLite schema and integrity status
+- WAL/SHM sidecar presence and size
 - runtime/cache root denial
 - author/book file-tree consistency
 - symlink, mount, and cloud-backed classification

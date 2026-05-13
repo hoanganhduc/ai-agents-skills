@@ -1,4 +1,4 @@
-.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test list-skills list-artifacts docs generate-docs docs-site sanitize-check test
+.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke list-skills list-artifacts docs generate-docs docs-site sanitize-check test
 
 ARGS ?=
 
@@ -64,6 +64,9 @@ fake-root-lifecycle:
 
 lifecycle-test:
 	./installer/bootstrap.sh lifecycle-test $(ARGS)
+
+runtime-smoke:
+	./installer/bootstrap.sh runtime-smoke $(ARGS)
 
 list-skills:
 	./installer/bootstrap.sh list-skills $(ARGS)

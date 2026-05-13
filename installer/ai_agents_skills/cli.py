@@ -28,6 +28,8 @@ from .openclaw_manifest import PATH_STYLES, TARGET_AGENTS, approve_manifest, bui
 from .openclaw_persistence import check_persistence_manifest_file
 from .planner import build_plan
 from .render import MANAGED_MARKER, canonical_skill_path
+from .runtime import runtime_inventory
+from .runtime_smoke import run_runtime_smoke
 from .selectors import (
     artifact_dependency_skills,
     canonical_artifact_name,
@@ -85,6 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="skip SQLite quick_check for faster read-only candidate discovery",
     )
+
+    runtime_inventory_parser = sub.add_parser("runtime-inventory")
+    runtime_inventory_parser.add_argument("--source-root", type=Path, required=True)
+    runtime_inventory_parser.add_argument("--max-entries", type=int, default=5000)
+
+    runtime_smoke_parser = sub.add_parser("runtime-smoke")
+    runtime_smoke_parser.add_argument("--skill")
+    runtime_smoke_parser.add_argument("--skills")
+    runtime_smoke_parser.add_argument("--timeout", type=int, default=60)
 
     openclaw_inventory = sub.add_parser("openclaw-inventory")
     openclaw_inventory.add_argument(
@@ -255,6 +266,14 @@ def add_selection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--artifact-profile", help="comma-separated artifact profiles")
     parser.add_argument("--exclude-artifact", help="comma-separated artifacts to exclude")
     parser.add_argument("--with-deps", action="store_true", help="include skills required by selected artifacts")
+    parser.add_argument(
+        "--runtime-profile",
+        choices=["auto", "full", "none"],
+        default="auto",
+        help="runtime file install profile; auto installs runtime files for selected runtime-backed skills",
+    )
+    parser.add_argument("--runtime-root", type=Path, help="runtime root for managed runtime files")
+    parser.add_argument("--no-runtime", action="store_true", help="do not install runtime files")
 
 
 def add_conflict_args(parser: argparse.ArgumentParser) -> None:
@@ -301,6 +320,10 @@ def run(args: argparse.Namespace) -> int:
         if args.profile:
             result["selected_skill_profile"] = args.profile
         return output(result, args)
+    if args.command == "runtime-inventory":
+        return output(runtime_inventory(args.source_root, max_entries=args.max_entries), args)
+    if args.command == "runtime-smoke":
+        return runtime_smoke(args, manifests)
     if args.command == "openclaw-inventory":
         return output(
             build_inventory(
@@ -572,6 +595,7 @@ def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, 
     selected, selected_artifacts = resolve_install_selection(args, manifests)
     agent_filter = split_csv(args.agents) if args.agents else None
     agents = detect_agents(args.root, agent_filter)
+    runtime_profile = "none" if getattr(args, "no_runtime", False) else args.runtime_profile
     return build_plan(
         args.root,
         manifests,
@@ -582,6 +606,9 @@ def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, 
         args.migrate,
         selected_artifacts,
         args.install_mode,
+        runtime_profile,
+        args.runtime_root,
+        args.platform,
     )
 
 
@@ -591,7 +618,18 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     agent_filter = split_csv(args.agents) if args.agents else None
     agents = detect_agents(args.root, agent_filter)
     precheck_result = build_precheck_result(args, manifests)
-    default_plan = build_plan(args.root, manifests, selected, agents, artifacts=selected_artifacts, install_mode=args.install_mode)
+    runtime_profile = "none" if getattr(args, "no_runtime", False) else args.runtime_profile
+    default_plan = build_plan(
+        args.root,
+        manifests,
+        selected,
+        agents,
+        artifacts=selected_artifacts,
+        install_mode=args.install_mode,
+        runtime_profile=runtime_profile,
+        runtime_root=args.runtime_root,
+        platform=args.platform,
+    )
     requested_plan = build_plan(
         args.root,
         manifests,
@@ -602,9 +640,34 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         args.migrate,
         selected_artifacts,
         args.install_mode,
+        runtime_profile,
+        args.runtime_root,
+        args.platform,
     )
-    adopt_plan = build_plan(args.root, manifests, selected, agents, adopt=True, artifacts=selected_artifacts, install_mode=args.install_mode)
-    migrate_plan = build_plan(args.root, manifests, selected, agents, migrate=True, artifacts=selected_artifacts, install_mode=args.install_mode)
+    adopt_plan = build_plan(
+        args.root,
+        manifests,
+        selected,
+        agents,
+        adopt=True,
+        artifacts=selected_artifacts,
+        install_mode=args.install_mode,
+        runtime_profile=runtime_profile,
+        runtime_root=args.runtime_root,
+        platform=args.platform,
+    )
+    migrate_plan = build_plan(
+        args.root,
+        manifests,
+        selected,
+        agents,
+        migrate=True,
+        artifacts=selected_artifacts,
+        install_mode=args.install_mode,
+        runtime_profile=runtime_profile,
+        runtime_root=args.runtime_root,
+        platform=args.platform,
+    )
     adopt_migrate_plan = build_plan(
         args.root,
         manifests,
@@ -614,6 +677,9 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         migrate=True,
         artifacts=selected_artifacts,
         install_mode=args.install_mode,
+        runtime_profile=runtime_profile,
+        runtime_root=args.runtime_root,
+        platform=args.platform,
     )
     state = load_state(args.root)
     result = {
@@ -871,6 +937,15 @@ def summarize_plan(plan: dict[str, Any]) -> dict[str, Any]:
                     "fallback_mode",
                     "reason",
                     "artifact_type",
+                    "owner",
+                    "source_relpath",
+                    "target_relpath",
+                    "source_sha256",
+                    "canonical_source_sha256",
+                    "mode",
+                    "newline_policy",
+                    "file_type",
+                    "runtime_root",
                 )
             }
             for action in plan["actions"]
@@ -933,6 +1008,17 @@ def lifecycle_test(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         platform_shape=args.platform_shape,
         agents=args.agents,
         keep_fake_roots=args.keep_fake_roots,
+    )
+    output(result, args)
+    return 0 if result["status"] == "ok" else 1
+
+
+def runtime_smoke(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    result = run_runtime_smoke(
+        manifests,
+        skills=resolve_skill_filter(args, manifests),
+        platform=args.platform,
+        timeout=args.timeout,
     )
     output(result, args)
     return 0 if result["status"] == "ok" else 1
@@ -1156,6 +1242,8 @@ def command_help() -> dict[str, Any]:
         "uninstall",
         "fake-root-lifecycle",
         "lifecycle-test",
+        "runtime-smoke",
+        "runtime-inventory",
         "list-skills",
         "list-artifacts",
         "generate-docs",

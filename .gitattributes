@@ -1,0 +1,7 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
