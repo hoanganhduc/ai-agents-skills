@@ -2250,6 +2250,11 @@ Useful overrides:
 - `AAS_SAGE`: preferred SageMath executable for `sage-runtime` checks
 - `PATH`: command discovery for TeX, Git, ripgrep, OCR, Calibre, and other tools
 
+Docker-backed SageMath is also valid on Linux when it is exposed through an
+executable wrapper. Put the wrapper on `PATH` as `sage` or point `AAS_SAGE` at
+it. The wrapper should support the normal probes used by `precheck`, including
+`sage --version` and `sage -c "print(2+2)"`.
+
 The Linux path is also used when inspecting a mounted Windows profile from WSL
 or a Linux host. In that case, native Windows executables may be reported as
 `present-unverified` because they can be found but not safely executed from the
