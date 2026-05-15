@@ -20,6 +20,9 @@ Latest update: {sub-ref}`today`
 - OpenClaw integration work: use the
   [OpenClaw Integration Plan](openclaw-integration-plan.md) before adding
   migration, hook, or runtime behavior.
+- OpenClaw install-target work: use the
+  [OpenClaw Install Target Plan](openclaw-install-target-plan.md) before
+  adding OpenClaw as a writable target.
 - Dependency questions: use [Dependencies](dependencies.md), then check the
   platform-specific [Windows](windows.md) or [Linux](linux.md) notes.
 - Zotero/Calibre local-library changes: run
@@ -60,6 +63,7 @@ agent-locations
 local-library-profiles
 audit-and-migration
 openclaw-integration-plan
+openclaw-install-target-plan
 verification
 architecture
 windows

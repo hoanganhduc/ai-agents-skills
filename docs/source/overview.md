@@ -77,5 +77,7 @@ make verify ARGS="--root <fake-or-real-root>"
   agents, skills, runtimes, and external software.
 - [Audit And Migration](audit-and-migration.md): how to inspect an existing
   setup before adopting or migrating files.
+- [OpenClaw Install Target Plan](openclaw-install-target-plan.md): how to
+  stage future OpenClaw writable target support behind evidence gates.
 - [Verification](verification.md): what installed managed artifacts are
   checked after install, uninstall, or rollback.
