@@ -1,4 +1,4 @@
-.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke list-skills list-artifacts docs generate-docs docs-site sanitize-check test
+.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke runtime-inventory list-skills list-artifacts describe describe-artifact docs generate-docs docs-site sanitize-check test
 
 ARGS ?=
 
@@ -68,11 +68,20 @@ lifecycle-test:
 runtime-smoke:
 	./installer/bootstrap.sh runtime-smoke $(ARGS)
 
+runtime-inventory:
+	./installer/bootstrap.sh runtime-inventory $(ARGS)
+
 list-skills:
 	./installer/bootstrap.sh list-skills $(ARGS)
 
 list-artifacts:
 	./installer/bootstrap.sh list-artifacts $(ARGS)
+
+describe:
+	./installer/bootstrap.sh describe $(ARGS)
+
+describe-artifact:
+	./installer/bootstrap.sh describe-artifact $(ARGS)
 
 docs:
 	./installer/bootstrap.sh generate-docs $(ARGS)
@@ -80,7 +89,7 @@ docs:
 generate-docs: docs
 
 docs-site:
-	./installer/bootstrap.sh --run-python -c 'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("sphinx") else "Install docs dependencies first: python -m pip install -r docs/requirements.txt")'
+	./installer/bootstrap.sh --run-python -c 'import importlib.util, sys; missing = [m for m in ("sphinx", "myst_parser", "sphinx_rtd_theme") if importlib.util.find_spec(m) is None]; sys.exit("Install docs dependencies first: python -m pip install -r docs/requirements.txt; missing: " + ", ".join(missing) if missing else 0)'
 	./installer/bootstrap.sh --run-python -m sphinx -b html docs/source docs/_build/html
 
 sanitize-check:

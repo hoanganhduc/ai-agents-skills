@@ -47,6 +47,21 @@ make smoke ARGS="--skill zotero --root <fake-or-real-root>"
 python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
+Recommended local maintainer checks mirror the CI gate:
+
+```bash
+make sanitize-check
+make test
+make runtime-smoke
+make docs
+make docs-site
+make lifecycle-test ARGS="--matrix default --platform-shape all"
+```
+
+CI also checks that regenerated docs are current by running `make docs` and
+diffing `README.md` plus `docs/`. Run `make docs-site` after installing
+`docs/requirements.txt` when Sphinx rendering matters.
+
 Result meanings:
 
 - `ok`: all selected managed artifacts passed their checks.
@@ -105,12 +120,20 @@ doctors, and the agent's own diagnostics for those layers.
 Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
-macOS it exercises `run_skill.sh`.
+macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
+`formal-skeleton-helper`, `get-available-resources`, and `graph-verifier`,
+forcing copy-mode runtime installation in a temporary root. It requires Python
+plus the runtime dependencies for those checks, including `psutil` and
+`networkx` for the default CI path. Passing `--skills` may only select skills
+that are supported by this runtime-smoke harness.
 
 ```bash
 make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
 ```
+
+`smoke` can also return `no-managed-artifacts` when no managed skill-file
+artifacts match the selected scope.
 
 Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
 [OpenClaw Integration Plan](openclaw-integration-plan.md),

@@ -13,7 +13,7 @@
 </div>
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
-![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)
+![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
 ![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
@@ -70,8 +70,14 @@ record the agent policy and fallback behavior used to choose symlink,
 reference, or copy mode. Copy mode remains available when an agent or
 filesystem must have regular files inside the settings directory.
 
+Platform support is Linux and Windows first, with core installer flows also
+covered on macOS in CI. macOS users should expect POSIX-style behavior but
+lighter platform-specific guidance than Linux and Windows.
+
 ## Documentation
 
+- [docs/source/index.md](docs/source/index.md): docs-site landing page and
+  task-oriented navigation.
 - [docs/installation.md](docs/installation.md): install, dry-run, conflict,
   and migration modes.
 - [docs/skills.md](docs/skills.md): skill catalog and descriptions.
@@ -98,9 +104,22 @@ filesystem must have regular files inside the settings directory.
 - [docs/openclaw-integration-plan.md](docs/openclaw-integration-plan.md): gated OpenClaw integration plan,
   risk fixes, and acceptance criteria.
 - [docs/verification.md](docs/verification.md): installed-artifact verification model.
+- [docs/architecture.md](docs/architecture.md): manifest-to-target rendering,
+  install modes, artifact classes, and safety boundaries.
+- [docs/windows.md](docs/windows.md) and [docs/linux.md](docs/linux.md):
+  platform-specific command and dependency notes.
+- [docs/troubleshooting.md](docs/troubleshooting.md): common install, audit,
+  launcher, migration, and verification cases.
+- [docs/uninstall-rollback.md](docs/uninstall-rollback.md): scoped uninstall
+  and rollback behavior.
 
 The GitHub Pages site is built from `docs/source` and deployed by
 `.github/workflows/docs.yml`.
+
+Most checked-in docs are generated. Edit `installer/ai_agents_skills/docs.py`
+and the manifests for generated pages, then run `make docs`; CI checks that
+`README.md` and `docs/` are current. `docs/source/index.md` and
+`docs/source/overview.md` are maintained manually as docs-site landing pages.
 
 ## Acknowledgements
 
@@ -111,6 +130,17 @@ This repository was implemented and maintained with help from ChatGPT Codex.
 This project is licensed under GPL-3.0-or-later. See `LICENSE`.
 
 ## Quick Start
+
+Clone the repo and run commands from the repository root:
+
+```bash
+git clone https://github.com/hoanganhduc/ai-agents-skills.git
+cd ai-agents-skills
+```
+
+Requires Python 3.10 or newer. Linux and macOS examples use `make` and the
+POSIX bootstrap script. Windows examples use `make.bat`, which requires
+`pwsh` or `powershell.exe`.
 
 Linux:
 
@@ -142,6 +172,11 @@ make.bat lifecycle-test --matrix default --platform-shape windows
 make.bat fake-root-lifecycle --profile research-core --platform-shape windows
 ```
 
+For a shorter first pass, run `doctor`, `precheck`, `plan`, and a dry-run
+`install` before any lifecycle matrix. `lifecycle-test` and
+`fake-root-lifecycle` are verification tools; they use fake roots and should
+not be confused with a real install.
+
 Applied installs, uninstalls, and rollbacks are interactive: before any
 `--apply` writes files, the installer explains the install, uninstall, and
 rollback process and requires the user to type the displayed confirmation
@@ -163,6 +198,20 @@ Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-instructions`, or
 `--artifact-profile research-entrypoints` explicitly. Use `--with-deps` when
 dependency-bound artifacts should also install their backing skills.
+
+## Command Surfaces
+
+- `make <target> ARGS="..."` is the normal Linux/macOS wrapper.
+- `make.bat <command> ...` is the normal native Windows wrapper.
+- `./installer/bootstrap.sh <command> ...` and
+  `python -m installer.ai_agents_skills <command> ...` are direct entrypoints
+  for debugging wrapper behavior.
+- `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` inspect
+  manifest content without planning writes.
+- `docs` regenerates generated documentation; `docs-site` builds the local
+  Sphinx site when `docs/requirements.txt` is installed.
+- `sanitize-check`, `test`, `runtime-smoke`, and `lifecycle-test` are
+  maintainer verification commands.
 
 ## Profiles
 

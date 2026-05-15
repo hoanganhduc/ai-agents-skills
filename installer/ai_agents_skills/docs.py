@@ -63,7 +63,7 @@ def write_readme(manifests: dict[str, Any]) -> Path:
 </div>
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
-![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-blue)
+![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
 ![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
@@ -120,8 +120,14 @@ record the agent policy and fallback behavior used to choose symlink,
 reference, or copy mode. Copy mode remains available when an agent or
 filesystem must have regular files inside the settings directory.
 
+Platform support is Linux and Windows first, with core installer flows also
+covered on macOS in CI. macOS users should expect POSIX-style behavior but
+lighter platform-specific guidance than Linux and Windows.
+
 ## Documentation
 
+- [docs/source/index.md](docs/source/index.md): docs-site landing page and
+  task-oriented navigation.
 - [docs/installation.md](docs/installation.md): install, dry-run, conflict,
   and migration modes.
 - [docs/skills.md](docs/skills.md): skill catalog and descriptions.
@@ -148,9 +154,22 @@ filesystem must have regular files inside the settings directory.
 - [docs/openclaw-integration-plan.md](docs/openclaw-integration-plan.md): gated OpenClaw integration plan,
   risk fixes, and acceptance criteria.
 - [docs/verification.md](docs/verification.md): installed-artifact verification model.
+- [docs/architecture.md](docs/architecture.md): manifest-to-target rendering,
+  install modes, artifact classes, and safety boundaries.
+- [docs/windows.md](docs/windows.md) and [docs/linux.md](docs/linux.md):
+  platform-specific command and dependency notes.
+- [docs/troubleshooting.md](docs/troubleshooting.md): common install, audit,
+  launcher, migration, and verification cases.
+- [docs/uninstall-rollback.md](docs/uninstall-rollback.md): scoped uninstall
+  and rollback behavior.
 
 The GitHub Pages site is built from `docs/source` and deployed by
 `.github/workflows/docs.yml`.
+
+Most checked-in docs are generated. Edit `installer/ai_agents_skills/docs.py`
+and the manifests for generated pages, then run `make docs`; CI checks that
+`README.md` and `docs/` are current. `docs/source/index.md` and
+`docs/source/overview.md` are maintained manually as docs-site landing pages.
 
 ## Acknowledgements
 
@@ -161,6 +180,17 @@ This repository was implemented and maintained with help from ChatGPT Codex.
 This project is licensed under GPL-3.0-or-later. See `LICENSE`.
 
 ## Quick Start
+
+Clone the repo and run commands from the repository root:
+
+```bash
+git clone https://github.com/hoanganhduc/ai-agents-skills.git
+cd ai-agents-skills
+```
+
+Requires Python 3.10 or newer. Linux and macOS examples use `make` and the
+POSIX bootstrap script. Windows examples use `make.bat`, which requires
+`pwsh` or `powershell.exe`.
 
 Linux:
 
@@ -192,6 +222,11 @@ make.bat lifecycle-test --matrix default --platform-shape windows
 make.bat fake-root-lifecycle --profile research-core --platform-shape windows
 ```
 
+For a shorter first pass, run `doctor`, `precheck`, `plan`, and a dry-run
+`install` before any lifecycle matrix. `lifecycle-test` and
+`fake-root-lifecycle` are verification tools; they use fake roots and should
+not be confused with a real install.
+
 Applied installs, uninstalls, and rollbacks are interactive: before any
 `--apply` writes files, the installer explains the install, uninstall, and
 rollback process and requires the user to type the displayed confirmation
@@ -213,6 +248,20 @@ Optional workflow artifacts are not installed by default. Use
 `--artifact-profile workflow-instructions`, or
 `--artifact-profile research-entrypoints` explicitly. Use `--with-deps` when
 dependency-bound artifacts should also install their backing skills.
+
+## Command Surfaces
+
+- `make <target> ARGS="..."` is the normal Linux/macOS wrapper.
+- `make.bat <command> ...` is the normal native Windows wrapper.
+- `./installer/bootstrap.sh <command> ...` and
+  `python -m installer.ai_agents_skills <command> ...` are direct entrypoints
+  for debugging wrapper behavior.
+- `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` inspect
+  manifest content without planning writes.
+- `docs` regenerates generated documentation; `docs-site` builds the local
+  Sphinx site when `docs/requirements.txt` is installed.
+- `sanitize-check`, `test`, `runtime-smoke`, and `lifecycle-test` are
+  maintainer verification commands.
 
 ## Profiles
 
@@ -295,7 +344,15 @@ def skills_text(manifests: dict[str, Any]) -> str:
         "Codex and DeepSeek receive reference adapters unless native loader "
         "evidence justifies a different policy. Explicit `symlink`, "
         "`reference`, and `copy` modes force the same strategy for every "
-        "agent.\n\n"
+        "agent. In `reference` mode, the installed `SKILL.md` is an adapter "
+        "that points back to this repo; support files remain in "
+        "`canonical/skills/<skill>/` instead of being copied into the agent "
+        "home.\n\n"
+        "Some older local skill names are accepted as migration aliases. "
+        "For example, `deep-research` maps to `deep-research-workflow`, "
+        "`smart_model_router` maps to `model-router`, and `openclaw-research` "
+        "maps to `source-research`. Use `audit-system` and a reviewed "
+        "`--migrate` plan before replacing legacy alias directories.\n\n"
         + skill_table(manifests)
         + "\n\n"
         "Related pages: [Installation](installation.md), "
@@ -318,6 +375,7 @@ def artifacts_text(manifests: dict[str, Any]) -> str:
         "Common commands:\n\n"
         "```bash\n"
         "make list-artifacts\n"
+        "make describe-artifact ARGS=\"entrypoint-alias:zotero\"\n"
         "make plan ARGS=\"--no-skills --artifact-profile workflow-templates\"\n"
         "make plan ARGS=\"--no-skills --artifact entrypoint-alias:zotero --with-deps\"\n"
         "make install ARGS=\"--no-skills --artifact-profile repo-management --dry-run\"\n"
@@ -375,6 +433,14 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
         "which capabilities are selected for a workflow, and use",
         "[Windows](windows.md) or [Linux](linux.md) for platform-specific",
         "detection notes.",
+        "",
+        "Minimum installer prerequisites:",
+        "",
+        "- Python 3.10 or newer.",
+        "- A shell that can run the launcher: POSIX shell plus `make` on",
+        "  Linux/macOS, or `make.bat` with PowerShell on native Windows.",
+        "- Existing agent homes for any agents you want to install into. Missing",
+        "  agent homes are skipped rather than created implicitly.",
         "",
         "Common commands:",
         "",
@@ -603,6 +669,21 @@ make smoke ARGS="--skill zotero --root <fake-or-real-root>"
 python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
+Recommended local maintainer checks mirror the CI gate:
+
+```bash
+make sanitize-check
+make test
+make runtime-smoke
+make docs
+make docs-site
+make lifecycle-test ARGS="--matrix default --platform-shape all"
+```
+
+CI also checks that regenerated docs are current by running `make docs` and
+diffing `README.md` plus `docs/`. Run `make docs-site` after installing
+`docs/requirements.txt` when Sphinx rendering matters.
+
 Result meanings:
 
 - `ok`: all selected managed artifacts passed their checks.
@@ -661,12 +742,20 @@ doctors, and the agent's own diagnostics for those layers.
 Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
-macOS it exercises `run_skill.sh`.
+macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
+`formal-skeleton-helper`, `get-available-resources`, and `graph-verifier`,
+forcing copy-mode runtime installation in a temporary root. It requires Python
+plus the runtime dependencies for those checks, including `psutil` and
+`networkx` for the default CI path. Passing `--skills` may only select skills
+that are supported by this runtime-smoke harness.
 
 ```bash
 make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
 ```
+
+`smoke` can also return `no-managed-artifacts` when no managed skill-file
+artifacts match the selected scope.
 
 Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
 [OpenClaw Integration Plan](openclaw-integration-plan.md),
@@ -1453,6 +1542,11 @@ The manifests are the source of truth:
 - `manifest/dependencies.yaml` and `manifest/system-dependencies.yaml` define
   logical tools and sanitized maintainer-system dependency observations.
 
+The primary manifests are JSON-compatible YAML files loaded and validated by
+`installer/ai_agents_skills/manifest.py`. The JSON Schemas under
+`manifest/schema/openclaw/` are for the gated OpenClaw integration pipeline,
+not the primary installer manifest format.
+
 The installer resolves those manifests into per-agent target artifacts and
 records ownership in `.ai-agents-skills/state.json` under the selected root.
 Existing unmanaged files are skipped by default.
@@ -1488,9 +1582,21 @@ Artifact classes:
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
+Target rendering is intentionally adapter-heavy where native behavior has not
+been proven. Codex personas are TOML custom-agent files, Claude personas are
+Markdown subagents, and DeepSeek personas are reference prompts. Claude
+entrypoint aliases are command files, while Codex and DeepSeek entrypoint
+aliases are reference documents under `instructions/entrypoints`.
+
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
 detected, not as the default global Codex target.
+
+Portable runtime runners accept workspace-relative skill commands only. They
+set runtime-specific environment variables such as `AAS_RUNTIME_ROOT`,
+`AAS_RUNTIME_WORKSPACE`, and `AAS_SECRETS_FILE`, and set OpenClaw-compatible
+variables only to Codex-owned runtime paths. Absolute paths and `..` traversal
+are rejected by the runtime wrappers.
 
 Safety boundary:
 
@@ -1528,6 +1634,22 @@ Windows/WSL substrate information where possible.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
+
+Before running installer commands, clone the repository and run commands from
+the repo root. The launchers need Python 3.10 or newer. On Linux and macOS,
+use `make` or `./installer/bootstrap.sh`; on Windows, use `make.bat`, which
+requires `pwsh` or `powershell.exe`. The direct Python entrypoint is useful for
+debugging wrapper behavior:
+
+```bash
+python -m installer.ai_agents_skills help
+python -m installer.ai_agents_skills describe zotero
+```
+
+Use `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` to
+inspect manifest content without planning writes. Use `make docs` to
+regenerate generated docs and `make docs-site` to build the Sphinx site after
+installing `docs/requirements.txt`.
 
 Use `precheck --interactive` for a guided one-by-one pass through missing
 dependencies. It does not install packages automatically; it shows the install
@@ -1570,6 +1692,12 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
 make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
+
+Fake-root plans detect only agent homes that exist under the fake root. Create
+`.codex`, `.claude`, or `.deepseek` inside the fake root for the agents you
+want to exercise; a fake root with no agent homes produces no install actions,
+no managed installer state, and later verification may report
+`no-managed-artifacts`.
 
 Real-system writes should be a final step after reviewing `plan` output:
 
@@ -1627,7 +1755,9 @@ skill targets that current Codex will not discover.
 Use `--install-mode reference` for agents or environments that should not load
 symlinked skills. This mode writes a thin `SKILL.md` adapter into every agent
 settings directory. The adapter tells the agent where the canonical repo skill
-file is and does not copy support files.
+file is and does not copy support files. If a previously managed skill is
+switched to reference mode, obsolete managed support files may be planned for
+removal because the adapter now points back to the repo copy.
 
 Use `--install-mode copy` only when the agent must have regular files inside
 its settings directory. Copy mode materializes skill files and support files
@@ -1718,6 +1848,14 @@ make audit-system ARGS="--profile full-research --migration-report --json"
 make plan ARGS="--profile full-research --migrate"
 make plan ARGS="--profile full-research --adopt"
 ```
+
+Legacy aliases are compatibility names for older local installs. New managed
+installs use canonical kebab-case skill names from `manifest/skills.yaml`.
+Examples include `deep-research` to `deep-research-workflow`,
+`smart_model_router` to `model-router`, and `openclaw-research` to
+`source-research`. A reviewed `--migrate` plan installs the canonical target,
+backs up the legacy alias directory, and removes that alias directory only
+after explicit apply.
 
 The audit reports:
 
@@ -1893,6 +2031,15 @@ Optional artifact-class target directories:
 | Claude | `~/.claude/agents` | `~/.claude/templates` | `~/.claude/commands` | `~/.claude/tools` |
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 
+Rendered artifact behavior differs by agent:
+
+| Artifact | Codex | Claude | DeepSeek |
+|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. |
+
 Instruction docs target each agent's `instructions` directory. Entrypoint
 aliases target Claude commands, but Codex and DeepSeek receive reference docs
 under `instructions/entrypoints` because equivalent slash-command loading is
@@ -1903,7 +2050,8 @@ They require explicit artifact selection because commands, personas, hooks, and
 tool shims can affect behavior more broadly than a normal skill directory.
 
 Instruction files are modified through managed marker blocks only. Uninstall
-and rollback remove only those managed blocks and managed files.
+and rollback remove only recorded managed blocks and managed files; surrounding
+user text is outside installer ownership.
 The optional `management-notice:repo-management` artifact is also a managed
 block in the instruction file; it does not replace existing user instructions.
 
@@ -2023,6 +2171,8 @@ Use `make.bat precheck` before installation. The precheck reports whether each
 dependency is native Windows, WSL-backed, missing, degraded, or manual. A
 missing DeepSeek home on Windows is not an error; DeepSeek-specific artifacts
 and dependencies are skipped when the agent is absent.
+`make.bat` requires `pwsh` or `powershell.exe`; if neither is available, install
+PowerShell or use the POSIX bootstrap script from a compatible shell.
 
 Common commands from a native Windows shell:
 
@@ -2034,6 +2184,9 @@ make.bat install --profile research-core --dry-run
 make.bat lifecycle-test --matrix default --platform-shape windows
 make.bat fake-root-lifecycle --profile research-core --platform-shape windows
 make.bat verify --root <fake-or-real-root>
+make.bat docs
+make.bat sanitize-check
+make.bat test
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected
@@ -2075,6 +2228,9 @@ def linux_text() -> str:
 Linux checks resolve logical tools from installed commands, repo-local runtimes,
 and user overrides such as `AAS_PYTHON` or `AAS_SAGE`. `precheck` also checks
 selected optional Python packages where a skill declares them.
+macOS uses the same POSIX launcher path for core installer flows and is covered
+by CI for the default lifecycle smoke, but this repository does not yet provide
+a separate macOS dependency guide.
 
 Common commands:
 
@@ -2150,6 +2306,10 @@ Common cases:
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
 | Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled this way by default. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
+| Windows wrapper reports no PowerShell runtime | `make.bat` could not find `pwsh` or `powershell.exe`. | Install PowerShell, run from a shell where it is on PATH, or use the POSIX bootstrap script from a compatible environment. |
+| Fake-root install has no actions | The fake root does not contain any `.codex`, `.claude`, or `.deepseek` home directories. | Create the agent homes you want to test under the fake root, or use `lifecycle-test` to create managed fake roots automatically. |
+| Docs freshness check fails in CI | Generated docs are stale. | Edit `installer/ai_agents_skills/docs.py` or manifests, run `make docs`, and commit the resulting `README.md` and `docs/` changes. |
+| Forced symlink smoke is degraded for Codex or DeepSeek | Current loader evidence does not prove file-symlinked `SKILL.md` loading for those agents. | Use default auto mode or reference mode unless intentionally testing loader behavior. |
 | Verify returns `no-managed-artifacts` | The selected scope has no state recorded by this installer. | Run install/adopt/migrate first, or verify a different scope. |
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),

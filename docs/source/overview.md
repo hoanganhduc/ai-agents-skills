@@ -15,6 +15,12 @@ Codex and DeepSeek receive reference adapters unless native loader evidence
 justifies a different policy. Explicit symlink, reference, and copy modes are
 available when you need to force one strategy.
 
+Most checked-in documentation is generated from
+`installer/ai_agents_skills/docs.py`, with manifest-derived tables inserted
+from `manifest/`. Maintainers should edit the generator or manifests and run
+`make docs` rather than hand-editing generated `README.md` or mirrored
+`docs/*.md` pages.
+
 ## Main Ideas
 
 - Canonical skills live under `canonical/skills/`.
@@ -33,6 +39,13 @@ available when you need to force one strategy.
 - Verification checks only installed managed artifacts.
 
 ## Typical Workflow
+
+Clone the repository and run commands from its root before starting:
+
+```bash
+git clone https://github.com/hoanganhduc/ai-agents-skills.git
+cd ai-agents-skills
+```
 
 ```bash
 make doctor
