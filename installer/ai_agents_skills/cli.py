@@ -1246,6 +1246,8 @@ def command_help() -> dict[str, Any]:
         "runtime-inventory",
         "list-skills",
         "list-artifacts",
+        "describe",
+        "describe-artifact",
         "generate-docs",
         "openclaw-inventory",
         "openclaw-dry-run-manifest",
@@ -1262,7 +1264,9 @@ def command_help() -> dict[str, Any]:
         "examples": [
             "make precheck ARGS=\"--profile research-core\"",
             "make install ARGS=\"--profile research-core --dry-run\"",
+            "make describe ARGS=\"zotero\"",
             "make lifecycle-test ARGS=\"--matrix default --platform-shape all\"",
+            "make docs",
         ],
     }
 

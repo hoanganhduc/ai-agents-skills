@@ -8,6 +8,7 @@ Common commands:
 
 ```bash
 make list-artifacts
+make describe-artifact ARGS="entrypoint-alias:zotero"
 make plan ARGS="--no-skills --artifact-profile workflow-templates"
 make plan ARGS="--no-skills --artifact entrypoint-alias:zotero --with-deps"
 make install ARGS="--no-skills --artifact-profile repo-management --dry-run"

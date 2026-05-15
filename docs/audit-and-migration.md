@@ -18,6 +18,14 @@ make plan ARGS="--profile full-research --migrate"
 make plan ARGS="--profile full-research --adopt"
 ```
 
+Legacy aliases are compatibility names for older local installs. New managed
+installs use canonical kebab-case skill names from `manifest/skills.yaml`.
+Examples include `deep-research` to `deep-research-workflow`,
+`smart_model_router` to `model-router`, and `openclaw-research` to
+`source-research`. A reviewed `--migrate` plan installs the canonical target,
+backs up the legacy alias directory, and removes that alias directory only
+after explicit apply.
+
 The audit reports:
 
 - detected and skipped agents

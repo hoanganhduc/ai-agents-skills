@@ -12,6 +12,14 @@ which capabilities are selected for a workflow, and use
 [Windows](windows.md) or [Linux](linux.md) for platform-specific
 detection notes.
 
+Minimum installer prerequisites:
+
+- Python 3.10 or newer.
+- A shell that can run the launcher: POSIX shell plus `make` on
+  Linux/macOS, or `make.bat` with PowerShell on native Windows.
+- Existing agent homes for any agents you want to install into. Missing
+  agent homes are skipped rather than created implicitly.
+
 Common commands:
 
 ```bash

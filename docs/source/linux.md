@@ -3,6 +3,9 @@
 Linux checks resolve logical tools from installed commands, repo-local runtimes,
 and user overrides such as `AAS_PYTHON` or `AAS_SAGE`. `precheck` also checks
 selected optional Python packages where a skill declares them.
+macOS uses the same POSIX launcher path for core installer flows and is covered
+by CI for the default lifecycle smoke, but this repository does not yet provide
+a separate macOS dependency guide.
 
 Common commands:
 

@@ -8,6 +8,8 @@ Use `make.bat precheck` before installation. The precheck reports whether each
 dependency is native Windows, WSL-backed, missing, degraded, or manual. A
 missing DeepSeek home on Windows is not an error; DeepSeek-specific artifacts
 and dependencies are skipped when the agent is absent.
+`make.bat` requires `pwsh` or `powershell.exe`; if neither is available, install
+PowerShell or use the POSIX bootstrap script from a compatible shell.
 
 Common commands from a native Windows shell:
 
@@ -19,6 +21,9 @@ make.bat install --profile research-core --dry-run
 make.bat lifecycle-test --matrix default --platform-shape windows
 make.bat fake-root-lifecycle --profile research-core --platform-shape windows
 make.bat verify --root <fake-or-real-root>
+make.bat docs
+make.bat sanitize-check
+make.bat test
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected

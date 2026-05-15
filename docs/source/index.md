@@ -11,6 +11,8 @@ Latest update: {sub-ref}`today`
 
 ## Start Here
 
+- First time here: clone the repository, run commands from the repo root, and
+  use `doctor`, `precheck`, and `plan` before any applied install.
 - New install: read [Installation](installation.md), then choose a
   [Profile](profiles.md).
 - Existing agent setup: run a read-only audit with
@@ -35,6 +37,11 @@ The installer is dry-run first. Real home-directory writes require explicit
 chooses `--adopt`, `--backup-replace`, or `--migrate`. Secrets, auth files,
 session logs, local paper libraries, and runtime caches are outside the managed
 scope.
+
+Most repository docs are generated from `installer/ai_agents_skills/docs.py`
+and manifest data. Edit the generator or manifests, run `make docs`, then use
+`make docs-site` when you need to preview the Sphinx site. This `index.md` page
+and `overview.md` are maintained manually as docs-site landing pages.
 
 ```{toctree}
 :maxdepth: 2
