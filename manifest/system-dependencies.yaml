@@ -55,7 +55,7 @@
     "sagemath": {
       "display_name": "SageMath",
       "requirement": "required for the sagemath skill and optional Sage-backed graph/TikZ workflows",
-      "linux": "Native executable via SAGE_BIN, sage on PATH, or a local Sage install.",
+      "linux": "Native executable via `AAS_SAGE`, `sage` on `PATH`, a local Sage install, or a Docker-backed wrapper that behaves like `sage` for `--version` and `-c` probes.",
       "windows": "WSL-backed SageMath inside Ubuntu 24.04, detected through wsl.exe when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when available, or an ext4.vhdx presence warning when the distro image is not inspectable.",
       "used_by": ["sagemath", "tikz-draw", "openclaw/source research math verification"]
     },
