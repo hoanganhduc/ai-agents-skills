@@ -137,4 +137,5 @@ artifacts match the selected scope.
 
 Related pages: [Installation](installation.md), [Audit And Migration](audit-and-migration.md),
 [OpenClaw Integration Plan](openclaw-integration-plan.md),
+[OpenClaw Install Target Plan](openclaw-install-target-plan.md),
 [Uninstall And Rollback](uninstall-rollback.md), [Troubleshooting](troubleshooting.md).

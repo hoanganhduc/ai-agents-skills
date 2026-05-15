@@ -103,6 +103,8 @@ lighter platform-specific guidance than Linux and Windows.
   local skill handling, and Windows-native verification notes.
 - [docs/openclaw-integration-plan.md](docs/openclaw-integration-plan.md): gated OpenClaw integration plan,
   risk fixes, and acceptance criteria.
+- [docs/openclaw-install-target-plan.md](docs/openclaw-install-target-plan.md): future OpenClaw-as-install-target
+  policy, phases, and tests.
 - [docs/verification.md](docs/verification.md): installed-artifact verification model.
 - [docs/architecture.md](docs/architecture.md): manifest-to-target rendering,
   install modes, artifact classes, and safety boundaries.
