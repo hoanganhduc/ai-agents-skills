@@ -3,8 +3,10 @@ setlocal EnableExtensions DisableDelayedExpansion
 if "%~1"=="help" (
   echo Usage: make.bat ^<command^> [args...]
   echo Common commands: doctor precheck audit-system plan install verify smoke rollback uninstall
-  echo Test commands: fake-root-lifecycle lifecycle-test runtime-smoke
-  echo Listing commands: list-skills list-artifacts
+  echo Test commands: fake-root-lifecycle lifecycle-test runtime-smoke sanitize-check test
+  echo Listing commands: list-skills list-artifacts describe describe-artifact
+  echo Docs commands: docs
+  echo Runtime commands: runtime-inventory
   echo OpenClaw commands: openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check
   exit /b 0
 )

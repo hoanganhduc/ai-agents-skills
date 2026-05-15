@@ -28,6 +28,15 @@ Optional artifact-class target directories:
 | Claude | `~/.claude/agents` | `~/.claude/templates` | `~/.claude/commands` | `~/.claude/tools` |
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 
+Rendered artifact behavior differs by agent:
+
+| Artifact | Codex | Claude | DeepSeek |
+|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. |
+
 Instruction docs target each agent's `instructions` directory. Entrypoint
 aliases target Claude commands, but Codex and DeepSeek receive reference docs
 under `instructions/entrypoints` because equivalent slash-command loading is
@@ -38,7 +47,8 @@ They require explicit artifact selection because commands, personas, hooks, and
 tool shims can affect behavior more broadly than a normal skill directory.
 
 Instruction files are modified through managed marker blocks only. Uninstall
-and rollback remove only those managed blocks and managed files.
+and rollback remove only recorded managed blocks and managed files; surrounding
+user text is outside installer ownership.
 The optional `management-notice:repo-management` artifact is also a managed
 block in the instruction file; it does not replace existing user instructions.
 

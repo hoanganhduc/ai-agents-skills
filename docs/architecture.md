@@ -15,6 +15,11 @@ The manifests are the source of truth:
 - `manifest/dependencies.yaml` and `manifest/system-dependencies.yaml` define
   logical tools and sanitized maintainer-system dependency observations.
 
+The primary manifests are JSON-compatible YAML files loaded and validated by
+`installer/ai_agents_skills/manifest.py`. The JSON Schemas under
+`manifest/schema/openclaw/` are for the gated OpenClaw integration pipeline,
+not the primary installer manifest format.
+
 The installer resolves those manifests into per-agent target artifacts and
 records ownership in `.ai-agents-skills/state.json` under the selected root.
 Existing unmanaged files are skipped by default.
@@ -50,9 +55,21 @@ Artifact classes:
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
+Target rendering is intentionally adapter-heavy where native behavior has not
+been proven. Codex personas are TOML custom-agent files, Claude personas are
+Markdown subagents, and DeepSeek personas are reference prompts. Claude
+entrypoint aliases are command files, while Codex and DeepSeek entrypoint
+aliases are reference documents under `instructions/entrypoints`.
+
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
 detected, not as the default global Codex target.
+
+Portable runtime runners accept workspace-relative skill commands only. They
+set runtime-specific environment variables such as `AAS_RUNTIME_ROOT`,
+`AAS_RUNTIME_WORKSPACE`, and `AAS_SECRETS_FILE`, and set OpenClaw-compatible
+variables only to Codex-owned runtime paths. Absolute paths and `..` traversal
+are rejected by the runtime wrappers.
 
 Safety boundary:
 

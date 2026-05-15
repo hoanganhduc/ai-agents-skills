@@ -18,6 +18,22 @@ Windows/WSL substrate information where possible.
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
 
+Before running installer commands, clone the repository and run commands from
+the repo root. The launchers need Python 3.10 or newer. On Linux and macOS,
+use `make` or `./installer/bootstrap.sh`; on Windows, use `make.bat`, which
+requires `pwsh` or `powershell.exe`. The direct Python entrypoint is useful for
+debugging wrapper behavior:
+
+```bash
+python -m installer.ai_agents_skills help
+python -m installer.ai_agents_skills describe zotero
+```
+
+Use `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` to
+inspect manifest content without planning writes. Use `make docs` to
+regenerate generated docs and `make docs-site` to build the Sphinx site after
+installing `docs/requirements.txt`.
+
 Use `precheck --interactive` for a guided one-by-one pass through missing
 dependencies. It does not install packages automatically; it shows the install
 hint, lets the user skip or ignore a dependency, and tells them to rerun
@@ -59,6 +75,12 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
 make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
+
+Fake-root plans detect only agent homes that exist under the fake root. Create
+`.codex`, `.claude`, or `.deepseek` inside the fake root for the agents you
+want to exercise; a fake root with no agent homes produces no install actions,
+no managed installer state, and later verification may report
+`no-managed-artifacts`.
 
 Real-system writes should be a final step after reviewing `plan` output:
 
@@ -116,7 +138,9 @@ skill targets that current Codex will not discover.
 Use `--install-mode reference` for agents or environments that should not load
 symlinked skills. This mode writes a thin `SKILL.md` adapter into every agent
 settings directory. The adapter tells the agent where the canonical repo skill
-file is and does not copy support files.
+file is and does not copy support files. If a previously managed skill is
+switched to reference mode, obsolete managed support files may be planned for
+removal because the adapter now points back to the repo copy.
 
 Use `--install-mode copy` only when the agent must have regular files inside
 its settings directory. Copy mode materializes skill files and support files
