@@ -11,7 +11,7 @@ from typing import Any
 from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
 from .discovery import current_platform
 from .manifest import REPO_ROOT
-from .sanitize import has_sensitive_material
+from .sanitize import has_sensitive_material, sanitize_text
 from .state import artifact_signature, sha256_file
 
 
@@ -99,10 +99,13 @@ def build_runtime_actions(
     runtime_skills = resolve_runtime_skills(selected_skills, runtime_manifest, runtime_profile)
     if not runtime_skills:
         return []
+    platform_name = current_platform(platform)
     target_root = (runtime_root or default_runtime_root(root, agents, platform)).expanduser()
     actions: list[dict[str, Any]] = []
     seen_targets: dict[str, str] = {}
     for entry in runtime_manifest.get("runners", []):
+        if not runtime_entry_applies(entry, platform_name):
+            continue
         actions.append(
             runtime_file_action(
                 root=root,
@@ -117,6 +120,8 @@ def build_runtime_actions(
     for skill in runtime_skills:
         spec = runtime_manifest["skills"][skill]
         for entry in spec.get("files", []):
+            if not runtime_entry_applies(entry, platform_name):
+                continue
             actions.append(
                 runtime_file_action(
                     root=root,
@@ -129,6 +134,11 @@ def build_runtime_actions(
                 )
             )
     return actions
+
+
+def runtime_entry_applies(entry: dict[str, Any], platform_name: str) -> bool:
+    platforms = entry.get("platforms", [])
+    return not platforms or platform_name in platforms
 
 
 def runtime_file_action(
@@ -401,21 +411,20 @@ def missing_parent_dirs(root: Path, parent: Path) -> list[Path]:
 
 def runtime_inventory(source_root: Path, max_entries: int = 5000) -> dict[str, Any]:
     source_root = source_root.expanduser()
+    source_root_label = sanitize_text(str(source_root))
     if not source_root.exists():
-        return {"status": "missing", "source_root": str(source_root), "entries": []}
+        return {"status": "missing", "source_root": source_root_label, "entries": []}
     if not source_root.is_dir() or source_root.is_symlink():
-        return {"status": "blocked", "source_root": str(source_root), "reason": "source root must be a real directory", "entries": []}
+        return {"status": "blocked", "source_root": source_root_label, "reason": "source root must be a real directory", "entries": []}
     entries = []
     for index, path in enumerate(sorted(source_root.rglob("*"), key=lambda item: item.as_posix())):
         if index >= max_entries:
             return {
                 "status": "truncated",
-                "source_root": str(source_root),
+                "source_root": source_root_label,
                 "max_entries": max_entries,
                 "entries": entries,
             }
-        if path.is_dir():
-            continue
         relative = path.relative_to(source_root).as_posix()
         entry = {
             "path": relative,
@@ -427,6 +436,8 @@ def runtime_inventory(source_root: Path, max_entries: int = 5000) -> dict[str, A
         if path.is_symlink():
             entry["classification"] = "blocked"
             entry["reason"] = "symlink"
+        elif path.is_dir():
+            continue
         elif runtime_path_denied(relative):
             entry["classification"] = "denied"
             entry["reason"] = "denied pattern"
@@ -449,7 +460,7 @@ def runtime_inventory(source_root: Path, max_entries: int = 5000) -> dict[str, A
     blocked = [item for item in entries if item["classification"] in {"blocked", "denied"}]
     return {
         "status": "ok",
-        "source_root": str(source_root),
+        "source_root": source_root_label,
         "entry_count": len(entries),
         "blocked_count": len(blocked),
         "entries": entries,

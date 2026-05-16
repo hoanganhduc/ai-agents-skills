@@ -101,7 +101,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             result = verify(root)
             self.assertEqual(result["status"], "ok")
             checked_skills = {item["skill"] for item in result["results"]}
-            self.assertEqual(checked_skills, {"zotero"})
+            self.assertEqual(checked_skills, {"runtime-runner", "zotero"})
 
     def test_no_detected_agent_means_no_actions(self) -> None:
         manifests = load_manifests()
@@ -1277,7 +1277,14 @@ class PlanInstallVerifyTests(unittest.TestCase):
             args = Args()
             args.skills = "zotero"
             selected = resolve_skills(args, manifests)
-            plan = build_plan(root, manifests, selected, detect_agents(root), backup_replace=True)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root),
+                backup_replace=True,
+                runtime_profile="none",
+            )
             apply_plan(root, plan, dry_run=False)
             uninstall(root, skills={"zotero"}, dry_run=False)
 
@@ -1318,7 +1325,14 @@ class PlanInstallVerifyTests(unittest.TestCase):
             args = Args()
             args.skills = "zotero"
             selected = resolve_skills(args, manifests)
-            plan = build_plan(root, manifests, selected, detect_agents(root), adopt=True)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root),
+                adopt=True,
+                runtime_profile="none",
+            )
             apply_plan(root, plan, dry_run=False)
             uninstall(root, skills={"zotero"}, dry_run=False)
 
@@ -1600,6 +1614,69 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             uninstall(root, artifacts={"management-notice:repo-management"}, dry_run=False)
             self.assertFalse(instructions.exists())
+
+    def test_management_notice_conflict_is_skipped(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            instructions = root / ".codex" / "AGENTS.md"
+            instructions.write_text(
+                "<!-- ai-agents-skills:repo-management:start -->\n"
+                "first\n"
+                "<!-- ai-agents-skills:repo-management:end -->\n"
+                "<!-- ai-agents-skills:repo-management:start -->\n"
+                "second\n"
+                "<!-- ai-agents-skills:repo-management:end -->\n",
+                encoding="utf-8",
+            )
+            from installer.ai_agents_skills.agents import detect_agents
+
+            action = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root),
+                artifacts=[("management-notice", "repo-management")],
+            )["actions"][0]
+
+            self.assertEqual(action["classification"], "conflict")
+            self.assertEqual(action["operation"], "skip")
+            self.assertIn("malformed or duplicated", action["reason"])
+
+    def test_uninstall_refuses_tampered_backup_restore(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            target = root / ".codex" / "skills" / "graph-verifier" / "SKILL.md"
+            target.parent.mkdir(parents=True)
+            target.write_text("original user content\n", encoding="utf-8")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                detect_agents(root, ["codex"]),
+                backup_replace=True,
+            )
+            apply_result = apply_plan(root, plan, dry_run=False)
+            skill_record = next(
+                item for item in apply_result["actions"]
+                if item.get("artifact_type") == "skill-file"
+            )
+            Path(skill_record["backup"]).write_text("tampered backup\n", encoding="utf-8")
+
+            result = uninstall(root, skills={"graph-verifier"}, dry_run=False)
+            action = next(
+                item for item in result["actions"]
+                if item.get("artifact_type") == "skill-file"
+            )
+
+            self.assertEqual(action["operation"], "skip-conflict")
+            self.assertIn("backup signature changed", action["reason"])
+            self.assertNotEqual(target.read_text(encoding="utf-8"), "tampered backup\n")
 
 
 class DocsAndLauncherTests(unittest.TestCase):
@@ -2078,6 +2155,19 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(payload["status"], "error")
             self.assertIn("installer state", payload["error"])
             self.assertFalse((outside / "precheck.json").exists())
+
+    def test_cli_precheck_save_state_refuses_real_system_without_flag(self) -> None:
+        with fake_root() as tmp, patch("installer.ai_agents_skills.cli.is_real_system_root", return_value=True):
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main(["--json", "--root", str(root), "precheck", "--save-state"])
+
+        self.assertEqual(code, 1)
+        payload = json.loads(stream.getvalue())
+        self.assertIn("real-system precheck state writes require --real-system", payload["error"])
+        self.assertFalse((root / ".ai-agents-skills" / "precheck.json").exists())
 
     def test_cli_verify_returns_nonzero_for_failed_status(self) -> None:
         manifests = load_manifests()

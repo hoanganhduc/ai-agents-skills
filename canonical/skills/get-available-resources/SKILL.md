@@ -5,6 +5,18 @@ description: Use at the start of computationally intensive local tasks to detect
 
 # Get Available Resources
 
+
+## Windows Runtime Commands
+
+On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+
+```powershell
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.bat" "skills/get-available-resources/run_get_available_resources.bat" <args>
+```
+
+POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
+
 Use this skill before local work that may be expensive, memory-sensitive, or
 parallelized, such as document conversion batches, graph enumeration, SageMath
 runs, OCR, local parsing, or large file rearrangement.

@@ -1,0 +1,753 @@
+{
+  "suite_id": "semantic-regression.v1",
+  "fixtures": [
+    {
+      "id": "flowchart_pipeline",
+      "diagram_family": "flowchart",
+      "render": {
+        "figure_id": "F1",
+        "title": "Validation pipeline",
+        "purpose": "Show a validation pipeline with a retry loop.",
+        "caption": "Validation pipeline.",
+        "content_requirements": [
+          "input",
+          "parse",
+          "validate",
+          "repair",
+          "emit",
+          "retry loop"
+        ]
+      },
+      "expected": {
+        "check": {
+          "exit_code": 0,
+          "verdict": "APPROVED"
+        },
+        "compile": {
+          "exit_code": 0
+        },
+        "review_visual": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "visual_status": "PASS"
+        },
+        "verify_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        },
+        "review_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        }
+      },
+      "mutations": [
+        {
+          "id": "wrong_node_type",
+          "operations": [
+            {
+              "op": "replace_node_style",
+              "label": "Validate?",
+              "style": "box"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "WRONG_NODE_TYPE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "WRONG_NODE_TYPE"
+              ]
+            }
+          }
+        },
+        {
+          "id": "reversed_retry_edge",
+          "operations": [
+            {
+              "op": "reverse_edge",
+              "from_label": "Repair",
+              "to_label": "Parse"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "REVERSED_EDGE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "REVERSED_EDGE"
+              ]
+            }
+          }
+        },
+        {
+          "id": "wrong_node_label",
+          "operations": [
+            {
+              "op": "replace_node_label",
+              "label": "Repair",
+              "new_label": "Fix"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_NODE",
+                "EXTRA_NODE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_NODE",
+                "EXTRA_NODE"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "dag_pipeline",
+      "diagram_family": "dag",
+      "render": {
+        "figure_id": "F1",
+        "title": "Dependency DAG",
+        "purpose": "Show a linear dependency DAG.",
+        "caption": "Dependency DAG.",
+        "content_requirements": [
+          "input",
+          "parse",
+          "validate",
+          "emit"
+        ]
+      },
+      "expected": {
+        "check": {
+          "exit_code": 0,
+          "verdict": "APPROVED"
+        },
+        "compile": {
+          "exit_code": 0
+        },
+        "review_visual": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "visual_status": "PASS"
+        },
+        "verify_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        },
+        "review_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        }
+      },
+      "mutations": [
+        {
+          "id": "reversed_edge",
+          "operations": [
+            {
+              "op": "reverse_edge",
+              "from_label": "Parse",
+              "to_label": "Validate?"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "REVERSED_EDGE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "REVERSED_EDGE"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "tree_claims",
+      "diagram_family": "tree",
+      "render": {
+        "figure_id": "F1",
+        "title": "Main claim",
+        "purpose": "Show a support tree for the main claim.",
+        "caption": "Support tree.",
+        "content_requirements": [
+          "Assumption A",
+          "Assumption B",
+          "Conclusion"
+        ]
+      },
+      "expected": {
+        "check": {
+          "exit_code": 0,
+          "verdict": "APPROVED"
+        },
+        "compile": {
+          "exit_code": 0
+        },
+        "review_visual": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "visual_status": "PASS"
+        },
+        "verify_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        },
+        "review_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        }
+      },
+      "mutations": [
+        {
+          "id": "wrong_child_label",
+          "operations": [
+            {
+              "op": "replace_node_label",
+              "label": "Conclusion",
+              "new_label": "Result"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_NODE",
+                "EXTRA_NODE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_NODE",
+                "EXTRA_NODE"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "commutative_square",
+      "diagram_family": "commutative",
+      "render": {
+        "figure_id": "F1",
+        "title": "Commutative square",
+        "purpose": "Show a basic commutative square.",
+        "caption": "Commutative square.",
+        "content_requirements": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ]
+      },
+      "expected": {
+        "check": {
+          "exit_code": 0,
+          "verdict": "APPROVED"
+        },
+        "compile": {
+          "exit_code": 0
+        },
+        "review_visual": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "visual_status": "PASS"
+        },
+        "verify_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        },
+        "review_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        }
+      },
+      "mutations": [
+        {
+          "id": "reversed_top_edge",
+          "operations": [
+            {
+              "op": "reverse_edge",
+              "from_label": "A",
+              "to_label": "B"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "REVERSED_EDGE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "REVERSED_EDGE"
+              ]
+            }
+          }
+        },
+        {
+          "id": "wrong_edge_label",
+          "operations": [
+            {
+              "op": "replace_edge_label",
+              "from_label": "C",
+              "to_label": "D",
+              "new_label": "m"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "WRONG_EDGE_LABEL"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "WRONG_EDGE_LABEL"
+              ]
+            }
+          }
+        },
+        {
+          "id": "wrong_node_label",
+          "operations": [
+            {
+              "op": "replace_node_label",
+              "label": "D",
+              "new_label": "E"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_NODE",
+                "EXTRA_NODE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_NODE",
+                "EXTRA_NODE"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "petersen_graph",
+      "diagram_family": "graph",
+      "render": {
+        "figure_id": "F1",
+        "title": "Petersen graph",
+        "purpose": "Draw the Petersen graph.",
+        "caption": "Petersen graph.",
+        "content_requirements": [
+          "layout: circular",
+          "show labels: false"
+        ]
+      },
+      "expected": {
+        "check": {
+          "exit_code": 0,
+          "verdict": "APPROVED"
+        },
+        "compile": {
+          "exit_code": 0
+        },
+        "review_visual": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "visual_status": "PASS"
+        },
+        "verify_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        },
+        "review_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        }
+      },
+      "mutations": [
+        {
+          "id": "missing_edge",
+          "operations": [
+            {
+              "op": "remove_edge",
+              "left_label": "0",
+              "right_label": "5"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_EDGE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_EDGE"
+              ]
+            }
+          }
+        },
+        {
+          "id": "extra_edge",
+          "operations": [
+            {
+              "op": "add_edge",
+              "left_label": "0",
+              "right_label": "2"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "EXTRA_EDGE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "EXTRA_EDGE"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "johnson_5_3",
+      "diagram_family": "graph",
+      "render": {
+        "figure_id": "F1",
+        "title": "J(5,3)",
+        "purpose": "Draw the Johnson graph J(5,3).",
+        "caption": "Johnson graph J(5,3).",
+        "content_requirements": [
+          "layout: spring",
+          "show labels: false"
+        ]
+      },
+      "expected": {
+        "check": {
+          "exit_code": 0,
+          "verdict": "APPROVED"
+        },
+        "compile": {
+          "exit_code": 0
+        },
+        "review_visual": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "visual_status": "PASS"
+        },
+        "verify_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        },
+        "review_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        }
+      },
+      "mutations": [
+        {
+          "id": "missing_edge",
+          "operations": [
+            {
+              "op": "remove_edge",
+              "left_label": "{0, 1, 2}",
+              "right_label": "{0, 1, 3}"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_EDGE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "MISSING_EDGE"
+              ]
+            }
+          }
+        },
+        {
+          "id": "extra_edge",
+          "operations": [
+            {
+              "op": "add_edge",
+              "left_label": "{2, 3, 4}",
+              "right_label": "{0, 1, 2}"
+            }
+          ],
+          "expected": {
+            "check": {
+              "exit_code": 0,
+              "verdict": "APPROVED"
+            },
+            "compile": {
+              "exit_code": 0
+            },
+            "review_visual": {
+              "exit_code": 0,
+              "review_status": "COMPLETE",
+              "visual_status": "PASS"
+            },
+            "verify_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "EXTRA_EDGE"
+              ]
+            },
+            "review_semantic": {
+              "exit_code": 1,
+              "review_status": "COMPLETE",
+              "semantic_verdict": "NEEDS_REVISION",
+              "mismatch_codes_include": [
+                "EXTRA_EDGE"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

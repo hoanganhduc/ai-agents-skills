@@ -1,0 +1,4 @@
+PyMuPDF==1.27.2.2
+shapely==2.1.2
+svgelements==1.9.6
+numpy==1.26.4

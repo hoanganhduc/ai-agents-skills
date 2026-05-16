@@ -1,4 +1,5 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-python "%~dp0formal_skeleton_helper.py" %*
+set "AAS_RUNTIME_SCRIPT=%~dp0formal_skeleton_helper.py"
+"%~dp0..\..\..\run_python.bat" %*
 exit /b %ERRORLEVEL%
