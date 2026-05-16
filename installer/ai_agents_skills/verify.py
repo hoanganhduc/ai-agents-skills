@@ -54,6 +54,7 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
             "agent": artifact.get("agent"),
             "skill": artifact.get("skill"),
             "artifact": artifact.get("artifact"),
+            "artifact_type": artifact.get("artifact_type"),
             "status": "ok" if all(check["ok"] for check in checks) else "failed",
             "checks": checks,
         }
@@ -63,6 +64,7 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
             "agent": artifact.get("agent"),
             "skill": artifact.get("skill"),
             "artifact": artifact.get("artifact"),
+            "artifact_type": artifact.get("artifact_type"),
             "status": "ok" if all(check["ok"] for check in checks) else "failed",
             "checks": checks,
         }
@@ -90,6 +92,12 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8", errors="replace")
         managed_block = extract_managed_block(text, block_id(artifact["skill"]))
         checks.append({"name": "managed-block-present", "ok": managed_block is not None})
+        expected_block = artifact.get("managed_block")
+        if expected_block is not None:
+            checks.append({
+                "name": "managed-block-match",
+                "ok": managed_block is not None and managed_block.strip() == expected_block.strip(),
+            })
         checks.append({
             "name": "no-secret-leak",
             "ok": managed_block is not None and not has_sensitive_material(managed_block),
@@ -110,6 +118,7 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         "agent": artifact.get("agent"),
         "skill": artifact.get("skill"),
         "artifact": artifact.get("artifact"),
+        "artifact_type": artifact.get("artifact_type"),
         "status": "ok" if all(check["ok"] for check in checks) else "failed",
         "checks": checks,
     }

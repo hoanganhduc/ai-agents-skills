@@ -3,6 +3,9 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -141,6 +144,59 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 ])
             self.assertEqual(code, 0)
             self.assertTrue((root / ".codex" / "runtime" / "workspace" / "skills" / "graph-verifier" / "graph_verifier.py").is_file())
+
+    def test_runtime_preflight_rejects_real_system_openclaw_runtime_root(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                detect_agents(root, ["codex"]),
+                runtime_root=root / ".openclaw" / "ai-agents-skills" / "runtime",
+            )
+
+            with patch("installer.ai_agents_skills.runtime.looks_like_real_system_root", return_value=True):
+                with self.assertRaisesRegex(ValueError, "OpenClaw runtime writes"):
+                    apply_plan(root, plan, dry_run=True)
+
+    def test_bash_runtime_runner_ignores_external_workspace_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            runtime_root = temp / "runtime"
+            workspace_script = runtime_root / "workspace" / "skills" / "demo" / "run.sh"
+            workspace_script.parent.mkdir(parents=True)
+            workspace_script.write_text("#!/usr/bin/env bash\nprintf 'managed-workspace\\n'\n", encoding="utf-8")
+            workspace_script.chmod(0o755)
+            runner = runtime_root / "run_skill.sh"
+            shutil.copy2(Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_skill.sh", runner)
+            runner.chmod(0o755)
+
+            external_script = temp / "external" / "skills" / "demo" / "run.sh"
+            external_script.parent.mkdir(parents=True)
+            marker = temp / "external-ran"
+            external_script.write_text(
+                f"#!/usr/bin/env bash\nprintf 'external-workspace\\n'\ntouch {marker}\n",
+                encoding="utf-8",
+            )
+            external_script.chmod(0o755)
+            env = os.environ.copy()
+            env["AAS_RUNTIME_WORKSPACE"] = str(temp / "external")
+            env.pop("AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE", None)
+
+            completed = subprocess.run(
+                ["bash", str(runner), "skills/demo/run.sh"],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stdout, "managed-workspace\n")
+            self.assertFalse(marker.exists())
 
     def test_portable_runtime_text_is_ascii_clean(self) -> None:
         runtime_root = Path(__file__).resolve().parents[1] / "canonical" / "runtime"

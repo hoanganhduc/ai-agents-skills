@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from .agents import all_agent_names, detect_agents
+from .agents import agent_home_statuses, all_agent_names, detect_agents
 from .apply import apply_plan
 from .capabilities import looks_like_real_system_root, smoke_artifact
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
@@ -38,7 +38,7 @@ from .selectors import (
     resolve_skills,
     split_csv,
 )
-from .state import load_state
+from .state import load_state, preflight_state_path, write_text_atomic
 from .verify import verify as verify_state
 
 
@@ -475,6 +475,16 @@ def list_artifacts(manifests: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def skipped_agent_names(root: Path, requested_agents: list[str] | None, agents: list[Any]) -> list[str]:
+    detected = {target.name for target in agents}
+    candidates = requested_agents if requested_agents is not None else all_agent_names()
+    return [
+        str(status["agent"])
+        for status in agent_home_statuses(root, candidates)
+        if status["agent"] not in detected
+    ]
+
+
 def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     platform = current_platform(args.platform)
     selected, selected_artifacts = resolve_install_selection(args, manifests)
@@ -499,9 +509,7 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
         "active_skills": active_skills,
         "detected_agents": [agent.name for agent in agents],
-        "skipped_agents": [
-            agent for agent in all_agent_names() if agent not in {target.name for target in agents}
-        ],
+        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents),
         "tools": tool_results,
     }
     return output(result, args)
@@ -513,8 +521,9 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         interactive_precheck(result)
     if getattr(args, "save_state", False):
         path = args.root / ".ai-agents-skills" / "precheck.json"
+        preflight_state_path(args.root, path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_text_atomic(path, json.dumps(result, indent=2, sort_keys=True) + "\n")
         result["state_file"] = str(path)
     return output(result, args)
 
@@ -576,9 +585,7 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
         "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
         "active_skills": active_skills,
         "detected_agents": [agent.name for agent in agents],
-        "skipped_agents": [
-            agent for agent in all_agent_names() if agent not in {target.name for target in agents}
-        ],
+        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents),
         "ignored_dependencies": sorted(ignored),
         "skipped_dependencies": sorted(skipped),
         "dependencies": results,
@@ -609,6 +616,7 @@ def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, 
         runtime_profile,
         args.runtime_root,
         args.platform,
+        requested_agents=agent_filter,
     )
 
 
@@ -629,6 +637,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         runtime_profile=runtime_profile,
         runtime_root=args.runtime_root,
         platform=args.platform,
+        requested_agents=agent_filter,
     )
     requested_plan = build_plan(
         args.root,
@@ -643,6 +652,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         runtime_profile,
         args.runtime_root,
         args.platform,
+        requested_agents=agent_filter,
     )
     adopt_plan = build_plan(
         args.root,
@@ -655,6 +665,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         runtime_profile=runtime_profile,
         runtime_root=args.runtime_root,
         platform=args.platform,
+        requested_agents=agent_filter,
     )
     migrate_plan = build_plan(
         args.root,
@@ -667,6 +678,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         runtime_profile=runtime_profile,
         runtime_root=args.runtime_root,
         platform=args.platform,
+        requested_agents=agent_filter,
     )
     adopt_migrate_plan = build_plan(
         args.root,
@@ -680,6 +692,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         runtime_profile=runtime_profile,
         runtime_root=args.runtime_root,
         platform=args.platform,
+        requested_agents=agent_filter,
     )
     state = load_state(args.root)
     result = {
@@ -689,9 +702,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         "selected_skills": selected,
         "selected_artifacts": [f"{kind}:{name}" for kind, name in selected_artifacts],
         "detected_agents": [agent.name for agent in agents],
-        "skipped_agents": [
-            agent for agent in all_agent_names() if agent not in {target.name for target in agents}
-        ],
+        "skipped_agents": skipped_agent_names(args.root, agent_filter, agents),
         "managed_state": {
             "artifact_count": len(state.get("artifacts", [])),
             "run_count": len(state.get("runs", [])),
@@ -958,7 +969,8 @@ def verify(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     skills = resolve_skill_filter(args, manifests)
     agents = set(split_csv(args.agents)) if args.agents else None
     result = verify_state(args.root, skills, agents)
-    return output(result, args)
+    output(result, args)
+    return 0 if result["status"] == "ok" else 1
 
 
 def smoke(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
@@ -973,17 +985,18 @@ def smoke(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         and (not agents or item.get("agent") in agents)
     ]
     if not results:
-        return output(
-            {
-                "status": "no-managed-artifacts",
-                "checked": 0,
-                "results": [],
-                "reason": "no managed skill-file artifacts matched this scope",
-            },
-            args,
-        )
+        result = {
+            "status": "no-managed-artifacts",
+            "checked": 0,
+            "results": [],
+            "reason": "no managed skill-file artifacts matched this scope",
+        }
+        output(result, args)
+        return 1
     status = "ok" if all(item["status"] == "ok" for item in results) else "degraded"
-    return output({"status": status, "checked": len(results), "results": results}, args)
+    result = {"status": status, "checked": len(results), "results": results}
+    output(result, args)
+    return 0 if status == "ok" else 1
 
 
 def fake_root_lifecycle(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
