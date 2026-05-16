@@ -8,7 +8,24 @@
     },
     "full": {
       "description": "Install every currently portable runtime file declared in this manifest.",
-      "skills": ["formal-skeleton-helper", "get-available-resources", "graph-verifier"]
+      "skills": [
+        "annotated-review",
+        "calibre",
+        "deep-research-workflow",
+        "digest-bridge",
+        "docling",
+        "formal-skeleton-helper",
+        "get-available-resources",
+        "getscipapers-requester",
+        "graph-verifier",
+        "modal-research-compute",
+        "research-digest-wrapper",
+        "rss-news-digest",
+        "sagemath",
+        "tikz-draw",
+        "vnthuquan",
+        "zotero"
+      ]
     },
     "none": {
       "description": "Do not install runtime files.",
@@ -43,7 +60,11 @@
     {
       "source": "runners/run_skill.sh",
       "target": "run_skill.sh",
-      "platforms": ["linux", "macos", "wsl"],
+      "platforms": [
+        "linux",
+        "macos",
+        "wsl"
+      ],
       "type": "text",
       "newline": "lf",
       "mode": "0755"
@@ -51,7 +72,9 @@
     {
       "source": "runners/run_skill.ps1",
       "target": "run_skill.ps1",
-      "platforms": ["windows"],
+      "platforms": [
+        "windows"
+      ],
       "type": "text",
       "newline": "crlf",
       "mode": "0644"
@@ -59,45 +82,559 @@
     {
       "source": "runners/run_skill.bat",
       "target": "run_skill.bat",
-      "platforms": ["windows"],
+      "platforms": [
+        "windows"
+      ],
+      "type": "text",
+      "newline": "crlf",
+      "mode": "0644"
+    },
+    {
+      "source": "runners/run_python.bat",
+      "target": "run_python.bat",
+      "platforms": [
+        "windows"
+      ],
       "type": "text",
       "newline": "crlf",
       "mode": "0644"
     }
   ],
   "skills": {
-    "graph-verifier": {
-      "runtime_dir": "graph-verifier",
+    "annotated-review": {
+      "runtime_dir": "annotated-review",
       "files": [
         {
-          "source": "skills/graph-verifier/graph_verifier.py",
-          "target": "workspace/skills/graph-verifier/graph_verifier.py",
-          "platforms": ["linux", "macos", "windows", "wsl"],
+          "source": "skills/annotated-review/critic.py",
+          "target": "workspace/skills/annotated-review/critic.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0644"
         },
         {
-          "source": "skills/graph-verifier/run_graph_verifier.sh",
-          "target": "workspace/skills/graph-verifier/run_graph_verifier.sh",
-          "platforms": ["linux", "macos", "wsl"],
+          "source": "skills/annotated-review/latex_annotator.py",
+          "target": "workspace/skills/annotated-review/latex_annotator.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/annotated-review/pdf_annotator.py",
+          "target": "workspace/skills/annotated-review/pdf_annotator.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/annotated-review/requirements.txt",
+          "target": "workspace/skills/annotated-review/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/annotated-review/review.py",
+          "target": "workspace/skills/annotated-review/review.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/annotated-review/run_review.bat",
+          "target": "workspace/skills/annotated-review/run_review.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/annotated-review/run_review.sh",
+          "target": "workspace/skills/annotated-review/run_review.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0755"
         },
         {
-          "source": "skills/graph-verifier/run_graph_verifier.bat",
-          "target": "workspace/skills/graph-verifier/run_graph_verifier.bat",
-          "platforms": ["windows"],
+          "source": "skills/annotated-review/zotero_note.py",
+          "target": "workspace/skills/annotated-review/zotero_note.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ]
+    },
+    "calibre": {
+      "runtime_dir": "calibre",
+      "files": [
+        {
+          "source": "skills/calibre/cal.py",
+          "target": "workspace/skills/calibre/cal.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/config.json.example",
+          "target": "workspace/skills/calibre/config.json.example",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/__init__.py",
+          "target": "workspace/skills/calibre/lib/__init__.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/cache.py",
+          "target": "workspace/skills/calibre/lib/cache.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/calibre_db.py",
+          "target": "workspace/skills/calibre/lib/calibre_db.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/config.py",
+          "target": "workspace/skills/calibre/lib/config.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/doctor.py",
+          "target": "workspace/skills/calibre/lib/doctor.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/drive_sync.py",
+          "target": "workspace/skills/calibre/lib/drive_sync.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/filetype.py",
+          "target": "workspace/skills/calibre/lib/filetype.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/gdrive.py",
+          "target": "workspace/skills/calibre/lib/gdrive.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/parallel.py",
+          "target": "workspace/skills/calibre/lib/parallel.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/renamer.py",
+          "target": "workspace/skills/calibre/lib/renamer.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/lib/verifier.py",
+          "target": "workspace/skills/calibre/lib/verifier.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/requirements.txt",
+          "target": "workspace/skills/calibre/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/run_cal.bat",
+          "target": "workspace/skills/calibre/run_cal.bat",
+          "platforms": [
+            "windows"
+          ],
           "type": "text",
           "newline": "crlf",
           "mode": "0644"
+        },
+        {
+          "source": "skills/calibre/run_cal.sh",
+          "target": "workspace/skills/calibre/run_cal.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
         }
-      ],
-      "smoke": {
-        "command": "workspace/skills/graph-verifier/run_graph_verifier.sh",
-        "args": []
-      }
+      ]
+    },
+    "deep-research-workflow": {
+      "runtime_dir": "deep-research-workflow",
+      "files": [
+        {
+          "source": "skills/deep-research-workflow/README.txt",
+          "target": "workspace/skills/deep-research-workflow/README.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/deep-research-workflow/run_deep_research_workflow.bat",
+          "target": "workspace/skills/deep-research-workflow/run_deep_research_workflow.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/deep-research-workflow/run_deep_research_workflow.sh",
+          "target": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "workspace/templates/deep-research-analysis.md",
+          "target": "workspace/templates/deep-research-analysis.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/templates/deep-research-report.md",
+          "target": "workspace/templates/deep-research-report.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/templates/deep-research-sources.md",
+          "target": "workspace/templates/deep-research-sources.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ]
+    },
+    "digest-bridge": {
+      "runtime_dir": "digest-bridge",
+      "files": [
+        {
+          "source": "skills/digest-bridge/digest_bridge.py",
+          "target": "workspace/skills/digest-bridge/digest_bridge.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/digest-bridge/run_digest_bridge.bat",
+          "target": "workspace/skills/digest-bridge/run_digest_bridge.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/digest-bridge/run_digest_bridge.sh",
+          "target": "workspace/skills/digest-bridge/run_digest_bridge.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ]
+    },
+    "docling": {
+      "runtime_dir": "docling",
+      "files": [
+        {
+          "source": "skills/docling/docling_chunk.py",
+          "target": "workspace/skills/docling/docling_chunk.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/docling/docling_convert.py",
+          "target": "workspace/skills/docling/docling_convert.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/docling/docling_extract.py",
+          "target": "workspace/skills/docling/docling_extract.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/docling/doctor.py",
+          "target": "workspace/skills/docling/doctor.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/docling/requirements.txt",
+          "target": "workspace/skills/docling/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/docling/run_docling.bat",
+          "target": "workspace/skills/docling/run_docling.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/docling/run_docling.ps1",
+          "target": "workspace/skills/docling/run_docling.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/docling/run_docling.sh",
+          "target": "workspace/skills/docling/run_docling.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ]
     },
     "formal-skeleton-helper": {
       "runtime_dir": "formal-skeleton-helper",
@@ -105,31 +642,44 @@
         {
           "source": "skills/formal-skeleton-helper/formal_skeleton_helper.py",
           "target": "workspace/skills/formal-skeleton-helper/formal_skeleton_helper.py",
-          "platforms": ["linux", "macos", "windows", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/formal-skeleton-helper/run_formal_skeleton.bat",
+          "target": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
           "mode": "0644"
         },
         {
           "source": "skills/formal-skeleton-helper/run_formal_skeleton.sh",
           "target": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.sh",
-          "platforms": ["linux", "macos", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0755"
-        },
-        {
-          "source": "skills/formal-skeleton-helper/run_formal_skeleton.bat",
-          "target": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.bat",
-          "platforms": ["windows"],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
         }
       ],
       "smoke": {
         "command": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.sh",
-        "args": ["--help"]
+        "args": [
+          "--help"
+        ]
       }
     },
     "get-available-resources": {
@@ -138,32 +688,1268 @@
         {
           "source": "skills/get-available-resources/detect_resources.py",
           "target": "workspace/skills/get-available-resources/detect_resources.py",
-          "platforms": ["linux", "macos", "windows", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/get-available-resources/run_get_available_resources.bat",
+          "target": "workspace/skills/get-available-resources/run_get_available_resources.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
           "mode": "0644"
         },
         {
           "source": "skills/get-available-resources/run_get_available_resources.sh",
           "target": "workspace/skills/get-available-resources/run_get_available_resources.sh",
-          "platforms": ["linux", "macos", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ],
+      "smoke": {
+        "command": "workspace/skills/get-available-resources/run_get_available_resources.sh",
+        "args": [
+          "--help"
+        ]
+      }
+    },
+    "getscipapers-requester": {
+      "runtime_dir": "getscipapers-requester",
+      "files": [
+        {
+          "source": "skills/getscipapers-requester/GETSCIPAPERS_POLICY.md",
+          "target": "workspace/skills/getscipapers_requester/GETSCIPAPERS_POLICY.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/getscipapers-requester/gsp_openclaw_helper.py",
+          "target": "workspace/skills/getscipapers_requester/gsp_openclaw_helper.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/getscipapers-requester/run_gsp_helper.bat",
+          "target": "workspace/skills/getscipapers_requester/run_gsp_helper.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/getscipapers-requester/run_gsp_helper.sh",
+          "target": "workspace/skills/getscipapers_requester/run_gsp_helper.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ]
+    },
+    "graph-verifier": {
+      "runtime_dir": "graph-verifier",
+      "files": [
+        {
+          "source": "skills/graph-verifier/graph_verifier.py",
+          "target": "workspace/skills/graph-verifier/graph_verifier.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/graph-verifier/run_graph_verifier.bat",
+          "target": "workspace/skills/graph-verifier/run_graph_verifier.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/graph-verifier/run_graph_verifier.sh",
+          "target": "workspace/skills/graph-verifier/run_graph_verifier.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ],
+      "smoke": {
+        "command": "workspace/skills/graph-verifier/run_graph_verifier.sh",
+        "args": []
+      }
+    },
+    "modal-research-compute": {
+      "runtime_dir": "modal-research-compute",
+      "files": [
+        {
+          "source": "skills/modal-research-compute/modal_research_compute.py",
+          "target": "workspace/skills/modal-research-compute/modal_research_compute.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/modal-research-compute/run_modal_research_compute.bat",
+          "target": "workspace/skills/modal-research-compute/run_modal_research_compute.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/modal-research-compute/run_modal_research_compute.sh",
+          "target": "workspace/skills/modal-research-compute/run_modal_research_compute.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0755"
         },
         {
-          "source": "skills/get-available-resources/run_get_available_resources.bat",
-          "target": "workspace/skills/get-available-resources/run_get_available_resources.bat",
-          "platforms": ["windows"],
+          "source": "workspace/research_compute/__init__.py",
+          "target": "workspace/research_compute/__init__.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/__main__.py",
+          "target": "workspace/research_compute/__main__.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/cli.py",
+          "target": "workspace/research_compute/cli.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/config.py",
+          "target": "workspace/research_compute/config.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/modal_app.py",
+          "target": "workspace/research_compute/modal_app.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/modal_backend.py",
+          "target": "workspace/research_compute/modal_backend.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/planner.py",
+          "target": "workspace/research_compute/planner.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/state.py",
+          "target": "workspace/research_compute/state.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/template_runner.py",
+          "target": "workspace/research_compute/template_runner.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/config/research-compute.example.toml",
+          "target": "workspace/config/research-compute.example.toml",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ]
+    },
+    "research-digest-wrapper": {
+      "runtime_dir": "research-digest-wrapper",
+      "files": [
+        {
+          "source": "skills/research-digest-wrapper/research_digest.py",
+          "target": "workspace/skills/research-digest-wrapper/research_digest.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/research-digest-wrapper/run_research_digest.bat",
+          "target": "workspace/skills/research-digest-wrapper/run_research_digest.bat",
+          "platforms": [
+            "windows"
+          ],
           "type": "text",
           "newline": "crlf",
           "mode": "0644"
+        },
+        {
+          "source": "skills/research-digest-wrapper/run_research_digest.sh",
+          "target": "workspace/skills/research-digest-wrapper/run_research_digest.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
         }
-      ],
-      "smoke": {
-        "command": "workspace/skills/get-available-resources/run_get_available_resources.sh",
-        "args": ["--help"]
-      }
+      ]
+    },
+    "rss-news-digest": {
+      "runtime_dir": "rss-news-digest",
+      "files": [
+        {
+          "source": "skills/rss-news-digest/rss_news_digest.py",
+          "target": "workspace/skills/rss-news-digest/rss_news_digest.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/rss-news-digest/run_and_summarize.bat",
+          "target": "workspace/skills/rss-news-digest/run_and_summarize.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/rss-news-digest/run_and_summarize.sh",
+          "target": "workspace/skills/rss-news-digest/run_and_summarize.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/rss-news-digest/run_rss_news_digest.bat",
+          "target": "workspace/skills/rss-news-digest/run_rss_news_digest.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/rss-news-digest/run_rss_news_digest.sh",
+          "target": "workspace/skills/rss-news-digest/run_rss_news_digest.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ]
+    },
+    "sagemath": {
+      "runtime_dir": "sagemath",
+      "files": [
+        {
+          "source": "skills/sagemath/run_sage.bat",
+          "target": "workspace/skills/sagemath/run_sage.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/sagemath/run_sage.sh",
+          "target": "workspace/skills/sagemath/run_sage.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/sagemath/sage_reference.md",
+          "target": "workspace/skills/sagemath/sage_reference.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/sagemath/templates/counterexample_search.sage",
+          "target": "workspace/skills/sagemath/templates/counterexample_search.sage",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/sagemath/templates/enumerate_chromatic.sage",
+          "target": "workspace/skills/sagemath/templates/enumerate_chromatic.sage",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/sagemath/templates/reconfiguration_check.sage",
+          "target": "workspace/skills/sagemath/templates/reconfiguration_check.sage",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/sagemath/templates/reconfiguration_check.sage.py",
+          "target": "workspace/skills/sagemath/templates/reconfiguration_check.sage.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/sagemath/templates/spectral_analysis.sage",
+          "target": "workspace/skills/sagemath/templates/spectral_analysis.sage",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/sagemath/templates/spectral_analysis.sage.py",
+          "target": "workspace/skills/sagemath/templates/spectral_analysis.sage.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ]
+    },
+    "tikz-draw": {
+      "runtime_dir": "tikz-draw",
+      "files": [
+        {
+          "source": "skills/tikz-draw/assets/checks/prevention-rules.md",
+          "target": "workspace/skills/tikz-draw/assets/checks/prevention-rules.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/checks/review-rules.md",
+          "target": "workspace/skills/tikz-draw/assets/checks/review-rules.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/checks/tikz-measurement.md",
+          "target": "workspace/skills/tikz-draw/assets/checks/tikz-measurement.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/checks/tikz-prevention.md",
+          "target": "workspace/skills/tikz-draw/assets/checks/tikz-prevention.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/examples/semantic-regression/README.md",
+          "target": "workspace/skills/tikz-draw/assets/examples/semantic-regression/README.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/examples/semantic-regression/suite.json",
+          "target": "workspace/skills/tikz-draw/assets/examples/semantic-regression/suite.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/spec-schema/diagram.schema.json",
+          "target": "workspace/skills/tikz-draw/assets/spec-schema/diagram.schema.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/spec-schema/figure-brief.schema.json",
+          "target": "workspace/skills/tikz-draw/assets/spec-schema/figure-brief.schema.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/spec-schema/render-semantics.schema.json",
+          "target": "workspace/skills/tikz-draw/assets/spec-schema/render-semantics.schema.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/spec-schema/semantic-review.schema.json",
+          "target": "workspace/skills/tikz-draw/assets/spec-schema/semantic-review.schema.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/styles/tikz_palette.tex",
+          "target": "workspace/skills/tikz-draw/assets/styles/tikz_palette.tex",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/styles/tikz_styles.tex",
+          "target": "workspace/skills/tikz-draw/assets/styles/tikz_styles.tex",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/templates/tikz-snippets/README.md",
+          "target": "workspace/skills/tikz-draw/assets/templates/tikz-snippets/README.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/templates/tikz-snippets/commutative-basic.standalone.tex",
+          "target": "workspace/skills/tikz-draw/assets/templates/tikz-snippets/commutative-basic.standalone.tex",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/templates/tikz-snippets/dag-basic.standalone.tex",
+          "target": "workspace/skills/tikz-draw/assets/templates/tikz-snippets/dag-basic.standalone.tex",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/templates/tikz-snippets/flowchart-basic.standalone.tex",
+          "target": "workspace/skills/tikz-draw/assets/templates/tikz-snippets/flowchart-basic.standalone.tex",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/templates/tikz-snippets/tree-basic.standalone.tex",
+          "target": "workspace/skills/tikz-draw/assets/templates/tikz-snippets/tree-basic.standalone.tex",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/family_verifiers.py",
+          "target": "workspace/skills/tikz-draw/family_verifiers.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/pdf_extract.py",
+          "target": "workspace/skills/tikz-draw/pdf_extract.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/requirements-semantic-verifier.txt",
+          "target": "workspace/skills/tikz-draw/requirements-semantic-verifier.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/run_tikz_draw.bat",
+          "target": "workspace/skills/tikz-draw/run_tikz_draw.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/run_tikz_draw.sh",
+          "target": "workspace/skills/tikz-draw/run_tikz_draw.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/tikz-draw/sage_graph_backend.py",
+          "target": "workspace/skills/tikz-draw/sage_graph_backend.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/semantic_parity_check.py",
+          "target": "workspace/skills/tikz-draw/semantic_parity_check.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/semantic_regression_runner.py",
+          "target": "workspace/skills/tikz-draw/semantic_regression_runner.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/tikz_draw.py",
+          "target": "workspace/skills/tikz-draw/tikz_draw.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ]
+    },
+    "vnthuquan": {
+      "runtime_dir": "vnthuquan",
+      "files": [
+        {
+          "source": "skills/vnthuquan/run_vnthuquan.bat",
+          "target": "workspace/skills/vnthuquan/run_vnthuquan.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/vnthuquan/run_vnthuquan.ps1",
+          "target": "workspace/skills/vnthuquan/run_vnthuquan.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/vnthuquan/run_vnthuquan.sh",
+          "target": "workspace/skills/vnthuquan/run_vnthuquan.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/vnthuquan/vnthuquan_wrapper.py",
+          "target": "workspace/skills/vnthuquan/vnthuquan_wrapper.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ]
+    },
+    "zotero": {
+      "runtime_dir": "zotero",
+      "files": [
+        {
+          "source": "skills/zotero/.gitignore",
+          "target": "workspace/skills/zotero/.gitignore",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/README.md",
+          "target": "workspace/skills/zotero/README.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/config.json.example",
+          "target": "workspace/skills/zotero/config.json.example",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/__init__.py",
+          "target": "workspace/skills/zotero/lib/__init__.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/cache.py",
+          "target": "workspace/skills/zotero/lib/cache.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/config.py",
+          "target": "workspace/skills/zotero/lib/config.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/doctor.py",
+          "target": "workspace/skills/zotero/lib/doctor.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/downloader.py",
+          "target": "workspace/skills/zotero/lib/downloader.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/filetype.py",
+          "target": "workspace/skills/zotero/lib/filetype.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/gdrive.py",
+          "target": "workspace/skills/zotero/lib/gdrive.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/metadata.py",
+          "target": "workspace/skills/zotero/lib/metadata.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/parallel.py",
+          "target": "workspace/skills/zotero/lib/parallel.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/renamer.py",
+          "target": "workspace/skills/zotero/lib/renamer.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/verifier.py",
+          "target": "workspace/skills/zotero/lib/verifier.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/webdav.py",
+          "target": "workspace/skills/zotero/lib/webdav.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/lib/zotero_client.py",
+          "target": "workspace/skills/zotero/lib/zotero_client.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/requirements.txt",
+          "target": "workspace/skills/zotero/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/run_zot.bat",
+          "target": "workspace/skills/zotero/run_zot.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/run_zot.sh",
+          "target": "workspace/skills/zotero/run_zot.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/zotero/scripts/auto-catalog.py",
+          "target": "workspace/skills/zotero/scripts/auto-catalog.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/scripts/start-translation-server.sh",
+          "target": "workspace/skills/zotero/scripts/start-translation-server.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/zotero/scripts/watch-poller.py",
+          "target": "workspace/skills/zotero/scripts/watch-poller.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/zotero/scripts/wsl_url_translate.sh",
+          "target": "workspace/skills/zotero/scripts/wsl_url_translate.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/zotero/send_file.sh",
+          "target": "workspace/skills/zotero/send_file.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/zotero/send_queue_worker.sh",
+          "target": "workspace/skills/zotero/send_queue_worker.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/zotero/send_telegram.sh",
+          "target": "workspace/skills/zotero/send_telegram.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/zotero/zot.py",
+          "target": "workspace/skills/zotero/zot.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ]
     }
   }
 }

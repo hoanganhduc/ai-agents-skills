@@ -1,0 +1,15 @@
+{
+  "zotero_user_id": "",
+  "webdav_url": "",
+  "webdav_user": "",
+  "gdrive_folder_id": "",
+  "gdrive_credentials_file": "",
+  "gdrive_share_permission": "anyone_with_link",
+  "zotfile_pattern": "{author}_{year}_{title}",
+  "default_collection": "",
+  "translation_server": "http://host.docker.internal:1969",
+  "_translation_server_note": "Use http://localhost:1969 if running outside Docker",
+  "auto_catalog_threshold": 80,
+  "cache_max_age_hours": 24,
+  "semantic_scholar_api_key": ""
+}

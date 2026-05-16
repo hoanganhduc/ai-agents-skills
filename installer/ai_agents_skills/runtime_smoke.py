@@ -68,9 +68,9 @@ def run_runtime_smoke(
 
 
 def selected_runtime_skills(manifests: dict[str, Any], skills: set[str] | None) -> list[str]:
-    declared = set(manifests.get("runtime", {}).get("skills", {}))
+    smoke_supported = set(RUNTIME_SMOKE_SKILLS)
     selected = set(RUNTIME_SMOKE_SKILLS) if skills is None else set(skills)
-    unknown = sorted(selected - declared)
+    unknown = sorted(selected - smoke_supported)
     if unknown:
         raise ValueError("skills do not have runtime smoke coverage: " + ", ".join(unknown))
     return sorted(selected)

@@ -180,6 +180,7 @@ def build_parser() -> argparse.ArgumentParser:
     precheck.add_argument("--skip", help="comma-separated dependency names to skip for this run")
     precheck.add_argument("--interactive", action="store_true")
     precheck.add_argument("--save-state", action="store_true")
+    precheck.add_argument("--real-system", action="store_true")
 
     audit = sub.add_parser("audit-system")
     add_selection_args(audit)
@@ -520,6 +521,8 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     if getattr(args, "interactive", False) and not args.json:
         interactive_precheck(result)
     if getattr(args, "save_state", False):
+        if is_real_system_root(args.root) and not getattr(args, "real_system", False):
+            raise ValueError("real-system precheck state writes require --real-system")
         path = args.root / ".ai-agents-skills" / "precheck.json"
         preflight_state_path(args.root, path)
         path.parent.mkdir(parents=True, exist_ok=True)

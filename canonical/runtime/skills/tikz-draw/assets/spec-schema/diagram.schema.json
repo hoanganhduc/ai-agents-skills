@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/tikz-draw/diagram.schema.json",
+  "title": "TikZ Draw Diagram Spec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "diagram_family",
+    "tikz_backend",
+    "title",
+    "nodes",
+    "edges",
+    "groups",
+    "layout_constraints",
+    "validation_rules"
+  ],
+  "properties": {
+    "diagram_family": {
+      "type": "string",
+      "enum": [
+        "flowchart",
+        "dag",
+        "tree",
+        "matrix",
+        "automaton",
+        "mindmap",
+        "sequence",
+        "commutative",
+        "graph",
+        "network",
+        "custom"
+      ]
+    },
+    "tikz_backend": {
+      "type": "string",
+      "enum": [
+        "positioning",
+        "matrix",
+        "fit",
+        "graphs",
+        "graphdrawing",
+        "forest",
+        "tikz-cd",
+        "automata",
+        "mindmap",
+        "pgf-umlsd",
+        "raw-tikz"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "caption": {
+      "type": "string"
+    },
+    "global_styles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/group"
+      }
+    },
+    "layout_constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "validation_rules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "graph_routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode_requested",
+        "route_status",
+        "route_reason",
+        "backend_used"
+      ],
+      "properties": {
+        "mode_requested": {
+          "type": "string"
+        },
+        "route_status": {
+          "type": "string"
+        },
+        "route_reason": {
+          "type": "string"
+        },
+        "backend_used": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+        },
+        "label": {
+          "type": "string"
+        },
+        "style": {
+          "type": "string"
+        },
+        "width": {
+          "type": "string"
+        },
+        "height": {
+          "type": "string"
+        },
+        "placement": {
+          "$ref": "#/$defs/placement"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "label_pos": {
+          "type": "string",
+          "enum": [
+            "above",
+            "below",
+            "left",
+            "right",
+            "midway",
+            "near start",
+            "near end"
+          ]
+        },
+        "style": {
+          "type": "string"
+        },
+        "bend": {
+          "type": "string"
+        }
+      }
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "members"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+        },
+        "label": {
+          "type": "string"
+        },
+        "members": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "style": {
+          "type": "string"
+        }
+      }
+    },
+    "placement": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "relative",
+            "matrix",
+            "grid",
+            "absolute"
+          ]
+        },
+        "target": {
+          "type": "string"
+        },
+        "relation": {
+          "type": "string"
+        },
+        "x": {
+          "type": "string"
+        },
+        "y": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

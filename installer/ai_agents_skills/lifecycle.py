@@ -114,11 +114,59 @@ def filter_artifacts(
             continue
         if skills and item.get("skill") not in skills:
             continue
-        if agents and item.get("agent") not in agents and item.get("artifact_type") != "runtime-file":
+        if agents and item.get("agent") not in agents:
             continue
         if artifact_ids and item.get("artifact_id") not in artifact_ids:
             continue
         selected.append(item)
+    if artifact_ids:
+        return selected
+    return expand_runtime_lifecycle_scope(artifacts, selected)
+
+
+def expand_runtime_lifecycle_scope(artifacts: list[Any], selected: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected_keys = {item.get("key") for item in selected}
+    selected_skills = {
+        item.get("skill")
+        for item in selected
+        if item.get("artifact_type") != "runtime-file" and isinstance(item.get("skill"), str)
+    }
+    if not selected_keys and not selected_skills:
+        return selected
+
+    remaining_skill_consumers: set[str] = set()
+    runtime_skill_records = []
+    runtime_runner_records = []
+    for item in artifacts:
+        if not isinstance(item, dict):
+            continue
+        skill = item.get("skill")
+        if item.get("artifact_type") == "runtime-file":
+            if skill == "runtime-runner":
+                runtime_runner_records.append(item)
+            else:
+                runtime_skill_records.append(item)
+            continue
+        if item.get("key") not in selected_keys and isinstance(skill, str):
+            remaining_skill_consumers.add(skill)
+
+    for item in runtime_skill_records:
+        skill = item.get("skill")
+        if item.get("key") in selected_keys:
+            continue
+        if skill in selected_skills and skill not in remaining_skill_consumers:
+            selected.append(item)
+            selected_keys.add(item.get("key"))
+
+    remaining_runtime_skills = [
+        item for item in runtime_skill_records
+        if item.get("key") not in selected_keys
+    ]
+    if not remaining_runtime_skills:
+        for item in runtime_runner_records:
+            if item.get("key") not in selected_keys:
+                selected.append(item)
+                selected_keys.add(item.get("key"))
     return selected
 
 
@@ -261,6 +309,10 @@ def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> 
             result["operation"] = "skip-conflict"
             result["reason"] = "backup path outside installer backup directory"
             return result
+        if not backup_integrity_ok(action, Path(backup)):
+            result["operation"] = "skip-conflict"
+            result["reason"] = "backup signature changed since it was recorded"
+            return result
         restore_backup(Path(backup), Path(action["artifact"]))
         result["completed"] = True
         return result
@@ -359,6 +411,8 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     if item.get("artifact_type") in {"instruction-block", "management-notice"}:
         previous = item.get("previous_state_artifact")
         if previous and item.get("backup"):
+            if not backup_integrity_ok(item, Path(item["backup"])):
+                raise ValueError(f"refusing rollback because backup changed since it was recorded: {item['backup']}")
             restore_backup(Path(item["backup"]), path)
         else:
             remove_managed_block_precise(item)
@@ -371,6 +425,8 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     if backup:
         backup_path = Path(backup)
         path.parent.mkdir(parents=True, exist_ok=True)
+        if not backup_integrity_ok(item, backup_path):
+            raise ValueError(f"refusing rollback because backup changed since it was recorded: {backup}")
         restore_backup(backup_path, path)
     else:
         remove_artifact(item, root)
@@ -517,6 +573,8 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
             raise ValueError(f"refusing rollback because backup is outside installer state: {backup}")
         if backup and not Path(backup).exists() and not Path(backup).is_symlink():
             raise ValueError(f"refusing rollback because backup is missing: {backup}")
+        if backup and not backup_integrity_ok(item, Path(backup)):
+            raise ValueError(f"refusing rollback because backup changed since it was recorded: {backup}")
         if item.get("artifact_type") in {"instruction-block", "management-notice"}:
             block_groups.setdefault(item["artifact"], []).append(item)
             continue
@@ -552,6 +610,13 @@ def real_openclaw_artifact_blocked(root: Path, item: dict[str, Any], path: Path)
         and looks_like_real_system_root(root)
         and normalized_path_within(root / ".openclaw", path)
     )
+
+
+def backup_integrity_ok(item: dict[str, Any], backup_path: Path) -> bool:
+    expected = item.get("uninstall", {}).get("original_signature") or item.get("previous_signature")
+    if expected is None:
+        return True
+    return signatures_match(artifact_signature(backup_path), expected)
 
 
 def strip_managed_blocks(text: str, skills: list[str]) -> str:

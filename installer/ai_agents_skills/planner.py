@@ -306,19 +306,30 @@ def artifact_action(
     backup_replace: bool,
 ) -> dict[str, Any]:
     if artifact_type == "management-notice":
+        classification = classify_block(agent.instructions_file, "repo-management")
+        operation = "upsert"
+        reason = None
+        content = render_management_notice(agent.name)
+        if classification == "conflict":
+            operation = "skip"
+            reason = "managed instruction block is malformed or duplicated"
+        elif classification == "managed" and current_block(agent.instructions_file, "repo-management") == content.strip():
+            operation = "noop"
         action = {
             "kind": "managed-block",
             "agent": agent.name,
             "skill": "repo-management",
             "path": str(agent.instructions_file),
             "block_id": block_id("repo-management"),
-            "content": render_management_notice(agent.name),
-            "classification": classify_block(agent.instructions_file, "repo-management"),
-            "operation": "upsert",
+            "content": content,
+            "classification": classification,
+            "operation": operation,
             "artifact_type": "management-notice",
             "artifact_id": f"{artifact_type}:{name}",
             "artifact_name": name,
         }
+        if reason:
+            action["reason"] = reason
         return action
     dependencies = spec.get("depends_on_skills", [])
     missing = [

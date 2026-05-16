@@ -11,14 +11,24 @@ from .state import artifact_signature, load_state, sha256_file, signatures_match
 
 def verify(root: Path, skill_filter: set[str] | None = None, agent_filter: set[str] | None = None) -> dict[str, Any]:
     state = load_state(root)
+    artifacts = state.get("artifacts", [])
+    agent_runtime_skills = runtime_skills_for_agent_scope(artifacts, skill_filter, agent_filter)
+    include_agent_runtime_runner = runtime_runner_needed(artifacts, agent_runtime_skills)
     results: list[dict[str, Any]] = []
-    for artifact in state.get("artifacts", []):
+    for artifact in artifacts:
         skill = artifact.get("skill")
         agent = artifact.get("agent")
         if skill_filter and skill not in skill_filter:
             continue
-        if agent_filter and agent not in agent_filter:
-            continue
+        if agent_filter:
+            if artifact.get("artifact_type") == "runtime-file" and "runtime" not in agent_filter:
+                if skill == "runtime-runner":
+                    if not include_agent_runtime_runner:
+                        continue
+                elif skill not in agent_runtime_skills:
+                    continue
+            elif agent not in agent_filter:
+                continue
         results.append(verify_artifact(artifact))
     if not results:
         return {
@@ -29,6 +39,40 @@ def verify(root: Path, skill_filter: set[str] | None = None, agent_filter: set[s
         }
     status = "ok" if all(item["status"] == "ok" for item in results) else "failed"
     return {"status": status, "checked": len(results), "results": results}
+
+
+def runtime_skills_for_agent_scope(
+    artifacts: list[Any],
+    skill_filter: set[str] | None,
+    agent_filter: set[str] | None,
+) -> set[str]:
+    if not agent_filter or "runtime" in agent_filter:
+        return set()
+    skills = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            continue
+        if artifact.get("artifact_type") == "runtime-file":
+            continue
+        skill = artifact.get("skill")
+        if skill_filter and skill not in skill_filter:
+            continue
+        if artifact.get("agent") not in agent_filter:
+            continue
+        if isinstance(skill, str):
+            skills.add(skill)
+    return skills
+
+
+def runtime_runner_needed(artifacts: list[Any], runtime_skills: set[str]) -> bool:
+    if not runtime_skills:
+        return False
+    return any(
+        isinstance(artifact, dict)
+        and artifact.get("artifact_type") == "runtime-file"
+        and artifact.get("skill") in runtime_skills
+        for artifact in artifacts
+    )
 
 
 def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:

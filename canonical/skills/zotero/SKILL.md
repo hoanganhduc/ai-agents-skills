@@ -7,6 +7,18 @@ metadata:
 
 # Zotero
 
+
+## Windows Runtime Commands
+
+On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+
+```powershell
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.bat" "skills/zotero/run_zot.bat" <args>
+```
+
+POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
+
 This uses the vendored Codex runtime copy of the Zotero workflow.
 
 ## Routing rule
