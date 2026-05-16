@@ -36,8 +36,23 @@ if (-not (Test-Path -LiteralPath $commandResolved -PathType Leaf)) {
     throw "Runtime command not found: $commandResolved"
 }
 $commandItem = Get-Item -LiteralPath $commandResolved
-if (($commandItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-    throw "Refusing symlinked runtime command: $commandResolved"
+$workspaceItem = Get-Item -LiteralPath $workspaceResolved
+$cursor = $commandItem
+while ($null -ne $cursor) {
+    if (($cursor.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing symlinked runtime command path: $($cursor.FullName)"
+    }
+    if ([System.String]::Equals($cursor.FullName.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar), $workspaceItem.FullName.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)) {
+        break
+    }
+    if ($cursor -is [System.IO.DirectoryInfo]) {
+        $cursor = $cursor.Parent
+    } else {
+        $cursor = $cursor.Directory
+    }
+}
+if ($null -eq $cursor) {
+    throw "Refusing runtime command outside workspace: $commandResolved"
 }
 
 $env:AAS_RUNTIME_ROOT = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { $runtimeRoot }
