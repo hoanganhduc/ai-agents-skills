@@ -1,0 +1,53 @@
+% Shared TikZ styles for structural diagrams.
+\tikzset{
+  box/.style={
+    draw=tikzdrawPrimary,
+    rounded corners=2pt,
+    very thick,
+    minimum height=8mm,
+    text centered,
+    align=center,
+    inner sep=2mm
+  },
+  io/.style={
+    box,
+    trapezium,
+    trapezium left angle=70,
+    trapezium right angle=110
+  },
+  decision/.style={
+    draw=tikzdrawAccent,
+    diamond,
+    aspect=2,
+    text centered,
+    inner sep=1.5mm
+  },
+  groupbox/.style={
+    draw=tikzdrawNeutral,
+    dashed,
+    rounded corners=2pt,
+    inner sep=3mm
+  },
+  edge/.style={
+    ->,
+    very thick,
+    draw=tikzdrawNeutral
+  },
+  graphnode/.style={
+    circle,
+    draw=tikzdrawPrimary,
+    fill=white,
+    very thick,
+    minimum size=5.5mm,
+    inner sep=0pt,
+    font=\scriptsize
+  },
+  graphedge/.style={
+    very thick,
+    draw=tikzdrawNeutral
+  },
+  note/.style={
+    font=\small,
+    text=tikzdrawNeutral
+  }
+}

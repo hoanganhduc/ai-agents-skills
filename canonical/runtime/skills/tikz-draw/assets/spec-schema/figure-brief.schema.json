@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/tikz-draw/figure-brief.schema.json",
+  "title": "TikZ Draw Figure Brief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "figure_id",
+    "title",
+    "purpose",
+    "source_ids",
+    "diagram_family",
+    "content_requirements",
+    "layout_constraints",
+    "output_dir"
+  ],
+  "properties": {
+    "figure_id": {
+      "type": "string",
+      "pattern": "^F[1-9][0-9]*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^S[1-9][0-9]*$"
+      }
+    },
+    "diagram_family": {
+      "type": "string",
+      "enum": [
+        "flowchart",
+        "dag",
+        "tree",
+        "matrix",
+        "automaton",
+        "mindmap",
+        "sequence",
+        "commutative",
+        "graph",
+        "network",
+        "custom"
+      ]
+    },
+    "backend_hint": {
+      "type": "string"
+    },
+    "graph_mode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "local",
+        "sage"
+      ]
+    },
+    "graph_request": {
+      "type": "string"
+    },
+    "graph_constructor": {
+      "type": "string"
+    },
+    "graph_params": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "graph_layout": {
+      "type": "string"
+    },
+    "show_labels": {
+      "type": "boolean"
+    },
+    "content_requirements": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "layout_constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "caption": {
+      "type": "string"
+    },
+    "output_dir": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

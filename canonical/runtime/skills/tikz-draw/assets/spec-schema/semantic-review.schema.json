@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TikZ Draw Semantic Review Report",
+  "type": "object",
+  "required": [
+    "review_status",
+    "family",
+    "static_status",
+    "visual_status",
+    "compile_status",
+    "semantic_status",
+    "semantic_verdict",
+    "supported_family",
+    "mismatches",
+    "mismatch_codes",
+    "rule_hits",
+    "rule_refs",
+    "warnings",
+    "visual_review",
+    "evidence"
+  ],
+  "properties": {
+    "review_status": {
+      "type": "string"
+    },
+    "family": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "static_status": {
+      "type": "string"
+    },
+    "visual_status": {
+      "type": "string"
+    },
+    "compile_status": {
+      "type": "string"
+    },
+    "semantic_status": {
+      "type": "string"
+    },
+    "semantic_verdict": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "supported_family": {
+      "type": "boolean"
+    },
+    "mismatches": {
+      "type": "array"
+    },
+    "mismatch_codes": {
+      "type": "array"
+    },
+    "rule_hits": {
+      "type": "array"
+    },
+    "rule_refs": {
+      "type": "array"
+    },
+    "warnings": {
+      "type": "array"
+    },
+    "visual_review": {
+      "type": "object",
+      "required": [
+        "passes_run",
+        "findings"
+      ],
+      "properties": {
+        "passes_run": {
+          "type": "array"
+        },
+        "findings": {
+          "type": "array"
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}
