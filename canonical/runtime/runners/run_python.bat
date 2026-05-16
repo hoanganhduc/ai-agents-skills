@@ -23,12 +23,6 @@ if defined AAS_PYTHON (
     exit /b %ERRORLEVEL%
 )
 
-where py >nul 2>nul
-if %ERRORLEVEL% EQU 0 (
-    py -3 "%SCRIPT%" %*
-    exit /b %ERRORLEVEL%
-)
-
 where python.exe >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
     python.exe "%SCRIPT%" %*
@@ -38,6 +32,12 @@ if %ERRORLEVEL% EQU 0 (
 where python >nul 2>nul
 if %ERRORLEVEL% EQU 0 (
     python "%SCRIPT%" %*
+    exit /b %ERRORLEVEL%
+)
+
+where py >nul 2>nul
+if %ERRORLEVEL% EQU 0 (
+    py -3 "%SCRIPT%" %*
     exit /b %ERRORLEVEL%
 )
 

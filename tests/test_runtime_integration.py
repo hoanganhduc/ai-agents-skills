@@ -681,6 +681,14 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 offenders.append(str(path.relative_to(runtime_root)))
         self.assertEqual(offenders, [])
 
+    def test_windows_python_runner_prefers_path_python_before_py_launcher(self) -> None:
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.bat"
+        text = runner.read_text(encoding="utf-8")
+
+        py_probe = text.index("\nwhere py >nul")
+        self.assertLess(text.index("\nwhere python.exe >nul"), py_probe)
+        self.assertLess(text.index("\nwhere python >nul"), py_probe)
+
     def test_runtime_smoke_selects_native_command_targets(self) -> None:
         manifests = load_manifests()
         self.assertEqual(
