@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -11,6 +12,9 @@ from pathlib import Path
 from typing import Any
 
 from .capabilities import normalized_path_within, resolved_path_within
+
+STATE_SCHEMA_VERSION = 1
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 def sha256_text(text: str) -> str:
@@ -97,21 +101,43 @@ def state_file(root: Path) -> Path:
     return state_dir(root) / "state.json"
 
 
+def default_state() -> dict[str, Any]:
+    return {
+        "schema_version": STATE_SCHEMA_VERSION,
+        "artifacts": [],
+        "runs": [],
+        "uninstall_records": [],
+    }
+
+
+def validate_state(data: Any, *, path: Path | None = None) -> dict[str, Any]:
+    label = str(path) if path is not None else "state"
+    if not isinstance(data, dict):
+        raise ValueError(f"installer state must be a JSON object: {label}")
+    if data.get("schema_version") != STATE_SCHEMA_VERSION:
+        raise ValueError(
+            f"installer state has unsupported schema_version {data.get('schema_version')!r}: {label}"
+        )
+    for key in ("artifacts", "runs", "uninstall_records"):
+        if key in data and not isinstance(data[key], list):
+            raise ValueError(f"installer state field must be a list: {key} in {label}")
+    return data
+
+
 def load_state(root: Path) -> dict[str, Any]:
     path = state_file(root)
     preflight_state_path(root, path)
     if not path.exists():
-        return {"schema_version": 1, "artifacts": [], "runs": []}
+        return default_state()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValueError(f"installer state is not valid JSON: {path}") from exc
-    if not isinstance(data, dict):
-        raise ValueError(f"installer state must be a JSON object: {path}")
-    return data
+    return validate_state(data, path=path)
 
 
 def save_state(root: Path, data: dict[str, Any]) -> None:
+    validate_state(data)
     path = state_file(root)
     preflight_state_path(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -152,7 +178,14 @@ def upsert_uninstall_record(data: dict[str, Any], record: dict[str, Any]) -> Non
 
 
 def run_record_path(root: Path, run_id: str) -> Path:
+    validate_run_id(run_id)
     return state_dir(root) / "runs" / f"{run_id}.json"
+
+
+def validate_run_id(run_id: str) -> str:
+    if not isinstance(run_id, str) or run_id in {".", ".."} or RUN_ID_RE.fullmatch(run_id) is None:
+        raise ValueError(f"invalid run id: {run_id!r}")
+    return run_id
 
 
 def write_run_record(root: Path, run_id: str, actions: list[dict[str, Any]]) -> None:

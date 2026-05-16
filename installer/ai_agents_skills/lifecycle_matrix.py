@@ -273,6 +273,7 @@ def run_lifecycle_case(
             install_mode=scenario.install_mode,
             runtime_profile=scenario.runtime_profile,
             platform=shape,
+            requested_agents=active_requested_agents,
         )
         install_dry_run = apply_plan(root, plan, dry_run=True)
         after_install_dry_run = root_snapshot(root, include_installer_state=True)
@@ -551,6 +552,7 @@ def installed_root(
         install_mode=install_mode,
         runtime_profile=scenario.runtime_profile,
         platform=shape,
+        requested_agents=requested_agents,
     )
     apply_plan(root, plan, dry_run=False)
     return base, root

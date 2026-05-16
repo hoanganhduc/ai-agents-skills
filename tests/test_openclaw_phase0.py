@@ -38,6 +38,7 @@ class OpenClawPhase0SchemaTests(unittest.TestCase):
         "alias.schema.json",
         "evidence.schema.json",
         "apply-manifest.schema.json",
+        "target-support-file.schema.json",
     }
 
     def test_schema_files_are_present_versioned_and_strict(self) -> None:
@@ -87,6 +88,27 @@ class OpenClawPhase0SchemaTests(unittest.TestCase):
         self.assertIn("wsl-mounted-windows", platforms)
         self.assertIn("ci-container", platforms)
 
+    def test_target_support_file_schema_requires_compatibility_metadata(self) -> None:
+        schema = load_json(SCHEMA_DIR / "target-support-file.schema.json")
+        support_file = schema["properties"]["files"]["items"]
+        required = set(support_file["required"])
+        self.assertIn("artifact_class", required)
+        self.assertIn("execution_role", required)
+        self.assertIn("compatibility", required)
+        self.assertIn("helper_evidence_required", required)
+        compatibility_required = set(support_file["properties"]["compatibility"]["required"])
+        self.assertEqual(
+            compatibility_required,
+            {
+                "platform",
+                "path_style",
+                "shell_family",
+                "wrapper_runtime_class",
+                "newline_policy",
+                "mode_policy",
+            },
+        )
+
     def test_fixture_catalog_covers_required_phase0_risks(self) -> None:
         catalog = load_json(FIXTURE_CATALOG)
         source_fixture_ids = {item["fixture_id"] for item in catalog["source_root_fixtures"]}
@@ -124,6 +146,55 @@ class OpenClawPhase0SchemaTests(unittest.TestCase):
         self.assertIn("DeepSeek remains reference-only", text)
         self.assertIn("native loader evidence proves another", text)
         self.assertIn("manifest/schema/openclaw/apply-manifest.schema.json", text)
+
+    def test_generated_openclaw_install_target_plan_keeps_safety_contract(self) -> None:
+        generate_docs(load_manifests())
+        root_doc = REPO_ROOT / "docs" / "openclaw-install-target-plan.md"
+        source_doc = REPO_ROOT / "docs" / "source" / "openclaw-install-target-plan.md"
+        text = root_doc.read_text(encoding="utf-8")
+        self.assertEqual(text, source_doc.read_text(encoding="utf-8"))
+
+        def section(start_heading, end_heading):
+            start = text.index(start_heading)
+            end = text.index(end_heading, start + len(start_heading)) if end_heading else len(text)
+            return " ".join(text[start:end].split())
+
+        decision = section("## Decision\n", "\n## Target Policy\n")
+        target_policy = section("## Target Policy\n", "\n## No-Go Surfaces\n")
+        code_design = section("## Code Design Notes\n", "\n## Implementation Issue Breakdown\n")
+        implementation_issues = section("## Implementation Issue Breakdown\n", "\n## Required Tests\n")
+        required_tests = section("## Required Tests\n", "\n## Acceptance Criteria\n")
+        acceptance = section("## Acceptance Criteria\n", None)
+
+        self.assertIn("no files may be written anywhere under a real `.openclaw` tree", decision)
+        self.assertIn("Native loader evidence is necessary but not sufficient for real writes", decision)
+        self.assertIn("must not plan or apply any write under a real `.openclaw` tree", target_policy)
+        self.assertIn("before native loader evidence, native inertness evidence", target_policy)
+        self.assertIn("not manifest actions, action IDs, approval hashes", target_policy)
+        self.assertIn("shared runtime-root writes are also fake-root-only", target_policy)
+        self.assertIn("`.openclaw/ai-agents-skills/...` is a candidate quarantined namespace only", target_policy)
+        self.assertIn("it is not exempt from the no-real-write rule", target_policy)
+        self.assertIn("target-support-file.schema.json", target_policy)
+        self.assertIn("unclassified OpenClaw support files fail closed", target_policy)
+        self.assertIn("compatibility tuple matches every target dimension", target_policy)
+        self.assertIn("canonical realpath", target_policy)
+        self.assertIn("must not hardcode Codex runtime paths", target_policy)
+        self.assertIn("That does not imply real OpenClaw loader support", code_design)
+        self.assertIn("after native loader evidence, native inertness evidence", implementation_issues)
+        self.assertIn("table-driven no-go fixtures cover every category", required_tests)
+        self.assertIn("compatibility-tuple-filtered runtime and support-file actions", required_tests)
+        self.assertIn("planner/runtime behavior tests reject Codex runtime paths", required_tests)
+        self.assertIn("openclaw.evidence.v1` source/import evidence cannot approve", required_tests)
+        self.assertIn("docs/source OpenClaw install-target plan output matches", required_tests)
+        self.assertIn("must fail closed unless OpenClaw is stopped, locked, or otherwise quiescent", required_tests)
+        self.assertIn("artifact-specific evidence where required", acceptance)
+        self.assertIn("dedicated real-system runtime approval gate", acceptance)
+        self.assertNotIn("except for optional inert documentation", text)
+        self.assertNotIn("future inert docs/templates may live only under", text)
+        self.assertNotIn("optional docs/templates only under", text)
+        self.assertNotIn("before native OpenClaw target evidence", text)
+        self.assertNotIn("After native loader evidence: OpenClaw `auto` may resolve to `copy`", text)
+        self.assertNotIn("real active-loader copy is allowed only after the native loader evidence gate", text)
 
 
 if __name__ == "__main__":

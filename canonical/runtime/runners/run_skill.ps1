@@ -15,7 +15,10 @@ if ([string]::IsNullOrWhiteSpace($SkillCommand)) {
 }
 
 $runtimeRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$workspace = if ($env:AAS_RUNTIME_WORKSPACE) { $env:AAS_RUNTIME_WORKSPACE } else { Join-Path $runtimeRoot "workspace" }
+$workspace = Join-Path $runtimeRoot "workspace"
+if ($env:AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE -eq "1" -and $env:AAS_RUNTIME_WORKSPACE) {
+    $workspace = $env:AAS_RUNTIME_WORKSPACE
+}
 $normalized = $SkillCommand -replace "/", [System.IO.Path]::DirectorySeparatorChar
 
 if ([System.IO.Path]::IsPathRooted($normalized) -or $normalized.Contains("..")) {
@@ -25,11 +28,16 @@ if ([System.IO.Path]::IsPathRooted($normalized) -or $normalized.Contains("..")) 
 $resolved = Join-Path $workspace $normalized
 $workspaceResolved = [System.IO.Path]::GetFullPath($workspace)
 $commandResolved = [System.IO.Path]::GetFullPath($resolved)
-if (-not $commandResolved.StartsWith($workspaceResolved, [System.StringComparison]::OrdinalIgnoreCase)) {
+$workspacePrefix = $workspaceResolved.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+if (-not $commandResolved.StartsWith($workspacePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Refusing runtime command outside workspace: $resolved"
 }
 if (-not (Test-Path -LiteralPath $commandResolved -PathType Leaf)) {
     throw "Runtime command not found: $commandResolved"
+}
+$commandItem = Get-Item -LiteralPath $commandResolved
+if (($commandItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw "Refusing symlinked runtime command: $commandResolved"
 }
 
 $env:AAS_RUNTIME_ROOT = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { $runtimeRoot }

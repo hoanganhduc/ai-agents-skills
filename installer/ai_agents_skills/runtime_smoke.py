@@ -38,6 +38,7 @@ def run_runtime_smoke(
             install_mode="copy",
             runtime_profile="full",
             platform=host_platform,
+            requested_agents=["codex"],
         )
         install_result = apply_plan(root, plan, dry_run=False)
         verify_result = verify(root)

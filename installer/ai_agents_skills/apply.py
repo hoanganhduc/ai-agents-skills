@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from .capabilities import normalized_path_within, resolved_path_within
+from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
 from .render import replace_or_append_block
 from .runtime import apply_runtime_file_action, preflight_runtime_action
 from .state import (
@@ -16,6 +16,7 @@ from .state import (
     save_state,
     sha256_file,
     sha256_text,
+    signatures_match,
     symlink_atomic,
     upsert_artifact,
     upsert_uninstall_record,
@@ -92,6 +93,12 @@ def preflight_action(root: Path, action: dict[str, Any]) -> None:
         preflight_runtime_action(root, action)
         return
     path = Path(action["path"])
+    if (
+        action.get("agent") == "openclaw"
+        and looks_like_real_system_root(root)
+        and normalized_path_within(root / ".openclaw", path)
+    ):
+        raise ValueError("refusing real-system OpenClaw writes before native target evidence")
     if not normalized_path_within(root, path) or not resolved_path_within(root, path.parent):
         raise ValueError(f"refusing to apply artifact outside selected root: {path}")
     for parent in existing_parents(path.parent, root):
@@ -196,9 +203,12 @@ def apply_block_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[
     result["previous_hash"] = sha256_text(before)
     result["previous_signature"] = artifact_signature(path)
     if action.get("operation") in {"skip", "noop"}:
-        result["managed"] = False
+        result["managed"] = action.get("operation") == "noop"
         result["applied"] = False
         result["installed_signature"] = artifact_signature(path)
+        if action.get("operation") == "noop":
+            result["block_id"] = action.get("block_id")
+            result["managed_block"] = action.get("content", "").strip()
         return result
     backup = backup_file(root, run_id, path)
     after = replace_or_append_block(before, action["skill"], action["content"])
@@ -263,6 +273,16 @@ def apply_managed_file_remove_action(root: Path, run_id: str, action: dict[str, 
     if action["operation"] != "remove-obsolete":
         result["applied"] = False
         result["installed_signature"] = artifact_signature(path)
+        return result
+    expected_signature = action.get("installed_signature")
+    current_signature = artifact_signature(path)
+    if expected_signature and current_signature.get("exists") and not signatures_match(current_signature, expected_signature):
+        result["operation"] = "skip-conflict"
+        result["applied"] = False
+        result["managed"] = False
+        result["state_operation"] = None
+        result["reason"] = "managed file changed since install"
+        result["installed_signature"] = current_signature
         return result
     backup = backup_file(root, run_id, path)
     result["backup"] = str(backup) if backup else None

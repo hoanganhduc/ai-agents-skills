@@ -548,6 +548,35 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue(support.is_symlink())
             self.assertEqual(verify(root)["status"], "ok")
 
+    def test_switching_to_reference_preserves_changed_managed_support_file(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            initial_plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="copy")
+            apply_plan(root, initial_plan, dry_run=False)
+            support = root / ".claude" / "skills" / "deep-research-workflow" / "references" / "output-structure.md"
+            self.assertTrue(support.exists())
+            self.assertFalse(support.is_symlink())
+            support.write_text(support.read_text(encoding="utf-8") + "\nuser edit\n", encoding="utf-8")
+
+            reference_plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="reference")
+            remove_actions = [a for a in reference_plan["actions"] if a["operation"] == "remove-obsolete"]
+            self.assertTrue(remove_actions)
+            result = apply_plan(root, reference_plan, dry_run=False)
+
+            removed = [a for a in result["actions"] if a.get("artifact_type") == "skill-support-file"]
+            self.assertTrue(removed)
+            self.assertEqual(removed[0]["operation"], "skip-conflict")
+            self.assertTrue(support.exists())
+            state = (root / ".ai-agents-skills" / "state.json").read_text(encoding="utf-8")
+            self.assertIn("output-structure.md", state)
+
     def test_deepseek_default_reference_mode_writes_adapter(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -571,6 +600,212 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("canonical/skills/zotero/SKILL.md", text)
             self.assertNotIn("\\canonical\\skills\\zotero\\SKILL.md", text)
             self.assertEqual(verify(root)["status"], "ok")
+
+    def test_openclaw_is_explicit_only_and_fake_root_eligible(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            self.assertEqual(detect_agents(root), [])
+            self.assertEqual([agent.name for agent in detect_agents(root, ["openclaw"])], ["openclaw"])
+
+    def test_openclaw_fake_root_installs_skill_file_without_instruction_block(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "model-router"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["openclaw"]))
+            file_actions = [a for a in plan["actions"] if a["kind"] == "file" and a["artifact_type"] == "skill-file"]
+            block_actions = [a for a in plan["actions"] if a["kind"] == "managed-block"]
+
+            self.assertEqual(len(file_actions), 1)
+            self.assertEqual(file_actions[0]["agent"], "openclaw")
+            self.assertEqual(file_actions[0]["install_mode"], "copy")
+            self.assertEqual(file_actions[0]["operation"], "create")
+            self.assertFalse(block_actions)
+
+            apply_plan(root, plan, dry_run=False)
+
+            target = root / ".openclaw" / "skills" / "model-router" / "SKILL.md"
+            self.assertTrue(target.exists())
+            self.assertFalse(target.is_symlink())
+            self.assertIn("Generated target: openclaw", target.read_text(encoding="utf-8"))
+            self.assertFalse((root / ".openclaw" / "AGENTS.md").exists())
+            self.assertEqual(verify(root, agent_filter={"openclaw"})["status"], "ok")
+
+            uninstall(root, agents={"openclaw"}, dry_run=False)
+            self.assertFalse(target.exists())
+
+    def test_openclaw_existing_unmanaged_skill_is_skipped_by_default(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+            existing = root / ".openclaw" / "skills" / "model-router" / "SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("user-owned OpenClaw skill\n", encoding="utf-8")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "model-router"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["openclaw"]))
+            file_action = next(action for action in plan["actions"] if action["artifact_type"] == "skill-file")
+
+            self.assertEqual(file_action["classification"], "unmanaged")
+            self.assertEqual(file_action["operation"], "skip")
+            self.assertFalse([a for a in plan["actions"] if a["kind"] == "managed-block"])
+
+    def test_openclaw_runtime_backed_skill_is_blocked_without_runtime_actions(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "graph-verifier"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["openclaw"]))
+            file_action = next(action for action in plan["actions"] if action["artifact_type"] == "skill-file")
+
+            self.assertEqual(file_action["classification"], "blocked")
+            self.assertEqual(file_action["operation"], "skip")
+            self.assertEqual(file_action["reason"], "OpenClaw runtime-backed skills require neutral runtime evidence")
+            self.assertFalse([action for action in plan["actions"] if action["artifact_type"] == "runtime-file"])
+            self.assertFalse([action for action in plan["actions"] if action["kind"] == "managed-block"])
+
+    def test_openclaw_symlink_and_reference_modes_are_blocked(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "model-router"
+            selected = resolve_skills(args, manifests)
+            for mode in ("symlink", "reference"):
+                with self.subTest(mode=mode):
+                    plan = build_plan(root, manifests, selected, detect_agents(root, ["openclaw"]), install_mode=mode)
+                    file_action = next(action for action in plan["actions"] if action["artifact_type"] == "skill-file")
+                    self.assertEqual(file_action["classification"], "blocked")
+                    self.assertEqual(file_action["operation"], "skip")
+                    self.assertEqual(file_action["reason"], f"OpenClaw {mode} install mode requires native target evidence")
+
+    def test_openclaw_adopt_backup_replace_and_migrate_are_blocked(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+            existing = root / ".openclaw" / "skills" / "model-router" / "SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("user-owned OpenClaw skill\n", encoding="utf-8")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "model-router"
+            selected = resolve_skills(args, manifests)
+            for kwargs in ({"adopt": True}, {"backup_replace": True}):
+                with self.subTest(kwargs=kwargs):
+                    plan = build_plan(root, manifests, selected, detect_agents(root, ["openclaw"]), **kwargs)
+                    file_action = next(action for action in plan["actions"] if action["artifact_type"] == "skill-file")
+                    self.assertEqual(file_action["classification"], "blocked")
+                    self.assertEqual(file_action["operation"], "skip")
+                    self.assertEqual(
+                        file_action["reason"],
+                        "OpenClaw adopt, backup-replace, and migrate require native target evidence",
+                    )
+            existing.unlink()
+            legacy = root / ".openclaw" / "skills" / "smart_model_router" / "SKILL.md"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_text("legacy OpenClaw skill\n", encoding="utf-8")
+
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["openclaw"]), migrate=True)
+            file_action = next(action for action in plan["actions"] if action["artifact_type"] == "skill-file")
+            self.assertEqual(file_action["classification"], "blocked")
+            self.assertEqual(file_action["operation"], "skip")
+            self.assertEqual(
+                file_action["reason"],
+                "OpenClaw adopt, backup-replace, and migrate require native target evidence",
+            )
+
+    def test_openclaw_support_files_require_manifest_metadata(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "source-research"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["openclaw"]))
+            file_action = next(action for action in plan["actions"] if action["artifact_type"] == "skill-file")
+            support_actions = [a for a in plan["actions"] if a["artifact_type"] == "skill-support-file"]
+
+            self.assertEqual(file_action["classification"], "blocked")
+            self.assertEqual(file_action["operation"], "skip")
+            self.assertEqual(file_action["reason"], "OpenClaw support files require target-support-file manifest metadata")
+            self.assertFalse(support_actions)
+
+            apply_plan(root, plan, dry_run=False)
+            target = root / ".openclaw" / "skills" / "source-research" / "SKILL.md"
+            support = root / ".openclaw" / "skills" / "source-research" / "references" / "specialist-subagents.md"
+            self.assertFalse(target.exists())
+            self.assertFalse(support.exists())
+            self.assertEqual(verify(root, agent_filter={"openclaw"})["status"], "no-managed-artifacts")
+
+    def test_openclaw_real_system_write_guards_fail_closed(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+
+            from installer.ai_agents_skills.agents import target_for
+
+            args = Args()
+            args.skills = "source-research"
+            selected = resolve_skills(args, manifests)
+            with patch("installer.ai_agents_skills.planner.looks_like_real_system_root", return_value=True):
+                plan = build_plan(root, manifests, selected, [target_for(root, "openclaw")])
+            self.assertEqual(plan["actions"], [])
+            self.assertIn(
+                {
+                    "agent": "openclaw",
+                    "reason": "OpenClaw target writes are fake-root only before native target evidence",
+                },
+                plan["skipped_agents"],
+            )
+
+            action = {
+                "kind": "file",
+                "agent": "openclaw",
+                "skill": "source-research",
+                "path": str(root / ".openclaw" / "skills" / "source-research" / "SKILL.md"),
+                "content": "blocked\n",
+                "classification": "missing",
+                "operation": "create",
+                "artifact_type": "skill-file",
+                "install_mode": "copy",
+            }
+            with patch("installer.ai_agents_skills.apply.looks_like_real_system_root", return_value=True):
+                with self.assertRaisesRegex(ValueError, "real-system OpenClaw"):
+                    apply_plan(root, {"actions": [action], "skipped_agents": [], "root": str(root)}, dry_run=True)
+            self.assertFalse((root / ".openclaw" / "skills" / "source-research" / "SKILL.md").exists())
 
     def test_all_agent_fake_root_detects_deepseek_when_home_exists(self) -> None:
         manifests = load_manifests()
@@ -798,12 +1033,25 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertNotEqual(before, after_user_edit)
             self.assertEqual(verify(root)["status"], "ok")
 
+    def test_rollback_rejects_invalid_or_unlisted_run_ids(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            save_state(root, {"schema_version": 1, "artifacts": [], "runs": []})
+
+            with self.assertRaisesRegex(ValueError, "invalid run id"):
+                rollback(root, run_id="../outside", dry_run=True)
+
+            write_run_record(root, "unlisted-run", [])
+            with self.assertRaisesRegex(ValueError, "unknown run id"):
+                rollback(root, run_id="unlisted-run", dry_run=True)
+
     def test_rollback_refuses_run_artifact_outside_root_before_mutation(self) -> None:
         with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
             root = Path(tmp)
             outside = Path(outside_tmp) / "outside.txt"
             outside.write_text("do not remove\n", encoding="utf-8")
             run_id = "rollback-boundary"
+            save_state(root, {"schema_version": 1, "artifacts": [], "runs": [{"run_id": run_id, "action_count": 1}]})
             write_run_record(
                 root,
                 run_id,
@@ -836,6 +1084,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             outside_backup = Path(outside_tmp) / "backup.txt"
             outside_backup.write_text("outside backup\n", encoding="utf-8")
             run_id = "rollback-backup-boundary"
+            save_state(root, {"schema_version": 1, "artifacts": [], "runs": [{"run_id": run_id, "action_count": 1}]})
             write_run_record(
                 root,
                 run_id,
@@ -898,6 +1147,55 @@ class PlanInstallVerifyTests(unittest.TestCase):
             plan = build_plan(root, manifests, selected, detect_agents(root))
             apply_plan(root, plan, dry_run=False)
             self.assertEqual(verify(root)["status"], "ok")
+
+    def test_malformed_instruction_block_is_skipped_as_conflict(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            instructions = root / ".claude" / "CLAUDE.md"
+            instructions.write_text("<!-- ai-agents-skills:zotero:start -->\ntruncated\n", encoding="utf-8")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            block_action = next(action for action in plan["actions"] if action["kind"] == "managed-block")
+
+            self.assertEqual(block_action["classification"], "conflict")
+            self.assertEqual(block_action["operation"], "skip")
+            self.assertEqual(block_action["reason"], "managed instruction block is malformed or duplicated")
+
+    def test_verify_detects_changed_managed_instruction_block(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            apply_plan(root, plan, dry_run=False)
+            instructions = root / ".claude" / "CLAUDE.md"
+            instructions.write_text(
+                instructions.read_text(encoding="utf-8").replace(
+                    "<!-- ai-agents-skills:zotero:end -->",
+                    "tampered managed content\n<!-- ai-agents-skills:zotero:end -->",
+                ),
+                encoding="utf-8",
+            )
+
+            result = verify(root)
+
+            self.assertEqual(result["status"], "failed")
+            block_result = next(item for item in result["results"] if item["artifact_type"] == "instruction-block")
+            checks = {check["name"]: check["ok"] for check in block_result["checks"]}
+            self.assertFalse(checks["managed-block-match"])
 
     def test_verify_detects_changed_managed_file_signature(self) -> None:
         manifests = load_manifests()
@@ -1122,6 +1420,37 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(result["actions"][0]["operation"], "skip-conflict")
             state = json.loads((root / ".ai-agents-skills" / "state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["artifacts"][0]["key"], "tampered")
+
+    def test_uninstall_refuses_unmanaged_state_record(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            target.parent.mkdir(parents=True)
+            target.write_text("user-owned file\n", encoding="utf-8")
+            save_state(
+                root,
+                {
+                    "schema_version": 1,
+                    "runs": [],
+                    "artifacts": [
+                        {
+                            "key": "tampered",
+                            "agent": "claude",
+                            "skill": "zotero",
+                            "artifact": str(target),
+                            "artifact_type": "skill-file",
+                            "uninstall": {"action": "delete-created"},
+                            "installed_signature": artifact_signature(target),
+                        }
+                    ],
+                },
+            )
+
+            result = uninstall(root, skills={"zotero"}, dry_run=False)
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "user-owned file\n")
+            self.assertEqual(result["actions"][0]["operation"], "skip-conflict")
+            self.assertEqual(result["actions"][0]["reason"], "state record is not marked managed")
 
     def test_adopted_existing_file_verifies_by_recorded_hash(self) -> None:
         manifests = load_manifests()
@@ -1363,6 +1692,30 @@ class DocsAndLauncherTests(unittest.TestCase):
             ])
             self.assertEqual(code, 0)
             self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
+
+    def test_cli_plan_reports_missing_explicit_openclaw_target(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agent",
+                    "openclaw",
+                    "plan",
+                    "--skill",
+                    "source-research",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["action_count"], 0)
+            self.assertEqual(
+                payload["skipped_agents"],
+                [{"agent": "openclaw", "reason": "agent home not detected"}],
+            )
+            self.assertFalse((root / ".openclaw").exists())
 
     def test_cli_install_rejects_dry_run_with_apply(self) -> None:
         with fake_root() as tmp:
@@ -1703,6 +2056,74 @@ class DocsAndLauncherTests(unittest.TestCase):
             coverage = payload["skill_coverage"][0]
             self.assertEqual(coverage["managed_canonical"], ["zotero"])
             self.assertEqual(coverage["unmanaged_canonical"], [])
+
+    def test_cli_precheck_save_state_uses_state_path_guard(self) -> None:
+        with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            (root / ".ai-agents-skills").symlink_to(outside, target_is_directory=True)
+            stream = io.StringIO()
+
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "precheck",
+                    "--save-state",
+                ])
+
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "error")
+            self.assertIn("installer state", payload["error"])
+            self.assertFalse((outside / "precheck.json").exists())
+
+    def test_cli_verify_returns_nonzero_for_failed_status(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["claude"]), install_mode="copy")
+            apply_plan(root, plan, dry_run=False)
+            target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            target.write_text(target.read_text(encoding="utf-8") + "\nuser edit\n", encoding="utf-8")
+
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "verify",
+                    "--skill",
+                    "zotero",
+                ])
+
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "failed")
+
+    def test_cli_smoke_returns_nonzero_without_managed_artifacts(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "smoke",
+                ])
+
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "no-managed-artifacts")
 
     def test_cli_smoke_reports_managed_skill_visibility(self) -> None:
         with fake_root() as tmp:

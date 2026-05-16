@@ -2,7 +2,10 @@
 set -euo pipefail
 
 runtime_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-workspace="${AAS_RUNTIME_WORKSPACE:-$runtime_root/workspace}"
+workspace="$runtime_root/workspace"
+if [ "${AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE:-}" = "1" ] && [ -n "${AAS_RUNTIME_WORKSPACE:-}" ]; then
+  workspace="$AAS_RUNTIME_WORKSPACE"
+fi
 
 if [ "$#" -lt 1 ]; then
   printf 'usage: %s <runtime-relative-script> [args...]\n' "$0" >&2
@@ -41,6 +44,10 @@ esac
 if [ ! -f "$command_path" ]; then
   printf 'runtime command not found: %s\n' "$command_path" >&2
   exit 127
+fi
+if [ -L "$command_path" ]; then
+  printf 'refusing symlinked runtime command: %s\n' "$command_path" >&2
+  exit 2
 fi
 
 export AAS_RUNTIME_ROOT="${AAS_RUNTIME_ROOT:-$runtime_real}"
