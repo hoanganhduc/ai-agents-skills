@@ -1,0 +1,22 @@
+\documentclass[border=4pt]{standalone}
+\usepackage{adjustbox}
+\usepackage[edges]{forest}
+\begin{document}
+\begin{adjustbox}{max width=\textwidth}
+\begin{forest}
+for tree={
+  draw,
+  rounded corners=2pt,
+  edge={->, very thick},
+  minimum height=8mm,
+  inner sep=2mm,
+  s sep=10mm,
+  l sep=12mm
+}
+[Claim
+  [Assumption A]
+  [Assumption B]
+]
+\end{forest}
+\end{adjustbox}
+\end{document}
