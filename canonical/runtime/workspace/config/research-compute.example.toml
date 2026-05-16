@@ -1,0 +1,20 @@
+install_id = "example-install"
+platform = "linux"
+broker_state_root = "../../memories/research-compute"
+default_materialize_root = ".research-compute"
+modal_profile = "default"
+modal_environment = "main"
+deployment_alias = "research-compute-codex"
+allowed_gpu_families = ["T4", "L4", "A10", "A100", "H100"]
+per_job_cost_cap_usd = 5.0
+default_archive_backend = "local"
+
+[functions]
+modal_cpu = "run_cpu_job"
+modal_highmem_cpu = "run_highmem_job"
+modal_gpu = "run_gpu_job"
+modal_sandbox_experimental = "run_sandbox_job"
+
+[defaults]
+auto_submit = true
+wait_poll_seconds = 5

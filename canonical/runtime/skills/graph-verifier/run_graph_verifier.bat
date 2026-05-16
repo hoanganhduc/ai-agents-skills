@@ -1,4 +1,5 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
-python "%~dp0graph_verifier.py" %*
+set "AAS_RUNTIME_SCRIPT=%~dp0graph_verifier.py"
+"%~dp0..\..\..\run_python.bat" %*
 exit /b %ERRORLEVEL%
