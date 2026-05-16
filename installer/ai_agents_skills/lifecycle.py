@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .capabilities import normalized_path_within, resolved_path_within
+from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
 from .state import (
     artifact_signature,
     load_state,
@@ -16,6 +16,7 @@ from .state import (
     signatures_match,
     state_dir,
     upsert_artifact,
+    validate_run_id,
     write_text_atomic,
 )
 
@@ -68,10 +69,7 @@ def rollback(
 ) -> dict[str, Any]:
     state = load_state(root)
     if run_id:
-        path = run_record_path(root, run_id)
-        if not path.exists():
-            raise ValueError(f"unknown run id: {run_id}")
-        actions = json.loads(path.read_text(encoding="utf-8"))["actions"]
+        actions = load_run_actions(root, state, run_id)
     else:
         actions = state.get("artifacts", [])
     targets = [
@@ -103,13 +101,17 @@ def rollback(
 
 
 def filter_artifacts(
-    artifacts: list[dict[str, Any]],
+    artifacts: list[Any],
     skills: set[str] | None,
     agents: set[str] | None,
     artifact_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     selected = []
     for item in artifacts:
+        if not isinstance(item, dict):
+            if not skills and not agents and not artifact_ids:
+                selected.append({"managed": False, "invalid_record": item})
+            continue
         if skills and item.get("skill") not in skills:
             continue
         if agents and item.get("agent") not in agents and item.get("artifact_type") != "runtime-file":
@@ -127,8 +129,47 @@ def lifecycle_records(state: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def load_run_actions(root: Path, state: dict[str, Any], run_id: str) -> list[dict[str, Any]]:
+    run_id = validate_run_id(run_id)
+    known_run_ids = {
+        item.get("run_id")
+        for item in state.get("runs", [])
+        if isinstance(item, dict)
+    }
+    if run_id not in known_run_ids:
+        raise ValueError(f"unknown run id: {run_id}")
+    path = run_record_path(root, run_id)
+    if not path.exists():
+        raise ValueError(f"missing run record for run id: {run_id}")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"run record is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("actions"), list):
+        raise ValueError(f"invalid run record: {path}")
+    if payload.get("run_id") not in {None, run_id}:
+        raise ValueError(f"run record id mismatch: {path}")
+    return payload["actions"]
+
+
+def lifecycle_record_schema_issue(item: Any) -> str | None:
+    if not isinstance(item, dict):
+        return "state record is not an object"
+    if item.get("managed") is not True:
+        return "state record is not marked managed"
+    for key in ("key", "artifact", "artifact_type"):
+        if not item.get(key):
+            return f"state record is missing required field: {key}"
+    return None
+
+
 def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
     action = dict(item)
+    schema_issue = lifecycle_record_schema_issue(item)
+    if schema_issue:
+        action["operation"] = "skip-conflict"
+        action["reason"] = schema_issue
+        return action
     origin = item.get("uninstall", {})
     path = Path(item["artifact"])
     if root is not None and not path_within(root, path):
@@ -192,15 +233,15 @@ def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> 
     result = dict(action)
     operation = action["operation"]
     result["completed"] = False
+    if operation == "skip-conflict":
+        result["reason"] = result.get("reason", "artifact changed since install")
+        return result
     if root is not None and not path_within(root, Path(action["artifact"])):
         result["operation"] = "skip-conflict"
         result["reason"] = "artifact path outside selected root"
         return result
     if operation in {"unmanage-only", "forget-missing"}:
         result["completed"] = True
-        return result
-    if operation == "skip-conflict":
-        result["reason"] = result.get("reason", "artifact changed since install")
         return result
     if operation == "remove-managed-block":
         remove_managed_block_precise(action)
@@ -436,6 +477,8 @@ def preflight_uninstall_actions(root: Path, actions: list[dict[str, Any]]) -> No
         path = Path(action["artifact"])
         if not path_within(root, path):
             raise ValueError(f"refusing uninstall for artifact outside selected root: {path}")
+        if real_openclaw_artifact_blocked(root, action, path):
+            raise ValueError("refusing real-system OpenClaw uninstall before native target evidence")
         if operation in {"restore-backup", "restore-removed"}:
             backup = action.get("uninstall", {}).get("backup") or action.get("backup")
             if not backup:
@@ -461,9 +504,14 @@ def mark_created_instruction_file_groups(actions: list[dict[str, Any]]) -> None:
 def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[dict[str, Any]]) -> None:
     block_groups: dict[str, list[dict[str, Any]]] = {}
     for item in targets:
+        schema_issue = lifecycle_record_schema_issue(item)
+        if schema_issue:
+            raise ValueError(f"refusing rollback for invalid state record: {schema_issue}")
         path = Path(item["artifact"])
         if not path_within(root, path):
             raise ValueError(f"refusing rollback for artifact outside selected root: {path}")
+        if real_openclaw_artifact_blocked(root, item, path):
+            raise ValueError("refusing real-system OpenClaw rollback before native target evidence")
         backup = item.get("backup")
         if backup and not path_within(state_dir(root) / "backups", Path(backup)):
             raise ValueError(f"refusing rollback because backup is outside installer state: {backup}")
@@ -496,6 +544,14 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
         ]
         if any(item.get("created_file") for item in group) and strip_managed_blocks(text, known_skills).strip():
             raise ValueError(f"refusing rollback because instruction file changed since install: {path}")
+
+
+def real_openclaw_artifact_blocked(root: Path, item: dict[str, Any], path: Path) -> bool:
+    return (
+        item.get("agent") == "openclaw"
+        and looks_like_real_system_root(root)
+        and normalized_path_within(root / ".openclaw", path)
+    )
 
 
 def strip_managed_blocks(text: str, skills: list[str]) -> str:

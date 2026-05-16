@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/target-support-file.schema.json",
+  "title": "OpenClaw Target Support File Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "skill",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "openclaw.target-support-file.v1"
+    },
+    "skill": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "relative_path",
+          "artifact_class",
+          "execution_role",
+          "compatibility",
+          "platforms",
+          "path_styles",
+          "shell_families",
+          "wrapper_runtime_class",
+          "newline_policy",
+          "mode_policy",
+          "file_type",
+          "helper_evidence_required"
+        ],
+        "properties": {
+          "relative_path": {
+            "type": "string"
+          },
+          "artifact_class": {
+            "enum": [
+              "text-support",
+              "executable-helper",
+              "binary-support",
+              "shared-runtime-file",
+              "openclaw-native-surface"
+            ]
+          },
+          "execution_role": {
+            "enum": [
+              "read-only-reference",
+              "imported-module",
+              "direct-helper",
+              "runtime-wrapper",
+              "blocked"
+            ]
+          },
+          "compatibility": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "platform",
+              "path_style",
+              "shell_family",
+              "wrapper_runtime_class",
+              "newline_policy",
+              "mode_policy"
+            ],
+            "properties": {
+              "platform": {
+                "type": "string"
+              },
+              "path_style": {
+                "type": "string"
+              },
+              "shell_family": {
+                "type": "string"
+              },
+              "wrapper_runtime_class": {
+                "type": "string"
+              },
+              "newline_policy": {
+                "type": "string"
+              },
+              "mode_policy": {
+                "type": "string"
+              }
+            }
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "linux",
+                "macos",
+                "windows",
+                "wsl-native",
+                "wsl-mounted-windows",
+                "ci-container"
+              ]
+            }
+          },
+          "path_styles": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "posix",
+                "windows-drive",
+                "windows-unc",
+                "wsl-posix",
+                "mounted-windows"
+              ]
+            }
+          },
+          "shell_families": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "posix-sh",
+                "bash",
+                "powershell",
+                "cmd",
+                "none"
+              ]
+            }
+          },
+          "wrapper_runtime_class": {
+            "enum": [
+              "none",
+              "shared-ai-agents-skills-runtime",
+              "openclaw-native",
+              "blocked"
+            ]
+          },
+          "newline_policy": {
+            "enum": [
+              "preserve",
+              "lf",
+              "crlf",
+              "binary"
+            ]
+          },
+          "mode_policy": {
+            "enum": [
+              "preserve",
+              "0644",
+              "0755",
+              "non-executable",
+              "blocked"
+            ]
+          },
+          "file_type": {
+            "enum": [
+              "text",
+              "binary"
+            ]
+          },
+          "helper_evidence_required": {
+            "type": "boolean"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^evidence_[A-Za-z0-9_.-]+$"
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -21,6 +21,11 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "default_mode": "reference",
         "reason": "DeepSeek native symlinked SKILL.md loading has not been verified, so auto mode uses reference adapters.",
     },
+    "openclaw": {
+        "symlink_skill_file": False,
+        "default_mode": "copy",
+        "reason": "OpenClaw native target support is fake-root-only; auto mode uses regular files for layout tests.",
+    },
 }
 
 
@@ -58,9 +63,9 @@ def effective_install_mode_with_evidence(
     if not source_exists:
         return "copy", "canonical source missing; copy rendered skill content", evidence
     if requested_mode == "auto":
-        if policy["symlink_skill_file"]:
+        if policy["default_mode"] == "symlink" and policy["symlink_skill_file"]:
             return "symlink", policy["reason"], evidence
-        return "reference", policy["reason"], evidence
+        return policy["default_mode"], policy["reason"], evidence
     if requested_mode == "symlink":
         return "symlink", "symlink explicitly requested; apply will fallback if creation fails", evidence
     return requested_mode, f"{requested_mode} explicitly requested", evidence

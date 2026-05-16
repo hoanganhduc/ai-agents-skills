@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .agents import AgentTarget, agent_home_statuses
-from .capabilities import effective_install_mode_with_evidence
+from .capabilities import effective_install_mode_with_evidence, looks_like_real_system_root
 from .manifest import REPO_ROOT
 from .render import (
     MANAGED_MARKER,
@@ -35,25 +35,44 @@ def build_plan(
     runtime_profile: str = "auto",
     runtime_root: Path | None = None,
     platform: str | None = None,
+    requested_agents: list[str] | None = None,
 ) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
     skipped_agents = []
     skill_specs = manifests["skills"]["skills"]
     state = load_state(root)
+    agents, blocked_agents = plannable_agents(root, agents)
+    skipped_agents.extend(blocked_agents)
     detected_agent_names = {agent.name for agent in agents}
-    for status in agent_home_statuses(root):
-        if status["agent"] not in detected_agent_names:
+    skipped_agent_names = {item["agent"] for item in skipped_agents}
+    for status in agent_home_statuses(root, requested_agents):
+        if status["agent"] not in detected_agent_names and status["agent"] not in skipped_agent_names:
             skipped_agents.append({"agent": status["agent"], "reason": status["reason"]})
+            skipped_agent_names.add(str(status["agent"]))
 
     skill_actions: dict[tuple[str, str], dict[str, Any]] = {}
     for skill in skills:
         spec = skill_specs[skill]
         for agent in agents:
-            if agent.name not in spec["supported_agents"]:
+            if not skill_supported_by_agent(spec, agent):
                 continue
             skill_file = agent.skills_dir / skill / "SKILL.md"
             source_path = canonical_skill_path(skill)
             source = source_path if source_path.exists() else None
+            block_reason = target_skill_block_reason(agent, skill, manifests, install_mode)
+            if block_reason is not None:
+                file_action = blocked_file_action(
+                    agent=agent.name,
+                    skill=skill,
+                    path=skill_file,
+                    artifact_type="skill-file",
+                    reason=block_reason,
+                    install_mode="copy",
+                    source_path=source,
+                )
+                actions.append(file_action)
+                skill_actions[(agent.name, skill)] = file_action
+                continue
             action_install_mode, mode_reason, capability_evidence = effective_install_mode(
                 agent.name,
                 install_mode,
@@ -81,6 +100,7 @@ def build_plan(
                 source_path=source,
                 fallback_content=fallback_content,
             )
+            block_openclaw_conflict_mode(agent.name, file_action)
             actions.append(file_action)
             skill_actions[(agent.name, skill)] = file_action
             if skill_action_is_active(file_action):
@@ -93,10 +113,12 @@ def build_plan(
                         adopt=adopt,
                         backup_replace=backup_replace,
                         install_mode=file_action["install_mode"],
+                        manifests=manifests,
                     )
                 )
-            block = render_instruction_block(skill, spec)
-            actions.append(classify_instruction_block(agent, skill, block, file_action))
+            if agent.instruction_blocks_enabled:
+                block = render_instruction_block(skill, spec)
+                actions.append(classify_instruction_block(agent, skill, block, file_action))
             if migrate and skill_action_is_active(file_action) and file_action.get("legacy_path"):
                 actions.append(
                     legacy_removal_action(
@@ -127,7 +149,7 @@ def build_plan(
         build_runtime_actions(
             root=root,
             manifests=manifests,
-            selected_skills=skills,
+            selected_skills=runtime_enabled_skills(skills, skill_actions),
             agents=agents,
             runtime_profile=runtime_profile,
             runtime_root=runtime_root,
@@ -136,6 +158,109 @@ def build_plan(
         )
     )
     return {"actions": actions, "skipped_agents": skipped_agents, "root": str(root)}
+
+
+def plannable_agents(root: Path, agents: list[AgentTarget]) -> tuple[list[AgentTarget], list[dict[str, str]]]:
+    plannable = []
+    skipped = []
+    for agent in agents:
+        reason = target_plan_block_reason(root, agent)
+        if reason is None:
+            plannable.append(agent)
+        else:
+            skipped.append({"agent": agent.name, "reason": reason})
+    return plannable, skipped
+
+
+def target_plan_block_reason(root: Path, agent: AgentTarget) -> str | None:
+    if agent.fake_root_only and looks_like_real_system_root(root):
+        return "OpenClaw target writes are fake-root only before native target evidence"
+    return None
+
+
+def skill_supported_by_agent(spec: dict[str, Any], agent: AgentTarget) -> bool:
+    if agent.name == "openclaw":
+        return bool(set(spec["supported_agents"]).intersection({"codex", "claude", "deepseek"}))
+    return agent.name in spec["supported_agents"]
+
+
+def target_skill_block_reason(
+    agent: AgentTarget,
+    skill: str,
+    manifests: dict[str, Any],
+    requested_mode: str,
+) -> str | None:
+    if agent.name != "openclaw":
+        return None
+    if requested_mode in {"reference", "symlink"}:
+        return f"OpenClaw {requested_mode} install mode requires native target evidence"
+    if skill in manifests.get("runtime", {}).get("skills", {}):
+        return "OpenClaw runtime-backed skills require neutral runtime evidence"
+    content_reason = openclaw_skill_content_block_reason(skill)
+    if content_reason is not None:
+        return content_reason
+    support_reason = openclaw_skill_support_block_reason(skill)
+    if support_reason is not None:
+        return support_reason
+    return None
+
+
+def openclaw_skill_content_block_reason(skill: str) -> str | None:
+    source = canonical_skill_path(skill)
+    if not source.exists():
+        return "OpenClaw skill source is missing"
+    try:
+        content = source.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return "OpenClaw skill content must be UTF-8"
+    lowered = content.lower()
+    denied_markers = (
+        ".codex/runtime",
+        "$codex_home",
+        "%userprofile%\\.codex\\runtime",
+        "%localappdata%\\ai-agents-skills\\runtime",
+    )
+    if any(marker in lowered for marker in denied_markers):
+        return "OpenClaw skill content references Codex/runtime-specific paths"
+    return None
+
+
+def openclaw_skill_support_block_reason(skill: str) -> str | None:
+    canonical_dir = canonical_skill_dir(skill)
+    if not canonical_dir.exists():
+        return None
+    has_support_files = any(
+        source.is_file() and source.name != "SKILL.md"
+        for source in canonical_dir.rglob("*")
+    )
+    if has_support_files:
+        return "OpenClaw support files require target-support-file manifest metadata"
+    return None
+
+
+def block_openclaw_conflict_mode(agent_name: str, action: dict[str, Any]) -> None:
+    if agent_name != "openclaw":
+        return
+    if action.get("operation") not in {"adopt", "backup-replace", "migrate-install"}:
+        return
+    action["classification"] = "blocked"
+    action["operation"] = "skip"
+    action["reason"] = "OpenClaw adopt, backup-replace, and migrate require native target evidence"
+
+
+def runtime_enabled_skills(
+    skills: list[str],
+    skill_actions: dict[tuple[str, str], dict[str, Any]],
+) -> list[str]:
+    enabled = []
+    for skill in skills:
+        if any(
+            action.get("agent") != "openclaw" and skill_action_is_active(action)
+            for (agent_name, action_skill), action in skill_actions.items()
+            if action_skill == skill
+        ):
+            enabled.append(skill)
+    return enabled
 
 
 def effective_install_mode(agent: str, requested_mode: str, source_path: Path) -> tuple[str, str, dict[str, Any]]:
@@ -162,6 +287,7 @@ def obsolete_support_file_actions(state: dict[str, Any], agent: str, skill: str)
                 "artifact_type": "skill-support-file",
                 "install_mode": item.get("install_mode"),
                 "source_path": item.get("source_path"),
+                "installed_signature": item.get("installed_signature"),
                 "created_parent_dirs": item.get("created_parent_dirs", []),
                 "reason": "reference install mode does not use installed support files",
             }
@@ -212,6 +338,7 @@ def artifact_action(
     )
     action["artifact_id"] = f"{artifact_type}:{name}"
     action["artifact_name"] = name
+    block_openclaw_conflict_mode(agent.name, action)
     if missing:
         action["operation"] = "skip"
         action["classification"] = "blocked"
@@ -246,6 +373,8 @@ def backing_skill_available(
     path = agent.skills_dir / skill / "SKILL.md"
     if not path.exists():
         return False
+    if not path.is_file() and not path.is_symlink():
+        return False
     source_path = canonical_skill_path(skill)
     if path.is_symlink() and source_path.exists() and path.resolve() == source_path.resolve():
         return True
@@ -261,12 +390,15 @@ def support_file_actions(
     adopt: bool,
     backup_replace: bool,
     install_mode: str,
+    manifests: dict[str, Any],
 ) -> list[dict[str, Any]]:
     if install_mode == "reference":
         return []
     canonical_dir = canonical_skill_dir(skill)
     if not canonical_dir.exists():
         return []
+    if agent.name == "openclaw":
+        return openclaw_support_file_actions(agent, skill, canonical_dir)
     actions: list[dict[str, Any]] = []
     for source in sorted(canonical_dir.rglob("*")):
         if not source.is_file() or source.name == "SKILL.md":
@@ -294,6 +426,30 @@ def support_file_actions(
     return actions
 
 
+def openclaw_support_file_actions(
+    agent: AgentTarget,
+    skill: str,
+    canonical_dir: Path,
+) -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for source in sorted(canonical_dir.rglob("*")):
+        if not source.is_file() or source.name == "SKILL.md":
+            continue
+        relative = source.relative_to(canonical_dir)
+        actions.append(
+            blocked_file_action(
+                agent=agent.name,
+                skill=skill,
+                path=agent.skills_dir / skill / relative,
+                artifact_type="skill-support-file",
+                reason="OpenClaw support file lacks target-support-file manifest metadata",
+                install_mode="copy",
+                source_path=source,
+            )
+        )
+    return actions
+
+
 def skill_content_for_mode(
     skill: str,
     spec: dict[str, Any],
@@ -304,6 +460,31 @@ def skill_content_for_mode(
     if install_mode == "reference" and source_path.exists():
         return render_reference_skill_md(skill, spec, agent, source_path)
     return render_skill_md(skill, spec, agent)
+
+
+def blocked_file_action(
+    agent: str,
+    skill: str,
+    path: Path,
+    artifact_type: str,
+    reason: str,
+    install_mode: str = "copy",
+    source_path: Path | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "kind": "file",
+        "agent": agent,
+        "skill": skill,
+        "path": str(path),
+        "classification": "blocked",
+        "operation": "skip",
+        "artifact_type": artifact_type,
+        "install_mode": install_mode,
+        "reason": reason,
+    }
+    if source_path is not None:
+        result["source_path"] = str(source_path)
+    return result
 
 
 def classify_file_action(
@@ -445,8 +626,14 @@ def classify_block(path: Path, skill: str) -> str:
     if not path.exists():
         return "missing"
     content = path.read_text(encoding="utf-8", errors="replace")
-    if f"<!-- {block_id(skill)}:start -->" in content:
+    start_marker = f"<!-- {block_id(skill)}:start -->"
+    end_marker = f"<!-- {block_id(skill)}:end -->"
+    start_count = content.count(start_marker)
+    end_count = content.count(end_marker)
+    if start_count == 1 and end_count == 1 and content.find(start_marker) < content.find(end_marker):
         return "managed"
+    if start_count or end_count:
+        return "conflict"
     return "missing"
 
 
@@ -485,6 +672,9 @@ def classify_instruction_block(
 
     classification = classify_block(agent.instructions_file, skill)
     existing_block = current_block(agent.instructions_file, skill)
+    if operation == "upsert" and classification == "conflict":
+        operation = "skip"
+        reason = "managed instruction block is malformed or duplicated"
     if (
         operation == "upsert"
         and classification == "managed"

@@ -4,7 +4,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from .capabilities import resolved_path_within
+from .capabilities import looks_like_real_system_root, resolved_path_within
+
+
+DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek"]
+KNOWN_AGENT_NAMES = [*DEFAULT_AGENT_NAMES, "openclaw"]
 
 
 @dataclass(frozen=True)
@@ -16,6 +20,9 @@ class AgentTarget:
     legacy_skills_dirs: tuple[Path, ...] = ()
     optional_skills_dirs: tuple[Path, ...] = ()
     artifact_dirs: Mapping[str, Path] = field(default_factory=dict)
+    detect_by_default: bool = True
+    instruction_blocks_enabled: bool = True
+    fake_root_only: bool = False
 
     def target_dir_for(self, artifact_type: str) -> Path:
         return self.artifact_dirs.get(artifact_type, self.skills_dir)
@@ -70,11 +77,21 @@ def target_for(root: Path, agent: str) -> AgentTarget:
                 "tool-shim": root / ".deepseek" / "tools",
             },
         )
+    if agent == "openclaw":
+        return AgentTarget(
+            name="openclaw",
+            home=root / ".openclaw",
+            skills_dir=root / ".openclaw" / "skills",
+            instructions_file=root / ".openclaw" / "AGENTS.md",
+            detect_by_default=False,
+            instruction_blocks_enabled=False,
+            fake_root_only=True,
+        )
     raise ValueError(f"unknown agent: {agent}")
 
 
 def detect_agents(root: Path, requested: Iterable[str] | None = None) -> list[AgentTarget]:
-    candidates = list(requested) if requested else ["codex", "claude", "deepseek"]
+    candidates = list(requested) if requested else DEFAULT_AGENT_NAMES
     targets: list[AgentTarget] = []
     for agent in candidates:
         target = target_for(root, agent)
@@ -84,7 +101,7 @@ def detect_agents(root: Path, requested: Iterable[str] | None = None) -> list[Ag
 
 
 def agent_home_statuses(root: Path, requested: Iterable[str] | None = None) -> list[dict[str, str | bool]]:
-    candidates = list(requested) if requested else ["codex", "claude", "deepseek"]
+    candidates = list(requested) if requested else DEFAULT_AGENT_NAMES
     return [agent_home_status(root, target_for(root, agent)) for agent in candidates]
 
 
@@ -97,6 +114,12 @@ def agent_home_status(root: Path, target: AgentTarget) -> dict[str, str | bool]:
         return {"agent": target.name, "eligible": False, "reason": "agent home is not a directory"}
     if not resolved_path_within(root, target.home):
         return {"agent": target.name, "eligible": False, "reason": "agent home resolves outside selected root"}
+    if target.fake_root_only and looks_like_real_system_root(root):
+        return {
+            "agent": target.name,
+            "eligible": False,
+            "reason": "OpenClaw target is fake-root only before native target evidence",
+        }
     return {"agent": target.name, "eligible": True, "reason": "agent home detected"}
 
 
@@ -105,4 +128,8 @@ def agent_home_is_eligible(root: Path, target: AgentTarget) -> bool:
 
 
 def all_agent_names() -> list[str]:
-    return ["codex", "claude", "deepseek"]
+    return list(DEFAULT_AGENT_NAMES)
+
+
+def known_agent_names() -> list[str]:
+    return list(KNOWN_AGENT_NAMES)
