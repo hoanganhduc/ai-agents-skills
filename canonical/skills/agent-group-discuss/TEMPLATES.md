@@ -46,6 +46,11 @@ Before any template begins, the orchestrator must show:
 - estimated time per role and total time
 - execution order by round
 
+For research, manuscript, literature, citation, source-quality, paper or book,
+document, database, synthesis, or verification roles, include the research
+skill-routing block from `EXECUTION.md` when the role may involve sources,
+papers, documents, databases, or final research claims.
+
 ## Mandatory preamble
 
 Before any high-stakes research template begins, the orchestrator must also produce a Step 0 restatement:
