@@ -593,7 +593,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 env=env,
             )
 
-            expected = str(runtime_root / "workspace" / ".secrets.json")
+            expected = str((runtime_root / "workspace" / ".secrets.json").resolve())
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(completed.stdout, f"{expected}|{expected}\n")
 
