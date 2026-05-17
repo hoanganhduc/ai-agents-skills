@@ -21,6 +21,11 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "default_mode": "reference",
         "reason": "DeepSeek native symlinked SKILL.md loading has not been verified, so auto mode uses reference adapters.",
     },
+    "copilot": {
+        "symlink_skill_file": False,
+        "default_mode": "reference",
+        "reason": "Copilot agent skills are regular SKILL.md files; symlinked skill discovery is not assumed.",
+    },
     "openclaw": {
         "symlink_skill_file": False,
         "default_mode": "copy",

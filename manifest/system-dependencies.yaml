@@ -354,8 +354,12 @@
       "description": "GitHub app/CLI authentication is configured outside this repo.",
       "used_by": ["github", "gh-fix-ci", "yeet"]
     },
+    "github-copilot-cli": {
+      "description": "Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when --agents copilot is selected; credentials and config values are not read.",
+      "used_by": ["copilot target"]
+    },
     "provider-configs": {
-      "description": "OpenAI, Claude, DeepSeek, and other provider auth/config files are intentionally excluded.",
+      "description": "OpenAI, Claude, DeepSeek, Copilot, and other provider auth/config files are intentionally excluded.",
       "used_by": ["agent frontends"]
     }
   },

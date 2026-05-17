@@ -2483,5 +2483,145 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertIn("Managed by ai-agents-skills", file_actions[0]["content"])
 
 
+class CopilotTargetTests(unittest.TestCase):
+    def test_copilot_is_known_but_not_detected_by_default(self) -> None:
+        from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+
+            self.assertNotIn("copilot", all_agent_names())
+            self.assertIn("copilot", known_agent_names())
+            self.assertEqual([agent.name for agent in detect_agents(root)], [])
+            self.assertEqual([agent.name for agent in detect_agents(root, ["copilot"])], ["copilot"])
+
+    def test_explicit_copilot_skill_install_uses_personal_skill_surface(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["copilot"]),
+                requested_agents=["copilot"],
+            )
+            skill_actions = [
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            ]
+
+            self.assertEqual(len(skill_actions), 1)
+            action = skill_actions[0]
+            self.assertEqual(action["agent"], "copilot")
+            self.assertEqual(Path(action["path"]), root / ".copilot" / "skills" / "zotero" / "SKILL.md")
+            self.assertEqual(action["install_mode"], "reference")
+            self.assertIn("Copilot agent skills are regular SKILL.md files", action["mode_reason"])
+
+            apply_plan(root, plan, dry_run=False)
+            installed = root / ".copilot" / "skills" / "zotero" / "SKILL.md"
+            self.assertTrue(installed.is_file())
+            self.assertFalse(installed.is_symlink())
+            self.assertIn("Install mode: reference", installed.read_text(encoding="utf-8"))
+
+    def test_copilot_agent_persona_uses_agent_md_surface(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["copilot"]),
+                artifacts=[("agent-persona", "code-reviewer")],
+                runtime_profile="none",
+                requested_agents=["copilot"],
+            )
+            action = next(action for action in plan["actions"] if action["artifact_type"] == "agent-persona")
+
+            self.assertEqual(Path(action["path"]), root / ".copilot" / "agents" / "code-reviewer.agent.md")
+            self.assertIn("target: github-copilot", action["content"])
+            self.assertIn('tools: ["*"]', action["content"])
+
+    def test_copilot_precheck_reports_cli_config_and_redacts_secret_values(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+            settings = root / ".copilot" / "settings.json"
+            settings.write_text('{"token":"sk-should-not-appear"}\n', encoding="utf-8")
+
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "copilot",
+                    "precheck",
+                    "--no-skills",
+                ])
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["detected_agents"], ["copilot"])
+            self.assertEqual(len(payload["target_prechecks"]), 1)
+            precheck = payload["target_prechecks"][0]
+            self.assertEqual(precheck["target"], "copilot")
+            self.assertIn(precheck["status"], {"cli-missing", "probe-disabled", "offline-unverified"})
+            self.assertEqual(precheck["config_dir"]["children"]["settings_json"]["status"], "file")
+            self.assertFalse(precheck["config_dir"]["file_contents_read"])
+            self.assertFalse(precheck["auth"]["secret_values_read"])
+            self.assertNotIn("sk-should-not-appear", json.dumps(payload))
+
+    def test_copilot_status_reduction_prioritizes_blocking_statuses(self) -> None:
+        from installer.ai_agents_skills.copilot import reduce_copilot_status
+
+        self.assertEqual(reduce_copilot_status("supported", "unsupported-model"), "unsupported-model")
+        self.assertEqual(reduce_copilot_status("supported", "provider-unavailable"), "provider-unavailable")
+        self.assertEqual(reduce_copilot_status("supported", "probe-timeout"), "probe-timeout")
+        self.assertEqual(reduce_copilot_status("supported", "probe-disabled"), "probe-disabled")
+        self.assertEqual(reduce_copilot_status("supported", "not-a-status"), "unknown-entitlement")
+
+    def test_copilot_symlink_mode_fails_closed(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["copilot"]),
+                install_mode="symlink",
+                requested_agents=["copilot"],
+            )
+            action = next(
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            )
+            self.assertEqual(action["operation"], "skip")
+            self.assertEqual(action["classification"], "blocked")
+            self.assertIn("symlinked skill loading has not been verified", action["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

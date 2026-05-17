@@ -8,7 +8,9 @@ from .capabilities import looks_like_real_system_root, resolved_path_within
 
 
 DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek"]
-KNOWN_AGENT_NAMES = [*DEFAULT_AGENT_NAMES, "openclaw"]
+KNOWN_AGENT_NAMES = [*DEFAULT_AGENT_NAMES, "copilot", "openclaw"]
+PORTABLE_MANIFEST_AGENT_NAMES = {"codex", "claude", "deepseek"}
+ADAPTER_AGENT_NAMES = {"copilot", "openclaw"}
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,19 @@ def target_for(root: Path, agent: str) -> AgentTarget:
                 "tool-shim": root / ".deepseek" / "tools",
             },
         )
+    if agent == "copilot":
+        return AgentTarget(
+            name="copilot",
+            home=root / ".copilot",
+            skills_dir=root / ".copilot" / "skills",
+            instructions_file=root / ".copilot" / "AGENTS.md",
+            optional_skills_dirs=(root / ".agents" / "skills",),
+            artifact_dirs={
+                "agent-persona": root / ".copilot" / "agents",
+            },
+            detect_by_default=False,
+            instruction_blocks_enabled=False,
+        )
     if agent == "openclaw":
         return AgentTarget(
             name="openclaw",
@@ -133,3 +148,10 @@ def all_agent_names() -> list[str]:
 
 def known_agent_names() -> list[str]:
     return list(KNOWN_AGENT_NAMES)
+
+
+def agent_supports_manifest_entry(agent: str, supported_agents: Iterable[str]) -> bool:
+    declared = set(supported_agents)
+    if agent in ADAPTER_AGENT_NAMES:
+        return bool(declared.intersection(PORTABLE_MANIFEST_AGENT_NAMES))
+    return agent in declared
