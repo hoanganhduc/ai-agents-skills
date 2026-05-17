@@ -132,7 +132,10 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         if artifact.get("file_type") == "text":
             text = path.read_text(encoding="utf-8", errors="replace")
             checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
-    if artifact.get("artifact_type") in {"instruction-block", "management-notice"} and path.exists():
+    if artifact.get("artifact_type") in {"instruction-block", "management-notice"}:
+        instruction_regular = path.exists() and path.is_file() and not path.is_symlink()
+        checks.append({"name": "instruction-regular-file", "ok": instruction_regular})
+    if artifact.get("artifact_type") in {"instruction-block", "management-notice"} and instruction_regular:
         text = path.read_text(encoding="utf-8", errors="replace")
         managed_block = extract_managed_block(text, block_id(artifact["skill"]))
         checks.append({"name": "managed-block-present", "ok": managed_block is not None})

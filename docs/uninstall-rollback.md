@@ -4,15 +4,17 @@
 removes or restores current managed artifacts according to the install journal.
 Both support skill and agent scopes and both support dry-run previews.
 
-Applied uninstall requires an explicit scope: use `--skill`, `--skills`, or
-`--artifact`, `--artifacts`, or `--all`. Uninstall acts only on recorded managed
-artifacts. It restores backups for replaced pre-install files when the installed
-artifact has not changed, deletes files created by the installer when they have
-not changed, unmanages adopted files, and removes managed instruction blocks
-while preserving surrounding user text. Rollback can target one run, one skill,
-multiple skills, one artifact, multiple artifacts, or one agent. If a managed
-instruction file was created by the installer and becomes empty after block
-removal, it is removed.
+Applied uninstall requires an explicit scope: use `--skill`, `--skills`,
+`--artifact`, `--artifacts`, or `--all`. Applied rollback also requires an
+explicit scope: use `--run`, `--skill`, `--skills`, `--artifact`,
+`--artifacts`, or `--all`. Uninstall acts only on recorded managed artifacts.
+It restores backups for replaced pre-install files when the installed artifact
+has not changed, deletes files created by the installer when they have not
+changed, unmanages adopted files, and removes managed instruction blocks while
+preserving surrounding user text. Rollback can target one run, one skill,
+multiple skills, all managed artifacts, one artifact, multiple artifacts, or
+one agent. If a managed instruction file was created by the installer and
+becomes empty after block removal, it is removed.
 
 Applied uninstall and rollback are interactive and require the same confirmation
 phrase as install. Real home-directory writes additionally require
