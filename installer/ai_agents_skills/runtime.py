@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -323,19 +324,31 @@ def apply_runtime_file_action(root: Path, run_id: str, action: dict[str, Any], b
 
 
 def replace_with_runtime_file(source: Path, target: Path, action: dict[str, Any]) -> None:
-    tmp = target.parent / f".{target.name}.runtime.tmp"
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{target.name}.runtime.",
+        suffix=".tmp",
+        dir=target.parent,
+    )
+    tmp = Path(tmp_name)
     try:
         if action.get("file_type") == "text":
             text = source.read_text(encoding="utf-8")
             newline = "\r\n" if action.get("newline_policy") == "crlf" else "\n"
-            with tmp.open("w", encoding="utf-8", newline="") as handle:
+            handle = os.fdopen(fd, "w", encoding="utf-8", newline="")
+            fd = -1
+            with handle:
                 handle.write(text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", newline))
         else:
-            shutil.copyfile(source, tmp)
+            handle = os.fdopen(fd, "wb")
+            fd = -1
+            with handle, source.open("rb") as source_handle:
+                shutil.copyfileobj(source_handle, handle)
         apply_mode(tmp, action.get("mode"))
         os.replace(tmp, target)
     finally:
-        if tmp.exists():
+        if fd != -1:
+            os.close(fd)
+        if tmp.exists() or tmp.is_symlink():
             tmp.unlink()
 
 

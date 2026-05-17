@@ -40,14 +40,14 @@ if echo "$output" | grep -qiE "$pattern"; then
   cat <<'EOF'
 Potential failure markers detected.
 
-Consider whether this should be logged with `self_improving_agent`:
+Consider whether this should be logged with `self-improving-agent`:
 - unexpected command failure
 - recurring environment or path issue
 - missing capability
 - fix or workaround worth preserving
 
 Useful next step:
-  bash ~/.codex/skills/self_improving_agent/scripts/review_pending.sh
+  bash ~/.codex/skills/self-improving-agent/scripts/review_pending.sh
 EOF
 else
   echo "No common error markers detected."

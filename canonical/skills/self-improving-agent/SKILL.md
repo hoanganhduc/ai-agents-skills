@@ -71,19 +71,19 @@ Typical lightweight checks:
 Helper script:
 
 ```bash
-bash ~/.codex/skills/self_improving_agent/scripts/review_pending.sh
+bash ~/.codex/skills/self-improving-agent/scripts/review_pending.sh
 ```
 
 High-priority-only view:
 
 ```bash
-bash ~/.codex/skills/self_improving_agent/scripts/review_pending.sh --high-only
+bash ~/.codex/skills/self-improving-agent/scripts/review_pending.sh --high-only
 ```
 
 Explicit workspace or `.learnings` directory:
 
 ```bash
-bash ~/.codex/skills/self_improving_agent/scripts/review_pending.sh /path/to/workspace
+bash ~/.codex/skills/self-improving-agent/scripts/review_pending.sh /path/to/workspace
 ```
 
 ## Manual helpers inspired by Claude hooks
@@ -94,13 +94,13 @@ without automatic hooks:
 Safety-check a shell command:
 
 ```bash
-bash ~/.codex/skills/self_improving_agent/scripts/check_command_safety.sh "git push --force origin main"
+bash ~/.codex/skills/self-improving-agent/scripts/check_command_safety.sh "git push --force origin main"
 ```
 
 Scan command output for common failure markers:
 
 ```bash
-some_command 2>&1 | bash ~/.codex/skills/self_improving_agent/scripts/detect_common_errors.sh
+some_command 2>&1 | bash ~/.codex/skills/self-improving-agent/scripts/detect_common_errors.sh
 ```
 
 ## Read only when needed
