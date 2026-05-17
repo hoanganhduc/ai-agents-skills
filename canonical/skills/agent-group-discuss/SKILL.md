@@ -109,6 +109,8 @@ Codex cannot hard-restrict each spawned agent's tools the way OpenClaw can. Comp
 - forbid file edits unless the role owns a specific write target
 - ask for the exact output format needed for the current round
 - pass only the minimum prior context needed
+- for research-related roles, include the research skill-routing block from
+  `EXECUTION.md`, narrowed to the role's allowed tools and side-effect limits
 
 For reasoning-only roles, prefer `agent_type: "default"`.
 Use `agent_type: "explorer"` only for tightly scoped codebase fact-finding roles.
