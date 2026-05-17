@@ -142,6 +142,11 @@ file is and does not copy support files. If a previously managed skill is
 switched to reference mode, obsolete managed support files may be planned for
 removal because the adapter now points back to the repo copy.
 
+When targeting a mounted Windows profile from Linux or WSL, verify that the
+reference path written into the adapter is readable by the target agent runtime.
+If the agent actually runs on native Windows and cannot read the POSIX repo
+path, use a native Windows checkout or `--install-mode copy`.
+
 Use `--install-mode copy` only when the agent must have regular files inside
 its settings directory. Copy mode materializes skill files and support files
 with managed metadata, so it uses more space and needs reinstalling after repo

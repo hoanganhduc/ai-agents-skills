@@ -272,6 +272,10 @@ def missing_parent_dirs(root: Path, parent: Path) -> list[Path]:
 def cleanup_created_parents(root: Path, relative_dirs: list[str]) -> None:
     for relative in sorted(relative_dirs, key=lambda item: item.count("/"), reverse=True):
         path = root / checked_relative_path(relative)
+        if not normalized_path_within(root, path) or not resolved_path_within(root, path):
+            continue
+        if not path.exists() or path.is_symlink() or not path.is_dir():
+            continue
         try:
             path.rmdir()
         except OSError:
