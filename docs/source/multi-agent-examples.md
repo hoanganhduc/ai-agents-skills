@@ -13,6 +13,7 @@ The shared skills involved are:
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
+| `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
 | `research-verification-gate` | Final evidence and gap check before delivery. |
 
 Codex has a native `spawn_agent` orchestration model. Claude and DeepSeek get

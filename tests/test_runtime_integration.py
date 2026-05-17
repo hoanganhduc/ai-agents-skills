@@ -18,7 +18,7 @@ from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
 from installer.ai_agents_skills.lifecycle import uninstall
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
-from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, runtime_inventory
+from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with_runtime_file, runtime_inventory
 from installer.ai_agents_skills.runtime_smoke import runtime_command_target, selected_runtime_skills
 from installer.ai_agents_skills.sanitize import has_sensitive_material
 from installer.ai_agents_skills.state import load_state
@@ -507,6 +507,27 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "OpenClaw runtime writes"):
                     apply_plan(root, plan, dry_run=True)
 
+    def test_runtime_replace_does_not_follow_predictable_temp_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            source = root / "source.txt"
+            target = root / "managed.txt"
+            victim = outside / "victim.txt"
+            predictable_temp = root / ".managed.txt.runtime.tmp"
+            source.write_text("managed\n", encoding="utf-8")
+            victim.write_text("outside\n", encoding="utf-8")
+            try:
+                predictable_temp.symlink_to(victim)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"file symlink unavailable: {exc}")
+
+            replace_with_runtime_file(source, target, {"file_type": "text", "mode": "0644"})
+
+            self.assertEqual(victim.read_text(encoding="utf-8"), "outside\n")
+            self.assertTrue(predictable_temp.is_symlink())
+            self.assertEqual(target.read_text(encoding="utf-8"), "managed\n")
+
     @unittest.skipIf(os.name == "nt", "POSIX runtime runner is not a native Windows runtime target")
     def test_bash_runtime_runner_ignores_external_workspace_without_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -543,6 +564,38 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(completed.stdout, "managed-workspace\n")
             self.assertFalse(marker.exists())
+
+    @unittest.skipIf(os.name == "nt", "POSIX runtime runner is not a native Windows runtime target")
+    def test_bash_runtime_runner_ignores_external_secrets_file_without_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp)
+            runtime_root = temp / "runtime"
+            workspace_script = runtime_root / "workspace" / "skills" / "demo" / "run.sh"
+            workspace_script.parent.mkdir(parents=True)
+            workspace_script.write_text(
+                "#!/usr/bin/env bash\nprintf '%s|%s\\n' \"$AAS_SECRETS_FILE\" \"$OPENCLAW_SECRETS_FILE\"\n",
+                encoding="utf-8",
+            )
+            workspace_script.chmod(0o755)
+            runner = runtime_root / "run_skill.sh"
+            shutil.copy2(Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_skill.sh", runner)
+            runner.chmod(0o755)
+            external = temp / "external-secrets.json"
+            env = os.environ.copy()
+            env["AAS_SECRETS_FILE"] = str(external)
+            env.pop("AAS_ALLOW_EXTERNAL_SECRETS_FILE", None)
+
+            completed = subprocess.run(
+                ["bash", str(runner), "skills/demo/run.sh"],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+            )
+
+            expected = str(runtime_root / "workspace" / ".secrets.json")
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stdout, f"{expected}|{expected}\n")
 
     @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
     def test_powershell_runtime_runner_ignores_external_workspace_without_opt_in(self) -> None:

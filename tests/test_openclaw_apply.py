@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from installer.ai_agents_skills.cli import main
-from installer.ai_agents_skills.openclaw_apply import apply_manifest, uninstall_manifest
+from installer.ai_agents_skills.openclaw_apply import apply_manifest, cleanup_created_parents, uninstall_manifest
 from installer.ai_agents_skills.openclaw_inventory import build_inventory
 from installer.ai_agents_skills.openclaw_manifest import approve_manifest, build_manifest
 from tests.test_openclaw_inventory import CANARY_TEXT, fake_root_path, make_source_root, snapshot
@@ -142,6 +142,24 @@ class OpenClawApplyTests(unittest.TestCase):
 
             self.assertEqual(snapshot(target_root), before_target)
             self.assertEqual(snapshot(outside), {})
+
+    def test_cleanup_created_parents_refuses_symlink_escape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = fake_root_path(tmp, "fake-home")
+            outside = fake_root_path(tmp, "outside")
+            root.mkdir()
+            outside.mkdir()
+            link = root / "link"
+            try:
+                link.symlink_to(outside, target_is_directory=True)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"directory symlink unavailable: {exc}")
+            outside_child = outside / "child"
+            outside_child.mkdir()
+
+            cleanup_created_parents(root, ["link/child"])
+
+            self.assertTrue(outside_child.is_dir())
 
     def test_apply_refuses_real_system_target_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

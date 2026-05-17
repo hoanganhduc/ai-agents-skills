@@ -235,6 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     rollback = sub.add_parser("rollback")
     rollback.add_argument("--run")
+    rollback.add_argument("--all", action="store_true")
     rollback.add_argument("--skill")
     rollback.add_argument("--skills")
     rollback.add_argument("--artifact")
@@ -422,10 +423,22 @@ def run(args: argparse.Namespace) -> int:
         return lifecycle_test(args, manifests)
     if args.command == "rollback":
         ensure_apply_allowed(args)
-        confirm_lifecycle_process_understood(args, "rollback")
+        if (
+            args.apply
+            and not args.all
+            and not args.run
+            and not args.skill
+            and not args.skills
+            and not args.artifact
+            and not args.artifacts
+        ):
+            raise ValueError("applied rollback requires --all, --run, --skill, --skills, --artifact, or --artifacts")
         skills = resolve_skill_filter(args, manifests)
         artifacts = resolve_artifact_filter(args, manifests)
         agents = set(split_csv(args.agents)) if args.agents else None
+        if args.apply:
+            preview = rollback_artifacts(args.root, args.run, skills, agents, artifacts, dry_run=True)
+            confirm_lifecycle_process_understood(args, "rollback", preview)
         dry_run = not args.apply
         result = rollback_artifacts(args.root, args.run, skills, agents, artifacts, dry_run=dry_run)
         return output(result, args)
@@ -1368,13 +1381,21 @@ Confirmation: """
         raise ValueError("install aborted: confirmation phrase did not match")
 
 
-def confirm_lifecycle_process_understood(args: argparse.Namespace, operation: str) -> None:
+def confirm_lifecycle_process_understood(
+    args: argparse.Namespace,
+    operation: str,
+    preview: dict[str, Any] | None = None,
+) -> None:
     if not args.apply:
         return
+    scope = lifecycle_scope_summary(args)
+    action_count = len(preview.get("actions", [])) if preview is not None else "unknown"
     message = f"""{operation.title()} confirmation required
 
 You are about to apply an ai-agents-skills {operation} for:
   root: {args.root}
+  scope: {scope}
+  planned lifecycle actions: {action_count}
 
 Process summary:
 - `{operation}` is a dry-run by default; `--apply` performs file changes.
@@ -1384,6 +1405,8 @@ Process summary:
   unchanged, removes repo-managed blocks when user text was added around them,
   and preserves changed user-owned content.
 - Rollback reverses a recorded run or selected managed scope from the journal.
+- Applied rollback requires an explicit scope such as `--all`, `--run`,
+  `--skill`, `--skills`, `--artifact`, or `--artifacts`.
 - Real home-directory writes require `--real-system`.
 
 To confirm that you understand the installation and uninstall process, type
@@ -1462,6 +1485,25 @@ def uninstall_scope_summary(args: argparse.Namespace) -> str:
     parts = []
     if getattr(args, "all", False):
         parts.append("all managed artifacts")
+    if getattr(args, "skill", None):
+        parts.append(f"skill={args.skill}")
+    if getattr(args, "skills", None):
+        parts.append(f"skills={args.skills}")
+    if getattr(args, "artifact", None):
+        parts.append(f"artifact={args.artifact}")
+    if getattr(args, "artifacts", None):
+        parts.append(f"artifacts={args.artifacts}")
+    if getattr(args, "agents", None):
+        parts.append(f"agents={args.agents}")
+    return ", ".join(parts) if parts else "unspecified"
+
+
+def lifecycle_scope_summary(args: argparse.Namespace) -> str:
+    parts = []
+    if getattr(args, "all", False):
+        parts.append("all managed artifacts")
+    if getattr(args, "run", None):
+        parts.append(f"run={args.run}")
     if getattr(args, "skill", None):
         parts.append(f"skill={args.skill}")
     if getattr(args, "skills", None):

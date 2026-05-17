@@ -1109,6 +1109,50 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             self.assertEqual(target.read_text(encoding="utf-8"), "managed\n")
 
+    def test_instruction_block_lifecycle_refuses_symlinked_instruction_file(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            result = apply_plan(root, plan, dry_run=False)
+            instructions = root / ".claude" / "CLAUDE.md"
+            outside_instructions = outside / "CLAUDE.md"
+            original_text = instructions.read_text(encoding="utf-8")
+            outside_instructions.write_text(original_text, encoding="utf-8")
+            instructions.unlink()
+            try:
+                instructions.symlink_to(outside_instructions)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"file symlink unavailable: {exc}")
+
+            verification = verify(root)
+            self.assertEqual(verification["status"], "failed")
+            block_result = next(
+                item for item in verification["results"]
+                if item["artifact_type"] == "instruction-block"
+            )
+            checks = {item["name"]: item["ok"] for item in block_result["checks"]}
+            self.assertFalse(checks["instruction-regular-file"])
+
+            dry_uninstall = uninstall(root, skills={"zotero"}, dry_run=True)
+            block_action = next(
+                item for item in dry_uninstall["actions"]
+                if item["artifact_type"] == "instruction-block"
+            )
+            self.assertEqual(block_action["operation"], "skip-conflict")
+            self.assertEqual(block_action["reason"], "instruction file is symlinked")
+
+            with self.assertRaisesRegex(ValueError, "instruction file is symlinked"):
+                rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertEqual(outside_instructions.read_text(encoding="utf-8"), original_text)
+
     def test_support_files_are_installed_and_verified(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1129,6 +1173,39 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("canonical/skills/deep-research-workflow/references/output-structure.md", support.resolve().as_posix())
             result = verify(root)
             self.assertEqual(result["status"], "ok")
+
+    def test_windows_plan_blocks_posix_support_helpers(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "self-improving-agent"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                install_mode="copy",
+                runtime_profile="none",
+                platform="windows",
+            )
+            blocked_shell = [
+                action for action in plan["actions"]
+                if action.get("artifact_type") == "skill-support-file"
+                and str(action.get("source_path", "")).endswith(".sh")
+            ]
+
+            self.assertTrue(blocked_shell)
+            self.assertEqual({action["classification"] for action in blocked_shell}, {"blocked"})
+            self.assertEqual({action["operation"] for action in blocked_shell}, {"skip"})
+            self.assertEqual(
+                {action["reason"] for action in blocked_shell},
+                {"POSIX shell support file is not installed for Windows targets"},
+            )
 
     def test_verify_instruction_block_ignores_unmanaged_surrounding_text(self) -> None:
         manifests = load_manifests()
@@ -1988,6 +2065,18 @@ class DocsAndLauncherTests(unittest.TestCase):
                 "--root",
                 str(root),
                 "uninstall",
+                "--apply",
+            ])
+            self.assertEqual(code, 1)
+
+    def test_cli_rollback_apply_requires_scope(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            code = main([
+                "--json",
+                "--root",
+                str(root),
+                "rollback",
                 "--apply",
             ])
             self.assertEqual(code, 1)

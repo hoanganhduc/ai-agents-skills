@@ -5,6 +5,7 @@ from typing import Any
 
 from .agents import AgentTarget, agent_home_statuses
 from .capabilities import effective_install_mode_with_evidence, looks_like_real_system_root
+from .discovery import current_platform
 from .manifest import REPO_ROOT
 from .render import (
     MANAGED_MARKER,
@@ -114,6 +115,7 @@ def build_plan(
                         backup_replace=backup_replace,
                         install_mode=file_action["install_mode"],
                         manifests=manifests,
+                        platform=platform,
                     )
                 )
             if agent.instruction_blocks_enabled:
@@ -402,6 +404,7 @@ def support_file_actions(
     backup_replace: bool,
     install_mode: str,
     manifests: dict[str, Any],
+    platform: str | None = None,
 ) -> list[dict[str, Any]]:
     if install_mode == "reference":
         return []
@@ -421,6 +424,20 @@ def support_file_actions(
             continue
         content = add_managed_support_header(raw, agent.name, str(relative).replace("\\", "/"))
         path = agent.skills_dir / skill / relative
+        platform_reason = support_file_platform_block_reason(relative, platform)
+        if platform_reason is not None:
+            actions.append(
+                blocked_file_action(
+                    agent=agent.name,
+                    skill=skill,
+                    path=path,
+                    artifact_type="skill-support-file",
+                    reason=platform_reason,
+                    install_mode=install_mode,
+                    source_path=source,
+                )
+            )
+            continue
         actions.append(
             classify_file_action(
                 agent=agent.name,
@@ -435,6 +452,16 @@ def support_file_actions(
             )
         )
     return actions
+
+
+def support_file_platform_block_reason(relative: Path, platform: str | None = None) -> str | None:
+    platform_name = current_platform(platform)
+    suffix = relative.suffix.lower()
+    if platform_name == "windows" and suffix == ".sh":
+        return "POSIX shell support file is not installed for Windows targets"
+    if platform_name in {"linux", "macos", "wsl"} and suffix in {".bat", ".cmd", ".ps1"}:
+        return "Windows support file is not installed for POSIX targets"
+    return None
 
 
 def openclaw_support_file_actions(
