@@ -59,30 +59,14 @@ run_with_timeout() {
   fi
 }
 
-wsl_path() {
-  local p="$1"
-  if [[ "$p" == ?:* ]]; then
-    local drive="${p:0:1}"
-    drive=$(printf '%s' "$drive" | tr 'A-Z' 'a-z')
-    p="/mnt/$drive${p:2}"
-    p="${p//\//}"
-  elif [[ "$p" == /[a-zA-Z]/* ]]; then
-    local drive="${p:1:1}"
-    drive=$(printf '%s' "$drive" | tr 'A-Z' 'a-z')
-    p="/mnt/$drive${p:2}"
-  fi
-  printf '%s
-' "$p"
-}
-
-run_sage() {
-  local path="$1"
+run_sage_code() {
+  local code="$1"
   if command -v "$SAGE_BIN" >/dev/null 2>&1 || [[ -x "$SAGE_BIN" ]]; then
-    run_with_timeout "$SAGE_BIN" "$path"
+    run_with_timeout "$SAGE_BIN" -c "$code"
   elif command -v wsl.exe >/dev/null 2>&1; then
-    wsl.exe -d "$SAGE_WSL_DISTRO" -- timeout "$TIMEOUT" "$SAGE_BIN" "$(wsl_path "$path")"
+    wsl.exe -d "$SAGE_WSL_DISTRO" -- timeout "$TIMEOUT" "$SAGE_BIN" -c "$code"
   elif command -v wsl >/dev/null 2>&1; then
-    wsl -d "$SAGE_WSL_DISTRO" -- timeout "$TIMEOUT" "$SAGE_BIN" "$(wsl_path "$path")"
+    wsl -d "$SAGE_WSL_DISTRO" -- timeout "$TIMEOUT" "$SAGE_BIN" -c "$code"
   else
     echo '{"status":"error","message":"SageMath not found; install sage or configure WSL"}'
     return 127
@@ -90,10 +74,7 @@ run_sage() {
 }
 
 if [[ "$MODE" == "file" ]]; then
-  run_sage "$FILE_PATH"
+  run_sage_code "$(cat "$FILE_PATH")"
 else
-  TMPFILE="$SAGE_DIR/tmp_sage_$$.sage"
-  echo "$CODE" > "$TMPFILE"
-  run_sage "$TMPFILE"
-  rm -f "$TMPFILE"
+  run_sage_code "$CODE"
 fi
