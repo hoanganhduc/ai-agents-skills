@@ -14,10 +14,19 @@ partial: select `--artifact`, `--artifacts`, or `--artifact-profile`.
 required tools, optional tools, Python packages, remote-service configuration
 placeholders, detected agents, skipped agents, ignored dependencies,
 target-specific prechecks, and Windows/WSL substrate information where
-possible. When `--agents copilot` is selected, `precheck --json` includes a
-`target_prechecks` entry for Copilot CLI detection, the `.copilot` directory
-shape, redacted auth-source presence, provider/model probe status, and
-delegation authority metadata.
+possible. `precheck --json` includes `target_prechecks` for every requested or
+detected target. Each entry reports host-inspected home, skill, instruction,
+optional skill, artifact-directory, install-mode, and read-policy metadata; the
+`path_style` field labels the selected platform path convention but the `path`
+values remain paths inspected from the current host/root. Target prechecks do
+not read target file contents; known auth-token sources are reported by
+presence only rather than value. Copilot extends the base precheck with CLI
+detection, the `.copilot` directory shape, redacted auth-source presence,
+provider/model probe status, delegation authority metadata, and a separate
+`copilot_status` field for CLI/account/model readiness; command arguments and
+version output are redacted. OpenClaw
+prechecks report the current fake-root-only gate and evidence requirements
+without enabling real `.openclaw` writes.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.

@@ -10,7 +10,6 @@ from typing import Any
 from .agents import agent_home_statuses, agent_supports_manifest_entry, all_agent_names, detect_agents
 from .apply import apply_plan
 from .capabilities import looks_like_real_system_root, smoke_artifact
-from .copilot import COPILOT_CLI_TOOL_SPEC, build_copilot_precheck
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
 from .docs import generate_docs
 from .lifecycle import rollback as rollback_artifacts
@@ -40,6 +39,7 @@ from .selectors import (
     split_csv,
 )
 from .state import load_state, preflight_state_path, write_text_atomic
+from .target_prechecks import build_target_prechecks
 from .verify import verify as verify_state
 
 
@@ -621,20 +621,6 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
         ],
         "resume_hint": "install missing software, then rerun precheck; use --ignore or --skip for accepted gaps",
     }
-
-
-def build_target_prechecks(
-    root: Path,
-    platform: str,
-    requested_agents: list[str] | None,
-    agents: list[Any],
-) -> list[dict[str, Any]]:
-    requested = set(requested_agents or [])
-    detected = {agent.name for agent in agents}
-    if "copilot" not in requested and "copilot" not in detected:
-        return []
-    cli_result = discover_tool("copilot-cli", COPILOT_CLI_TOOL_SPEC, platform, root)
-    return [build_copilot_precheck(root, platform, cli_result)]
 
 
 def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, Any]:

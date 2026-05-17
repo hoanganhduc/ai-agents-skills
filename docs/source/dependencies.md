@@ -174,7 +174,7 @@ Evidence inspected:
 | Integration | Description | Used By |
 |---|---|---|
 | `github` | GitHub app/CLI authentication is configured outside this repo. | `github`, `gh-fix-ci`, `yeet` |
-| `github-copilot-cli` | Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when --agents copilot is selected; credentials and config values are not read. | `copilot target` |
+| `github-copilot-cli` | Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when --agents copilot is selected; known credential sources are reported by presence rather than value, config secret values are not read, and command arguments/version output are redacted. | `copilot target` |
 | `google-drive` | Google Drive service-account or OAuth credentials are configured outside this repo. | `calibre`, `zotero optional Google Drive helpers` |
 | `modal` | Modal token file and workspace credentials are configured outside this repo. | `modal-research-compute` |
 | `provider-configs` | OpenAI, Claude, DeepSeek, Copilot, and other provider auth/config files are intentionally excluded. | `agent frontends` |
