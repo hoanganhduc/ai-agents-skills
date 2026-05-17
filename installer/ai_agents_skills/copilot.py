@@ -4,7 +4,12 @@ import os
 from pathlib import Path
 from typing import Any, Iterable
 
-from .capabilities import normalized_path_within, resolved_path_within
+from .capabilities import (
+    existing_parents,
+    normalized_path_within,
+    resolved_path_within,
+)
+from .discovery import render_command, split_command
 
 
 COPILOT_CLI_TOOL_SPEC: dict[str, Any] = {
@@ -182,7 +187,32 @@ def _redacted_cli_result(cli_result: dict[str, Any]) -> dict[str, Any]:
         "checked",
         "reason",
     }
-    return {key: value for key, value in cli_result.items() if key in allowed}
+    redacted = {key: value for key, value in cli_result.items() if key in allowed}
+    if "command" in redacted:
+        redacted["command"] = _redacted_command(redacted["command"])
+    if "version" in redacted:
+        redacted["version"] = "output-redacted"
+    if "checked" in redacted:
+        redacted["checked"] = [_redacted_checked_item(item) for item in redacted["checked"]]
+    return redacted
+
+
+def _redacted_command(command: Any) -> str:
+    parts = split_command(str(command))
+    if not parts:
+        return "<empty-command>"
+    if len(parts) == 1:
+        return parts[0]
+    return f"{render_command(parts[0], [])} <args-redacted>"
+
+
+def _redacted_checked_item(item: dict[str, Any]) -> dict[str, Any]:
+    redacted = dict(item)
+    if "command" in redacted:
+        redacted["command"] = _redacted_command(redacted["command"])
+    if "version" in redacted:
+        redacted["version"] = "output-redacted"
+    return redacted
 
 
 def summarize_copilot_home(root: Path) -> dict[str, Any]:
@@ -207,6 +237,11 @@ def summarize_copilot_home(root: Path) -> dict[str, Any]:
 def path_status(root: Path, path: Path) -> dict[str, Any]:
     if not normalized_path_within(root, path) or not resolved_path_within(root, path.parent):
         return {"path": str(path), "status": "blocked", "reason": "path resolves outside selected root"}
+    for parent in existing_parents(path.parent, root):
+        if parent.is_symlink():
+            return {"path": str(path), "status": "blocked", "reason": f"path has symlinked parent: {parent}"}
+        if not parent.is_dir():
+            return {"path": str(path), "status": "blocked", "reason": f"path has non-directory parent: {parent}"}
     if path.is_symlink():
         return {"path": str(path), "status": "blocked", "reason": "path is a symlink"}
     if not path.exists():

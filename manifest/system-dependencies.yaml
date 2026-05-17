@@ -355,7 +355,7 @@
       "used_by": ["github", "gh-fix-ci", "yeet"]
     },
     "github-copilot-cli": {
-      "description": "Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when --agents copilot is selected; credentials and config values are not read.",
+      "description": "Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when --agents copilot is selected; known credential sources are reported by presence rather than value, config secret values are not read, and command arguments/version output are redacted.",
       "used_by": ["copilot target"]
     },
     "provider-configs": {

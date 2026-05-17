@@ -2174,10 +2174,19 @@ partial: select `--artifact`, `--artifacts`, or `--artifact-profile`.
 required tools, optional tools, Python packages, remote-service configuration
 placeholders, detected agents, skipped agents, ignored dependencies,
 target-specific prechecks, and Windows/WSL substrate information where
-possible. When `--agents copilot` is selected, `precheck --json` includes a
-`target_prechecks` entry for Copilot CLI detection, the `.copilot` directory
-shape, redacted auth-source presence, provider/model probe status, and
-delegation authority metadata.
+possible. `precheck --json` includes `target_prechecks` for every requested or
+detected target. Each entry reports host-inspected home, skill, instruction,
+optional skill, artifact-directory, install-mode, and read-policy metadata; the
+`path_style` field labels the selected platform path convention but the `path`
+values remain paths inspected from the current host/root. Target prechecks do
+not read target file contents; known auth-token sources are reported by
+presence only rather than value. Copilot extends the base precheck with CLI
+detection, the `.copilot` directory shape, redacted auth-source presence,
+provider/model probe status, delegation authority metadata, and a separate
+`copilot_status` field for CLI/account/model readiness; command arguments and
+version output are redacted. OpenClaw
+prechecks report the current fake-root-only gate and evidence requirements
+without enabling real `.openclaw` writes.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
@@ -2571,6 +2580,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | Claude | `~/.claude` | `~/.claude/skills/<skill>/` | `~/.claude/CLAUDE.md` |
 | DeepSeek | `~/.deepseek` | `~/.deepseek/skills/<skill>/` | `~/.deepseek/AGENTS.md` |
 | Copilot | `~/.copilot` | `~/.copilot/skills/<skill>/` | not modified |
+| OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
 
 Optional or compatibility skill locations:
 
@@ -2588,15 +2598,16 @@ Optional artifact-class target directories:
 | Claude | `~/.claude/agents` | `~/.claude/templates` | `~/.claude/commands` | `~/.claude/tools` |
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 | Copilot | `~/.copilot/agents` | not supported | not supported | not supported |
+| OpenClaw | not supported | not supported | not supported | not supported |
 
 Rendered artifact behavior differs by agent:
 
-| Artifact | Codex | Claude | DeepSeek | Copilot |
-|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. |
-| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. |
-| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. |
-| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. |
+| Artifact | Codex | Claude | DeepSeek | Copilot | OpenClaw |
+|---|---|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Not supported. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Not supported. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Not supported; OpenClaw instruction files are not modified. |
 
 Instruction docs target each agent's `instructions` directory. Entrypoint
 aliases target Claude commands, but Codex and DeepSeek receive reference docs
@@ -2608,6 +2619,12 @@ repository-level Copilot files under `.github/` do not activate the personal
 Copilot target. The installer reports repository Copilot surfaces in precheck
 metadata, but the home-root install path writes only `~/.copilot/skills` and
 optional `~/.copilot/agents` files.
+
+OpenClaw is also explicit-only and remains fake-root-only before native target
+evidence. `precheck --json --agents openclaw` reports the `.openclaw` home
+shape and current gates, but real `.openclaw` writes, runtime-backed skills,
+support files, symlink/reference modes, and instruction-file edits remain
+blocked until the OpenClaw install-target plan requirements are met.
 
 These optional artifact classes are intentionally not installed by default.
 They require explicit artifact selection because commands, personas, hooks, and

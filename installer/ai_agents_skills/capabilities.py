@@ -94,6 +94,22 @@ def resolved_path_within(root: Path, path: Path) -> bool:
         return False
 
 
+def existing_parents(path: Path, root: Path | None = None) -> list[Path]:
+    parents: list[Path] = []
+    current = Path(os.path.abspath(path))
+    root_abs = Path(os.path.abspath(root)) if root is not None else None
+    while True:
+        if current.exists() or current.is_symlink():
+            parents.append(current)
+        if root_abs is not None and current == root_abs:
+            break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return parents
+
+
 def looks_like_real_system_root(root: Path, home: Path | None = None) -> bool:
     resolved = root.resolve(strict=False)
     current_home = (home or Path.home()).resolve(strict=False)
