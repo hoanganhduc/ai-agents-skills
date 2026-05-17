@@ -33,7 +33,7 @@
     },
     "multi-agent": {
       "description": "Multi-agent and structured workflow orchestration.",
-      "skills": ["agent-group-discuss", "prose", "model-router"]
+      "skills": ["agent-group-discuss", "prose", "model-router", "cross-agent-delegation"]
     },
     "workflow-tools": {
       "description": "Reusable planning helpers for resources, model routing, formal skeletons, and workspace organization.",

@@ -237,7 +237,7 @@ make install ARGS="--profile research-core --dry-run"
 | `full-research` | All research-related skills. | `*` |
 | `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
 | `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier` |
-| `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router` |
+| `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation` |
 | `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate` |
 | `workflow-tools` | Reusable planning helpers for resources, model routing, formal skeletons, and workspace organization. | `get-available-resources`, `model-router`, `formal-skeleton-helper`, `workspace-rearranger` |
 
@@ -285,6 +285,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `full-research` |
 | `annotated-review` | Annotated paper review workflow when both annotation and review are requested. | `full-research` |
 | `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `full-research` |
+| `cross-agent-delegation` | Cross-agent delegation packet contract for bounded parent-controlled handoffs. | `multi-agent`, `full-research` |
 | `database-lookup` | Structured public scientific, biomedical, regulatory, materials, and economic database lookups. | `document`, `full-research` |
 | `deep-research-workflow` | Phased source-preserving research workflow: search, analyze, write, with citation handoff. | `research-core`, `full-research` |
 | `digest-bridge` | Convert digest output into paper retrieval manifests. | `digest`, `full-research` |

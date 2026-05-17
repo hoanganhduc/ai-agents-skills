@@ -226,6 +226,11 @@ def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dic
         return action
     action["current_signature"] = artifact_signature(path)
     if item.get("artifact_type") in {"instruction-block", "management-notice"}:
+        safety_reason = instruction_file_safety_reason(path)
+        if safety_reason is not None:
+            action["operation"] = "skip-conflict"
+            action["reason"] = safety_reason
+            return action
         action["operation"] = plan_block_uninstall(item)
         return action
     origin_action = origin.get("action")
@@ -275,6 +280,14 @@ def plan_block_uninstall(item: dict[str, Any]) -> str:
     if expected is not None and current_block.strip() != expected.strip():
         return "skip-conflict"
     return "remove-managed-block"
+
+
+def instruction_file_safety_reason(path: Path) -> str | None:
+    if path.is_symlink():
+        return "instruction file is symlinked"
+    if path.exists() and not path.is_file():
+        return "instruction file is not a regular file"
+    return None
 
 
 def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
@@ -350,6 +363,9 @@ def remove_artifact(item: dict[str, Any], root: Path | None = None) -> None:
 
 
 def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) -> None:
+    safety_reason = instruction_file_safety_reason(path)
+    if safety_reason is not None:
+        raise ValueError(f"refusing to edit instruction file because {safety_reason}: {path}")
     if not path.exists():
         return
     marker = f"ai-agents-skills:{skill}"
@@ -368,6 +384,9 @@ def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) 
 
 def remove_managed_block_precise(item: dict[str, Any]) -> None:
     path = Path(item["artifact"])
+    safety_reason = instruction_file_safety_reason(path)
+    if safety_reason is not None:
+        raise ValueError(f"refusing to edit instruction file because {safety_reason}: {path}")
     text = path.read_text(encoding="utf-8")
     span = managed_block_span(text, item["skill"])
     if span is None:
@@ -535,6 +554,10 @@ def preflight_uninstall_actions(root: Path, actions: list[dict[str, Any]]) -> No
             raise ValueError(f"refusing uninstall for artifact outside selected root: {path}")
         if real_openclaw_artifact_blocked(root, action, path):
             raise ValueError("refusing real-system OpenClaw uninstall before native target evidence")
+        if action.get("artifact_type") in {"instruction-block", "management-notice"}:
+            safety_reason = instruction_file_safety_reason(path)
+            if safety_reason is not None:
+                raise ValueError(f"refusing uninstall because {safety_reason}: {path}")
         if operation in {"restore-backup", "restore-removed"}:
             backup = action.get("uninstall", {}).get("backup") or action.get("backup")
             if not backup:
@@ -584,6 +607,9 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
             raise ValueError(f"refusing rollback because artifact changed since install: {path}")
     for path_text, group in block_groups.items():
         path = Path(path_text)
+        safety_reason = instruction_file_safety_reason(path)
+        if safety_reason is not None:
+            raise ValueError(f"refusing rollback because {safety_reason}: {path}")
         if not path.exists():
             raise ValueError(f"refusing rollback because instruction file is missing: {path}")
         text = path.read_text(encoding="utf-8", errors="replace")

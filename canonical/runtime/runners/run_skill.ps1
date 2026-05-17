@@ -57,7 +57,11 @@ if ($null -eq $cursor) {
 
 $env:AAS_RUNTIME_ROOT = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { $runtimeRoot }
 $env:AAS_RUNTIME_WORKSPACE = $workspaceResolved
-$env:AAS_SECRETS_FILE = if ($env:AAS_SECRETS_FILE) { $env:AAS_SECRETS_FILE } else { Join-Path $workspaceResolved ".secrets.json" }
+$secretsFile = Join-Path $workspaceResolved ".secrets.json"
+if ($env:AAS_ALLOW_EXTERNAL_SECRETS_FILE -eq "1" -and $env:AAS_SECRETS_FILE) {
+    $secretsFile = [System.IO.Path]::GetFullPath($env:AAS_SECRETS_FILE)
+}
+$env:AAS_SECRETS_FILE = $secretsFile
 if (-not $env:PYTHONUTF8) { $env:PYTHONUTF8 = "1" }
 if (-not $env:PYTHONIOENCODING) { $env:PYTHONIOENCODING = "utf-8" }
 

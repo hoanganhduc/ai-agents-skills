@@ -52,7 +52,17 @@ fi
 
 export AAS_RUNTIME_ROOT="${AAS_RUNTIME_ROOT:-$runtime_real}"
 export AAS_RUNTIME_WORKSPACE="$workspace_real"
-export AAS_SECRETS_FILE="${AAS_SECRETS_FILE:-$workspace_real/.secrets.json}"
+secrets_file="$workspace_real/.secrets.json"
+if [ "${AAS_ALLOW_EXTERNAL_SECRETS_FILE:-}" = "1" ] && [ -n "${AAS_SECRETS_FILE:-}" ]; then
+  secrets_dir="$(dirname -- "$AAS_SECRETS_FILE")"
+  if [ ! -d "$secrets_dir" ]; then
+    printf 'runtime secrets directory not found: %s\n' "$secrets_dir" >&2
+    exit 2
+  fi
+  secrets_dir_real="$(cd -- "$secrets_dir" && pwd -P)"
+  secrets_file="$secrets_dir_real/$(basename -- "$AAS_SECRETS_FILE")"
+fi
+export AAS_SECRETS_FILE="$secrets_file"
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 
