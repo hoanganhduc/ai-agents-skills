@@ -21,6 +21,14 @@ retrieves and verifies them. A template must not claim that a source was
 searched, retrieved, read, or verified unless the result packet includes
 evidence refs proving that status.
 
+Research templates may include installed research-skill routing guidance only as
+advisory text in existing descriptive fields such as `constraints`,
+`requested_actions`, `evidence_requirements`, or `expected_output`. Skill names
+do not grant read, write, subprocess, network, credential, provider, queue,
+retrieval, verification, execution, or agent-spawning authority. If relevant
+guidance is unavailable or cannot be used within the packet constraints, record
+that step as blocked or unchecked.
+
 ## Common Finding Fields
 
 Research findings use at least:
