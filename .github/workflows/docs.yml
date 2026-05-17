@@ -6,6 +6,9 @@ on:
     paths:
       - "README.md"
       - "docs/**"
+      - "canonical/**"
+      - "installer/**"
+      - "manifest/**"
       - ".github/workflows/docs.yml"
       - "pyproject.toml"
 
@@ -34,6 +37,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r docs/requirements.txt
+
+      - name: Verify generated docs are current
+        run: |
+          make docs
+          git diff --exit-code -- README.md docs
 
       - name: Build documentation
         run: |

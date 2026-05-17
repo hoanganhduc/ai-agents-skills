@@ -1806,6 +1806,7 @@ The shared skills involved are:
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
+| `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
 | `research-verification-gate` | Final evidence and gap check before delivery. |
 
 Codex has a native `spawn_agent` orchestration model. Claude and DeepSeek get
@@ -2286,6 +2287,11 @@ settings directory. The adapter tells the agent where the canonical repo skill
 file is and does not copy support files. If a previously managed skill is
 switched to reference mode, obsolete managed support files may be planned for
 removal because the adapter now points back to the repo copy.
+
+When targeting a mounted Windows profile from Linux or WSL, verify that the
+reference path written into the adapter is readable by the target agent runtime.
+If the agent actually runs on native Windows and cannot read the POSIX repo
+path, use a native Windows checkout or `--install-mode copy`.
 
 Use `--install-mode copy` only when the agent must have regular files inside
 its settings directory. Copy mode materializes skill files and support files
@@ -2857,15 +2863,17 @@ def uninstall_text() -> str:
 removes or restores current managed artifacts according to the install journal.
 Both support skill and agent scopes and both support dry-run previews.
 
-Applied uninstall requires an explicit scope: use `--skill`, `--skills`, or
-`--artifact`, `--artifacts`, or `--all`. Uninstall acts only on recorded managed
-artifacts. It restores backups for replaced pre-install files when the installed
-artifact has not changed, deletes files created by the installer when they have
-not changed, unmanages adopted files, and removes managed instruction blocks
-while preserving surrounding user text. Rollback can target one run, one skill,
-multiple skills, one artifact, multiple artifacts, or one agent. If a managed
-instruction file was created by the installer and becomes empty after block
-removal, it is removed.
+Applied uninstall requires an explicit scope: use `--skill`, `--skills`,
+`--artifact`, `--artifacts`, or `--all`. Applied rollback also requires an
+explicit scope: use `--run`, `--skill`, `--skills`, `--artifact`,
+`--artifacts`, or `--all`. Uninstall acts only on recorded managed artifacts.
+It restores backups for replaced pre-install files when the installed artifact
+has not changed, deletes files created by the installer when they have not
+changed, unmanages adopted files, and removes managed instruction blocks while
+preserving surrounding user text. Rollback can target one run, one skill,
+multiple skills, all managed artifacts, one artifact, multiple artifacts, or
+one agent. If a managed instruction file was created by the installer and
+becomes empty after block removal, it is removed.
 
 Applied uninstall and rollback are interactive and require the same confirmation
 phrase as install. Real home-directory writes additionally require

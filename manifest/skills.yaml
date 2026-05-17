@@ -262,6 +262,15 @@
       "optional_capabilities": ["structured-workflow"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "cross-agent-delegation": {
+      "description": "Cross-agent delegation packet contract for bounded parent-controlled handoffs.",
+      "profiles": ["multi-agent", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["packet-contract"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
     "modal-research-compute": {
       "description": "Route heavy compute jobs to Modal through a local broker.",
       "profiles": ["full-research"],
