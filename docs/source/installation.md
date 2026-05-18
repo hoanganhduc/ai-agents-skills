@@ -12,8 +12,21 @@ partial: select `--artifact`, `--artifacts`, or `--artifact-profile`.
 
 `doctor` is a quick required-tool check. `precheck` is broader: it detects
 required tools, optional tools, Python packages, remote-service configuration
-placeholders, detected agents, skipped agents, ignored dependencies, and
-Windows/WSL substrate information where possible.
+placeholders, detected agents, skipped agents, ignored dependencies,
+target-specific prechecks, and Windows/WSL substrate information where
+possible. `precheck --json` includes `target_prechecks` for every requested or
+detected target. Each entry reports host-inspected home, skill, instruction,
+optional skill, artifact-directory, install-mode, and read-policy metadata; the
+`path_style` field labels the selected platform path convention but the `path`
+values remain paths inspected from the current host/root. Target prechecks do
+not read target file contents; known auth-token sources are reported by
+presence only rather than value. Copilot extends the base precheck with CLI
+detection, the `.copilot` directory shape, redacted auth-source presence,
+provider/model probe status, delegation authority metadata, and a separate
+`copilot_status` field for CLI/account/model readiness; command arguments and
+version output are redacted. OpenClaw
+prechecks report the current fake-root-only gate and evidence requirements
+without enabling real `.openclaw` writes.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
@@ -77,9 +90,10 @@ make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
 Fake-root plans detect only agent homes that exist under the fake root. Create
-`.codex`, `.claude`, or `.deepseek` inside the fake root for the agents you
-want to exercise; a fake root with no agent homes produces no install actions,
-no managed installer state, and later verification may report
+`.codex`, `.claude`, `.deepseek`, or explicitly requested `.copilot` inside
+the fake root for the agents you want to exercise; a fake root with no agent
+homes produces no install actions, no managed installer state, and later
+verification may report
 `no-managed-artifacts`.
 
 Real-system writes should be a final step after reviewing `plan` output:
@@ -123,13 +137,15 @@ records the reason in `plan --json`. Symlink creation itself is verified during
 apply; if a symlink cannot be created, skill files fall back to reference
 adapters and support files fall back to copied files.
 
-Codex and DeepSeek are compatibility exceptions. Current Codex skill discovery
-loads regular user `SKILL.md` files but ignores file-symlinked user `SKILL.md`
-files. DeepSeek native symlinked `SKILL.md` loading has not been verified. In
-default auto mode, both agents therefore resolve skill files to reference
-adapters that point at the canonical repo skill. `plan --json` shows the
-effective `install_mode`, `mode_reason`, `capability_evidence`, and fallback
-mode for each target before anything is written.
+Codex, DeepSeek, and Copilot are compatibility exceptions. Current Codex skill
+discovery loads regular user `SKILL.md` files but ignores file-symlinked user
+`SKILL.md` files. DeepSeek native symlinked `SKILL.md` loading has not been
+verified. Copilot agent skills are regular `SKILL.md` files in
+`~/.copilot/skills` or `.github/skills`; symlinked skill loading is not
+assumed. In default auto mode, these agents therefore resolve skill files to
+reference adapters that point at the canonical repo skill. `plan --json` shows
+the effective `install_mode`, `mode_reason`, `capability_evidence`, and
+fallback mode for each target before anything is written.
 
 Use `--install-mode symlink` to force symlinked skill files for every agent.
 This is useful for testing future loader behavior, but it can produce Codex
@@ -205,10 +221,10 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex and DeepSeek skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
-| Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, DeepSeek gets a reference prompt. |
+| Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
 
 Related pages: [Dependencies](dependencies.md), [Audit And Migration](audit-and-migration.md),

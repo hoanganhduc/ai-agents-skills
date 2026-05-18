@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from .agents import agent_home_statuses, all_agent_names, detect_agents
+from .agents import agent_home_statuses, agent_supports_manifest_entry, all_agent_names, detect_agents
 from .apply import apply_plan
 from .capabilities import looks_like_real_system_root, smoke_artifact
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
@@ -39,6 +39,7 @@ from .selectors import (
     split_csv,
 )
 from .state import load_state, preflight_state_path, write_text_atomic
+from .target_prechecks import build_target_prechecks
 from .verify import verify as verify_state
 
 
@@ -64,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-agents-skills")
     parser.add_argument("--root", type=Path, default=Path.home(), help="home root to inspect or manage")
-    parser.add_argument("--platform", choices=["linux", "windows", "macos"], default=None)
+    parser.add_argument("--platform", choices=["linux", "windows", "macos", "wsl"], default=None)
     parser.add_argument("--agent", dest="agents", help="single agent filter")
     parser.add_argument("--agents", help="comma-separated agent filter")
     parser.add_argument("--json", action="store_true")
@@ -508,7 +509,10 @@ def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     active_skills = [
         skill for skill in selected
         if detected_agent_names
-        and detected_agent_names.intersection(manifests["skills"]["skills"][skill]["supported_agents"])
+        and any(
+            agent_supports_manifest_entry(agent, manifests["skills"]["skills"][skill]["supported_agents"])
+            for agent in detected_agent_names
+        )
     ]
     required_tools = sorted(required_tools_for(active_skills, manifests))
     tool_results = {
@@ -553,7 +557,10 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
     active_skills = [
         skill for skill in selected
         if detected_agent_names
-        and detected_agent_names.intersection(manifests["skills"]["skills"][skill]["supported_agents"])
+        and any(
+            agent_supports_manifest_entry(agent, manifests["skills"]["skills"][skill]["supported_agents"])
+            for agent in detected_agent_names
+        )
     ]
     ignored = set(split_csv(getattr(args, "ignore", None)))
     skipped = set(split_csv(getattr(args, "skip", None)))
@@ -576,6 +583,7 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
         if name == "python-runtime" and result.get("command"):
             python_command = result["command"]
         results.append(result)
+    target_prechecks = build_target_prechecks(args.root, platform, agent_filter, agents)
 
     actionable = [item for item in results if item["dependency"] not in ignored]
     missing_required = [
@@ -605,6 +613,7 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
         "ignored_dependencies": sorted(ignored),
         "skipped_dependencies": sorted(skipped),
         "dependencies": results,
+        "target_prechecks": target_prechecks,
         "missing_required": missing_required,
         "missing_optional": [
             item for item in actionable

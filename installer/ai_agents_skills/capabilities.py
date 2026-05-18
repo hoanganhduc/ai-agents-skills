@@ -21,6 +21,11 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "default_mode": "reference",
         "reason": "DeepSeek native symlinked SKILL.md loading has not been verified, so auto mode uses reference adapters.",
     },
+    "copilot": {
+        "symlink_skill_file": False,
+        "default_mode": "reference",
+        "reason": "Copilot agent skills are regular SKILL.md files; symlinked skill discovery is not assumed.",
+    },
     "openclaw": {
         "symlink_skill_file": False,
         "default_mode": "copy",
@@ -87,6 +92,22 @@ def resolved_path_within(root: Path, path: Path) -> bool:
         return os.path.commonpath([root_text, path_text]) == root_text
     except ValueError:
         return False
+
+
+def existing_parents(path: Path, root: Path | None = None) -> list[Path]:
+    parents: list[Path] = []
+    current = Path(os.path.abspath(path))
+    root_abs = Path(os.path.abspath(root)) if root is not None else None
+    while True:
+        if current.exists() or current.is_symlink():
+            parents.append(current)
+        if root_abs is not None and current == root_abs:
+            break
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return parents
 
 
 def looks_like_real_system_root(root: Path, home: Path | None = None) -> bool:

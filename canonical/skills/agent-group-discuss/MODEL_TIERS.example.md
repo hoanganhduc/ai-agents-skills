@@ -1,11 +1,14 @@
 # Codex Model Tiers Template
 
-Copy this file to `MODEL_TIERS.md` and adjust it if you want to tune the default mappings.
+Copy this file to `MODEL_TIERS.md` and adjust it if you want to tune the default
+mappings. Before using copied mappings, inspect the active runtime model list
+and replace symbolic defaults with the newest suitable available model.
 
 - name: STRONG_REASONER
-  recommended_model: gpt-5.4
+  recommended_model: latest available frontier model
   default_reasoning_effort: high
   fallback_models:
+    - gpt-5.4
     - gpt-5.2
     - gpt-5.3-codex
   speed: medium
@@ -53,12 +56,12 @@ Copy this file to `MODEL_TIERS.md` and adjust it if you want to tune the default
 ## Suggested profile mappings
 
 - `math-heavy`
-  - lead verifier / referee: `gpt-5.4` `xhigh`
+  - lead verifier / referee: latest available frontier model `xhigh`
   - secondary deep roles: `gpt-5.3-codex` `high`
   - lightweight support: `gpt-5.4-mini` `medium`
 
 - `premium`
-  - lead judge or synthesizer: `gpt-5.4` `high`
+  - lead judge or synthesizer: latest available frontier model `high`
   - supporting reviewers: `gpt-5.3-codex` `medium`
   - scout or clarity support: `gpt-5.4-mini` `medium`
 

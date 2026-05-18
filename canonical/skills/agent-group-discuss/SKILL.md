@@ -109,6 +109,8 @@ Codex cannot hard-restrict each spawned agent's tools the way OpenClaw can. Comp
 - forbid file edits unless the role owns a specific write target
 - ask for the exact output format needed for the current round
 - pass only the minimum prior context needed
+- for research-related roles, include the research skill-routing block from
+  `EXECUTION.md`, narrowed to the role's allowed tools and side-effect limits
 
 For reasoning-only roles, prefer `agent_type: "default"`.
 Use `agent_type: "explorer"` only for tightly scoped codebase fact-finding roles.
@@ -177,7 +179,10 @@ Typical roles by mode:
 ## Model assignment
 
 Each role gets a `model` and `reasoning_effort` through `spawn_agent`.
-Refer to `MODEL_TIERS.md` for the live Codex model catalog and `EXECUTION.md` for per-template execution defaults.
+Refer to `MODEL_TIERS.md` for the runtime freshness check and role-to-model
+routing policy, and `EXECUTION.md` for per-template execution defaults. The
+active Codex runtime/tool definitions are the source of truth for available
+models; update stale checked-in defaults before launching a run from this repo.
 
 ### Reasoning level classification
 
@@ -322,7 +327,7 @@ The plan file and the user-facing plan summary must include:
 
 | # | Role | Model | Reasoning | Effort | Est. time |
 |---|------|-------|-----------|--------|-----------|
-| 1 | Judge | gpt-5.4 | R4 | xhigh | 2-4 min |
+| 1 | Judge | <resolved current frontier model> | R4 | xhigh | 2-4 min |
 | 2 | Correctness Reviewer | gpt-5.3-codex | R3 | high | 1-2 min |
 | 3 | Edge-case Reviewer | gpt-5.4-mini | R2 | medium | 1-2 min |
 
@@ -359,7 +364,7 @@ Use a `state.json` structure like:
   "roles": ["string"],
   "models": {
     "role_name": {
-      "model": "gpt-5.4",
+      "model": "<resolved runtime model>",
       "reasoning_level": "R4",
       "reasoning_effort": "xhigh"
     }

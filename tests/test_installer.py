@@ -11,12 +11,14 @@ from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
+from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
 from installer.ai_agents_skills.state import artifact_signature, save_state, write_run_record
+from installer.ai_agents_skills.target_prechecks import path_style_for_platform
 from installer.ai_agents_skills.verify import verify
 
 
@@ -1757,6 +1759,25 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
 
 class DocsAndLauncherTests(unittest.TestCase):
+    def assert_target_precheck_schema(self, target: dict[str, object]) -> None:
+        expected = {
+            "target",
+            "status",
+            "platform",
+            "path_style",
+            "target_home",
+            "skills_dir",
+            "instructions_file",
+            "artifact_dirs",
+            "optional_skills_dirs",
+            "legacy_skills_dirs",
+            "capabilities",
+            "read_policy",
+            "home_status",
+            "notes",
+        }
+        self.assertFalse(expected - set(target), expected - set(target))
+
     def test_generated_docs_include_manifest_skills(self) -> None:
         manifests = load_manifests()
         written = generate_docs(manifests)
@@ -2115,6 +2136,38 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertTrue(payload["dependencies"])
             dependency = next(item for item in payload["dependencies"] if item["dependency"] == "python-runtime")
             self.assertIn("graph-verifier", dependency["required_by"])
+            self.assertEqual([item["target"] for item in payload["target_prechecks"]], ["claude"])
+            target = payload["target_prechecks"][0]
+            self.assertEqual(target["status"], "ready")
+            self.assertEqual(target["target_home"]["status"], "directory")
+            self.assertEqual(target["capabilities"]["default_install_mode"], "symlink")
+            self.assertFalse(target["read_policy"]["file_contents_read"])
+            self.assertFalse(target["read_policy"]["secret_values_read"])
+            self.assert_target_precheck_schema(target)
+
+    def test_cli_precheck_reports_detected_target_prechecks_without_agent_filter(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex", "claude", "deepseek")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "precheck",
+                    "--no-skills",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["detected_agents"], ["codex", "claude", "deepseek"])
+            self.assertEqual(
+                [item["target"] for item in payload["target_prechecks"]],
+                payload["detected_agents"],
+            )
+            for target in payload["target_prechecks"]:
+                self.assertEqual(target["status"], "ready")
+                self.assert_target_precheck_schema(target)
 
     def test_cli_precheck_reports_no_agent_homes(self) -> None:
         with fake_root() as tmp:
@@ -2134,6 +2187,181 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(payload["status"], "no-agent-homes")
             self.assertEqual(payload["detected_agents"], [])
             self.assertEqual(payload["dependencies"], [])
+            self.assertEqual(payload["target_prechecks"], [])
+
+    def test_cli_precheck_reports_requested_missing_target_precheck(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "openclaw",
+                    "precheck",
+                    "--no-skills",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["detected_agents"], [])
+            self.assertEqual(len(payload["target_prechecks"]), 1)
+            target = payload["target_prechecks"][0]
+            self.assertEqual(target["target"], "openclaw")
+            self.assertEqual(target["status"], "home-missing")
+            self.assertEqual(target["target_home"]["status"], "missing")
+            self.assertTrue(target["capabilities"]["fake_root_only"])
+            self.assertFalse((root / ".openclaw").exists())
+            self.assert_target_precheck_schema(target)
+
+    def test_cli_precheck_reports_copilot_target_and_cli_status_separately(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "copilot",
+                    "precheck",
+                    "--no-skills",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            target = payload["target_prechecks"][0]
+            self.assertEqual(target["target"], "copilot")
+            self.assertEqual(target["status"], "home-missing")
+            self.assertEqual(target["base"]["status"], "home-missing")
+            self.assertIn(target["copilot_status"], {"cli-missing", "probe-disabled", "offline-unverified"})
+            self.assertEqual(target["path_style"], path_style_for_platform(current_platform()))
+            self.assert_target_precheck_schema(target)
+
+    def test_cli_precheck_reports_all_targets_for_all_platform_overrides(self) -> None:
+        target_names = ["codex", "claude", "deepseek", "copilot", "openclaw"]
+        expected_path_styles = {
+            "linux": "posix",
+            "macos": "posix",
+            "windows": "windows",
+            "wsl": "wsl-posix",
+        }
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, *target_names)
+            for platform, path_style in expected_path_styles.items():
+                with self.subTest(platform=platform):
+                    stream = io.StringIO()
+                    with contextlib.redirect_stdout(stream):
+                        code = main([
+                            "--json",
+                            "--root",
+                            str(root),
+                            "--platform",
+                            platform,
+                            "--agents",
+                            ",".join(target_names),
+                            "precheck",
+                            "--no-skills",
+                        ])
+                    self.assertEqual(code, 0)
+                    payload = json.loads(stream.getvalue())
+                    prechecks = payload["target_prechecks"]
+                    self.assertEqual([item["target"] for item in prechecks], target_names)
+                    by_target = {item["target"]: item for item in prechecks}
+                    for target in prechecks:
+                        self.assertEqual(target["platform"], platform)
+                        self.assertEqual(target["path_style"], path_style)
+                        self.assertTrue(target["target_home"]["path"].startswith(str(root)))
+                        self.assertFalse(target["read_policy"]["secret_values_read"])
+                        self.assert_target_precheck_schema(target)
+                    self.assertEqual(by_target["codex"]["capabilities"]["default_install_mode"], "reference")
+                    self.assertEqual(by_target["claude"]["capabilities"]["default_install_mode"], "symlink")
+                    self.assertEqual(by_target["deepseek"]["capabilities"]["default_install_mode"], "reference")
+                    self.assertEqual(by_target["openclaw"]["status"], "fake-root-only")
+                    self.assertEqual(by_target["openclaw"]["capabilities"]["default_install_mode"], "copy")
+                    self.assertEqual(by_target["copilot"]["status"], "ready")
+                    self.assertIn(by_target["copilot"]["copilot_status"], {"cli-missing", "probe-disabled", "offline-unverified"})
+
+    def test_cli_precheck_reports_target_home_safety_statuses(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            (root / "real-codex").mkdir()
+            (root / ".codex").symlink_to(root / "real-codex")
+            (root / ".claude").write_text("not a directory\n", encoding="utf-8")
+
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "codex,claude",
+                    "precheck",
+                    "--no-skills",
+                ])
+            self.assertEqual(code, 0)
+            by_target = {item["target"]: item for item in json.loads(stream.getvalue())["target_prechecks"]}
+            self.assertEqual(by_target["codex"]["status"], "home-symlink")
+            self.assertEqual(by_target["codex"]["target_home"]["status"], "blocked")
+            self.assertEqual(by_target["claude"]["status"], "home-invalid")
+            self.assertEqual(by_target["claude"]["target_home"]["status"], "file")
+
+    def test_cli_precheck_reports_openclaw_real_system_block(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+            stream = io.StringIO()
+            with patch("installer.ai_agents_skills.agents.looks_like_real_system_root", return_value=True):
+                with contextlib.redirect_stdout(stream):
+                    code = main([
+                        "--json",
+                        "--root",
+                        str(root),
+                        "--agents",
+                        "openclaw",
+                        "precheck",
+                        "--no-skills",
+                    ])
+            self.assertEqual(code, 0)
+            target = json.loads(stream.getvalue())["target_prechecks"][0]
+            self.assertEqual(target["status"], "blocked-real-system")
+            self.assertFalse(target["home_status"]["eligible"])
+
+    def test_cli_precheck_reports_symlinked_parent_paths_as_blocked(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            (root / "shared-agents").mkdir()
+            (root / ".agents").symlink_to(root / "shared-agents")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "codex",
+                    "precheck",
+                    "--no-skills",
+                ])
+            self.assertEqual(code, 0)
+            target = json.loads(stream.getvalue())["target_prechecks"][0]
+            optional = target["optional_skills_dirs"][0]
+            self.assertEqual(optional["status"], "blocked")
+            self.assertIn("symlinked parent", optional["reason"])
+
+    def test_target_precheck_path_status_blocks_outside_paths(self) -> None:
+        from installer.ai_agents_skills.target_prechecks import path_status
+
+        with fake_root() as tmp, fake_root() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp) / "SKILL.md"
+            status = path_status(root, outside)
+            self.assertEqual(status["status"], "blocked")
+            self.assertIn("outside selected root", status["reason"])
 
     def test_cli_audit_system_reports_unmanaged_and_no_state(self) -> None:
         with fake_root() as tmp:
@@ -2481,6 +2709,186 @@ class DocsAndLauncherTests(unittest.TestCase):
             file_actions = [a for a in plan["actions"] if a["kind"] == "file"]
             self.assertIn("Phased deep research", file_actions[0]["content"])
             self.assertIn("Managed by ai-agents-skills", file_actions[0]["content"])
+
+
+class CopilotTargetTests(unittest.TestCase):
+    def test_copilot_is_known_but_not_detected_by_default(self) -> None:
+        from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+
+            self.assertNotIn("copilot", all_agent_names())
+            self.assertIn("copilot", known_agent_names())
+            self.assertEqual([agent.name for agent in detect_agents(root)], [])
+            self.assertEqual([agent.name for agent in detect_agents(root, ["copilot"])], ["copilot"])
+
+    def test_explicit_copilot_skill_install_uses_personal_skill_surface(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["copilot"]),
+                requested_agents=["copilot"],
+            )
+            skill_actions = [
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            ]
+
+            self.assertEqual(len(skill_actions), 1)
+            action = skill_actions[0]
+            self.assertEqual(action["agent"], "copilot")
+            self.assertEqual(Path(action["path"]), root / ".copilot" / "skills" / "zotero" / "SKILL.md")
+            self.assertEqual(action["install_mode"], "reference")
+            self.assertIn("Copilot agent skills are regular SKILL.md files", action["mode_reason"])
+
+            apply_plan(root, plan, dry_run=False)
+            installed = root / ".copilot" / "skills" / "zotero" / "SKILL.md"
+            self.assertTrue(installed.is_file())
+            self.assertFalse(installed.is_symlink())
+            self.assertIn("Install mode: reference", installed.read_text(encoding="utf-8"))
+
+    def test_copilot_agent_persona_uses_agent_md_surface(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+
+            plan = build_plan(
+                root,
+                manifests,
+                [],
+                detect_agents(root, ["copilot"]),
+                artifacts=[("agent-persona", "code-reviewer")],
+                runtime_profile="none",
+                requested_agents=["copilot"],
+            )
+            action = next(action for action in plan["actions"] if action["artifact_type"] == "agent-persona")
+
+            self.assertEqual(Path(action["path"]), root / ".copilot" / "agents" / "code-reviewer.agent.md")
+            self.assertIn("target: github-copilot", action["content"])
+            self.assertIn('tools: ["*"]', action["content"])
+
+    def test_copilot_precheck_reports_cli_config_and_redacts_secret_values(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+            settings = root / ".copilot" / "settings.json"
+            settings.write_text('{"token":"sk-should-not-appear"}\n', encoding="utf-8")
+
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "copilot",
+                    "precheck",
+                    "--no-skills",
+                ])
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["detected_agents"], ["copilot"])
+            self.assertEqual(len(payload["target_prechecks"]), 1)
+            precheck = payload["target_prechecks"][0]
+            self.assertEqual(precheck["target"], "copilot")
+            self.assertEqual(precheck["status"], "ready")
+            self.assertIn(precheck["copilot_status"], {"cli-missing", "probe-disabled", "offline-unverified"})
+            self.assertEqual(precheck["config_dir"]["children"]["settings_json"]["status"], "file")
+            self.assertFalse(precheck["config_dir"]["file_contents_read"])
+            self.assertFalse(precheck["auth"]["secret_values_read"])
+            self.assertNotIn("sk-should-not-appear", json.dumps(payload))
+
+    def test_copilot_precheck_redacts_env_override_command_args_and_version_output(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+            command_name = "copilot.cmd" if current_platform() == "windows" else "copilot"
+            tool = root / command_name
+            if current_platform() == "windows":
+                tool.write_text("@echo off\r\necho GitHub Copilot sk-version-secret\r\n", encoding="utf-8")
+            else:
+                tool.write_text("#!/bin/sh\nprintf 'GitHub Copilot sk-version-secret\\n'\n", encoding="utf-8")
+            tool.chmod(0o755)
+
+            stream = io.StringIO()
+            with patch.dict(
+                os.environ,
+                {
+                    "AAS_COPILOT": f"{command_name} --token sk-command-secret",
+                    "PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}",
+                },
+            ):
+                with contextlib.redirect_stdout(stream):
+                    code = main([
+                        "--json",
+                        "--root",
+                        str(root),
+                        "--agents",
+                        "copilot",
+                        "precheck",
+                        "--no-skills",
+                    ])
+
+            self.assertEqual(code, 0)
+            payload_text = stream.getvalue()
+            self.assertNotIn("sk-command-secret", payload_text)
+            self.assertNotIn("sk-version-secret", payload_text)
+            precheck = json.loads(payload_text)["target_prechecks"][0]
+            self.assertIn("<args-redacted>", precheck["cli"]["command"])
+            self.assertEqual(precheck["cli"]["version"], "output-redacted")
+
+    def test_copilot_status_reduction_prioritizes_blocking_statuses(self) -> None:
+        from installer.ai_agents_skills.copilot import reduce_copilot_status
+
+        self.assertEqual(reduce_copilot_status("supported", "unsupported-model"), "unsupported-model")
+        self.assertEqual(reduce_copilot_status("supported", "provider-unavailable"), "provider-unavailable")
+        self.assertEqual(reduce_copilot_status("supported", "probe-timeout"), "probe-timeout")
+        self.assertEqual(reduce_copilot_status("supported", "probe-disabled"), "probe-disabled")
+        self.assertEqual(reduce_copilot_status("supported", "not-a-status"), "unknown-entitlement")
+
+    def test_copilot_symlink_mode_fails_closed(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["copilot"]),
+                install_mode="symlink",
+                requested_agents=["copilot"],
+            )
+            action = next(
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            )
+            self.assertEqual(action["operation"], "skip")
+            self.assertEqual(action["classification"], "blocked")
+            self.assertIn("symlinked skill loading has not been verified", action["reason"])
 
 
 if __name__ == "__main__":
