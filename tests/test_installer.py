@@ -11,12 +11,14 @@ from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
+from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
 from installer.ai_agents_skills.state import artifact_signature, save_state, write_run_record
+from installer.ai_agents_skills.target_prechecks import path_style_for_platform
 from installer.ai_agents_skills.verify import verify
 
 
@@ -2234,7 +2236,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(target["status"], "home-missing")
             self.assertEqual(target["base"]["status"], "home-missing")
             self.assertIn(target["copilot_status"], {"cli-missing", "probe-disabled", "offline-unverified"})
-            self.assertEqual(target["path_style"], "posix")
+            self.assertEqual(target["path_style"], path_style_for_platform(current_platform()))
             self.assert_target_precheck_schema(target)
 
     def test_cli_precheck_reports_all_targets_for_all_platform_overrides(self) -> None:
@@ -2817,15 +2819,19 @@ class CopilotTargetTests(unittest.TestCase):
         with fake_root() as tmp:
             root = Path(tmp)
             create_agent_homes(root, "copilot")
-            tool = root / "copilot"
-            tool.write_text("#!/bin/sh\nprintf 'GitHub Copilot sk-version-secret\\n'\n", encoding="utf-8")
+            command_name = "copilot.cmd" if current_platform() == "windows" else "copilot"
+            tool = root / command_name
+            if current_platform() == "windows":
+                tool.write_text("@echo off\r\necho GitHub Copilot sk-version-secret\r\n", encoding="utf-8")
+            else:
+                tool.write_text("#!/bin/sh\nprintf 'GitHub Copilot sk-version-secret\\n'\n", encoding="utf-8")
             tool.chmod(0o755)
 
             stream = io.StringIO()
             with patch.dict(
                 os.environ,
                 {
-                    "AAS_COPILOT": "copilot --token sk-command-secret",
+                    "AAS_COPILOT": f"{command_name} --token sk-command-secret",
                     "PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}",
                 },
             ):
