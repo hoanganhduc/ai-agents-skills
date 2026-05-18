@@ -150,6 +150,17 @@ def render_persona(name: str, spec: dict[str, Any], agent: str, body: str) -> st
             f"{instructions}\n"
         )
         return add_managed_support_header(content, agent, f"agent-persona:{name}.md")
+    if agent == "copilot":
+        content = (
+            f"---\n"
+            f"name: {name}\n"
+            f"description: {spec['description']}\n"
+            f"target: github-copilot\n"
+            f"tools: [\"*\"]\n"
+            f"---\n\n"
+            f"{instructions}\n"
+        )
+        return add_managed_support_header(content, agent, f"agent-persona:{name}.agent.md")
     content = dedent(
         f"""\
         # {name}

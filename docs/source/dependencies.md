@@ -95,7 +95,8 @@ Status vocabulary used by `precheck`:
 ## Current Linux And Windows Config Inventory
 
 This sanitized inventory is derived from the maintainer's current Linux
-and Windows Codex, Claude, and DeepSeek configs. It intentionally excludes
+and Windows Codex, Claude, DeepSeek, and explicit Copilot-target configs where
+present. It intentionally excludes
 auth files, provider secrets, session/history/log files, local library
 databases, caches, backups, and file-history snapshots.
 
@@ -173,9 +174,10 @@ Evidence inspected:
 | Integration | Description | Used By |
 |---|---|---|
 | `github` | GitHub app/CLI authentication is configured outside this repo. | `github`, `gh-fix-ci`, `yeet` |
+| `github-copilot-cli` | Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when --agents copilot is selected; known credential sources are reported by presence rather than value, config secret values are not read, and command arguments/version output are redacted. | `copilot target` |
 | `google-drive` | Google Drive service-account or OAuth credentials are configured outside this repo. | `calibre`, `zotero optional Google Drive helpers` |
 | `modal` | Modal token file and workspace credentials are configured outside this repo. | `modal-research-compute` |
-| `provider-configs` | OpenAI, Claude, DeepSeek, and other provider auth/config files are intentionally excluded. | `agent frontends` |
+| `provider-configs` | OpenAI, Claude, DeepSeek, Copilot, and other provider auth/config files are intentionally excluded. | `agent frontends` |
 | `zotero` | Zotero API/library/WebDAV credentials are configured outside this repo. | `zotero`, `annotated-review`, `paper-review` |
 
 ### Windows Substrate Notes

@@ -366,6 +366,8 @@ def substrate_for(platform: str, command: str | None = None) -> str:
         return "wsl"
     if platform == "windows" and command and is_posix_command(command):
         return "wsl"
+    if platform == "wsl":
+        return "wsl"
     if platform == "windows":
         return "windows-native"
     return "linux-local"
@@ -420,6 +422,8 @@ def candidates_for_platform(candidates: dict[str, list[str]], platform: str) -> 
         return candidates[platform]
     if platform == "macos":
         return candidates.get("linux", [])
+    if platform == "wsl":
+        return candidates.get("wsl", candidates.get("linux", []))
     return []
 
 

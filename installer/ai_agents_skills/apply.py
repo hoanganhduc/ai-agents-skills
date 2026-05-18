@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 from typing import Any
 
-from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
+from .capabilities import (
+    existing_parents,
+    looks_like_real_system_root,
+    normalized_path_within,
+    resolved_path_within,
+)
 from .render import replace_or_append_block
 from .runtime import apply_runtime_file_action, preflight_runtime_action
 from .state import (
@@ -121,22 +125,6 @@ def preflight_action(root: Path, action: dict[str, Any]) -> None:
             or not resolved_path_within(root, legacy_path.parent)
         ):
             raise ValueError(f"refusing to remove legacy path outside selected root: {path}")
-
-
-def existing_parents(path: Path, root: Path | None = None) -> list[Path]:
-    parents: list[Path] = []
-    current = Path(os.path.abspath(path))
-    root_abs = Path(os.path.abspath(root)) if root is not None else None
-    while True:
-        if current.exists() or current.is_symlink():
-            parents.append(current)
-        if root_abs is not None and current == root_abs:
-            break
-        parent = current.parent
-        if parent == current:
-            break
-        current = parent
-    return parents
 
 
 def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
