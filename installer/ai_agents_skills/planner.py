@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .agents import AgentTarget, agent_home_statuses
+from .agents import AgentTarget, agent_home_statuses, agent_supports_manifest_entry
 from .capabilities import effective_install_mode_with_evidence, looks_like_real_system_root
 from .discovery import current_platform
 from .manifest import REPO_ROOT
@@ -133,7 +133,7 @@ def build_plan(
     for artifact_type, name in artifacts or []:
         spec = manifests["artifacts"]["artifacts"][artifact_type][name]
         for agent in agents:
-            if agent.name not in spec["supported_agents"]:
+            if not artifact_supported_by_agent(artifact_type, spec, agent):
                 continue
             actions.append(
                 artifact_action(
@@ -181,9 +181,15 @@ def target_plan_block_reason(root: Path, agent: AgentTarget) -> str | None:
 
 
 def skill_supported_by_agent(spec: dict[str, Any], agent: AgentTarget) -> bool:
+    return agent_supports_manifest_entry(agent.name, spec["supported_agents"])
+
+
+def artifact_supported_by_agent(artifact_type: str, spec: dict[str, Any], agent: AgentTarget) -> bool:
     if agent.name == "openclaw":
-        return bool(set(spec["supported_agents"]).intersection({"codex", "claude", "deepseek"}))
-    return agent.name in spec["supported_agents"]
+        return False
+    if agent.name == "copilot" and artifact_type != "agent-persona":
+        return False
+    return agent_supports_manifest_entry(agent.name, spec["supported_agents"])
 
 
 def target_skill_block_reason(
@@ -192,6 +198,8 @@ def target_skill_block_reason(
     manifests: dict[str, Any],
     requested_mode: str,
 ) -> str | None:
+    if agent.name == "copilot" and requested_mode == "symlink":
+        return "Copilot symlinked skill loading has not been verified"
     if agent.name != "openclaw":
         return None
     if requested_mode in {"reference", "symlink"}:
@@ -367,6 +375,8 @@ def artifact_target_path(
 ) -> Path:
     target_dir = agent.target_dir_for(artifact_type)
     if artifact_type == "agent-persona":
+        if agent.name == "copilot":
+            return target_dir / f"{name}.agent.md"
         suffix = ".toml" if agent.name == "codex" else ".md"
         return target_dir / f"{name}{suffix}"
     if artifact_type == "entrypoint-alias":

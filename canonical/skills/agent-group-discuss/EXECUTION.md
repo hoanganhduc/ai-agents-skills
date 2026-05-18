@@ -7,22 +7,27 @@ Template definitions live in `TEMPLATES.md`.
 ## Runtime rules
 
 1. Before any `spawn_agent` call, show the plan and get explicit user confirmation.
-2. For research, proof, manuscript-correctness, or other high-stakes review tasks, use the highest reasoning model available for all spawned agents by default.
-3. For complex correctness reviews, default agent timeout is 45 minutes and persistent progress checkpoints are required every 15 minutes.
-4. Default execution is foreground. Only run the panel as background work if the user explicitly wants to do other work while it runs.
+2. Before assigning models, perform the runtime freshness check in
+   `MODEL_TIERS.md`; if a newer suitable model is available than the checked-in
+   fallback, use the newer model and record the resolved choice.
+3. For research, proof, manuscript-correctness, or other high-stakes review tasks, use the highest reasoning model available for all spawned agents by default.
+4. For complex correctness reviews, default agent timeout is 45 minutes and persistent progress checkpoints are required every 15 minutes.
+5. Default execution is foreground. Only run the panel as background work if the user explicitly wants to do other work while it runs.
 
 ## Model mapping
 
-Resolve models through `MODEL_TIERS.md`.
+Resolve models through `MODEL_TIERS.md` after checking the active runtime model
+list. The table below uses symbolic model slots; replace them with concrete
+model names in the user-facing plan and `state.json`.
 
 Practical default mapping:
 
 | Reasoning tier | Research default | Non-research baseline | Use for |
 |----------------|------------------|-----------------------|---------|
-| `R4` | `gpt-5.4` `xhigh` | `gpt-5.4` `high` | proofs, formal math, correctness verification, refereeing |
-| `R3` | `gpt-5.4` `high` | `gpt-5.2` `high` | planning, synthesis, structured review |
-| `R2` | `gpt-5.4` `medium` | `gpt-5.4-mini` `medium` | edge-case review, support analysis |
-| `R1` | `gpt-5.4` `medium` | `gpt-5.3-codex-spark` `low` | scouting, brainstorming, clarity review |
+| `R4` | latest available frontier model `xhigh` | latest available frontier model `high` | proofs, formal math, correctness verification, refereeing |
+| `R3` | latest available frontier model `high` | strongest available R3 model `high` | planning, synthesis, structured review |
+| `R2` | latest available frontier model `medium` | strongest available R2 model `medium` | edge-case review, support analysis |
+| `R1` | latest available frontier model `medium` | strongest available fast model `low` | scouting, brainstorming, clarity review |
 
 ## Execution pattern
 
@@ -37,7 +42,7 @@ Example shape:
 ```text
 spawn_agent({
   agent_type: "default",
-  model: "gpt-5.4",
+  model: "<resolved runtime model, for example the current frontier model>",
   reasoning_effort: "xhigh",
   fork_context: false,
   message: "<full role briefing>"
@@ -96,6 +101,25 @@ You are the {ROLE_NAME} in a {TEMPLATE_NAME} multi-agent research session.
 - Read files or search if needed, but do not run computations unless explicitly instructed.
 - Do not write files.
 
+{FOR RESEARCH-RELATED ROLES}
+- Consider relevant installed research skill guidance before performing the task,
+  but use it only within this prompt's explicit tool, context, and side-effect
+  limits.
+- Do not spawn agents, edit files, run network calls, retrieve sources, or
+  execute commands unless this prompt explicitly permits that capability.
+- For paper or book work, follow local-library-first routing when applicable:
+  use `zotero` first for papers, use `calibre` for book or review lookup when
+  applicable, and use `getscipapers-requester` only after local lookup fails
+  and external retrieval is allowed.
+- Use `paper-lookup` for metadata or discovery fallback, not retrieval. Other
+  research support may route through `docling`, `database-lookup`,
+  `source-research`, `deep-research-workflow`, `research-briefing`,
+  `research-report-reviewer`, or `research-verification-gate` when permitted.
+- Treat `agent-group-discuss` and `prose` as parent-level escalation workflows,
+  not nested-agent tools for this role.
+- Report which guidance you used or could not use. Keep unverified leads,
+  unchecked citations, unsupported claims, and blocked checks clearly labeled.
+
 ## Hard rules
 - Work independently.
 - Be concrete: cite exact lines, pages, steps, definitions, or claims.
@@ -114,10 +138,10 @@ Roles: `4`
 
 | # | Role | Model | Computation |
 |---|------|-------|-------------|
-| 1 | Prover | `gpt-5.4` `xhigh` | No |
-| 2 | Counterexample Hunter | `gpt-5.4` `xhigh` | SageMath |
-| 3 | Monster-Barrer / Refiner | `gpt-5.4` `high` | No |
-| 4 | Formalist | `gpt-5.4` `xhigh` | No |
+| 1 | Prover | latest available frontier model `xhigh` | No |
+| 2 | Counterexample Hunter | latest available frontier model `xhigh` | SageMath |
+| 3 | Monster-Barrer / Refiner | latest available frontier model `high` | No |
+| 4 | Formalist | latest available frontier model `xhigh` | No |
 
 Execution:
 
@@ -133,9 +157,9 @@ Roles: `3`
 
 | # | Role | Model | Computation |
 |---|------|-------|-------------|
-| 1 | Specializer | `gpt-5.4` `xhigh` | SageMath |
-| 2 | Generalizer | `gpt-5.4` `xhigh` | No |
-| 3 | Reducer | `gpt-5.4` `xhigh` | No |
+| 1 | Specializer | latest available frontier model `xhigh` | SageMath |
+| 2 | Generalizer | latest available frontier model `xhigh` | No |
+| 3 | Reducer | latest available frontier model `xhigh` | No |
 
 Execution:
 
@@ -151,9 +175,9 @@ Roles: `3`
 
 | # | Role | Model | Computation |
 |---|------|-------|-------------|
-| 1 | Correctness Reviewer | `gpt-5.4` `xhigh` | SageMath when claims are computationally checkable |
-| 2 | Exposition Reviewer | `gpt-5.4` `high` | No |
-| 3 | Literature Reviewer | `gpt-5.4` `high` | No |
+| 1 | Correctness Reviewer | latest available frontier model `xhigh` | SageMath when claims are computationally checkable |
+| 2 | Exposition Reviewer | latest available frontier model `high` | No |
+| 3 | Literature Reviewer | latest available frontier model `high` | No |
 
 Execution:
 
@@ -168,10 +192,10 @@ Roles: `4`
 
 | # | Role | Model | Computation |
 |---|------|-------|-------------|
-| 1 | Builder | `gpt-5.4` `xhigh` | No |
-| 2 | Breaker | `gpt-5.4` `xhigh` | SageMath |
-| 3 | Alternative Builder | `gpt-5.4` `xhigh` | No |
-| 4 | Referee / Verifier | `gpt-5.4` `xhigh` | synthesis only |
+| 1 | Builder | latest available frontier model `xhigh` | No |
+| 2 | Breaker | latest available frontier model `xhigh` | SageMath |
+| 3 | Alternative Builder | latest available frontier model `xhigh` | No |
+| 4 | Referee / Verifier | latest available frontier model `xhigh` | synthesis only |
 
 Execution:
 
@@ -189,10 +213,10 @@ Roles: `4`
 
 | # | Role | Model | Computation |
 |---|------|-------|-------------|
-| 1 | Constructor | `gpt-5.4` `xhigh` | No |
-| 2 | Adversary | `gpt-5.4` `xhigh` | SageMath |
-| 3 | Auditor | `gpt-5.4` `xhigh` | No |
-| 4 | Referee / Verifier | `gpt-5.4` `xhigh` | synthesis only |
+| 1 | Constructor | latest available frontier model `xhigh` | No |
+| 2 | Adversary | latest available frontier model `xhigh` | SageMath |
+| 3 | Auditor | latest available frontier model `xhigh` | No |
+| 4 | Referee / Verifier | latest available frontier model `xhigh` | synthesis only |
 
 Execution:
 
@@ -214,11 +238,11 @@ Roles: `5`
 
 | # | Role | Model | Computation |
 |---|------|-------|-------------|
-| 1 | Informal Planner | `gpt-5.4` `xhigh` | No |
-| 2 | Formalizer | `gpt-5.4` `xhigh` | local Lean or scaffold work |
-| 3 | Missing-Lemma Miner | `gpt-5.4` `high` | No |
-| 4 | Repair Agent | `gpt-5.4` `high` | No |
-| 5 | Checker | `gpt-5.4` `xhigh` | No |
+| 1 | Informal Planner | latest available frontier model `xhigh` | No |
+| 2 | Formalizer | latest available frontier model `xhigh` | local Lean or scaffold work |
+| 3 | Missing-Lemma Miner | latest available frontier model `high` | No |
+| 4 | Repair Agent | latest available frontier model `high` | No |
+| 5 | Checker | latest available frontier model `xhigh` | No |
 
 Execution:
 

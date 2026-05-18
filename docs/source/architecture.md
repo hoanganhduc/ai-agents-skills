@@ -1,7 +1,8 @@
 # Architecture
 
 This page explains how the repository turns one canonical skill catalog into
-agent-specific files for Codex, Claude, and DeepSeek.
+agent-specific files for Codex, Claude, DeepSeek, and explicit adapter targets
+such as GitHub Copilot.
 
 The manifests are the source of truth:
 
@@ -43,11 +44,11 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex skill files resolve to reference adapters because Codex discovery ignores file-symlinked user skills. DeepSeek skill files also resolve to reference adapters until native symlink-loading evidence exists. Explicit symlink, reference, and copy modes are available for all agents. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
-| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, and DeepSeek receives reference prompts. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
 | `entrypoint-alias` | Optional quick-action aliases. Claude receives command files; Codex and DeepSeek receive reference documents. |
@@ -57,9 +58,20 @@ Artifact classes:
 
 Target rendering is intentionally adapter-heavy where native behavior has not
 been proven. Codex personas are TOML custom-agent files, Claude personas are
-Markdown subagents, and DeepSeek personas are reference prompts. Claude
-entrypoint aliases are command files, while Codex and DeepSeek entrypoint
-aliases are reference documents under `instructions/entrypoints`.
+Markdown subagents, Copilot personas are `.agent.md` custom-agent profiles,
+and DeepSeek personas are reference prompts. Claude entrypoint aliases are
+command files, while Codex and DeepSeek entrypoint aliases are reference
+documents under `instructions/entrypoints`.
+
+Copilot is an explicit-only target. Existing `.github/*` files or a
+`~/.copilot` directory do not activate it during default detection; use
+`--agents copilot`. The installer currently writes personal Copilot skill
+adapters to `~/.copilot/skills/<skill>/SKILL.md` and optional personal
+custom-agent profiles to `~/.copilot/agents/*.agent.md`. Repository Copilot
+surfaces such as `.github/skills`, `.github/agents`,
+`.github/copilot-instructions.md`, and `.github/instructions/**/*.instructions.md`
+are reported in precheck metadata but are not written by the home-root
+installer path.
 
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
