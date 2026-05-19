@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -114,7 +115,7 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         }
     if artifact.get("artifact_type") == "skill-file" and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
-        checks.append({"name": "metadata-valid", "ok": f"name: {artifact['skill']}" in text})
+        checks.append({"name": "metadata-valid", "ok": skill_metadata_valid(text, artifact["skill"])})
         checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
         checks.append({"name": "agent-visible", "ok": path.parent.name == artifact["skill"]})
@@ -181,7 +182,7 @@ def verify_symlink_artifact(path: Path, artifact: dict[str, Any], checks: list[d
     })
     if artifact.get("artifact_type") == "skill-file" and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
-        checks.append({"name": "metadata-valid", "ok": f"name: {artifact['skill']}" in text})
+        checks.append({"name": "metadata-valid", "ok": skill_metadata_valid(text, artifact["skill"])})
         checks.append({"name": "agent-visible", "ok": path.parent.name == artifact["skill"]})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
     if artifact.get("artifact_type") == "skill-support-file" and path.exists():
@@ -199,3 +200,49 @@ def extract_managed_block(text: str, identifier: str) -> str | None:
     if end_index == -1:
         return None
     return text[start_index:end_index + len(end)]
+
+
+def skill_metadata_valid(text: str, skill: str) -> bool:
+    frontmatter = extract_frontmatter(text)
+    if frontmatter is None:
+        return False
+    try:
+        import yaml  # type: ignore
+    except ImportError:
+        data = parse_simple_frontmatter(frontmatter)
+    else:
+        try:
+            data = yaml.safe_load(frontmatter)
+        except Exception:
+            return False
+    return (
+        isinstance(data, dict)
+        and data.get("name") == skill
+        and isinstance(data.get("description"), str)
+    )
+
+
+def extract_frontmatter(text: str) -> str | None:
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---", 4)
+    if end == -1:
+        return None
+    return text[4:end]
+
+
+def parse_simple_frontmatter(frontmatter: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    for line in frontmatter.splitlines():
+        if not line or line.startswith(" ") or ":" not in line:
+            continue
+        key, raw_value = line.split(":", 1)
+        value = raw_value.strip()
+        if value.startswith('"') and value.endswith('"'):
+            try:
+                data[key.strip()] = json.loads(value)
+                continue
+            except json.JSONDecodeError:
+                pass
+        data[key.strip()] = value
+    return data
