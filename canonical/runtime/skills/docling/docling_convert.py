@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
-import argparse, json, sys
-from pathlib import Path
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
+import argparse
+import json
+import sys
 
-def build_converter(args):
-    if args.pipeline == 'standard':
-        opts = PdfPipelineOptions(do_ocr=args.ocr, do_table_structure=args.tables)
-        return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)})
-    return DocumentConverter()
+from docling_runtime import (
+    add_common_arguments,
+    build_docling_converter,
+    convert_with_options,
+    resolve_runtime_options,
+    run_cli,
+    validate_local_source,
+    write_text_output,
+)
 
-def main():
+
+def _run():
     p = argparse.ArgumentParser()
     p.add_argument('--source', required=True)
     p.add_argument('--to', choices=['md','json','text','html'], default='md')
-    p.add_argument('--pipeline', choices=['standard','auto'], default='standard')
-    p.add_argument('--ocr', dest='ocr', action='store_true')
-    p.add_argument('--no-ocr', dest='ocr', action='store_false')
-    p.set_defaults(ocr=True)
-    p.add_argument('--tables', dest='tables', action='store_true')
-    p.add_argument('--no-tables', dest='tables', action='store_false')
-    p.set_defaults(tables=True)
+    add_common_arguments(p)
+    p.add_argument('--ocr', dest='legacy_ocr', action='store_true', default=None)
+    p.add_argument('--no-ocr', dest='legacy_ocr', action='store_false')
     p.add_argument('--output')
+    p.add_argument('--overwrite', action='store_true')
     args = p.parse_args()
-    conv = build_converter(args)
-    result = conv.convert(args.source)
+    options = resolve_runtime_options(args)
+    source = validate_local_source(args.source)
+    conv = build_docling_converter(options)
+    result = convert_with_options(conv, source, options)
     if args.to == 'json':
         text = json.dumps(result.document.export_to_dict(), ensure_ascii=False, indent=2)
     elif args.to == 'html':
@@ -35,9 +37,14 @@ def main():
     else:
         text = result.document.export_to_markdown()
     if args.output:
-        Path(args.output).write_text(text, encoding='utf-8')
+        write_text_output(args.output, text, overwrite=args.overwrite)
     else:
         sys.stdout.write(text)
 
+
+def main():
+    return run_cli(_run)
+
+
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

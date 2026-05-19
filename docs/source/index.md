@@ -25,6 +25,9 @@ Latest update: {sub-ref}`today`
   adding OpenClaw as a writable target.
 - Dependency questions: use [Dependencies](dependencies.md), then check the
   platform-specific [Windows](windows.md) or [Linux](linux.md) notes.
+- Runtime-backed skill questions: use [Installation](installation.md) for
+  runtime roots and inventory boundaries, then [Dependencies](dependencies.md)
+  for Docling/OCR and local config notes.
 - Zotero/Calibre local-library changes: run
   [Local Library Profiles](local-library-profiles.md) before choosing paths.
 - Unsure what will be written: read [Agent Locations](agent-locations.md) and
@@ -40,6 +43,11 @@ The installer is dry-run first. Real home-directory writes require explicit
 chooses `--adopt`, `--backup-replace`, or `--migrate`. Secrets, auth files,
 session logs, local paper libraries, and runtime caches are outside the managed
 scope.
+
+Runtime-backed skills use managed helper files under a shared runtime root.
+Live runtime config, caches, local databases, downloaded papers, bytecode, and
+secrets stay outside the canonical source tree. The Docling wrapper is
+local-only by default; OCR.space is deferred to a future explicit adapter.
 
 Most repository docs are generated from `installer/ai_agents_skills/docs.py`
 and manifest data. Edit the generator or manifests, run `make docs`, then use

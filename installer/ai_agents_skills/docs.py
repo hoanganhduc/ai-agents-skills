@@ -267,6 +267,35 @@ dependency-bound artifacts should also install their backing skills.
 - `sanitize-check`, `test`, `runtime-smoke`, and `lifecycle-test` are
   maintainer verification commands.
 
+## Runtime-Backed Skills
+
+Runtime-backed skills install shared helper files from `canonical/runtime`
+into a root-scoped runtime directory instead of copying executable helpers
+inside every agent's skill directory. The runtime manifest declares platform
+filters, newline policy, executable modes, and the exact source-to-target
+mapping. Runtime inventory intentionally rejects live config, databases,
+caches, downloaded documents, bytecode, archives, symlinks, sensitive material,
+and persistent execution markers.
+
+Docling is the main document/OCR runtime-backed skill. Its managed wrapper is
+local-only in this repo: sources must be local files, remote service fields are
+rejected from config, and OCR.space is not enabled. Use `scan-heavy` when you
+want stronger local OCR for image-backed papers:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \\
+  --source "/path/to/paper.pdf" \\
+  --to md \\
+  --preset scan-heavy
+```
+
+Docling config can be passed with `--config`, `AAS_DOCLING_CONFIG`,
+`DOCLING_CONFIG`, or `$AAS_RUNTIME_WORKSPACE/config/docling.toml`. The runtime
+skill directory includes `docling.example.toml`; live config files stay outside
+the managed manifest. Any future OCR.space adapter should be a separate
+explicit opt-in path and use OCR Engine 3 for paper extraction quality.
+
 ## Profiles
 
 Profiles are named presets for installing groups of related skills. Use a
@@ -480,6 +509,7 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
                 detail = f"{detail}; candidate set `{spec['candidate_set']}`"
             lines.append(f"| `{name}` | `{spec.get('type')}` | {detail} |")
     lines.extend(current_config_dependency_sections(manifests))
+    lines.extend(docling_runtime_notes())
     lines.extend(
         [
             "",
@@ -501,6 +531,43 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
         ]
     )
     return "\n".join(lines) + "\n"
+
+
+def docling_runtime_notes() -> list[str]:
+    return [
+        "",
+        "## Docling And OCR Runtime Notes",
+        "",
+        "The managed Docling runtime is intentionally local-only. The wrappers",
+        "accept local paths for `doctor`, `convert`, `extract`, and `chunk`,",
+        "load Docling lazily after argument/config validation, and reject URL",
+        "sources, network-style paths, HTML/Markdown inputs with remote assets,",
+        "remote service config fields, provider URLs, API tokens, and OCR.space",
+        "settings.",
+        "",
+        "Useful local OCR controls include:",
+        "",
+        "- `--preset local-accurate` for normal high-quality local parsing.",
+        "- `--preset scan-heavy` for stronger scanned/image-backed paper OCR.",
+        "- `--ocr-mode never|auto|always` and `--force-full-page-ocr`.",
+        "- `--ocr-engine auto|easyocr|ocrmac|rapidocr|tesseract|tesserocr`.",
+        "- `--table-mode fast|accurate`, `--page-range`, `--max-num-pages`,",
+        "  and `--max-file-size` for bounded conversions.",
+        "",
+        "Config discovery order is `--config`, `AAS_DOCLING_CONFIG`,",
+        "`DOCLING_CONFIG`, `$AAS_RUNTIME_WORKSPACE/config/docling.toml`, and",
+        "`$OPENCLAW_WORKSPACE/config/docling.toml` only when",
+        "`--allow-openclaw-config` is passed. `docling.example.toml` is the",
+        "tracked template; live configs, caches, downloaded PDFs, and runtime",
+        "data are not promoted into the managed runtime manifest.",
+        "",
+        "OCR.space is deliberately deferred. Splitting a PDF into one image per",
+        "page may help satisfy per-request size or timeout limits, but it does",
+        "not bypass account-level quota, rate, or concurrency limits. If an",
+        "OCR.space adapter is added later, it should be explicit, separate from",
+        "the Docling local path, redact secrets, document retries/costs, and use",
+        "OCR Engine 3 for paper extraction quality.",
+    ]
 
 
 def current_config_dependency_sections(manifests: dict[str, Any]) -> list[str]:
@@ -757,6 +824,14 @@ that are supported by this runtime-smoke harness.
 ```bash
 make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
+```
+
+Docling has a skill-specific runtime doctor because it may rely on a dedicated
+Docling environment and heavier OCR/model packages that are not part of the
+default runtime-smoke harness:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
 ```
 
 `smoke` can also return `no-managed-artifacts` when no managed skill-file
@@ -2289,6 +2364,14 @@ sidecars, symlinks, personal paths, sensitive material, and persistence markers
 such as cron, systemd, launchd, scheduled tasks, and Docker
 `restart: unless-stopped`.
 
+Runtime-backed skill config should be a local live file under the installed
+runtime workspace or passed explicitly, not a canonical runtime source file.
+For Docling, start from the tracked `docling.example.toml`, then place the live
+config at `$AAS_RUNTIME_WORKSPACE/config/docling.toml` or pass it with
+`--config`. The inventory allows example config templates but denies live
+`config.toml`, `workspace/config/*.toml`, caches, bytecode, and downloaded
+documents so credentials and local state are not accidentally promoted.
+
 ## Install Modes
 
 `--install-mode auto` is the default. The installer resolves that request per
@@ -2546,7 +2629,7 @@ The dry-run state had no managed `ai-agents-skills` instruction blocks yet.
 | Research planning and synthesis | agent instructions plus optional Python helper runtime |
 | Paper/library workflows | Zotero credentials and local library access are external configuration, not repo content |
 | External paper retrieval | `getscipapers`-style helper/runtime is treated as an external or runtime-backed dependency |
-| Document parsing | Python plus optional `docling` package and OCR tools |
+| Document parsing | Local-only Docling runtime wrappers, Python, optional OCR tools, and optional local model artifacts |
 | Database lookup | public HTTP APIs; API keys, when needed, are supplied externally |
 | Digest workflows | Python runtime and user-managed topic/feed files outside the repo |
 | TikZ figures | TeX engine; optional SageMath and graph helpers |

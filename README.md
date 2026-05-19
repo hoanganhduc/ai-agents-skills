@@ -216,6 +216,35 @@ dependency-bound artifacts should also install their backing skills.
 - `sanitize-check`, `test`, `runtime-smoke`, and `lifecycle-test` are
   maintainer verification commands.
 
+## Runtime-Backed Skills
+
+Runtime-backed skills install shared helper files from `canonical/runtime`
+into a root-scoped runtime directory instead of copying executable helpers
+inside every agent's skill directory. The runtime manifest declares platform
+filters, newline policy, executable modes, and the exact source-to-target
+mapping. Runtime inventory intentionally rejects live config, databases,
+caches, downloaded documents, bytecode, archives, symlinks, sensitive material,
+and persistent execution markers.
+
+Docling is the main document/OCR runtime-backed skill. Its managed wrapper is
+local-only in this repo: sources must be local files, remote service fields are
+rejected from config, and OCR.space is not enabled. Use `scan-heavy` when you
+want stronger local OCR for image-backed papers:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \
+  --source "/path/to/paper.pdf" \
+  --to md \
+  --preset scan-heavy
+```
+
+Docling config can be passed with `--config`, `AAS_DOCLING_CONFIG`,
+`DOCLING_CONFIG`, or `$AAS_RUNTIME_WORKSPACE/config/docling.toml`. The runtime
+skill directory includes `docling.example.toml`; live config files stay outside
+the managed manifest. Any future OCR.space adapter should be a separate
+explicit opt-in path and use OCR Engine 3 for paper extraction quality.
+
 ## Profiles
 
 Profiles are named presets for installing groups of related skills. Use a
