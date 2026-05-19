@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -14,14 +15,14 @@ def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
     canonical = load_canonical_skill(skill)
     if canonical is not None:
         return add_managed_header(canonical, agent)
-    description = spec["description"]
+    description = str(spec["description"])
     optional = spec.get("optional_capabilities", [])
     optional_text = "\n".join(f"- {item}" for item in optional) or "- none"
     return dedent(
         f"""\
         ---
-        name: {skill}
-        description: {description}
+        name: {yaml_scalar(skill)}
+        description: {yaml_scalar(description)}
         ---
 
         # {skill}
@@ -59,13 +60,15 @@ def canonical_skill_dir(skill: str) -> Path:
 
 def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, source_path: Path) -> str:
     display_source = display_path_for_agent(source_path)
+    description = str(spec["description"])
+    short_description = str(spec.get("short_description", description))
     return dedent(
         f"""\
         ---
-        name: {skill}
-        description: {spec["description"]}
+        name: {yaml_scalar(skill)}
+        description: {yaml_scalar(description)}
         metadata:
-          short-description: {spec.get("short_description", spec["description"])}
+          short-description: {yaml_scalar(short_description)}
         ---
 
         <!-- {MANAGED_MARKER}. Generated target: {agent}. Install mode: reference. -->
@@ -144,8 +147,8 @@ def render_persona(name: str, spec: dict[str, Any], agent: str, body: str) -> st
     if agent == "claude":
         content = (
             f"---\n"
-            f"name: {name}\n"
-            f"description: {spec['description']}\n"
+            f"name: {yaml_scalar(name)}\n"
+            f"description: {yaml_scalar(str(spec['description']))}\n"
             f"---\n\n"
             f"{instructions}\n"
         )
@@ -153,8 +156,8 @@ def render_persona(name: str, spec: dict[str, Any], agent: str, body: str) -> st
     if agent == "copilot":
         content = (
             f"---\n"
-            f"name: {name}\n"
-            f"description: {spec['description']}\n"
+            f"name: {yaml_scalar(name)}\n"
+            f"description: {yaml_scalar(str(spec['description']))}\n"
             f"target: github-copilot\n"
             f"tools: [\"*\"]\n"
             f"---\n\n"
@@ -182,7 +185,7 @@ def render_entrypoint(name: str, spec: dict[str, Any], agent: str, body: str) ->
     if agent == "claude":
         content = (
             f"---\n"
-            f"description: {spec['description']}\n"
+            f"description: {yaml_scalar(str(spec['description']))}\n"
             f"---\n\n"
             f"{body.strip()}\n\n"
             f"Backing skill: {skills}\n"
@@ -209,6 +212,10 @@ def toml_escape(value: str) -> str:
 
 def toml_multiline_escape(value: str) -> str:
     return value.replace('"""', '\\"\\"\\"')
+
+
+def yaml_scalar(value: str) -> str:
+    return json.dumps(value, ensure_ascii=True)
 
 
 def add_managed_header(content: str, agent: str) -> str:

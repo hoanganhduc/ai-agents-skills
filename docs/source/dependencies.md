@@ -159,6 +159,7 @@ Evidence inspected:
 | `responses` | `responses` | responses>=0.23.0 | `linux`, `windows` | `zotero test suite` |
 | `shapely` | `shapely` | shapely==2.1.2 for TikZ semantic verifier | `linux`, `windows` | `tikz-draw` |
 | `svgelements` | `svgelements` | svgelements==1.9.6 for optional SVG parsing parity | `linux`, `windows` | `tikz-draw` |
+| `tomli` | `tomli` | tomli>=2 on Python <3.11 for Docling TOML config parsing | `linux`, `windows` | `docling` |
 | `torch` | `torch` | torch CPU wheel for Windows docling; torch in Modal GPU image | `windows`, `remote-modal` | `docling Windows setup`, `modal GPU jobs` |
 | `torchvision` | `torchvision` | torchvision CPU wheel for Windows docling | `windows` | `docling Windows setup` |
 
@@ -187,6 +188,38 @@ Evidence inspected:
 - Docker is explicitly not required by the inspected Windows Sage config.
 - Windows wrapper commands may use PowerShell, .bat launchers, native Python venvs, and WSL in the same workflow.
 
+
+## Docling And OCR Runtime Notes
+
+The managed Docling runtime is intentionally local-only. The wrappers
+accept local paths for `doctor`, `convert`, `extract`, and `chunk`,
+load Docling lazily after argument/config validation, and reject URL
+sources, network-style paths, HTML/Markdown inputs with remote assets,
+remote service config fields, provider URLs, API tokens, and OCR.space
+settings.
+
+Useful local OCR controls include:
+
+- `--preset local-accurate` for normal high-quality local parsing.
+- `--preset scan-heavy` for stronger scanned/image-backed paper OCR.
+- `--ocr-mode never|auto|always` and `--force-full-page-ocr`.
+- `--ocr-engine auto|easyocr|ocrmac|rapidocr|tesseract|tesserocr`.
+- `--table-mode fast|accurate`, `--page-range`, `--max-num-pages`,
+  and `--max-file-size` for bounded conversions.
+
+Config discovery order is `--config`, `AAS_DOCLING_CONFIG`,
+`DOCLING_CONFIG`, `$AAS_RUNTIME_WORKSPACE/config/docling.toml`, and
+`$OPENCLAW_WORKSPACE/config/docling.toml` only when
+`--allow-openclaw-config` is passed. `docling.example.toml` is the
+tracked template; live configs, caches, downloaded PDFs, and runtime
+data are not promoted into the managed runtime manifest.
+
+OCR.space is deliberately deferred. Splitting a PDF into one image per
+page may help satisfy per-request size or timeout limits, but it does
+not bypass account-level quota, rate, or concurrency limits. If an
+OCR.space adapter is added later, it should be explicit, separate from
+the Docling local path, redact secrets, document retries/costs, and use
+OCR Engine 3 for paper extraction quality.
 
 ## Detection Notes
 
