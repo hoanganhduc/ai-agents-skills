@@ -16,6 +16,7 @@ from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
+from installer.ai_agents_skills.render import render_reference_skill_md
 from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
 from installer.ai_agents_skills.state import artifact_signature, save_state, write_run_record
 from installer.ai_agents_skills.target_prechecks import path_style_for_platform
@@ -78,6 +79,18 @@ class ManifestTests(unittest.TestCase):
 
 
 class PlanInstallVerifyTests(unittest.TestCase):
+    def test_reference_adapter_quotes_yaml_scalars_with_colons(self) -> None:
+        content = render_reference_skill_md(
+            "deep-research-workflow",
+            {"description": "Phased workflow: search, analyze, write."},
+            "codex",
+            REPO_ROOT / "canonical" / "skills" / "deep-research-workflow" / "SKILL.md",
+        )
+
+        self.assertIn('name: "deep-research-workflow"', content)
+        self.assertIn('description: "Phased workflow: search, analyze, write."', content)
+        self.assertIn('short-description: "Phased workflow: search, analyze, write."', content)
+
     def test_partial_install_to_fake_root_only_installs_selected_skill(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
