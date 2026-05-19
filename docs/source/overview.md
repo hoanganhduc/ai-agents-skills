@@ -27,6 +27,9 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
 - Profiles in `manifest/profiles.yaml` select useful skill bundles.
 - Optional artifacts add templates, personas, instruction docs, entrypoint
   aliases, and management notices outside normal skill directories.
+- Runtime-backed skills install helper scripts under a shared runtime root; live
+  config, caches, local databases, and downloaded documents are outside managed
+  canonical source.
 - `precheck` detects tools and Python packages from the current substrate.
 - `plan` and `install --dry-run` preview writes before anything is changed.
 - `--install-mode auto` is the default and resolves per agent. Claude uses
@@ -37,6 +40,9 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
   agent.
 - Real home-directory writes require explicit `--apply --real-system`.
 - Verification checks only installed managed artifacts.
+- The Docling document/OCR runtime is local-only by default. Stronger scanned
+  PDF extraction uses local presets such as `scan-heavy`; OCR.space is not part
+  of the managed runtime path.
 
 ## Typical Workflow
 

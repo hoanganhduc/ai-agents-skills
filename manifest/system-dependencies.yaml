@@ -145,6 +145,13 @@
       "used_by": ["docling"],
       "source": "Linux Codex runtime docling requirements; Windows Claude docling command docs."
     },
+    "tomli": {
+      "requirement": "tomli>=2 on Python <3.11 for Docling TOML config parsing",
+      "import_name": "tomli",
+      "platforms": ["linux", "windows"],
+      "used_by": ["docling"],
+      "source": "Docling runtime requirements conditional fallback for interpreters without tomllib."
+    },
     "docling-mcp": {
       "requirement": "docling-mcp",
       "import_name": "docling_mcp",
