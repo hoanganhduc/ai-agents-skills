@@ -72,7 +72,7 @@ The dry-run state had no managed `ai-agents-skills` instruction blocks yet.
 | Research planning and synthesis | agent instructions plus optional Python helper runtime |
 | Paper/library workflows | Zotero credentials and local library access are external configuration, not repo content |
 | External paper retrieval | `getscipapers`-style helper/runtime is treated as an external or runtime-backed dependency |
-| Document parsing | Python plus optional `docling` package and OCR tools |
+| Document parsing | Local-only Docling runtime wrappers, Python, optional OCR tools, and optional local model artifacts |
 | Database lookup | public HTTP APIs; API keys, when needed, are supplied externally |
 | Digest workflows | Python runtime and user-managed topic/feed files outside the repo |
 | TikZ figures | TeX engine; optional SageMath and graph helpers |

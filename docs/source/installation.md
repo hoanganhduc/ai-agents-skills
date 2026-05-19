@@ -129,6 +129,14 @@ sidecars, symlinks, personal paths, sensitive material, and persistence markers
 such as cron, systemd, launchd, scheduled tasks, and Docker
 `restart: unless-stopped`.
 
+Runtime-backed skill config should be a local live file under the installed
+runtime workspace or passed explicitly, not a canonical runtime source file.
+For Docling, start from the tracked `docling.example.toml`, then place the live
+config at `$AAS_RUNTIME_WORKSPACE/config/docling.toml` or pass it with
+`--config`. The inventory allows example config templates but denies live
+`config.toml`, `workspace/config/*.toml`, caches, bytecode, and downloaded
+documents so credentials and local state are not accidentally promoted.
+
 ## Install Modes
 
 `--install-mode auto` is the default. The installer resolves that request per

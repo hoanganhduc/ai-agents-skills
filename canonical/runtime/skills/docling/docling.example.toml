@@ -1,0 +1,46 @@
+# Example local-only Docling runtime config.
+# Copy to the runtime workspace as config/docling.toml or pass with --config.
+
+schema_version = 1
+default_preset = "local-accurate"
+
+[defaults]
+pipeline = "standard"
+ocr_mode = "auto"
+ocr_engine = "auto"
+ocr_lang = ["en"]
+force_full_page_ocr = false
+tables = true
+table_mode = "accurate"
+cell_matching = true
+document_timeout = 1800
+
+[presets.local-fast]
+pipeline = "standard"
+ocr_mode = "auto"
+ocr_engine = "auto"
+tables = true
+table_mode = "fast"
+cell_matching = false
+
+[presets.scan-heavy]
+pipeline = "standard"
+ocr_mode = "always"
+ocr_engine = "auto"
+ocr_lang = ["en"]
+force_full_page_ocr = true
+tables = true
+table_mode = "accurate"
+cell_matching = true
+
+[presets.vlm-local]
+pipeline = "vlm"
+table_mode = "accurate"
+requires_artifacts = true
+# Set artifacts_path to a local pre-fetched Docling model directory, or use
+# DOCLING_ARTIFACTS_PATH in the environment.
+# artifacts_path = "/opt/docling-artifacts"
+
+# OCR.space is intentionally not configurable in Phase 1. A future explicit
+# online adapter must account for request size/rate limits and use OCR Engine 3
+# for paper extraction quality.
