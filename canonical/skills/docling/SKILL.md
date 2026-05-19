@@ -84,8 +84,21 @@ bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert   --sou
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert   --source "/path/to/file.pdf"   --to json   --pipeline standard
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert   --source "/path/to/file.pdf"   --to json   --preset scan-heavy
 ```
+
+Useful local quality controls:
+
+- `--preset local-accurate`: default high-quality local parsing
+- `--preset scan-heavy`: stronger OCR for scanned/image-heavy PDFs
+- `--ocr-mode never|auto|always`
+- `--ocr-engine auto|easyocr|ocrmac|rapidocr|tesseract|tesserocr`
+- `--ocr-lang <lang>` repeated for multiple languages
+- `--force-full-page-ocr`
+- `--table-mode fast|accurate`
+- `--page-range 1-8`
+- `--max-num-pages <n>`
+- `--output <path> --overwrite`
 
 ### Analyze structure
 
@@ -94,6 +107,7 @@ bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh extract   --sou
 ```
 
 Emits JSON with counts and basic structural signals such as headings, tables, pictures, and pages.
+The same `--config`, `--preset`, OCR, table, page, and limit options are accepted.
 
 ### Chunk
 
@@ -101,7 +115,42 @@ Emits JSON with counts and basic structural signals such as headings, tables, pi
 bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh chunk   --source "/path/to/file.pdf"   --mode hierarchical
 ```
 
+The same `--config`, `--preset`, OCR, table, page, and limit options are accepted.
+
 ## Recommended settings
+
+### Local-only policy
+
+The managed runtime is local-only in Phase 1:
+
+- document sources must be local paths, not URLs or network shares
+- HTML/Markdown inputs with remote assets are rejected before conversion
+- remote service fields such as endpoints, provider URLs, tokens, and OCR.space settings are rejected in config
+- Docling pipeline options force `enable_remote_services=False`
+- `vlm-local` requires a local `DOCLING_ARTIFACTS_PATH` or `artifacts_path`
+
+OCR.space remains a future Phase 2 online adapter. If it is added later, it must be an explicit opt-in path, account for free API limits, split pages only to satisfy per-request size/timeout constraints, and use OCR Engine 3 for paper extraction quality. Page-by-page splitting does not remove account-level rate, quota, or concurrency limits.
+
+### Config file
+
+Pass a config explicitly:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \
+  --source "/path/to/file.pdf" \
+  --config "/path/to/docling.toml" \
+  --preset scan-heavy
+```
+
+Discovery order is:
+
+1. `--config`
+2. `AAS_DOCLING_CONFIG`
+3. `DOCLING_CONFIG`
+4. `$AAS_RUNTIME_WORKSPACE/config/docling.toml`
+5. `$OPENCLAW_WORKSPACE/config/docling.toml` only with `--allow-openclaw-config`
+
+Use `docling.example.toml` in the runtime skill directory as the starting template.
 
 ### Environment variables
 
@@ -115,17 +164,21 @@ Docling supports these environment variables directly or indirectly:
 - `DOCLING_DEVICE`
 - `DOCLING_NUM_THREADS`
 - `OMP_NUM_THREADS`
+- `AAS_DOCLING_CONFIG`
+- `AAS_DOCLING_PRESET`
 
 Use `DOCLING_ARTIFACTS_PATH` when models are prefetched or when you want offline behavior.
 
 ### Pipeline choices
 
 - `standard` pipeline: default for born-digital PDFs and CPU-friendly conversions
-- `vlm` pipeline: for harder layouts, handwriting, formulas, or image-heavy pages
+- `vlm` pipeline: for harder layouts, handwriting, formulas, or image-heavy pages; requires local artifacts
 
 ### Important options
 
 - OCR: `do_ocr`
+- OCR mode: `never`, `auto`, or `always`
+- local OCR engine: `auto`, `easyocr`, `rapidocr`, `tesseract`, `tesserocr`, or `ocrmac`
 - tables: `do_table_structure`
 - table matching: `table_structure_options.do_cell_matching`
 - table mode: `FAST` vs `ACCURATE`
@@ -142,8 +195,8 @@ Use `DOCLING_ARTIFACTS_PATH` when models are prefetched or when you want offline
 ## Safety notes
 
 - Prefer local models and local parsing by default.
-- Only use remote inference or API-backed vision models when explicitly needed.
-- Treat `enable_remote_services=True` as an intentional opt-in.
+- Do not place API keys, endpoints, OCR.space fields, or provider URLs in Docling config.
+- Only add remote inference or API-backed OCR as a separate explicit adapter after review.
 - For review workflows, use Docling for parsing but keep review judgment in `paper-review` or `annotated-review`.
 
 ## Integration guidance

@@ -132,6 +132,14 @@ make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
 ```
 
+Docling has a skill-specific runtime doctor because it may rely on a dedicated
+Docling environment and heavier OCR/model packages that are not part of the
+default runtime-smoke harness:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
+```
+
 `smoke` can also return `no-managed-artifacts` when no managed skill-file
 artifacts match the selected scope.
 
