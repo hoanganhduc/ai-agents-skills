@@ -168,6 +168,15 @@
       "optional_capabilities": ["lean-static-intake"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "lean-strict-verification-gate": {
+      "description": "Static, proof-neutral preflight gate for Lean formalization verification readiness.",
+      "profiles": ["workflow-tools", "math", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["lean-static-verification-gate"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
     "lean-axle-adapter": {
       "description": "Offline-only AXLE integration boundary for Lean formalization workflows.",
       "profiles": ["workflow-tools", "math", "full-research"],
