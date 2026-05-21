@@ -31,11 +31,18 @@ Practical default mapping:
 
 ## Execution pattern
 
-### Launching role agents
+### Launching participants
 
-Each role is a separate `spawn_agent` call.
+Each template role is a logical responsibility. Each role is assigned to one or
+more participants. Initial participant kinds are:
 
-Independent roles in the same round should be launched in parallel with `multi_tool_use.parallel`.
+- `codex_spawned`: a Codex subagent launched with `spawn_agent`
+- `external_cli`: a parent-owned external CLI participant governed by
+  `references/external-cli-agents.md`
+
+For `codex_spawned`, each participant is a separate `spawn_agent` call.
+Independent `codex_spawned` participants in the same round should be launched
+in parallel with `multi_tool_use.parallel`.
 
 Example shape:
 
@@ -49,23 +56,33 @@ spawn_agent({
 })
 ```
 
+For `external_cli`, do not call `spawn_agent`. Before launch, record a current
+capability profile, input transport policy, output contract, timeout, artifact
+layout, and validation owner. The parent must parse and validate output before
+it can influence synthesis.
+
 ### Round structure
 
-- Round 1 independent first pass: use fresh agents with no cross-role contamination.
-- Later rounds: use `send_input` to the same role agent when continuity helps, or respawn fresh if independence or token hygiene matters more.
+- Round 1 independent first pass: use fresh participants with no cross-role contamination.
+- Later rounds: use `send_input` to the same `codex_spawned` participant when continuity helps, or respawn/rerun fresh if independence or token hygiene matters more.
 - Referee or synthesis roles run only after the prior round results are in.
 - Compress prior results before relaying them. Keep only decisive findings, not full transcripts.
 
 ### Waiting and cleanup
 
-- Use `wait_agent` once per round or per critical batch.
+- Use `wait_agent` once per round or per critical batch for `codex_spawned`
+  participants.
 - Do not busy-poll.
 - Use `close_agent` after the run or when a role is no longer needed.
-- If a role agent needs to be revived, use `resume_agent` before reusing it.
+- If a `codex_spawned` role agent needs to be revived, use `resume_agent`
+  before reusing it.
+  External CLI participants use parent-owned retry and artifact policies
+  instead of agent resume.
 
 ## Role prompt template
 
-Every role agent should receive a self-contained prompt with this structure:
+Every participant should receive a self-contained prompt or input packet with
+this structure:
 
 ```text
 You are the {ROLE_NAME} in a {TEMPLATE_NAME} multi-agent research session.
@@ -145,7 +162,7 @@ Roles: `4`
 
 Execution:
 
-- Round 1: 4 parallel role agents
+- Round 1: 4 parallel participants
 - Round 2: 4 parallel role follow-ups with compressed Round 1 findings
 - Round 3: 1 Formalist synthesis pass or local synthesis if clearly better
 
@@ -163,7 +180,7 @@ Roles: `3`
 
 Execution:
 
-- Round 1: 3 parallel role agents
+- Round 1: 3 parallel participants
 - Round 2: 3 parallel role follow-ups after orchestrator cross-pollinates decisive findings
 - Round 3: local synthesis or 1 lead synthesis agent
 
@@ -199,7 +216,7 @@ Roles: `4`
 
 Execution:
 
-- Round 1: 3 parallel independent role agents
+- Round 1: 3 parallel independent participants
 - Round 2: 3 parallel critique passes with compressed Round 1 findings
 - Round 3: orchestrator-run verification via `functions.exec_command`
 - Round 4: optional repair pass only if a concrete local repair exists
@@ -220,7 +237,7 @@ Roles: `4`
 
 Execution:
 
-- Round 1: 3 parallel independent role agents
+- Round 1: 3 parallel independent participants
 - Round 2: 3 parallel critique passes
 - Round 3: orchestrator verification:
   - computational
@@ -246,8 +263,8 @@ Roles: `5`
 
 Execution:
 
-- Round 1: 3 parallel role agents
-- Round 2: 2 parallel role agents
+- Round 1: 3 parallel participants
+- Round 2: 2 parallel participants
 - Final: local synthesis or Checker-led synthesis
 
 ## State management
@@ -267,11 +284,26 @@ Files written by the orchestrator:
 | After completion | `final.md` | final synthesis or ledger |
 | After completion | `final_report.md` | optional user-facing condensed report for long review runs |
 
+Additional files for `external_cli` participants:
+
+| Directory or file | Content |
+|-------------------|---------|
+| `profiles/` | timestamped capability profiles |
+| `probes/` | probe prompts, sanitized observations, and probe summaries |
+| `raw/` | parent-owned raw stdout/stderr or command-shape artifacts |
+| `parsed/` | parsed participant outputs |
+| `validation/` | parent validation reports |
+| `transport_manifest.json` | prompt/input transport and chunk manifest |
+| `timeout_events.jsonl` | timeout and missing-final-marker events |
+| `truncation_events.jsonl` | truncation or malformed-rendering events |
+
 State updates:
 
 - set `status: "running"` before each round launch
-- update `responses_received` immediately after each result arrives
-- write the round file as soon as all expected responses for that round are in
+- update participant status and `responses_received` immediately after each
+  result arrives or fails validation
+- write the round file as soon as all expected required participants for that
+  round are in, failed, or explicitly marked invalid
 - set `status: "completed"` after `final.md` is written
 
 ### Lock protocol
@@ -290,9 +322,11 @@ If a session is interrupted:
 
 1. read `state.json`
 2. inspect existing round and progress files
-3. identify missing roles from `responses_received`
-4. if role agents still exist, use `resume_agent` or `send_input`
-5. otherwise respawn only the missing roles with compressed context
+3. identify missing required participants from `responses_received` and
+   participant status
+4. if `codex_spawned` role agents still exist, use `resume_agent` or `send_input`
+5. otherwise respawn or rerun only the missing participants with compressed
+   context and a fresh artifact record
 6. never rerun completed rounds unless the user asks
 
 ## External verification
