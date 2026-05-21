@@ -16,6 +16,7 @@
         "docling",
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-strict-verification-gate",
         "get-available-resources",
         "getscipapers-requester",
         "graph-verifier",
@@ -738,6 +739,46 @@
         {
           "source": "skills/lean-formalization-intake/run_lean_formalization_intake.sh",
           "target": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ]
+    },
+    "lean-strict-verification-gate": {
+      "runtime_dir": "lean-strict-verification-gate",
+      "files": [
+        {
+          "source": "skills/lean-strict-verification-gate/lean_strict_verification_gate.py",
+          "target": "workspace/skills/lean-strict-verification-gate/lean_strict_verification_gate.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.bat",
+          "target": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh",
+          "target": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh",
           "platforms": [
             "linux",
             "macos",
