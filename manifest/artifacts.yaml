@@ -7,6 +7,11 @@
         "template:spec",
         "template:tasks-plan",
         "template:tasks-todo",
+        "template:research-scope-brief",
+        "template:research-evidence-matrix",
+        "template:research-verification-checklist",
+        "template:research-workflow-runbook",
+        "template:hierarchical-agent-delegation",
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report"
@@ -65,6 +70,11 @@
         "template:spec",
         "template:tasks-plan",
         "template:tasks-todo",
+        "template:research-scope-brief",
+        "template:research-evidence-matrix",
+        "template:research-verification-checklist",
+        "template:research-workflow-runbook",
+        "template:hierarchical-agent-delegation",
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report",
@@ -114,6 +124,36 @@
         "description": "Execution checklist template.",
         "source": "tasks-todo.md",
         "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "research-scope-brief": {
+        "description": "Pre-research scope, assumptions, evidence plan, and start decision template.",
+        "source": "research-scope-brief.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["research-briefing"]
+      },
+      "research-evidence-matrix": {
+        "description": "Claim-to-source evidence matrix for research analysis and uncertainty tracking.",
+        "source": "research-evidence-matrix.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["deep-research-workflow"]
+      },
+      "research-verification-checklist": {
+        "description": "Final research delivery checklist for evidence coverage, gaps, and readiness.",
+        "source": "research-verification-checklist.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["research-report-reviewer", "research-verification-gate"]
+      },
+      "research-workflow-runbook": {
+        "description": "Multi-phase research runbook for state, artifacts, delegation, recovery, and delivery gates.",
+        "source": "research-workflow-runbook.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["deep-research-workflow", "research-verification-gate"]
+      },
+      "hierarchical-agent-delegation": {
+        "description": "Hierarchical manager-worker delegation template for bounded multi-runner workflows.",
+        "source": "hierarchical-agent-delegation.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["cross-agent-delegation"]
       },
       "deep-research-sources": {
         "description": "Source handoff table for phased deep research.",

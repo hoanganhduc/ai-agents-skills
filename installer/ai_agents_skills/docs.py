@@ -3061,7 +3061,7 @@ Applied real-system examples:
 ```bash
 make uninstall ARGS="--skill zotero --apply --real-system"
 make rollback ARGS="--run 20260429-080620 --apply --real-system"
-make verify ARGS="--real-system"
+make verify ARGS="--root <real-root>"
 ```
 
 Windows applied examples:

@@ -268,6 +268,7 @@ Each JSON fixture is preceded by a canonical metadata marker:
   ],
   "status": "partial",
   "summary": "One issue found; remaining scope was not inspected.",
+  "coverage_scope": "Only the supplied plan-section-a excerpt was inspected; no broader repository or runtime state was checked.",
   "findings": [
     {
       "finding_id": "F1",
@@ -288,13 +289,76 @@ Each JSON fixture is preceded by a canonical metadata marker:
       "ref_id": "plan-section-a",
       "kind": "excerpt",
       "quote_or_summary": "The excerpt mentions a bounded review.",
-      "status": "checked"
+      "status": "checked",
+      "evidence_disposition": "supports_finding",
+      "disposition_rationale": "The excerpt is the only supplied basis for finding F1."
     }
   ],
   "artifacts": [],
   "limitations": [
     "Full artifact was not supplied."
   ],
+  "warnings": [],
+  "errors": [],
+  "parent_action_request": null,
+  "next_step": "parent_decides"
+}
+```
+
+## Invalid Result With Runtime Authority Fields
+
+<!-- fixture: id=invalid-result-runtime-authority kind=result valid=false errors=FORBIDDEN_AUTHORITY_FIELD,UNKNOWN_FIELD -->
+```json
+{
+  "schema_version": "cross-agent-delegation.result.v1",
+  "result_id": "result-invalid-runtime-001",
+  "task_packet_id": "pkt-valid-inert-001",
+  "task_schema_version": "cross-agent-delegation.task.v1",
+  "intended_recipient": "codex-like reviewer",
+  "adapter_spec_id": "codex-like-coding-reviewer",
+  "recipient_profile": {
+    "profile_id": "codex-like-coding-reviewer",
+    "profile_version": "v1",
+    "execution_status": "reference_only"
+  },
+  "produced_at": "2026-05-16T00:06:00Z",
+  "produced_by": "descriptive-reviewer-label",
+  "provenance": [],
+  "status": "completed",
+  "summary": "Attempted to report runtime authority in a packet.",
+  "coverage_scope": "Supplied excerpt only.",
+  "findings": [
+    {
+      "finding_id": "F-runtime",
+      "severity": "info",
+      "claim_or_object_ref": "plan-section-a",
+      "evidence_refs": [],
+      "confidence": "low",
+      "validation_status": "unchecked",
+      "rationale": "Runtime fields are not valid packet data.",
+      "recommended_parent_action": "Reject packet."
+    }
+  ],
+  "evidence": [
+    {
+      "evidence_id": "E-runtime",
+      "ref_id": "artifact:runtime-log",
+      "kind": "runtime_log_ref",
+      "quote_or_summary": "Raw runtime logs must stay in parent-owned artifacts.",
+      "status": "limited",
+      "participant_probe_status": "passed"
+    }
+  ],
+  "artifacts": [
+    {
+      "artifact_id": "A-runtime",
+      "kind": "runtime_log",
+      "ref_id": "artifact:runtime-log",
+      "description": "Inert ref only.",
+      "session_id": "session-123"
+    }
+  ],
+  "limitations": [],
   "warnings": [],
   "errors": [],
   "parent_action_request": null,

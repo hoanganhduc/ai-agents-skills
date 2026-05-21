@@ -6,6 +6,11 @@ loop, or configured provider.
 
 All V1 profiles have `execution_status: reference_only`.
 
+Runtime CLI capability profiles, probes, command flags, raw logs, session IDs,
+and provider-specific execution observations are outside this contract. A
+parent orchestrator such as `agent-group-discuss` may maintain those artifacts
+out of band and reference only inert artifacts from task or result packets.
+
 ## Profiles
 
 ### codex-like-coding-reviewer

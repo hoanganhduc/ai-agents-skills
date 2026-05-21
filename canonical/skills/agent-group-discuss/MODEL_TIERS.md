@@ -1,8 +1,12 @@
 # MODEL_TIERS.md
 
-This is the Codex model routing policy for `agent_group_discuss`.
-Use this file for actual role assignment after performing the runtime freshness
-check below. `MODEL_TIERS.example.md` is only a template.
+This is the Codex model routing policy for `agent_group_discuss`
+`codex_spawned` participants. Use this file for actual Codex-spawned role
+assignment after performing the runtime freshness check below.
+`MODEL_TIERS.example.md` is only a template.
+
+External CLI participants use AGD-owned capability profiles and adapter probes,
+not this model-tier table.
 
 ## Runtime Freshness Check
 

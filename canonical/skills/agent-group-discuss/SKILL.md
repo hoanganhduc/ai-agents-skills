@@ -27,6 +27,8 @@ Read these when relevant:
 
 - `TEMPLATES.md` for the imported research and review templates
 - `EXECUTION.md` for the Codex execution pattern and per-template round topology
+- `references/external-cli-agents.md` for parent-owned external CLI participant
+  probes, capability profiles, artifact layout, and failure handling
 - `MODEL_TIERS.md` for the live Codex model-tier catalog
 - `MODEL_TIERS.example.md` only as a customization template
 - `README.md` for the structured request shape
@@ -86,16 +88,24 @@ OpenClaw concepts must be translated to Codex tools as follows:
 - OpenClaw local execution -> Codex `functions.exec_command`
 - OpenClaw proof or graph computation helpers -> Codex `sagemath`, `graph_verifier`, `formal_skeleton_helper`, or local `functions.exec_command`
 
-## Codex execution model
+## Participant execution model
 
 - The main agent is the orchestrator.
-- Use `spawn_agent` for each role.
-- Use `multi_tool_use.parallel` when launching independent roles in the same round.
+- A template role is a logical responsibility. A participant is the executable
+  actor assigned to that role.
+- Initial participant kinds are `codex_spawned` and `external_cli`.
+- Use `spawn_agent` for `codex_spawned` participants.
+- Use `references/external-cli-agents.md` for `external_cli` participants.
+- Use `multi_tool_use.parallel` when launching independent `codex_spawned`
+  participants in the same round.
 - Keep role prompts concrete and bounded.
 - Run independent roles in parallel.
-- Use `send_input` for later rounds when keeping a role agent alive is helpful.
-- Use `wait_agent` once per round or per critical batch, not in a tight polling loop.
-- Use `close_agent` after the run finishes or when a role is no longer useful.
+- Use `send_input` for later rounds when keeping a `codex_spawned`
+  participant alive is helpful.
+- Use `wait_agent` once per round or per critical batch, not in a tight polling
+  loop.
+- Use `close_agent` after the run finishes or when a `codex_spawned`
+  participant is no longer useful.
 - Prefer local synthesis unless a dedicated synthesizer role materially improves the result.
 
 For any actual run, follow `EXECUTION.md` as the detailed orchestration reference.
@@ -122,9 +132,9 @@ Given a task, you must:
 
 1. classify the task
 2. decide which roles are needed
-3. decide how many subagents are useful
+3. decide how many participants are useful
 4. assign a model and reasoning effort to each role
-5. choose how the subagents interact
+5. choose how the participants interact
 6. run the requested number of rounds
 7. synthesize the result
 8. maintain durable recovery state on disk
@@ -178,11 +188,15 @@ Typical roles by mode:
 
 ## Model assignment
 
-Each role gets a `model` and `reasoning_effort` through `spawn_agent`.
+Each `codex_spawned` participant gets a `model` and `reasoning_effort` through
+`spawn_agent`.
 Refer to `MODEL_TIERS.md` for the runtime freshness check and role-to-model
 routing policy, and `EXECUTION.md` for per-template execution defaults. The
 active Codex runtime/tool definitions are the source of truth for available
 models; update stale checked-in defaults before launching a run from this repo.
+External CLI participants use probed capability profiles and adapter guidance
+from `references/external-cli-agents.md`; do not route them through
+`MODEL_TIERS.md`.
 
 ### Reasoning level classification
 
@@ -231,7 +245,7 @@ Record the chosen profile, per-role model, and reasoning effort in `state.json`.
 Do not promise truncation cannot happen.
 Keep prompts compact and summarize prior rounds before relaying them.
 
-If a subagent response is truncated:
+If a participant response is truncated:
 
 1. note the truncation in `state.json`
 2. re-prompt the same role with compressed context
@@ -263,9 +277,9 @@ Never exceed 5 rounds unless the user explicitly asks.
 Ordinary discussion or lightweight review: 10 minutes per round by default.
 Complex correctness review or research verification: 45 minutes per agent by default, with persistent progress checkpoints every 15 minutes.
 
-If a spawned role does not respond in time:
+If a `codex_spawned` participant does not respond in time:
 
-1. mark the role as timed out in `responses_received`
+1. mark the participant as timed out in `responses_received` and participant state
 2. add a note to `pending_work`
 3. continue the round with available responses
 4. do not block the whole run on one unresponsive role
@@ -280,7 +294,7 @@ Create a run folder under:
 
 - `$HOME/.codex/runs/agent_group_discuss/<run_id>/`
 
-Before spawning any role:
+Before launching any participant:
 
 1. create the run directory
 2. create a `lock` file with the current timestamp
@@ -323,13 +337,13 @@ The plan file and the user-facing plan summary must include:
 **Estimated total time:** <X-Y minutes>
 **Estimated agent calls:** <parallel batches + follow-up batches + synthesis passes>
 
-### Subagent assignments
+### Participant assignments
 
-| # | Role | Model | Reasoning | Effort | Est. time |
-|---|------|-------|-----------|--------|-----------|
-| 1 | Judge | <resolved current frontier model> | R4 | xhigh | 2-4 min |
-| 2 | Correctness Reviewer | gpt-5.3-codex | R3 | high | 1-2 min |
-| 3 | Edge-case Reviewer | gpt-5.4-mini | R2 | medium | 1-2 min |
+| # | Participant | Kind | Role | Model/Profile | Output contract | Failure policy | Est. time |
+|---|-------------|------|------|---------------|-----------------|----------------|-----------|
+| 1 | judge-1 | codex_spawned | Judge | <resolved current frontier model>, R4, xhigh | structured finding list | fail_closed | 2-4 min |
+| 2 | reviewer-1 | codex_spawned | Correctness Reviewer | gpt-5.3-codex, R3, high | issue list | partial_allowed | 1-2 min |
+| 3 | cli-checker-1 | external_cli | Edge-case Reviewer | profile:copilot-json-2026-05-21 | parseable envelope | fail_closed | 1-2 min |
 
 ### Execution plan
 
@@ -362,9 +376,51 @@ Use a `state.json` structure like:
   "interaction": "star | debate | panel_judge",
   "template": "string or null",
   "roles": ["string"],
+  "participants": {
+    "participant_id": {
+      "kind": "codex_spawned | external_cli",
+      "role": "logical role name",
+      "status": "planned | ready | running | succeeded | failed | timed_out | invalid | skipped",
+      "required": true,
+      "rounds": [1],
+      "input_policy": {
+        "context_scope": "string",
+        "allowed_inputs": ["string"],
+        "side_effect_policy": "none | parent_resolved_only"
+      },
+      "output_contract": {
+        "required_fields": ["string"],
+        "parser": "string",
+        "artifact_paths": ["string"]
+      },
+      "evidence_policy": {
+        "required_evidence": "none | citations | source_refs | artifact_refs",
+        "blocked_check_reporting": true
+      },
+      "timeout": {
+        "minutes": 45,
+        "retry_count": 0,
+        "idempotence": "no_side_effects"
+      },
+      "failure_policy": "fail_closed | partial_allowed | best_effort",
+      "validation": {
+        "owner": "parent_orchestrator",
+        "status": "unvalidated | accepted | accepted_with_limitations | rejected",
+        "notes": []
+      },
+      "artifacts": {
+        "prompt": "artifact ref",
+        "raw_output": "artifact ref",
+        "parsed_output": "artifact ref",
+        "stderr_or_log": "artifact ref",
+        "validation_report": "artifact ref"
+      },
+      "runtime_ref": "agent-id or external profile ref"
+    }
+  },
   "models": {
-    "role_name": {
-      "model": "<resolved runtime model>",
+    "participant_id": {
+      "model": "<resolved runtime model for codex_spawned only>",
       "reasoning_level": "R4",
       "reasoning_effort": "xhigh"
     }
@@ -372,11 +428,8 @@ Use a `state.json` structure like:
   "rounds_requested": 2,
   "current_round": 0,
   "status": "planning | running | paused | completed | failed",
-  "spawned_agents": {
-    "role_name": "agent-id or null"
-  },
   "responses_received": {
-    "role_name": true
+    "participant_id": true
   },
   "pending_work": ["string"],
   "start_time": "ISO 8601 timestamp",
@@ -388,14 +441,14 @@ Use a `state.json` structure like:
 }
 ```
 
-## Spawning policy
+## Participant launch policy
 
 The main agent is the orchestrator.
 Prefer leaf agents spawned directly by the main agent.
 
 Use the role prompt template and per-template execution plans from `EXECUTION.md` instead of improvising prompt structure ad hoc.
 
-Each spawned task must include:
+Each participant task must include:
 
 - the role
 - the topic
@@ -403,6 +456,14 @@ Each spawned task must include:
 - the expected response format
 - the current round number
 - only the minimum prior context needed
+
+For `codex_spawned` participants, launch with `spawn_agent` and record the
+returned agent ID in `runtime_ref`.
+
+For `external_cli` participants, run only after the parent has recorded a
+current capability profile and artifact policy according to
+`references/external-cli-agents.md`. External CLI output is untrusted until the
+parent parses it and updates the participant `validation` status.
 
 For opening statements, ask for:
 
@@ -422,13 +483,18 @@ If a result is missing or the run is disrupted:
 
 1. read `state.json`
 2. inspect which round files exist
-3. identify missing roles from `responses_received`
+3. identify missing required participants from `responses_received` and
+   participant `status`
 4. set `recovery_needed: true`
-5. if the old role agents still exist, use `resume_agent` or `send_input`
-6. otherwise respawn only the missing roles with compressed context
+5. if old `codex_spawned` role agents still exist, use `resume_agent` or `send_input`
+6. otherwise respawn or rerun only the missing participants with compressed
+   context and a fresh artifact record
 7. never discard already completed rounds unless the user asks
 
-If a role fails repeatedly, skip it and note the gap explicitly.
+If an optional participant fails repeatedly, skip it and note the gap
+explicitly. If a required participant fails, times out, produces unparseable
+output, or violates its evidence contract, mark it `invalid` or `failed` and
+mark the run incomplete unless the user explicitly approves a weaker synthesis.
 
 If the user pauses the run:
 
@@ -484,7 +550,7 @@ Before any template begins:
 3. list assumptions explicitly
 4. separate what is given, to be proved, and conjectured
 5. identify notation and definitions
-6. obtain explicit user confirmation before spawning any role agents
+6. obtain explicit user confirmation before launching any participants
 
 Show this Step 0 restatement to the user before spawning agents for a high-stakes research template.
 
