@@ -53,4 +53,9 @@ Do not use this skill for:
 - `input_refs`, `artifact_refs`, context refs, and action target refs are inert
   labels. They do not grant filesystem, network, credential, or workspace access.
 - Unknown permission-bearing fields such as `execute`, `execution_target`,
-  `confirmed_by_parent`, or `skip_confirmation` invalidate the packet.
+  `execution_targets`, `confirmed_by_parent`, `skip_confirmation`,
+  `approval_receipt`, `approval_receipts`, `command`, `commands`, `args`,
+  `cwd`, `env`, `environment_variables`, `provider_config`,
+  `provider_configs`, `model_config`, `model_configs`, `queue`, `queues`,
+  `ledger`, `session_id`, `session_ids`, `resume_token`, or `resume_tokens`
+  invalidate the packet.
