@@ -111,6 +111,8 @@ class LeanFormalizationIntakeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"
             shutil.copytree(FIXTURES / "task_repo", root)
+            (root / ".git").mkdir()
+            (root / ".git" / "config").write_text("token=git-secret-should-be-ignored\n", encoding="utf-8")
             (root / ".env").write_text("token=fixture-env-secret-123456\n", encoding="utf-8")
             outside = Path(tmp) / "outside.lean"
             outside.write_text("axiom outside_secret : True\n", encoding="utf-8")
@@ -122,7 +124,10 @@ class LeanFormalizationIntakeTests(unittest.TestCase):
             payload = self.helper.scan_repo(root)
             serialized = json.dumps(payload)
             self.assertNotIn("fixture-env-secret-123456", serialized)
+            self.assertNotIn("git-secret-should-be-ignored", serialized)
             self.assertNotIn("outside_secret", serialized)
+            paths = {gap.get("path") for gap in payload["unchecked_gaps"]}
+            self.assertNotIn(".git/config", paths)
             reasons = {gap.get("reason") for gap in payload["unchecked_gaps"]}
             self.assertIn("denied_source_input", reasons)
             self.assertIn("symlink_skipped", reasons)

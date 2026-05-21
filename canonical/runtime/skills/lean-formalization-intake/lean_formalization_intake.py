@@ -55,6 +55,8 @@ DENIED_PARTS = {
     ".cache",
 }
 
+IGNORED_TRAVERSAL_PARTS = set(DENIED_PARTS)
+
 SOURCE_SUFFIXES = {".tex", ".md", ".pdf"}
 SIDECAR_SUFFIXES = {".py", ".sage", ".ipynb"}
 TEXT_SUFFIXES = {".lean", ".md", ".toml", ".json", ".yaml", ".yml", ".txt"}
@@ -147,6 +149,12 @@ def path_denied(relative: str) -> bool:
     return False
 
 
+def path_ignored_for_traversal(relative: str) -> bool:
+    path = Path(relative)
+    lowered_parts = {part.lower() for part in path.parts}
+    return bool(lowered_parts.intersection(IGNORED_TRAVERSAL_PARTS))
+
+
 def safe_read_text(root: Path, path: Path, gaps: list[dict[str, Any]]) -> str | None:
     relative = rel(root, path)
     if path_denied(relative):
@@ -175,6 +183,8 @@ def list_files(root: Path, gaps: list[dict[str, Any]]) -> list[Path]:
             gaps.append(status_entry("unchecked", relative, reason="symlink_skipped"))
             continue
         if path.is_file():
+            if path_ignored_for_traversal(relative):
+                continue
             if path_denied(relative):
                 gaps.append(status_entry("not_run", relative, reason="denied_source_input"))
                 continue
