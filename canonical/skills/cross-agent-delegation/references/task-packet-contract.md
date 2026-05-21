@@ -66,12 +66,27 @@ Unknown permission-bearing fields are always invalid, including:
 - `confirmed_by_parent`
 - `execute`
 - `execution_target`
+- `execution_targets`
 - `skip_confirmation`
 - `approval_receipt`
+- `approval_receipts`
 - `command`
+- `commands`
+- `args`
+- `cwd`
+- `env`
+- `environment_variables`
 - `provider_config`
+- `provider_configs`
+- `model_config`
+- `model_configs`
 - `queue`
+- `queues`
 - `ledger`
+- `session_id`
+- `session_ids`
+- `resume_token`
+- `resume_tokens`
 
 ## Field Tables
 

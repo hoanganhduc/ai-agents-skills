@@ -43,6 +43,11 @@ Before any template begins, the orchestrator must show:
 
 - model assigned to each role
 - reasoning tier and reasoning effort
+- participant kind for each role (`codex_spawned` or `external_cli`)
+- output contract, evidence policy, and failure policy for each participant
+- external CLI capability profile source, timestamp, validated capabilities,
+  degraded or blocked capabilities, timeout, final-marker contract, and artifact
+  refs when any role uses an external CLI participant
 - estimated time per role and total time
 - execution order by round
 
@@ -294,6 +299,10 @@ Claim ledger fields:
 - dependencies
 - verification type
 - owner
+- participant_id
+- evidence status
+- validation owner
+- artifact refs
 - notes
 
 Rounds:

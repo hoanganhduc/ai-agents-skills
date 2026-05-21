@@ -77,6 +77,7 @@ RESULT_FIELDS = {
     "provenance",
     "status",
     "summary",
+    "coverage_scope",
     "findings",
     "evidence",
     "artifacts",
@@ -106,7 +107,8 @@ FINDING_FIELDS = {
     "rationale",
     "recommended_parent_action",
 }
-EVIDENCE_FIELDS = {"evidence_id", "ref_id", "kind", "quote_or_summary", "status"}
+EVIDENCE_REQUIRED_FIELDS = {"evidence_id", "ref_id", "kind", "quote_or_summary", "status"}
+EVIDENCE_FIELDS = EVIDENCE_REQUIRED_FIELDS | {"evidence_disposition", "disposition_rationale"}
 ARTIFACT_FIELDS = {"artifact_id", "kind", "ref_id", "description"}
 DIAGNOSTIC_FIELDS = {"code", "message", "ref_id"}
 PARENT_ACTION_FIELDS = {"requested_action", "target_refs", "side_effects", "reversible", "reason"}
@@ -114,12 +116,32 @@ FORBIDDEN_KEYS = {
     "confirmed_by_parent",
     "execute",
     "execution_target",
+    "execution_targets",
     "skip_confirmation",
     "approval_receipt",
+    "approval_receipts",
     "command",
+    "commands",
+    "args",
+    "cwd",
+    "env",
+    "environment_variables",
     "provider_config",
+    "provider_configs",
+    "model_config",
+    "model_configs",
     "queue",
+    "queues",
     "ledger",
+    "session_id",
+    "session_ids",
+    "resume_token",
+    "resume_tokens",
+    "participant_probe_status",
+    "probe_ref",
+    "probe_source_ref",
+    "parent_acceptance",
+    "accepted_by_parent",
 }
 TASK_SCHEMA_VERSION = "cross-agent-delegation.task.v1"
 RESULT_SCHEMA_VERSION = "cross-agent-delegation.result.v1"
@@ -128,6 +150,7 @@ CONFIRMATION_REQUIREMENTS = {"parent_decides_outside_packet", "parent_confirmati
 FAILURE_POLICIES = {"block", "partial_allowed", "ask_parent"}
 RESULT_STATUSES = {"completed", "partial", "blocked", "failed"}
 RESULT_NEXT_STEPS = {"parent_decides", "revise_packet", "discard"}
+EVIDENCE_DISPOSITIONS = {"supports_finding", "contradicts_finding", "context_only", "limited", "unchecked"}
 REFERENCE_FILES = {
     "task-packet-contract.md",
     "result-packet-contract.md",
@@ -269,7 +292,9 @@ def validate_result(packet: dict[str, Any]) -> list[str]:
         errors.extend(validate_required_fields(finding, FINDING_FIELDS))
     for evidence in packet.get("evidence", []):
         errors.extend(validate_closed_object(evidence, EVIDENCE_FIELDS))
-        errors.extend(validate_required_fields(evidence, EVIDENCE_FIELDS))
+        errors.extend(validate_required_fields(evidence, EVIDENCE_REQUIRED_FIELDS))
+        if "evidence_disposition" in evidence:
+            errors.extend(validate_enum(evidence.get("evidence_disposition"), EVIDENCE_DISPOSITIONS, "EVIDENCE_DISPOSITION_INVALID"))
     for artifact in packet.get("artifacts", []):
         errors.extend(validate_closed_object(artifact, ARTIFACT_FIELDS))
         errors.extend(validate_required_fields(artifact, ARTIFACT_FIELDS))
@@ -401,6 +426,38 @@ class CrossAgentDelegationFixtureTests(unittest.TestCase):
         bad_provenance = deepcopy(packet)
         bad_provenance["provenance"] = [{"ref_id": "src-1", "source": "paper summary"}]
         self.assertIn("MISSING_REQUIRED_FIELD", validate_result(bad_provenance))
+
+        bad_disposition = deepcopy(packet)
+        bad_disposition["evidence"][0]["evidence_disposition"] = "parent_accepted"
+        self.assertIn("EVIDENCE_DISPOSITION_INVALID", validate_result(bad_disposition))
+
+    def test_contract_rejects_nested_runtime_authority_fields(self) -> None:
+        task_packet = deepcopy(next(fixture["packet"] for fixture in parse_fixtures() if fixture["id"] == "valid-inert-task"))
+        result_packet = deepcopy(next(fixture["packet"] for fixture in parse_fixtures() if fixture["id"] == "valid-partial-result"))
+        forbidden_mutations = [
+            (task_packet, ("expected_output", "commands"), ["claude -p prompt"]),
+            (task_packet, ("recipient_capability_snapshot", "provider_configs"), {"claude": "configured"}),
+            (task_packet, ("artifact_refs", 0, "session_id"), "session-123"),
+            (result_packet, ("findings", 0, "accepted_by_parent"), True),
+            (result_packet, ("evidence", 0, "participant_probe_status"), "passed"),
+            (result_packet, ("artifacts", 0, "env"), {"TOKEN": "redacted"}),
+        ]
+
+        for packet, path, value in forbidden_mutations:
+            mutated = deepcopy(packet)
+            target = mutated
+            for key in path[:-1]:
+                if isinstance(key, int):
+                    while len(target) <= key:
+                        target.append({})
+                    target = target[key]
+                else:
+                    if key not in target:
+                        target[key] = [] if isinstance(path[path.index(key) + 1], int) else {}
+                    target = target[key]
+            target[path[-1]] = value
+            errors = validate_task(mutated) if packet is task_packet else validate_result(mutated)
+            self.assertIn("FORBIDDEN_AUTHORITY_FIELD", errors, path)
 
     def test_examples_are_portable_and_secret_safe(self) -> None:
         text = EXAMPLES.read_text(encoding="utf-8")
