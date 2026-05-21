@@ -15,6 +15,7 @@
         "digest-bridge",
         "docling",
         "formal-skeleton-helper",
+        "lean-axle-adapter",
         "lean-formalization-intake",
         "lean-strict-verification-gate",
         "get-available-resources",
@@ -709,6 +710,46 @@
           "--help"
         ]
       }
+    },
+    "lean-axle-adapter": {
+      "runtime_dir": "lean-axle-adapter",
+      "files": [
+        {
+          "source": "skills/lean-axle-adapter/lean_axle_adapter.py",
+          "target": "workspace/skills/lean-axle-adapter/lean_axle_adapter.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-axle-adapter/run_lean_axle_adapter.bat",
+          "target": "workspace/skills/lean-axle-adapter/run_lean_axle_adapter.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-axle-adapter/run_lean_axle_adapter.sh",
+          "target": "workspace/skills/lean-axle-adapter/run_lean_axle_adapter.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ]
     },
     "lean-formalization-intake": {
       "runtime_dir": "lean-formalization-intake",

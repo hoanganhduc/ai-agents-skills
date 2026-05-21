@@ -32,7 +32,7 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `get-available-resources` | Detect CPU, memory, disk, and optional accelerator availability before heavy local work. | `workflow-tools`, `full-research` |
 | `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `full-research` |
 | `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
-| `lean-axle-adapter` | Offline-only AXLE integration boundary for Lean formalization workflows. | `workflow-tools`, `math`, `full-research` |
+| `lean-axle-adapter` | Offline-only AXLE dry-run/no-op integration boundary for Lean formalization workflows. | `workflow-tools`, `math`, `full-research` |
 | `lean-formalization-intake` | Static, proof-neutral intake for local Lean formalization repositories. | `workflow-tools`, `math`, `full-research` |
 | `lean-strict-verification-gate` | Static, proof-neutral preflight gate for Lean formalization verification readiness. | `workflow-tools`, `math`, `full-research` |
 | `modal-research-compute` | Route heavy compute jobs to Modal through a local broker. | `full-research` |
