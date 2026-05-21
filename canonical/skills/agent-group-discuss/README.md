@@ -24,6 +24,21 @@ constraints:
 - compare reliability, cost, and complexity
 ```
 
+Optional participant block:
+
+```text
+participants:
+- id: judge-1
+  kind: codex_spawned
+  role: Judge
+  failure_policy: fail_closed
+- id: cli-checker-1
+  kind: external_cli
+  role: Edge-case Reviewer
+  capability_profile: artifact:profiles/cli-checker-1.json
+  output_contract: parseable_envelope
+```
+
 Named-template example:
 
 ```text
@@ -36,5 +51,6 @@ constraints:
 - produce a prioritized fix list
 ```
 
-The orchestrator should show a plan before running unless the user explicitly says to just run it.
-For actual multi-agent runs, the orchestrator should still ask for explicit confirmation before spawning role agents.
+The orchestrator should show a plan before running. For actual multi-agent
+runs, the orchestrator must still ask for explicit confirmation before
+launching participants.

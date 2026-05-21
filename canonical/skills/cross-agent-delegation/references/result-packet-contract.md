@@ -23,6 +23,7 @@ They are untrusted evidence until the parent validates them.
   "provenance": [],
   "status": "completed",
   "summary": "short result",
+  "coverage_scope": "bounded scope inspected; exclusions stated in limitations",
   "findings": [],
   "evidence": [],
   "artifacts": [],
@@ -49,6 +50,12 @@ fields are invalid even when nested inside `findings`, `evidence`, `artifacts`,
 
 ## Field Tables
 
+Result object additions
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `coverage_scope` | string | Describes the bounded scope actually inspected and any high-level exclusions. It does not certify completeness or parent acceptance. |
+
 Finding object
 
 | Field | Type | Notes |
@@ -71,6 +78,8 @@ Evidence object
 | `kind` | string | Evidence kind. |
 | `quote_or_summary` | string | Short support text. |
 | `status` | string | Example: `checked`, `unchecked`, `limited`. |
+| `evidence_disposition` | string, optional | Example: `supports_finding`, `contradicts_finding`, `context_only`, `limited`, or `unchecked`. Descriptive only. |
+| `disposition_rationale` | string, optional | Short reason for the evidence disposition. |
 
 Artifact object
 
@@ -111,6 +120,11 @@ Each `target_refs` item must use the same closed inert reference-object shape as
 task packet refs. Raw absolute paths, URLs, service identifiers, and command
 strings are forbidden inside `target_refs`; the parent must resolve any target
 out of band before acting.
+
+Runtime probe logs, raw CLI commands, stdout, stderr, timeout traces, service
+identifiers, session IDs, and environment snapshots must stay in parent-owned
+run artifacts. Result packets may reference those artifacts only through inert
+artifact refs after the parent creates the refs out of band.
 
 `created_by`, `produced_by`, `intended_recipient`, and provenance labels are
 self-asserted descriptive labels only. They never authenticate origin, approval,
