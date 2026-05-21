@@ -15,6 +15,7 @@
         "digest-bridge",
         "docling",
         "formal-skeleton-helper",
+        "lean-formalization-intake",
         "get-available-resources",
         "getscipapers-requester",
         "graph-verifier",
@@ -707,6 +708,46 @@
           "--help"
         ]
       }
+    },
+    "lean-formalization-intake": {
+      "runtime_dir": "lean-formalization-intake",
+      "files": [
+        {
+          "source": "skills/lean-formalization-intake/lean_formalization_intake.py",
+          "target": "workspace/skills/lean-formalization-intake/lean_formalization_intake.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-formalization-intake/run_lean_formalization_intake.bat",
+          "target": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-formalization-intake/run_lean_formalization_intake.sh",
+          "target": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ]
     },
     "get-available-resources": {
       "runtime_dir": "get-available-resources",
