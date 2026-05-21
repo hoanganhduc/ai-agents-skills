@@ -326,6 +326,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
 | `lean-axle-adapter` | Offline-only AXLE integration boundary for Lean formalization workflows. | `workflow-tools`, `math`, `full-research` |
 | `lean-formalization-intake` | Static, proof-neutral intake for local Lean formalization repositories. | `workflow-tools`, `math`, `full-research` |
+| `lean-strict-verification-gate` | Static, proof-neutral preflight gate for Lean formalization verification readiness. | `workflow-tools`, `math`, `full-research` |
 | `modal-research-compute` | Route heavy compute jobs to Modal through a local broker. | `full-research` |
 | `model-router` | Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work. | `workflow-tools`, `multi-agent`, `full-research` |
 | `paper-lookup` | External paper metadata and discovery fallback. | `library`, `full-research` |
