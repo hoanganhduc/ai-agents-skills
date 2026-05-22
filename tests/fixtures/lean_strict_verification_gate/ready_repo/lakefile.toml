@@ -1,5 +1,0 @@
-name = "ReadyRepo"
-
-[[require]]
-name = "mathlib"
-scope = "leanprover-community"
