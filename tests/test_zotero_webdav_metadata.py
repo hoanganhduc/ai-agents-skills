@@ -4,24 +4,60 @@ import importlib.util
 import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WEBDAV_PATH = REPO_ROOT / "canonical" / "runtime" / "skills" / "zotero" / "lib" / "webdav.py"
+_MISSING = object()
+
+
+class _FakeAuth:
+    def __init__(self, *args, **kwargs) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+
+def _install_fake_requests():
+    fake_requests = types.ModuleType("requests")
+    fake_requests.request = lambda *args, **kwargs: None
+
+    fake_auth = types.ModuleType("requests.auth")
+    fake_auth.HTTPBasicAuth = _FakeAuth
+    fake_auth.HTTPDigestAuth = _FakeAuth
+    fake_requests.auth = fake_auth
+
+    previous = {
+        "requests": sys.modules.get("requests", _MISSING),
+        "requests.auth": sys.modules.get("requests.auth", _MISSING),
+    }
+    sys.modules["requests"] = fake_requests
+    sys.modules["requests.auth"] = fake_auth
+    return previous
+
+
+def _restore_modules(previous):
+    for name, module in previous.items():
+        if module is _MISSING:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
 
 
 def load_webdav_module():
     spec = importlib.util.spec_from_file_location("canonical_zotero_webdav", WEBDAV_PATH)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    previous_modules = _install_fake_requests()
     previous = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
     try:
         spec.loader.exec_module(module)
     finally:
         sys.dont_write_bytecode = previous
+        _restore_modules(previous_modules)
     return module
 
 
