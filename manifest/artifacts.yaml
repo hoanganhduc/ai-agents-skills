@@ -12,8 +12,6 @@
         "template:research-verification-checklist",
         "template:research-workflow-runbook",
         "template:hierarchical-agent-delegation",
-        "template:lean-repo-audit-checklist",
-        "template:lean-verifier-policy",
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report"
@@ -77,8 +75,6 @@
         "template:research-verification-checklist",
         "template:research-workflow-runbook",
         "template:hierarchical-agent-delegation",
-        "template:lean-repo-audit-checklist",
-        "template:lean-verifier-policy",
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report",
@@ -158,18 +154,6 @@
         "source": "hierarchical-agent-delegation.md",
         "supported_agents": ["codex", "claude", "deepseek"],
         "depends_on_skills": ["cross-agent-delegation"]
-      },
-      "lean-repo-audit-checklist": {
-        "description": "Static audit checklist for Lean repositories before builds, AXLE calls, verifier runs, or remote scans.",
-        "source": "lean-repo-audit-checklist.md",
-        "supported_agents": ["codex", "claude", "deepseek"],
-        "depends_on_skills": ["lean-formalization-intake"]
-      },
-      "lean-verifier-policy": {
-        "description": "Trust-tier policy template for Lean build, AXLE, theorem-intent, and strict-verifier evidence.",
-        "source": "lean-verifier-policy.md",
-        "supported_agents": ["codex", "claude", "deepseek"],
-        "depends_on_skills": ["lean-formalization-intake"]
       },
       "deep-research-sources": {
         "description": "Source handoff table for phased deep research.",
