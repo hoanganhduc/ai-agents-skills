@@ -8,9 +8,29 @@ Zotero WebDAV format:
 
 import os
 import io
+import hashlib
 import zipfile
 import requests
 from requests.auth import HTTPBasicAuth, HTTPDigestAuth
+
+
+def file_sync_metadata(file_path):
+    """Return Zotero attachment file-sync metadata for a local file."""
+    digest = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    stat = os.stat(file_path)
+    return {
+        "md5": digest.hexdigest(),
+        "mtime": int(stat.st_mtime * 1000),
+    }
+
+
+def populate_imported_file_attachment(template, file_path):
+    """Populate md5/mtime fields Zotero Desktop expects for file sync."""
+    template.update(file_sync_metadata(file_path))
+    return template
 
 
 class WebDAVClient:
@@ -19,12 +39,14 @@ class WebDAVClient:
         self.zotero_url = f"{base_url}/zotero"
         self.user = config["webdav_user"]
         self.password = config["WEBDAV_PASSWORD"]
+        self.timeout = int(config.get("webdav_timeout", 30))
+        self.upload_timeout = int(config.get("webdav_upload_timeout", max(self.timeout, 300)))
         self._auth = HTTPBasicAuth(self.user, self.password)
         self._auth_type = "basic"
 
     def _request(self, method, url, **kwargs):
         """Make a request with automatic auth type fallback."""
-        kwargs.setdefault("timeout", 30)
+        kwargs.setdefault("timeout", self.timeout)
         r = requests.request(method, url, auth=self._auth, **kwargs)
         if r.status_code == 401 and self._auth_type == "basic":
             self._auth = HTTPDigestAuth(self.user, self.password)
@@ -52,7 +74,8 @@ class WebDAVClient:
         # Upload
         url = f"{self.zotero_url}/{attachment_key}.zip"
         r = self._request("PUT", url, data=buf.getvalue(),
-                          headers={"Content-Type": "application/zip"})
+                          headers={"Content-Type": "application/zip"},
+                          timeout=self.upload_timeout)
 
         if r.status_code not in (200, 201, 204):
             raise RuntimeError(f"WebDAV upload failed: HTTP {r.status_code} for {url}")

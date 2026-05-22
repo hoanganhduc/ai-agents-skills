@@ -53,6 +53,7 @@ DOI/arXiv/ISBN/URL
   → PDF verification (magic bytes, page count, aspect ratio, title match)
   → ZotFile rename ({Author}_{Year}_{Title} [Type].pdf)
   → Create attachment item (Zotero API)
+  → Store file-sync metadata (md5, mtime)
   → Zip + upload to WebDAV
   → Zotero desktop syncs on next refresh
 ```

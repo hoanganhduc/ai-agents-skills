@@ -488,7 +488,7 @@ def main() -> None:
                         annotated_pdf = outputs.get("latex_pdf") or outputs.get("pdf_markup")
                         if annotated_pdf and os.path.exists(annotated_pdf):
                             try:
-                                from lib.webdav import WebDAVClient
+                                from lib.webdav import WebDAVClient, populate_imported_file_attachment
                                 from lib.config import load_config
                                 from lib.zotero_client import ZoteroClient
 
@@ -505,6 +505,7 @@ def main() -> None:
                                 att_template["parentItem"] = parent_key
                                 att_template["contentType"] = "application/pdf"
                                 att_template["tags"] = [{"tag": "annotated-review-pdf"}]
+                                populate_imported_file_attachment(att_template, annotated_pdf)
                                 att_result = zot_client._retry(
                                     zot_client.zot.create_items, [att_template]
                                 )
