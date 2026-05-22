@@ -577,7 +577,7 @@ def cmd_add(args):
             # WebDAV upload (if configured)
             if config.get("webdav_url") and config.get("WEBDAV_PASSWORD"):
                 _progress("5/5 Uploading to WebDAV...")
-                from lib.webdav import WebDAVClient
+                from lib.webdav import WebDAVClient, populate_imported_file_attachment
 
                 # Create attachment child item (need key for zip filename)
                 att_template = client.zot.item_template("attachment", "imported_file")
@@ -585,6 +585,7 @@ def cmd_add(args):
                 att_template["filename"] = os.path.basename(new_path)
                 att_template["parentItem"] = item_key
                 att_template["contentType"] = "application/pdf"
+                populate_imported_file_attachment(att_template, new_path)
                 att_result = client._retry(client.zot.create_items, [att_template])
 
                 att_item = None
@@ -898,13 +899,14 @@ def cmd_add_file(args):
     # WebDAV upload
     if config.get("webdav_url") and config.get("WEBDAV_PASSWORD"):
         _progress("5/5 Uploading to WebDAV...")
-        from lib.webdav import WebDAVClient
+        from lib.webdav import WebDAVClient, populate_imported_file_attachment
 
         att_template = client.zot.item_template("attachment", "imported_file")
         att_template["title"] = new_name
         att_template["filename"] = new_name
         att_template["parentItem"] = item_key
         att_template["contentType"] = content_type
+        populate_imported_file_attachment(att_template, staged_path)
         att_result = client._retry(client.zot.create_items, [att_template])
 
         att_key = None
@@ -1497,13 +1499,14 @@ def cmd_update(args):
         # WebDAV upload (shared for both local and download paths)
         if config.get("webdav_url") and config.get("WEBDAV_PASSWORD"):
             _progress("Uploading to WebDAV...")
-            from lib.webdav import WebDAVClient
+            from lib.webdav import WebDAVClient, populate_imported_file_attachment
 
             att_template = client.zot.item_template("attachment", "imported_file")
             att_template["title"] = os.path.basename(new_path)
             att_template["filename"] = os.path.basename(new_path)
             att_template["parentItem"] = args.key
             att_template["contentType"] = content_type
+            populate_imported_file_attachment(att_template, new_path)
             att_result = client._retry(client.zot.create_items, [att_template])
 
             att_key = None
