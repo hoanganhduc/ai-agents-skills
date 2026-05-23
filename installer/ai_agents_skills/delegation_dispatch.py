@@ -396,7 +396,7 @@ class CompletedCommand:
 def run_command(command: str, prompt: str, *, timeout: int, env: dict[str, str], final_marker: str) -> CompletedCommand:
     rendered = render_command_template(command, final_marker)
     try:
-        parts = shlex.split(rendered)
+        parts = split_dispatch_command(rendered)
     except ValueError as exc:
         raise ValueError(f"invalid dispatch command: {exc}") from exc
     if not parts:
@@ -426,6 +426,19 @@ def run_command(command: str, prompt: str, *, timeout: int, env: dict[str, str],
         stderr=completed.stderr,
         timed_out=False,
     )
+
+
+def split_dispatch_command(command: str) -> list[str]:
+    parts = shlex.split(command, posix=os.name != "nt")
+    if os.name == "nt":
+        return [strip_wrapping_quotes(part) for part in parts]
+    return parts
+
+
+def strip_wrapping_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
 
 
 def render_command_template(command: str, final_marker: str) -> str:
