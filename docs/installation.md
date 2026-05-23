@@ -20,11 +20,22 @@ optional skill, artifact-directory, install-mode, and read-policy metadata; the
 `path_style` field labels the selected platform path convention but the `path`
 values remain paths inspected from the current host/root. Target prechecks do
 not read target file contents; known auth-token sources are reported by
-presence only rather than value. Copilot extends the base precheck with CLI
+presence only rather than value. `external_agent_prechecks` reports sanitized
+Claude, DeepSeek, Copilot, and reference-only OpenClaw delegation readiness,
+including latest-model/highest-thinking probe requirements and nested-worker
+capability status. Copilot extends the base precheck with CLI
 detection, the `.copilot` directory shape, redacted auth-source presence,
 provider/model probe status, delegation authority metadata, and a separate
 `copilot_status` field for CLI/account/model readiness; command arguments and
-version output are redacted. OpenClaw
+version output are redacted.
+
+`delegate-agent` is the live external CLI adapter for parent-owned
+cross-provider runs. Use `delegate-agent --dry-run` first; actual external
+process launch requires `--allow-external-cli`. Research launch is fail-closed
+unless a provider dispatch command and resolved latest-model/highest-thinking
+settings are available.
+
+OpenClaw
 prechecks report the current fake-root-only gate and evidence requirements
 without enabling real `.openclaw` writes.
 `audit-system` is read-only and compares the selected repo profile with the

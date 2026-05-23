@@ -39,7 +39,8 @@ def load_manifests() -> dict[str, Any]:
     artifacts = load_json_yaml(MANIFEST_DIR / "artifacts.yaml")
     system_dependencies = load_json_yaml(MANIFEST_DIR / "system-dependencies.yaml")
     runtime = load_json_yaml(MANIFEST_DIR / "runtime.yaml")
-    validate_manifests(skills, profiles, dependencies, artifacts, system_dependencies, runtime)
+    delegation = load_json_yaml(MANIFEST_DIR / "delegation.yaml")
+    validate_manifests(skills, profiles, dependencies, artifacts, system_dependencies, runtime, delegation)
     return {
         "skills": skills,
         "profiles": profiles,
@@ -47,6 +48,7 @@ def load_manifests() -> dict[str, Any]:
         "artifacts": artifacts,
         "system_dependencies": system_dependencies,
         "runtime": runtime,
+        "delegation": delegation,
     }
 
 
@@ -57,6 +59,7 @@ def validate_manifests(
     artifacts: dict[str, Any],
     system_dependencies: dict[str, Any],
     runtime: dict[str, Any],
+    delegation: dict[str, Any],
 ) -> None:
     if "skills" not in skills or not isinstance(skills["skills"], dict):
         raise ManifestError("skills.yaml must contain a skills object")
@@ -127,6 +130,53 @@ def validate_manifests(
             raise ManifestError(f"runtime skill {skill} runtime_dir must use canonical kebab-case")
         for entry in spec.get("files", []):
             validate_runtime_file(entry, runtime_source_root, f"runtime skill {skill}")
+
+    validate_delegation_manifest(delegation)
+
+
+def validate_delegation_manifest(delegation: dict[str, Any]) -> None:
+    if delegation.get("schema_version") != 1:
+        raise ManifestError("delegation.yaml schema_version must be 1")
+    policy = delegation.get("policy")
+    providers = delegation.get("providers")
+    nested = delegation.get("nested_delegation")
+    if not isinstance(policy, dict):
+        raise ManifestError("delegation.yaml must contain a policy object")
+    if not isinstance(providers, dict):
+        raise ManifestError("delegation.yaml must contain a providers object")
+    if not isinstance(nested, dict):
+        raise ManifestError("delegation.yaml must contain a nested_delegation object")
+    if policy.get("mode") not in {"off", "audit_only", "prefer", "require"}:
+        raise ManifestError("delegation.yaml policy.mode is invalid")
+    if policy.get("research_model_policy") != "latest_model_highest_reasoning_required":
+        raise ManifestError("delegation.yaml must require latest model and highest reasoning for research")
+    if policy.get("template_policy") not in {"prefer_installed_templates", "built_in_only"}:
+        raise ManifestError("delegation.yaml policy.template_policy is invalid")
+    for field in ("active_providers", "reference_only_providers"):
+        if not isinstance(policy.get(field), list):
+            raise ManifestError(f"delegation.yaml policy.{field} must be a list")
+    provider_names = set(providers)
+    referenced = set(policy["active_providers"]) | set(policy["reference_only_providers"])
+    if referenced - provider_names:
+        missing = ", ".join(sorted(referenced - provider_names))
+        raise ManifestError(f"delegation.yaml policy references unknown providers: {missing}")
+    for name, spec in providers.items():
+        if "_" in name:
+            raise ManifestError(f"delegation provider {name} must use canonical kebab-case")
+        if not isinstance(spec, dict):
+            raise ManifestError(f"delegation provider {name} must be an object")
+        if spec.get("status") not in {"active", "reference_only"}:
+            raise ManifestError(f"delegation provider {name} has invalid status")
+        for field in ("recipient_profile", "default_role_family"):
+            if field not in spec:
+                raise ManifestError(f"delegation provider {name} is missing {field}")
+    for field in ("enabled", "require_same_model_as_manager"):
+        if not isinstance(nested.get(field), bool):
+            raise ManifestError(f"delegation.yaml nested_delegation.{field} must be boolean")
+    for field in ("max_depth", "max_child_workers_per_manager"):
+        value = nested.get(field)
+        if not isinstance(value, int) or value < 0:
+            raise ManifestError(f"delegation.yaml nested_delegation.{field} must be a nonnegative integer")
 
 
 def validate_runtime_file(entry: dict[str, Any], runtime_source_root: Path, owner: str) -> None:

@@ -353,11 +353,13 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             "codex-like-coding-reviewer",
             "claude-like-research-reviewer",
             "deepseek-like-model-reviewer",
+            "copilot-like-code-reviewer",
             "model-only-api-reviewer",
             "openclaw-host-reference",
         ):
             self.assertIn(profile, text)
-        self.assertIn("DeepSeek V1 support is reference or instruction placement only", text)
+        self.assertIn("may route to a live DeepSeek-like CLI only after fresh", text)
+        self.assertIn("capability probes satisfy the run policy", text)
         self.assertIn("OpenClaw is not a V1 `supported_agents` target", text)
 
 
@@ -488,6 +490,10 @@ class CrossAgentDelegationFixtureTests(unittest.TestCase):
             "result-synthesis-review",
             "formalization-readiness-check",
             "reproducibility-audit",
+            "cross-provider-research-panel",
+            "manager-worker-research-review",
+            "repo-comparison-research",
+            "evidence-synthesis-critique",
         ]
         for template_id in template_ids:
             self.assertEqual(text.count(f"### {template_id}"), 1, template_id)

@@ -59,3 +59,16 @@ Do not use this skill for:
   `provider_configs`, `model_config`, `model_configs`, `queue`, `queues`,
   `ledger`, `session_id`, `session_ids`, `resume_token`, or `resume_tokens`
   invalidate the packet.
+
+## Manager-worker packets
+
+When a parent workflow enables nested delegation, this skill may describe the
+manager task packet and expected child result summaries. It still does not
+execute the child work. Parent workflows such as `agent-group-discuss` own
+provider probing, latest-model/highest-thinking enforcement, same-model
+child-worker checks, execution, and final validation.
+
+Live external CLI execution, when needed, belongs to the parent-owned
+`delegate-agent` dispatcher or an equivalent orchestrator adapter. This packet
+skill remains inert and must not embed dispatch commands, credentials, session
+state, or approval receipts.

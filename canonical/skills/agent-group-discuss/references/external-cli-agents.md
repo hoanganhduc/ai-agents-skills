@@ -7,6 +7,16 @@ credential store, a provider router, a queue, or a runtime broker.
 Use this file only when a logical AGD role is assigned to an `external_cli`
 participant instead of a `codex_spawned` participant.
 
+The managed CLI entrypoint is:
+
+```bash
+./installer/bootstrap.sh delegate-agent --provider auto --task-file <task.md> --dry-run
+```
+
+Actual process launch requires `--allow-external-cli`. Research launch also
+requires a resolved latest model, highest thinking/reasoning value, and an
+explicit provider dispatch command such as `AAS_CLAUDE_DISPATCH_COMMAND`.
+
 ## Scope
 
 An external CLI participant is an executable endpoint that may contribute to a
@@ -63,6 +73,8 @@ Required for every external CLI participant:
 
 - version or help probe
 - auth/config availability probe when the CLI needs credentials
+- latest model and highest thinking/reasoning selection probe for research
+  tasks
 - smoke prompt
 - output contract probe: JSON if supported, otherwise a strict parseable
   envelope with a unique final marker
@@ -74,6 +86,39 @@ Required when the role expects local file inspection:
 
 - file-read fidelity probe with a sentinel, line count, and selected-line check
 - fallback inline-excerpt probe when file reads fail or are unsupported
+
+Required when a manager role may launch child workers:
+
+- same-provider same-model child dispatch probe
+- child output contract probe
+- evidence that child workers can be kept one level deep
+
+## Managed Dispatcher
+
+`delegate-agent` is the parent-owned subprocess adapter for external CLI
+participants. It:
+
+- selects providers from `manifest/delegation.yaml` when `--provider auto` is
+  used
+- blocks live external execution unless `--allow-external-cli` is supplied
+- blocks research execution unless latest-model and highest-thinking settings
+  are resolved for the provider
+- sends bounded prompts over stdin
+- requires a JSON envelope plus final marker
+- writes run artifacts under `.ai-agents-skills/delegation-runs/<run-id>/`
+- returns parsed results and validation status, not raw stdout/stderr
+
+Provider dispatch commands are intentionally configured outside the repo with
+environment variables, for example:
+
+```bash
+export AAS_CLAUDE_DISPATCH_COMMAND='claude --print --model {model}'
+export AAS_CLAUDE_LATEST_MODEL='<current-latest-model>'
+export AAS_CLAUDE_HIGHEST_THINKING='xhigh'
+```
+
+Do not hardcode provider model names into shared templates unless a specific
+target system has just probed and recorded that model as current.
 
 For long prompts or long drafts, avoid shell argument transport. Use stdin,
 prompt files, or bounded chunks with a manifest.

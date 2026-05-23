@@ -10,6 +10,8 @@ from typing import Any
 from .agents import agent_home_statuses, agent_supports_manifest_entry, all_agent_names, detect_agents
 from .apply import apply_plan
 from .capabilities import looks_like_real_system_root, smoke_artifact
+from .delegation import build_external_agent_prechecks
+from .delegation_dispatch import dispatch_external_agents
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
 from .docs import generate_docs
 from .lifecycle import rollback as rollback_artifacts
@@ -97,6 +99,22 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_smoke_parser.add_argument("--skill")
     runtime_smoke_parser.add_argument("--skills")
     runtime_smoke_parser.add_argument("--timeout", type=int, default=60)
+
+    delegate_agent = sub.add_parser("delegate-agent")
+    delegate_agent.add_argument("--provider", default="auto", help="provider name or auto")
+    delegate_agent.add_argument("--providers", help="comma-separated provider list; overrides --provider")
+    delegate_agent.add_argument("--task", help="inline task text")
+    delegate_agent.add_argument("--task-file", type=Path, help="task file to send over stdin")
+    delegate_agent.add_argument("--role", default="research reviewer")
+    delegate_agent.add_argument("--template")
+    delegate_agent.add_argument("--research", action="store_true")
+    delegate_agent.add_argument("--resolved-model")
+    delegate_agent.add_argument("--resolved-thinking")
+    delegate_agent.add_argument("--max-providers", type=int, default=1)
+    delegate_agent.add_argument("--timeout", type=int, default=120)
+    delegate_agent.add_argument("--run-dir", type=Path)
+    delegate_agent.add_argument("--dry-run", action="store_true")
+    delegate_agent.add_argument("--allow-external-cli", action="store_true")
 
     openclaw_inventory = sub.add_parser("openclaw-inventory")
     openclaw_inventory.add_argument(
@@ -327,6 +345,8 @@ def run(args: argparse.Namespace) -> int:
         return output(runtime_inventory(args.source_root, max_entries=args.max_entries), args)
     if args.command == "runtime-smoke":
         return runtime_smoke(args, manifests)
+    if args.command == "delegate-agent":
+        return output(dispatch_external_agents(args, manifests), args)
     if args.command == "openclaw-inventory":
         return output(
             build_inventory(
@@ -584,6 +604,11 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
             python_command = result["command"]
         results.append(result)
     target_prechecks = build_target_prechecks(args.root, platform, agent_filter, agents)
+    external_agent_prechecks = build_external_agent_prechecks(
+        args.root,
+        platform,
+        manifests["delegation"],
+    )
 
     actionable = [item for item in results if item["dependency"] not in ignored]
     missing_required = [
@@ -614,6 +639,7 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
         "skipped_dependencies": sorted(skipped),
         "dependencies": results,
         "target_prechecks": target_prechecks,
+        "external_agent_prechecks": external_agent_prechecks,
         "missing_required": missing_required,
         "missing_optional": [
             item for item in actionable
@@ -757,6 +783,7 @@ def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
                 if item.get("status") == "manual"
             ],
         },
+        "external_agent_prechecks": precheck_result["external_agent_prechecks"],
         "recommendations": audit_recommendations(default_plan, precheck_result, state),
     }
     if getattr(args, "migration_report", False):
@@ -1282,6 +1309,7 @@ def command_help() -> dict[str, Any]:
         "lifecycle-test",
         "runtime-smoke",
         "runtime-inventory",
+        "delegate-agent",
         "list-skills",
         "list-artifacts",
         "describe",
@@ -1304,6 +1332,7 @@ def command_help() -> dict[str, Any]:
             "make install ARGS=\"--profile research-core --dry-run\"",
             "make describe ARGS=\"zotero\"",
             "make lifecycle-test ARGS=\"--matrix default --platform-shape all\"",
+            "make delegate-agent ARGS=\"--provider auto --task 'review this claim' --dry-run\"",
             "make docs",
         ],
     }

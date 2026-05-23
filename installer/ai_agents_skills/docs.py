@@ -83,7 +83,8 @@ versions, or research tasks outside the assumptions documented here.
 This repo turns a multi-agent research setup into one maintainable skill source.
 Codex, Claude, DeepSeek, and explicit adapter targets such as GitHub Copilot
 can each load local skills, while this repository keeps the shared research
-workflows, profiles, dependency metadata, and installer logic in one place.
+workflows, profiles, delegation settings, dependency metadata, and installer
+logic in one place.
 
 The research stack is organized as:
 
@@ -1892,6 +1893,27 @@ depends on the frontend and installed tools. When a frontend cannot spawn
 separate agents directly, the templates still serve as a disciplined role and
 round protocol for manual or sequential execution.
 
+True cross-provider delegation is parent-owned by `agent-group-discuss`.
+`manifest/delegation.yaml` sets the default policy: include Codex as the parent
+and spawned-subagent provider; prefer Claude, DeepSeek, and Copilot when fresh
+probes pass; keep OpenClaw reference-only; fall back to Codex-only when
+configured; and require latest-model plus highest-thinking for research roles.
+This policy is general across supported target-agent installs. External CLI
+process launch is handled by the parent-owned `delegate-agent` adapter, not by
+the inert packet contract. Target agents receive shared guidance and templates;
+live dispatch is still run-specific, probe-gated, and confirmation-controlled.
+
+Dry-run an external provider plan with:
+
+```bash
+make delegate-agent ARGS="--provider auto --task-file ./task.md --research --dry-run"
+```
+
+Actual launch requires `--allow-external-cli`. Research launch also requires a
+provider dispatch command plus resolved latest-model and highest-thinking
+settings, for example `AAS_CLAUDE_DISPATCH_COMMAND`,
+`AAS_CLAUDE_LATEST_MODEL`, and `AAS_CLAUDE_HIGHEST_THINKING`.
+
 ## Orchestration Lifecycle
 
 A normal multi-agent run follows this shape:
@@ -1934,6 +1956,12 @@ For Codex-style execution, the mapping is:
 | Finish role | `close_agent` after the role is no longer needed. |
 | External verification | Orchestrator runs local tools directly, then feeds verified facts into synthesis. |
 
+For research tasks, every parent role, delegated manager, and child worker must
+use the latest available model with the highest available thinking or reasoning
+level. Nested workers are allowed only for explicitly planned manager roles,
+must use the manager's same provider/model/thinking level, and must remain leaf
+workers.
+
 Role prompts should include:
 
 - template and role name
@@ -1959,6 +1987,20 @@ Role prompts should include:
 Template chaining is allowed when the task naturally has phases. For example,
 a graph reconfiguration reduction can use Graph Reconfiguration Specialist
 first, then Knuth Structured Manuscript Review after the proof is stable.
+
+## True Cross-Provider Delegation
+
+Cross-provider runs use three layers:
+
+1. `agent-group-discuss` selects providers, probes capability profiles, and
+   owns execution.
+2. `cross-agent-delegation` supplies inert task and result packet contracts.
+3. `deep-research-workflow` preserves source IDs and evidence mapping.
+
+The default policy is `prefer`: use Codex plus real non-Codex providers when
+enough fresh profiles satisfy the research model policy, otherwise disclose
+Codex-only fallback. `require` mode can be used later to block runs that cannot
+satisfy the provider threshold.
 
 ## Example: Graph Theory Proof Stress-Test
 
@@ -2146,6 +2188,10 @@ The manifests are the source of truth:
   instruction docs, entrypoints, and management notices.
 - `manifest/runtime.yaml` defines portable runtime runners and runtime-backed
   skill files that may be copied into a local runtime root.
+- `manifest/delegation.yaml` defines cross-provider delegation policy,
+  research model requirements, active/reference providers, and nested worker
+  limits. The `delegate-agent` CLI consumes this policy for parent-owned live
+  external CLI dispatch after explicit opt-in and run-specific probes.
 - `manifest/dependencies.yaml` and `manifest/system-dependencies.yaml` define
   logical tools and sanitized maintainer-system dependency observations.
 
@@ -2255,11 +2301,22 @@ optional skill, artifact-directory, install-mode, and read-policy metadata; the
 `path_style` field labels the selected platform path convention but the `path`
 values remain paths inspected from the current host/root. Target prechecks do
 not read target file contents; known auth-token sources are reported by
-presence only rather than value. Copilot extends the base precheck with CLI
+presence only rather than value. `external_agent_prechecks` reports sanitized
+Claude, DeepSeek, Copilot, and reference-only OpenClaw delegation readiness,
+including latest-model/highest-thinking probe requirements and nested-worker
+capability status. Copilot extends the base precheck with CLI
 detection, the `.copilot` directory shape, redacted auth-source presence,
 provider/model probe status, delegation authority metadata, and a separate
 `copilot_status` field for CLI/account/model readiness; command arguments and
-version output are redacted. OpenClaw
+version output are redacted.
+
+`delegate-agent` is the live external CLI adapter for parent-owned
+cross-provider runs. Use `delegate-agent --dry-run` first; actual external
+process launch requires `--allow-external-cli`. Research launch is fail-closed
+unless a provider dispatch command and resolved latest-model/highest-thinking
+settings are available.
+
+OpenClaw
 prechecks report the current fake-root-only gate and evidence requirements
 without enabling real `.openclaw` writes.
 `audit-system` is read-only and compares the selected repo profile with the
