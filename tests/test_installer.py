@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
+from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
 from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
@@ -1948,21 +1950,30 @@ class DocsAndLauncherTests(unittest.TestCase):
             payload = json.loads(stream.getvalue())
             self.assertIn("live external CLI dispatch requires --allow-external-cli", payload["error"])
 
+    def test_dispatch_command_split_strips_windows_wrapper_quotes(self) -> None:
+        command = '"C:\\Path With Spaces\\python.exe" "D:\\tmp\\fake.py" --model x'
+        with patch("installer.ai_agents_skills.delegation_dispatch.os.name", "nt"):
+            self.assertEqual(
+                split_dispatch_command(command),
+                ["C:\\Path With Spaces\\python.exe", "D:\\tmp\\fake.py", "--model", "x"],
+            )
+
     def test_cli_delegate_agent_dispatches_fake_external_cli(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
-            fake_cli = root / "bin" / "fake-claude"
+            fake_cli = root / "bin" / "fake_claude.py"
             fake_cli.parent.mkdir()
             fake_cli.write_text(
-                "#!/bin/sh\n"
-                "cat >/dev/null\n"
-                "printf '%s\\n' 'AAS_RESULT_JSON_START'\n"
-                "printf '%s\\n' '{\"status\":\"ok\",\"findings\":[{\"id\":\"F1\",\"summary\":\"done\",\"evidence_refs\":[\"task\"]}],\"limitations\":[],\"warnings\":[]}'\n"
-                "printf '%s\\n' 'AAS_RESULT_JSON_END'\n"
-                "printf '%s\\n' \"$AAS_DELEGATION_FINAL_MARKER\"\n",
+                "from __future__ import annotations\n"
+                "import os\n"
+                "import sys\n"
+                "sys.stdin.read()\n"
+                "print('AAS_RESULT_JSON_START')\n"
+                "print('{\"status\":\"ok\",\"findings\":[{\"id\":\"F1\",\"summary\":\"done\",\"evidence_refs\":[\"task\"]}],\"limitations\":[],\"warnings\":[]}')\n"
+                "print('AAS_RESULT_JSON_END')\n"
+                "print(os.environ['AAS_DELEGATION_FINAL_MARKER'])\n",
                 encoding="utf-8",
             )
-            fake_cli.chmod(0o755)
             stream = io.StringIO()
             with (
                 contextlib.redirect_stdout(stream),
@@ -1970,7 +1981,9 @@ class DocsAndLauncherTests(unittest.TestCase):
                     os.environ,
                     {
                         "AAS_CLAUDE": str(fake_cli),
-                        "AAS_CLAUDE_DISPATCH_COMMAND": f"{fake_cli} --model {{model}} --thinking {{thinking}}",
+                        "AAS_CLAUDE_DISPATCH_COMMAND": (
+                            f"\"{sys.executable}\" \"{fake_cli}\" --model {{model}} --thinking {{thinking}}"
+                        ),
                         "AAS_CLAUDE_LATEST_MODEL": "claude-fake-latest",
                         "AAS_CLAUDE_HIGHEST_THINKING": "xhigh",
                     },
@@ -1996,7 +2009,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["participants"][0]["status"], "ok")
             self.assertEqual(payload["participants"][0]["result"]["findings"][0]["summary"], "done")
-            self.assertEqual(payload["dispatch_plan"][0]["command_shape"], "fake-claude <args-redacted>")
+            self.assertEqual(payload["dispatch_plan"][0]["command_shape"], f"{Path(sys.executable).name} <args-redacted>")
             self.assertNotIn("command", payload["dispatch_plan"][0])
             run_dir = Path(payload["run_dir"])
             self.assertTrue((run_dir / "profiles" / "claude-external-1.json").is_file())
