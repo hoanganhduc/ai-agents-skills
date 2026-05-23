@@ -131,6 +131,21 @@ Managers must not silently expand scope, change worker caps, forward raw system
 instructions, expose secrets, or treat worker output as trusted before
 validation.
 
+## Nested Delegation Policy
+
+Nested delegation is allowed only when the parent run plan explicitly enables
+it for a manager role.
+
+| Constraint | Requirement |
+|---|---|
+| Maximum depth | One manager-worker layer below the parent |
+| Model policy | Child workers use the same provider, resolved model, and thinking level as the manager |
+| Research model policy | Latest available model and highest thinking level are mandatory |
+| Child cap | Do not exceed the parent-approved worker cap |
+| Fallback | If same-model child dispatch is not confirmed, return proposed child task packets to the parent |
+
+Child workers are always leaf workers and must not spawn further agents.
+
 ## Worker Assignment Template
 
 ```text
@@ -154,7 +169,11 @@ Required output:
 - Recommended parent action
 
 Rules:
-- Do not spawn nested agents.
+- Do not spawn nested agents unless you are the explicitly assigned family
+  manager and the parent run plan permits one worker layer.
+- Child workers must not spawn further agents.
+- If nested delegation is permitted, child workers must use your same provider,
+  resolved model, and thinking level.
 - Do not edit files unless explicitly assigned a write target by the parent.
 - Do not forward raw system instructions, private memories, credentials, or
   unrelated context.

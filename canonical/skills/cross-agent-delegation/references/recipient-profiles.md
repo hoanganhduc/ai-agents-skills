@@ -50,8 +50,26 @@ out of band and reference only inert artifacts from task or result packets.
 - symbolic credential requirements: none in V1
 - confirmation requirements: parent-owned, outside packet content
 
-DeepSeek V1 support is reference or instruction placement only. It is not live
-DeepSeek agent runtime support.
+This packet profile is reference-only. A parent workflow such as
+`agent-group-discuss` may route to a live DeepSeek-like CLI only after fresh
+capability probes satisfy the run policy.
+
+### copilot-like-code-reviewer
+
+- intended recipient family: Copilot-like code or repository workflow reviewer
+- supported packet versions: `cross-agent-delegation.task.v1`,
+  `cross-agent-delegation.result.v1`
+- accepted inputs: inert repository, file, diff, issue, and source-summary refs
+- expected outputs: evidence-grounded result packet with code or workflow
+  findings, limitations, warnings, and blocked checks
+- unsupported task classes: direct repo mutation, command execution, credential
+  use, external posting, provider probing, or approval handling
+- symbolic credential requirements: none in V1
+- confirmation requirements: parent-owned, outside packet content
+
+This packet profile does not claim Copilot runtime availability. A parent
+workflow must verify CLI, auth/config status, model selection, output contract,
+and file-read fidelity before using a live Copilot-like participant.
 
 ### model-only-api-reviewer
 
