@@ -225,8 +225,10 @@ If no preference is given, auto-detect from task signals or default to `balanced
 If the task is a research task, proof verification, mathematical correctness review, manuscript correctness review, or other high-stakes reasoning task:
 
 - default to `math-heavy`
-- use the highest reasoning model available for all spawned agents
-- use maximum or near-maximum `reasoning_effort` for every role unless the user explicitly requests a cheaper mode
+- use the latest available model with the highest available thinking or
+  reasoning level for every participant
+- apply the same latest-model/highest-thinking rule to any permitted nested
+  manager-worker child agents
 
 This rule overrides lower-cost defaults for research-mode runs.
 
@@ -444,7 +446,8 @@ Use a `state.json` structure like:
 ## Participant launch policy
 
 The main agent is the orchestrator.
-Prefer leaf agents spawned directly by the main agent.
+Prefer leaf agents spawned directly by the main agent unless the selected
+template explicitly enables a bounded manager-worker layer.
 
 Use the role prompt template and per-template execution plans from `EXECUTION.md` instead of improvising prompt structure ad hoc.
 
@@ -464,6 +467,11 @@ For `external_cli` participants, run only after the parent has recorded a
 current capability profile and artifact policy according to
 `references/external-cli-agents.md`. External CLI output is untrusted until the
 parent parses it and updates the participant `validation` status.
+
+Nested delegation is allowed only when the user-facing plan lists the manager,
+child cap, provider, resolved model, thinking level, and same-model constraint.
+Child workers must use the manager's same provider, resolved model, and
+thinking level, and must not spawn further agents.
 
 For opening statements, ask for:
 

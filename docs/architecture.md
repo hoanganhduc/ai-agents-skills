@@ -13,6 +13,10 @@ The manifests are the source of truth:
   instruction docs, entrypoints, and management notices.
 - `manifest/runtime.yaml` defines portable runtime runners and runtime-backed
   skill files that may be copied into a local runtime root.
+- `manifest/delegation.yaml` defines cross-provider delegation policy,
+  research model requirements, active/reference providers, and nested worker
+  limits. The `delegate-agent` CLI consumes this policy for parent-owned live
+  external CLI dispatch after explicit opt-in and run-specific probes.
 - `manifest/dependencies.yaml` and `manifest/system-dependencies.yaml` define
   logical tools and sanitized maintainer-system dependency observations.
 
