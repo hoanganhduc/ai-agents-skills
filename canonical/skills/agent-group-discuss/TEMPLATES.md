@@ -44,6 +44,10 @@ Before any template begins, the orchestrator must show:
 - model assigned to each role
 - reasoning tier and reasoning effort
 - participant kind for each role (`codex_spawned` or `external_cli`)
+- for research tasks, confirmation that every role uses the latest available
+  model with the highest available thinking or reasoning level
+- whether nested manager-worker delegation is enabled, plus child caps,
+  same-model constraints, and leaf-worker limits
 - output contract, evidence policy, and failure policy for each participant
 - external CLI capability profile source, timestamp, validated capabilities,
   degraded or blocked capabilities, timeout, final-marker contract, and artifact

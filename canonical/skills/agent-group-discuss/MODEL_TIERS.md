@@ -61,9 +61,9 @@ different model.
 
 For research, proof, manuscript-correctness, or other high-stakes mathematical review tasks:
 
-- `STRONG_REASONER` -> latest available frontier model with `xhigh`
-- `BALANCED_MODEL` -> latest available frontier model with `high`
-- `FAST_MODEL` -> latest available frontier model with `medium`
+- every role, including scouts, support reviewers, managers, and child workers
+  -> latest available frontier model with the highest available reasoning level
+  (currently `xhigh` in Codex runtimes that expose it)
 
 Use cheaper profiles only if the user explicitly asks for them.
 
