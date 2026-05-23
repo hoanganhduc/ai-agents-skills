@@ -10,7 +10,10 @@ Template definitions live in `TEMPLATES.md`.
 2. Before assigning models, perform the runtime freshness check in
    `MODEL_TIERS.md`; if a newer suitable model is available than the checked-in
    fallback, use the newer model and record the resolved choice.
-3. For research, proof, manuscript-correctness, or other high-stakes review tasks, use the highest reasoning model available for all spawned agents by default.
+3. For research, proof, manuscript-correctness, or other high-stakes review
+   tasks, every participant must use the latest available model with the
+   highest available thinking or reasoning level. Apply the same rule to any
+   permitted manager-spawned child workers.
 4. For complex correctness reviews, default agent timeout is 45 minutes and persistent progress checkpoints are required every 15 minutes.
 5. Default execution is foreground. Only run the panel as background work if the user explicitly wants to do other work while it runs.
 
@@ -25,9 +28,9 @@ Practical default mapping:
 | Reasoning tier | Research default | Non-research baseline | Use for |
 |----------------|------------------|-----------------------|---------|
 | `R4` | latest available frontier model `xhigh` | latest available frontier model `high` | proofs, formal math, correctness verification, refereeing |
-| `R3` | latest available frontier model `high` | strongest available R3 model `high` | planning, synthesis, structured review |
-| `R2` | latest available frontier model `medium` | strongest available R2 model `medium` | edge-case review, support analysis |
-| `R1` | latest available frontier model `medium` | strongest available fast model `low` | scouting, brainstorming, clarity review |
+| `R3` | latest available frontier model `xhigh` | strongest available R3 model `high` | planning, synthesis, structured review |
+| `R2` | latest available frontier model `xhigh` | strongest available R2 model `medium` | edge-case review, support analysis |
+| `R1` | latest available frontier model `xhigh` | strongest available fast model `low` | scouting, brainstorming, clarity review |
 
 ## Execution pattern
 
@@ -60,6 +63,24 @@ For `external_cli`, do not call `spawn_agent`. Before launch, record a current
 capability profile, input transport policy, output contract, timeout, artifact
 layout, and validation owner. The parent must parse and validate output before
 it can influence synthesis.
+
+Use the managed dispatcher when an external CLI participant should run from
+this repository:
+
+```text
+./installer/bootstrap.sh delegate-agent \
+  --provider auto \
+  --task-file <bounded-task-prompt.md> \
+  --role "<role name>" \
+  --template "<template name>" \
+  --research \
+  --allow-external-cli
+```
+
+For research dispatch, the dispatcher blocks unless the provider has a resolved
+latest model and highest thinking/reasoning setting from arguments or provider
+environment, and a provider dispatch command is configured. Use dry-run first
+to see the selected providers and blocked reasons.
 
 ### Round structure
 
@@ -124,6 +145,9 @@ You are the {ROLE_NAME} in a {TEMPLATE_NAME} multi-agent research session.
   limits.
 - Do not spawn agents, edit files, run network calls, retrieve sources, or
   execute commands unless this prompt explicitly permits that capability.
+- If this prompt explicitly permits nested workers, keep them one level deep,
+  use the same provider, resolved model, and thinking level as this manager,
+  and require child workers to avoid further spawning.
 - For paper or book work, follow local-library-first routing when applicable:
   use `zotero` first for papers, use `calibre` for book or review lookup when
   applicable, and use `getscipapers-requester` only after local lookup fails
@@ -157,7 +181,7 @@ Roles: `4`
 |---|------|-------|-------------|
 | 1 | Prover | latest available frontier model `xhigh` | No |
 | 2 | Counterexample Hunter | latest available frontier model `xhigh` | SageMath |
-| 3 | Monster-Barrer / Refiner | latest available frontier model `high` | No |
+| 3 | Monster-Barrer / Refiner | latest available frontier model `xhigh` | No |
 | 4 | Formalist | latest available frontier model `xhigh` | No |
 
 Execution:
@@ -193,8 +217,8 @@ Roles: `3`
 | # | Role | Model | Computation |
 |---|------|-------|-------------|
 | 1 | Correctness Reviewer | latest available frontier model `xhigh` | SageMath when claims are computationally checkable |
-| 2 | Exposition Reviewer | latest available frontier model `high` | No |
-| 3 | Literature Reviewer | latest available frontier model `high` | No |
+| 2 | Exposition Reviewer | latest available frontier model `xhigh` | No |
+| 3 | Literature Reviewer | latest available frontier model `xhigh` | No |
 
 Execution:
 
@@ -257,8 +281,8 @@ Roles: `5`
 |---|------|-------|-------------|
 | 1 | Informal Planner | latest available frontier model `xhigh` | No |
 | 2 | Formalizer | latest available frontier model `xhigh` | local Lean or scaffold work |
-| 3 | Missing-Lemma Miner | latest available frontier model `high` | No |
-| 4 | Repair Agent | latest available frontier model `high` | No |
+| 3 | Missing-Lemma Miner | latest available frontier model `xhigh` | No |
+| 4 | Repair Agent | latest available frontier model `xhigh` | No |
 | 5 | Checker | latest available frontier model `xhigh` | No |
 
 Execution:

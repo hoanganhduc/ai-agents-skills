@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
+from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
 from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
@@ -69,6 +71,16 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("deep-research-workflow", selected)
         self.assertIn("research-briefing", selected)
         self.assertNotIn("tikz-draw", selected)
+
+    def test_delegation_manifest_requires_true_cross_provider_policy(self) -> None:
+        delegation = load_manifests()["delegation"]
+        self.assertEqual(delegation["policy"]["mode"], "prefer")
+        self.assertEqual(delegation["policy"]["research_model_policy"], "latest_model_highest_reasoning_required")
+        self.assertEqual(delegation["policy"]["active_providers"], ["codex", "claude", "deepseek", "copilot"])
+        self.assertEqual(delegation["policy"]["reference_only_providers"], ["openclaw"])
+        self.assertEqual(delegation["providers"]["codex"]["recipient_profile"], "codex-like-coding-reviewer")
+        self.assertTrue(delegation["nested_delegation"]["enabled"])
+        self.assertTrue(delegation["nested_delegation"]["require_same_model_as_manager"])
 
     def test_legacy_alias_resolves_to_canonical(self) -> None:
         manifests = load_manifests()
@@ -1798,6 +1810,8 @@ class DocsAndLauncherTests(unittest.TestCase):
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
         for skill in ("deep-research-workflow", "source-research", "zotero", "vnthuquan"):
             self.assertIn(f"`{skill}`", readme)
+        self.assertIn("`cross-provider-delegation`", readme)
+        self.assertIn("`template:cross-provider-research-panel`", readme)
         self.assertNotIn("`openclaw-research`", readme)
         self.assertIn("docs/workflow-overview.md", readme)
         self.assertIn("docs/multi-agent-examples.md", readme)
@@ -1854,12 +1868,155 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertNotIn("PYTHONPATH=. python -m unittest", text)
         self.assertIn("lifecycle-test:", text)
         self.assertIn("runtime-smoke:", text)
+        self.assertIn("delegate-agent:", text)
         self.assertIn("help:", text)
         self.assertIn("list-artifacts:", text)
         self.assertIn("./installer/bootstrap.sh list-artifacts $(ARGS)", text)
         self.assertIn("./installer/bootstrap.sh runtime-smoke $(ARGS)", text)
+        self.assertIn("./installer/bootstrap.sh delegate-agent $(ARGS)", text)
         self.assertIn("generate-docs: docs", text)
         self.assertIn("./installer/bootstrap.sh --run-python -m sphinx", text)
+
+    def test_cli_delegate_agent_research_blocks_without_resolved_model(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            fake_cli = root / "bin" / "fake-claude"
+            fake_cli.parent.mkdir()
+            fake_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake_cli.chmod(0o755)
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                patch.dict(
+                    os.environ,
+                    {
+                        "AAS_CLAUDE": str(fake_cli),
+                        "AAS_CLAUDE_DISPATCH_COMMAND": str(fake_cli),
+                    },
+                    clear=False,
+                ),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "delegate-agent",
+                    "--provider",
+                    "claude",
+                    "--task",
+                    "Review the claim.",
+                    "--research",
+                    "--dry-run",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "blocked")
+            self.assertIn("research dispatch requires", payload["dispatch_plan"][0]["reason"])
+            self.assertNotIn(str(root), json.dumps(payload["dispatch_plan"]))
+
+    def test_cli_delegate_agent_live_requires_external_cli_opt_in(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            fake_cli = root / "bin" / "fake-claude"
+            fake_cli.parent.mkdir()
+            fake_cli.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake_cli.chmod(0o755)
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                patch.dict(
+                    os.environ,
+                    {
+                        "AAS_CLAUDE": str(fake_cli),
+                        "AAS_CLAUDE_DISPATCH_COMMAND": str(fake_cli),
+                        "AAS_CLAUDE_LATEST_MODEL": "claude-fake-latest",
+                        "AAS_CLAUDE_HIGHEST_THINKING": "xhigh",
+                    },
+                    clear=False,
+                ),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "delegate-agent",
+                    "--provider",
+                    "claude",
+                    "--task",
+                    "Review the claim.",
+                    "--research",
+                ])
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertIn("live external CLI dispatch requires --allow-external-cli", payload["error"])
+
+    def test_dispatch_command_split_strips_windows_wrapper_quotes(self) -> None:
+        command = '"C:\\Path With Spaces\\python.exe" "D:\\tmp\\fake.py" --model x'
+        with patch("installer.ai_agents_skills.delegation_dispatch.os.name", "nt"):
+            self.assertEqual(
+                split_dispatch_command(command),
+                ["C:\\Path With Spaces\\python.exe", "D:\\tmp\\fake.py", "--model", "x"],
+            )
+
+    def test_cli_delegate_agent_dispatches_fake_external_cli(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            fake_cli = root / "bin" / "fake_claude.py"
+            fake_cli.parent.mkdir()
+            fake_cli.write_text(
+                "from __future__ import annotations\n"
+                "import os\n"
+                "import sys\n"
+                "sys.stdin.read()\n"
+                "print('AAS_RESULT_JSON_START')\n"
+                "print('{\"status\":\"ok\",\"findings\":[{\"id\":\"F1\",\"summary\":\"done\",\"evidence_refs\":[\"task\"]}],\"limitations\":[],\"warnings\":[]}')\n"
+                "print('AAS_RESULT_JSON_END')\n"
+                "print(os.environ['AAS_DELEGATION_FINAL_MARKER'])\n",
+                encoding="utf-8",
+            )
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                patch.dict(
+                    os.environ,
+                    {
+                        "AAS_CLAUDE": str(fake_cli),
+                        "AAS_CLAUDE_DISPATCH_COMMAND": (
+                            f"\"{sys.executable}\" \"{fake_cli}\" --model {{model}} --thinking {{thinking}}"
+                        ),
+                        "AAS_CLAUDE_LATEST_MODEL": "claude-fake-latest",
+                        "AAS_CLAUDE_HIGHEST_THINKING": "xhigh",
+                    },
+                    clear=False,
+                ),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "delegate-agent",
+                    "--provider",
+                    "claude",
+                    "--task",
+                    "Review the claim.",
+                    "--research",
+                    "--allow-external-cli",
+                    "--timeout",
+                    "5",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["participants"][0]["status"], "ok")
+            self.assertEqual(payload["participants"][0]["result"]["findings"][0]["summary"], "done")
+            self.assertEqual(payload["dispatch_plan"][0]["command_shape"], f"{Path(sys.executable).name} <args-redacted>")
+            self.assertNotIn("command", payload["dispatch_plan"][0])
+            run_dir = Path(payload["run_dir"])
+            self.assertTrue((run_dir / "profiles" / "claude-external-1.json").is_file())
+            profile = json.loads((run_dir / "profiles" / "claude-external-1.json").read_text(encoding="utf-8"))
+            self.assertEqual(profile["research_model_policy"]["resolved_model"], "claude-fake-latest")
+            self.assertEqual(profile["research_model_policy"]["resolved_thinking"], "xhigh")
+            self.assertNotIn(str(root), json.dumps(payload["dispatch_plan"]))
 
     def test_cli_install_refuses_real_system_without_flag(self) -> None:
         code = main(["--json", "install", "--skill", "zotero", "--apply"])
@@ -2251,6 +2408,74 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertIn(target["copilot_status"], {"cli-missing", "probe-disabled", "offline-unverified"})
             self.assertEqual(target["path_style"], path_style_for_platform(current_platform()))
             self.assert_target_precheck_schema(target)
+
+    def test_cli_precheck_reports_sanitized_external_agent_delegation_policy(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            fake_cli = root / "bin" / "claude-test"
+            fake_cli.parent.mkdir()
+            fake_cli.write_text("#!/bin/sh\nprintf 'claude-test 1.0\\n'\n", encoding="utf-8")
+            fake_cli.chmod(0o755)
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                patch.dict(os.environ, {"AAS_CLAUDE": str(fake_cli)}, clear=False),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "precheck",
+                    "--no-skills",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            external = payload["external_agent_prechecks"]
+            self.assertEqual(external["schema_version"], "external-agent-precheck.v1")
+            self.assertEqual(external["policy"]["mode"], "prefer")
+            self.assertEqual(external["policy"]["research_model_policy"], "latest_model_highest_reasoning_required")
+            self.assertTrue(external["nested_delegation"]["require_same_model_as_manager"])
+            by_provider = {item["provider"]: item for item in external["providers"]}
+            self.assertEqual(by_provider["codex"]["status"], "parent-runtime-probe-required")
+            self.assertEqual(
+                by_provider["codex"]["research_model_policy"]["status"],
+                "runtime-probe-required",
+            )
+            self.assertEqual(by_provider["openclaw"]["status"], "reference-only")
+            self.assertEqual(by_provider["claude"]["cli"]["command"], "claude-test")
+            self.assertEqual(by_provider["claude"]["cli"]["version"], "output-redacted")
+            self.assertNotIn(str(root), by_provider["claude"]["cli"]["command"])
+            self.assertFalse(by_provider["claude"]["read_policy"]["secret_values_read"])
+            self.assertEqual(
+                by_provider["claude"]["research_model_policy"]["status"],
+                "runtime-probe-required",
+            )
+            self.assertEqual(
+                by_provider["claude"]["nested_delegation"]["status"],
+                "runtime-probe-required",
+            )
+
+    def test_cli_audit_system_includes_external_agent_prechecks(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "audit-system",
+                    "--profile",
+                    "multi-agent",
+                ])
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertIn("external_agent_prechecks", payload)
+            self.assertEqual(
+                payload["external_agent_prechecks"]["policy"]["template_policy"],
+                "prefer_installed_templates",
+            )
 
     def test_cli_precheck_reports_all_targets_for_all_platform_overrides(self) -> None:
         target_names = ["codex", "claude", "deepseek", "copilot", "openclaw"]

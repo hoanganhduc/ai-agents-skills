@@ -135,3 +135,55 @@ locators, claim-to-source mappings, and evidence status values:
   gap, rerun ambiguity, artifact mismatch
 - forbidden outputs: claims that code was executed or results were reproduced
   unless evidence refs prove that status
+
+### cross-provider-research-panel
+
+- recipient profile family: `claude-like-research-reviewer`,
+  `deepseek-like-model-reviewer`, `copilot-like-code-reviewer`, or
+  `codex-like-coding-reviewer`
+- required input ref kinds: research brief, source ledger, role assignment,
+  capability-profile summary
+- source ID policy: preserve parent `S*` ids; new leads are `unverified_leads`
+- expected findings: provider-specific critique, missing evidence, integration
+  candidate, limitation note, blocked-provider note
+- forbidden outputs: claims that a provider used the latest model or highest
+  thinking level unless the parent-supplied capability profile supports it
+
+### manager-worker-research-review
+
+- recipient profile family: `claude-like-research-reviewer`,
+  `deepseek-like-model-reviewer`, `copilot-like-code-reviewer`, or
+  `codex-like-coding-reviewer`
+- required input ref kinds: manager assignment, worker cap, source ledger,
+  evidence matrix, same-model policy
+- source ID policy: preserve parent source IDs and child task IDs
+- expected findings: child task partition, child result summaries, accepted
+  findings, rejected findings, unresolved findings, limitations
+- forbidden outputs: launching or claiming child-worker results unless the
+  parent run policy explicitly permits nested delegation and same-model child
+  dispatch was confirmed
+
+### repo-comparison-research
+
+- recipient profile family: `copilot-like-code-reviewer`,
+  `codex-like-coding-reviewer`, or `claude-like-research-reviewer`
+- required input ref kinds: repository snapshot, README/docs summary,
+  manifest/config summary, test summary
+- source ID policy: preserve repository source IDs and file refs
+- expected findings: confirmed repo facts, reusable workflow patterns,
+  incompatible assumptions, integration candidates, verification gaps
+- forbidden outputs: broad compatibility claims unless all compared interfaces
+  were inspected or the limitation is stated
+
+### evidence-synthesis-critique
+
+- recipient profile family: `claude-like-research-reviewer`,
+  `model-only-api-reviewer`, or `codex-like-coding-reviewer`
+- required input ref kinds: draft synthesis, source ledger, result packet refs,
+  limitation list
+- source ID policy: preserve source IDs, task IDs, result IDs, and
+  claim-to-source mapping
+- expected findings: unsupported synthesis claim, missing limitation,
+  contradicted claim, overgeneralization, delivery blocker
+- forbidden outputs: final readiness claims without checking all declared scope,
+  evidence, dates, and limitations
