@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "policy": {
+    "mode": "prefer",
+    "min_distinct_providers": 2,
+    "active_providers": ["codex", "claude", "deepseek", "copilot"],
+    "reference_only_providers": ["openclaw"],
+    "fallback_to_codex_only": true,
+    "require_parent_confirmation_for_external_cli": true,
+    "stale_profile_after_hours": 24,
+    "template_policy": "prefer_installed_templates",
+    "research_model_policy": "latest_model_highest_reasoning_required"
+  },
+  "nested_delegation": {
+    "enabled": true,
+    "max_depth": 1,
+    "max_child_workers_per_manager": 3,
+    "require_same_model_as_manager": true
+  },
+  "providers": {
+    "codex": {
+      "status": "active",
+      "recipient_profile": "codex-like-coding-reviewer",
+      "default_role_family": "parent orchestrator and Codex spawned subagents"
+    },
+    "claude": {
+      "status": "active",
+      "recipient_profile": "claude-like-research-reviewer",
+      "default_role_family": "literature and long-context research critique"
+    },
+    "deepseek": {
+      "status": "active",
+      "recipient_profile": "deepseek-like-model-reviewer",
+      "default_role_family": "independent model-only critique"
+    },
+    "copilot": {
+      "status": "active",
+      "recipient_profile": "copilot-like-code-reviewer",
+      "default_role_family": "code and repository workflow review"
+    },
+    "openclaw": {
+      "status": "reference_only",
+      "recipient_profile": "openclaw-host-reference",
+      "default_role_family": "reference-only interoperability notes"
+    }
+  }
+}

@@ -12,6 +12,10 @@
         "template:research-verification-checklist",
         "template:research-workflow-runbook",
         "template:hierarchical-agent-delegation",
+        "template:cross-provider-research-panel",
+        "template:manager-worker-research-review",
+        "template:repo-comparison-research",
+        "template:evidence-synthesis-critique",
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report"
@@ -22,6 +26,7 @@
       "artifacts": [
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:research-quick-actions",
+        "instruction-doc:cross-provider-delegation",
         "instruction-doc:python-quality-gates",
         "instruction-doc:modal-offload-routing",
         "instruction-doc:scrapling-integration",
@@ -64,6 +69,16 @@
         "management-notice:repo-management"
       ]
     },
+    "cross-provider-delegation": {
+      "description": "Templates and guidance for true cross-provider delegation runs.",
+      "artifacts": [
+        "instruction-doc:cross-provider-delegation",
+        "template:cross-provider-research-panel",
+        "template:manager-worker-research-review",
+        "template:repo-comparison-research",
+        "template:evidence-synthesis-critique"
+      ]
+    },
     "workflow-artifacts": {
       "description": "All portable templates, workflow docs, personas, and entrypoint aliases.",
       "artifacts": [
@@ -75,11 +90,16 @@
         "template:research-verification-checklist",
         "template:research-workflow-runbook",
         "template:hierarchical-agent-delegation",
+        "template:cross-provider-research-panel",
+        "template:manager-worker-research-review",
+        "template:repo-comparison-research",
+        "template:evidence-synthesis-critique",
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report",
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:research-quick-actions",
+        "instruction-doc:cross-provider-delegation",
         "instruction-doc:python-quality-gates",
         "instruction-doc:modal-offload-routing",
         "instruction-doc:scrapling-integration",
@@ -155,6 +175,30 @@
         "supported_agents": ["codex", "claude", "deepseek"],
         "depends_on_skills": ["cross-agent-delegation"]
       },
+      "cross-provider-research-panel": {
+        "description": "Cross-provider research panel template with latest-model and highest-thinking constraints.",
+        "source": "cross-provider-research-panel.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation"]
+      },
+      "manager-worker-research-review": {
+        "description": "Manager-worker research review template with same-model nested worker constraints.",
+        "source": "manager-worker-research-review.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation"]
+      },
+      "repo-comparison-research": {
+        "description": "Repository comparison research template with source-preserving evidence requirements.",
+        "source": "repo-comparison-research.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["deep-research-workflow", "agent-group-discuss"]
+      },
+      "evidence-synthesis-critique": {
+        "description": "Evidence synthesis critique template for validating delegated research outputs.",
+        "source": "evidence-synthesis-critique.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["research-report-reviewer", "research-verification-gate"]
+      },
       "deep-research-sources": {
         "description": "Source handoff table for phased deep research.",
         "source": "deep-research-sources.md",
@@ -184,6 +228,12 @@
         "description": "Short command and routing references for common research actions.",
         "source": "research-quick-actions.md",
         "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "cross-provider-delegation": {
+        "description": "Guidance for template-driven cross-provider delegation with safe nested workers.",
+        "source": "cross-provider-delegation.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation", "model-router"]
       },
       "python-quality-gates": {
         "description": "Suggested Python verification gates for research and installer code.",

@@ -1,4 +1,4 @@
-.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke runtime-inventory list-skills list-artifacts describe describe-artifact docs generate-docs docs-site sanitize-check test
+.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke runtime-inventory delegate-agent list-skills list-artifacts describe describe-artifact docs generate-docs docs-site sanitize-check test
 
 ARGS ?=
 
@@ -70,6 +70,9 @@ runtime-smoke:
 
 runtime-inventory:
 	./installer/bootstrap.sh runtime-inventory $(ARGS)
+
+delegate-agent:
+	./installer/bootstrap.sh delegate-agent $(ARGS)
 
 list-skills:
 	./installer/bootstrap.sh list-skills $(ARGS)
