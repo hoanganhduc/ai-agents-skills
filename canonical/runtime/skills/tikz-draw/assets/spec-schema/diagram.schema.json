@@ -12,7 +12,8 @@
     "edges",
     "groups",
     "layout_constraints",
-    "validation_rules"
+    "validation_rules",
+    "symmetry_contract"
   ],
   "properties": {
     "diagram_family": {
@@ -90,6 +91,9 @@
       "items": {
         "type": "string"
       }
+    },
+    "symmetry_contract": {
+      "$ref": "#/$defs/symmetry_contract"
     },
     "graph_routing": {
       "type": "object",
@@ -238,6 +242,42 @@
         },
         "y": {
           "type": "string"
+        }
+      }
+    },
+    "symmetry_contract": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "required",
+            "not_required",
+            "intentionally_asymmetric"
+          ]
+        },
+        "justification": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "mirror_vertical_axis",
+            "mirror_horizontal_axis",
+            "row_alignment",
+            "column_alignment",
+            "paired_panels"
+          ]
+        },
+        "pairs": {
+          "type": "array"
+        },
+        "tolerance_pt": {
+          "type": "number"
         }
       }
     }

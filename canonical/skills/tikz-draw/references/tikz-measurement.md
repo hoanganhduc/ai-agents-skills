@@ -1,6 +1,6 @@
 # TikZ Measurement
 
-This reference names the additive measured-review passes used by `review-visual`.
+This reference names the measured-review passes used by `review-visual` and consumed by strict `approve`.
 
 Current pass IDs:
 
@@ -10,11 +10,18 @@ Current pass IDs:
   - reserved for label-to-shape and boundary-clearance checks
 - `V3_PAGE_MARGIN`
   - reserved for page, slide, or frame-edge margin checks
-- `V4_CURVE_POINT_PLACEMENT`
-  - reserved for curve-depth, plotted-point, and geometry-sensitive placement checks
+- `V4_TEXT_TEXT_OVERLAP`
+  - text labels must not overlap one another
+- `V5_TEXT_SHAPE_OVERLAP`
+  - text must not overlap non-containing shapes
+- `V6_LINE_TEXT_OVERLAP`
+  - linework must not cross text labels
+- `V7_LINE_SHAPE_OVERLAP`
+  - linework must not cross non-incident shapes
+- `V8_SHAPE_SHAPE_OVERLAP`
+  - non-group shapes must not overlap
 
 Phase note:
 
-- In phase 0/1 the pass IDs and report fields are being locked.
-- The actual rendered-artifact measurement implementation lands later.
-- Do not treat `review-visual` as strong semantic approval yet.
+- `review-visual` remains a component gate.
+- Final figure approval requires `approve`, which consumes visual status together with compile, semantic, provenance, and symmetry-contract status.
