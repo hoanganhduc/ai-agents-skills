@@ -52,6 +52,7 @@ BACKEND_BY_FAMILY = {
 
 CLI_VERBS = (
     "doctor",
+    "contract",
     "spec",
     "render",
     "check",
@@ -89,6 +90,7 @@ VISUAL_REVIEW_PASS_IDS = (
 )
 
 STRICT_APPROVAL_VERSION = "strict-approval.v1"
+FIGURE_CONTRACT_VERSION = "figure-contract.v1"
 SYMMETRY_CONTRACT_STATUSES = ("required", "not_required", "intentionally_asymmetric")
 SYMMETRY_MODES = (
     "mirror_vertical_axis",
@@ -187,6 +189,20 @@ BRIEF_REQUIRED = {
     "content_requirements",
     "layout_constraints",
     "output_dir",
+}
+
+FIGURE_CONTRACT_REQUIRED = {
+    "schema_version",
+    "figure_id",
+    "request",
+    "context_summary",
+    "recommended_diagram_family",
+    "intent",
+    "required_objects",
+    "required_relations",
+    "forbidden_simplifications",
+    "notation_requirements",
+    "approval_criteria",
 }
 
 SPEC_REQUIRED = {
@@ -344,6 +360,498 @@ def normalize_symmetry_contract(value: Any, *, default_reason: str | None = None
     return contract
 
 
+def compact_ws(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def text_entries(values: Any) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, list):
+        return []
+    entries: list[str] = []
+    for value in values:
+        text = compact_ws(str(value))
+        if text:
+            entries.append(text)
+    return entries
+
+
+def entry_dict(value: Any, *, prefix: str, index: int, field: str = "description") -> dict[str, str]:
+    if isinstance(value, dict):
+        payload = {str(key): str(item) for key, item in value.items() if item is not None}
+        if "id" not in payload:
+            basis = payload.get(field) or payload.get("label") or prefix
+            payload["id"] = slugify(basis, f"{prefix}{index + 1}")
+        return payload
+    text = compact_ws(str(value))
+    return {"id": slugify(text, f"{prefix}{index + 1}"), field: text}
+
+
+def normalize_contract_entries(values: Any, *, prefix: str, field: str = "description") -> list[dict[str, str]]:
+    if values is None:
+        return []
+    if not isinstance(values, list):
+        values = [values]
+    return [entry_dict(value, prefix=prefix, index=index, field=field) for index, value in enumerate(values)]
+
+
+def contract_item_text(item: Any) -> str:
+    if isinstance(item, dict):
+        return compact_ws(" ".join(str(value) for value in item.values() if value is not None))
+    return compact_ws(str(item))
+
+
+def unique_contract_entries(items: list[dict[str, str]], *, key: str = "description") -> list[dict[str, str]]:
+    seen: set[str] = set()
+    result: list[dict[str, str]] = []
+    for item in items:
+        basis = compact_ws(item.get(key) or item.get("label") or contract_item_text(item)).lower()
+        if not basis or basis in seen:
+            continue
+        seen.add(basis)
+        result.append(item)
+    return result
+
+
+def extract_math_labels(text: str) -> list[str]:
+    labels: list[str] = []
+    for match in re.finditer(r"\$([^$]+)\$", text):
+        label = "$" + compact_ws(match.group(1)) + "$"
+        labels.append(label)
+    for match in re.finditer(r"\\\(?([A-Za-z0-9_{}^,=+\-\\ ]{2,})\\\)?", text):
+        body = compact_ws(match.group(1))
+        if any(token in body for token in ("_", "^", "\\")):
+            labels.append(body)
+    return list(dict.fromkeys(labels))
+
+
+def read_context_inputs(args: argparse.Namespace) -> tuple[str, list[str]]:
+    chunks: list[str] = []
+    evidence: list[str] = []
+    for index, text in enumerate(text_entries(getattr(args, "context_text", None))):
+        chunks.append(text)
+        evidence.append(f"--context-text[{index}]")
+    for value in text_entries(getattr(args, "context_file", None)):
+        path = abs_path(value)
+        if path is None or not path.is_file():
+            raise SystemExit(f"context file is missing: {value}")
+        chunks.append(read_text(path))
+        evidence.append(str(path))
+    source_tex = abs_path(getattr(args, "source_tex", None))
+    if source_tex is not None:
+        if not source_tex.is_file():
+            raise SystemExit(f"source tex file is missing: {source_tex}")
+        text = read_text(source_tex)
+        around_label = compact_ws(str(getattr(args, "around_label", "") or ""))
+        if around_label:
+            index = text.find(around_label)
+            if index >= 0:
+                start = max(index - 1800, 0)
+                end = min(index + len(around_label) + 1800, len(text))
+                text = text[start:end]
+        chunks.append(text)
+        evidence.append(str(source_tex))
+    return "\n\n".join(chunks), evidence
+
+
+def classify_diagram_family(
+    text: str,
+    *,
+    requested_family: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    lowered = text.lower()
+    scores = {family: 0 for family in SUPPORTED_FAMILIES}
+    evidence: list[str] = []
+
+    def hit(family: str, points: int, pattern: str, description: str) -> None:
+        if re.search(pattern, lowered, re.IGNORECASE):
+            scores[family] += points
+            evidence.append(description)
+
+    hit("graph", 5, r"\bgraph(s)?\b|\bvertices\b|\bvertex\b", "graph/vertex vocabulary")
+    hit("graph", 4, r"\bedge(s)?\b.*\bgadget\b|\bgadget\b.*\bedge(s)?\b", "edge-gadget vocabulary")
+    hit("graph", 4, r"\bhardness reduction\b|\breduction\b.*\bgadget\b", "hardness-reduction/gadget vocabulary")
+    hit("graph", 3, r"\breplac(?:e|ed|ing|ement)\b.*\bedge\b|\bedge\b.*\breplac(?:e|ed|ing|ement)\b", "edge replacement vocabulary")
+    hit("graph", 2, r"kempe|claw-free|k_\{1,|k1,|constructed instance|original instance|source instance", "graph reconfiguration context")
+
+    hit("commutative", 5, r"commutative|tikz-cd|category|morphism|pullback|pushout", "commutative-diagram vocabulary")
+    hit("tree", 4, r"\btree\b|rooted|children|parent|branch", "tree vocabulary")
+    hit("dag", 4, r"\bdag\b|dependency graph|acyclic", "DAG vocabulary")
+    hit("flowchart", 4, r"flowchart|pipeline|workflow|process|validation loop|decision", "flowchart/process vocabulary")
+
+    if requested_family:
+        scores[requested_family] += 1
+        evidence.append(f"explicit requested family: {requested_family}")
+
+    family = max(sorted(scores), key=lambda item: scores[item])
+    if scores[family] <= 0:
+        family = requested_family or "flowchart"
+        evidence.append("defaulted from requested family or flowchart fallback")
+    return family, {"scores": scores, "evidence": evidence}
+
+
+def infer_figure_contract(
+    *,
+    figure_id: str,
+    request: str,
+    title: str,
+    purpose: str,
+    source_ids: list[str],
+    content_requirements: list[str],
+    requested_family: str | None,
+    args: argparse.Namespace | None = None,
+) -> dict[str, Any]:
+    context_text = ""
+    context_evidence: list[str] = []
+    if args is not None:
+        context_text, context_evidence = read_context_inputs(args)
+    combined = compact_ws("\n".join([request, title, purpose, *content_requirements, context_text]))
+    family, family_evidence = classify_diagram_family(combined, requested_family=requested_family)
+    lowered = combined.lower()
+    is_reduction = bool(re.search(r"\breduction\b|\bhardness\b|\bgadget\b|\breplac(?:e|ed|ing|ement)\b", lowered))
+
+    required_objects: list[dict[str, str]] = []
+    required_relations: list[dict[str, str]] = []
+    forbidden_simplifications: list[dict[str, str]] = []
+    approval_criteria: list[dict[str, str]] = []
+
+    if family == "graph":
+        required_objects.extend(
+            [
+                {"id": "graph-vertices", "description": "Visible graph vertices must be drawn as graph vertices, not as free text or process boxes."},
+                {"id": "graph-edges", "description": "Visible graph edges must connect the corresponding graph vertices."},
+            ]
+        )
+        required_relations.append(
+            {"id": "incidence", "description": "Adjacency must be represented by line segments incident with graph vertices."}
+        )
+        forbidden_simplifications.append(
+            {
+                "id": "box-only-flowchart",
+                "description": "A box-only flowchart or schematic without graph vertices and graph edges is not acceptable for a graph request.",
+            }
+        )
+        if is_reduction:
+            required_objects.extend(
+                [
+                    {
+                        "id": "source-instance-part",
+                        "description": "The original/source instance part relevant to the reduction must be visible.",
+                    },
+                    {
+                        "id": "constructed-instance-part",
+                        "description": "The corresponding constructed instance part must be visible.",
+                    },
+                    {
+                        "id": "replacement-gadget",
+                        "description": "The gadget replacing the chosen source edge or local structure must be visible as graph structure.",
+                    },
+                ]
+            )
+            required_relations.append(
+                {
+                    "id": "replacement-correspondence",
+                    "description": "The figure must mark which source edge or local structure corresponds to which constructed gadget.",
+                }
+            )
+            forbidden_simplifications.append(
+                {
+                    "id": "label-only-gadget",
+                    "description": "A label naming a gadget is not enough unless the gadget vertices and edges are drawn.",
+                }
+            )
+    elif family in {"flowchart", "dag"}:
+        required_objects.append(
+            {"id": f"{family}-nodes", "description": f"The {family} must have visible nodes for the main steps or states."}
+        )
+        required_relations.append(
+            {"id": f"{family}-arcs", "description": f"The {family} must have directed connections showing the intended order or dependency."}
+        )
+    elif family == "tree":
+        required_objects.append({"id": "tree-nodes", "description": "The tree must have a visible root and visible child nodes."})
+        required_relations.append({"id": "tree-edges", "description": "Parent-child relations must be shown by tree edges."})
+    elif family == "commutative":
+        required_objects.append(
+            {"id": "commutative-objects", "description": "The diagram must show the mathematical objects in a commutative grid."}
+        )
+        required_relations.append(
+            {"id": "commutative-arrows", "description": "The arrows must connect the intended source and target objects."}
+        )
+
+    for index, value in enumerate(text_entries(getattr(args, "required_object", None) if args is not None else None)):
+        required_objects.append(entry_dict(value, prefix="required-object", index=index))
+    for index, value in enumerate(text_entries(getattr(args, "required_relation", None) if args is not None else None)):
+        required_relations.append(entry_dict(value, prefix="required-relation", index=index))
+    for index, value in enumerate(text_entries(getattr(args, "forbidden_simplification", None) if args is not None else None)):
+        forbidden_simplifications.append(entry_dict(value, prefix="forbidden", index=index))
+
+    notation_requirements = [
+        {"id": slugify(label, f"notation{index + 1}"), "label": label, "description": "Preserve this mathematical label as TeX notation."}
+        for index, label in enumerate(extract_math_labels(combined))
+    ]
+    for index, value in enumerate(text_entries(getattr(args, "notation_requirement", None) if args is not None else None)):
+        notation_requirements.append(entry_dict(value, prefix="notation", index=index, field="label"))
+
+    approval_criteria.extend(
+        [
+            {"id": "contract-family", "description": f"The rendered figure must use the {family} family unless the contract is revised."},
+            {"id": "no-overlaps", "description": "Text, edges, and shapes must pass the visual overlap checker."},
+            {"id": "semantic-match", "description": "The rendered structure must match the diagram spec and this contract."},
+        ]
+    )
+    for index, value in enumerate(text_entries(getattr(args, "approval_criterion", None) if args is not None else None)):
+        approval_criteria.append(entry_dict(value, prefix="approval", index=index))
+
+    context_summary = " ".join(family_evidence["evidence"][:4])
+    if context_evidence:
+        context_summary = compact_ws(f"{context_summary}; context files: {', '.join(context_evidence)}")
+    if not context_summary:
+        context_summary = "No strong external context was supplied; contract was inferred from request/title/purpose."
+
+    intent_kind = "graph_hardness_reduction" if family == "graph" and is_reduction else f"{family}_figure"
+    contract = {
+        "schema_version": FIGURE_CONTRACT_VERSION,
+        "figure_id": figure_id,
+        "request": request or purpose or title,
+        "context_summary": context_summary,
+        "source_ids": source_ids,
+        "recommended_diagram_family": family,
+        "intent": {
+            "kind": intent_kind,
+            "description": f"Generate a {family} figure that satisfies the required objects, relations, notation, and approval criteria.",
+            "classification": family_evidence,
+        },
+        "required_objects": unique_contract_entries(required_objects),
+        "required_relations": unique_contract_entries(required_relations),
+        "forbidden_simplifications": unique_contract_entries(forbidden_simplifications),
+        "notation_requirements": unique_contract_entries(notation_requirements, key="label"),
+        "approval_criteria": unique_contract_entries(approval_criteria),
+    }
+    return normalize_figure_contract(contract)
+
+
+def normalize_figure_contract(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SystemExit("semantic_contract must be an object")
+    ensure_keys(value, FIGURE_CONTRACT_REQUIRED, "figure contract")
+    contract = dict(value)
+    if contract.get("schema_version") != FIGURE_CONTRACT_VERSION:
+        raise SystemExit(f"unsupported figure contract schema_version: {contract.get('schema_version')!r}")
+    contract["figure_id"] = ensure_figure_id(str(contract.get("figure_id") or "F1"))
+    family = str(contract.get("recommended_diagram_family", "")).strip()
+    if family not in SUPPORTED_FAMILIES:
+        raise SystemExit(
+            "figure contract recommended_diagram_family must be one of: " + ", ".join(sorted(SUPPORTED_FAMILIES))
+        )
+    contract["recommended_diagram_family"] = family
+    if not isinstance(contract.get("intent"), dict):
+        raise SystemExit("figure contract intent must be an object")
+    contract["source_ids"] = text_entries(contract.get("source_ids"))
+    contract["required_objects"] = normalize_contract_entries(contract.get("required_objects"), prefix="required-object")
+    contract["required_relations"] = normalize_contract_entries(contract.get("required_relations"), prefix="required-relation")
+    contract["forbidden_simplifications"] = normalize_contract_entries(
+        contract.get("forbidden_simplifications"), prefix="forbidden"
+    )
+    contract["notation_requirements"] = normalize_contract_entries(
+        contract.get("notation_requirements"), prefix="notation", field="label"
+    )
+    contract["approval_criteria"] = normalize_contract_entries(contract.get("approval_criteria"), prefix="approval")
+    return contract
+
+
+def load_or_infer_contract(
+    args: argparse.Namespace,
+    *,
+    figure_id: str,
+    request: str,
+    title: str,
+    purpose: str,
+    source_ids: list[str],
+    content_requirements: list[str],
+    requested_family: str | None,
+) -> dict[str, Any]:
+    contract_path = abs_path(getattr(args, "contract", None))
+    if contract_path is not None:
+        if not contract_path.is_file():
+            raise SystemExit(f"figure contract is missing: {contract_path}")
+        contract = normalize_figure_contract(load_json(contract_path))
+        if contract["figure_id"] != figure_id:
+            raise SystemExit(
+                f"figure contract figure_id {contract['figure_id']!r} does not match requested figure_id {figure_id!r}"
+            )
+        return contract
+    return infer_figure_contract(
+        figure_id=figure_id,
+        request=request,
+        title=title,
+        purpose=purpose,
+        source_ids=source_ids,
+        content_requirements=content_requirements,
+        requested_family=requested_family,
+        args=args,
+    )
+
+
+def ensure_brief_contract(brief: dict[str, Any], args: argparse.Namespace | None = None) -> None:
+    figure_id = ensure_figure_id(str(brief.get("figure_id") or "F1"))
+    requested_family = str(brief.get("diagram_family", "") or "") or None
+    if args is not None and getattr(args, "contract", None):
+        contract = load_or_infer_contract(
+            args,
+            figure_id=figure_id,
+            request=str(brief.get("purpose", "")),
+            title=str(brief.get("title", "")),
+            purpose=str(brief.get("purpose", "")),
+            source_ids=text_entries(brief.get("source_ids")),
+            content_requirements=text_entries(brief.get("content_requirements")),
+            requested_family=requested_family,
+        )
+    elif brief.get("semantic_contract") is not None:
+        contract = normalize_figure_contract(brief["semantic_contract"])
+    else:
+        namespace = args if args is not None else argparse.Namespace()
+        contract = infer_figure_contract(
+            figure_id=figure_id,
+            request=str(brief.get("purpose", "")),
+            title=str(brief.get("title", "")),
+            purpose=str(brief.get("purpose", "")),
+            source_ids=text_entries(brief.get("source_ids")),
+            content_requirements=text_entries(brief.get("content_requirements")),
+            requested_family=requested_family,
+            args=namespace,
+        )
+    family = contract["recommended_diagram_family"]
+    if requested_family and family != requested_family:
+        raise SystemExit(
+            f"figure contract recommends diagram_family={family!r}, but brief requests {requested_family!r}; revise the contract or the brief"
+        )
+    brief["semantic_contract"] = contract
+
+
+def spec_text_index(spec: dict[str, Any]) -> str:
+    values: list[str] = [
+        str(spec.get("title", "")),
+        str(spec.get("caption", "")),
+        str(spec.get("diagram_family", "")),
+    ]
+    for node in spec.get("nodes", []):
+        values.extend(str(node.get(key, "")) for key in ("id", "label", "style"))
+    for edge in spec.get("edges", []):
+        values.extend(str(edge.get(key, "")) for key in ("from", "to", "label", "style"))
+    for group in spec.get("groups", []):
+        values.extend(str(group.get(key, "")) for key in ("id", "label", "style"))
+        values.extend(str(member) for member in group.get("members", []))
+    values.extend(str(item) for item in spec.get("layout_constraints", []))
+    values.extend(str(item) for item in spec.get("validation_rules", []))
+    return compact_ws(" ".join(values)).lower()
+
+
+def contract_mismatch(code: str, message: str, **payload: Any) -> dict[str, Any]:
+    mismatch = {"code": code, "message": message}
+    mismatch.update(payload)
+    return mismatch
+
+
+def validate_contract_against_spec(contract_value: Any, spec: dict[str, Any]) -> list[dict[str, Any]]:
+    if contract_value is None:
+        return [
+            contract_mismatch(
+                "CONTRACT_MISSING",
+                "diagram spec must carry a semantic_contract before semantic approval",
+            )
+        ]
+    contract = normalize_figure_contract(contract_value)
+    mismatches: list[dict[str, Any]] = []
+    family = str(spec.get("diagram_family", ""))
+    expected_family = contract["recommended_diagram_family"]
+    if family != expected_family:
+        mismatches.append(
+            contract_mismatch(
+                "CONTRACT_FAMILY_MISMATCH",
+                f"contract requires family {expected_family!r}, but spec uses {family!r}",
+                expected_family=expected_family,
+                actual_family=family,
+            )
+        )
+
+    nodes = spec.get("nodes", [])
+    edges = spec.get("edges", [])
+    index = spec_text_index(spec)
+    for item in contract.get("required_objects", []):
+        text = contract_item_text(item).lower()
+        if "vertex" in text and not nodes:
+            mismatches.append(contract_mismatch("CONTRACT_GRAPH_VERTEX_MISSING", "contract requires graph vertices"))
+        if "edge" in text and not edges:
+            mismatches.append(contract_mismatch("CONTRACT_GRAPH_EDGE_MISSING", "contract requires graph edges"))
+        if any(token in text for token in ("source instance", "original/source", "original instance")) and not any(
+            token in index for token in ("source", "original", "edge e", "source-edge")
+        ):
+            mismatches.append(
+                contract_mismatch("CONTRACT_SOURCE_PART_MISSING", "contract requires the source/original instance part")
+            )
+        if "constructed instance" in text and "constructed" not in index:
+            mismatches.append(
+                contract_mismatch(
+                    "CONTRACT_CONSTRUCTED_PART_MISSING",
+                    "contract requires the constructed instance part",
+                )
+            )
+        if "gadget" in text and "gadget" not in index:
+            mismatches.append(contract_mismatch("CONTRACT_GADGET_MISSING", "contract requires a visible gadget"))
+
+    for item in contract.get("required_relations", []):
+        text = contract_item_text(item).lower()
+        if "replacement" in text and not any(token in index for token in ("replacement", "replaces", "gadget")):
+            mismatches.append(
+                contract_mismatch(
+                    "CONTRACT_REPLACEMENT_RELATION_MISSING",
+                    "contract requires the source-to-gadget replacement relation",
+                )
+            )
+        if any(token in text for token in ("adjacency", "incident", "edge")) and not edges:
+            mismatches.append(contract_mismatch("CONTRACT_RELATION_EDGE_MISSING", "contract relation requires edges"))
+
+    for item in contract.get("forbidden_simplifications", []):
+        text = contract_item_text(item).lower()
+        if "flowchart" in text and family in {"flowchart", "dag"} and expected_family == "graph":
+            mismatches.append(
+                contract_mismatch(
+                    "CONTRACT_FORBIDDEN_SIMPLIFICATION",
+                    "contract forbids satisfying a graph request by a flowchart/DAG",
+                )
+            )
+        if "label" in text and "gadget" in text and "gadget" in index and not edges:
+            mismatches.append(
+                contract_mismatch(
+                    "CONTRACT_FORBIDDEN_LABEL_ONLY_GADGET",
+                    "contract forbids a label-only gadget without graph edges",
+                )
+            )
+
+    raw_spec_text = " ".join(
+        [
+            str(spec.get("title", "")),
+            str(spec.get("caption", "")),
+            *[str(node.get("label", "")) for node in nodes],
+            *[str(edge.get("label", "")) for edge in edges],
+        ]
+    )
+    for item in contract.get("notation_requirements", []):
+        label = compact_ws(str(item.get("label") or item.get("description") or ""))
+        if label and label not in raw_spec_text:
+            mismatches.append(
+                contract_mismatch(
+                    "CONTRACT_NOTATION_MISSING",
+                    f"contract requires notation {label!r} to be preserved in labels",
+                    label=label,
+                )
+            )
+    return mismatches
+
+
 def validate_brief(brief: dict[str, Any]) -> None:
     ensure_keys(brief, BRIEF_REQUIRED, "figure-brief")
     family = brief["diagram_family"]
@@ -359,6 +867,7 @@ def validate_brief(brief: dict[str, Any]) -> None:
             raise SystemExit(f"invalid graph_mode {brief['graph_mode']!r}; allowed: {', '.join(GRAPH_MODE_VALUES)}")
     if "symmetry_contract" in brief:
         brief["symmetry_contract"] = normalize_symmetry_contract(brief["symmetry_contract"])
+    ensure_brief_contract(brief)
 
 
 def validate_spec(spec: dict[str, Any]) -> None:
@@ -376,6 +885,12 @@ def validate_spec(spec: dict[str, Any]) -> None:
         spec.get("symmetry_contract"),
         default_reason=None,
     )
+    if spec.get("semantic_contract") is not None:
+        spec["semantic_contract"] = normalize_figure_contract(spec["semantic_contract"])
+    contract_mismatches = validate_contract_against_spec(spec.get("semantic_contract"), spec)
+    if contract_mismatches:
+        codes = ", ".join(sorted({str(item["code"]) for item in contract_mismatches}))
+        raise SystemExit(f"diagram spec violates semantic_contract: {codes}")
 
 
 def slugify(value: str, fallback: str) -> str:
@@ -399,6 +914,13 @@ def tex_escape(value: str) -> str:
     for old, new in replacements.items():
         value = value.replace(old, new)
     return value
+
+
+def strip_outer_math_delimiters(value: str) -> str:
+    text = value.strip()
+    if len(text) >= 2 and text.startswith("$") and text.endswith("$"):
+        return text[1:-1]
+    return text
 
 
 def make_run_id() -> str:
@@ -464,31 +986,48 @@ def bootstrap_brief(
     *,
     fallback_parent: Path | None = None,
 ) -> tuple[dict[str, Any], Path, str]:
-    if not getattr(args, "diagram_family", None):
-        raise SystemExit("render/spec without --brief requires --diagram-family")
     request = (getattr(args, "request", None) or "").strip()
     title = (getattr(args, "title", None) or "").strip()
     purpose = (getattr(args, "purpose", None) or "").strip()
-    if not (request or title or purpose):
-        raise SystemExit("render/spec without --brief requires --request, --title, or --purpose")
 
     run_id = normalize_run_id(getattr(args, "run_id", None))
     figure_id = ensure_figure_id(getattr(args, "figure_id", None))
     out_dir = resolve_output_dir(args, run_id=run_id, fallback_parent=fallback_parent)
-    final_title = title or infer_title_from_request(request, figure_id)
-    final_purpose = purpose or request or f"Illustrate {final_title}."
+    source_ids = list(getattr(args, "source_id", None) or [])
+    content_requirements = list(getattr(args, "content_requirement", None) or ([request] if request else []))
+    contract = load_or_infer_contract(
+        args,
+        figure_id=figure_id,
+        request=request,
+        title=title,
+        purpose=purpose,
+        source_ids=source_ids,
+        content_requirements=content_requirements,
+        requested_family=getattr(args, "diagram_family", None),
+    )
+    contract_request = compact_ws(str(contract.get("request", "")))
+    if not (request or title or purpose or contract_request):
+        raise SystemExit("render/spec without --brief requires --request, --title, --purpose, or --contract")
+    if getattr(args, "diagram_family", None) and args.diagram_family != contract["recommended_diagram_family"]:
+        raise SystemExit(
+            f"requested --diagram-family {args.diagram_family!r} conflicts with semantic contract "
+            f"recommendation {contract['recommended_diagram_family']!r}; revise the request or pass an updated contract"
+        )
+    final_title = title or infer_title_from_request(request or contract_request, figure_id)
+    final_purpose = purpose or request or contract_request or f"Illustrate {final_title}."
     brief = {
         "figure_id": figure_id,
         "title": final_title,
         "purpose": final_purpose,
-        "source_ids": list(getattr(args, "source_id", None) or []),
-        "diagram_family": args.diagram_family,
+        "source_ids": source_ids,
+        "diagram_family": contract["recommended_diagram_family"],
         "backend_hint": getattr(args, "backend_hint", None),
-        "content_requirements": list(getattr(args, "content_requirement", None) or ([request] if request else [])),
+        "content_requirements": content_requirements,
         "layout_constraints": list(
             getattr(args, "layout_constraint", None) or ["Fit within text width using adjustbox."]
         ),
         "caption": getattr(args, "caption", None),
+        "semantic_contract": contract,
         "output_dir": str(out_dir),
     }
     symmetry_status = getattr(args, "symmetry", None)
@@ -505,7 +1044,7 @@ def bootstrap_brief(
         brief["symmetry_contract"] = default_symmetry_contract(
             "No mirror or alignment symmetry was requested for this generated figure."
         )
-    if args.diagram_family == "graph":
+    if brief["diagram_family"] == "graph":
         brief["graph_request"] = request or final_purpose
         if getattr(args, "graph_mode", None):
             brief["graph_mode"] = args.graph_mode
@@ -645,6 +1184,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "layout_constraints": brief["layout_constraints"],
             "validation_rules": validation_rules,
             "symmetry_contract": symmetry_contract,
+            "semantic_contract": brief.get("semantic_contract"),
         }
 
     if family == "tree":
@@ -668,6 +1208,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "layout_constraints": brief["layout_constraints"],
             "validation_rules": validation_rules,
             "symmetry_contract": symmetry_contract,
+            "semantic_contract": brief.get("semantic_contract"),
         }
 
     if family == "commutative":
@@ -697,6 +1238,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "layout_constraints": brief["layout_constraints"],
             "validation_rules": validation_rules,
             "symmetry_contract": symmetry_contract,
+            "semantic_contract": brief.get("semantic_contract"),
         }
 
     if family == "graph":
@@ -769,6 +1311,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "layout_constraints": brief["layout_constraints"],
             "validation_rules": validation_rules,
             "symmetry_contract": symmetry_contract,
+            "semantic_contract": brief.get("semantic_contract"),
             "graph_routing": graph_routing,
         }
 
@@ -910,7 +1453,7 @@ def render_tree(spec: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
 
 
 def render_commutative(spec: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
-    node_labels = {node["id"]: tex_escape(node["label"]) for node in spec["nodes"]}
+    node_labels = {node["id"]: strip_outer_math_delimiters(tex_escape(node["label"])) for node in spec["nodes"]}
     cell_positions = {
         "a": (1, 1),
         "b": (1, 2),
@@ -933,7 +1476,7 @@ def render_commutative(spec: dict[str, Any]) -> tuple[str, list[str], list[str],
             raise SystemExit(
                 f"commutative renderer currently supports only adjacent square edges, got {source!r} -> {target!r}"
             )
-        label = tex_escape(edge.get("label", "")) if edge.get("label") is not None else ""
+        label = strip_outer_math_delimiters(tex_escape(edge.get("label", ""))) if edge.get("label") is not None else ""
         label_fragment = ""
         if label:
             if frozenset({source, target}) in swap_pairs:
@@ -1370,6 +1913,7 @@ def base_semantic_report(manifest: dict[str, Any] | None = None) -> dict[str, An
     family = manifest.get("diagram_family") if manifest else None
     evidence = {
         "figure_brief": manifest.get("figure_brief") if manifest else None,
+        "figure_contract": manifest.get("figure_contract") if manifest else None,
         "diagram_spec": manifest.get("diagram_spec") if manifest else None,
         "standalone_tex": manifest.get("standalone_tex") if manifest else None,
         "pdf": manifest.get("pdf") if manifest else None,
@@ -1491,21 +2035,134 @@ def bbox_payload_from_tuple(bounds: tuple[float, float, float, float]) -> dict[s
     }
 
 
+def words_bbox(words: list[dict[str, Any]]) -> tuple[float, float, float, float] | None:
+    boxes = [bbox_tuple(item["bbox"]) for item in words if item.get("bbox")]
+    if not boxes:
+        return None
+    return (
+        min(item[0] for item in boxes),
+        min(item[1] for item in boxes),
+        max(item[2] for item in boxes),
+        max(item[3] for item in boxes),
+    )
+
+
+def should_merge_block_as_single_label(words: list[dict[str, Any]]) -> bool:
+    if len(words) <= 1:
+        return False
+    lines = {int(word.get("line", 0)) for word in words}
+    if len(lines) <= 1:
+        return False
+    bounds = words_bbox(words)
+    if bounds is None:
+        return False
+    x0, y0, x1, y1 = bounds
+    width = x1 - x0
+    height = y1 - y0
+    compact_text = "".join(
+        str(word.get("text", ""))
+        for word in sorted(words, key=lambda item: (int(item.get("line", 0)), int(item.get("word", 0))))
+    )
+    compact_text = compact_ws(compact_text)
+    if width > 90.0 or height > 36.0 or len(compact_text) > 28:
+        return False
+    math_like = bool(re.fullmatch(r"[A-Za-z0-9_{}^=,+\-()\\| ]+", compact_text))
+    small_fragment = any(
+        float(word.get("bbox", {}).get("height", 0.0)) < 5.0 or len(str(word.get("text", ""))) <= 2
+        for word in words
+    )
+    return math_like and small_fragment
+
+
+def word_cluster_lines(words: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    by_line: dict[int, list[dict[str, Any]]] = {}
+    for word in words:
+        by_line.setdefault(int(word.get("line", 0)), []).append(word)
+    clusters: list[list[dict[str, Any]]] = []
+    for _line, line_words in sorted(by_line.items()):
+        ordered = sorted(line_words, key=lambda item: float(item.get("bbox", {}).get("x0", 0.0)))
+        current: list[dict[str, Any]] = []
+        current_bounds: tuple[float, float, float, float] | None = None
+        for word in ordered:
+            bounds = bbox_tuple(word["bbox"]) if word.get("bbox") else None
+            if bounds is None:
+                continue
+            if current and current_bounds is not None:
+                gap = bounds[0] - current_bounds[2]
+                if gap > 9.0:
+                    clusters.append(current)
+                    current = []
+                    current_bounds = None
+            current.append(word)
+            current_bounds = words_bbox(current)
+        if current:
+            clusters.append(current)
+    return clusters
+
+
+def should_merge_clusters_as_math(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> bool:
+    left_bounds = words_bbox(left)
+    right_bounds = words_bbox(right)
+    if left_bounds is None or right_bounds is None:
+        return False
+    combined = [*left, *right]
+    combined_bounds = words_bbox(combined)
+    if combined_bounds is None:
+        return False
+    x0, y0, x1, y1 = combined_bounds
+    if x1 - x0 > 45.0 or y1 - y0 > 24.0:
+        return False
+    left_x0, _left_y0, left_x1, _left_y1 = left_bounds
+    right_x0, _right_y0, right_x1, _right_y1 = right_bounds
+    x_overlap_or_near = min(left_x1, right_x1) - max(left_x0, right_x0) >= -3.0
+    if not x_overlap_or_near:
+        return False
+    compact_text = "".join(
+        str(word.get("text", ""))
+        for word in sorted(combined, key=lambda item: (int(item.get("line", 0)), int(item.get("word", 0))))
+    )
+    return bool(re.fullmatch(r"[A-Za-z0-9_{}^=,+\-()\\| ]{1,28}", compact_text.strip()))
+
+
+def visual_word_clusters(block_words: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    clusters = word_cluster_lines(block_words)
+    changed = True
+    while changed:
+        changed = False
+        next_clusters: list[list[dict[str, Any]]] = []
+        used: set[int] = set()
+        for left_index, left in enumerate(clusters):
+            if left_index in used:
+                continue
+            merged = list(left)
+            used.add(left_index)
+            for right_index, right in enumerate(clusters[left_index + 1 :], start=left_index + 1):
+                if right_index in used:
+                    continue
+                if should_merge_clusters_as_math(merged, right):
+                    merged.extend(right)
+                    used.add(right_index)
+                    changed = True
+            next_clusters.append(merged)
+        clusters = next_clusters
+    return clusters
+
+
 def merge_words_into_visual_labels(page: dict[str, Any]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    by_block: dict[int, list[dict[str, Any]]] = {}
     for word in page.get("words", []):
-        key = (int(word.get("block", 0)), int(word.get("line", 0)))
-        grouped.setdefault(key, []).append(word)
+        by_block.setdefault(int(word.get("block", 0)), []).append(word)
+    grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for block, block_words in sorted(by_block.items()):
+        for cluster_index, cluster in enumerate(visual_word_clusters(block_words)):
+            grouped[(block, cluster_index)] = cluster
     labels: list[dict[str, Any]] = []
     for (block, line), words in sorted(grouped.items()):
-        ordered = sorted(words, key=lambda item: int(item.get("word", 0)))
-        boxes = [bbox_tuple(item["bbox"]) for item in ordered if item.get("bbox")]
-        if not boxes:
+        ordered = sorted(words, key=lambda item: (int(item.get("line", 0)), int(item.get("word", 0))))
+        bounds = words_bbox(ordered)
+        if bounds is None:
             continue
-        x0 = min(item[0] for item in boxes)
-        y0 = min(item[1] for item in boxes)
-        x1 = max(item[2] for item in boxes)
-        y1 = max(item[3] for item in boxes)
+        x0, y0, x1, y1 = bounds
         text = " ".join(str(item.get("text", "")) for item in ordered).strip()
         labels.append(
             {
@@ -1932,9 +2589,13 @@ def run_verify_semantic_report(manifest_path: Path, work_dir: Path) -> tuple[dic
 
     spec = load_json(spec_path)
     verification = verify_rendered_family(spec, render_semantics)
+    contract_mismatches = validate_contract_against_spec(spec.get("semantic_contract"), spec)
     report["supported_family"] = verification["supported_family"]
-    report["mismatches"] = verification["mismatches"]
-    report["mismatch_codes"] = verification["mismatch_codes"]
+    report["mismatches"] = [*verification["mismatches"], *contract_mismatches]
+    report["mismatch_codes"] = [
+        *verification["mismatch_codes"],
+        *[str(item.get("code")) for item in contract_mismatches],
+    ]
     report["evidence"]["recovered"] = verification["recovered"]
     report["semantic_status"] = "FAIL" if report["mismatches"] else "PASS"
     report["review_status"] = "COMPLETE"
@@ -2262,6 +2923,7 @@ def command_doctor() -> int:
         SCRIPT_DIR / "pdf_extract.py",
         SCRIPT_DIR / "family_verifiers.py",
         SCRIPT_DIR / "sage_graph_backend.py",
+        SCHEMA_DIR / "figure-contract.schema.json",
         SCHEMA_DIR / "diagram.schema.json",
         SCHEMA_DIR / "figure-brief.schema.json",
         SCHEMA_DIR / "render-semantics.schema.json",
@@ -2339,6 +3001,30 @@ def command_doctor() -> int:
     return 0 if report["status"] == "OK" else 1
 
 
+def command_contract(args: argparse.Namespace) -> int:
+    out_path = abs_path(args.out)
+    assert out_path is not None
+    figure_id = ensure_figure_id(getattr(args, "figure_id", None))
+    request = (getattr(args, "request", None) or "").strip()
+    title = (getattr(args, "title", None) or "").strip()
+    purpose = (getattr(args, "purpose", None) or "").strip()
+    content_requirements = list(getattr(args, "content_requirement", None) or ([request] if request else []))
+    contract = load_or_infer_contract(
+        args,
+        figure_id=figure_id,
+        request=request,
+        title=title,
+        purpose=purpose,
+        source_ids=list(getattr(args, "source_id", None) or []),
+        content_requirements=content_requirements,
+        requested_family=getattr(args, "diagram_family", None),
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    dump_json(out_path, contract)
+    print(f"WROTE\t{out_path}")
+    return 0
+
+
 def command_spec(args: argparse.Namespace) -> int:
     out_path = abs_path(args.out)
     assert out_path is not None
@@ -2354,15 +3040,20 @@ def command_spec(args: argparse.Namespace) -> int:
             fallback_parent=out_path.parent,
         )
         brief["output_dir"] = str(out_dir)
+        ensure_brief_contract(brief, args)
     else:
         brief, out_dir, _run_id = bootstrap_brief(args, fallback_parent=out_path.parent)
     validate_brief(brief)
     out_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_from_brief(brief)
+    validate_spec(spec)
     brief_out_path = out_dir / f"{brief['figure_id']}.figure-brief.json"
+    contract_out_path = out_dir / f"{brief['figure_id']}.figure-contract.json"
     dump_json(brief_out_path, brief)
+    dump_json(contract_out_path, brief["semantic_contract"])
     dump_json(out_path, spec)
     print(f"WROTE\t{brief_out_path}")
+    print(f"WROTE\t{contract_out_path}")
     print(f"WROTE\t{out_path}")
     return 0
 
@@ -2376,6 +3067,7 @@ def build_render_manifest(
     standalone_path: Path,
     snippet_path: Path,
     spec_out_path: Path,
+    contract_path: Path | None,
     brief: dict[str, Any],
     spec: dict[str, Any],
 ) -> dict[str, Any]:
@@ -2388,6 +3080,7 @@ def build_render_manifest(
         "source_ids": brief["source_ids"],
         "diagram_family": spec["diagram_family"],
         "figure_brief": str(brief_path),
+        "figure_contract": str(contract_path) if contract_path else None,
         "standalone_tex": str(standalone_path),
         "figure_tex": str(snippet_path),
         "diagram_spec": str(spec_out_path),
@@ -2418,6 +3111,7 @@ def command_render(args: argparse.Namespace) -> int:
         run_id = normalize_run_id(getattr(args, "run_id", None))
         out_dir = resolve_output_dir(args, run_id=run_id, brief_output_dir=brief.get("output_dir"))
         brief["output_dir"] = str(out_dir)
+        ensure_brief_contract(brief, args)
     else:
         brief, out_dir, run_id = bootstrap_brief(args)
     validate_brief(brief)
@@ -2432,10 +3126,12 @@ def command_render(args: argparse.Namespace) -> int:
     standalone_path = out_dir / f"{basename}.standalone.tex"
     snippet_path = out_dir / f"{basename}.figure.tex"
     spec_out_path = out_dir / f"{basename}.diagram.json"
+    contract_out_path = out_dir / f"{figure_id}.figure-contract.json"
     manifest_path = out_dir / f"{basename}.artifacts.json"
 
     standalone, snippet = build_outputs(spec, figure_id, brief.get("caption", ""))
     dump_json(brief_out_path, brief)
+    dump_json(contract_out_path, brief["semantic_contract"])
     write_text(standalone_path, standalone)
     write_text(snippet_path, snippet)
     dump_json(spec_out_path, spec)
@@ -2447,6 +3143,7 @@ def command_render(args: argparse.Namespace) -> int:
         standalone_path=standalone_path,
         snippet_path=snippet_path,
         spec_out_path=spec_out_path,
+        contract_path=contract_out_path,
         brief=brief,
         spec=spec,
     )
@@ -2455,6 +3152,7 @@ def command_render(args: argparse.Namespace) -> int:
         refresh_manifest_artifact_hashes(manifest),
     )
     print(f"WROTE\t{brief_out_path}")
+    print(f"WROTE\t{contract_out_path}")
     print(f"WROTE\t{standalone_path}")
     print(f"WROTE\t{snippet_path}")
     print(f"WROTE\t{spec_out_path}")
@@ -2620,55 +3318,59 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("doctor")
 
+    def add_intent_contract_args(target: argparse.ArgumentParser) -> None:
+        target.add_argument("--contract", help="Existing figure-contract.json to enforce instead of inferring one.")
+        target.add_argument("--context-text", action="append", help="Additional task/literature context used for intent inference.")
+        target.add_argument("--context-file", action="append", help="File containing additional context used for intent inference.")
+        target.add_argument("--source-tex", help="Source TeX file containing nearby manuscript context.")
+        target.add_argument("--around-label", help="Optional anchor text for cropping --source-tex context.")
+        target.add_argument("--required-object", action="append", help="Object that the figure must visibly contain.")
+        target.add_argument("--required-relation", action="append", help="Relation that the figure must visibly encode.")
+        target.add_argument(
+            "--forbidden-simplification",
+            action="append",
+            help="Simplification that must fail semantic approval if used.",
+        )
+        target.add_argument("--notation-requirement", action="append", help="Math label or notation that must be preserved.")
+        target.add_argument("--approval-criterion", action="append", help="Additional contract-level approval criterion.")
+
+    def add_bootstrap_args(target: argparse.ArgumentParser) -> None:
+        target.add_argument("--request")
+        target.add_argument("--title")
+        target.add_argument("--purpose")
+        target.add_argument("--diagram-family", choices=sorted(SUPPORTED_FAMILIES))
+        target.add_argument("--backend-hint")
+        target.add_argument("--content-requirement", action="append")
+        target.add_argument("--layout-constraint", action="append")
+        target.add_argument("--graph-mode", choices=GRAPH_MODE_VALUES)
+        target.add_argument("--graph-constructor")
+        target.add_argument("--graph-param", action="append")
+        target.add_argument("--graph-layout")
+        target.add_argument("--show-labels", choices=("true", "false"))
+        target.add_argument("--caption")
+        target.add_argument("--figure-id")
+        target.add_argument("--source-id", action="append")
+        target.add_argument("--symmetry", choices=SYMMETRY_CONTRACT_STATUSES)
+        target.add_argument("--symmetry-mode", choices=SYMMETRY_MODES)
+        target.add_argument("--symmetry-justification")
+        target.add_argument("--run-id")
+        target.add_argument("--out-dir")
+        target.add_argument("--research-root")
+        add_intent_contract_args(target)
+
+    contract_parser = subparsers.add_parser("contract")
+    contract_parser.add_argument("--out", required=True)
+    add_bootstrap_args(contract_parser)
+
     spec_parser = subparsers.add_parser("spec")
     spec_parser.add_argument("--brief")
     spec_parser.add_argument("--out", required=True)
-    spec_parser.add_argument("--request")
-    spec_parser.add_argument("--title")
-    spec_parser.add_argument("--purpose")
-    spec_parser.add_argument("--diagram-family", choices=sorted(SUPPORTED_FAMILIES))
-    spec_parser.add_argument("--backend-hint")
-    spec_parser.add_argument("--content-requirement", action="append")
-    spec_parser.add_argument("--layout-constraint", action="append")
-    spec_parser.add_argument("--graph-mode", choices=GRAPH_MODE_VALUES)
-    spec_parser.add_argument("--graph-constructor")
-    spec_parser.add_argument("--graph-param", action="append")
-    spec_parser.add_argument("--graph-layout")
-    spec_parser.add_argument("--show-labels", choices=("true", "false"))
-    spec_parser.add_argument("--caption")
-    spec_parser.add_argument("--figure-id")
-    spec_parser.add_argument("--source-id", action="append")
-    spec_parser.add_argument("--symmetry", choices=SYMMETRY_CONTRACT_STATUSES)
-    spec_parser.add_argument("--symmetry-mode", choices=SYMMETRY_MODES)
-    spec_parser.add_argument("--symmetry-justification")
-    spec_parser.add_argument("--run-id")
-    spec_parser.add_argument("--out-dir")
-    spec_parser.add_argument("--research-root")
+    add_bootstrap_args(spec_parser)
 
     render_parser = subparsers.add_parser("render")
     render_parser.add_argument("--brief")
     render_parser.add_argument("--spec")
-    render_parser.add_argument("--request")
-    render_parser.add_argument("--title")
-    render_parser.add_argument("--purpose")
-    render_parser.add_argument("--diagram-family", choices=sorted(SUPPORTED_FAMILIES))
-    render_parser.add_argument("--backend-hint")
-    render_parser.add_argument("--content-requirement", action="append")
-    render_parser.add_argument("--layout-constraint", action="append")
-    render_parser.add_argument("--graph-mode", choices=GRAPH_MODE_VALUES)
-    render_parser.add_argument("--graph-constructor")
-    render_parser.add_argument("--graph-param", action="append")
-    render_parser.add_argument("--graph-layout")
-    render_parser.add_argument("--show-labels", choices=("true", "false"))
-    render_parser.add_argument("--caption")
-    render_parser.add_argument("--figure-id")
-    render_parser.add_argument("--source-id", action="append")
-    render_parser.add_argument("--symmetry", choices=SYMMETRY_CONTRACT_STATUSES)
-    render_parser.add_argument("--symmetry-mode", choices=SYMMETRY_MODES)
-    render_parser.add_argument("--symmetry-justification")
-    render_parser.add_argument("--run-id")
-    render_parser.add_argument("--out-dir")
-    render_parser.add_argument("--research-root")
+    add_bootstrap_args(render_parser)
     render_parser.add_argument("--basename")
 
     check_parser = subparsers.add_parser("check")
@@ -2711,6 +3413,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "doctor":
         return command_doctor()
+    if args.command == "contract":
+        return command_contract(args)
     if args.command == "spec":
         return command_spec(args)
     if args.command == "render":
