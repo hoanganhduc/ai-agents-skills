@@ -34,6 +34,7 @@ Typical cases:
 The Codex runtime helper exposes one stable verb set:
 
 - `doctor`
+- `contract`
 - `spec`
 - `render`
 - `check`
@@ -69,7 +70,6 @@ Direct bootstrap without prewriting a brief:
 ```bash
 bash ~/.codex/runtime/run_skill.sh \
   skills/tikz-draw/run_tikz_draw.sh render \
-  --diagram-family flowchart \
   --request "Draw a validation pipeline for statement X"
 ```
 
@@ -77,18 +77,38 @@ If `--out-dir` is omitted in direct mode, the helper allocates:
 
 - `~/.codex/runs/tikz-draw/<run_id>/`
 
+For research or mathematical figures, first let the runtime write the intent
+contract or provide one explicitly:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/tikz-draw/run_tikz_draw.sh contract \
+  --out /abs/path/to/F1.figure-contract.json \
+  --request "Draw a graph hardness reduction where an edge is replaced by a gadget"
+```
+
+The contract records the inferred figure family, required objects, required
+relations, forbidden simplifications, notation that must be preserved, and the
+approval criteria. `spec` and `render` enforce this contract. If a request says
+to illustrate a graph hardness reduction, the contract must require graph
+vertices and graph edges; a box-only flowchart is a contract violation.
+
 ## Required workflow
 
-1. Prefer a structural brief or spec before raw TikZ.
-   Direct mode may bootstrap and write the brief for you.
+1. Establish the semantic intent contract before raw TikZ. Direct mode may
+   infer and write the contract for you, but it must still be present in the
+   generated brief and spec.
 2. Route the figure to the right backend:
    - `flowchart`, `dag`: `positioning`
    - `tree`: `forest`
    - `commutative`: `tikz-cd`
    - `graph`: baseline graph path first, with Sage-assisted routing when the request exceeds the baseline shorthand/layout surface
-3. Keep document-facing output inside the `adjustbox` environment with `max width=\textwidth`.
-4. For standalone compile targets, use plain `\documentclass[border=...]{standalone}` rather than `standalone[tikz]`.
-5. After creating, extracting, refactoring, or modifying any TikZ figure, run the strict approval gate before saying the figure is done, fixed, ready, passed, verified, or approved.
+3. Reject a requested or inferred backend family that contradicts the contract.
+   Do not downgrade a graph request into a schematic diagram unless the contract
+   explicitly says that a schematic is intended.
+4. Keep document-facing output inside the `adjustbox` environment with `max width=\textwidth`.
+5. For standalone compile targets, use plain `\documentclass[border=...]{standalone}` rather than `standalone[tikz]`.
+6. After creating, extracting, refactoring, or modifying any TikZ figure, run the strict approval gate before saying the figure is done, fixed, ready, passed, verified, or approved.
 
 Strict approval command:
 
@@ -133,6 +153,8 @@ If `approve` fails, fix the reported issue and rerun `approve`. Repeat until it 
 - `verify-semantic` now supports the current render-generated `flowchart`, `dag`, `tree`, supported-square `commutative`, and Sage-backed `graph` families.
 - `verify-semantic` still fails closed with `UNSUPPORTED_FAMILY` for an unsupported family and unsupported inputs outside the current renderer assumptions.
 - Strict approval is fail-closed for unsupported families, arbitrary extracted TikZ without a semantic target/spec, stale extracted sources, missing dependencies, missing render artifacts, failed overlap checks, and missing or failed symmetry contracts.
+- Strict approval also fails closed when a generated spec is missing its
+  semantic intent contract or contradicts it.
 
 Every generated spec carries a `symmetry_contract`. The checker verifies the declared contract:
 
@@ -152,7 +174,8 @@ python3 ~/.codex/runtime/workspace/skills/tikz-draw/semantic_regression_runner.p
 ```
 
 The current suite covers supported good cases for `flowchart`, `dag`, `tree`,
-`commutative`, and Sage-backed `graph`, plus mutation cases.
+`commutative`, and Sage-backed `graph`, plus mutation cases and intent-contract
+cases that guard against graph-hardness requests becoming flowcharts.
 
 On Windows, use:
 

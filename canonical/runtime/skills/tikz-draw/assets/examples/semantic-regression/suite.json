@@ -1,5 +1,30 @@
 {
   "suite_id": "semantic-regression.v1",
+  "contract_cases": [
+    {
+      "id": "graph_hardness_reduction_intent",
+      "request": "Draw a figure illustrating a hardness reduction in a graph where edge $e=uv$ is replaced by a gadget with ports $p_u^e$ and $p_v^e$ and blocker $c_{u,3}$.",
+      "expected": {
+        "exit_code": 0,
+        "recommended_diagram_family": "graph",
+        "intent_kind": "graph_hardness_reduction",
+        "required_object_ids_include": [
+          "graph-vertices",
+          "graph-edges",
+          "replacement-gadget"
+        ],
+        "forbidden_ids_include": [
+          "box-only-flowchart"
+        ],
+        "notation_labels_include": [
+          "$e=uv$",
+          "$p_u^e$",
+          "$p_v^e$",
+          "$c_{u,3}$"
+        ]
+      }
+    }
+  ],
   "fixtures": [
     {
       "id": "flowchart_pipeline",
@@ -504,6 +529,49 @@
           }
         }
       ]
+    },
+    {
+      "id": "commutative_math_labels",
+      "diagram_family": "commutative",
+      "render": {
+        "figure_id": "F1",
+        "title": "Math label square",
+        "purpose": "Show a commutative square with TeX labels.",
+        "caption": "Math label square.",
+        "content_requirements": [
+          "$p_u^e$",
+          "$p_v^e$",
+          "$c_{u,3}$",
+          "$c_{v,3}$"
+        ]
+      },
+      "expected": {
+        "check": {
+          "exit_code": 0,
+          "verdict": "PRECHECK_PASS"
+        },
+        "compile": {
+          "exit_code": 0
+        },
+        "review_visual": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "visual_status": "PASS"
+        },
+        "verify_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        },
+        "review_semantic": {
+          "exit_code": 0,
+          "review_status": "COMPLETE",
+          "semantic_verdict": "APPROVED",
+          "mismatch_codes": []
+        }
+      },
+      "mutations": []
     },
     {
       "id": "petersen_graph",
