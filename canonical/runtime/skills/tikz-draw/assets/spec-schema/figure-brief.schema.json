@@ -110,6 +110,10 @@
     "caption": {
       "type": "string"
     },
+    "semantic_contract": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "symmetry_contract": {
       "$ref": "#/$defs/symmetry_contract"
     },

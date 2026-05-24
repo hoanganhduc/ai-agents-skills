@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import re
 from typing import Any
 
 from shapely.geometry import LineString, Point, box  # type: ignore
@@ -61,28 +62,124 @@ def point_pair_payload(args: list[dict[str, Any]]) -> tuple[tuple[float, float],
 def normalize_label(value: str | None) -> str | None:
     if value is None:
         return None
-    normalized = " ".join(str(value).split()).strip()
+    raw = str(value).strip()
+    texish = any(token in raw for token in ("$", "_", "^", "\\"))
+    normalized = raw.strip("$")
+    compact_math = normalized.replace("{", "").replace("}", "").replace(" ", "")
+    sub_sup = re.fullmatch(r"([A-Za-z]+)_([A-Za-z0-9,]+)\^([A-Za-z0-9,]+)", compact_math)
+    if sub_sup:
+        return "".join((sub_sup.group(1), sub_sup.group(3), sub_sup.group(2)))
+    sup_sub = re.fullmatch(r"([A-Za-z]+)\^([A-Za-z0-9,]+)_([A-Za-z0-9,]+)", compact_math)
+    if sup_sub:
+        return "".join((sup_sub.group(1), sup_sub.group(2), sup_sub.group(3)))
+    normalized = re.sub(r"_\{([^}]*)\}", r" \1", normalized)
+    normalized = re.sub(r"_([A-Za-z0-9,]+)", r" \1", normalized)
+    normalized = re.sub(r"\^\{([^}]*)\}", r"\1", normalized)
+    normalized = re.sub(r"\^([A-Za-z0-9,]+)", r"\1", normalized)
+    normalized = normalized.replace("{", "").replace("}", "")
+    normalized = re.sub(r"\\[A-Za-z]+", "", normalized)
+    normalized = " ".join(normalized.split()).strip()
+    tokens = normalized.split()
+    if texish or (
+        1 < len(tokens) <= 3
+        and all(re.fullmatch(r"[A-Za-z0-9,]+", token) and len(token) <= 4 for token in tokens)
+        and any(len(token) > 1 for token in tokens)
+    ):
+        normalized = normalized.replace(" ", "")
     return normalized or None
 
 
+def words_bounds(words: list[dict[str, Any]]) -> dict[str, float]:
+    return bbox_union([item["bbox"] for item in words])
+
+
+def word_line_clusters(words: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for word in words:
+        grouped[int(word["line"])].append(word)
+    clusters: list[list[dict[str, Any]]] = []
+    for _line, line_words in sorted(grouped.items()):
+        ordered = sorted(line_words, key=lambda item: float(item["bbox"]["x0"]))
+        current: list[dict[str, Any]] = []
+        current_bounds: dict[str, float] | None = None
+        for word in ordered:
+            if current and current_bounds is not None:
+                gap = float(word["bbox"]["x0"]) - float(current_bounds["x1"])
+                if gap > 9.0:
+                    clusters.append(current)
+                    current = []
+                    current_bounds = None
+            current.append(word)
+            current_bounds = words_bounds(current)
+        if current:
+            clusters.append(current)
+    return clusters
+
+
+def clusters_are_math_fragments(left: list[dict[str, Any]], right: list[dict[str, Any]]) -> bool:
+    left_bounds = words_bounds(left)
+    right_bounds = words_bounds(right)
+    combined = [*left, *right]
+    combined_bounds = words_bounds(combined)
+    if float(combined_bounds["width"]) > 45.0 or float(combined_bounds["height"]) > 24.0:
+        return False
+    x_overlap_or_near = min(float(left_bounds["x1"]), float(right_bounds["x1"])) - max(
+        float(left_bounds["x0"]), float(right_bounds["x0"])
+    ) >= -3.0
+    if not x_overlap_or_near:
+        return False
+    compact = "".join(
+        str(word.get("text", ""))
+        for word in sorted(combined, key=lambda item: (int(item["line"]), int(item["word"])))
+    ).strip()
+    return bool(re.fullmatch(r"[A-Za-z0-9_{}^=,+\-()\\| ]{1,28}", compact))
+
+
+def visual_label_clusters(words: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    clusters = word_line_clusters(words)
+    changed = True
+    while changed:
+        changed = False
+        merged_clusters: list[list[dict[str, Any]]] = []
+        used: set[int] = set()
+        for left_index, left in enumerate(clusters):
+            if left_index in used:
+                continue
+            merged = list(left)
+            used.add(left_index)
+            for right_index, right in enumerate(clusters[left_index + 1 :], start=left_index + 1):
+                if right_index in used:
+                    continue
+                if clusters_are_math_fragments(merged, right):
+                    merged.extend(right)
+                    used.add(right_index)
+                    changed = True
+            merged_clusters.append(merged)
+        clusters = merged_clusters
+    return clusters
+
+
 def merge_words_into_lines(page: dict[str, Any]) -> list[dict[str, Any]]:
-    grouped: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+    by_block: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for word in page.get("words", []):
-        grouped[(int(word["block"]), int(word["line"]))].append(word)
+        by_block[int(word["block"])].append(word)
 
     lines: list[dict[str, Any]] = []
-    for (block, line), words in sorted(grouped.items()):
-        words_sorted = sorted(words, key=lambda item: int(item["word"]))
-        text = " ".join(str(item["text"]) for item in words_sorted).strip()
-        lines.append(
-            {
-                "text": text,
-                "bbox": bbox_union([item["bbox"] for item in words_sorted]),
-                "block": block,
-                "line": line,
-                "word_count": len(words_sorted),
-            }
-        )
+    for block, block_words in sorted(by_block.items()):
+        for cluster_index, words in enumerate(visual_label_clusters(block_words)):
+            words_sorted = sorted(words, key=lambda item: (int(item["line"]), int(item["word"])))
+            text = " ".join(str(item["text"]) for item in words_sorted).strip()
+            line_numbers = sorted({int(item["line"]) for item in words_sorted})
+            lines.append(
+                {
+                    "text": text,
+                    "bbox": bbox_union([item["bbox"] for item in words_sorted]),
+                    "block": block,
+                    "line": line_numbers[0] if len(line_numbers) == 1 else -1,
+                    "word_count": len(words_sorted),
+                    "cluster": cluster_index,
+                }
+            )
     return lines
 
 
