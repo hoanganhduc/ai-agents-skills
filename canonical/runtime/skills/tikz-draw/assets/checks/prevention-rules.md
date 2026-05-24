@@ -23,6 +23,9 @@ See also:
   - Use an explicit final edge such as `\draw (a) -- (b) -- (c) -- (a);`.
   - Reason: the rendered closure can differ from the intended last node-to-node edge when TikZ uses node shape borders.
 - Strict approval requires current artifact provenance and a structured symmetry contract.
+  - Scoped manuscript-facing semantic figures also require a visual-semantic design contract.
+  - Boxes, fills, labels, arrows, regions, and callouts must declare whether they are graph structure, metadata, correspondence, gadget region, highlight, or legend.
+  - Metadata and notation labels must not be rendered as graph objects unless the design contract explicitly says so.
   - Source-only `check` output is preflight, not approval.
   - Use `approve` as the final gate after every generated or modified figure.
 

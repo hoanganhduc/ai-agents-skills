@@ -80,6 +80,13 @@
         "$ref": "#/$defs/group"
       }
     },
+    "marks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/mark"
+      },
+      "default": []
+    },
     "layout_constraints": {
       "type": "array",
       "items": {
@@ -96,6 +103,10 @@
       "$ref": "#/$defs/symmetry_contract"
     },
     "semantic_contract": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "semantic_design": {
       "type": "object",
       "additionalProperties": true
     },
@@ -218,6 +229,89 @@
           }
         },
         "style": {
+          "type": "string"
+        }
+      }
+    },
+    "mark": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "role",
+        "semantic_type",
+        "visual_encoding",
+        "counts_as_graph_object"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "graph_object",
+            "annotation",
+            "callout",
+            "correspondence",
+            "gadget_region",
+            "highlight_region",
+            "legend"
+          ]
+        },
+        "semantic_type": {
+          "type": "string"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "target_targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "label": {
+          "type": "string"
+        },
+        "visual_encoding": {
+          "type": "string"
+        },
+        "counts_as_graph_object": {
+          "type": "boolean"
+        },
+        "caption_claim_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_prose_claim_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "boundary_style": {
+          "type": "string"
+        },
+        "fill_policy": {
+          "type": "string"
+        },
+        "label_policy": {
+          "type": "string"
+        },
+        "rationale": {
           "type": "string"
         }
       }

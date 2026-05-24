@@ -1336,8 +1336,34 @@
           "mode": "0644"
         },
         {
+          "source": "skills/tikz-draw/assets/spec-schema/figure-contract.schema.json",
+          "target": "workspace/skills/tikz-draw/assets/spec-schema/figure-contract.schema.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/tikz-draw/assets/spec-schema/figure-brief.schema.json",
           "target": "workspace/skills/tikz-draw/assets/spec-schema/figure-brief.schema.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/tikz-draw/assets/spec-schema/figure-design.schema.json",
+          "target": "workspace/skills/tikz-draw/assets/spec-schema/figure-design.schema.json",
           "platforms": [
             "linux",
             "macos",
