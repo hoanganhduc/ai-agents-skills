@@ -141,6 +141,82 @@ def render_direct(platform: str, fixture: dict[str, Any], case_dir: Path, *, com
     }
 
 
+def run_contract_case(platform: str, case: dict[str, Any], out_root: Path, *, command_shape: str) -> dict[str, Any]:
+    case_dir = out_root / "contract" / case["id"]
+    case_dir.mkdir(parents=True, exist_ok=True)
+    out_path = case_dir / "figure-contract.json"
+    command = [
+        *platform_command(platform, command_shape),
+        "contract",
+        "--out",
+        str(out_path),
+    ]
+    for key, flag in (
+        ("request", "--request"),
+        ("title", "--title"),
+        ("purpose", "--purpose"),
+        ("diagram_family", "--diagram-family"),
+        ("figure_id", "--figure-id"),
+    ):
+        if case.get(key):
+            command.extend([flag, str(case[key])])
+    for value in case.get("content_requirements", []):
+        command.extend(["--content-requirement", str(value)])
+    for value in case.get("required_objects", []):
+        command.extend(["--required-object", str(value)])
+    for value in case.get("required_relations", []):
+        command.extend(["--required-relation", str(value)])
+    for value in case.get("forbidden_simplifications", []):
+        command.extend(["--forbidden-simplification", str(value)])
+    for value in case.get("notation_requirements", []):
+        command.extend(["--notation-requirement", str(value)])
+    result = run_command(command)
+    payload = read_json(out_path) if out_path.exists() else None
+    return {
+        "platform": platform,
+        "command_shape": command_shape,
+        "case_id": case["id"],
+        "kind": "contract",
+        "run_dir": str(case_dir),
+        "contract_path": str(out_path),
+        "command_result": result,
+        "contract": payload,
+    }
+
+
+def evaluate_contract_case(execution: dict[str, Any], expected: dict[str, Any]) -> tuple[bool, list[str]]:
+    errors: list[str] = []
+    result = execution["command_result"]
+    if result["exit_code"] != expected.get("exit_code", result["exit_code"]):
+        errors.append(f"contract: expected exit {expected['exit_code']}, got {result['exit_code']}")
+    contract = execution.get("contract") or {}
+    if expected.get("recommended_diagram_family") is not None:
+        actual = contract.get("recommended_diagram_family")
+        if actual != expected["recommended_diagram_family"]:
+            errors.append(
+                f"contract: expected recommended_diagram_family={expected['recommended_diagram_family']!r}, got {actual!r}"
+            )
+    if expected.get("intent_kind") is not None:
+        actual = (contract.get("intent") or {}).get("kind")
+        if actual != expected["intent_kind"]:
+            errors.append(f"contract: expected intent.kind={expected['intent_kind']!r}, got {actual!r}")
+    actual_required = {str(item.get("id")) for item in contract.get("required_objects", []) if isinstance(item, dict)}
+    for item in expected.get("required_object_ids_include", []):
+        if item not in actual_required:
+            errors.append(f"contract: missing required object id {item!r}")
+    actual_forbidden = {
+        str(item.get("id")) for item in contract.get("forbidden_simplifications", []) if isinstance(item, dict)
+    }
+    for item in expected.get("forbidden_ids_include", []):
+        if item not in actual_forbidden:
+            errors.append(f"contract: missing forbidden simplification id {item!r}")
+    actual_notation = {str(item.get("label")) for item in contract.get("notation_requirements", []) if isinstance(item, dict)}
+    for item in expected.get("notation_labels_include", []):
+        if item not in actual_notation:
+            errors.append(f"contract: missing notation label {item!r}")
+    return not errors, errors
+
+
 def label_to_node_id(spec: dict[str, Any], label: str) -> str:
     for node in spec.get("nodes", []):
         if node.get("label") == label:
@@ -496,6 +572,26 @@ def main() -> int:
     for platform in platforms:
         platform_root = out_dir / platform
         platform_root.mkdir(parents=True, exist_ok=True)
+        for contract_case in suite.get("contract_cases", []):
+            execution = run_contract_case(platform, contract_case, platform_root, command_shape=args.command_shape)
+            passed, errors = evaluate_contract_case(execution, contract_case.get("expected", {}))
+            all_results.append(
+                {
+                    "platform": platform,
+                    "command_shape": args.command_shape,
+                    "fixture_id": contract_case["id"],
+                    "case_id": contract_case["id"],
+                    "family": (execution.get("contract") or {}).get("recommended_diagram_family"),
+                    "kind": "contract",
+                    "run_dir": execution["run_dir"],
+                    "expected": contract_case.get("expected", {}),
+                    "paths": {"contract": execution["contract_path"]},
+                    "render": execution["command_result"],
+                    "commands": {},
+                    "passed": passed,
+                    "errors": errors,
+                }
+            )
         for fixture in selected_fixtures:
             all_results.extend(
                 run_fixture(
