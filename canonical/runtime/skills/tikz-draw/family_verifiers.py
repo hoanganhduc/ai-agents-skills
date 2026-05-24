@@ -107,6 +107,9 @@ def candidate_shapes(page: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         if ops == ["l"]:
             continue
+        shape_like = ops == ["l", "l", "l", "l"] or (len(ops) >= 4 and set(ops).issubset({"l", "c"}))
+        if not shape_like:
+            continue
         if float(rect["width"]) < 8.0 or float(rect["height"]) < 8.0:
             continue
         candidates.append(
@@ -218,7 +221,8 @@ def assign_labels_to_edges(edges: list[dict[str, Any]], free_lines: list[dict[st
         candidates: list[tuple[int, float, float]] = []
         for edge_index, edge in enumerate(edges):
             distance = edge["geom"].distance(center)
-            if distance > EDGE_LABEL_TOLERANCE_PT:
+            tolerance = float(edge.get("label_tolerance_pt", EDGE_LABEL_TOLERANCE_PT))
+            if distance > tolerance:
                 continue
             candidates.append((edge_index, distance, edge["geom"].length))
         if not candidates:
@@ -237,12 +241,19 @@ def recover_edges(page: dict[str, Any], nodes: list[dict[str, Any]], free_lines:
     edges: list[dict[str, Any]] = []
     for drawing in page.get("drawings", []):
         ops = [item["op"] for item in drawing.get("items", [])]
-        if ops != ["l"]:
+        if ops == ["l"]:
+            args = drawing["items"][0].get("args", [])
+            if len(args) != 2:
+                continue
+            edge_points = args
+        elif ops == ["c"]:
+            args = drawing["items"][0].get("args", [])
+            if len(args) != 4:
+                continue
+            edge_points = args
+        else:
             continue
-        args = drawing["items"][0].get("args", [])
-        if len(args) != 2:
-            continue
-        start_payload, end_payload = args
+        start_payload, end_payload = edge_points[0], edge_points[-1]
         nearest_start = nearest_node(start_payload, nodes)
         nearest_end = nearest_node(end_payload, nodes)
         if nearest_start is None or nearest_end is None:
@@ -255,19 +266,20 @@ def recover_edges(page: dict[str, Any], nodes: list[dict[str, Any]], free_lines:
             continue
         edge_geom = LineString(
             [
-                (float(start_payload["x"]), float(start_payload["y"])),
-                (float(end_payload["x"]), float(end_payload["y"])),
+                (float(point["x"]), float(point["y"]))
+                for point in edge_points
             ]
         )
-        edges.append(
-            {
-                "from_label": start_node["label"],
-                "to_label": end_node["label"],
-                "label": None,
-                "geom": edge_geom,
-                "drawing_rect": drawing["rect"],
-            }
-        )
+        edge = {
+            "from_label": start_node["label"],
+            "to_label": end_node["label"],
+            "label": None,
+            "geom": edge_geom,
+            "drawing_rect": drawing["rect"],
+        }
+        if ops == ["c"]:
+            edge["label_tolerance_pt"] = 30.0
+        edges.append(edge)
     edges, remaining_lines = assign_labels_to_edges(edges, free_lines)
     for edge in edges:
         edge.pop("geom", None)

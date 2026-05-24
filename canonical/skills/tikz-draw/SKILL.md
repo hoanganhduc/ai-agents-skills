@@ -40,6 +40,7 @@ The Codex runtime helper exposes one stable verb set:
 - `compile`
 - `review-visual`
 - `verify-semantic`
+- `approve`
 - `review`
 - `extract`
 
@@ -87,7 +88,28 @@ If `--out-dir` is omitted in direct mode, the helper allocates:
    - `graph`: baseline graph path first, with Sage-assisted routing when the request exceeds the baseline shorthand/layout surface
 3. Keep document-facing output inside the `adjustbox` environment with `max width=\textwidth`.
 4. For standalone compile targets, use plain `\documentclass[border=...]{standalone}` rather than `standalone[tikz]`.
-5. Run `check` before `compile` when you generated or heavily edited the figure.
+5. After creating, extracting, refactoring, or modifying any TikZ figure, run the strict approval gate before saying the figure is done, fixed, ready, passed, verified, or approved.
+
+Strict approval command:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/tikz-draw/run_tikz_draw.sh approve \
+  --artifacts /abs/path/to/F1.artifacts.json \
+  --work-dir /abs/path/to/work-dir
+```
+
+On native Windows, use the same verb through `run_skill.bat` and `run_tikz_draw.bat`.
+
+The only final approval is `approve` exiting `0` with:
+
+- `final_verdict=APPROVED`
+- `overlap_status=PASS`
+- `symmetry_status=PASS`
+
+`render`, `extract`, `compile`, `check`, `review --tex`, `review-visual`, and `verify-semantic` are preflight or artifact commands. Never cite them as final approval. Source inspection, compile success, screenshot review, PDF preview, or human visual inspection alone never constitute final approval.
+
+If `approve` fails, fix the reported issue and rerun `approve`. Repeat until it passes, or report the exact blocked state such as `BLOCKED_INPUT`, `BLOCKED_ENVIRONMENT`, or `UNSUPPORTED_FAMILY`. Do not use approval-style wording for blocked or unsupported states.
 
 ## Graph routing
 
@@ -102,13 +124,23 @@ If `--out-dir` is omitted in direct mode, the helper allocates:
   - `--show-labels true|false`
 - Render manifests and semantic-review reports now carry routing fields including baseline vs Sage-assisted path selection and backend used.
 
-## Phase 6 semantic surface
+## Strict Approval Surface
 
-- `review --tex` remains the legacy source-only path.
-- `review-visual` now runs through the rendered-artifact extractor and refreshes `render-semantics.json` from the compiled PDF.
+- `approve` is the authoritative final gate for supported render-generated figures.
+- `review --semantic` delegates to the strict approval path for compatibility.
+- `review --tex` remains source-only preflight and must not be treated as approval.
+- `review-visual` runs through the rendered-artifact extractor and refreshes `render-semantics.json` from the compiled PDF, but remains a component gate.
 - `verify-semantic` now supports the current render-generated `flowchart`, `dag`, `tree`, supported-square `commutative`, and Sage-backed `graph` families.
 - `verify-semantic` still fails closed with `UNSUPPORTED_FAMILY` for an unsupported family and unsupported inputs outside the current renderer assumptions.
-- Strong semantic approval is still out of scope for unsupported families and arbitrary extracted TikZ.
+- Strict approval is fail-closed for unsupported families, arbitrary extracted TikZ without a semantic target/spec, stale extracted sources, missing dependencies, missing render artifacts, failed overlap checks, and missing or failed symmetry contracts.
+
+Every generated spec carries a `symmetry_contract`. The checker verifies the declared contract:
+
+- `required`: declared pair/axis/alignment symmetry must pass.
+- `not_required`: accepted only with a justification.
+- `intentionally_asymmetric`: accepted only with a justification.
+
+Comments such as `% Symmetry: ...` are human hints only; they do not satisfy the machine-readable contract.
 
 ## Regression runner
 
@@ -116,7 +148,7 @@ For implementation-level verification, use the persistent regression suite inste
 of ad hoc `/tmp` smokes:
 
 ```bash
-python3 ~/.codex/runtime/workspace/skills/tikz-draw/semantic_regression_runner.py --platform both
+python3 ~/.codex/runtime/workspace/skills/tikz-draw/semantic_regression_runner.py --platform both --strict-approval
 ```
 
 The current suite covers supported good cases for `flowchart`, `dag`, `tree`,
