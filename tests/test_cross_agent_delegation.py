@@ -358,7 +358,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             "openclaw-host-reference",
         ):
             self.assertIn(profile, text)
-        self.assertIn("may route to a live DeepSeek-like CLI only after fresh", text)
+        self.assertIn("may route to a live CodeWhale or DeepSeek-like CLI only", text)
         self.assertIn("capability probes satisfy the run policy", text)
         self.assertIn("OpenClaw is not a V1 `supported_agents` target", text)
 
