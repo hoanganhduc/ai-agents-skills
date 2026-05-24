@@ -95,6 +95,10 @@
     "symmetry_contract": {
       "$ref": "#/$defs/symmetry_contract"
     },
+    "semantic_contract": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "graph_routing": {
       "type": "object",
       "additionalProperties": false,

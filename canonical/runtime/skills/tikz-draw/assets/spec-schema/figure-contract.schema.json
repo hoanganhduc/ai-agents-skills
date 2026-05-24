@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local/tikz-draw/figure-contract.schema.json",
+  "title": "TikZ Draw Figure Contract",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "figure_id",
+    "request",
+    "context_summary",
+    "recommended_diagram_family",
+    "intent",
+    "required_objects",
+    "required_relations",
+    "forbidden_simplifications",
+    "notation_requirements",
+    "approval_criteria"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "figure-contract.v1"
+    },
+    "figure_id": {
+      "type": "string",
+      "pattern": "^F[1-9][0-9]*$"
+    },
+    "request": {
+      "type": "string"
+    },
+    "context_summary": {
+      "type": "string"
+    },
+    "source_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recommended_diagram_family": {
+      "type": "string",
+      "enum": [
+        "flowchart",
+        "dag",
+        "tree",
+        "commutative",
+        "graph"
+      ]
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "required_objects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contract_entry"
+      }
+    },
+    "required_relations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contract_entry"
+      }
+    },
+    "forbidden_simplifications": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contract_entry"
+      }
+    },
+    "notation_requirements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contract_entry"
+      }
+    },
+    "approval_criteria": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contract_entry"
+      }
+    }
+  },
+  "$defs": {
+    "contract_entry": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
