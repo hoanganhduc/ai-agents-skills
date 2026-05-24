@@ -12,6 +12,7 @@ from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
+from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS
 from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
 from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.docs import generate_docs
@@ -81,6 +82,20 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(delegation["providers"]["codex"]["recipient_profile"], "codex-like-coding-reviewer")
         self.assertTrue(delegation["nested_delegation"]["enabled"])
         self.assertTrue(delegation["nested_delegation"]["require_same_model_as_manager"])
+
+    def test_deepseek_cli_candidates_prefer_codewhale_rename(self) -> None:
+        candidates = PROVIDER_CLI_SPECS["deepseek"]["candidates"]
+
+        for platform in ("linux", "macos", "wsl"):
+            self.assertLess(candidates[platform].index("codewhale"), candidates[platform].index("deepseek"))
+            self.assertIn("codewhale-tui", candidates[platform])
+            self.assertIn("deepseek-cli", candidates[platform])
+
+        windows = candidates["windows"]
+        self.assertLess(windows.index("codewhale.cmd"), windows.index("deepseek.cmd"))
+        self.assertIn("%APPDATA%\\npm\\codewhale.cmd", windows)
+        self.assertIn("%APPDATA%\\npm\\codewhale-tui.cmd", windows)
+        self.assertIn("deepseek", windows)
 
     def test_legacy_alias_resolves_to_canonical(self) -> None:
         manifests = load_manifests()

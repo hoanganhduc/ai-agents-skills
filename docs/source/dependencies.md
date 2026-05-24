@@ -111,6 +111,7 @@ Evidence inspected:
 - Windows Codex AGENTS/config/skill docs
 - Windows Claude CLAUDE/command/skill docs
 - Windows Claude skill requirement files and Python imports
+- npm metadata for the deepseek-tui to codewhale package rename
 
 ### Extra Software
 
@@ -167,6 +168,7 @@ Evidence inspected:
 
 | Package | Requirement | Used By | Notes |
 |---|---|---|---|
+| `codewhale` | codewhale npm package; successor to deprecated deepseek-tui | `DeepSeek delegation provider CLI`, `DeepSeek target` | npm package metadata for codewhale and deepseek-tui rename. |
 | `sequential-thinking-mcp` | @modelcontextprotocol/server-sequential-thinking via npx | `Windows Codex MCP sequentialThinking server` | Windows Codex config.toml. |
 | `zotero-translation-server` | Vendored Zotero translation-server package.json | `zotero metadata translation` | Linux Codex Zotero translation-server-src/package.json. Runtime deps: `aws-sdk`, `config`, `iconv-lite`, `jsdom`, `koa`, `koa-bodyparser`, `koa-route`, `md5`, `request`, `request-promise-native`, `serverless-http`, `w3c-xmlserializer`, `wicked-good-xpath`, `xregexp`, `yargs` |
 

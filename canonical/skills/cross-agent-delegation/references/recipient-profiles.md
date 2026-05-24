@@ -51,8 +51,8 @@ out of band and reference only inert artifacts from task or result packets.
 - confirmation requirements: parent-owned, outside packet content
 
 This packet profile is reference-only. A parent workflow such as
-`agent-group-discuss` may route to a live DeepSeek-like CLI only after fresh
-capability probes satisfy the run policy.
+`agent-group-discuss` may route to a live CodeWhale or DeepSeek-like CLI only
+after fresh capability probes satisfy the run policy.
 
 ### copilot-like-code-reviewer
 

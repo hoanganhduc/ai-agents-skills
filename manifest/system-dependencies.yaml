@@ -10,7 +10,8 @@
       "Linux Codex runtime skill requirement files and Python imports",
       "Windows Codex AGENTS/config/skill docs",
       "Windows Claude CLAUDE/command/skill docs",
-      "Windows Claude skill requirement files and Python imports"
+      "Windows Claude skill requirement files and Python imports",
+      "npm metadata for the deepseek-tui to codewhale package rename"
     ],
     "excluded_evidence": [
       "auth files",
@@ -315,6 +316,11 @@
     }
   },
   "node_packages": {
+    "codewhale": {
+      "requirement": "codewhale npm package; successor to deprecated deepseek-tui",
+      "used_by": ["DeepSeek delegation provider CLI", "DeepSeek target"],
+      "source": "npm package metadata for codewhale and deepseek-tui rename."
+    },
     "sequential-thinking-mcp": {
       "requirement": "@modelcontextprotocol/server-sequential-thinking via npx",
       "used_by": ["Windows Codex MCP sequentialThinking server"],
