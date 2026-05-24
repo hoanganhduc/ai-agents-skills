@@ -7,6 +7,8 @@ Shared rule IDs for the semantic-verifier slice:
 - `P3_BARE_SCALE`
 - `P4_DIRECTIONAL_EDGE_LABELS`
 - `P5_EXTRACT_FRESHNESS`
+- `P7_APPROVAL_PROVENANCE`
+- `P8_SYMMETRY_CONTRACT`
 
 Compatibility rules retained in the runtime helper:
 
@@ -17,5 +19,5 @@ Compatibility rules retained in the runtime helper:
 
 Phase note:
 
-- This file defines the shared prevention contract and naming.
-- It does not claim that every later semantic rule is implemented yet.
+- Source preflight is not final approval.
+- Strict final approval requires `approve` to pass provenance, rendered overlap, semantic, and symmetry-contract gates.

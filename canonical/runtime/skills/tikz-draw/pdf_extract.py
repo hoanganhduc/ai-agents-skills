@@ -103,7 +103,7 @@ def color_payload(color: Any) -> list[float] | None:
     return [round_float(color)]
 
 
-def drawing_payload(drawing: dict[str, Any], page_width: float, page_height: float) -> dict[str, Any]:
+def drawing_payload(drawing: dict[str, Any], page_width: float, page_height: float, index: int) -> dict[str, Any]:
     items = []
     for item in drawing.get("items", []):
         op = item[0] if item else None
@@ -115,6 +115,7 @@ def drawing_payload(drawing: dict[str, Any], page_width: float, page_height: flo
             }
         )
     payload = {
+        "primitive_id": f"drawing-{drawing.get('seqno', index)}",
         "seqno": drawing.get("seqno"),
         "type": drawing.get("type"),
         "rect": serialize_pdf_value(drawing.get("rect"), page_width, page_height),
@@ -137,6 +138,7 @@ def word_payload(word: tuple[Any, ...], page_width: float, page_height: float) -
     x0, y0, x1, y1, text, block_no, line_no, word_no = word
     bbox = rect_payload(type("RectLike", (), {"x0": x0, "y0": y0, "x1": x1, "y1": y1})(), page_width, page_height)
     return {
+        "primitive_id": f"word-{int(block_no)}-{int(line_no)}-{int(word_no)}",
         "text": text,
         "bbox": bbox,
         "block": int(block_no),
@@ -163,7 +165,10 @@ def extract_pdf_render_semantics(pdf_path: Path, manifest_path: Path | None = No
                     "width": round_float(page_width),
                     "height": round_float(page_height),
                     "bbox": rect_payload(page_rect, page_width, page_height),
-                    "drawings": [drawing_payload(drawing, page_width, page_height) for drawing in drawings],
+                    "drawings": [
+                        drawing_payload(drawing, page_width, page_height, index)
+                        for index, drawing in enumerate(drawings)
+                    ],
                     "words": [word_payload(word, page_width, page_height) for word in words],
                 }
             )
