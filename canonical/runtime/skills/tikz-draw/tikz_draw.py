@@ -58,6 +58,7 @@ CLI_VERBS = (
     "compile",
     "review-visual",
     "verify-semantic",
+    "approve",
     "review",
     "extract",
 )
@@ -72,14 +73,32 @@ STATIC_RULES = {
     "P4_DIRECTIONAL_EDGE_LABELS": "edge labels must include explicit directional or anchoring placement",
     "P5_EXTRACT_FRESHNESS": "extracted figures require freshness metadata and current source-of-truth alignment",
     "P6_EXPLICIT_GRAPH_CLOSURE": "verification-sensitive graph closures must use explicit final edges instead of cycle",
+    "P7_APPROVAL_PROVENANCE": "strict approval requires current generated artifacts and provenance hashes",
+    "P8_SYMMETRY_CONTRACT": "strict approval requires a declared symmetry contract",
 }
 
 VISUAL_REVIEW_PASS_IDS = (
     "V1_LABEL_GAP",
     "V2_BOUNDARY_CLEARANCE",
     "V3_PAGE_MARGIN",
-    "V4_CURVE_POINT_PLACEMENT",
+    "V4_TEXT_TEXT_OVERLAP",
+    "V5_TEXT_SHAPE_OVERLAP",
+    "V6_LINE_TEXT_OVERLAP",
+    "V7_LINE_SHAPE_OVERLAP",
+    "V8_SHAPE_SHAPE_OVERLAP",
 )
+
+STRICT_APPROVAL_VERSION = "strict-approval.v1"
+SYMMETRY_CONTRACT_STATUSES = ("required", "not_required", "intentionally_asymmetric")
+SYMMETRY_MODES = (
+    "mirror_vertical_axis",
+    "mirror_horizontal_axis",
+    "row_alignment",
+    "column_alignment",
+    "paired_panels",
+)
+DEFAULT_SYMMETRY_TOLERANCE_PT = 3.0
+OVERLAP_EPSILON_PT = 0.25
 
 MANIFEST_FRESHNESS_FIELDS = (
     "source_hash",
@@ -111,6 +130,8 @@ MANIFEST_REQUIRED_FIELDS = {
     "render_semantics",
     "semantic_review",
     "semantic_target_present",
+    "approval_contract_version",
+    "artifact_hashes",
     *MANIFEST_FRESHNESS_FIELDS,
     *GRAPH_ROUTE_FIELDS,
 }
@@ -120,9 +141,12 @@ SEMANTIC_REPORT_FIELDS = (
     "family",
     "static_status",
     "visual_status",
+    "overlap_status",
     "compile_status",
     "semantic_status",
+    "symmetry_status",
     "semantic_verdict",
+    "final_verdict",
     "supported_family",
     "mismatches",
     "mismatch_codes",
@@ -147,6 +171,11 @@ VISUAL_THRESHOLDS_PT = {
     "V1_LABEL_GAP": 2.0,
     "V2_BOUNDARY_CLEARANCE": 3.0,
     "V3_PAGE_MARGIN": 5.0,
+    "V4_TEXT_TEXT_OVERLAP": OVERLAP_EPSILON_PT,
+    "V5_TEXT_SHAPE_OVERLAP": OVERLAP_EPSILON_PT,
+    "V6_LINE_TEXT_OVERLAP": OVERLAP_EPSILON_PT,
+    "V7_LINE_SHAPE_OVERLAP": OVERLAP_EPSILON_PT,
+    "V8_SHAPE_SHAPE_OVERLAP": OVERLAP_EPSILON_PT,
 }
 
 BRIEF_REQUIRED = {
@@ -226,6 +255,25 @@ def tool_environment() -> dict[str, str]:
     return env
 
 
+def probe_tool(tool_path: str, args: list[str]) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(
+            [tool_path, *args],
+            text=True,
+            capture_output=True,
+            timeout=20,
+            env=tool_environment(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"probe_status": "FAILED", "error": str(exc)}
+    return {
+        "probe_status": "OK" if proc.returncode == 0 else "FAILED",
+        "exit_code": proc.returncode,
+        "stdout": proc.stdout[:500],
+        "stderr": proc.stderr[:500],
+    }
+
+
 def abs_path(value: str | None) -> Path | None:
     if value is None:
         return None
@@ -258,6 +306,44 @@ def ensure_keys(payload: dict[str, Any], required: set[str], kind: str) -> None:
         raise SystemExit(f"{kind} missing required keys: {', '.join(missing)}")
 
 
+def default_symmetry_contract(reason: str) -> dict[str, Any]:
+    return {
+        "status": "not_required",
+        "justification": reason,
+    }
+
+
+def normalize_symmetry_contract(value: Any, *, default_reason: str | None = None) -> dict[str, Any]:
+    if value is None:
+        if default_reason is None:
+            raise SystemExit("symmetry_contract is required for strict approval")
+        return default_symmetry_contract(default_reason)
+    if not isinstance(value, dict):
+        raise SystemExit("symmetry_contract must be an object")
+    status = str(value.get("status", "")).strip()
+    if status not in SYMMETRY_CONTRACT_STATUSES:
+        raise SystemExit(
+            "symmetry_contract.status must be one of: " + ", ".join(SYMMETRY_CONTRACT_STATUSES)
+        )
+    contract = dict(value)
+    contract["status"] = status
+    if status in {"not_required", "intentionally_asymmetric"}:
+        justification = str(contract.get("justification", "")).strip()
+        if not justification:
+            raise SystemExit(f"symmetry_contract.status={status!r} requires a nonempty justification")
+        contract["justification"] = justification
+    if status == "required":
+        mode = str(contract.get("mode", "mirror_vertical_axis")).strip()
+        if mode not in SYMMETRY_MODES:
+            raise SystemExit("symmetry_contract.mode must be one of: " + ", ".join(SYMMETRY_MODES))
+        contract["mode"] = mode
+        if "tolerance_pt" in contract:
+            contract["tolerance_pt"] = float(contract["tolerance_pt"])
+        else:
+            contract["tolerance_pt"] = DEFAULT_SYMMETRY_TOLERANCE_PT
+    return contract
+
+
 def validate_brief(brief: dict[str, Any]) -> None:
     ensure_keys(brief, BRIEF_REQUIRED, "figure-brief")
     family = brief["diagram_family"]
@@ -271,6 +357,8 @@ def validate_brief(brief: dict[str, Any]) -> None:
         lowered = str(brief["graph_mode"]).strip().lower()
         if lowered not in GRAPH_MODE_VALUES:
             raise SystemExit(f"invalid graph_mode {brief['graph_mode']!r}; allowed: {', '.join(GRAPH_MODE_VALUES)}")
+    if "symmetry_contract" in brief:
+        brief["symmetry_contract"] = normalize_symmetry_contract(brief["symmetry_contract"])
 
 
 def validate_spec(spec: dict[str, Any]) -> None:
@@ -284,6 +372,10 @@ def validate_spec(spec: dict[str, Any]) -> None:
     expected = BACKEND_BY_FAMILY[family]
     if backend != expected:
         raise SystemExit(f"phase 1 expects backend '{expected}' for family '{family}', got '{backend}'")
+    spec["symmetry_contract"] = normalize_symmetry_contract(
+        spec.get("symmetry_contract"),
+        default_reason=None,
+    )
 
 
 def slugify(value: str, fallback: str) -> str:
@@ -399,6 +491,20 @@ def bootstrap_brief(
         "caption": getattr(args, "caption", None),
         "output_dir": str(out_dir),
     }
+    symmetry_status = getattr(args, "symmetry", None)
+    symmetry_justification = (getattr(args, "symmetry_justification", None) or "").strip()
+    if symmetry_status:
+        brief["symmetry_contract"] = {
+            "status": symmetry_status,
+            "justification": symmetry_justification
+            or ("No mirror or alignment symmetry is required for this generated figure."),
+        }
+        if symmetry_status == "required":
+            brief["symmetry_contract"]["mode"] = getattr(args, "symmetry_mode", None) or "mirror_vertical_axis"
+    else:
+        brief["symmetry_contract"] = default_symmetry_contract(
+            "No mirror or alignment symmetry was requested for this generated figure."
+        )
     if args.diagram_family == "graph":
         brief["graph_request"] = request or final_purpose
         if getattr(args, "graph_mode", None):
@@ -471,10 +577,15 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
     requirements = brief.get("content_requirements") or []
     title = brief["title"]
     caption = brief.get("caption", "")
+    symmetry_contract = normalize_symmetry_contract(
+        brief.get("symmetry_contract"),
+        default_reason="No mirror or alignment symmetry was requested for this generated figure.",
+    )
     validation_rules = [
         "document-facing output must use the adjustbox environment with max width textwidth",
         "prefer structural placement over absolute coordinates",
         "avoid bare scale as primary width-fit control",
+        "strict approval requires the declared symmetry contract to be satisfied",
     ]
 
     if family in {"flowchart", "dag"}:
@@ -508,6 +619,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
                     "to": node_ids["Parse"],
                     "label": "retry",
                     "label_pos": "below",
+                    "bend": "below_loop",
                     "style": "edge",
                 }
             )
@@ -532,6 +644,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "groups": groups,
             "layout_constraints": brief["layout_constraints"],
             "validation_rules": validation_rules,
+            "symmetry_contract": symmetry_contract,
         }
 
     if family == "tree":
@@ -554,6 +667,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "groups": [],
             "layout_constraints": brief["layout_constraints"],
             "validation_rules": validation_rules,
+            "symmetry_contract": symmetry_contract,
         }
 
     if family == "commutative":
@@ -582,6 +696,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "groups": [],
             "layout_constraints": brief["layout_constraints"],
             "validation_rules": validation_rules,
+            "symmetry_contract": symmetry_contract,
         }
 
     if family == "graph":
@@ -653,6 +768,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "groups": [],
             "layout_constraints": brief["layout_constraints"],
             "validation_rules": validation_rules,
+            "symmetry_contract": symmetry_contract,
             "graph_routing": graph_routing,
         }
 
@@ -728,7 +844,12 @@ def render_flowchart(spec: dict[str, Any]) -> tuple[str, list[str], list[str], s
         lines.append(statement)
     for edge in spec["edges"]:
         label = edge.get("label")
-        if label:
+        if edge.get("bend") == "below_loop":
+            label_fragment = f" node[below, note] {{{tex_escape(label)}}}" if label else ""
+            lines.append(
+                rf"\draw[edge] ({edge['from']}.south) to[out=-90,in=-90,looseness=1.15]{label_fragment} ({edge['to']}.south);"
+            )
+        elif label:
             label_pos = edge.get("label_pos", "above")
             lines.append(
                 rf"\draw[edge] ({edge['from']}) -- node[{label_pos}, note] {{{tex_escape(label)}}} ({edge['to']});"
@@ -937,6 +1058,35 @@ def source_metadata(path: Path) -> tuple[str, str]:
     return file_sha256(path), str(stat.st_mtime_ns)
 
 
+def artifact_hash_payload(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {"path": None, "exists": False}
+    payload: dict[str, Any] = {"path": str(path), "exists": path.is_file()}
+    if path.is_file():
+        stat = path.stat()
+        payload["sha256"] = file_sha256(path)
+        payload["mtime_ns"] = str(stat.st_mtime_ns)
+        payload["size"] = stat.st_size
+    return payload
+
+
+def refresh_manifest_artifact_hashes(manifest: dict[str, Any]) -> dict[str, Any]:
+    fields = (
+        "figure_brief",
+        "standalone_tex",
+        "figure_tex",
+        "diagram_spec",
+        "pdf",
+        "render_semantics",
+        "semantic_review",
+    )
+    manifest["approval_contract_version"] = STRICT_APPROVAL_VERSION
+    manifest["artifact_hashes"] = {
+        field: artifact_hash_payload(abs_path(manifest.get(field))) for field in fields
+    }
+    return manifest
+
+
 def make_rule_hit(rule_id: str, message: str, *, severity: str = "FAIL") -> dict[str, str]:
     return {
         "rule_id": rule_id,
@@ -1013,14 +1163,20 @@ def detect_static_rule_hits(text: str) -> list[dict[str, str]]:
 def check_file(tex_path: Path) -> dict[str, Any]:
     text = read_text(tex_path)
     rule_hits = detect_static_rule_hits(text)
-    verdict = "APPROVED" if not rule_hits else "NEEDS_REVISION"
+    verdict = "PRECHECK_PASS" if not rule_hits else "NEEDS_REVISION"
     return {
         "verdict": verdict,
+        "preflight_only": True,
+        "final_verdict": "NOT_APPROVAL",
         "file": str(tex_path),
         "failed_rules": [hit["message"] for hit in rule_hits],
         "rule_hits": rule_hits,
         "rule_refs": [hit["rule_id"] for hit in rule_hits],
     }
+
+
+def static_preflight_pass(result: dict[str, Any]) -> bool:
+    return not result.get("rule_hits") and result.get("verdict") in {"PRECHECK_PASS", "APPROVED"}
 
 
 def corrective_actions_for_rules(rule_ids: list[str]) -> list[str]:
@@ -1034,6 +1190,8 @@ def corrective_actions_for_rules(rule_ids: list[str]) -> list[str]:
         "P4_DIRECTIONAL_EDGE_LABELS": "add explicit directional or anchoring placement to edge labels",
         "P5_EXTRACT_FRESHNESS": "refresh the extracted artifacts from the current source-of-truth file",
         "P6_EXPLICIT_GRAPH_CLOSURE": "replace cycle closure with an explicit final edge between named nodes",
+        "P7_APPROVAL_PROVENANCE": "rerun strict approval from current generated artifacts so provenance hashes refresh",
+        "P8_SYMMETRY_CONTRACT": "add a structured symmetry_contract with required/not_required/intentionally_asymmetric intent",
     }
     ordered = []
     for rule_id in rule_ids:
@@ -1043,32 +1201,69 @@ def corrective_actions_for_rules(rule_ids: list[str]) -> list[str]:
     return ordered
 
 
-def run_compile(tex_path: Path, svg: bool) -> int:
+def compile_tex(tex_path: Path, svg: bool) -> dict[str, Any]:
     latexmk = resolve_tool("latexmk")
     if not latexmk:
-        raise SystemExit("latexmk is not available")
+        return {
+            "status": "BLOCKED_ENVIRONMENT",
+            "exit_code": 5,
+            "tool": "latexmk",
+            "message": "latexmk is not available",
+        }
     env = tool_environment()
     cmd = [latexmk, "-pdf", "-interaction=nonstopmode", "-halt-on-error", tex_path.name]
     proc = subprocess.run(cmd, cwd=tex_path.parent, text=True, capture_output=True, env=env)
+    result: dict[str, Any] = {
+        "status": "PASS" if proc.returncode == 0 else "FAIL",
+        "exit_code": proc.returncode,
+        "command": cmd,
+        "cwd": str(tex_path.parent),
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "pdf": str(tex_path.with_suffix(".pdf")),
+        "svg": str(tex_path.with_suffix(".svg")),
+    }
     if proc.returncode != 0:
-        sys.stdout.write(proc.stdout)
-        sys.stderr.write(proc.stderr)
-        return proc.returncode
+        return result
     pdf_path = tex_path.with_suffix(".pdf")
-    print(f"PDF\t{pdf_path}")
     if svg:
         dvisvgm = resolve_tool("dvisvgm")
         if dvisvgm:
             svg_path = tex_path.with_suffix(".svg")
             svg_cmd = [dvisvgm, "--pdf", str(pdf_path), "-n", "-o", str(svg_path)]
             svg_proc = subprocess.run(svg_cmd, cwd=tex_path.parent, text=True, capture_output=True, env=env)
+            result["svg_command"] = svg_cmd
+            result["svg_stdout"] = svg_proc.stdout
+            result["svg_stderr"] = svg_proc.stderr
             if svg_proc.returncode != 0:
-                sys.stdout.write(svg_proc.stdout)
-                sys.stderr.write(svg_proc.stderr)
-                return svg_proc.returncode
-            print(f"SVG\t{svg_path}")
+                result["status"] = "FAIL"
+                result["exit_code"] = svg_proc.returncode
+                return result
         else:
-            raise SystemExit("requested --svg but dvisvgm is not available")
+            return {
+                **result,
+                "status": "BLOCKED_ENVIRONMENT",
+                "exit_code": 5,
+                "tool": "dvisvgm",
+                "message": "requested --svg but dvisvgm is not available",
+            }
+    return result
+
+
+def run_compile(tex_path: Path, svg: bool) -> int:
+    result = compile_tex(tex_path, svg)
+    if result["status"] == "BLOCKED_ENVIRONMENT":
+        raise SystemExit(result.get("message", "compile dependency is not available"))
+    if result["exit_code"] != 0:
+        sys.stdout.write(result.get("stdout", ""))
+        sys.stderr.write(result.get("stderr", ""))
+        if result.get("svg_stdout") or result.get("svg_stderr"):
+            sys.stdout.write(result.get("svg_stdout", ""))
+            sys.stderr.write(result.get("svg_stderr", ""))
+        return int(result["exit_code"])
+    print(f"PDF\t{tex_path.with_suffix('.pdf')}")
+    if svg:
+        print(f"SVG\t{tex_path.with_suffix('.svg')}")
     return 0
 
 
@@ -1186,9 +1381,12 @@ def base_semantic_report(manifest: dict[str, Any] | None = None) -> dict[str, An
         "family": family,
         "static_status": "SKIPPED",
         "visual_status": "SKIPPED",
+        "overlap_status": "SKIPPED",
         "compile_status": "SKIPPED",
         "semantic_status": "SKIPPED",
+        "symmetry_status": "SKIPPED",
         "semantic_verdict": None,
+        "final_verdict": None,
         "supported_family": family in SEMANTIC_VERIFIER_FAMILIES if family else False,
         "mismatches": [],
         "mismatch_codes": [],
@@ -1197,6 +1395,10 @@ def base_semantic_report(manifest: dict[str, Any] | None = None) -> dict[str, An
         "warnings": [],
         "visual_review": {
             "passes_run": [],
+            "findings": [],
+        },
+        "symmetry_review": {
+            "contract": None,
             "findings": [],
         },
         "evidence": evidence,
@@ -1258,6 +1460,7 @@ def make_visual_finding(
     subject: str | None = None,
     measured_pt: float | None = None,
     threshold_pt: float | None = None,
+    evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     finding: dict[str, Any] = {
         "pass_id": pass_id,
@@ -1271,7 +1474,133 @@ def make_visual_finding(
         finding["measured_pt"] = round(float(measured_pt), 4)
     if threshold_pt is not None:
         finding["threshold_pt"] = round(float(threshold_pt), 4)
+    if evidence is not None:
+        finding["evidence"] = evidence
     return finding
+
+
+def bbox_payload_from_tuple(bounds: tuple[float, float, float, float]) -> dict[str, float]:
+    x0, y0, x1, y1 = bounds
+    return {
+        "x0": round(float(x0), 4),
+        "y0": round(float(y0), 4),
+        "x1": round(float(x1), 4),
+        "y1": round(float(y1), 4),
+        "width": round(float(x1 - x0), 4),
+        "height": round(float(y1 - y0), 4),
+    }
+
+
+def merge_words_into_visual_labels(page: dict[str, Any]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for word in page.get("words", []):
+        key = (int(word.get("block", 0)), int(word.get("line", 0)))
+        grouped.setdefault(key, []).append(word)
+    labels: list[dict[str, Any]] = []
+    for (block, line), words in sorted(grouped.items()):
+        ordered = sorted(words, key=lambda item: int(item.get("word", 0)))
+        boxes = [bbox_tuple(item["bbox"]) for item in ordered if item.get("bbox")]
+        if not boxes:
+            continue
+        x0 = min(item[0] for item in boxes)
+        y0 = min(item[1] for item in boxes)
+        x1 = max(item[2] for item in boxes)
+        y1 = max(item[3] for item in boxes)
+        text = " ".join(str(item.get("text", "")) for item in ordered).strip()
+        labels.append(
+            {
+                "primitive_id": f"text-{block}-{line}",
+                "text": text,
+                "bbox": bbox_payload_from_tuple((x0, y0, x1, y1)),
+                "block": block,
+                "line": line,
+                "word_count": len(ordered),
+            }
+        )
+    return labels
+
+
+def drawing_primitive_id(drawing: dict[str, Any], index: int) -> str:
+    return str(drawing.get("primitive_id") or f"drawing-{drawing.get('seqno', index)}")
+
+
+def drawing_ops(drawing: dict[str, Any]) -> list[str]:
+    return [str(item.get("op")) for item in drawing.get("items", [])]
+
+
+def is_groupbox_drawing(drawing: dict[str, Any]) -> bool:
+    dashes = drawing.get("dashes")
+    return dashes not in (None, "[] 0", [])
+
+
+def visual_shape_primitives(page: dict[str, Any]) -> list[dict[str, Any]]:
+    from shapely.geometry import box  # type: ignore
+
+    shapes: list[dict[str, Any]] = []
+    for index, drawing in enumerate(page.get("drawings", [])):
+        rect = drawing.get("rect")
+        if not rect:
+            continue
+        ops = drawing_ops(drawing)
+        if ops == ["l"]:
+            continue
+        shape_like = ops == ["l", "l", "l", "l"] or (len(ops) >= 4 and set(ops).issubset({"l", "c"}))
+        if not shape_like:
+            continue
+        if float(rect.get("width", 0.0)) < 4.0 or float(rect.get("height", 0.0)) < 4.0:
+            continue
+        shapes.append(
+            {
+                "primitive_id": drawing_primitive_id(drawing, index),
+                "drawing_index": index,
+                "kind": "groupbox" if is_groupbox_drawing(drawing) else "shape",
+                "bbox": rect,
+                "geom": box(*bbox_tuple(rect)),
+            }
+        )
+    return shapes
+
+
+def visual_line_primitives(page: dict[str, Any]) -> list[dict[str, Any]]:
+    from shapely.geometry import LineString  # type: ignore
+
+    lines: list[dict[str, Any]] = []
+    for index, drawing in enumerate(page.get("drawings", [])):
+        if is_groupbox_drawing(drawing):
+            continue
+        ops = drawing_ops(drawing)
+        if ops != ["l"]:
+            continue
+        base_id = drawing_primitive_id(drawing, index)
+        for item_index, item in enumerate(drawing.get("items", [])):
+            args = item.get("args") or []
+            if len(args) != 2:
+                continue
+            start, end = args
+            if not all(key in start for key in ("x", "y")) or not all(key in end for key in ("x", "y")):
+                continue
+            start_xy = (float(start["x"]), float(start["y"]))
+            end_xy = (float(end["x"]), float(end["y"]))
+            lines.append(
+                {
+                    "primitive_id": f"{base_id}-line-{item_index}",
+                    "drawing_index": index,
+                    "start": {"x": round(start_xy[0], 4), "y": round(start_xy[1], 4)},
+                    "end": {"x": round(end_xy[0], 4), "y": round(end_xy[1], 4)},
+                    "geom": LineString([start_xy, end_xy]),
+                    "width": float(drawing.get("width") or 0.0),
+                }
+            )
+    return lines
+
+
+def endpoint_touches_shape(line: dict[str, Any], shape: dict[str, Any], tolerance: float = 2.0) -> bool:
+    from shapely.geometry import Point  # type: ignore
+
+    start = Point(float(line["start"]["x"]), float(line["start"]["y"]))
+    end = Point(float(line["end"]["x"]), float(line["end"]["y"]))
+    geom = shape["geom"].buffer(tolerance)
+    return geom.intersects(start) or geom.intersects(end)
 
 
 def evaluate_visual_review(render_semantics: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -1283,22 +1612,36 @@ def evaluate_visual_review(render_semantics: dict[str, Any]) -> tuple[list[dict[
         page_index = int(page["page_index"])
         page_width = float(page["width"])
         page_height = float(page["height"])
-        drawing_boxes: list[tuple[dict[str, Any], Any]] = []
-        for drawing in page.get("drawings", []):
-            rect = drawing.get("rect")
-            if not rect:
-                continue
-            try:
-                drawing_boxes.append((drawing, box(*bbox_tuple(rect))))
-            except Exception:
-                continue
+        labels = merge_words_into_visual_labels(page)
+        shapes = visual_shape_primitives(page)
+        lines = visual_line_primitives(page)
 
-        for word in page.get("words", []):
-            word_box = box(*bbox_tuple(word["bbox"]))
-            text = str(word.get("text", "")).strip()
-            subject = text or f"word-{word.get('word')}"
+        for left_index, left in enumerate(labels):
+            left_box = box(*bbox_tuple(left["bbox"]))
+            for right in labels[left_index + 1 :]:
+                right_box = box(*bbox_tuple(right["bbox"]))
+                overlap_area = left_box.intersection(right_box).area
+                if overlap_area > OVERLAP_EPSILON_PT:
+                    findings.append(
+                        make_visual_finding(
+                            "V4_TEXT_TEXT_OVERLAP",
+                            page_index=page_index,
+                            subject=f"{left['primitive_id']}:{right['primitive_id']}",
+                            measured_pt=overlap_area,
+                            threshold_pt=OVERLAP_EPSILON_PT,
+                            message=f"text labels '{left['text']}' and '{right['text']}' overlap",
+                            evidence={
+                                "left": {"id": left["primitive_id"], "text": left["text"], "bbox": left["bbox"]},
+                                "right": {"id": right["primitive_id"], "text": right["text"], "bbox": right["bbox"]},
+                            },
+                        )
+                    )
 
-            x0, y0, x1, y1 = bbox_tuple(word["bbox"])
+        for label in labels:
+            word_box = box(*bbox_tuple(label["bbox"]))
+            subject = str(label.get("text", "")).strip() or label["primitive_id"]
+
+            x0, y0, x1, y1 = bbox_tuple(label["bbox"])
             page_margin = min(x0, y0, page_width - x1, page_height - y1)
             if page_margin < VISUAL_THRESHOLDS_PT["V3_PAGE_MARGIN"]:
                 findings.append(
@@ -1309,19 +1652,39 @@ def evaluate_visual_review(render_semantics: dict[str, Any]) -> tuple[list[dict[
                         measured_pt=page_margin,
                         threshold_pt=VISUAL_THRESHOLDS_PT["V3_PAGE_MARGIN"],
                         message=f"text '{subject}' sits too close to the page boundary",
+                        evidence={"text": {"id": label["primitive_id"], "bbox": label["bbox"]}},
                     )
                 )
 
             containing_shapes: list[float] = []
             exterior_gaps: list[float] = []
-            for drawing, drawing_box in drawing_boxes:
+            for shape in shapes:
+                drawing_box = shape["geom"]
                 if drawing_box.area <= word_box.area * 1.05:
                     continue
                 if drawing_box.buffer(1e-6).contains(word_box):
                     clearance = word_box.distance(drawing_box.boundary)
                     containing_shapes.append(clearance)
                 else:
-                    exterior_gaps.append(word_box.distance(drawing_box))
+                    gap = word_box.distance(drawing_box)
+                    exterior_gaps.append(gap)
+                    if word_box.intersects(drawing_box):
+                        overlap_area = word_box.intersection(drawing_box).area
+                        if overlap_area > OVERLAP_EPSILON_PT:
+                            findings.append(
+                                make_visual_finding(
+                                    "V5_TEXT_SHAPE_OVERLAP",
+                                    page_index=page_index,
+                                    subject=subject,
+                                    measured_pt=overlap_area,
+                                    threshold_pt=OVERLAP_EPSILON_PT,
+                                    message=f"text '{subject}' overlaps a non-containing shape",
+                                    evidence={
+                                        "text": {"id": label["primitive_id"], "bbox": label["bbox"]},
+                                        "shape": {"id": shape["primitive_id"], "bbox": shape["bbox"]},
+                                    },
+                                )
+                            )
 
             if containing_shapes:
                 clearance = min(containing_shapes)
@@ -1334,11 +1697,12 @@ def evaluate_visual_review(render_semantics: dict[str, Any]) -> tuple[list[dict[
                             measured_pt=clearance,
                             threshold_pt=VISUAL_THRESHOLDS_PT["V2_BOUNDARY_CLEARANCE"],
                             message=f"text '{subject}' is too close to its enclosing shape boundary",
+                            evidence={"text": {"id": label["primitive_id"], "bbox": label["bbox"]}},
                         )
                     )
             if exterior_gaps:
                 gap = min(exterior_gaps)
-                if 0.0 < gap < VISUAL_THRESHOLDS_PT["V1_LABEL_GAP"]:
+                if 0.0 <= gap < VISUAL_THRESHOLDS_PT["V1_LABEL_GAP"]:
                     findings.append(
                         make_visual_finding(
                             "V1_LABEL_GAP",
@@ -1347,10 +1711,73 @@ def evaluate_visual_review(render_semantics: dict[str, Any]) -> tuple[list[dict[
                             measured_pt=gap,
                             threshold_pt=VISUAL_THRESHOLDS_PT["V1_LABEL_GAP"],
                             message=f"text '{subject}' is too close to nearby linework or shapes",
+                            evidence={"text": {"id": label["primitive_id"], "bbox": label["bbox"]}},
                         )
                     )
 
-    warnings.append("V4_CURVE_POINT_PLACEMENT remains family-specific and is not evaluated in the current semantic-review slice.")
+            for line in lines:
+                shrunken_text = word_box.buffer(-OVERLAP_EPSILON_PT)
+                text_target = shrunken_text if not shrunken_text.is_empty else word_box
+                if line["geom"].intersects(text_target):
+                    findings.append(
+                        make_visual_finding(
+                            "V6_LINE_TEXT_OVERLAP",
+                            page_index=page_index,
+                            subject=subject,
+                            measured_pt=0.0,
+                            threshold_pt=OVERLAP_EPSILON_PT,
+                            message=f"linework crosses text '{subject}'",
+                            evidence={
+                                "line": {"id": line["primitive_id"], "start": line["start"], "end": line["end"]},
+                                "text": {"id": label["primitive_id"], "bbox": label["bbox"]},
+                            },
+                        )
+                    )
+
+        for line in lines:
+            for shape in shapes:
+                if shape["kind"] == "groupbox" or endpoint_touches_shape(line, shape):
+                    continue
+                interior = shape["geom"].buffer(-0.5)
+                target = interior if not interior.is_empty else shape["geom"]
+                if line["geom"].intersects(target):
+                    findings.append(
+                        make_visual_finding(
+                            "V7_LINE_SHAPE_OVERLAP",
+                            page_index=page_index,
+                            subject=f"{line['primitive_id']}:{shape['primitive_id']}",
+                            measured_pt=0.0,
+                            threshold_pt=OVERLAP_EPSILON_PT,
+                            message="linework crosses a non-incident shape",
+                            evidence={
+                                "line": {"id": line["primitive_id"], "start": line["start"], "end": line["end"]},
+                                "shape": {"id": shape["primitive_id"], "bbox": shape["bbox"]},
+                            },
+                        )
+                    )
+
+        non_group_shapes = [shape for shape in shapes if shape["kind"] != "groupbox"]
+        for left_index, left in enumerate(non_group_shapes):
+            for right in non_group_shapes[left_index + 1 :]:
+                if left["geom"].contains(right["geom"]) or right["geom"].contains(left["geom"]):
+                    continue
+                overlap_area = left["geom"].intersection(right["geom"]).area
+                if overlap_area > OVERLAP_EPSILON_PT:
+                    findings.append(
+                        make_visual_finding(
+                            "V8_SHAPE_SHAPE_OVERLAP",
+                            page_index=page_index,
+                            subject=f"{left['primitive_id']}:{right['primitive_id']}",
+                            measured_pt=overlap_area,
+                            threshold_pt=OVERLAP_EPSILON_PT,
+                            message="non-group shapes overlap",
+                            evidence={
+                                "left": {"id": left["primitive_id"], "bbox": left["bbox"]},
+                                "right": {"id": right["primitive_id"], "bbox": right["bbox"]},
+                            },
+                        )
+                    )
+
     return findings, warnings
 
 
@@ -1402,6 +1829,7 @@ def run_review_visual_report(manifest_path: Path, work_dir: Path) -> tuple[dict[
     if freshness_hits:
         report["review_status"] = "BLOCKED_INPUT"
         report["visual_status"] = "BLOCKED"
+        report["overlap_status"] = "BLOCKED"
         report["rule_hits"].extend(freshness_hits)
         report["warnings"].append("freshness checks failed before visual review")
         finalized = finalize_report(report)
@@ -1412,6 +1840,7 @@ def run_review_visual_report(manifest_path: Path, work_dir: Path) -> tuple[dict[
     if pdf_path is None or not pdf_path.is_file():
         report["review_status"] = "BLOCKED_INPUT"
         report["visual_status"] = "BLOCKED"
+        report["overlap_status"] = "BLOCKED"
         report["warnings"].append("compiled PDF is required for review-visual")
         finalized = finalize_report(report)
         write_semantic_report(manifest, finalized)
@@ -1421,6 +1850,7 @@ def run_review_visual_report(manifest_path: Path, work_dir: Path) -> tuple[dict[
     if missing_deps is not None:
         report, exit_code = missing_deps
         report["visual_status"] = "BLOCKED"
+        report["overlap_status"] = "BLOCKED"
         write_semantic_report(manifest, report)
         return report, exit_code
 
@@ -1432,6 +1862,7 @@ def run_review_visual_report(manifest_path: Path, work_dir: Path) -> tuple[dict[
     report["visual_review"]["findings"] = findings
     report["review_status"] = "COMPLETE"
     report["visual_status"] = "FAIL" if findings else "PASS"
+    report["overlap_status"] = report["visual_status"]
     finalized = finalize_report(report)
     write_semantic_report(manifest, finalized)
     return finalized, 1 if findings else 0
@@ -1519,6 +1950,312 @@ def run_verify_semantic_report(manifest_path: Path, work_dir: Path) -> tuple[dic
     return finalized, 1 if report["mismatches"] else 0
 
 
+def bbox_center_payload(bbox: dict[str, Any]) -> dict[str, float]:
+    x0, y0, x1, y1 = bbox_tuple(bbox)
+    return {
+        "x": round((x0 + x1) / 2.0, 4),
+        "y": round((y0 + y1) / 2.0, 4),
+    }
+
+
+def rendered_label_map(render_semantics: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    labels: dict[str, dict[str, Any]] = {}
+    for page in render_semantics.get("pages", []):
+        for label in merge_words_into_visual_labels(page):
+            text = str(label.get("text", "")).strip()
+            if not text or text in labels:
+                continue
+            labels[text] = {
+                **label,
+                "page_index": int(page.get("page_index", 0)),
+                "center": bbox_center_payload(label["bbox"]),
+            }
+    return labels
+
+
+def node_label_by_id(spec: dict[str, Any]) -> dict[str, str]:
+    return {str(node.get("id")): str(node.get("label", "")) for node in spec.get("nodes", [])}
+
+
+def symmetry_pair_entries(contract: dict[str, Any]) -> list[tuple[str, str]]:
+    pairs = contract.get("pairs") or contract.get("node_pairs") or []
+    entries: list[tuple[str, str]] = []
+    for pair in pairs:
+        if isinstance(pair, dict):
+            left = pair.get("left") or pair.get("a") or pair.get("source")
+            right = pair.get("right") or pair.get("b") or pair.get("target")
+        elif isinstance(pair, (list, tuple)) and len(pair) == 2:
+            left, right = pair
+        else:
+            continue
+        if left is not None and right is not None:
+            entries.append((str(left), str(right)))
+    return entries
+
+
+def make_symmetry_finding(
+    message: str,
+    *,
+    severity: str = "FAIL",
+    subject: str | None = None,
+    evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    finding: dict[str, Any] = {
+        "rule_id": "P8_SYMMETRY_CONTRACT",
+        "severity": severity,
+        "message": message,
+    }
+    if subject is not None:
+        finding["subject"] = subject
+    if evidence is not None:
+        finding["evidence"] = evidence
+    return finding
+
+
+def evaluate_symmetry_contract(spec: dict[str, Any] | None, render_semantics: dict[str, Any] | None) -> dict[str, Any]:
+    review = {
+        "contract": None,
+        "findings": [],
+        "mode": None,
+    }
+    if spec is None:
+        review["status"] = "BLOCKED"
+        review["findings"].append(make_symmetry_finding("diagram_spec is required for symmetry-contract approval"))
+        return review
+    try:
+        contract = normalize_symmetry_contract(spec.get("symmetry_contract"))
+    except SystemExit as exc:
+        review["status"] = "BLOCKED"
+        review["findings"].append(make_symmetry_finding(str(exc)))
+        return review
+    review["contract"] = contract
+    status = contract["status"]
+    if status in {"not_required", "intentionally_asymmetric"}:
+        review["status"] = "PASS"
+        review["mode"] = status
+        return review
+    if render_semantics is None:
+        review["status"] = "BLOCKED"
+        review["findings"].append(make_symmetry_finding("render semantics are required for required symmetry checking"))
+        return review
+
+    mode = contract.get("mode", "mirror_vertical_axis")
+    tolerance = float(contract.get("tolerance_pt", DEFAULT_SYMMETRY_TOLERANCE_PT))
+    pairs = symmetry_pair_entries(contract)
+    if not pairs:
+        review["status"] = "BLOCKED"
+        review["mode"] = mode
+        review["findings"].append(
+            make_symmetry_finding("required symmetry_contract needs explicit node pair mappings")
+        )
+        return review
+
+    labels_by_id = node_label_by_id(spec)
+    rendered = rendered_label_map(render_semantics)
+    pair_evidence: list[dict[str, Any]] = []
+    midpoint_values: list[float] = []
+    for left_id, right_id in pairs:
+        left_label = labels_by_id.get(left_id, left_id)
+        right_label = labels_by_id.get(right_id, right_id)
+        left_rendered = rendered.get(left_label)
+        right_rendered = rendered.get(right_label)
+        if left_rendered is None or right_rendered is None:
+            review["findings"].append(
+                make_symmetry_finding(
+                    "required symmetry pair could not be matched to rendered labels",
+                    subject=f"{left_id}:{right_id}",
+                    evidence={"left_label": left_label, "right_label": right_label},
+                )
+            )
+            continue
+        left_center = left_rendered["center"]
+        right_center = right_rendered["center"]
+        if mode == "mirror_vertical_axis":
+            midpoint_values.append((left_center["x"] + right_center["x"]) / 2.0)
+            delta = abs(left_center["y"] - right_center["y"])
+            axis_delta = 0.0
+        elif mode == "mirror_horizontal_axis":
+            midpoint_values.append((left_center["y"] + right_center["y"]) / 2.0)
+            delta = abs(left_center["x"] - right_center["x"])
+            axis_delta = 0.0
+        elif mode == "row_alignment":
+            delta = abs(left_center["y"] - right_center["y"])
+            axis_delta = 0.0
+        elif mode == "column_alignment":
+            delta = abs(left_center["x"] - right_center["x"])
+            axis_delta = 0.0
+        else:
+            width_delta = abs(float(left_rendered["bbox"]["width"]) - float(right_rendered["bbox"]["width"]))
+            height_delta = abs(float(left_rendered["bbox"]["height"]) - float(right_rendered["bbox"]["height"]))
+            delta = max(width_delta, height_delta)
+            axis_delta = 0.0
+        pair_evidence.append(
+            {
+                "left": {"id": left_id, "label": left_label, "center": left_center, "bbox": left_rendered["bbox"]},
+                "right": {"id": right_id, "label": right_label, "center": right_center, "bbox": right_rendered["bbox"]},
+                "delta_pt": round(delta, 4),
+            }
+        )
+        if delta > tolerance:
+            review["findings"].append(
+                make_symmetry_finding(
+                    f"required symmetry pair exceeds tolerance for {mode}",
+                    subject=f"{left_id}:{right_id}",
+                    evidence={"delta_pt": round(delta, 4), "tolerance_pt": tolerance},
+                )
+            )
+
+    if midpoint_values and mode in {"mirror_vertical_axis", "mirror_horizontal_axis"}:
+        axis = sum(midpoint_values) / len(midpoint_values)
+        max_axis_delta = max(abs(value - axis) for value in midpoint_values)
+        review["axis_pt"] = round(axis, 4)
+        if max_axis_delta > tolerance:
+            review["findings"].append(
+                make_symmetry_finding(
+                    f"symmetry pair midpoints disagree on the {mode} axis",
+                    evidence={"max_axis_delta_pt": round(max_axis_delta, 4), "tolerance_pt": tolerance},
+                )
+            )
+
+    review["mode"] = mode
+    review["pairs"] = pair_evidence
+    review["status"] = "FAIL" if review["findings"] else "PASS"
+    return review
+
+
+def blocked_review_status(*reports: dict[str, Any]) -> str | None:
+    for report in reports:
+        status = report.get("review_status")
+        if status in {"BLOCKED_INPUT", "BLOCKED_ENVIRONMENT", "UNSUPPORTED_FAMILY", "TOOL_ERROR"}:
+            return str(status)
+    return None
+
+
+def run_approve_report(manifest_path: Path, work_dir: Path) -> tuple[dict[str, Any], int]:
+    manifest = load_manifest(manifest_path)
+    report = base_semantic_report(manifest)
+    report["strict_approval_version"] = STRICT_APPROVAL_VERSION
+    report["approval_command"] = "approve"
+
+    standalone_tex = abs_path(manifest.get("standalone_tex"))
+    if standalone_tex is None or not standalone_tex.is_file():
+        report["review_status"] = "BLOCKED_INPUT"
+        report["static_status"] = "BLOCKED"
+        report["compile_status"] = "BLOCKED"
+        report["final_verdict"] = "BLOCKED"
+        report["warnings"].append("standalone_tex is required for strict approval")
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 3
+
+    static_result = check_file(standalone_tex)
+    report["static_status"] = "PASS" if static_preflight_pass(static_result) else "FAIL"
+    report["rule_hits"].extend(static_result["rule_hits"])
+    if report["static_status"] == "FAIL":
+        report["review_status"] = "COMPLETE"
+        report["final_verdict"] = "NEEDS_REVISION"
+        report["semantic_verdict"] = "REJECTED"
+        report["warnings"].append("strict approval stopped after static preflight failure")
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 1
+
+    compile_result = compile_tex(standalone_tex, svg=False)
+    report["compile"] = {
+        "status": compile_result["status"],
+        "exit_code": compile_result["exit_code"],
+        "pdf": compile_result.get("pdf"),
+    }
+    if compile_result["status"] == "BLOCKED_ENVIRONMENT":
+        report["review_status"] = "BLOCKED_ENVIRONMENT"
+        report["compile_status"] = "BLOCKED"
+        report["final_verdict"] = "BLOCKED"
+        report["warnings"].append(str(compile_result.get("message", "compile dependency unavailable")))
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 5
+    if compile_result["exit_code"] != 0:
+        report["review_status"] = "COMPLETE"
+        report["compile_status"] = "FAIL"
+        report["final_verdict"] = "NEEDS_REVISION"
+        report["warnings"].append("latex compilation failed during strict approval")
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 1
+    report["compile_status"] = "PASS"
+
+    refresh_manifest_artifact_hashes(manifest)
+    dump_json(manifest_path, manifest)
+
+    visual_report, visual_exit = run_review_visual_report(manifest_path, work_dir)
+    semantic_report, semantic_exit = run_verify_semantic_report(manifest_path, work_dir)
+    report["visual_status"] = visual_report.get("visual_status", "SKIPPED")
+    report["overlap_status"] = visual_report.get("overlap_status", report["visual_status"])
+    report["semantic_status"] = semantic_report.get("semantic_status", "SKIPPED")
+    report["semantic_verdict"] = semantic_report.get("semantic_verdict")
+    report["supported_family"] = semantic_report.get("supported_family", False)
+    report["mismatches"] = semantic_report.get("mismatches", [])
+    report["mismatch_codes"] = semantic_report.get("mismatch_codes", [])
+    report["warnings"].extend(visual_report.get("warnings", []))
+    report["warnings"].extend(semantic_report.get("warnings", []))
+    report["rule_hits"].extend(visual_report.get("rule_hits", []))
+    report["rule_hits"].extend(semantic_report.get("rule_hits", []))
+    report["visual_review"] = visual_report.get("visual_review", report["visual_review"])
+    if semantic_report.get("evidence", {}).get("recovered") is not None:
+        report["evidence"]["recovered"] = semantic_report["evidence"]["recovered"]
+    if visual_report.get("evidence", {}).get("render_semantics") is not None:
+        report["evidence"]["render_semantics"] = visual_report["evidence"]["render_semantics"]
+
+    render_semantics = None
+    render_path = abs_path(manifest.get("render_semantics"))
+    if render_path and render_path.is_file():
+        render_semantics = load_render_semantics(render_path)
+    spec = None
+    spec_path = abs_path(manifest.get("diagram_spec"))
+    if spec_path and spec_path.is_file():
+        spec = load_json(spec_path)
+    symmetry_review = evaluate_symmetry_contract(spec, render_semantics)
+    report["symmetry_review"] = symmetry_review
+    report["symmetry_status"] = symmetry_review.get("status", "BLOCKED")
+    if report["symmetry_status"] in {"FAIL", "BLOCKED"}:
+        report["rule_hits"].append(
+            make_rule_hit("P8_SYMMETRY_CONTRACT", STATIC_RULES["P8_SYMMETRY_CONTRACT"])
+        )
+
+    blocked_status = blocked_review_status(visual_report, semantic_report)
+    if blocked_status is not None:
+        report["review_status"] = blocked_status
+        report["final_verdict"] = "BLOCKED"
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, visual_exit if visual_exit not in {0, 1} else semantic_exit
+    if report["symmetry_status"] == "BLOCKED":
+        report["review_status"] = "BLOCKED_INPUT"
+        report["final_verdict"] = "BLOCKED"
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 3
+
+    if visual_exit == 0 and semantic_exit == 0 and report["symmetry_status"] == "PASS":
+        report["review_status"] = "COMPLETE"
+        report["final_verdict"] = "APPROVED"
+        report["semantic_verdict"] = "APPROVED"
+        refresh_manifest_artifact_hashes(manifest)
+        dump_json(manifest_path, manifest)
+        report["evidence"]["artifact_hashes"] = manifest["artifact_hashes"]
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 0
+
+    report["review_status"] = "COMPLETE"
+    report["final_verdict"] = "NEEDS_REVISION"
+    if report["semantic_verdict"] is None or report["semantic_verdict"] == "APPROVED":
+        report["semantic_verdict"] = "NEEDS_REVISION"
+    finalized = finalize_report(report)
+    write_semantic_report(manifest, finalized)
+    return finalized, 1
+
+
 def command_doctor() -> int:
     required_files = [
         SCRIPT_DIR / "requirements-semantic-verifier.txt",
@@ -1545,25 +2282,35 @@ def command_doctor() -> int:
         if status != "OK":
             missing_required = True
 
-    tools: list[dict[str, str]] = []
+    tools: list[dict[str, Any]] = []
     for tool in ("python", "latexmk", "pdflatex"):
         resolved = resolve_tool(tool)
         status = "OK" if resolved else "MISSING"
-        entry = {"name": tool, "status": status}
+        entry: dict[str, Any] = {"name": tool, "status": status}
         if resolved:
             entry["path"] = resolved
+            if tool == "python":
+                entry["probe"] = probe_tool(resolved, ["--version"])
+            else:
+                entry["probe"] = probe_tool(resolved, ["--version"])
+                if entry["probe"].get("probe_status") != "OK":
+                    status = "MISSING"
+                    entry["status"] = "MISSING"
         tools.append(entry)
         if status != "OK":
             missing_required = True
     dvisvgm_path = resolve_tool("dvisvgm")
-    tools.append(
-        {
-            "name": "dvisvgm",
-            "status": "OK" if dvisvgm_path else "MISSING",
-            **({"path": dvisvgm_path} if dvisvgm_path else {}),
-            "optional": True,
-        }
-    )
+    dvisvgm_entry: dict[str, Any] = {
+        "name": "dvisvgm",
+        "status": "OK" if dvisvgm_path else "MISSING",
+        **({"path": dvisvgm_path} if dvisvgm_path else {}),
+        "optional": True,
+    }
+    if dvisvgm_path:
+        dvisvgm_entry["probe"] = probe_tool(dvisvgm_path, ["--version"])
+        if dvisvgm_entry["probe"].get("probe_status") != "OK":
+            dvisvgm_entry["status"] = "MISSING"
+    tools.append(dvisvgm_entry)
 
     semantic_deps = semantic_dependency_report()
     graph_backend = sagemath_backend_status()
@@ -1653,6 +2400,8 @@ def build_render_manifest(
         "render_semantics": str(out_dir / f"{basename}.render-semantics.json"),
         "semantic_review": str(out_dir / f"{basename}.semantic-review.json"),
         "semantic_target_present": True,
+        "approval_contract_version": STRICT_APPROVAL_VERSION,
+        "artifact_hashes": {},
         "graph_mode_requested": brief.get("graph_mode", "auto") if spec.get("diagram_family") == "graph" else None,
         "graph_route_status": graph_routing.get("route_status"),
         "graph_route_reason": graph_routing.get("route_reason"),
@@ -1690,19 +2439,20 @@ def command_render(args: argparse.Namespace) -> int:
     write_text(standalone_path, standalone)
     write_text(snippet_path, snippet)
     dump_json(spec_out_path, spec)
+    manifest = build_render_manifest(
+        run_id=run_id,
+        out_dir=out_dir,
+        basename=basename,
+        brief_path=brief_out_path,
+        standalone_path=standalone_path,
+        snippet_path=snippet_path,
+        spec_out_path=spec_out_path,
+        brief=brief,
+        spec=spec,
+    )
     dump_json(
         manifest_path,
-        build_render_manifest(
-            run_id=run_id,
-            out_dir=out_dir,
-            basename=basename,
-            brief_path=brief_out_path,
-            standalone_path=standalone_path,
-            snippet_path=snippet_path,
-            spec_out_path=spec_out_path,
-            brief=brief,
-            spec=spec,
-        ),
+        refresh_manifest_artifact_hashes(manifest),
     )
     print(f"WROTE\t{brief_out_path}")
     print(f"WROTE\t{standalone_path}")
@@ -1717,7 +2467,7 @@ def command_check(args: argparse.Namespace) -> int:
     assert tex_path is not None
     result = check_file(tex_path)
     print(json.dumps(result, indent=2))
-    return 0 if result["verdict"] == "APPROVED" else 1
+    return 0 if static_preflight_pass(result) else 1
 
 
 def command_compile(args: argparse.Namespace) -> int:
@@ -1746,6 +2496,16 @@ def command_verify_semantic(args: argparse.Namespace) -> int:
     return exit_code
 
 
+def command_approve(args: argparse.Namespace) -> int:
+    manifest_path = abs_path(args.artifacts)
+    work_dir = abs_path(args.work_dir)
+    assert manifest_path is not None
+    assert work_dir is not None
+    report, exit_code = run_approve_report(manifest_path, work_dir)
+    print(json.dumps(report, indent=2))
+    return exit_code
+
+
 def command_review(args: argparse.Namespace) -> int:
     if args.semantic or args.artifacts or args.work_dir:
         if not args.artifacts or not args.work_dir:
@@ -1754,88 +2514,10 @@ def command_review(args: argparse.Namespace) -> int:
         work_dir = abs_path(args.work_dir)
         assert manifest_path is not None
         assert work_dir is not None
-        manifest = load_manifest(manifest_path)
-        report = base_semantic_report(manifest)
-
-        standalone_tex = abs_path(manifest.get("standalone_tex"))
-        if standalone_tex is None or not standalone_tex.is_file():
-            report["review_status"] = "BLOCKED_INPUT"
-            report["static_status"] = "BLOCKED"
-            report["warnings"].append("standalone_tex is required for semantic review aggregation")
-            print(json.dumps(finalize_report(report), indent=2))
-            return 3
-
-        static_result = check_file(standalone_tex)
-        report["static_status"] = "PASS" if static_result["verdict"] == "APPROVED" else "FAIL"
-        report["rule_hits"].extend(static_result["rule_hits"])
-        if report["static_status"] == "FAIL":
-            report["review_status"] = "COMPLETE"
-            report["semantic_verdict"] = "REJECTED"
-            report["warnings"].append("semantic review stopped after static preflight failure")
-            report["visual_status"] = "SKIPPED"
-            report["compile_status"] = "SKIPPED"
-            report["semantic_status"] = "SKIPPED"
-            print(json.dumps(finalize_report(report), indent=2))
-            return 1
-
-        visual_report, visual_exit = run_review_visual_report(manifest_path, work_dir)
-        semantic_report, semantic_exit = run_verify_semantic_report(manifest_path, work_dir)
-        report["visual_status"] = visual_report["visual_status"]
-        report["semantic_status"] = semantic_report["semantic_status"]
-        report["compile_status"] = "PASS" if abs_path(manifest.get("pdf")) and abs_path(manifest.get("pdf")).is_file() else "BLOCKED"
-        report["warnings"].extend(visual_report["warnings"])
-        report["warnings"].extend(semantic_report["warnings"])
-        report["rule_hits"].extend(visual_report["rule_hits"])
-        report["rule_hits"].extend(semantic_report["rule_hits"])
-        report["visual_review"] = visual_report["visual_review"]
-        report["supported_family"] = semantic_report["supported_family"]
-        report["mismatches"] = semantic_report["mismatches"]
-        report["mismatch_codes"] = semantic_report["mismatch_codes"]
-        if semantic_report.get("evidence", {}).get("recovered") is not None:
-            report["evidence"]["recovered"] = semantic_report["evidence"]["recovered"]
-
-        if visual_exit == 0 and semantic_exit == 0:
-            report["review_status"] = "COMPLETE"
-            report["semantic_verdict"] = "APPROVED"
-            finalized = finalize_report(report)
-            write_semantic_report(manifest, finalized)
-            print(json.dumps(finalized, indent=2))
-            return 0
-
-        if visual_report["review_status"] in {"BLOCKED_INPUT", "BLOCKED_ENVIRONMENT", "UNSUPPORTED_FAMILY"}:
-            report["review_status"] = visual_report["review_status"]
-            finalized = finalize_report(report)
-            write_semantic_report(manifest, finalized)
-            print(json.dumps(finalized, indent=2))
-            return visual_exit
-        if semantic_report["review_status"] in {"BLOCKED_INPUT", "BLOCKED_ENVIRONMENT", "UNSUPPORTED_FAMILY"}:
-            report["review_status"] = semantic_report["review_status"]
-            finalized = finalize_report(report)
-            write_semantic_report(manifest, finalized)
-            print(json.dumps(finalized, indent=2))
-            return semantic_exit
-
-        if visual_exit == 1:
-            report["review_status"] = "COMPLETE"
-            report["semantic_verdict"] = "NEEDS_REVISION"
-            finalized = finalize_report(report)
-            write_semantic_report(manifest, finalized)
-            print(json.dumps(finalized, indent=2))
-            return 1
-
-        if semantic_exit == 1:
-            report["review_status"] = "COMPLETE"
-            report["semantic_verdict"] = semantic_report["semantic_verdict"] or "NEEDS_REVISION"
-            finalized = finalize_report(report)
-            write_semantic_report(manifest, finalized)
-            print(json.dumps(finalized, indent=2))
-            return 1
-
-        report["review_status"] = "TOOL_ERROR"
-        finalized = finalize_report(report)
-        write_semantic_report(manifest, finalized)
-        print(json.dumps(finalized, indent=2))
-        return 6
+        report, exit_code = run_approve_report(manifest_path, work_dir)
+        report["review_alias"] = "review --semantic delegates to approve; approve is the authoritative final gate"
+        print(json.dumps(report, indent=2))
+        return exit_code
 
     tex_path = abs_path(args.tex)
     if tex_path is None:
@@ -1843,6 +2525,8 @@ def command_review(args: argparse.Namespace) -> int:
     result = check_file(tex_path)
     review = {
         "verdict": result["verdict"],
+        "preflight_only": True,
+        "final_verdict": "NOT_APPROVAL",
         "failed_rules": result["failed_rules"],
         "rule_hits": result["rule_hits"],
         "rule_refs": result["rule_refs"],
@@ -1850,7 +2534,7 @@ def command_review(args: argparse.Namespace) -> int:
         "corrective_actions": corrective_actions_for_rules(result["rule_refs"]) if result["rule_refs"] else [],
     }
     print(json.dumps(review, indent=2))
-    return 0 if review["verdict"] == "APPROVED" else 1
+    return 0 if static_preflight_pass(result) else 1
 
 
 def build_extract_manifest(
@@ -1884,6 +2568,8 @@ def build_extract_manifest(
         "render_semantics": str(out_dir / f"{basename}.render-semantics.json"),
         "semantic_review": str(out_dir / f"{basename}.semantic-review.json"),
         "semantic_target_present": False,
+        "approval_contract_version": STRICT_APPROVAL_VERSION,
+        "artifact_hashes": {},
         "graph_mode_requested": None,
         "graph_route_status": None,
         "graph_route_reason": None,
@@ -1906,17 +2592,18 @@ def command_extract(args: argparse.Namespace) -> int:
     manifest_path = out_dir / f"{basename}.artifacts.json"
     write_text(standalone_path, standalone)
     write_text(snippet_path, snippet)
+    manifest = build_extract_manifest(
+        run_id=run_id,
+        out_dir=out_dir,
+        basename=basename,
+        figure_id=figure_id,
+        standalone_path=standalone_path,
+        snippet_path=snippet_path,
+        extracted_from=tex_path,
+    )
     dump_json(
         manifest_path,
-        build_extract_manifest(
-            run_id=run_id,
-            out_dir=out_dir,
-            basename=basename,
-            figure_id=figure_id,
-            standalone_path=standalone_path,
-            snippet_path=snippet_path,
-            extracted_from=tex_path,
-        ),
+        refresh_manifest_artifact_hashes(manifest),
     )
     print(f"WROTE\t{standalone_path}")
     print(f"WROTE\t{snippet_path}")
@@ -1951,6 +2638,9 @@ def build_parser() -> argparse.ArgumentParser:
     spec_parser.add_argument("--caption")
     spec_parser.add_argument("--figure-id")
     spec_parser.add_argument("--source-id", action="append")
+    spec_parser.add_argument("--symmetry", choices=SYMMETRY_CONTRACT_STATUSES)
+    spec_parser.add_argument("--symmetry-mode", choices=SYMMETRY_MODES)
+    spec_parser.add_argument("--symmetry-justification")
     spec_parser.add_argument("--run-id")
     spec_parser.add_argument("--out-dir")
     spec_parser.add_argument("--research-root")
@@ -1973,6 +2663,9 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--caption")
     render_parser.add_argument("--figure-id")
     render_parser.add_argument("--source-id", action="append")
+    render_parser.add_argument("--symmetry", choices=SYMMETRY_CONTRACT_STATUSES)
+    render_parser.add_argument("--symmetry-mode", choices=SYMMETRY_MODES)
+    render_parser.add_argument("--symmetry-justification")
     render_parser.add_argument("--run-id")
     render_parser.add_argument("--out-dir")
     render_parser.add_argument("--research-root")
@@ -1992,6 +2685,10 @@ def build_parser() -> argparse.ArgumentParser:
     verify_parser = subparsers.add_parser("verify-semantic")
     verify_parser.add_argument("--artifacts", required=True)
     verify_parser.add_argument("--work-dir", required=True)
+
+    approve_parser = subparsers.add_parser("approve")
+    approve_parser.add_argument("--artifacts", required=True)
+    approve_parser.add_argument("--work-dir", required=True)
 
     review_parser = subparsers.add_parser("review")
     review_parser.add_argument("--tex")
@@ -2026,6 +2723,8 @@ def main() -> int:
         return command_review_visual(args)
     if args.command == "verify-semantic":
         return command_verify_semantic(args)
+    if args.command == "approve":
+        return command_approve(args)
     if args.command == "review":
         return command_review(args)
     if args.command == "extract":
