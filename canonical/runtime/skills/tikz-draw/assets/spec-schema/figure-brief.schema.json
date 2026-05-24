@@ -114,6 +114,10 @@
       "type": "object",
       "additionalProperties": true
     },
+    "semantic_design": {
+      "type": "object",
+      "additionalProperties": true
+    },
     "symmetry_contract": {
       "$ref": "#/$defs/symmetry_contract"
     },

@@ -35,11 +35,13 @@ The Codex runtime helper exposes one stable verb set:
 
 - `doctor`
 - `contract`
+- `design`
 - `spec`
 - `render`
 - `check`
 - `compile`
 - `review-visual`
+- `verify-design`
 - `verify-semantic`
 - `approve`
 - `review`
@@ -98,17 +100,24 @@ vertices and graph edges; a box-only flowchart is a contract violation.
 1. Establish the semantic intent contract before raw TikZ. Direct mode may
    infer and write the contract for you, but it must still be present in the
    generated brief and spec.
-2. Route the figure to the right backend:
+2. For manuscript-facing semantic figures, establish a semantic design
+   checkpoint before drawing or editing visual marks. This is mandatory for
+   graph/proof/reduction figures, extracted figures intended for semantic
+   approval, and any figure whose boxes, fills, regions, callouts, labels, or
+   correspondence marks carry mathematical meaning. The checkpoint records the
+   inspected source/caption/prose, affected visual marks, intended role of each
+   mark, alternatives considered, chosen encoding, and caption/prose alignment.
+3. Route the figure to the right backend:
    - `flowchart`, `dag`: `positioning`
    - `tree`: `forest`
    - `commutative`: `tikz-cd`
    - `graph`: baseline graph path first, with Sage-assisted routing when the request exceeds the baseline shorthand/layout surface
-3. Reject a requested or inferred backend family that contradicts the contract.
+4. Reject a requested or inferred backend family that contradicts the contract.
    Do not downgrade a graph request into a schematic diagram unless the contract
    explicitly says that a schematic is intended.
-4. Keep document-facing output inside the `adjustbox` environment with `max width=\textwidth`.
-5. For standalone compile targets, use plain `\documentclass[border=...]{standalone}` rather than `standalone[tikz]`.
-6. After creating, extracting, refactoring, or modifying any TikZ figure, run the strict approval gate before saying the figure is done, fixed, ready, passed, verified, or approved.
+5. Keep document-facing output inside the `adjustbox` environment with `max width=\textwidth`.
+6. For standalone compile targets, use plain `\documentclass[border=...]{standalone}` rather than `standalone[tikz]`.
+7. After creating, extracting, refactoring, or modifying any TikZ figure, run the strict approval gate before saying the figure is done, fixed, ready, passed, verified, or approved.
 
 Strict approval command:
 
@@ -125,6 +134,7 @@ The only final approval is `approve` exiting `0` with:
 
 - `final_verdict=APPROVED`
 - `overlap_status=PASS`
+- `design_status=PASS` for scoped semantic figures, or `design_status=SKIPPED` when the design gate is out of scope
 - `symmetry_status=PASS`
 
 `render`, `extract`, `compile`, `check`, `review --tex`, `review-visual`, and `verify-semantic` are preflight or artifact commands. Never cite them as final approval. Source inspection, compile success, screenshot review, PDF preview, or human visual inspection alone never constitute final approval.
@@ -150,11 +160,25 @@ If `approve` fails, fix the reported issue and rerun `approve`. Repeat until it 
 - `review --semantic` delegates to the strict approval path for compatibility.
 - `review --tex` remains source-only preflight and must not be treated as approval.
 - `review-visual` runs through the rendered-artifact extractor and refreshes `render-semantics.json` from the compiled PDF, but remains a component gate.
+- `verify-design` checks the visual-semantic design layer for scoped figures:
+  mark roles, graph-object vs metadata separation, region/fill semantics,
+  label/callout ownership, and declared caption/prose claim bindings.
 - `verify-semantic` now supports the current render-generated `flowchart`, `dag`, `tree`, supported-square `commutative`, and Sage-backed `graph` families.
 - `verify-semantic` still fails closed with `UNSUPPORTED_FAMILY` for an unsupported family and unsupported inputs outside the current renderer assumptions.
 - Strict approval is fail-closed for unsupported families, arbitrary extracted TikZ without a semantic target/spec, stale extracted sources, missing dependencies, missing render artifacts, failed overlap checks, and missing or failed symmetry contracts.
 - Strict approval also fails closed when a generated spec is missing its
   semantic intent contract or contradicts it.
+- Strict approval also fails closed when a scoped semantic figure is missing a
+  required visual-semantic design contract or when `verify-design` reports
+  role, metadata, region, label, correspondence, or caption/prose mismatches.
+
+For semantic design, visual marks are not decorative by default. A box, fill,
+outline, color, arrow, brace, callout, label, or region must have a declared
+role such as graph object, annotation, callout, correspondence, gadget region,
+highlight region, or legend. Metadata such as list constraints should default
+to adjacent text or callouts, not graph-object styling. If the user correction
+shows that a previous design assumption was wrong, reopen the design checkpoint
+before editing again.
 
 Every generated spec carries a `symmetry_contract`. The checker verifies the declared contract:
 

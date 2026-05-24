@@ -19,7 +19,16 @@ from pdf_extract import (
     RENDER_SEMANTICS_SCHEMA_VERSION,
     extract_pdf_render_semantics,
 )
-from family_verifiers import SUPPORTED_SEMANTIC_FAMILIES, verify_rendered_family
+try:
+    from family_verifiers import SUPPORTED_SEMANTIC_FAMILIES, verify_rendered_family
+except Exception as exc:  # noqa: BLE001
+    FAMILY_VERIFIER_IMPORT_ERROR = exc
+    SUPPORTED_SEMANTIC_FAMILIES = ("flowchart", "dag", "tree", "commutative", "graph")
+
+    def verify_rendered_family(_spec: dict[str, Any], _render_semantics: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError(f"semantic family verifier dependencies are unavailable: {FAMILY_VERIFIER_IMPORT_ERROR}")
+else:
+    FAMILY_VERIFIER_IMPORT_ERROR = None
 from sage_graph_backend import (
     GRAPH_MODE_VALUES,
     GRAPH_ROUTE_STATUSES,
@@ -53,11 +62,13 @@ BACKEND_BY_FAMILY = {
 CLI_VERBS = (
     "doctor",
     "contract",
+    "design",
     "spec",
     "render",
     "check",
     "compile",
     "review-visual",
+    "verify-design",
     "verify-semantic",
     "approve",
     "review",
@@ -76,6 +87,7 @@ STATIC_RULES = {
     "P6_EXPLICIT_GRAPH_CLOSURE": "verification-sensitive graph closures must use explicit final edges instead of cycle",
     "P7_APPROVAL_PROVENANCE": "strict approval requires current generated artifacts and provenance hashes",
     "P8_SYMMETRY_CONTRACT": "strict approval requires a declared symmetry contract",
+    "P9_DESIGN_CONTRACT": "strict approval requires a visual-semantic design contract for scoped semantic figures",
 }
 
 VISUAL_REVIEW_PASS_IDS = (
@@ -91,6 +103,17 @@ VISUAL_REVIEW_PASS_IDS = (
 
 STRICT_APPROVAL_VERSION = "strict-approval.v1"
 FIGURE_CONTRACT_VERSION = "figure-contract.v1"
+FIGURE_DESIGN_VERSION = "figure-design.v1"
+DESIGN_MARK_ROLES = (
+    "graph_object",
+    "annotation",
+    "callout",
+    "correspondence",
+    "gadget_region",
+    "highlight_region",
+    "legend",
+)
+DESIGN_GATE_INTENT_TOKENS = ("graph_hardness_reduction", "proof", "reduction", "gadget")
 SYMMETRY_CONTRACT_STATUSES = ("required", "not_required", "intentionally_asymmetric")
 SYMMETRY_MODES = (
     "mirror_vertical_axis",
@@ -126,6 +149,7 @@ MANIFEST_REQUIRED_FIELDS = {
     "figure_tex",
     "standalone_tex",
     "diagram_spec",
+    "figure_design",
     "pdf",
     "svg",
     "source_ids",
@@ -146,6 +170,7 @@ SEMANTIC_REPORT_FIELDS = (
     "overlap_status",
     "compile_status",
     "semantic_status",
+    "design_status",
     "symmetry_status",
     "semantic_verdict",
     "final_verdict",
@@ -156,6 +181,7 @@ SEMANTIC_REPORT_FIELDS = (
     "rule_refs",
     "warnings",
     "visual_review",
+    "design_review",
     "evidence",
     *GRAPH_ROUTE_FIELDS,
 )
@@ -203,6 +229,19 @@ FIGURE_CONTRACT_REQUIRED = {
     "forbidden_simplifications",
     "notation_requirements",
     "approval_criteria",
+}
+
+FIGURE_DESIGN_REQUIRED = {
+    "schema_version",
+    "figure_id",
+    "design_intent",
+    "audience_task",
+    "caption_claims",
+    "source_prose_claims",
+    "marks",
+    "visual_encoding_policy",
+    "rationale",
+    "approval_requirements",
 }
 
 SPEC_REQUIRED = {
@@ -662,6 +701,321 @@ def normalize_figure_contract(value: Any) -> dict[str, Any]:
     return contract
 
 
+def normalize_claim_entries(value: Any, *, source: str, prefix: str) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    for index, item in enumerate(value or []):
+        if isinstance(item, dict):
+            text = compact_ws(str(item.get("text") or item.get("description") or ""))
+            claim_id = str(item.get("id") or f"{prefix}-{index + 1}")
+            claim_source = str(item.get("source") or source)
+            if text:
+                claims.append({"id": claim_id, "text": text, "source": claim_source})
+        else:
+            text = compact_ws(str(item))
+            if text:
+                claims.append({"id": f"{prefix}-{index + 1}", "text": text, "source": source})
+    return claims
+
+
+def normalize_design_mark(value: Any, *, index: int) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SystemExit("figure design marks must be objects")
+    mark = dict(value)
+    mark["id"] = slugify(str(mark.get("id") or f"mark-{index + 1}"), f"mark{index + 1}")
+    role = str(mark.get("role") or "").strip()
+    if role not in DESIGN_MARK_ROLES:
+        raise SystemExit(f"figure design mark {mark['id']!r} has unsupported role {role!r}")
+    mark["role"] = role
+    semantic_type = compact_ws(str(mark.get("semantic_type") or role))
+    if not semantic_type:
+        raise SystemExit(f"figure design mark {mark['id']!r} requires semantic_type")
+    mark["semantic_type"] = semantic_type
+    visual_encoding = compact_ws(str(mark.get("visual_encoding") or "plain"))
+    if not visual_encoding:
+        raise SystemExit(f"figure design mark {mark['id']!r} requires visual_encoding")
+    mark["visual_encoding"] = visual_encoding
+    mark["counts_as_graph_object"] = bool(mark.get("counts_as_graph_object", role == "graph_object"))
+    for key in ("targets", "source_targets", "target_targets", "caption_claim_ids", "source_prose_claim_ids"):
+        mark[key] = text_entries(mark.get(key))
+    for key in ("label", "boundary_style", "fill_policy", "label_policy", "rationale"):
+        if mark.get(key) is not None:
+            mark[key] = compact_ws(str(mark[key]))
+    return mark
+
+
+def normalize_figure_design(value: Any, *, figure_id: str | None = None) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise SystemExit("figure_design must be an object")
+    ensure_keys(value, FIGURE_DESIGN_REQUIRED, "figure design")
+    design = dict(value)
+    if design.get("schema_version") != FIGURE_DESIGN_VERSION:
+        raise SystemExit(f"unsupported figure design schema_version: {design.get('schema_version')!r}")
+    design["figure_id"] = ensure_figure_id(str(design.get("figure_id") or figure_id or "F1"))
+    if figure_id is not None and design["figure_id"] != figure_id:
+        raise SystemExit(
+            f"figure design figure_id {design['figure_id']!r} does not match requested figure_id {figure_id!r}"
+        )
+    design["design_intent"] = compact_ws(str(design.get("design_intent") or ""))
+    design["audience_task"] = compact_ws(str(design.get("audience_task") or ""))
+    if not design["design_intent"] or not design["audience_task"]:
+        raise SystemExit("figure design requires nonempty design_intent and audience_task")
+    design["caption_claims"] = normalize_claim_entries(
+        design.get("caption_claims"), source="caption", prefix="caption-claim"
+    )
+    design["source_prose_claims"] = normalize_claim_entries(
+        design.get("source_prose_claims"), source="source_prose", prefix="source-prose-claim"
+    )
+    design["marks"] = [
+        normalize_design_mark(mark, index=index) for index, mark in enumerate(design.get("marks") or [])
+    ]
+    design["visual_encoding_policy"] = (
+        dict(design.get("visual_encoding_policy")) if isinstance(design.get("visual_encoding_policy"), dict) else {}
+    )
+    design["rationale"] = text_entries(design.get("rationale"))
+    design["approval_requirements"] = text_entries(design.get("approval_requirements"))
+    return design
+
+
+def contract_text_index(contract: dict[str, Any]) -> str:
+    values = [
+        str(contract.get("recommended_diagram_family", "")),
+        str((contract.get("intent") or {}).get("kind", "")),
+        str((contract.get("intent") or {}).get("description", "")),
+    ]
+    for key in ("required_objects", "required_relations", "forbidden_simplifications", "approval_criteria"):
+        values.extend(contract_item_text(item) for item in contract.get(key, []))
+    return compact_ws(" ".join(values)).lower()
+
+
+def contract_requires_design(contract_value: Any) -> bool:
+    if contract_value is None:
+        return False
+    contract = normalize_figure_contract(contract_value)
+    index = contract_text_index(contract)
+    return any(token in index for token in DESIGN_GATE_INTENT_TOKENS)
+
+
+def claim_entry(claim_id: str, text: str, *, source: str) -> dict[str, str]:
+    return {"id": claim_id, "text": compact_ws(text), "source": source}
+
+
+def mark_entry(
+    mark_id: str,
+    role: str,
+    semantic_type: str,
+    visual_encoding: str,
+    *,
+    counts_as_graph_object: bool,
+    targets: list[str] | None = None,
+    source_targets: list[str] | None = None,
+    target_targets: list[str] | None = None,
+    label: str | None = None,
+    caption_claim_ids: list[str] | None = None,
+    source_prose_claim_ids: list[str] | None = None,
+    boundary_style: str | None = None,
+    fill_policy: str | None = None,
+    label_policy: str | None = None,
+    rationale: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": mark_id,
+        "role": role,
+        "semantic_type": semantic_type,
+        "visual_encoding": visual_encoding,
+        "counts_as_graph_object": counts_as_graph_object,
+        "targets": targets or [],
+        "source_targets": source_targets or [],
+        "target_targets": target_targets or [],
+        "caption_claim_ids": caption_claim_ids or [],
+        "source_prose_claim_ids": source_prose_claim_ids or [],
+    }
+    for key, value in (
+        ("label", label),
+        ("boundary_style", boundary_style),
+        ("fill_policy", fill_policy),
+        ("label_policy", label_policy),
+        ("rationale", rationale),
+    ):
+        if value:
+            payload[key] = value
+    return payload
+
+
+def infer_figure_design(
+    *,
+    contract: dict[str, Any],
+    caption: str = "",
+    source_prose: str = "",
+) -> dict[str, Any]:
+    contract = normalize_figure_contract(contract)
+    figure_id = contract["figure_id"]
+    intent_kind = str((contract.get("intent") or {}).get("kind", ""))
+    index = contract_text_index(contract)
+    is_reduction = "reduction" in index or "gadget" in index or intent_kind == "graph_hardness_reduction"
+    caption_claims: list[dict[str, str]] = []
+    if caption.strip():
+        caption_claims.append(claim_entry("caption-claim-1", caption, source="caption"))
+    if is_reduction:
+        caption_claims.append(
+            claim_entry(
+                "contract-replacement-claim",
+                "The selected source edge or local structure is replaced by the constructed gadget.",
+                source="contract",
+            )
+        )
+    source_prose_claims: list[dict[str, str]] = []
+    if source_prose.strip():
+        source_prose_claims.append(claim_entry("source-prose-claim-1", source_prose, source="source_prose"))
+
+    replacement_claim_ids = [claim["id"] for claim in caption_claims] if caption_claims else []
+    marks = [
+        mark_entry(
+            "graph_vertices",
+            "graph_object",
+            "graph_vertices",
+            "visible graph vertices",
+            counts_as_graph_object=True,
+            targets=["graph-vertices"],
+            rationale="Vertices are mathematical graph structure.",
+        ),
+        mark_entry(
+            "graph_edges",
+            "graph_object",
+            "graph_edges",
+            "visible graph edges",
+            counts_as_graph_object=True,
+            targets=["graph-edges"],
+            rationale="Edges are mathematical graph structure.",
+        ),
+    ]
+    if is_reduction:
+        marks.extend(
+            [
+                mark_entry(
+                    "source_part",
+                    "graph_object",
+                    "source_instance_part",
+                    "source-side graph structure",
+                    counts_as_graph_object=True,
+                    targets=["source-instance-part"],
+                    caption_claim_ids=replacement_claim_ids,
+                    rationale="The source side must be graph structure, not a process box.",
+                ),
+                mark_entry(
+                    "constructed_part",
+                    "graph_object",
+                    "constructed_instance_part",
+                    "constructed-side graph structure",
+                    counts_as_graph_object=True,
+                    targets=["constructed-instance-part"],
+                    caption_claim_ids=replacement_claim_ids,
+                    rationale="The constructed side must be graph structure, not a process box.",
+                ),
+                mark_entry(
+                    "replacement_gadget_region",
+                    "gadget_region",
+                    "replacement_gadget",
+                    "outline-only gadget boundary",
+                    counts_as_graph_object=False,
+                    targets=["replacement-gadget"],
+                    caption_claim_ids=replacement_claim_ids,
+                    boundary_style="dashed outline",
+                    fill_policy="outline_only",
+                    rationale="The region identifies the gadget without hiding vertices or edges.",
+                ),
+                mark_entry(
+                    "replacement_correspondence",
+                    "correspondence",
+                    "source_to_gadget_replacement",
+                    "direct correspondence arrow or matched boundary style",
+                    counts_as_graph_object=False,
+                    source_targets=["source-edge"],
+                    target_targets=["replacement-gadget"],
+                    caption_claim_ids=replacement_claim_ids,
+                    rationale="The reader must see which source object is replaced by which gadget.",
+                ),
+            ]
+        )
+    for item in contract.get("notation_requirements", []):
+        label = compact_ws(str(item.get("label") or item.get("description") or ""))
+        if not label:
+            continue
+        marks.append(
+            mark_entry(
+                slugify(label, "notation_mark"),
+                "annotation",
+                "notation_label",
+                "adjacent text label or callout",
+                counts_as_graph_object=False,
+                label=label,
+                label_policy="attach to the referenced vertex, edge, or gadget without boxing it as graph structure",
+                rationale="Notation labels are metadata unless the contract explicitly makes them graph vertices.",
+            )
+        )
+    design = {
+        "schema_version": FIGURE_DESIGN_VERSION,
+        "figure_id": figure_id,
+        "design_intent": str((contract.get("intent") or {}).get("description") or contract.get("request") or ""),
+        "audience_task": (
+            "Distinguish graph structure, annotations, gadget regions, and correspondence marks from the figure and caption."
+        ),
+        "caption_claims": caption_claims,
+        "source_prose_claims": source_prose_claims,
+        "marks": marks,
+        "visual_encoding_policy": {
+            "metadata_default": "unboxed adjacent label or callout",
+            "overlapping_regions": "outline_only_with_distinct_line_styles",
+            "color_dependency": "do_not_require_color_to_decode semantics",
+        },
+        "rationale": [
+            "Graph objects and proof metadata must use different visual encodings.",
+            "Regions and correspondences must explain replacement without hiding graph structure.",
+        ],
+        "approval_requirements": [
+            "every visual mark has a declared role",
+            "metadata is not counted as graph structure",
+            "caption/prose claims are bound to marks when declared",
+        ],
+    }
+    return normalize_figure_design(design, figure_id=figure_id)
+
+
+def load_or_infer_design(
+    args: argparse.Namespace | None,
+    *,
+    contract: dict[str, Any],
+    figure_id: str,
+    caption: str = "",
+) -> dict[str, Any] | None:
+    design_path = abs_path(getattr(args, "design", None)) if args is not None else None
+    if design_path is not None:
+        if not design_path.is_file():
+            raise SystemExit(f"figure design is missing: {design_path}")
+        return normalize_figure_design(load_json(design_path), figure_id=figure_id)
+    if args is not None and getattr(args, "source_tex", None):
+        source_prose, _evidence = read_context_inputs(args)
+    else:
+        source_prose = ""
+    if contract_requires_design(contract):
+        return infer_figure_design(contract=contract, caption=caption, source_prose=source_prose)
+    return None
+
+
+def ensure_brief_design(brief: dict[str, Any], args: argparse.Namespace | None = None) -> None:
+    contract = normalize_figure_contract(brief.get("semantic_contract"))
+    figure_id = ensure_figure_id(str(brief.get("figure_id") or contract["figure_id"]))
+    if args is not None and getattr(args, "design", None):
+        design = load_or_infer_design(args, contract=contract, figure_id=figure_id, caption=str(brief.get("caption") or ""))
+    elif brief.get("semantic_design") is not None:
+        design = normalize_figure_design(brief["semantic_design"], figure_id=figure_id)
+    elif contract_requires_design(contract):
+        design = infer_figure_design(contract=contract, caption=str(brief.get("caption") or ""))
+    else:
+        design = None
+    if design is not None:
+        brief["semantic_design"] = design
+
+
 def load_or_infer_contract(
     args: argparse.Namespace,
     *,
@@ -744,6 +1098,14 @@ def spec_text_index(spec: dict[str, Any]) -> str:
     for group in spec.get("groups", []):
         values.extend(str(group.get(key, "")) for key in ("id", "label", "style"))
         values.extend(str(member) for member in group.get("members", []))
+    for mark in spec.get("marks", []):
+        values.extend(
+            str(mark.get(key, ""))
+            for key in ("id", "role", "semantic_type", "visual_encoding", "label", "rationale")
+        )
+        values.extend(str(item) for item in mark.get("targets", []))
+        values.extend(str(item) for item in mark.get("source_targets", []))
+        values.extend(str(item) for item in mark.get("target_targets", []))
     values.extend(str(item) for item in spec.get("layout_constraints", []))
     values.extend(str(item) for item in spec.get("validation_rules", []))
     return compact_ws(" ".join(values)).lower()
@@ -868,6 +1230,7 @@ def validate_brief(brief: dict[str, Any]) -> None:
     if "symmetry_contract" in brief:
         brief["symmetry_contract"] = normalize_symmetry_contract(brief["symmetry_contract"])
     ensure_brief_contract(brief)
+    ensure_brief_design(brief)
 
 
 def validate_spec(spec: dict[str, Any]) -> None:
@@ -887,6 +1250,12 @@ def validate_spec(spec: dict[str, Any]) -> None:
     )
     if spec.get("semantic_contract") is not None:
         spec["semantic_contract"] = normalize_figure_contract(spec["semantic_contract"])
+    if spec.get("semantic_design") is not None:
+        spec["semantic_design"] = normalize_figure_design(
+            spec["semantic_design"], figure_id=str(spec["semantic_design"].get("figure_id") or "F1")
+        )
+    if spec.get("marks") is not None:
+        spec["marks"] = [normalize_design_mark(mark, index=index) for index, mark in enumerate(spec.get("marks") or [])]
     contract_mismatches = validate_contract_against_spec(spec.get("semantic_contract"), spec)
     if contract_mismatches:
         codes = ", ".join(sorted({str(item["code"]) for item in contract_mismatches}))
@@ -1110,6 +1479,17 @@ def normalize_graph_positions(raw_positions: dict[str, list[float]]) -> dict[str
     }
 
 
+def finalize_spec_from_brief(spec: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
+    design = brief.get("semantic_design")
+    if design is not None:
+        design = normalize_figure_design(design, figure_id=str(brief.get("figure_id") or design.get("figure_id") or "F1"))
+        spec["semantic_design"] = design
+        spec["marks"] = design["marks"]
+    else:
+        spec.setdefault("marks", [])
+    return spec
+
+
 def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
     family = brief["diagram_family"]
     backend = brief.get("backend_hint") or BACKEND_BY_FAMILY[family]
@@ -1172,7 +1552,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
                     "style": "groupbox",
                 }
             )
-        return {
+        return finalize_spec_from_brief({
             "diagram_family": family,
             "tikz_backend": backend,
             "title": title,
@@ -1185,7 +1565,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "validation_rules": validation_rules,
             "symmetry_contract": symmetry_contract,
             "semantic_contract": brief.get("semantic_contract"),
-        }
+        }, brief)
 
     if family == "tree":
         child_labels = requirements[:4] or ["Assumption A", "Assumption B", "Conclusion"]
@@ -1196,7 +1576,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             child_id = slugify(label, f"child{index + 1}")
             nodes.append({"id": child_id, "label": label, "style": "box"})
             edges.append({"from": root_id, "to": child_id})
-        return {
+        return finalize_spec_from_brief({
             "diagram_family": family,
             "tikz_backend": backend,
             "title": title,
@@ -1209,7 +1589,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "validation_rules": validation_rules,
             "symmetry_contract": symmetry_contract,
             "semantic_contract": brief.get("semantic_contract"),
-        }
+        }, brief)
 
     if family == "commutative":
         node_labels = requirements[:4] or ["A", "B", "C", "D"]
@@ -1221,7 +1601,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             {"id": "c", "label": node_labels[2]},
             {"id": "d", "label": node_labels[3]},
         ]
-        return {
+        return finalize_spec_from_brief({
             "diagram_family": family,
             "tikz_backend": backend,
             "title": title,
@@ -1239,7 +1619,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "validation_rules": validation_rules,
             "symmetry_contract": symmetry_contract,
             "semantic_contract": brief.get("semantic_contract"),
-        }
+        }, brief)
 
     if family == "graph":
         graph_query = extract_graph_query(brief)
@@ -1293,7 +1673,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
         validation_rules.append(
             f"graph routing currently selected {graph_payload['graph_route_status']} with backend {graph_payload['graph_backend_used']}"
         )
-        return {
+        return finalize_spec_from_brief({
             "diagram_family": family,
             "tikz_backend": backend,
             "title": title,
@@ -1313,7 +1693,7 @@ def spec_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
             "symmetry_contract": symmetry_contract,
             "semantic_contract": brief.get("semantic_contract"),
             "graph_routing": graph_routing,
-        }
+        }, brief)
 
     raise SystemExit(f"unsupported diagram_family '{family}'")
 
@@ -1616,6 +1996,7 @@ def artifact_hash_payload(path: Path | None) -> dict[str, Any]:
 def refresh_manifest_artifact_hashes(manifest: dict[str, Any]) -> dict[str, Any]:
     fields = (
         "figure_brief",
+        "figure_design",
         "standalone_tex",
         "figure_tex",
         "diagram_spec",
@@ -1735,6 +2116,7 @@ def corrective_actions_for_rules(rule_ids: list[str]) -> list[str]:
         "P6_EXPLICIT_GRAPH_CLOSURE": "replace cycle closure with an explicit final edge between named nodes",
         "P7_APPROVAL_PROVENANCE": "rerun strict approval from current generated artifacts so provenance hashes refresh",
         "P8_SYMMETRY_CONTRACT": "add a structured symmetry_contract with required/not_required/intentionally_asymmetric intent",
+        "P9_DESIGN_CONTRACT": "add or fix the figure-design artifact and rerun strict approval",
     }
     ordered = []
     for rule_id in rule_ids:
@@ -1914,6 +2296,7 @@ def base_semantic_report(manifest: dict[str, Any] | None = None) -> dict[str, An
     evidence = {
         "figure_brief": manifest.get("figure_brief") if manifest else None,
         "figure_contract": manifest.get("figure_contract") if manifest else None,
+        "figure_design": manifest.get("figure_design") if manifest else None,
         "diagram_spec": manifest.get("diagram_spec") if manifest else None,
         "standalone_tex": manifest.get("standalone_tex") if manifest else None,
         "pdf": manifest.get("pdf") if manifest else None,
@@ -1928,6 +2311,7 @@ def base_semantic_report(manifest: dict[str, Any] | None = None) -> dict[str, An
         "overlap_status": "SKIPPED",
         "compile_status": "SKIPPED",
         "semantic_status": "SKIPPED",
+        "design_status": "SKIPPED",
         "symmetry_status": "SKIPPED",
         "semantic_verdict": None,
         "final_verdict": None,
@@ -1939,6 +2323,9 @@ def base_semantic_report(manifest: dict[str, Any] | None = None) -> dict[str, An
         "warnings": [],
         "visual_review": {
             "passes_run": [],
+            "findings": [],
+        },
+        "design_review": {
             "findings": [],
         },
         "symmetry_review": {
@@ -2611,6 +2998,309 @@ def run_verify_semantic_report(manifest_path: Path, work_dir: Path) -> tuple[dic
     return finalized, 1 if report["mismatches"] else 0
 
 
+def contract_from_manifest_or_spec(manifest: dict[str, Any], spec: dict[str, Any] | None) -> dict[str, Any] | None:
+    if spec and spec.get("semantic_contract") is not None:
+        return normalize_figure_contract(spec["semantic_contract"])
+    contract_path = abs_path(manifest.get("figure_contract"))
+    if contract_path and contract_path.is_file():
+        return normalize_figure_contract(load_json(contract_path))
+    return None
+
+
+def design_from_manifest_or_spec(manifest: dict[str, Any], spec: dict[str, Any] | None) -> dict[str, Any] | None:
+    figure_id = str(manifest.get("figure_id") or "F1")
+    design_path = abs_path(manifest.get("figure_design"))
+    if design_path and design_path.is_file():
+        return normalize_figure_design(load_json(design_path), figure_id=figure_id)
+    if spec and spec.get("semantic_design") is not None:
+        return normalize_figure_design(spec["semantic_design"], figure_id=figure_id)
+    return None
+
+
+def design_required_for_approval(
+    *,
+    manifest: dict[str, Any],
+    spec: dict[str, Any] | None,
+    contract: dict[str, Any] | None,
+    design: dict[str, Any] | None,
+) -> bool:
+    if design is not None:
+        return True
+    if contract is not None and contract_requires_design(contract):
+        return True
+    if spec and spec.get("marks"):
+        return True
+    if manifest.get("extracted_from") and manifest.get("semantic_target_present"):
+        return True
+    return False
+
+
+def make_design_finding(code: str, message: str, *, severity: str = "FAIL", **payload: Any) -> dict[str, Any]:
+    finding = contract_mismatch(code, message, severity=severity)
+    finding.update(payload)
+    return finding
+
+
+def mark_claim_ids(marks: list[dict[str, Any]], key: str) -> set[str]:
+    values: set[str] = set()
+    for mark in marks:
+        values.update(str(item) for item in mark.get(key, []))
+    return values
+
+
+def contract_has_text(contract: dict[str, Any] | None, *tokens: str) -> bool:
+    if contract is None:
+        return False
+    index = contract_text_index(contract)
+    return any(token in index for token in tokens)
+
+
+def evaluate_design_review(
+    *,
+    manifest: dict[str, Any],
+    spec: dict[str, Any] | None,
+    contract: dict[str, Any] | None,
+    design: dict[str, Any] | None,
+    required: bool,
+) -> dict[str, Any]:
+    review: dict[str, Any] = {
+        "required": required,
+        "status": "SKIPPED",
+        "findings": [],
+        "mismatch_codes": [],
+    }
+    if design is None:
+        if required:
+            review["status"] = "BLOCKED"
+            review["findings"].append(
+                make_design_finding(
+                    "DESIGN_STATUS_MISSING",
+                    "scoped semantic figure requires a figure-design artifact before approval",
+                    severity="BLOCKED",
+                )
+            )
+        return review
+
+    findings: list[dict[str, Any]] = []
+    marks = design.get("marks", [])
+    if not marks:
+        findings.append(
+            make_design_finding(
+                "DESIGN_MARKS_MISSING",
+                "figure design must declare at least one visual-semantic mark",
+            )
+        )
+    mark_ids: set[str] = set()
+    duplicate_ids: set[str] = set()
+    for mark in marks:
+        mark_id = str(mark.get("id"))
+        if mark_id in mark_ids:
+            duplicate_ids.add(mark_id)
+        mark_ids.add(mark_id)
+    for mark_id in sorted(duplicate_ids):
+        findings.append(make_design_finding("DUPLICATE_DESIGN_MARK", "figure design has duplicate mark id", mark=mark_id))
+
+    if spec is not None and design.get("figure_id") != manifest.get("figure_id"):
+        findings.append(
+            make_design_finding(
+                "DESIGN_FIGURE_ID_MISMATCH",
+                "figure design figure_id does not match the artifact manifest",
+                design_figure_id=design.get("figure_id"),
+                manifest_figure_id=manifest.get("figure_id"),
+            )
+        )
+
+    if spec is not None:
+        spec_mark_ids = {str(mark.get("id")) for mark in spec.get("marks", []) if isinstance(mark, dict)}
+        if marks and not spec_mark_ids:
+            findings.append(
+                make_design_finding(
+                    "DESIGN_MARKS_NOT_IN_SPEC",
+                    "diagram spec does not carry the visual-semantic marks from the figure design",
+                )
+            )
+        missing_in_spec = sorted(mark_ids - spec_mark_ids) if spec_mark_ids else []
+        for mark_id in missing_in_spec:
+            findings.append(
+                make_design_finding(
+                    "DESIGN_MARKS_NOT_IN_SPEC",
+                    "figure design mark is missing from the diagram spec",
+                    mark=mark_id,
+                )
+            )
+
+    caption_claim_ids = {str(claim.get("id")) for claim in design.get("caption_claims", [])}
+    bound_caption_claim_ids = mark_claim_ids(marks, "caption_claim_ids")
+    for claim_id in sorted(caption_claim_ids - bound_caption_claim_ids):
+        findings.append(
+            make_design_finding(
+                "CAPTION_CONTRACT_MISMATCH",
+                "caption or contract claim is not bound to any visual-semantic mark",
+                claim=claim_id,
+            )
+        )
+    for claim_id in sorted(bound_caption_claim_ids - caption_claim_ids):
+        findings.append(
+            make_design_finding(
+                "CAPTION_CONTRACT_MISMATCH",
+                "visual-semantic mark references an unknown caption claim",
+                claim=claim_id,
+            )
+        )
+
+    has_gadget_mark = False
+    has_correspondence_mark = False
+    for mark in marks:
+        mark_id = str(mark.get("id"))
+        role = str(mark.get("role"))
+        semantic_type = str(mark.get("semantic_type", "")).lower()
+        visual_encoding = str(mark.get("visual_encoding", "")).lower()
+        fill_policy = str(mark.get("fill_policy", "")).lower()
+        label = str(mark.get("label", ""))
+        counts_as_graph_object = bool(mark.get("counts_as_graph_object"))
+
+        if role not in DESIGN_MARK_ROLES:
+            findings.append(
+                make_design_finding("INVALID_DESIGN_MARK_ROLE", "figure design mark has invalid role", mark=mark_id)
+            )
+            continue
+        if role == "graph_object" and not counts_as_graph_object:
+            findings.append(
+                make_design_finding(
+                    "GRAPH_OBJECT_NOT_COUNTED",
+                    "graph_object mark must count as graph structure",
+                    mark=mark_id,
+                )
+            )
+        if role != "graph_object" and counts_as_graph_object:
+            findings.append(
+                make_design_finding(
+                    "ANNOTATION_COUNTED_AS_GRAPH_OBJECT",
+                    "non-graph visual mark is counted as graph structure",
+                    mark=mark_id,
+                    role=role,
+                )
+            )
+        metadata_like = role in {"annotation", "callout", "legend"} or any(
+            token in semantic_type for token in ("metadata", "notation", "constraint", "label")
+        )
+        boxed_like = any(token in visual_encoding for token in ("boxed", "box", "graphnode", "vertex", "node style"))
+        if metadata_like and boxed_like:
+            findings.append(
+                make_design_finding(
+                    "METADATA_RENDERED_AS_GRAPH_OBJECT",
+                    "metadata or notation mark uses graph-object-like visual encoding",
+                    mark=mark_id,
+                    visual_encoding=mark.get("visual_encoding"),
+                )
+            )
+        if label.startswith("L(") and boxed_like:
+            findings.append(
+                make_design_finding(
+                    "METADATA_RENDERED_AS_GRAPH_OBJECT",
+                    "list annotation is boxed like a graph object",
+                    mark=mark_id,
+                    label=label,
+                )
+            )
+        if role in {"gadget_region", "highlight_region"}:
+            has_gadget_mark = has_gadget_mark or role == "gadget_region" or "gadget" in semantic_type
+            opaque_fill = any(token in fill_policy for token in ("opaque", "filled", "solid_fill"))
+            encoded_fill = any(token in visual_encoding for token in ("opaque", "filled box", "solid fill"))
+            if opaque_fill or encoded_fill:
+                findings.append(
+                    make_design_finding(
+                        "FILL_OCCLUDES_GRAPH_STRUCTURE",
+                        "region fill can obscure graph structure or make membership ambiguous",
+                        mark=mark_id,
+                    )
+                )
+        if role == "correspondence":
+            has_correspondence_mark = True
+            if not mark.get("source_targets") or not mark.get("target_targets"):
+                findings.append(
+                    make_design_finding(
+                        "CONTRACT_REPLACEMENT_RELATION_MISSING",
+                        "correspondence mark must bind source_targets and target_targets",
+                        mark=mark_id,
+                    )
+                )
+        if "port" in semantic_type and not mark.get("targets"):
+            findings.append(
+                make_design_finding(
+                    "WRONG_PORT_LABEL",
+                    "port label mark must declare the port or vertex it attaches to",
+                    mark=mark_id,
+                )
+            )
+
+    if contract_has_text(contract, "gadget") and not has_gadget_mark:
+        findings.append(
+            make_design_finding(
+                "CONTRACT_FORBIDDEN_LABEL_ONLY_GADGET",
+                "contract requires a gadget mark rather than a label-only gadget",
+            )
+        )
+    if contract_has_text(contract, "replacement", "replaces") and not has_correspondence_mark:
+        findings.append(
+            make_design_finding(
+                "CONTRACT_REPLACEMENT_RELATION_MISSING",
+                "contract requires a source-to-target correspondence mark",
+            )
+        )
+
+    review["findings"] = findings
+    review["mismatch_codes"] = [str(item.get("code")) for item in findings]
+    review["status"] = "FAIL" if findings else "PASS"
+    return review
+
+
+def run_verify_design_report(manifest_path: Path, work_dir: Path) -> tuple[dict[str, Any], int]:
+    del work_dir
+    manifest = load_manifest(manifest_path)
+    report = base_semantic_report(manifest)
+    spec = None
+    spec_path = abs_path(manifest.get("diagram_spec"))
+    if spec_path and spec_path.is_file():
+        spec = load_json(spec_path)
+    contract = contract_from_manifest_or_spec(manifest, spec)
+    design = design_from_manifest_or_spec(manifest, spec)
+    required = design_required_for_approval(manifest=manifest, spec=spec, contract=contract, design=design)
+    review = evaluate_design_review(
+        manifest=manifest,
+        spec=spec,
+        contract=contract,
+        design=design,
+        required=required,
+    )
+    report["design_review"] = review
+    report["design_status"] = review["status"]
+    report["mismatches"] = review.get("findings", [])
+    report["mismatch_codes"] = review.get("mismatch_codes", [])
+    if report["design_status"] == "BLOCKED":
+        report["review_status"] = "BLOCKED_INPUT"
+        report["warnings"].append("design verification is blocked by a missing required figure design")
+        report["rule_hits"].append(make_rule_hit("P9_DESIGN_CONTRACT", STATIC_RULES["P9_DESIGN_CONTRACT"]))
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 3
+    report["review_status"] = "COMPLETE"
+    if report["design_status"] == "FAIL":
+        report["semantic_verdict"] = "NEEDS_REVISION"
+        report["warnings"].append(f"design verification found {len(report['mismatches'])} mismatch(es)")
+        report["rule_hits"].append(make_rule_hit("P9_DESIGN_CONTRACT", STATIC_RULES["P9_DESIGN_CONTRACT"]))
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 1
+    if report["design_status"] == "PASS":
+        report["warnings"].append("design verification matched declared visual-semantic roles")
+    else:
+        report["warnings"].append("design verification skipped because no scoped design gate is required")
+    finalized = finalize_report(report)
+    write_semantic_report(manifest, finalized)
+    return finalized, 0
+
+
 def bbox_center_payload(bbox: dict[str, Any]) -> dict[str, float]:
     x0, y0, x1, y1 = bbox_tuple(bbox)
     return {
@@ -2821,6 +3511,27 @@ def run_approve_report(manifest_path: Path, work_dir: Path) -> tuple[dict[str, A
         write_semantic_report(manifest, finalized)
         return finalized, 1
 
+    design_report, design_exit = run_verify_design_report(manifest_path, work_dir)
+    report["design_status"] = design_report.get("design_status", "SKIPPED")
+    report["design_review"] = design_report.get("design_review", report["design_review"])
+    report["mismatches"].extend(design_report.get("mismatches", []))
+    report["mismatch_codes"].extend(design_report.get("mismatch_codes", []))
+    report["warnings"].extend(design_report.get("warnings", []))
+    report["rule_hits"].extend(design_report.get("rule_hits", []))
+    if report["design_status"] == "BLOCKED":
+        report["review_status"] = "BLOCKED_INPUT"
+        report["final_verdict"] = "BLOCKED"
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 3
+    if design_exit != 0:
+        report["review_status"] = "COMPLETE"
+        report["final_verdict"] = "NEEDS_REVISION"
+        report["semantic_verdict"] = "NEEDS_REVISION"
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 1
+
     compile_result = compile_tex(standalone_tex, svg=False)
     report["compile"] = {
         "status": compile_result["status"],
@@ -2855,8 +3566,8 @@ def run_approve_report(manifest_path: Path, work_dir: Path) -> tuple[dict[str, A
     report["semantic_status"] = semantic_report.get("semantic_status", "SKIPPED")
     report["semantic_verdict"] = semantic_report.get("semantic_verdict")
     report["supported_family"] = semantic_report.get("supported_family", False)
-    report["mismatches"] = semantic_report.get("mismatches", [])
-    report["mismatch_codes"] = semantic_report.get("mismatch_codes", [])
+    report["mismatches"].extend(semantic_report.get("mismatches", []))
+    report["mismatch_codes"].extend(semantic_report.get("mismatch_codes", []))
     report["warnings"].extend(visual_report.get("warnings", []))
     report["warnings"].extend(semantic_report.get("warnings", []))
     report["rule_hits"].extend(visual_report.get("rule_hits", []))
@@ -2897,7 +3608,7 @@ def run_approve_report(manifest_path: Path, work_dir: Path) -> tuple[dict[str, A
         write_semantic_report(manifest, finalized)
         return finalized, 3
 
-    if visual_exit == 0 and semantic_exit == 0 and report["symmetry_status"] == "PASS":
+    if visual_exit == 0 and semantic_exit == 0 and design_exit == 0 and report["symmetry_status"] == "PASS":
         report["review_status"] = "COMPLETE"
         report["final_verdict"] = "APPROVED"
         report["semantic_verdict"] = "APPROVED"
@@ -2924,6 +3635,7 @@ def command_doctor() -> int:
         SCRIPT_DIR / "family_verifiers.py",
         SCRIPT_DIR / "sage_graph_backend.py",
         SCHEMA_DIR / "figure-contract.schema.json",
+        SCHEMA_DIR / "figure-design.schema.json",
         SCHEMA_DIR / "diagram.schema.json",
         SCHEMA_DIR / "figure-brief.schema.json",
         SCHEMA_DIR / "render-semantics.schema.json",
@@ -3025,6 +3737,50 @@ def command_contract(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_design(args: argparse.Namespace) -> int:
+    out_path = abs_path(args.out)
+    assert out_path is not None
+    figure_id = ensure_figure_id(getattr(args, "figure_id", None))
+    if args.brief:
+        brief_path = abs_path(args.brief)
+        assert brief_path is not None
+        brief = load_json(brief_path)
+        ensure_brief_contract(brief, args)
+        ensure_brief_design(brief, args)
+        design = brief.get("semantic_design")
+        if design is None:
+            design = infer_figure_design(
+                contract=brief["semantic_contract"],
+                caption=str(brief.get("caption") or ""),
+            )
+    else:
+        request = (getattr(args, "request", None) or "").strip()
+        title = (getattr(args, "title", None) or "").strip()
+        purpose = (getattr(args, "purpose", None) or "").strip()
+        caption = (getattr(args, "caption", None) or "").strip()
+        content_requirements = list(getattr(args, "content_requirement", None) or ([request] if request else []))
+        contract = load_or_infer_contract(
+            args,
+            figure_id=figure_id,
+            request=request,
+            title=title,
+            purpose=purpose,
+            source_ids=list(getattr(args, "source_id", None) or []),
+            content_requirements=content_requirements,
+            requested_family=getattr(args, "diagram_family", None),
+        )
+        if getattr(args, "source_tex", None):
+            source_prose, _evidence = read_context_inputs(args)
+        else:
+            source_prose = ""
+        design = infer_figure_design(contract=contract, caption=caption, source_prose=source_prose)
+    design = normalize_figure_design(design, figure_id=design.get("figure_id", figure_id))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    dump_json(out_path, design)
+    print(f"WROTE\t{out_path}")
+    return 0
+
+
 def command_spec(args: argparse.Namespace) -> int:
     out_path = abs_path(args.out)
     assert out_path is not None
@@ -3041,19 +3797,26 @@ def command_spec(args: argparse.Namespace) -> int:
         )
         brief["output_dir"] = str(out_dir)
         ensure_brief_contract(brief, args)
+        ensure_brief_design(brief, args)
     else:
         brief, out_dir, _run_id = bootstrap_brief(args, fallback_parent=out_path.parent)
+        ensure_brief_design(brief, args)
     validate_brief(brief)
     out_dir.mkdir(parents=True, exist_ok=True)
     spec = spec_from_brief(brief)
     validate_spec(spec)
     brief_out_path = out_dir / f"{brief['figure_id']}.figure-brief.json"
     contract_out_path = out_dir / f"{brief['figure_id']}.figure-contract.json"
+    design_out_path = out_dir / f"{brief['figure_id']}.figure-design.json"
     dump_json(brief_out_path, brief)
     dump_json(contract_out_path, brief["semantic_contract"])
+    if brief.get("semantic_design") is not None:
+        dump_json(design_out_path, brief["semantic_design"])
     dump_json(out_path, spec)
     print(f"WROTE\t{brief_out_path}")
     print(f"WROTE\t{contract_out_path}")
+    if brief.get("semantic_design") is not None:
+        print(f"WROTE\t{design_out_path}")
     print(f"WROTE\t{out_path}")
     return 0
 
@@ -3068,6 +3831,7 @@ def build_render_manifest(
     snippet_path: Path,
     spec_out_path: Path,
     contract_path: Path | None,
+    design_path: Path | None,
     brief: dict[str, Any],
     spec: dict[str, Any],
 ) -> dict[str, Any]:
@@ -3081,6 +3845,7 @@ def build_render_manifest(
         "diagram_family": spec["diagram_family"],
         "figure_brief": str(brief_path),
         "figure_contract": str(contract_path) if contract_path else None,
+        "figure_design": str(design_path) if design_path else None,
         "standalone_tex": str(standalone_path),
         "figure_tex": str(snippet_path),
         "diagram_spec": str(spec_out_path),
@@ -3112,8 +3877,10 @@ def command_render(args: argparse.Namespace) -> int:
         out_dir = resolve_output_dir(args, run_id=run_id, brief_output_dir=brief.get("output_dir"))
         brief["output_dir"] = str(out_dir)
         ensure_brief_contract(brief, args)
+        ensure_brief_design(brief, args)
     else:
         brief, out_dir, run_id = bootstrap_brief(args)
+        ensure_brief_design(brief, args)
     validate_brief(brief)
     spec = load_json(spec_path) if spec_path else spec_from_brief(brief)
     validate_spec(spec)
@@ -3127,11 +3894,14 @@ def command_render(args: argparse.Namespace) -> int:
     snippet_path = out_dir / f"{basename}.figure.tex"
     spec_out_path = out_dir / f"{basename}.diagram.json"
     contract_out_path = out_dir / f"{figure_id}.figure-contract.json"
+    design_out_path = out_dir / f"{figure_id}.figure-design.json"
     manifest_path = out_dir / f"{basename}.artifacts.json"
 
     standalone, snippet = build_outputs(spec, figure_id, brief.get("caption", ""))
     dump_json(brief_out_path, brief)
     dump_json(contract_out_path, brief["semantic_contract"])
+    if brief.get("semantic_design") is not None:
+        dump_json(design_out_path, brief["semantic_design"])
     write_text(standalone_path, standalone)
     write_text(snippet_path, snippet)
     dump_json(spec_out_path, spec)
@@ -3144,6 +3914,7 @@ def command_render(args: argparse.Namespace) -> int:
         snippet_path=snippet_path,
         spec_out_path=spec_out_path,
         contract_path=contract_out_path,
+        design_path=design_out_path if brief.get("semantic_design") is not None else None,
         brief=brief,
         spec=spec,
     )
@@ -3153,6 +3924,8 @@ def command_render(args: argparse.Namespace) -> int:
     )
     print(f"WROTE\t{brief_out_path}")
     print(f"WROTE\t{contract_out_path}")
+    if brief.get("semantic_design") is not None:
+        print(f"WROTE\t{design_out_path}")
     print(f"WROTE\t{standalone_path}")
     print(f"WROTE\t{snippet_path}")
     print(f"WROTE\t{spec_out_path}")
@@ -3180,6 +3953,16 @@ def command_review_visual(args: argparse.Namespace) -> int:
     assert manifest_path is not None
     assert work_dir is not None
     report, exit_code = run_review_visual_report(manifest_path, work_dir)
+    print(json.dumps(report, indent=2))
+    return exit_code
+
+
+def command_verify_design(args: argparse.Namespace) -> int:
+    manifest_path = abs_path(args.artifacts)
+    work_dir = abs_path(args.work_dir)
+    assert manifest_path is not None
+    assert work_dir is not None
+    report, exit_code = run_verify_design_report(manifest_path, work_dir)
     print(json.dumps(report, indent=2))
     return exit_code
 
@@ -3254,6 +4037,8 @@ def build_extract_manifest(
         "source_ids": [],
         "diagram_family": None,
         "figure_brief": None,
+        "figure_contract": None,
+        "figure_design": None,
         "standalone_tex": str(standalone_path),
         "figure_tex": str(snippet_path),
         "diagram_spec": None,
@@ -3348,6 +4133,7 @@ def build_parser() -> argparse.ArgumentParser:
         target.add_argument("--graph-layout")
         target.add_argument("--show-labels", choices=("true", "false"))
         target.add_argument("--caption")
+        target.add_argument("--design", help="Existing figure-design.json to enforce instead of inferring one.")
         target.add_argument("--figure-id")
         target.add_argument("--source-id", action="append")
         target.add_argument("--symmetry", choices=SYMMETRY_CONTRACT_STATUSES)
@@ -3361,6 +4147,11 @@ def build_parser() -> argparse.ArgumentParser:
     contract_parser = subparsers.add_parser("contract")
     contract_parser.add_argument("--out", required=True)
     add_bootstrap_args(contract_parser)
+
+    design_parser = subparsers.add_parser("design")
+    design_parser.add_argument("--brief")
+    design_parser.add_argument("--out", required=True)
+    add_bootstrap_args(design_parser)
 
     spec_parser = subparsers.add_parser("spec")
     spec_parser.add_argument("--brief")
@@ -3383,6 +4174,10 @@ def build_parser() -> argparse.ArgumentParser:
     review_visual_parser = subparsers.add_parser("review-visual")
     review_visual_parser.add_argument("--artifacts", required=True)
     review_visual_parser.add_argument("--work-dir", required=True)
+
+    verify_design_parser = subparsers.add_parser("verify-design")
+    verify_design_parser.add_argument("--artifacts", required=True)
+    verify_design_parser.add_argument("--work-dir", required=True)
 
     verify_parser = subparsers.add_parser("verify-semantic")
     verify_parser.add_argument("--artifacts", required=True)
@@ -3415,6 +4210,8 @@ def main() -> int:
         return command_doctor()
     if args.command == "contract":
         return command_contract(args)
+    if args.command == "design":
+        return command_design(args)
     if args.command == "spec":
         return command_spec(args)
     if args.command == "render":
@@ -3425,6 +4222,8 @@ def main() -> int:
         return command_compile(args)
     if args.command == "review-visual":
         return command_review_visual(args)
+    if args.command == "verify-design":
+        return command_verify_design(args)
     if args.command == "verify-semantic":
         return command_verify_semantic(args)
     if args.command == "approve":

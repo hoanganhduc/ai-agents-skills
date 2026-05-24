@@ -217,6 +217,73 @@ def evaluate_contract_case(execution: dict[str, Any], expected: dict[str, Any]) 
     return not errors, errors
 
 
+def run_design_case(platform: str, case: dict[str, Any], out_root: Path, *, command_shape: str) -> dict[str, Any]:
+    case_dir = out_root / "design" / case["id"]
+    case_dir.mkdir(parents=True, exist_ok=True)
+    out_path = case_dir / "figure-design.json"
+    command = [
+        *platform_command(platform, command_shape),
+        "design",
+        "--out",
+        str(out_path),
+    ]
+    for key, flag in (
+        ("request", "--request"),
+        ("title", "--title"),
+        ("purpose", "--purpose"),
+        ("caption", "--caption"),
+        ("diagram_family", "--diagram-family"),
+        ("figure_id", "--figure-id"),
+    ):
+        if case.get(key):
+            command.extend([flag, str(case[key])])
+    for value in case.get("content_requirements", []):
+        command.extend(["--content-requirement", str(value)])
+    for value in case.get("required_objects", []):
+        command.extend(["--required-object", str(value)])
+    for value in case.get("required_relations", []):
+        command.extend(["--required-relation", str(value)])
+    for value in case.get("forbidden_simplifications", []):
+        command.extend(["--forbidden-simplification", str(value)])
+    for value in case.get("notation_requirements", []):
+        command.extend(["--notation-requirement", str(value)])
+    result = run_command(command)
+    payload = read_json(out_path) if out_path.exists() else None
+    return {
+        "platform": platform,
+        "command_shape": command_shape,
+        "case_id": case["id"],
+        "kind": "design",
+        "run_dir": str(case_dir),
+        "design_path": str(out_path),
+        "command_result": result,
+        "design": payload,
+    }
+
+
+def evaluate_design_case(execution: dict[str, Any], expected: dict[str, Any]) -> tuple[bool, list[str]]:
+    errors: list[str] = []
+    result = execution["command_result"]
+    if result["exit_code"] != expected.get("exit_code", result["exit_code"]):
+        errors.append(f"design: expected exit {expected['exit_code']}, got {result['exit_code']}")
+    design = execution.get("design") or {}
+    if expected.get("schema_version") is not None and design.get("schema_version") != expected["schema_version"]:
+        errors.append(f"design: expected schema_version={expected['schema_version']!r}, got {design.get('schema_version')!r}")
+    mark_ids = {str(item.get("id")) for item in design.get("marks", []) if isinstance(item, dict)}
+    for item in expected.get("mark_ids_include", []):
+        if item not in mark_ids:
+            errors.append(f"design: missing mark id {item!r}")
+    mark_roles = {str(item.get("role")) for item in design.get("marks", []) if isinstance(item, dict)}
+    for item in expected.get("mark_roles_include", []):
+        if item not in mark_roles:
+            errors.append(f"design: missing mark role {item!r}")
+    claim_ids = {str(item.get("id")) for item in design.get("caption_claims", []) if isinstance(item, dict)}
+    for item in expected.get("caption_claim_ids_include", []):
+        if item not in claim_ids:
+            errors.append(f"design: missing caption claim id {item!r}")
+    return not errors, errors
+
+
 def label_to_node_id(spec: dict[str, Any], label: str) -> str:
     for node in spec.get("nodes", []):
         if node.get("label") == label:
@@ -360,6 +427,7 @@ def run_case_commands(platform: str, paths: dict[str, str], *, command_shape: st
         "check": run_command([*base_command, "check", "--tex", standalone_tex]),
         "compile": run_command([*base_command, "compile", "--tex", standalone_tex]),
         "review_visual": run_command([*base_command, "review-visual", "--artifacts", manifest, "--work-dir", work_dir]),
+        "verify_design": run_command([*base_command, "verify-design", "--artifacts", manifest, "--work-dir", work_dir]),
         "verify_semantic": run_command([*base_command, "verify-semantic", "--artifacts", manifest, "--work-dir", work_dir]),
         "approve": run_command([*base_command, "approve", "--artifacts", manifest, "--work-dir", work_dir]),
         "review_semantic": run_command([*base_command, "review", "--semantic", "--artifacts", manifest, "--work-dir", work_dir]),
@@ -375,6 +443,7 @@ def assert_expected(command_name: str, result: dict[str, Any], expected: dict[st
         "review_status",
         "visual_status",
         "overlap_status",
+        "design_status",
         "symmetry_status",
         "semantic_verdict",
         "final_verdict",
@@ -586,6 +655,26 @@ def main() -> int:
                     "run_dir": execution["run_dir"],
                     "expected": contract_case.get("expected", {}),
                     "paths": {"contract": execution["contract_path"]},
+                    "render": execution["command_result"],
+                    "commands": {},
+                    "passed": passed,
+                    "errors": errors,
+                }
+            )
+        for design_case in suite.get("design_cases", []):
+            execution = run_design_case(platform, design_case, platform_root, command_shape=args.command_shape)
+            passed, errors = evaluate_design_case(execution, design_case.get("expected", {}))
+            all_results.append(
+                {
+                    "platform": platform,
+                    "command_shape": args.command_shape,
+                    "fixture_id": design_case["id"],
+                    "case_id": design_case["id"],
+                    "family": "design",
+                    "kind": "design",
+                    "run_dir": execution["run_dir"],
+                    "expected": design_case.get("expected", {}),
+                    "paths": {"design": execution["design_path"]},
                     "render": execution["command_result"],
                     "commands": {},
                     "passed": passed,

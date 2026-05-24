@@ -16,9 +16,9 @@ See also:
 - `UNSUPPORTED_FAMILY`
 
 Only `approve` may emit final approval. `check`, `compile`, `review --tex`,
-`review-visual`, and `verify-semantic` are preflight/component checks. A figure
+`review-visual`, `verify-design`, and `verify-semantic` are preflight/component checks. A figure
 is not done until `approve` exits 0 with `final_verdict=APPROVED`,
-`overlap_status=PASS`, and `symmetry_status=PASS`.
+`overlap_status=PASS`, scoped `design_status=PASS`, and `symmetry_status=PASS`.
 
 ## Review dimensions
 
@@ -39,6 +39,11 @@ is not done until `approve` exits 0 with `final_verdict=APPROVED`,
 5. Traceability
    - figure outputs preserve `figure_id`
    - research-driven diagrams preserve `source_ids`
+6. Visual-semantic design
+   - graph objects, annotations, callouts, correspondence marks, regions, and legends have declared roles
+   - metadata and notation are not counted as graph structure
+   - region and fill encodings do not obscure graph structure
+   - declared caption/prose claims are bound to visual-semantic marks
 
 ## Review notes format
 
@@ -53,9 +58,10 @@ Each review should be concise and concrete:
 ## Phase 5 note
 
 - `review-visual` now refreshes `render-semantics.json` from the compiled PDF.
+- `verify-design` checks scoped visual-semantic design contracts before final approval.
 - `verify-semantic` now supports the current render-generated `flowchart`, `dag`, `tree`, and supported-square `commutative` families.
 - `verify-semantic` still fails closed with `UNSUPPORTED_FAMILY` for unsupported families and unsupported inputs.
-- `approve` is the strict final gate and additionally requires artifact provenance and a declared symmetry contract.
+- `approve` is the strict final gate and additionally requires artifact provenance, scoped design approval, and a declared symmetry contract.
 
 ## Width-fit caveat
 
