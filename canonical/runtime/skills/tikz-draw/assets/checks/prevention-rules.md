@@ -22,6 +22,9 @@ See also:
 - Named-node chain paths such as `\draw (a) -- (b) -- (c) -- cycle;` are not allowed for verification-sensitive graph drawings.
   - Use an explicit final edge such as `\draw (a) -- (b) -- (c) -- (a);`.
   - Reason: the rendered closure can differ from the intended last node-to-node edge when TikZ uses node shape borders.
+- Strict approval requires current artifact provenance and a structured symmetry contract.
+  - Source-only `check` output is preflight, not approval.
+  - Use `approve` as the final gate after every generated or modified figure.
 
 ## Soft failures
 

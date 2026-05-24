@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import shutil
 import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -13,19 +15,45 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SUITE_PATH = SCRIPT_DIR / "assets" / "examples" / "semantic-regression" / "suite.json"
-DEFAULT_OUT_ROOT = Path("/tmp") / "tikz-semantic-regression"
-PLATFORM_COMMANDS = {
-    "codex": [
-        "bash",
-        str(Path.home() / ".codex" / "runtime" / "run_skill.sh"),
-        "skills/tikz-draw/run_tikz_draw.sh",
-    ],
-    "claude": [
-        "bash",
-        str(Path.home() / ".claude" / "skills" / "_run.sh"),
-        "skills/tikz-draw/run_tikz_draw.sh",
-    ],
-}
+DEFAULT_OUT_ROOT = Path(tempfile.gettempdir()) / "tikz-semantic-regression"
+
+
+def codex_runtime_root() -> Path:
+    if os.environ.get("AAS_RUNTIME_ROOT"):
+        return Path(os.environ["AAS_RUNTIME_ROOT"])
+    if os.name == "nt":
+        user_runtime = Path.home() / ".codex" / "runtime"
+        if user_runtime.exists():
+            return user_runtime
+        return Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "ai-agents-skills" / "runtime"
+    return Path.home() / ".codex" / "runtime"
+
+
+def platform_command(platform: str, command_shape: str) -> list[str]:
+    if platform == "codex":
+        runtime = codex_runtime_root()
+        if command_shape == "windows" or (command_shape == "auto" and os.name == "nt"):
+            return [
+                str(runtime / "run_skill.bat"),
+                r"skills\tikz-draw\run_tikz_draw.bat",
+            ]
+        return [
+            "bash",
+            str(runtime / "run_skill.sh"),
+            "skills/tikz-draw/run_tikz_draw.sh",
+        ]
+    if platform == "claude":
+        if command_shape == "windows" or (command_shape == "auto" and os.name == "nt"):
+            return [
+                str(Path.home() / ".claude" / "skills" / "_run.bat"),
+                r"skills\tikz-draw\run_tikz_draw.bat",
+            ]
+        return [
+            "bash",
+            str(Path.home() / ".claude" / "skills" / "_run.sh"),
+            "skills/tikz-draw/run_tikz_draw.sh",
+        ]
+    raise ValueError(f"unsupported platform: {platform}")
 
 
 def now_stamp() -> str:
@@ -82,11 +110,11 @@ def expected_paths(case_dir: Path, figure_id: str) -> dict[str, Path]:
     }
 
 
-def render_direct(platform: str, fixture: dict[str, Any], case_dir: Path) -> dict[str, Any]:
+def render_direct(platform: str, fixture: dict[str, Any], case_dir: Path, *, command_shape: str) -> dict[str, Any]:
     render = fixture["render"]
     figure_id = render["figure_id"]
     command = [
-        *PLATFORM_COMMANDS[platform],
+        *platform_command(platform, command_shape),
         "render",
         "--diagram-family",
         fixture["diagram_family"],
@@ -216,6 +244,7 @@ def render_mutation(
     *,
     base_paths: dict[str, str],
     case_dir: Path,
+    command_shape: str,
 ) -> dict[str, Any]:
     base_spec = read_json(Path(base_paths["diagram_spec"]))
     mutated_spec = apply_operations(base_spec, mutation.get("operations", []))
@@ -224,7 +253,7 @@ def render_mutation(
     write_json(mutated_spec_path, mutated_spec)
 
     command = [
-        *PLATFORM_COMMANDS[platform],
+        *platform_command(platform, command_shape),
         "render",
         "--brief",
         base_paths["brief"],
@@ -246,16 +275,18 @@ def render_mutation(
     }
 
 
-def run_case_commands(platform: str, paths: dict[str, str]) -> dict[str, Any]:
+def run_case_commands(platform: str, paths: dict[str, str], *, command_shape: str) -> dict[str, Any]:
     manifest = paths["artifacts"]
     work_dir = str(Path(manifest).parent)
     standalone_tex = paths["standalone_tex"]
+    base_command = platform_command(platform, command_shape)
     return {
-        "check": run_command([*PLATFORM_COMMANDS[platform], "check", "--tex", standalone_tex]),
-        "compile": run_command([*PLATFORM_COMMANDS[platform], "compile", "--tex", standalone_tex]),
-        "review_visual": run_command([*PLATFORM_COMMANDS[platform], "review-visual", "--artifacts", manifest, "--work-dir", work_dir]),
-        "verify_semantic": run_command([*PLATFORM_COMMANDS[platform], "verify-semantic", "--artifacts", manifest, "--work-dir", work_dir]),
-        "review_semantic": run_command([*PLATFORM_COMMANDS[platform], "review", "--semantic", "--artifacts", manifest, "--work-dir", work_dir]),
+        "check": run_command([*base_command, "check", "--tex", standalone_tex]),
+        "compile": run_command([*base_command, "compile", "--tex", standalone_tex]),
+        "review_visual": run_command([*base_command, "review-visual", "--artifacts", manifest, "--work-dir", work_dir]),
+        "verify_semantic": run_command([*base_command, "verify-semantic", "--artifacts", manifest, "--work-dir", work_dir]),
+        "approve": run_command([*base_command, "approve", "--artifacts", manifest, "--work-dir", work_dir]),
+        "review_semantic": run_command([*base_command, "review", "--semantic", "--artifacts", manifest, "--work-dir", work_dir]),
     }
 
 
@@ -263,7 +294,16 @@ def assert_expected(command_name: str, result: dict[str, Any], expected: dict[st
     if result["exit_code"] != expected.get("exit_code", result["exit_code"]):
         errors.append(f"{command_name}: expected exit {expected['exit_code']}, got {result['exit_code']}")
     payload = result.get("payload")
-    for key in ("verdict", "review_status", "visual_status", "semantic_verdict", "supported_family"):
+    for key in (
+        "verdict",
+        "review_status",
+        "visual_status",
+        "overlap_status",
+        "symmetry_status",
+        "semantic_verdict",
+        "final_verdict",
+        "supported_family",
+    ):
         if key in expected:
             actual = payload.get(key) if isinstance(payload, dict) else None
             if actual != expected[key]:
@@ -281,6 +321,33 @@ def assert_expected(command_name: str, result: dict[str, Any], expected: dict[st
 
 def evaluate_case(case_id: str, execution: dict[str, Any], expected: dict[str, Any]) -> tuple[bool, list[str]]:
     errors: list[str] = []
+    expected = copy.deepcopy(expected)
+    if execution.get("strict_approval") and "approve" not in expected:
+        semantic_expected = dict(expected.get("review_semantic") or expected.get("verify_semantic") or {})
+        approve_expected: dict[str, Any] = {"exit_code": semantic_expected.get("exit_code", 0)}
+        semantic_verdict = semantic_expected.get("semantic_verdict")
+        if semantic_verdict == "APPROVED":
+            approve_expected.update(
+                {
+                    "review_status": "COMPLETE",
+                    "semantic_verdict": "APPROVED",
+                    "final_verdict": "APPROVED",
+                    "overlap_status": "PASS",
+                    "symmetry_status": "PASS",
+                }
+            )
+        elif semantic_verdict == "NEEDS_REVISION":
+            approve_expected.update(
+                {
+                    "semantic_verdict": "NEEDS_REVISION",
+                    "final_verdict": "NEEDS_REVISION",
+                }
+            )
+            if "mismatch_codes_include" in semantic_expected:
+                approve_expected["mismatch_codes_include"] = semantic_expected["mismatch_codes_include"]
+        else:
+            approve_expected.update({"final_verdict": "BLOCKED"})
+        expected["approve"] = approve_expected
     render_result = execution["render_result"]
     if render_result["exit_code"] != 0:
         errors.append(f"{case_id}: render failed with exit {render_result['exit_code']}")
@@ -291,7 +358,11 @@ def evaluate_case(case_id: str, execution: dict[str, Any], expected: dict[str, A
         if not Path(path).exists():
             errors.append(f"{case_id}: expected artifact missing: {path}")
 
-    command_results = run_case_commands(execution["platform"], execution["paths"])
+    command_results = run_case_commands(
+        execution["platform"],
+        execution["paths"],
+        command_shape=execution.get("command_shape", "auto"),
+    )
     execution["commands"] = command_results
     for command_name, command_expected in expected.items():
         assert_expected(command_name, command_results[command_name], command_expected, errors)
@@ -322,6 +393,7 @@ def build_case_summary(
 ) -> dict[str, Any]:
     return {
         "platform": platform,
+        "command_shape": execution.get("command_shape", "auto"),
         "fixture_id": fixture_id,
         "case_id": case_id,
         "family": family,
@@ -337,10 +409,19 @@ def build_case_summary(
     }
 
 
-def run_fixture(platform: str, fixture: dict[str, Any], out_root: Path) -> list[dict[str, Any]]:
+def run_fixture(
+    platform: str,
+    fixture: dict[str, Any],
+    out_root: Path,
+    *,
+    command_shape: str,
+    strict_approval: bool,
+) -> list[dict[str, Any]]:
     base_case_dir = expected_case_dir(out_root, fixture["id"], "base")
-    execution = render_direct(platform, fixture, base_case_dir)
+    execution = render_direct(platform, fixture, base_case_dir, command_shape=command_shape)
     execution["platform"] = platform
+    execution["command_shape"] = command_shape
+    execution["strict_approval"] = strict_approval
     base_passed, base_errors = evaluate_case("base", execution, fixture["expected"])
     results = [
         build_case_summary(
@@ -360,8 +441,17 @@ def run_fixture(platform: str, fixture: dict[str, Any], out_root: Path) -> list[
     for mutation in fixture.get("mutations", []):
         case_id = mutation["id"]
         mutation_dir = expected_case_dir(out_root, fixture["id"], case_id)
-        mutation_exec = render_mutation(platform, fixture, mutation, base_paths=base_paths, case_dir=mutation_dir)
+        mutation_exec = render_mutation(
+            platform,
+            fixture,
+            mutation,
+            base_paths=base_paths,
+            case_dir=mutation_dir,
+            command_shape=command_shape,
+        )
         mutation_exec["platform"] = platform
+        mutation_exec["command_shape"] = command_shape
+        mutation_exec["strict_approval"] = strict_approval
         mutation_passed, mutation_errors = evaluate_case(case_id, mutation_exec, mutation["expected"])
         results.append(
             build_case_summary(
@@ -382,6 +472,8 @@ def run_fixture(platform: str, fixture: dict[str, Any], out_root: Path) -> list[
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run persistent semantic regression fixtures for tikz-draw.")
     parser.add_argument("--platform", choices=("codex", "claude", "both"), default="both")
+    parser.add_argument("--command-shape", choices=("auto", "posix", "windows"), default="auto")
+    parser.add_argument("--strict-approval", action="store_true", help="Require fixtures to assert the approve command.")
     parser.add_argument("--fixture", action="append", help="Run only the named fixture id. Repeatable.")
     parser.add_argument("--out-dir", help="Optional output root for generated regression runs.")
     args = parser.parse_args()
@@ -405,7 +497,15 @@ def main() -> int:
         platform_root = out_dir / platform
         platform_root.mkdir(parents=True, exist_ok=True)
         for fixture in selected_fixtures:
-            all_results.extend(run_fixture(platform, fixture, platform_root))
+            all_results.extend(
+                run_fixture(
+                    platform,
+                    fixture,
+                    platform_root,
+                    command_shape=args.command_shape,
+                    strict_approval=bool(args.strict_approval),
+                )
+            )
 
     passed = sum(1 for item in all_results if item["passed"])
     failed = len(all_results) - passed
@@ -415,6 +515,8 @@ def main() -> int:
         "suite_path": str(SUITE_PATH),
         "out_dir": str(out_dir),
         "platforms": list(platforms),
+        "command_shape": args.command_shape,
+        "strict_approval": bool(args.strict_approval),
         "fixture_filter": args.fixture or [],
         "passed_cases": passed,
         "failed_cases": failed,

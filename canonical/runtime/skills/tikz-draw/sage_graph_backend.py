@@ -388,18 +388,22 @@ def run_sage_graph_query(query: dict[str, Any]) -> dict[str, Any]:
     try:
         outer = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        raise route_error("SAGE_OUTPUT_INVALID", f"Sage graph backend returned non-JSON wrapper output: {exc}") from exc
-    if outer.get("status") != "ok":
+        raise route_error("SAGE_OUTPUT_INVALID", f"Sage graph backend returned non-JSON output: {exc}") from exc
+
+    if isinstance(outer, dict) and outer.get("status") == "ok":
+        output = str(outer.get("output", "")).strip()
+        if not output:
+            raise route_error("SAGE_OUTPUT_INVALID", "Sage graph backend returned empty output")
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError as exc:
+            raise route_error("SAGE_OUTPUT_INVALID", f"Sage graph backend returned non-JSON graph output: {exc}") from exc
+    elif isinstance(outer, dict) and "status" in outer:
         raise route_error("SAGE_OUTPUT_INVALID", f"Sage graph backend error: {outer.get('message', 'unknown Sage error')}")
-
-    output = str(outer.get("output", "")).strip()
-    if not output:
-        raise route_error("SAGE_OUTPUT_INVALID", "Sage graph backend returned empty output")
-
-    try:
-        payload = json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise route_error("SAGE_OUTPUT_INVALID", f"Sage graph backend returned non-JSON graph output: {exc}") from exc
+    elif isinstance(outer, dict):
+        payload = outer
+    else:
+        raise route_error("SAGE_OUTPUT_INVALID", "Sage graph backend returned a non-object JSON payload")
 
     required = {
         "sage_version",

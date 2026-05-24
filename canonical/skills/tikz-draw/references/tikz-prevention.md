@@ -14,6 +14,10 @@ Primary rule IDs:
   - edge labels should include explicit directional or anchoring placement
 - `P5_EXTRACT_FRESHNESS`
   - extracted figures must carry freshness metadata and stay aligned with the source-of-truth file
+- `P7_APPROVAL_PROVENANCE`
+  - strict approval must bind the report to the current generated artifacts and hashes
+- `P8_SYMMETRY_CONTRACT`
+  - strict approval requires a structured symmetry contract and must fail closed if it is missing or violated
 
 Additional compatibility rules currently enforced:
 
@@ -24,5 +28,5 @@ Additional compatibility rules currently enforced:
 
 Phase note:
 
-- In phase 0/1 these rules define the shared contract and initial checker surface.
-- They are intentionally narrower than the later rendered-artifact semantic verifier.
+- Source-preflight rules alone do not approve a figure.
+- After any generated or edited figure, the agent must run `approve` and iterate until it passes or report the blocked state.

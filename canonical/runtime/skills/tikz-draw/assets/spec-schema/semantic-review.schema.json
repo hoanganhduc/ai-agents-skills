@@ -7,9 +7,12 @@
     "family",
     "static_status",
     "visual_status",
+    "overlap_status",
     "compile_status",
     "semantic_status",
+    "symmetry_status",
     "semantic_verdict",
+    "final_verdict",
     "supported_family",
     "mismatches",
     "mismatch_codes",
@@ -35,13 +38,25 @@
     "visual_status": {
       "type": "string"
     },
+    "overlap_status": {
+      "type": "string"
+    },
     "compile_status": {
       "type": "string"
     },
     "semantic_status": {
       "type": "string"
     },
+    "symmetry_status": {
+      "type": "string"
+    },
     "semantic_verdict": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "final_verdict": {
       "type": [
         "string",
         "null"
@@ -80,6 +95,9 @@
         }
       },
       "additionalProperties": true
+    },
+    "symmetry_review": {
+      "type": "object"
     },
     "evidence": {
       "type": "object"

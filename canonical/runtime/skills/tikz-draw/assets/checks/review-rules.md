@@ -11,6 +11,14 @@ See also:
 - `APPROVED`
 - `NEEDS_REVISION`
 - `REJECTED`
+- `BLOCKED_INPUT`
+- `BLOCKED_ENVIRONMENT`
+- `UNSUPPORTED_FAMILY`
+
+Only `approve` may emit final approval. `check`, `compile`, `review --tex`,
+`review-visual`, and `verify-semantic` are preflight/component checks. A figure
+is not done until `approve` exits 0 with `final_verdict=APPROVED`,
+`overlap_status=PASS`, and `symmetry_status=PASS`.
 
 ## Review dimensions
 
@@ -21,7 +29,7 @@ See also:
    - diagram is wrapped in the `adjustbox` environment with `max width=\textwidth`
    - standalone output loads `adjustbox`
 3. Layout hygiene
-   - extractor-backed `review-visual` checks page margins and generic text-to-shape clearance where possible
+   - extractor-backed `review-visual` checks page margins, text clearance, rendered overlaps, and line/shape crossings where possible
    - spacing is readable after width-fit scaling
    - no obvious overlap or clipping
 4. Maintainability
@@ -40,12 +48,14 @@ Each review should be concise and concrete:
 - failed rules
 - file path
 - one-line corrective action per failed rule
+- final approval evidence from `approve` when claiming a figure is done
 
 ## Phase 5 note
 
 - `review-visual` now refreshes `render-semantics.json` from the compiled PDF.
 - `verify-semantic` now supports the current render-generated `flowchart`, `dag`, `tree`, and supported-square `commutative` families.
 - `verify-semantic` still fails closed with `UNSUPPORTED_FAMILY` for unsupported families and unsupported inputs.
+- `approve` is the strict final gate and additionally requires artifact provenance and a declared symmetry contract.
 
 ## Width-fit caveat
 
