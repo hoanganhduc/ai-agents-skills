@@ -10,6 +10,7 @@
     "overlap_status",
     "compile_status",
     "semantic_status",
+    "design_status",
     "symmetry_status",
     "semantic_verdict",
     "final_verdict",
@@ -45,6 +46,9 @@
       "type": "string"
     },
     "semantic_status": {
+      "type": "string"
+    },
+    "design_status": {
       "type": "string"
     },
     "symmetry_status": {
@@ -95,6 +99,9 @@
         }
       },
       "additionalProperties": true
+    },
+    "design_review": {
+      "type": "object"
     },
     "symmetry_review": {
       "type": "object"

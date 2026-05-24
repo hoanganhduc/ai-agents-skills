@@ -18,6 +18,8 @@ Primary rule IDs:
   - strict approval must bind the report to the current generated artifacts and hashes
 - `P8_SYMMETRY_CONTRACT`
   - strict approval requires a structured symmetry contract and must fail closed if it is missing or violated
+- `P9_DESIGN_CONTRACT`
+  - scoped manuscript-facing semantic figures require a visual-semantic design contract and must fail closed if it is missing or violated
 
 Additional compatibility rules currently enforced:
 
@@ -25,6 +27,9 @@ Additional compatibility rules currently enforced:
 - standalone outputs must load `adjustbox`
 - standalone width-fit outputs must avoid `standalone[tikz]`
 - verification-sensitive graph closures should use explicit final edges instead of `cycle`
+- do not add, remove, or restyle emphasis marks without recording their intended mathematical role
+- do not simplify visual encodings in a way that erases a distinction made by the caption or nearby prose
+- do not treat user corrections about boxes, fills, labels, arrows, or regions as blind patch instructions; reopen the semantic design checkpoint when the correction changes the design model
 
 Phase note:
 

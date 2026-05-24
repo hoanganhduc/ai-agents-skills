@@ -25,6 +25,33 @@
       }
     }
   ],
+  "design_cases": [
+    {
+      "id": "graph_hardness_reduction_design_intent",
+      "request": "Draw a figure illustrating a hardness reduction in a graph where edge $e=uv$ is replaced by a gadget with ports $p_u^e$ and $p_v^e$ and blocker $c_{u,3}$.",
+      "caption": "The source edge $e=uv$ is replaced by the constructed gadget.",
+      "expected": {
+        "exit_code": 0,
+        "schema_version": "figure-design.v1",
+        "mark_ids_include": [
+          "graph_vertices",
+          "graph_edges",
+          "replacement_gadget_region",
+          "replacement_correspondence"
+        ],
+        "mark_roles_include": [
+          "graph_object",
+          "gadget_region",
+          "correspondence",
+          "annotation"
+        ],
+        "caption_claim_ids_include": [
+          "caption-claim-1",
+          "contract-replacement-claim"
+        ]
+      }
+    }
+  ],
   "fixtures": [
     {
       "id": "flowchart_pipeline",
