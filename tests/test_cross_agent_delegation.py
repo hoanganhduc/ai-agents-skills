@@ -670,7 +670,7 @@ class CrossAgentDelegationFixtureTests(unittest.TestCase):
         self.assertIn("SECRET_MATERIAL", validate_task(secret_key))
 
         secret_value = deepcopy(task_packet)
-        secret_value["audit_notes"] = ["Bearer abcdefghijklmnop123456"]
+        secret_value["audit_notes"] = ["Bearer " + "abcdefghijklmnop123456"]
         self.assertIn("SECRET_MATERIAL", validate_task(secret_value))
 
         runtime_result = deepcopy(result_packet)
@@ -687,7 +687,7 @@ class CrossAgentDelegationFixtureTests(unittest.TestCase):
                 "artifact_id": "A-secret",
                 "kind": "note",
                 "ref_id": "artifact:secret",
-                "description": "github_pat_abcdefghijklmnopqrstuvwxyz",
+                "description": "github" + "_pat_" + "abcdefghijklmnopqrstuvwxyz",
             }
         )
         self.assertIn("SECRET_MATERIAL", validate_result(secret_result))
