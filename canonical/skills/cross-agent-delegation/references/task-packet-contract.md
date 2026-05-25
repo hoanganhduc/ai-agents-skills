@@ -87,6 +87,101 @@ Unknown permission-bearing fields are always invalid, including:
 - `session_ids`
 - `resume_token`
 - `resume_tokens`
+- `budget_envelope`
+- `runtime_budget`
+- `budget_owner`
+- `budget_spent`
+- `spent_tokens`
+- `spent_usd`
+- `depth_used`
+- `hops_used`
+- `resolved_model`
+- `resolved_thinking`
+- `model_policy_source`
+- `resolved_at`
+- `policy_ref`
+- `model`
+- `provider`
+- `reasoning`
+- `thinking`
+- `api_base`
+- `secret`
+- `secrets`
+- `api_key`
+- `apikey`
+- `access_token`
+- `refresh_token`
+- `password`
+- `credential`
+- `credentials`
+- `private_key`
+- `ssh_key`
+
+## Research Budget And Model Constraints
+
+Research delegation may use static, parent-owned caps only as inert plain
+strings inside existing `constraints` or `scope_constraints`. Packets must not
+add budget, model, provider, session, runtime-state, or approval fields.
+
+Closed V1 constraint grammar:
+
+| Constraint kind | Only allowed string or regex | Parent-policy validation |
+|---|---|---|
+| `model_policy` | `^model_policy=same_resolved_model; reasoning=parent_required_highest_available$` | Nested work must use the parent runbook's exact `resolved_model` and `resolved_thinking`. |
+| `max_depth` | `^max_depth=([0-9]+)$` | Parsed integer must satisfy `0 <= n <= parent_policy.max_depth`; V1 also requires `n <= 1` below the parent. |
+| `max_hops` | `^max_hops=([1-9][0-9]*)$` | Parsed integer must satisfy `1 <= n <= parent_policy.max_hops`. |
+| `max_tokens` | `^max_tokens=([1-9][0-9]*)$` | Parsed integer must satisfy `1 <= n <= parent_policy.max_tokens`. |
+| `max_usd` | `^max_usd=([0-9]+)(\\.[0-9]{1,2})?$` | Parsed decimal must satisfy `0 <= amount <= parent_policy.max_usd`; compare as decimal, not binary float. |
+| `budget_policy_ref` | `^budget_policy_ref=[A-Za-z][A-Za-z0-9_.-]{0,63}(#[A-Za-z][A-Za-z0-9_.-]{0,63})?$` | Ref must resolve to the parent run policy already recorded in the runbook. |
+
+Validation merges `constraints` and `scope_constraints` before checking
+duplicates. At most one entry for each constraint kind may appear across both
+fields. Reject duplicates even when values are identical.
+
+`parent_budget_owner=<actor>` is not valid packet content. Budget ownership
+belongs only in the parent runbook as `budget_owner`.
+
+Reject unsafe `budget_policy_ref` values containing path traversal, URLs,
+whitespace, shell metacharacters, query strings, or environment-variable
+syntax.
+
+## Recursive Packet Safety
+
+Task validation must reject forbidden JSON object keys recursively at any
+nesting level, including inside `recipient_capability_snapshot`,
+`requested_actions`, `expected_output`, `metadata`-like objects, and arrays of
+objects.
+
+Reject these key classes:
+
+- Runtime budget/state exact keys: `budget_envelope`, `runtime_budget`,
+  `budget_owner`, `max_depth`, `max_hops`, `max_tokens`, `max_usd`,
+  `budget_spent`, `spent_tokens`, `spent_usd`, `depth_used`, and `hops_used`.
+- Runtime budget/state key regexes: `^max_.*`, `^spent_.*`, `^budget_.*`,
+  `^depth_.*`, and `^hops_.*`.
+- Policy-resolution and model-config exact keys: `resolved_model`,
+  `resolved_thinking`, `model_policy_source`, `resolved_at`, `policy_ref`,
+  `model_policy`, `model`, `provider`, `reasoning`, `thinking`, `api_base`,
+  and `session_id`.
+- Policy-resolution and model-config key regexes: `^resolved_.*`,
+  `^model_.*`, `^provider_.*`, and `.*session.*`.
+- Secret-like exact keys: `secret`, `secrets`, `api_key`, `apikey`,
+  `access_token`, `refresh_token`, `password`, `credential`, `credentials`,
+  `private_key`, and `ssh_key`.
+- Secret-like key regex, case-insensitive:
+  `(^|[_-])(api[_-]?key|secret|token|password|credential|private[_-]?key|ssh[_-]?key)([_-]|$)`.
+
+This key-pattern rejection applies to JSON keys, not to allowed inert strings
+inside `constraints` or `scope_constraints`. Constraint string values are
+checked by the grammar above.
+
+Task validation must also reject secret-like string values, including values
+matching `sk-...`, `ghp_...`, `github_pat_...`, `AKIA[0-9A-Z]{16}`,
+`-----BEGIN ... PRIVATE KEY-----`, or `Bearer <token-like value>`.
+
+Nested delegation may be requested only as a bounded advisory task. The packet
+must not authorize child dispatch, carry model/provider/session configuration,
+or grant approval for further delegation by itself.
 
 ## Field Tables
 

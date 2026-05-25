@@ -46,6 +46,15 @@
       "optional_capabilities": [],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "draft-writing": {
+      "description": "Claim-preserving draft writing workflow for controlled rewriting, polishing, and revision audits.",
+      "profiles": ["writing-workflow", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["claim-ledger", "revision-delta-audit"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
     "zotero": {
       "description": "Zotero paper search, retrieval, ingest, and collection workflow.",
       "profiles": ["library", "full-research"],

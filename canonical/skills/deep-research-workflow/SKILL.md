@@ -43,22 +43,6 @@ bash ~/.codex/runtime/run_skill.sh \
   skills/deep-research-workflow/run_deep_research_workflow.sh doctor
 ```
 
-## Minimal runtime helper
-
-Initialize a deep-research scaffold with:
-
-```bash
-bash ~/.codex/runtime/run_skill.sh \
-  skills/deep-research-workflow/run_deep_research_workflow.sh init --dir /path/to/workspace
-```
-
-Verify the helper setup with:
-
-```bash
-bash ~/.codex/runtime/run_skill.sh \
-  skills/deep-research-workflow/run_deep_research_workflow.sh doctor
-```
-
 ## When to use
 
 - deep topic research
@@ -150,6 +134,20 @@ Detailed handoff structure:
 - `references/source-handoff.md`
 - `~/.codex/templates/deep-research-analysis.md`
 
+### Research quality guards
+
+For nontrivial, delegated, or completeness-claiming research, record guard
+outputs before final synthesis:
+
+- `ScopeGuard` for scope drift and exclusions
+- `EvidenceGuard` for claim-to-source or claim-to-evidence linkage
+- `VerifyGuard` for readiness checks separate from final delivery judgment
+- `BudgetGuard` for parent-owned token, USD, depth, and hop limits
+- `RegressionGuard` for load-bearing workflow text and template contracts
+
+Use the closed schema in `references/research-quality-guards.md`. Do not use a
+single aggregate research quality score.
+
 ### Optional post-analysis figure handoff
 
 Only do this when the user explicitly asks for a figure or the report would materially benefit from one.
@@ -197,6 +195,7 @@ Outputs:
 Output structure guidance:
 
 - `references/output-structure.md`
+- `references/research-quality-guards.md`
 - `~/.codex/templates/deep-research-report.md`
 
 ## Skill handoffs
@@ -233,6 +232,10 @@ Output structure guidance:
 - [ ] Final output distinguishes sourced fact from inference
 - [ ] Missing coverage is disclosed explicitly
 - [ ] Dropped or excluded sources are explained
+- [ ] Nontrivial runs include guard outputs with `guard_output_id`
+- [ ] Supported `pass` or `warn` guard outputs cite source or evidence IDs
+- [ ] Budget/model policy state is recorded only in parent-owned runbook artifacts
+- [ ] No aggregate research quality score replaces guard outputs
 
 ## Sample prompt shapes
 
