@@ -19,8 +19,8 @@ from installer.ai_agents_skills.docs import generate_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
-from installer.ai_agents_skills.render import render_reference_skill_md
-from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
+from installer.ai_agents_skills.render import render_artifact_content, render_reference_skill_md
+from installer.ai_agents_skills.selectors import artifact_dependency_skills, resolve_artifacts, resolve_skills
 from installer.ai_agents_skills.state import artifact_signature, save_state, write_run_record
 from installer.ai_agents_skills.target_prechecks import path_style_for_platform
 from installer.ai_agents_skills.verify import verify
@@ -103,6 +103,52 @@ class ManifestTests(unittest.TestCase):
         args.skills = "deep-research,research_digest_wrapper,openclaw-research"
         selected = resolve_skills(args, manifests)
         self.assertEqual(selected, ["deep-research-workflow", "research-digest-wrapper", "source-research"])
+
+    def test_writing_workflow_profile_resolves_draft_writing(self) -> None:
+        manifests = load_manifests()
+        args = Args()
+        args.profile = "writing-workflow"
+        selected = resolve_skills(args, manifests)
+        self.assertEqual(selected, ["draft-writing"])
+
+    def test_writing_workflow_artifacts_resolve_with_backing_dependency(self) -> None:
+        manifests = load_manifests()
+        args = Args()
+        args.no_skills = True
+        args.artifact_profile = "writing-workflow"
+        artifacts = resolve_artifacts(args, manifests)
+
+        self.assertEqual(
+            artifacts,
+            [
+                ("instruction-doc", "claim-preserving-writing"),
+                ("template", "draft-claim-ledger"),
+                ("template", "draft-revision-map"),
+            ],
+        )
+        self.assertEqual(artifact_dependency_skills(artifacts, manifests), {"draft-writing"})
+
+    def test_draft_writing_artifact_sources_render_from_expected_directories(self) -> None:
+        manifests = load_manifests()
+        artifact_specs = manifests["artifacts"]["artifacts"]
+
+        ledger = render_artifact_content(
+            "template",
+            "draft-claim-ledger",
+            artifact_specs["template"]["draft-claim-ledger"],
+            "codex",
+        )
+        instruction = render_artifact_content(
+            "instruction-doc",
+            "claim-preserving-writing",
+            artifact_specs["instruction-doc"]["claim-preserving-writing"],
+            "codex",
+        )
+
+        self.assertIn("# Draft Claim Ledger", ledger)
+        self.assertIn("# Claim-Preserving Writing", instruction)
+        self.assertIn("Managed by ai-agents-skills", ledger)
+        self.assertIn("Managed by ai-agents-skills", instruction)
 
 
 class PlanInstallVerifyTests(unittest.TestCase):
@@ -685,6 +731,36 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             uninstall(root, agents={"openclaw"}, dry_run=False)
             self.assertFalse(target.exists())
+
+    def test_openclaw_fake_root_can_plan_draft_writing_skill_only(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "openclaw")
+
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.profile = "writing-workflow"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["openclaw"]),
+                requested_agents=["openclaw"],
+            )
+            file_actions = [
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            ]
+            block_actions = [action for action in plan["actions"] if action["kind"] == "managed-block"]
+
+            self.assertEqual(len(file_actions), 1)
+            self.assertEqual(file_actions[0]["agent"], "openclaw")
+            self.assertEqual(file_actions[0]["operation"], "create")
+            self.assertEqual(file_actions[0]["install_mode"], "copy")
+            self.assertFalse(block_actions)
 
     def test_openclaw_existing_unmanaged_skill_is_skipped_by_default(self) -> None:
         manifests = load_manifests()
@@ -1657,6 +1733,27 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("developer_instructions", codex_persona.read_text(encoding="utf-8"))
             self.assertTrue(claude_persona.read_text(encoding="utf-8").lstrip().startswith("---"))
             self.assertIn("reference document", deepseek_persona.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_writing_workflow_profile_installs_skill_templates_and_instruction_docs(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex", "claude", "deepseek")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.profile = "writing-workflow"
+            args.artifact_profile = "writing-workflow"
+            selected = resolve_skills(args, manifests)
+            artifacts = resolve_artifacts(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root), artifacts=artifacts)
+            apply_plan(root, plan, dry_run=False)
+
+            self.assertTrue((root / ".codex" / "skills" / "draft-writing" / "SKILL.md").exists())
+            self.assertTrue((root / ".codex" / "templates" / "draft-claim-ledger.md").exists())
+            self.assertTrue((root / ".claude" / "templates" / "draft-revision-map.md").exists())
+            self.assertTrue((root / ".deepseek" / "instructions" / "claim-preserving-writing.md").exists())
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_entrypoint_alias_requires_backing_skill(self) -> None:
@@ -3012,6 +3109,41 @@ class CopilotTargetTests(unittest.TestCase):
             self.assertTrue(installed.is_file())
             self.assertFalse(installed.is_symlink())
             self.assertIn("Install mode: reference", installed.read_text(encoding="utf-8"))
+
+    def test_explicit_copilot_writing_workflow_gets_skill_adapter_not_artifacts(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "copilot")
+            args = Args()
+            args.profile = "writing-workflow"
+            args.artifact_profile = "writing-workflow"
+            selected = resolve_skills(args, manifests)
+            artifacts = resolve_artifacts(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["copilot"]),
+                artifacts=artifacts,
+                requested_agents=["copilot"],
+            )
+            skill_actions = [
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            ]
+            artifact_actions = [action for action in plan["actions"] if action.get("artifact_id")]
+
+            self.assertEqual(len(skill_actions), 1)
+            self.assertEqual(skill_actions[0]["agent"], "copilot")
+            self.assertEqual(
+                Path(skill_actions[0]["path"]),
+                root / ".copilot" / "skills" / "draft-writing" / "SKILL.md",
+            )
+            self.assertEqual(artifact_actions, [])
 
     def test_copilot_agent_persona_uses_agent_md_surface(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
