@@ -307,7 +307,7 @@ Each JSON fixture is preceded by a canonical metadata marker:
 
 ## Invalid Result With Runtime Authority Fields
 
-<!-- fixture: id=invalid-result-runtime-authority kind=result valid=false errors=FORBIDDEN_AUTHORITY_FIELD,UNKNOWN_FIELD -->
+<!-- fixture: id=invalid-result-runtime-authority kind=result valid=false errors=FORBIDDEN_AUTHORITY_FIELD,FORBIDDEN_MODEL_POLICY_FIELD,UNKNOWN_FIELD -->
 ```json
 {
   "schema_version": "cross-agent-delegation.result.v1",
@@ -510,6 +510,192 @@ Each JSON fixture is preceded by a canonical metadata marker:
   "evidence_requirements": [
     "Evidence refs are required for source verification claims."
   ],
+  "failure_policy": "block",
+  "audit_notes": []
+}
+```
+
+## Valid Research Budget Constraints
+
+<!-- fixture: id=valid-research-budget-constraints kind=task valid=true errors=none -->
+```json
+{
+  "schema_version": "cross-agent-delegation.task.v1",
+  "packet_id": "pkt-valid-budget-001",
+  "created_at": "2026-05-24T00:00:00Z",
+  "created_by": "parent-session",
+  "intended_recipient": "codex-like reviewer",
+  "adapter_spec_id": "codex-like-coding-reviewer",
+  "recipient_profile": {
+    "profile_id": "codex-like-coding-reviewer",
+    "profile_version": "v1",
+    "execution_status": "reference_only"
+  },
+  "recipient_capability_snapshot": {},
+  "intent": "Review supplied research evidence without live execution.",
+  "requested_actions": [
+    "evidence-synthesis-critique"
+  ],
+  "side_effects": {
+    "writes_files": false,
+    "external_service_posts": false,
+    "network_calls": false,
+    "subprocesses": false
+  },
+  "success_criteria": [
+    "Every finding cites supplied evidence refs."
+  ],
+  "constraints": [
+    "model_policy=same_resolved_model; reasoning=parent_required_highest_available",
+    "max_depth=1",
+    "max_hops=2"
+  ],
+  "provenance": [],
+  "input_refs": [
+    {
+      "ref_id": "S1",
+      "kind": "source",
+      "source": "source:S1",
+      "sensitivity": "public",
+      "access_note": "Parent supplies excerpt out of band."
+    }
+  ],
+  "artifact_refs": [],
+  "scope_constraints": [
+    "max_tokens=50000",
+    "max_usd=25.00",
+    "budget_policy_ref=researchPolicy#default"
+  ],
+  "out_of_scope": [
+    "Live provider dispatch."
+  ],
+  "context_policy": {
+    "forward_raw_chat": false,
+    "forward_system_instructions": false,
+    "summary_context_refs": [],
+    "context_refs_to_include": [],
+    "context_refs_to_exclude": []
+  },
+  "confirmation_requirement": "parent_decides_outside_packet",
+  "expected_output": {
+    "format": "result_packet"
+  },
+  "evidence_requirements": [
+    "Supported pass or warn findings require evidence refs."
+  ],
+  "failure_policy": "block",
+  "audit_notes": [
+    "Budget state stays in the parent runbook."
+  ]
+}
+```
+
+## Invalid Packet Budget Owner
+
+<!-- fixture: id=invalid-packet-budget-owner kind=task valid=false errors=BUDGET_CONSTRAINT_INVALID -->
+```json
+{
+  "schema_version": "cross-agent-delegation.task.v1",
+  "packet_id": "pkt-invalid-budget-owner-001",
+  "created_at": "2026-05-24T00:01:00Z",
+  "created_by": "parent-session",
+  "intended_recipient": "codex-like reviewer",
+  "adapter_spec_id": "codex-like-coding-reviewer",
+  "recipient_profile": {
+    "profile_id": "codex-like-coding-reviewer",
+    "profile_version": "v1",
+    "execution_status": "reference_only"
+  },
+  "recipient_capability_snapshot": {},
+  "intent": "Attempt to move parent budget ownership into a packet.",
+  "requested_actions": [
+    "review"
+  ],
+  "side_effects": {
+    "writes_files": false,
+    "external_service_posts": false,
+    "network_calls": false,
+    "subprocesses": false
+  },
+  "success_criteria": [],
+  "constraints": [
+    "parent_budget_owner=child-agent"
+  ],
+  "provenance": [],
+  "input_refs": [],
+  "artifact_refs": [],
+  "scope_constraints": [],
+  "out_of_scope": [],
+  "context_policy": {
+    "forward_raw_chat": false,
+    "forward_system_instructions": false,
+    "summary_context_refs": [],
+    "context_refs_to_include": [],
+    "context_refs_to_exclude": []
+  },
+  "confirmation_requirement": "parent_decides_outside_packet",
+  "expected_output": {
+    "format": "result_packet"
+  },
+  "evidence_requirements": [],
+  "failure_policy": "block",
+  "audit_notes": []
+}
+```
+
+## Invalid Packet-Authorized Nested Delegation
+
+<!-- fixture: id=invalid-packet-authorized-nested-delegation kind=task valid=false errors=FORBIDDEN_AUTHORITY_FIELD,FORBIDDEN_MODEL_POLICY_FIELD -->
+```json
+{
+  "schema_version": "cross-agent-delegation.task.v1",
+  "packet_id": "pkt-invalid-nested-dispatch-001",
+  "created_at": "2026-05-24T00:02:00Z",
+  "created_by": "parent-session",
+  "intended_recipient": "codex-like reviewer",
+  "adapter_spec_id": "codex-like-coding-reviewer",
+  "recipient_profile": {
+    "profile_id": "codex-like-coding-reviewer",
+    "profile_version": "v1",
+    "execution_status": "reference_only"
+  },
+  "recipient_capability_snapshot": {},
+  "intent": "Attempt to authorize a child dispatch inside packet content.",
+  "requested_actions": [
+    {
+      "kind": "subtask",
+      "execution_target": "child-agent",
+      "resolved_model": "gpt-example"
+    }
+  ],
+  "side_effects": {
+    "writes_files": false,
+    "external_service_posts": false,
+    "network_calls": false,
+    "subprocesses": false
+  },
+  "success_criteria": [],
+  "constraints": [
+    "model_policy=same_resolved_model; reasoning=parent_required_highest_available",
+    "max_depth=1"
+  ],
+  "provenance": [],
+  "input_refs": [],
+  "artifact_refs": [],
+  "scope_constraints": [],
+  "out_of_scope": [],
+  "context_policy": {
+    "forward_raw_chat": false,
+    "forward_system_instructions": false,
+    "summary_context_refs": [],
+    "context_refs_to_include": [],
+    "context_refs_to_exclude": []
+  },
+  "confirmation_requirement": "parent_decides_outside_packet",
+  "expected_output": {
+    "format": "result_packet"
+  },
+  "evidence_requirements": [],
   "failure_policy": "block",
   "audit_notes": []
 }

@@ -31,8 +31,12 @@ A typical research workflow looks like this:
 3. The skill routes to the right software capability: local libraries first,
    document parsing when files are involved, public databases for structured
    records, TeX for figures, and SageMath or Python for math checks.
-4. The final answer passes through review or verification skills when the task
-   needs stronger evidence control.
+4. Research phases keep explicit guard outputs: scope boundaries,
+   goal/backward success checks, delegated-agent result packets, source
+   handoffs, and a bounded iteration ledger.
+5. The final answer passes through review or verification skills when the task
+   needs stronger evidence control. Verification reports concrete issues and
+   remaining gaps instead of an aggregate quality score.
 
 Examples:
 

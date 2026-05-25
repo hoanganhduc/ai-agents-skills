@@ -5,6 +5,7 @@ import re
 import tempfile
 import unittest
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,85 @@ FORBIDDEN_KEYS = {
     "parent_acceptance",
     "accepted_by_parent",
 }
+FORBIDDEN_RUNTIME_KEYS = {
+    "budget_envelope",
+    "runtime_budget",
+    "budget_owner",
+    "max_depth",
+    "max_hops",
+    "max_tokens",
+    "max_usd",
+    "budget_spent",
+    "spent_tokens",
+    "spent_usd",
+    "depth_used",
+    "hops_used",
+}
+FORBIDDEN_RUNTIME_KEY_PATTERNS = [
+    re.compile(pattern)
+    for pattern in (r"^max_.*", r"^spent_.*", r"^budget_.*", r"^depth_.*", r"^hops_.*")
+]
+FORBIDDEN_MODEL_KEYS = {
+    "resolved_model",
+    "resolved_thinking",
+    "model_policy_source",
+    "resolved_at",
+    "policy_ref",
+    "model_policy",
+    "model",
+    "provider",
+    "reasoning",
+    "thinking",
+    "api_base",
+    "session_id",
+}
+FORBIDDEN_MODEL_KEY_PATTERNS = [
+    re.compile(pattern)
+    for pattern in (r"^resolved_.*", r"^model_.*", r"^provider_.*", r".*session.*")
+]
+FORBIDDEN_SECRET_KEYS = {
+    "secret",
+    "secrets",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "password",
+    "credential",
+    "credentials",
+    "private_key",
+    "ssh_key",
+}
+FORBIDDEN_SECRET_KEY_PATTERN = re.compile(
+    r"(^|[_-])(api[_-]?key|secret|token|password|credential|private[_-]?key|ssh[_-]?key)([_-]|$)",
+    re.I,
+)
+FORBIDDEN_SECRET_VALUE_PATTERNS = [
+    re.compile(pattern, re.I | re.S)
+    for pattern in (
+        r"\bsk-[A-Za-z0-9]{8,}\b",
+        r"\bghp_[A-Za-z0-9]{8,}\b",
+        r"\bgithub_pat_[A-Za-z0-9_]{8,}\b",
+        r"\bAKIA[0-9A-Z]{16}\b",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+        r"\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b",
+    )
+]
+BUDGET_CONSTRAINT_PATTERNS = {
+    "model_policy": re.compile(r"^model_policy=same_resolved_model; reasoning=parent_required_highest_available$"),
+    "max_depth": re.compile(r"^max_depth=([0-9]+)$"),
+    "max_hops": re.compile(r"^max_hops=([1-9][0-9]*)$"),
+    "max_tokens": re.compile(r"^max_tokens=([1-9][0-9]*)$"),
+    "max_usd": re.compile(r"^max_usd=([0-9]+)(\.[0-9]{1,2})?$"),
+    "budget_policy_ref": re.compile(r"^budget_policy_ref=[A-Za-z][A-Za-z0-9_.-]{0,63}(#[A-Za-z][A-Za-z0-9_.-]{0,63})?$"),
+}
+BUDGET_CONSTRAINT_PREFIXES = tuple(f"{kind}=" for kind in BUDGET_CONSTRAINT_PATTERNS)
+PARENT_POLICY_LIMITS = {
+    "max_depth": 1,
+    "max_hops": 4,
+    "max_tokens": 100000,
+    "max_usd": Decimal("100.00"),
+}
 TASK_SCHEMA_VERSION = "cross-agent-delegation.task.v1"
 RESULT_SCHEMA_VERSION = "cross-agent-delegation.result.v1"
 PROFILE_VERSION = "v1"
@@ -193,13 +273,78 @@ def parse_fixtures() -> list[dict[str, Any]]:
 def recursive_forbidden_key_errors(value: Any) -> list[str]:
     errors = []
     if isinstance(value, dict):
-        if set(value).intersection(FORBIDDEN_KEYS):
-            errors.append("FORBIDDEN_AUTHORITY_FIELD")
-        for item in value.values():
+        for key, item in value.items():
+            if key in FORBIDDEN_KEYS:
+                errors.append("FORBIDDEN_AUTHORITY_FIELD")
+            if key in FORBIDDEN_RUNTIME_KEYS or any(pattern.match(key) for pattern in FORBIDDEN_RUNTIME_KEY_PATTERNS):
+                errors.append("FORBIDDEN_RUNTIME_STATE_FIELD")
+            if key in FORBIDDEN_MODEL_KEYS or any(pattern.match(key) for pattern in FORBIDDEN_MODEL_KEY_PATTERNS):
+                errors.append("FORBIDDEN_MODEL_POLICY_FIELD")
+            if key in FORBIDDEN_SECRET_KEYS or FORBIDDEN_SECRET_KEY_PATTERN.search(key):
+                errors.append("SECRET_MATERIAL")
             errors.extend(recursive_forbidden_key_errors(item))
     elif isinstance(value, list):
         for item in value:
             errors.extend(recursive_forbidden_key_errors(item))
+    elif isinstance(value, str):
+        if any(pattern.search(value) for pattern in FORBIDDEN_SECRET_VALUE_PATTERNS):
+            errors.append("SECRET_MATERIAL")
+    return errors
+
+
+def budget_constraint_kind(value: str) -> str | None:
+    if value == "model_policy=same_resolved_model; reasoning=parent_required_highest_available":
+        return "model_policy"
+    for kind in ("max_depth", "max_hops", "max_tokens", "max_usd", "budget_policy_ref"):
+        if value.startswith(f"{kind}="):
+            return kind
+    if value.startswith(BUDGET_CONSTRAINT_PREFIXES) or value.startswith("parent_budget_owner="):
+        return value.split("=", 1)[0]
+    return None
+
+
+def validate_budget_constraint_bounds(kind: str, match: re.Match[str]) -> list[str]:
+    if kind in {"model_policy", "budget_policy_ref"}:
+        return []
+    try:
+        if kind == "max_usd":
+            value = Decimal(match.group(1) + (match.group(2) or ""))
+            if value > PARENT_POLICY_LIMITS[kind]:
+                return ["BUDGET_CONSTRAINT_EXCEEDS_PARENT_POLICY"]
+            return []
+        value = int(match.group(1))
+    except (InvalidOperation, ValueError):
+        return ["BUDGET_CONSTRAINT_INVALID"]
+    if value > PARENT_POLICY_LIMITS[kind]:
+        return ["BUDGET_CONSTRAINT_EXCEEDS_PARENT_POLICY"]
+    return []
+
+
+def validate_delegation_constraints(packet: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    seen: set[str] = set()
+    for field in ("constraints", "scope_constraints"):
+        values = packet.get(field, [])
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            kind = budget_constraint_kind(value)
+            if kind is None:
+                continue
+            if kind == "parent_budget_owner":
+                errors.append("BUDGET_CONSTRAINT_INVALID")
+                continue
+            pattern = BUDGET_CONSTRAINT_PATTERNS.get(kind)
+            match = pattern.match(value) if pattern is not None else None
+            if match is None:
+                errors.append("BUDGET_CONSTRAINT_INVALID")
+                continue
+            if kind in seen:
+                errors.append("DUPLICATE_BUDGET_CONSTRAINT")
+            seen.add(kind)
+            errors.extend(validate_budget_constraint_bounds(kind, match))
     return errors
 
 
@@ -270,6 +415,7 @@ def validate_task(packet: dict[str, Any]) -> list[str]:
     expected = packet.get("expected_output", {})
     if isinstance(expected, dict) and "searched and verified" in str(expected.get("forbidden_claim", "")):
         errors.append("UNVERIFIED_SOURCE_CLAIM")
+    errors.extend(validate_delegation_constraints(packet))
     errors.extend(recursive_forbidden_key_errors(packet))
     return sorted(set(errors))
 
@@ -460,6 +606,91 @@ class CrossAgentDelegationFixtureTests(unittest.TestCase):
             target[path[-1]] = value
             errors = validate_task(mutated) if packet is task_packet else validate_result(mutated)
             self.assertIn("FORBIDDEN_AUTHORITY_FIELD", errors, path)
+
+    def test_budget_constraints_use_closed_grammar_and_parent_bounds(self) -> None:
+        packet = deepcopy(next(fixture["packet"] for fixture in parse_fixtures() if fixture["id"] == "valid-inert-task"))
+        packet["constraints"] = [
+            "Ordinary inert review constraint.",
+            "model_policy=same_resolved_model; reasoning=parent_required_highest_available",
+            "max_depth=1",
+            "max_hops=2",
+        ]
+        packet["scope_constraints"] = [
+            "max_tokens=50000",
+            "max_usd=25.00",
+            "budget_policy_ref=researchPolicy#default",
+        ]
+        self.assertEqual(validate_task(packet), [])
+
+        duplicate = deepcopy(packet)
+        duplicate["scope_constraints"].append("max_depth=1")
+        self.assertIn("DUPLICATE_BUDGET_CONSTRAINT", validate_task(duplicate))
+
+        invalid_owner = deepcopy(packet)
+        invalid_owner["constraints"] = ["parent_budget_owner=child-agent"]
+        invalid_owner["scope_constraints"] = []
+        self.assertIn("BUDGET_CONSTRAINT_INVALID", validate_task(invalid_owner))
+
+        malformed_cases = {
+            "model_policy=same_resolved_model": "BUDGET_CONSTRAINT_INVALID",
+            "max_depth=-1": "BUDGET_CONSTRAINT_INVALID",
+            "max_hops=0": "BUDGET_CONSTRAINT_INVALID",
+            "max_tokens=0": "BUDGET_CONSTRAINT_INVALID",
+            "max_usd=1.234": "BUDGET_CONSTRAINT_INVALID",
+            "budget_policy_ref=../policy": "BUDGET_CONSTRAINT_INVALID",
+            "budget_policy_ref=https://example.test/policy": "BUDGET_CONSTRAINT_INVALID",
+            "budget_policy_ref=policy?x=1": "BUDGET_CONSTRAINT_INVALID",
+            "budget_policy_ref=$POLICY": "BUDGET_CONSTRAINT_INVALID",
+            "budget_policy_ref=bad policy": "BUDGET_CONSTRAINT_INVALID",
+            "max_depth=2": "BUDGET_CONSTRAINT_EXCEEDS_PARENT_POLICY",
+            "max_hops=5": "BUDGET_CONSTRAINT_EXCEEDS_PARENT_POLICY",
+            "max_tokens=100001": "BUDGET_CONSTRAINT_EXCEEDS_PARENT_POLICY",
+            "max_usd=100.01": "BUDGET_CONSTRAINT_EXCEEDS_PARENT_POLICY",
+        }
+        for constraint, expected_error in malformed_cases.items():
+            mutated = deepcopy(packet)
+            mutated["constraints"] = [constraint]
+            mutated["scope_constraints"] = []
+            self.assertIn(expected_error, validate_task(mutated), constraint)
+
+    def test_task_and_result_reject_recursive_budget_model_and_secret_material(self) -> None:
+        task_packet = deepcopy(next(fixture["packet"] for fixture in parse_fixtures() if fixture["id"] == "valid-inert-task"))
+        result_packet = deepcopy(next(fixture["packet"] for fixture in parse_fixtures() if fixture["id"] == "valid-partial-result"))
+
+        runtime_key = deepcopy(task_packet)
+        runtime_key["expected_output"]["metadata"] = {"budget_spent": {"spent_usd": "0.01"}}
+        self.assertIn("FORBIDDEN_RUNTIME_STATE_FIELD", validate_task(runtime_key))
+
+        model_key = deepcopy(task_packet)
+        model_key["recipient_capability_snapshot"] = {"nested": [{"resolved_model": "gpt-example"}]}
+        self.assertIn("FORBIDDEN_MODEL_POLICY_FIELD", validate_task(model_key))
+
+        secret_key = deepcopy(task_packet)
+        secret_key["expected_output"] = {"metadata": {"api_key": "redacted"}}
+        self.assertIn("SECRET_MATERIAL", validate_task(secret_key))
+
+        secret_value = deepcopy(task_packet)
+        secret_value["audit_notes"] = ["Bearer abcdefghijklmnop123456"]
+        self.assertIn("SECRET_MATERIAL", validate_task(secret_value))
+
+        runtime_result = deepcopy(result_packet)
+        runtime_result["findings"][0]["budget_owner"] = "child-agent"
+        self.assertIn("FORBIDDEN_RUNTIME_STATE_FIELD", validate_result(runtime_result))
+
+        model_result = deepcopy(result_packet)
+        model_result["evidence"][0]["resolved_thinking"] = "xhigh"
+        self.assertIn("FORBIDDEN_MODEL_POLICY_FIELD", validate_result(model_result))
+
+        secret_result = deepcopy(result_packet)
+        secret_result["artifacts"].append(
+            {
+                "artifact_id": "A-secret",
+                "kind": "note",
+                "ref_id": "artifact:secret",
+                "description": "github_pat_abcdefghijklmnopqrstuvwxyz",
+            }
+        )
+        self.assertIn("SECRET_MATERIAL", validate_result(secret_result))
 
     def test_examples_are_portable_and_secret_safe(self) -> None:
         text = EXAMPLES.read_text(encoding="utf-8")
