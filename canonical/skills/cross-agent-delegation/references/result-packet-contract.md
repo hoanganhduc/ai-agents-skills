@@ -48,6 +48,38 @@ schema or field table. Unknown fields are rejected. Unknown permission-bearing
 fields are invalid even when nested inside `findings`, `evidence`, `artifacts`,
 `provenance`, `warnings`, or `errors`.
 
+Result validation must also reject forbidden JSON object keys recursively at
+any nesting level, including inside arrays of findings, evidence, artifacts,
+warnings, errors, provenance, and `parent_action_request`.
+
+Reject these key classes:
+
+- Runtime budget/state exact keys: `budget_envelope`, `runtime_budget`,
+  `budget_owner`, `max_depth`, `max_hops`, `max_tokens`, `max_usd`,
+  `budget_spent`, `spent_tokens`, `spent_usd`, `depth_used`, and `hops_used`.
+- Runtime budget/state key regexes: `^max_.*`, `^spent_.*`, `^budget_.*`,
+  `^depth_.*`, and `^hops_.*`.
+- Policy-resolution and model-config exact keys: `resolved_model`,
+  `resolved_thinking`, `model_policy_source`, `resolved_at`, `policy_ref`,
+  `model_policy`, `model`, `provider`, `reasoning`, `thinking`, `api_base`,
+  and `session_id`.
+- Policy-resolution and model-config key regexes: `^resolved_.*`,
+  `^model_.*`, `^provider_.*`, and `.*session.*`.
+- Secret-like exact keys: `secret`, `secrets`, `api_key`, `apikey`,
+  `access_token`, `refresh_token`, `password`, `credential`, `credentials`,
+  `private_key`, and `ssh_key`.
+- Secret-like key regex, case-insensitive:
+  `(^|[_-])(api[_-]?key|secret|token|password|credential|private[_-]?key|ssh[_-]?key)([_-]|$)`.
+
+Result validation must reject secret-like string values, including values
+matching `sk-...`, `ghp_...`, `github_pat_...`, `AKIA[0-9A-Z]{16}`,
+`-----BEGIN ... PRIVATE KEY-----`, or `Bearer <token-like value>`.
+
+Runtime budget state, resolved model policy, provider configuration, session
+IDs, credentials, live logs, and raw environment state belong only in
+parent-owned runbook artifacts. Result packets may reference parent-created
+artifact refs, but they must not carry those values directly.
+
 ## Field Tables
 
 Result object additions
