@@ -48,6 +48,13 @@ For example, a literature-review request can route through
 fall back to `calibre` for books, parse files with `docling`, and then run
 `paper-review`.
 
+Nontrivial research workflows are expected to keep evidence control visible:
+scope briefs define claim boundaries and goal/backward success checks,
+deep-research runs preserve source handoffs and guard outputs, delegated agents
+return bounded result packets, and final reports pass review and verification
+gates. The workflow tracks concrete issues and evidence gaps instead of hiding
+quality behind a single aggregate score.
+
 See `docs/workflow-overview.md` for the full sanitized system description and
 workflow examples.
 

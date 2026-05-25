@@ -149,6 +149,7 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("# Claim-Preserving Writing", instruction)
         self.assertIn("Managed by ai-agents-skills", ledger)
         self.assertIn("Managed by ai-agents-skills", instruction)
+        self.assertIn("Generated target: codex", ledger)
 
 
 class PlanInstallVerifyTests(unittest.TestCase):
@@ -761,6 +762,13 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(file_actions[0]["operation"], "create")
             self.assertEqual(file_actions[0]["install_mode"], "copy")
             self.assertFalse(block_actions)
+
+            apply_plan(root, plan, dry_run=False)
+            target = root / ".openclaw" / "skills" / "draft-writing" / "SKILL.md"
+            self.assertTrue(target.exists())
+            self.assertFalse(target.is_symlink())
+            self.assertIn("Generated target: openclaw", target.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root, agent_filter={"openclaw"})["status"], "ok")
 
     def test_openclaw_existing_unmanaged_skill_is_skipped_by_default(self) -> None:
         manifests = load_manifests()
@@ -1920,7 +1928,7 @@ class DocsAndLauncherTests(unittest.TestCase):
         written = generate_docs(manifests)
         self.assertIn(REPO_ROOT / "README.md", written)
         readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-        for skill in ("deep-research-workflow", "source-research", "zotero", "vnthuquan"):
+        for skill in ("deep-research-workflow", "draft-writing", "source-research", "zotero", "vnthuquan"):
             self.assertIn(f"`{skill}`", readme)
         self.assertIn("`cross-provider-delegation`", readme)
         self.assertIn("`template:cross-provider-research-panel`", readme)
@@ -1955,6 +1963,17 @@ class DocsAndLauncherTests(unittest.TestCase):
                 root_text = (REPO_ROOT / "docs" / name).read_text(encoding="utf-8")
                 source_text = (REPO_ROOT / "docs" / "source" / name).read_text(encoding="utf-8")
                 self.assertEqual(root_text, source_text)
+
+    def test_source_only_docs_are_intentional(self) -> None:
+        root_docs = {path.name for path in (REPO_ROOT / "docs").glob("*.md")}
+        source_docs = {path.name for path in (REPO_ROOT / "docs" / "source").glob("*.md")}
+
+        source_only_docs = source_docs - root_docs
+        self.assertEqual(source_only_docs, {"index.md", "overview.md"})
+
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("docs/source/index.md", readme)
+        self.assertIn("docs/source/overview.md", readme)
 
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
         text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")

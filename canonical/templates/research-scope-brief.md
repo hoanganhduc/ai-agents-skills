@@ -45,6 +45,20 @@ agent delegation begins.
 | Multi-agent discussion | Independent perspectives or adversarial review matter. |  |
 | Structured reproducible workflow | Deterministic decomposition and auditability matter. |  |
 
+## GOAP Planning Fields
+
+Use these fields when the task is multi-step, delegated, ambiguous, blocked, or
+claims completeness. They are planning aids only; they do not authorize
+autonomous execution.
+
+| Field | Value |
+|---|---|
+| `goal_state` |  |
+| `preconditions` |  |
+| `candidate_actions` |  |
+| `success_conditions` |  |
+| `blocked_by` |  |
+
 ## Risks
 
 | Risk | Likelihood | Impact | Mitigation |
@@ -59,6 +73,7 @@ agent delegation begins.
 | Evidence classes are identified |  |  |
 | Known exclusions are explicit |  |  |
 | Verification gate is defined |  |  |
+| `blocked_by` is empty or resolved |  | If unresolved, the run decision must be `blocked`. |
 
 ## Decision
 

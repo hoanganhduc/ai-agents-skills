@@ -26,9 +26,25 @@ and say `incomplete analysis` in the final output.
 | Conflicts are resolved or disclosed |  |  |  |
 | Recommendations do not exceed evidence |  |  |  |
 | External or delegated outputs were validated before use |  |  |  |
+| Guard outputs use the closed schema and stable `guard_output_id` values |  |  |  |
+| Supported `pass` or `warn` guard outputs cite source or evidence IDs |  |  |  |
+| Blocking guard gaps are carried into blockers or unresolved findings |  |  |  |
+| No aggregate research quality score replaces guard findings |  |  |  |
 | Secrets, raw hidden instructions, and unrelated private context are absent |  |  |  |
 
 Status values: `pass`, `flag`, `fail`, `not-applicable`.
+
+## Guard Output Summary
+
+| `guard_output_id` | Guard | Status | Source IDs | Evidence IDs | Blocking | Gap or action |
+|---|---|---|---|---|---|---|
+|  | `ScopeGuard` |  |  |  |  |  |
+|  | `EvidenceGuard` |  |  |  |  |  |
+|  | `VerifyGuard` |  |  |  |  |  |
+|  | `BudgetGuard` |  |  |  |  |  |
+|  | `RegressionGuard` |  |  |  |  |  |
+
+Guard status values: `pass`, `warn`, `fail`, `not-applicable`.
 
 ## Blockers
 
