@@ -11,6 +11,10 @@
         "research-verification-gate"
       ]
     },
+    "writing-workflow": {
+      "description": "Claim-preserving draft writing, rewriting, and revision-audit workflow.",
+      "skills": ["draft-writing"]
+    },
     "library": {
       "description": "Paper and ebook library workflows.",
       "skills": ["zotero", "calibre", "getscipapers-requester", "paper-lookup"]

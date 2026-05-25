@@ -28,6 +28,7 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `deep-research-workflow` | Phased source-preserving research workflow: search, analyze, write, with citation handoff. | `research-core`, `full-research` |
 | `digest-bridge` | Convert digest output into paper retrieval manifests. | `digest`, `full-research` |
 | `docling` | Parse, convert, OCR, chunk, and analyze documents. | `document`, `full-research` |
+| `draft-writing` | Claim-preserving draft writing workflow for controlled rewriting, polishing, and revision audits. | `writing-workflow`, `full-research` |
 | `formal-skeleton-helper` | Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs. | `workflow-tools`, `math`, `full-research` |
 | `get-available-resources` | Detect CPU, memory, disk, and optional accelerator availability before heavy local work. | `workflow-tools`, `full-research` |
 | `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `full-research` |

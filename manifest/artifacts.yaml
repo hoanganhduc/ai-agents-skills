@@ -7,6 +7,8 @@
         "template:spec",
         "template:tasks-plan",
         "template:tasks-todo",
+        "template:draft-claim-ledger",
+        "template:draft-revision-map",
         "template:research-scope-brief",
         "template:research-evidence-matrix",
         "template:research-verification-checklist",
@@ -25,6 +27,7 @@
       "description": "Agent-readable workflow guidance documents copied outside skill folders.",
       "artifacts": [
         "instruction-doc:engineering-lifecycle",
+        "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
         "instruction-doc:python-quality-gates",
@@ -79,12 +82,22 @@
         "template:evidence-synthesis-critique"
       ]
     },
+    "writing-workflow": {
+      "description": "Claim-preserving writing workflow instructions and templates.",
+      "artifacts": [
+        "instruction-doc:claim-preserving-writing",
+        "template:draft-claim-ledger",
+        "template:draft-revision-map"
+      ]
+    },
     "workflow-artifacts": {
       "description": "All portable templates, workflow docs, personas, and entrypoint aliases.",
       "artifacts": [
         "template:spec",
         "template:tasks-plan",
         "template:tasks-todo",
+        "template:draft-claim-ledger",
+        "template:draft-revision-map",
         "template:research-scope-brief",
         "template:research-evidence-matrix",
         "template:research-verification-checklist",
@@ -98,6 +111,7 @@
         "template:deep-research-analysis",
         "template:deep-research-report",
         "instruction-doc:engineering-lifecycle",
+        "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
         "instruction-doc:python-quality-gates",
@@ -144,6 +158,18 @@
         "description": "Execution checklist template.",
         "source": "tasks-todo.md",
         "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "draft-claim-ledger": {
+        "description": "Claim ledger template for preserving author intent before rewriting.",
+        "source": "draft-claim-ledger.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["draft-writing"]
+      },
+      "draft-revision-map": {
+        "description": "Revision audit template for detecting claim-level draft drift.",
+        "source": "draft-revision-map.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["draft-writing"]
       },
       "research-scope-brief": {
         "description": "Pre-research scope, assumptions, evidence plan, and start decision template.",
@@ -223,6 +249,12 @@
         "description": "Spec-plan-tasks-implement-verify lifecycle guide.",
         "source": "engineering-lifecycle.md",
         "supported_agents": ["codex", "claude", "deepseek"]
+      },
+      "claim-preserving-writing": {
+        "description": "Guidance for preserving claims, evidence, caveats, and revision deltas during drafting.",
+        "source": "claim-preserving-writing.md",
+        "supported_agents": ["codex", "claude", "deepseek"],
+        "depends_on_skills": ["draft-writing"]
       },
       "research-quick-actions": {
         "description": "Short command and routing references for common research actions.",
