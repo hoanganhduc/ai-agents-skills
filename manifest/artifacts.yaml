@@ -23,6 +23,23 @@
         "template:deep-research-report"
       ]
     },
+    "serious-research": {
+      "description": "Templates and guidance for source-preserving, validated research runs.",
+      "artifacts": [
+        "template:research-scope-brief",
+        "template:research-evidence-matrix",
+        "template:research-verification-checklist",
+        "template:research-workflow-runbook",
+        "template:evidence-synthesis-critique",
+        "template:deep-research-sources",
+        "template:deep-research-analysis",
+        "template:deep-research-report",
+        "template:cross-provider-research-panel",
+        "template:manager-worker-research-review",
+        "instruction-doc:research-quick-actions",
+        "instruction-doc:cross-provider-delegation"
+      ]
+    },
     "workflow-instructions": {
       "description": "Agent-readable workflow guidance documents copied outside skill folders.",
       "artifacts": [

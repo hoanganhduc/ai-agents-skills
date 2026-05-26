@@ -12,6 +12,7 @@ from .apply import apply_plan
 from .capabilities import looks_like_real_system_root, smoke_artifact
 from .delegation import build_external_agent_prechecks
 from .delegation_dispatch import dispatch_external_agents
+from .delegation_packets import validate_packet_file
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
 from .docs import generate_docs
 from .lifecycle import rollback as rollback_artifacts
@@ -115,6 +116,10 @@ def build_parser() -> argparse.ArgumentParser:
     delegate_agent.add_argument("--run-dir", type=Path)
     delegate_agent.add_argument("--dry-run", action="store_true")
     delegate_agent.add_argument("--allow-external-cli", action="store_true")
+
+    validate_delegation_packet = sub.add_parser("validate-delegation-packet")
+    validate_delegation_packet.add_argument("--kind", choices=["task", "result"])
+    validate_delegation_packet.add_argument("--file", type=Path, required=True)
 
     openclaw_inventory = sub.add_parser("openclaw-inventory")
     openclaw_inventory.add_argument(
@@ -347,6 +352,10 @@ def run(args: argparse.Namespace) -> int:
         return runtime_smoke(args, manifests)
     if args.command == "delegate-agent":
         return output(dispatch_external_agents(args, manifests), args)
+    if args.command == "validate-delegation-packet":
+        result = validate_packet_file(args.file, kind=args.kind)
+        output(result, args)
+        return 0 if result["status"] == "ok" else 1
     if args.command == "openclaw-inventory":
         return output(
             build_inventory(
@@ -1310,6 +1319,7 @@ def command_help() -> dict[str, Any]:
         "runtime-smoke",
         "runtime-inventory",
         "delegate-agent",
+        "validate-delegation-packet",
         "list-skills",
         "list-artifacts",
         "describe",

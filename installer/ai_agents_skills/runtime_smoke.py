@@ -14,7 +14,12 @@ from .planner import build_plan
 from .verify import verify
 
 
-RUNTIME_SMOKE_SKILLS = ("formal-skeleton-helper", "get-available-resources", "graph-verifier")
+RUNTIME_SMOKE_SKILLS = (
+    "deep-research-workflow",
+    "formal-skeleton-helper",
+    "get-available-resources",
+    "graph-verifier",
+)
 
 
 def run_runtime_smoke(
@@ -161,6 +166,8 @@ def smoke_args(skill: str, workspace: Path) -> list[str]:
         return ["--output-dir", str(smoke_dir / "formal")]
     if skill == "get-available-resources":
         return ["--output", str(smoke_dir / "resources.json")]
+    if skill == "deep-research-workflow":
+        return ["init", "--dir", str(smoke_dir), "--subdir", "deep", "--structured"]
     return []
 
 
@@ -183,6 +190,19 @@ def validate_smoke_output(skill: str, completed: subprocess.CompletedProcess[str
         payload = json.loads(output_path.read_text(encoding="utf-8")) if output_path.is_file() else {}
         checks.append({"name": "resource-json-has-os", "ok": "os" in payload})
         checks.append({"name": "resource-json-has-cpu", "ok": "cpu" in payload})
+    elif skill == "deep-research-workflow":
+        out_dir = Path(args[args.index("--dir") + 1]) / args[args.index("--subdir") + 1]
+        for name in (
+            "sources.md",
+            "analysis.md",
+            "report.md",
+            "sources.jsonl",
+            "claims.jsonl",
+            "guards.jsonl",
+            "delivery.json",
+        ):
+            checks.append({"name": f"{name}-exists", "ok": (out_dir / name).is_file()})
+        checks.append({"name": "delegation-dir-exists", "ok": (out_dir / "delegation").is_dir()})
     return checks
 
 

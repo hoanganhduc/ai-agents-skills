@@ -756,6 +756,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
             runtime_command_target(manifests, "formal-skeleton-helper", "macos"),
             "skills/formal-skeleton-helper/run_formal_skeleton.sh",
         )
+        self.assertEqual(
+            runtime_command_target(manifests, "deep-research-workflow", "linux"),
+            "skills/deep-research-workflow/run_deep_research_workflow.sh",
+        )
 
     def test_runtime_smoke_rejects_non_runtime_skill_scope(self) -> None:
         manifests = load_manifests()

@@ -36,6 +36,20 @@ bash ~/.codex/runtime/run_skill.sh \
   skills/deep-research-workflow/run_deep_research_workflow.sh init --dir /path/to/workspace
 ```
 
+For machine-checkable research runs, initialize structured ledgers too:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/deep-research-workflow/run_deep_research_workflow.sh init --structured --dir /path/to/workspace
+```
+
+Validate the structured ledgers before delivery with:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/deep-research-workflow/run_deep_research_workflow.sh validate --dir /path/to/workspace/research
+```
+
 Verify the helper setup with:
 
 ```bash
@@ -83,6 +97,7 @@ Inputs:
 Outputs:
 
 - a source ledger
+- optional `sources.jsonl` records for machine validation
 - stable `S*` source ids
 - initial claim candidates
 - noted coverage gaps
@@ -125,6 +140,7 @@ Outputs:
 
 - a theme matrix
 - claim-to-source mapping
+- optional `claims.jsonl` records for machine validation
 - uncertainty notes
 - candidate open problems or next-step questions
 - optional figure opportunities with proposed `F*` ids and supporting `S*` ids
@@ -147,6 +163,7 @@ outputs before final synthesis:
 
 Use the closed schema in `references/research-quality-guards.md`. Do not use a
 single aggregate research quality score.
+Structured runs record these as `guards.jsonl`.
 
 ### Optional post-analysis figure handoff
 
@@ -189,6 +206,7 @@ Outputs:
 
 - a final report
 - a scoped source list
+- optional `delivery.json` decision record
 - optional `F*` figure references with artifact paths
 - explicit follow-up items when needed
 

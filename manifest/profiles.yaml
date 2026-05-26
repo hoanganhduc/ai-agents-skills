@@ -11,6 +11,30 @@
         "research-verification-gate"
       ]
     },
+    "serious-research": {
+      "description": "Source-preserving research workflow with local libraries, document parsing, validation, and multi-agent orchestration.",
+      "skills": [
+        "research-briefing",
+        "deep-research-workflow",
+        "source-research",
+        "research-report-reviewer",
+        "research-verification-gate",
+        "zotero",
+        "calibre",
+        "getscipapers-requester",
+        "paper-lookup",
+        "docling",
+        "database-lookup",
+        "paper-review",
+        "agent-group-discuss",
+        "prose",
+        "model-router",
+        "cross-agent-delegation",
+        "get-available-resources",
+        "formal-skeleton-helper",
+        "workspace-rearranger"
+      ]
+    },
     "writing-workflow": {
       "description": "Claim-preserving draft writing, rewriting, and revision-audit workflow.",
       "skills": ["draft-writing"]
