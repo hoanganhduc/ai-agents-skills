@@ -1,14 +1,35 @@
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from installer.ai_agents_skills.manifest import REPO_ROOT
+from installer.ai_agents_skills.manifest import load_manifests
+from installer.ai_agents_skills.selectors import resolve_artifacts, resolve_skills
 
 
 DEEP_RESEARCH = REPO_ROOT / "canonical" / "skills" / "deep-research-workflow"
 CROSS_AGENT = REPO_ROOT / "canonical" / "skills" / "cross-agent-delegation"
 TEMPLATES = REPO_ROOT / "canonical" / "templates"
+RUNTIME_WORKSPACE = REPO_ROOT / "canonical" / "runtime" / "workspace"
+DEEP_RESEARCH_RUNTIME = REPO_ROOT / "canonical" / "runtime" / "skills" / "deep-research-workflow" / "deep_research_workflow.py"
+
+
+class Args:
+    skill = None
+    skills = None
+    profile = None
+    exclude = None
+    no_skills = False
+    artifact = None
+    artifacts = None
+    artifact_profile = None
+    exclude_artifact = None
 
 
 class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
@@ -102,6 +123,115 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             self.assertIn("secret-like string values", text)
             self.assertIn("Bearer <token-like value>", text)
         self.assertIn("smoke-as-contract", integration)
+
+    def test_serious_research_profile_resolves_enforcement_bundle(self) -> None:
+        manifests = load_manifests()
+        args = Args()
+        args.profile = "serious-research"
+        skills = set(resolve_skills(args, manifests))
+        expected = {
+            "research-briefing",
+            "deep-research-workflow",
+            "source-research",
+            "research-report-reviewer",
+            "research-verification-gate",
+            "zotero",
+            "calibre",
+            "getscipapers-requester",
+            "paper-lookup",
+            "docling",
+            "database-lookup",
+            "paper-review",
+            "agent-group-discuss",
+            "prose",
+            "model-router",
+            "cross-agent-delegation",
+            "get-available-resources",
+            "formal-skeleton-helper",
+            "workspace-rearranger",
+        }
+        self.assertEqual(skills, expected)
+
+        args.artifact_profile = "serious-research"
+        artifacts = set(resolve_artifacts(args, manifests))
+        self.assertIn(("template", "research-workflow-runbook"), artifacts)
+        self.assertIn(("template", "deep-research-sources"), artifacts)
+        self.assertIn(("instruction-doc", "cross-provider-delegation"), artifacts)
+
+    def test_deep_research_structured_runtime_init_and_validate(self) -> None:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        with tempfile.TemporaryDirectory() as tmp:
+            init = subprocess.run(
+                [
+                    sys.executable,
+                    str(DEEP_RESEARCH_RUNTIME),
+                    "init",
+                    "--structured",
+                    "--dir",
+                    tmp,
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(init.returncode, 0, init.stderr)
+            research_dir = Path(tmp) / "research"
+            for name in (
+                "sources.md",
+                "analysis.md",
+                "report.md",
+                "sources.jsonl",
+                "claims.jsonl",
+                "guards.jsonl",
+                "delivery.json",
+            ):
+                self.assertTrue((research_dir / name).is_file(), name)
+            self.assertTrue((research_dir / "delegation").is_dir())
+
+            validate = subprocess.run(
+                [sys.executable, str(DEEP_RESEARCH_RUNTIME), "validate", "--dir", str(research_dir)],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(validate.returncode, 0, validate.stderr)
+            payload = json.loads(validate.stdout)
+            self.assertEqual(payload["status"], "ok")
+            self.assertEqual(payload["checked"]["delivery"], 1)
+
+    def test_deep_research_validator_rejects_ready_delivery_with_gaps(self) -> None:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = Path(tmp) / "research"
+            research_dir.mkdir()
+            (research_dir / "sources.jsonl").write_text("", encoding="utf-8")
+            (research_dir / "claims.jsonl").write_text("", encoding="utf-8")
+            (research_dir / "guards.jsonl").write_text("", encoding="utf-8")
+            (research_dir / "delivery.json").write_text(
+                json.dumps({
+                    "decision": "ready",
+                    "report_ref": "report.md",
+                    "checked_at": "2026-05-26T00:00:00Z",
+                    "guard_output_ids": [],
+                    "blockers": [],
+                    "gaps": ["unchecked evidence"],
+                    "caveats": [],
+                }),
+                encoding="utf-8",
+            )
+            validate = subprocess.run(
+                [sys.executable, str(DEEP_RESEARCH_RUNTIME), "validate", "--dir", str(research_dir)],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(validate.returncode, 1)
+            payload = json.loads(validate.stdout)
+            self.assertEqual(payload["status"], "failed")
+            self.assertIn("READY_WITH_GAPS", {error["code"] for error in payload["errors"]})
 
 
 if __name__ == "__main__":

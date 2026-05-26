@@ -20,36 +20,36 @@ Some older local skill names are accepted as migration aliases. For example, `de
 
 | Skill | Description | Profiles |
 |---|---|---|
-| `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `full-research` |
+| `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `serious-research`, `full-research` |
 | `annotated-review` | Annotated paper review workflow when both annotation and review are requested. | `full-research` |
-| `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `full-research` |
-| `cross-agent-delegation` | Cross-agent delegation packet contract for bounded parent-controlled handoffs. | `multi-agent`, `full-research` |
-| `database-lookup` | Structured public scientific, biomedical, regulatory, materials, and economic database lookups. | `document`, `full-research` |
-| `deep-research-workflow` | Phased source-preserving research workflow: search, analyze, write, with citation handoff. | `research-core`, `full-research` |
+| `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `serious-research`, `full-research` |
+| `cross-agent-delegation` | Cross-agent delegation packet contract for bounded parent-controlled handoffs. | `multi-agent`, `serious-research`, `full-research` |
+| `database-lookup` | Structured public scientific, biomedical, regulatory, materials, and economic database lookups. | `document`, `serious-research`, `full-research` |
+| `deep-research-workflow` | Phased source-preserving research workflow: search, analyze, write, with citation handoff. | `research-core`, `serious-research`, `full-research` |
 | `digest-bridge` | Convert digest output into paper retrieval manifests. | `digest`, `full-research` |
-| `docling` | Parse, convert, OCR, chunk, and analyze documents. | `document`, `full-research` |
+| `docling` | Parse, convert, OCR, chunk, and analyze documents. | `document`, `serious-research`, `full-research` |
 | `draft-writing` | Claim-preserving draft writing workflow for controlled rewriting, polishing, and revision audits. | `writing-workflow`, `full-research` |
-| `formal-skeleton-helper` | Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs. | `workflow-tools`, `math`, `full-research` |
-| `get-available-resources` | Detect CPU, memory, disk, and optional accelerator availability before heavy local work. | `workflow-tools`, `full-research` |
-| `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `full-research` |
+| `formal-skeleton-helper` | Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs. | `workflow-tools`, `math`, `serious-research`, `full-research` |
+| `get-available-resources` | Detect CPU, memory, disk, and optional accelerator availability before heavy local work. | `workflow-tools`, `serious-research`, `full-research` |
+| `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `serious-research`, `full-research` |
 | `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
 | `modal-research-compute` | Route heavy compute jobs to Modal through a local broker. | `full-research` |
-| `model-router` | Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work. | `workflow-tools`, `multi-agent`, `full-research` |
-| `paper-lookup` | External paper metadata and discovery fallback. | `library`, `full-research` |
-| `paper-review` | Single-agent paper review workflow. | `full-research` |
-| `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `full-research` |
-| `research-briefing` | Scope nontrivial research before execution with evidence plan and workflow recommendation. | `research-core`, `full-research` |
+| `model-router` | Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work. | `workflow-tools`, `multi-agent`, `serious-research`, `full-research` |
+| `paper-lookup` | External paper metadata and discovery fallback. | `library`, `serious-research`, `full-research` |
+| `paper-review` | Single-agent paper review workflow. | `serious-research`, `full-research` |
+| `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `serious-research`, `full-research` |
+| `research-briefing` | Scope nontrivial research before execution with evidence plan and workflow recommendation. | `research-core`, `serious-research`, `full-research` |
 | `research-digest-wrapper` | Run tracked-topic research digests. | `digest`, `full-research` |
-| `research-report-reviewer` | Review draft research reports for unsupported claims, ambiguity, and evidence gaps. | `research-core`, `full-research` |
-| `research-verification-gate` | Final evidence, date, and gap check before delivery. | `research-core`, `full-research` |
+| `research-report-reviewer` | Review draft research reports for unsupported claims, ambiguity, and evidence gaps. | `research-core`, `serious-research`, `full-research` |
+| `research-verification-gate` | Final evidence, date, and gap check before delivery. | `research-core`, `serious-research`, `full-research` |
 | `rss-news-digest` | Run and manage RSS digest workflows. | `digest`, `full-research` |
 | `sagemath` | Sage-backed math, graph theory, algebra, and verification. | `math`, `full-research` |
 | `self-improving-agent` | Log durable learnings, failures, and missing capabilities. | `full-research` |
 | `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
-| `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `full-research` |
+| `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `serious-research`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
-| `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `full-research` |
-| `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `full-research` |
+| `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |
+| `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `serious-research`, `full-research` |
 
 Related pages: [Installation](installation.md), [Verification](verification.md), [Agent Locations](agent-locations.md).

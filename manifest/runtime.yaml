@@ -432,6 +432,19 @@
           "mode": "0644"
         },
         {
+          "source": "skills/deep-research-workflow/deep_research_workflow.py",
+          "target": "workspace/skills/deep-research-workflow/deep_research_workflow.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/deep-research-workflow/run_deep_research_workflow.bat",
           "target": "workspace/skills/deep-research-workflow/run_deep_research_workflow.bat",
           "platforms": [
