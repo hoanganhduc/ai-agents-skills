@@ -15,6 +15,7 @@ from .verify import verify
 
 
 RUNTIME_SMOKE_SKILLS = (
+    "axiom-axle-mcp",
     "deep-research-workflow",
     "formal-skeleton-helper",
     "get-available-resources",
@@ -178,6 +179,8 @@ def smoke_args(skill: str, workspace: Path) -> list[str]:
         return ["--output", str(smoke_dir / "resources.json")]
     if skill == "deep-research-workflow":
         return ["init", "--dir", str(smoke_dir), "--subdir", "deep", "--structured"]
+    if skill == "axiom-axle-mcp":
+        return ["smoke"]
     if skill in {"lean-formalization-intake", "lean-strict-verification-gate"}:
         return ["doctor"]
     return []
@@ -224,6 +227,20 @@ def validate_smoke_output(skill: str, completed: subprocess.CompletedProcess[str
             "name": "lean-status-recorded",
             "ok": payload.get("tool_status", {}).get("lean", {}).get("status") in {"available", "tool_unavailable"},
         })
+    elif skill == "axiom-axle-mcp":
+        payload = parse_json_stdout(completed.stdout)
+        serialized = json.dumps(payload, sort_keys=True)
+        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
+        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
+        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
+        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
+        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
+        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
+        checks.append({"name": "placeholder-present", "ok": payload.get("snippet_contains_placeholder") is True})
+        checks.append({"name": "package-pinned", "ok": payload.get("snippet_package_pinned") is True})
+        checks.append({"name": "no-secret-value", "ok": "AXLE-SMOKE-CANARY" not in serialized})
     return checks
 
 

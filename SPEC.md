@@ -5,6 +5,7 @@
 - Add an optional local-first Lean/formal evidence lane to the existing research workflow.
 - Preserve the default research flow while allowing v2 structured runs to track evidence, formal targets, statement-equivalence reviews, and final readiness.
 - Keep remote AXLE/MCP explicit opt-in, disabled by default, and out of provider/delegation routing.
+- Add an inert AXLE MCP setup helper that works on Linux, macOS, Windows, and WSL without installing, starting, or configuring the remote service.
 
 ## Assumptions
 
@@ -12,7 +13,8 @@
 2. Local Lean/Lake checks may run only when already installed; wrappers must not install toolchains or dependencies.
 3. V1 structured research runs remain compatible unless a v2 marker or formal artifact is present.
 4. Formal evidence supports a research claim only after typecheck, placeholder/trust-base scan, statement-equivalence review, and lead/human review all pass.
-5. AXLE/MCP is a future remote-client adapter, not an installer-managed MCP server or delegation provider.
+5. AXLE/MCP is a manual setup helper, not an installer-managed MCP server or delegation provider.
+6. AXLE remote results are supplemental evidence and cannot promote formal proof support without local Lean/project evidence.
 
 ## Commands
 
@@ -30,6 +32,8 @@
 - `canonical/skills/lean-strict-verification-gate/SKILL.md`
 - `canonical/runtime/skills/lean-formalization-intake/`
 - `canonical/runtime/skills/lean-strict-verification-gate/`
+- `canonical/skills/axiom-axle-mcp/SKILL.md`
+- `canonical/runtime/skills/axiom-axle-mcp/`
 - `manifest/skills.yaml`
 - `manifest/profiles.yaml`
 - `manifest/runtime.yaml`
@@ -46,7 +50,8 @@
 
 - Unit: v2 evidence ledger, readiness, artifact-ref parsing, formal target state machine, computation evidence, and AGD evidence resolution.
 - Runtime: formal skill smoke with missing Lean/Lake/elan/npm/npx/pip/package managers proving degraded status without installation.
-- Manifest: formal profiles explicit, `research-core` unchanged, AXLE/MCP absent from provider/delegation routing.
+- Runtime: AXLE smoke/doctor/config-snippet proving no `uvx`, package manager, MCP server, live API, config write, or credential value exposure.
+- Manifest: formal profiles explicit, `research-core` unchanged, AXLE present only in `formal-research-remote` and user-approved `full-research`, and AXLE/MCP absent from provider/delegation routing.
 - Docs: generated docs reflect manifest source of truth.
 - Lifecycle: fake-root profile coverage across Linux, macOS, Windows, and WSL path shapes where existing tooling supports it.
 
@@ -54,9 +59,10 @@
 
 - Always: keep default research workflow unchanged.
 - Always: keep v1 structured runs compatible.
-- Always: keep AXLE/MCP out of default profiles, runtime smoke, provider routing, and live PR CI.
+- Always: keep AXLE/MCP out of default profiles, provider routing, and live PR CI; runtime smoke must remain offline-only.
 - Never: auto-install Lean, Lake, mathlib, npm packages, Python packages, credentials, configs, services, MCP servers, or background daemons.
 - Never: treat bounded computation as unrestricted formal theorem evidence.
+- Never: treat AXLE remote evidence as local `formal_check` evidence.
 
 ## Success Criteria
 
@@ -64,6 +70,8 @@
 - [ ] Final readiness fails closed on unsupported, provisional-without-caveat, unverified, unresolved, or invalid formal support.
 - [ ] Formal target promotion requires valid state, typecheck, placeholder/trust-base scans, statement-equivalence row, and review.
 - [ ] Local formal skills exist and run cross-platform with no auto-install behavior.
+- [ ] AXLE setup helper exists and runs cross-platform with no auto-install, config write, server start, live API call, or secret exposure.
+- [ ] AXLE evidence validates as supplemental `axle_remote_check` evidence and cannot promote formal support without local `formal_check` evidence.
 - [ ] Formal profiles are explicit and do not change `research-core`.
 - [ ] AGD evidence is parent-validated before use.
 - [ ] Runtime migration/adopt tests protect unmanaged files.

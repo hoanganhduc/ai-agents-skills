@@ -136,11 +136,14 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
         delegation = manifests["delegation"]
         active = set(delegation["policy"]["active_providers"])
         reference_only = set(delegation["policy"]["reference_only_providers"])
+        axle_skill = manifests["skills"]["skills"]["axiom-axle-mcp"]
 
         self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot"})
         self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot"})
-        self.assertFalse(active.intersection({"axle", "mcp", "openclaw"}))
+        self.assertFalse(active.intersection({"axiom-axle-mcp", "axle", "mcp", "openclaw"}))
         self.assertEqual(reference_only, {"openclaw"})
+        self.assertEqual(set(axle_skill["profiles"]), {"formal-research-remote", "full-research"})
+        self.assertNotIn("axiom-axle-mcp", delegation["providers"])
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

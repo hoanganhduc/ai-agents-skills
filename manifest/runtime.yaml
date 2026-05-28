@@ -10,6 +10,7 @@
       "description": "Install every currently portable runtime file declared in this manifest.",
       "skills": [
         "annotated-review",
+        "axiom-axle-mcp",
         "calibre",
         "deep-research-workflow",
         "digest-bridge",
@@ -46,6 +47,62 @@
     "workspace/config/*.toml",
     "**/workspace/config/*.toml",
     "**/config/*.toml",
+    ".env",
+    "**/.env",
+    "*.env",
+    "**/*.env",
+    "mcp*.json",
+    "**/mcp*.json",
+    "*mcp*.toml",
+    "**/*mcp*.toml",
+    ".mcp/**",
+    "**/.mcp/**",
+    "package.json",
+    "**/package.json",
+    "provider*.json",
+    "**/provider*.json",
+    "provider*.toml",
+    "**/provider*.toml",
+    "provider*.yaml",
+    "**/provider*.yaml",
+    "provider*.yml",
+    "**/provider*.yml",
+    "*provider-config*.json",
+    "**/*provider-config*.json",
+    "*provider-config*.toml",
+    "**/*provider-config*.toml",
+    "*provider-config*.yaml",
+    "**/*provider-config*.yaml",
+    "*provider-config*.yml",
+    "**/*provider-config*.yml",
+    "axle*.json",
+    "**/axle*.json",
+    "axle*.toml",
+    "**/axle*.toml",
+    "axle*.yaml",
+    "**/axle*.yaml",
+    "axle*.yml",
+    "**/axle*.yml",
+    "openclaw*.json",
+    "**/openclaw*.json",
+    "Dockerfile",
+    "**/Dockerfile",
+    "docker-compose.yml",
+    "**/docker-compose.yml",
+    "docker-compose.yaml",
+    "**/docker-compose.yaml",
+    "compose.yml",
+    "**/compose.yml",
+    "compose.yaml",
+    "**/compose.yaml",
+    "Procfile",
+    "**/Procfile",
+    "*.service",
+    "**/*.service",
+    "*.timer",
+    "**/*.timer",
+    "*.plist",
+    "**/*.plist",
     "workspace/data/**",
     "**/reports/**",
     "**/__pycache__/**",
@@ -722,6 +779,56 @@
           "--help"
         ]
       }
+    },
+    "axiom-axle-mcp": {
+      "runtime_dir": "axiom-axle-mcp",
+      "files": [
+        {
+          "source": "skills/axiom-axle-mcp/axiom_axle_mcp.py",
+          "target": "workspace/skills/axiom-axle-mcp/axiom_axle_mcp.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/axiom-axle-mcp/run_axiom_axle_mcp.bat",
+          "target": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
+          "target": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
+          "target": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ]
     },
     "lean-formalization-intake": {
       "runtime_dir": "lean-formalization-intake",

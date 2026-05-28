@@ -220,6 +220,104 @@ class RuntimeIntegrationTests(unittest.TestCase):
             "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1",
         )
 
+    def test_axiom_axle_runtime_smoke_skill_is_supported_and_uses_platform_launchers(self) -> None:
+        manifests = load_manifests()
+        selected = set(selected_runtime_skills(manifests, {"axiom-axle-mcp"}))
+
+        self.assertEqual(selected, {"axiom-axle-mcp"})
+        self.assertEqual(
+            runtime_command_target(manifests, "axiom-axle-mcp", "linux"),
+            "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "axiom-axle-mcp", "macos"),
+            "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "axiom-axle-mcp", "wsl"),
+            "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "axiom-axle-mcp", "windows", "run_skill.bat"),
+            "skills/axiom-axle-mcp/run_axiom_axle_mcp.bat",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "axiom-axle-mcp", "windows", "run_skill.ps1"),
+            "skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
+        )
+
+    def test_axiom_axle_helper_does_not_execute_install_or_leak_secret(self) -> None:
+        helper = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "axiom-axle-mcp"
+            / "axiom_axle_mcp.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            marker = Path(tmp) / "executed"
+            for name in ("uvx", "uvx.exe", "pip", "npx", "axle-mcp-server"):
+                fake = fake_bin / name
+                fake.write_text(f"#!/usr/bin/env sh\ntouch {marker}\nexit 99\n", encoding="utf-8")
+                fake.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": str(fake_bin),
+                "AXLE_API_KEY": "AXLE-SMOKE-CANARY",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+
+            for command in ("doctor", "smoke", "config-snippet"):
+                completed = subprocess.run(
+                    [sys.executable, str(helper), command],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                payload = json.loads(completed.stdout)
+                serialized = json.dumps(payload, sort_keys=True)
+                self.assertTrue(payload["no_auto_install"])
+                self.assertFalse(payload["installs_attempted"])
+                self.assertFalse(payload["live_api_attempted"])
+                self.assertFalse(payload["config_written"])
+                self.assertFalse(payload["server_started"])
+                self.assertNotIn("AXLE-SMOKE-CANARY", serialized)
+                if command == "doctor":
+                    self.assertEqual(payload["auth_status"], "present")
+
+            self.assertFalse(marker.exists())
+
+    def test_axiom_axle_helper_does_not_write_config_or_state(self) -> None:
+        helper = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "axiom-axle-mcp"
+            / "axiom_axle_mcp.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+
+            for command in ("doctor", "smoke", "config-snippet"):
+                completed = subprocess.run(
+                    [sys.executable, str(helper), command],
+                    capture_output=True,
+                    text=True,
+                    cwd=root,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            self.assertEqual(list(root.rglob("*")), [])
+
     def test_formal_runtime_doctor_does_not_execute_or_install_toolchain_commands(self) -> None:
         helper_paths = [
             Path(__file__).resolve().parents[1]

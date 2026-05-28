@@ -7,7 +7,8 @@
 3. Register formal skills, profiles, runtime files, and dependency metadata without adding AXLE/MCP to default or delegation routing.
 4. Update AGD documentation/tests for parent-owned artifacts and evidence mapping.
 5. Add migration/runtime smoke/provider-boundary tests.
-6. Regenerate docs and run verification.
+6. Add optional AXLE MCP setup helper, runtime wrappers, manifests, and evidence validation as supplemental-only.
+7. Regenerate docs and run verification.
 
 ## Dependencies
 
@@ -26,6 +27,10 @@
   - Mitigation: scanner-only preflight blocks execution-capable constructs before typecheck.
 - Risk: AXLE/MCP leaks into provider routing.
   - Mitigation: tests assert `manifest/delegation.yaml` providers and auto-provider selection exclude AXLE/MCP/Lean services.
+- Risk: AXLE helper accidentally installs packages, writes MCP config, starts a server, calls a live endpoint, or leaks an API key.
+  - Mitigation: helper is read-only/offline; tests use fake executables, secret canaries, and temp-cwd snapshots.
+- Risk: AXLE remote success is mistaken for local formal proof evidence.
+  - Mitigation: evidence validator accepts `axle_remote_check` as supplemental only and promotion requires local `formal_check` evidence.
 - Risk: runtime migration adopts stale user-owned runtime files.
   - Mitigation: tests assert `--adopt` skips differing runtime files and only `--backup-replace` replaces them.
 
@@ -35,4 +40,5 @@
 - After phase 2: `python -m unittest tests.test_runtime_integration`
 - After phase 3: manifest/profile tests and `make docs`
 - After phase 4: `python -m unittest tests.test_cross_agent_delegation`
-- Final: `make sanitize-check`, `make test`, `make runtime-smoke`
+- After phase 6: AXLE runtime helper tests, `make runtime-smoke ARGS="--skills axiom-axle-mcp"`, and research-workflow AXLE evidence tests.
+- Final: `make sanitize-check`, `make test`, `make runtime-smoke`, `make lifecycle-test ARGS="--matrix default --platform-shape all"`

@@ -20,6 +20,16 @@
   - Verify: selector/manifest/docs tests pass.
   - Files: `manifest/skills.yaml`, `manifest/profiles.yaml`, `manifest/runtime.yaml`, `manifest/dependencies.yaml`, `manifest/system-dependencies.yaml`
 
+- [x] Task: Add optional AXLE MCP setup helper.
+  - Acceptance: helper supports `doctor`, `config-snippet`, and `smoke`; runs on Linux, macOS, Windows, and WSL; never installs packages, starts MCP servers, writes config, calls live APIs, or prints credential values.
+  - Verify: AXLE runtime helper tests and `make runtime-smoke ARGS="--skills axiom-axle-mcp"` pass.
+  - Files: `canonical/skills/axiom-axle-mcp/`, `canonical/runtime/skills/axiom-axle-mcp/`, `installer/ai_agents_skills/runtime_smoke.py`, `tests/test_runtime_integration.py`
+
+- [x] Task: Add AXLE supplemental evidence validation.
+  - Acceptance: `axle_remote_check` evidence validates with explicit endpoint/operation/hash/expiry metadata but cannot promote formal support unless local `formal_check` evidence is also linked.
+  - Verify: research workflow AXLE evidence tests pass.
+  - Files: `canonical/runtime/skills/deep-research-workflow/deep_research_workflow.py`, `canonical/skills/deep-research-workflow/SKILL.md`, `tests/test_research_workflow_integration.py`
+
 - [x] Task: Add AGD and delegation boundaries.
   - Acceptance: parent-owned AGD artifact rules and evidence mapping are documented and tested; AXLE/MCP is not a provider.
   - Verify: cross-agent delegation tests pass.
