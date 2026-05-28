@@ -159,14 +159,15 @@ def runtime_command_target(
     runner_name: str | None = None,
 ) -> str:
     if platform == "windows":
-        suffix = ".ps1" if runner_name == "run_skill.ps1" else ".bat"
+        suffixes = (".ps1", ".bat") if runner_name == "run_skill.ps1" else (".bat", ".ps1")
     else:
-        suffix = ".sh"
+        suffixes = (".sh",)
     spec = manifests["runtime"]["skills"][skill]
-    for entry in spec.get("files", []):
-        target = entry.get("target", "")
-        if target.endswith(suffix) and platform in entry.get("platforms", []):
-            return target.removeprefix("workspace/")
+    for suffix in suffixes:
+        for entry in spec.get("files", []):
+            target = entry.get("target", "")
+            if target.endswith(suffix) and platform in entry.get("platforms", []):
+                return target.removeprefix("workspace/")
     raise ValueError(f"no {platform} runtime command declared for {skill}")
 
 
