@@ -6,7 +6,7 @@ from pathlib import Path
 from installer.ai_agents_skills.sanitize import has_sensitive_material
 
 
-SKIP_DIRS = {".git", ".learnings", "__pycache__", "_build"}
+SKIP_DIRS = {".git", ".learnings", ".venv", "__pycache__", "_build"}
 ALLOWLIST = {
     Path("installer/ai_agents_skills/sanitize.py"),
     Path("tests/test_sanitization.py"),

@@ -53,7 +53,23 @@
     },
     "math": {
       "description": "Math and graph verification workflows.",
-      "skills": ["sagemath", "graph-verifier"]
+      "skills": ["sagemath", "graph-verifier", "formal-skeleton-helper"]
+    },
+    "formal-research": {
+      "description": "Optional local-first Lean formalization lane for research claims.",
+      "skills": [
+        "formal-skeleton-helper",
+        "lean-formalization-intake",
+        "lean-strict-verification-gate"
+      ]
+    },
+    "formal-research-remote": {
+      "description": "Reserved explicit remote formal lane profile; currently installs only local formal-lane skills until a separately reviewed remote adapter exists.",
+      "skills": [
+        "formal-skeleton-helper",
+        "lean-formalization-intake",
+        "lean-strict-verification-gate"
+      ]
     },
     "figure": {
       "description": "Structural figure generation and checking.",
@@ -78,7 +94,41 @@
     },
     "full-research": {
       "description": "All research-related skills.",
-      "skills": ["*"]
+      "skills": [
+        "deep-research-workflow",
+        "source-research",
+        "research-briefing",
+        "research-report-reviewer",
+        "research-verification-gate",
+        "draft-writing",
+        "zotero",
+        "calibre",
+        "getscipapers-requester",
+        "paper-lookup",
+        "database-lookup",
+        "docling",
+        "get-available-resources",
+        "formal-skeleton-helper",
+        "lean-formalization-intake",
+        "lean-strict-verification-gate",
+        "model-router",
+        "workspace-rearranger",
+        "research-digest-wrapper",
+        "rss-news-digest",
+        "digest-bridge",
+        "tikz-draw",
+        "sagemath",
+        "graph-verifier",
+        "agent-group-discuss",
+        "prose",
+        "cross-agent-delegation",
+        "modal-research-compute",
+        "paper-review",
+        "annotated-review",
+        "vnthuquan",
+        "self-improving-agent",
+        "session-logs"
+      ]
     }
   },
   "default_profile": "research-core"

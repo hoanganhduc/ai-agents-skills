@@ -43,11 +43,26 @@ bash ~/.codex/runtime/run_skill.sh \
   skills/deep-research-workflow/run_deep_research_workflow.sh init --structured --dir /path/to/workspace
 ```
 
+For research where formal verification may help, initialize the optional v2
+formal lane:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/deep-research-workflow/run_deep_research_workflow.sh init --structured --schema-version 2 --formal --dir /path/to/workspace
+```
+
 Validate the structured ledgers before delivery with:
 
 ```bash
 bash ~/.codex/runtime/run_skill.sh \
   skills/deep-research-workflow/run_deep_research_workflow.sh validate --dir /path/to/workspace/research
+```
+
+Validate a v2/formal workspace with:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/deep-research-workflow/run_deep_research_workflow.sh validate --schema-version 2 --dir /path/to/workspace/research
 ```
 
 Verify the helper setup with:
@@ -165,6 +180,44 @@ Use the closed schema in `references/research-quality-guards.md`. Do not use a
 single aggregate research quality score.
 Structured runs record these as `guards.jsonl`.
 
+### Optional formal verification lane
+
+Use the formal lane only when it fits the research object. Lean formalization is
+optional because many graph theory and combinatorics proofs are too expensive
+or under-supported to formalize during a normal research pass.
+
+For v2 structured runs, formal artifacts live under `formal/`:
+
+- `formal_targets.jsonl` records which claims are formalization candidates,
+  required formal checks, and promotion state.
+- `statement_equivalence_reviews.jsonl` records whether the informal claim and
+  formal statement are equivalent enough to use as evidence.
+- `artifacts/` stores Lean skeletons, candidate Lean files, typecheck logs, and
+  scan records.
+- `README.md` summarizes the local policy.
+
+A Lean artifact may support a final report claim only after the parent has
+recorded typecheck evidence, placeholder/trust-base scan evidence, an accepted
+statement-equivalence review, and a lead or human review. Fake transports,
+stubs, `sorry`, `admit`, unsafe trust-base growth, or missing statement review
+cannot promote support.
+
+Use the local helpers as optional gates:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/lean-formalization-intake/run_lean_formalization_intake.sh assess --claim-id C1 --statement "..."
+```
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh verify --input formal/artifacts/C1.lean --artifact-stage final --typecheck
+```
+
+These helpers do not install Lean, Lake, Mathlib, MCP servers, AXLE adapters, or
+provider tooling. They report local availability and fail closed when a required
+tool is unavailable.
+
 ### Optional post-analysis figure handoff
 
 Only do this when the user explicitly asks for a figure or the report would materially benefit from one.
@@ -223,6 +276,10 @@ Output structure guidance:
 - Use `paper-lookup` during Phase 1 when external literature metadata/discovery is needed after the local library-first workflow.
 - Use `research_digest_wrapper` or `rss_news_digest` to seed Phase 1 when the task starts from tracked topics, alerts, or feeds.
 - Use `tikz-draw` only after Phase 2 when there is an explicit figure request or a clear post-analysis figure brief to execute.
+- Use `formal-skeleton-helper`, `lean-formalization-intake`, and
+  `lean-strict-verification-gate` only for optional formalization candidates;
+  they supplement the research workflow and do not replace source, computation,
+  or human mathematical review.
 
 ## Escalation rules
 
@@ -252,6 +309,10 @@ Output structure guidance:
 - [ ] Dropped or excluded sources are explained
 - [ ] Nontrivial runs include guard outputs with `guard_output_id`
 - [ ] Supported `pass` or `warn` guard outputs cite source or evidence IDs
+- [ ] V2 claims cite evidence IDs, not only source IDs
+- [ ] Formalized claims have `formal_targets.jsonl`,
+      `statement_equivalence_reviews.jsonl`, scan/typecheck artifacts, and lead
+      or human review before support is promoted
 - [ ] Budget/model policy state is recorded only in parent-owned runbook artifacts
 - [ ] No aggregate research quality score replaces guard outputs
 

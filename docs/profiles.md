@@ -19,9 +19,11 @@ make plan ARGS="--profile library --artifact-profile research-entrypoints --with
 | `document` | Document conversion and structured database lookup. | `docling`, `database-lookup` |
 | `ebook` | Ebook discovery and library handoff. | `calibre`, `vnthuquan` |
 | `figure` | Structural figure generation and checking. | `tikz-draw` |
-| `full-research` | All research-related skills. | `*` |
+| `formal-research` | Optional local-first Lean formalization lane for research claims. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate` |
+| `formal-research-remote` | Reserved explicit remote formal lane profile; currently installs only local formal-lane skills until a separately reviewed remote adapter exists. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate` |
+| `full-research` | All research-related skills. | `deep-research-workflow`, `source-research`, `research-briefing`, `research-report-reviewer`, `research-verification-gate`, `draft-writing`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `database-lookup`, `docling`, `get-available-resources`, `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate`, `model-router`, `workspace-rearranger`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `sagemath`, `graph-verifier`, `agent-group-discuss`, `prose`, `cross-agent-delegation`, `modal-research-compute`, `paper-review`, `annotated-review`, `vnthuquan`, `self-improving-agent`, `session-logs` |
 | `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
-| `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier` |
+| `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier`, `formal-skeleton-helper` |
 | `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation` |
 | `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate` |
 | `serious-research` | Source-preserving research workflow with local libraries, document parsing, validation, and multi-agent orchestration. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `docling`, `database-lookup`, `paper-review`, `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation`, `get-available-resources`, `formal-skeleton-helper`, `workspace-rearranger` |

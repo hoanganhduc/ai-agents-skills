@@ -144,6 +144,14 @@ truncation_events.jsonl
 include credentials, secrets, raw private paths, or service identifiers that
 would be unsafe to forward.
 
+Maintain a parent-owned `evidence-map.jsonl` for evidence mapping when external
+CLI findings are used by a research workflow. Each row should bind participant
+id, role, parsed finding id, validation artifact, source artifact refs,
+redaction status, parent disposition, and the target research `evidence.jsonl`
+id if accepted. Treat a stale capability profile, missing validation artifact,
+missing redaction record, or unmapped finding as a recovery item, not as usable
+evidence.
+
 ## Failure Taxonomy
 
 Use stable diagnostic codes in participant state and validation artifacts:

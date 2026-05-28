@@ -82,6 +82,29 @@ latest model and highest thinking/reasoning setting from arguments or provider
 environment, and a provider dispatch command is configured. Use dry-run first
 to see the selected providers and blocked reasons.
 
+### Parent-Owned Artifacts and Evidence Mapping
+
+Every `external_cli` run is parent-owned. The parent creates the run directory,
+stores capability profiles, probes, raw output, parsed output, validation
+records, and recovery notes, then decides which normalized findings enter the
+synthesis. Participants may point to artifact refs, but they do not own the
+delivery decision.
+
+For deep research sessions, map accepted participant evidence into the research
+`evidence.jsonl` ledger with `kind: "agd_result"` or the narrower evidence kind
+used by the workflow. The evidence mapping must preserve the participant id,
+role, source artifact ref, validation status, and parent disposition. Do not
+promote a delegated result to a final claim until the parent validates the
+referenced source, computation, proof, or artifact.
+Use target research `evidence.jsonl` ids in the mapping table so downstream
+delivery gates can trace every delegated finding.
+
+Apply redaction before copying anything from `raw/` into packets, reports, or
+user-visible summaries. Raw stdout, stderr, commands, provider configs, session
+ids, credentials, and absolute private paths stay in the parent-owned run
+directory. Recovery after interruption starts from the run manifest and
+validation records, not from untrusted participant prose.
+
 ### Round structure
 
 - Round 1 independent first pass: use fresh participants with no cross-role contamination.

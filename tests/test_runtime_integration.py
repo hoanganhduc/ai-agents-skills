@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from installer.ai_agents_skills.agents import detect_agents
@@ -199,6 +200,117 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
         self.assertEqual(missing, [])
 
+    def test_formal_runtime_smoke_skills_are_supported_and_use_platform_launchers(self) -> None:
+        manifests = load_manifests()
+        selected = set(selected_runtime_skills(
+            manifests,
+            {"lean-formalization-intake", "lean-strict-verification-gate"},
+        ))
+        self.assertEqual(selected, {"lean-formalization-intake", "lean-strict-verification-gate"})
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-strict-verification-gate", "linux"),
+            "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-strict-verification-gate", "windows", "run_skill.bat"),
+            "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.bat",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-strict-verification-gate", "windows", "run_skill.ps1"),
+            "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1",
+        )
+
+    def test_formal_runtime_doctor_does_not_execute_or_install_toolchain_commands(self) -> None:
+        helper_paths = [
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-formalization-intake"
+            / "lean_formalization_intake.py",
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-strict-verification-gate"
+            / "lean_strict_verification_gate.py",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            marker = Path(tmp) / "executed"
+            for name in ("lean", "lake", "elan", "npm", "npx", "pip"):
+                fake = fake_bin / name
+                fake.write_text(f"#!/usr/bin/env sh\ntouch {marker}\nexit 99\n", encoding="utf-8")
+                fake.chmod(0o755)
+            env = {**os.environ, "PATH": str(fake_bin)}
+            for helper in helper_paths:
+                completed = subprocess.run(
+                    [sys.executable, str(helper), "doctor"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                payload = json.loads(completed.stdout)
+                self.assertTrue(payload["no_auto_install"])
+                self.assertFalse(payload["installs_attempted"])
+            self.assertFalse(marker.exists())
+
+    def test_lean_strict_gate_scan_blocks_placeholders_unsafe_constructs_and_bad_encoding(self) -> None:
+        helper = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-strict-verification-gate"
+            / "lean_strict_verification_gate.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            final_candidate = root / "final.lean"
+            final_candidate.write_text("theorem demo : True := by\n  sorry\n", encoding="utf-8")
+            stub = root / "stub.lean"
+            stub.write_text("theorem demo : True := by\n  sorry\n", encoding="utf-8")
+            unsafe = root / "unsafe.lean"
+            unsafe.write_text("import Evil.Provider\n#eval IO.println \"x\"\n", encoding="utf-8")
+            bad = root / "bad.lean"
+            bad.write_bytes(b"\xff")
+
+            final_payload = self.run_json_helper(
+                [sys.executable, str(helper), "scan", "--input", str(final_candidate), "--artifact-stage", "final_candidate"],
+                expected_returncode=1,
+            )
+            self.assertFalse(final_payload["ok"])
+            self.assertIn("active_placeholder", {item["kind"] for item in final_payload["findings"]})
+
+            stub_payload = self.run_json_helper(
+                [sys.executable, str(helper), "scan", "--input", str(stub), "--artifact-stage", "stub"],
+            )
+            self.assertTrue(stub_payload["ok"])
+            self.assertEqual(stub_payload["placeholder_status"], "placeholders_allowed_for_stub")
+
+            unsafe_payload = self.run_json_helper(
+                [sys.executable, str(helper), "scan", "--input", str(unsafe)],
+                expected_returncode=1,
+            )
+            self.assertFalse(unsafe_payload["ok"])
+            self.assertTrue({"unsafe_construct", "non_allowlisted_import"}.issubset(
+                {item["kind"] for item in unsafe_payload["findings"]}
+            ))
+
+            bad_payload = self.run_json_helper(
+                [sys.executable, str(helper), "scan", "--input", str(bad)],
+                expected_returncode=1,
+            )
+            self.assertEqual(bad_payload["findings"][0]["kind"], "invalid_utf8")
+
+    def run_json_helper(self, argv: list[str], *, expected_returncode: int = 0) -> dict[str, Any]:
+        completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+        self.assertEqual(completed.returncode, expected_returncode, completed.stderr)
+        return json.loads(completed.stdout)
+
     def test_full_runtime_profile_filters_platform_files(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -263,6 +375,34 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 "services:\n  zotero:\n    restart: unless-stopped\n",
                 encoding="utf-8",
             )
+            (root / "workspace" / "skills" / "zotero" / "run_service.sh").write_text(
+                "#!/usr/bin/env sh\n# --restart=unless-stopped\n",
+                encoding="utf-8",
+            )
+            (root / "workspace" / ".env").write_text("TOKEN=x\n", encoding="utf-8")
+            (root / "workspace" / ".mcp").mkdir()
+            (root / "workspace" / ".mcp" / "servers.json").write_text("{}", encoding="utf-8")
+            (root / "workspace" / "skills" / "lean" / "mcp-config.json").parent.mkdir(parents=True)
+            (root / "workspace" / "skills" / "lean" / "mcp-config.json").write_text("{}", encoding="utf-8")
+            (root / "workspace" / "skills" / "lean" / "provider-config.toml").write_text(
+                "provider = 'example'\n",
+                encoding="utf-8",
+            )
+            (root / "workspace" / "skills" / "lean" / "provider-config.example.toml").write_text(
+                "# example only\n",
+                encoding="utf-8",
+            )
+            (root / "workspace" / "skills" / "lean" / "axle.toml").write_text("enabled = true\n", encoding="utf-8")
+            (root / "workspace" / "skills" / "lean" / "package.json").write_text(
+                '{"scripts":{"start":"node server.js"}}\n',
+                encoding="utf-8",
+            )
+            (root / "workspace" / "skills" / "lean" / "Dockerfile").write_text("FROM python:3\n", encoding="utf-8")
+            (root / "workspace" / "skills" / "lean" / "Procfile").write_text("web: python app.py\n", encoding="utf-8")
+            (root / "workspace" / "skills" / "lean" / "formal.service").write_text(
+                "[Service]\nExecStart=/bin/true\n",
+                encoding="utf-8",
+            )
 
             result = runtime_inventory(root)
             blocked = {item["path"]: item["classification"] for item in result["entries"]}
@@ -273,8 +413,60 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(blocked["workspace/config/research-compute.example.toml"], "candidate")
             self.assertEqual(blocked["workspace/skills/zotero/__pycache__/x.pyc"], "denied")
             self.assertEqual(blocked["workspace/data/calibre/cache/metadata.db"], "denied")
-            self.assertEqual(blocked["workspace/skills/zotero/docker-compose.yml"], "blocked")
-            self.assertIn("persistent execution marker", reasons["workspace/skills/zotero/docker-compose.yml"])
+            self.assertEqual(blocked["workspace/skills/zotero/docker-compose.yml"], "denied")
+            self.assertEqual(blocked["workspace/skills/zotero/run_service.sh"], "blocked")
+            self.assertIn("persistent execution marker", reasons["workspace/skills/zotero/run_service.sh"])
+            self.assertEqual(blocked["workspace/.env"], "denied")
+            self.assertEqual(blocked["workspace/.mcp/servers.json"], "denied")
+            self.assertEqual(blocked["workspace/skills/lean/mcp-config.json"], "denied")
+            self.assertEqual(blocked["workspace/skills/lean/provider-config.toml"], "denied")
+            self.assertEqual(blocked["workspace/skills/lean/provider-config.example.toml"], "candidate")
+            self.assertEqual(blocked["workspace/skills/lean/axle.toml"], "denied")
+            self.assertEqual(blocked["workspace/skills/lean/package.json"], "denied")
+            self.assertEqual(blocked["workspace/skills/lean/Dockerfile"], "denied")
+            self.assertEqual(blocked["workspace/skills/lean/Procfile"], "denied")
+            self.assertEqual(blocked["workspace/skills/lean/formal.service"], "denied")
+
+    def test_runtime_existing_drift_is_not_adopted_without_backup_replace(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            existing = root / ".codex" / "runtime" / "workspace" / "skills" / "graph-verifier" / "graph_verifier.py"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("# locally modified runtime helper\n", encoding="utf-8")
+
+            plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                detect_agents(root, ["codex"]),
+                adopt=True,
+                platform="linux",
+            )
+            graph_runtime = [
+                item for item in plan["actions"]
+                if item.get("target_relpath") == "workspace/skills/graph-verifier/graph_verifier.py"
+            ][0]
+
+            self.assertEqual(graph_runtime["classification"], "unmanaged")
+            self.assertEqual(graph_runtime["operation"], "skip")
+            self.assertIn("differs from runtime source", graph_runtime["reason"])
+
+            replace_plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                detect_agents(root, ["codex"]),
+                backup_replace=True,
+                platform="linux",
+            )
+            replacement = [
+                item for item in replace_plan["actions"]
+                if item.get("target_relpath") == "workspace/skills/graph-verifier/graph_verifier.py"
+            ][0]
+            self.assertEqual(replacement["classification"], "conflict")
+            self.assertEqual(replacement["operation"], "backup-replace")
 
     def test_runtime_inventory_reports_symlinked_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

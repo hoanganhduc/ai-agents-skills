@@ -1,26 +1,36 @@
 # Tasks
 
-- [x] Task: Add lifecycle artifacts.
-  - Acceptance: `SPEC.md`, `tasks/plan.md`, and `tasks/todo.md` describe this scoped work.
-  - Verify: files exist and stay current.
+- [x] Task: Refresh lifecycle artifacts.
+  - Acceptance: `SPEC.md`, `tasks/plan.md`, and `tasks/todo.md` describe the formal-lane implementation.
+  - Verify: files exist and align with `plan_fixed_v3.md`.
   - Files: `SPEC.md`, `tasks/plan.md`, `tasks/todo.md`
 
-- [x] Task: Add canonical writing workflow content.
-  - Acceptance: skill, instruction doc, and two templates exist under canonical source directories.
-  - Verify: manifest loader can read referenced sources.
-  - Files: `canonical/skills/draft-writing/SKILL.md`, `canonical/instructions/claim-preserving-writing.md`, `canonical/templates/draft-claim-ledger.md`, `canonical/templates/draft-revision-map.md`
+- [x] Task: Implement v2 research artifacts and readiness.
+  - Acceptance: v2 marker/evidence/formal artifacts validate; v1 compatibility remains intact.
+  - Verify: targeted research workflow tests pass.
+  - Files: `canonical/runtime/skills/deep-research-workflow/deep_research_workflow.py`, `tests/test_research_workflow_integration.py`
 
-- [x] Task: Register manifests.
-  - Acceptance: `draft-writing` skill, `writing-workflow` skill profile, and `writing-workflow` artifact profile resolve.
-  - Verify: selector tests and `make describe`.
-  - Files: `manifest/skills.yaml`, `manifest/profiles.yaml`, `manifest/artifacts.yaml`
+- [x] Task: Add local formal skills and wrappers.
+  - Acceptance: intake and strict verification skills exist, run cross-platform, degrade when Lean is missing, and do not install dependencies.
+  - Verify: runtime integration tests and runtime smoke contracts pass.
+  - Files: `canonical/skills/lean-formalization-intake/`, `canonical/skills/lean-strict-verification-gate/`, `canonical/runtime/skills/lean-formalization-intake/`, `canonical/runtime/skills/lean-strict-verification-gate/`
 
-- [x] Task: Add installer tests.
-  - Acceptance: tests cover profile selection, artifact dependency resolution, Copilot limits, and OpenClaw fake-root behavior.
-  - Verify: targeted unittest subset passes.
-  - Files: `tests/test_installer.py`
+- [x] Task: Register manifests and profiles.
+  - Acceptance: `formal-research` is local-only, `formal-research-remote` is explicit, and `research-core` is unchanged.
+  - Verify: selector/manifest/docs tests pass.
+  - Files: `manifest/skills.yaml`, `manifest/profiles.yaml`, `manifest/runtime.yaml`, `manifest/dependencies.yaml`, `manifest/system-dependencies.yaml`
+
+- [x] Task: Add AGD and delegation boundaries.
+  - Acceptance: parent-owned AGD artifact rules and evidence mapping are documented and tested; AXLE/MCP is not a provider.
+  - Verify: cross-agent delegation tests pass.
+  - Files: `canonical/skills/agent-group-discuss/*`, `tests/test_cross_agent_delegation.py`
+
+- [x] Task: Add migration and runtime safety tests.
+  - Acceptance: stale runtime `--adopt` skips differing files; no-auto-install and provider-boundary tests pass.
+  - Verify: runtime and installer tests pass.
+  - Files: `installer/ai_agents_skills/runtime.py`, `installer/ai_agents_skills/runtime_smoke.py`, `tests/test_runtime_integration.py`, `tests/test_installer.py`
 
 - [x] Task: Regenerate docs and verify.
-  - Acceptance: generated docs include the new skill/profile/artifacts.
-  - Verify: `make docs`, tests, lifecycle, plan/dry-run gates.
-  - Files: `docs/`, `docs/source/`
+  - Acceptance: generated docs reflect manifest source of truth and verification gates pass.
+  - Verify: `make docs`, targeted tests, `make test`, `make runtime-smoke`.
+  - Files: `README.md`, `docs/`, `docs/source/`

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from installer.ai_agents_skills.sanitize import has_sensitive_material, sanitize_text
+from tools import sanitization_check
 
 
 class SanitizationTests(unittest.TestCase):
@@ -42,6 +43,9 @@ class SanitizationTests(unittest.TestCase):
         self.assertFalse(has_sensitive_material("inspect `/windows/Users/...` from Linux"))
         self.assertTrue(has_sensitive_material("/home/exampleuser/file"))
         self.assertTrue(has_sensitive_material("/windows/Users/exampleuser/.codex"))
+
+    def test_sanitization_check_skips_local_virtualenvs(self) -> None:
+        self.assertIn(".venv", sanitization_check.SKIP_DIRS)
 
 
 if __name__ == "__main__":
