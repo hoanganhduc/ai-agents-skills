@@ -30,7 +30,7 @@
       "requirement": "required for runtime-backed skills and the installer",
       "linux": "Native Python 3.10+ detected from environment override, repo venv, python3, or python.",
       "windows": "Native Python 3.10+ detected from environment override, repo venv, C:\\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python.",
-      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "annotated-review", "modal-research-compute", "session-logs"]
+      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "annotated-review", "modal-research-compute", "session-logs", "lean-formalization-intake", "lean-strict-verification-gate"]
     },
     "bash-or-posix-shell": {
       "display_name": "Bash or POSIX-compatible shell",
@@ -73,6 +73,27 @@
       "linux": "Node.js 18+ with npm.",
       "windows": "Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server.",
       "used_by": ["Codex MCP", "zotero translation server"]
+    },
+    "lean-cli": {
+      "display_name": "Lean command line",
+      "requirement": "optional for local formal typechecking; never installed by wrappers",
+      "linux": "Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install.",
+      "windows": "Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install.",
+      "used_by": ["lean-strict-verification-gate"]
+    },
+    "lake-cli": {
+      "display_name": "Lake command line",
+      "requirement": "optional for local Lean project checks; never installed by wrappers",
+      "linux": "Lake executable on PATH, via AAS_LAKE, or via an existing elan install.",
+      "windows": "Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install.",
+      "used_by": ["lean-strict-verification-gate", "lean-formalization-intake"]
+    },
+    "mathlib-cache": {
+      "display_name": "mathlib cache",
+      "requirement": "optional manually prepared Lean dependency cache",
+      "linux": "Existing project-local mathlib cache or manually prepared Lake cache.",
+      "windows": "Existing project-local mathlib cache or manually prepared Lake cache.",
+      "used_by": ["lean-strict-verification-gate", "lean-formalization-intake"]
     },
     "git-cli": {
       "display_name": "Git",

@@ -49,6 +49,33 @@
       },
       "capabilities": ["npm"]
     },
+    "lean-cli": {
+      "description": "Lean command line executable for optional local formal typechecking.",
+      "version_constraint": ">=4",
+      "candidates": {
+        "linux": ["${AAS_LEAN}", "lean", "~/.elan/bin/lean"],
+        "windows": ["%AAS_LEAN%", "lean.exe", "lean", "%USERPROFILE%\\.elan\\bin\\lean.exe"]
+      },
+      "capabilities": ["formal-typecheck"]
+    },
+    "lake-cli": {
+      "description": "Lake command line executable for optional Lean project checks.",
+      "version_constraint": ">=5",
+      "candidates": {
+        "linux": ["${AAS_LAKE}", "lake", "~/.elan/bin/lake"],
+        "windows": ["%AAS_LAKE%", "lake.exe", "lake", "%USERPROFILE%\\.elan\\bin\\lake.exe"]
+      },
+      "capabilities": ["lean-project-build"]
+    },
+    "mathlib-cache": {
+      "description": "Manually managed mathlib cache or project dependency state for optional Lean checks.",
+      "version_constraint": "manual",
+      "candidates": {
+        "linux": ["manual:lake exe cache get"],
+        "windows": ["manual:lake exe cache get"]
+      },
+      "capabilities": ["lean-library-cache"]
+    },
     "wsl-runtime": {
       "description": "Windows Subsystem for Linux runtime.",
       "version_constraint": ">=2",

@@ -161,11 +161,29 @@
     },
     "formal-skeleton-helper": {
       "description": "Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs.",
-      "profiles": ["workflow-tools", "math", "serious-research", "full-research"],
+      "profiles": ["workflow-tools", "math", "formal-research", "formal-research-remote", "serious-research", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["lean-skeleton"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "lean-formalization-intake": {
+      "description": "Optional local-first Lean formalization intake and suitability decision workflow.",
+      "profiles": ["formal-research", "formal-research-remote", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["lean-cli", "lake-cli", "mathlib-cache"],
+      "optional_capabilities": ["formal-lane-intake", "lean-tool-detection"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "lean-strict-verification-gate": {
+      "description": "Scanner-first Lean artifact verification gate that separates typecheck status from claim support.",
+      "profiles": ["formal-research", "formal-research-remote", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["lean-cli", "lake-cli", "mathlib-cache"],
+      "optional_capabilities": ["lean-safety-scan", "optional-local-typecheck"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "model-router": {

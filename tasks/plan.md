@@ -2,29 +2,37 @@
 
 ## Phases
 
-1. Add canonical writing workflow content.
-2. Register skill, profile, and artifacts in manifests.
-3. Add targeted installer tests for selection and target boundaries.
-4. Regenerate docs.
-5. Run verification gates and inspect plan/dry-run output.
+1. Implement v2 structured research artifacts: evidence ledger, artifact refs, readiness checks, formal target schema, and formal directories.
+2. Add local formal skills and runtime wrappers for intake and strict verification.
+3. Register formal skills, profiles, runtime files, and dependency metadata without adding AXLE/MCP to default or delegation routing.
+4. Update AGD documentation/tests for parent-owned artifacts and evidence mapping.
+5. Add migration/runtime smoke/provider-boundary tests.
+6. Regenerate docs and run verification.
 
 ## Dependencies
 
-- Existing installer manifest loading and artifact rendering.
-- Existing target support rules for Codex, Claude, DeepSeek, Copilot, and OpenClaw.
+- Existing deep-research runtime validator and structured run files.
+- Existing manifest/profile/runtime selectors.
+- Existing runtime smoke and fake-root lifecycle tooling.
+- Existing cross-agent delegation packet validation.
 
 ## Risks
 
-- Risk: overstating Copilot/OpenClaw support.
-  - Mitigation: tests assert Copilot artifact skips and OpenClaw fake-root-only behavior.
-- Risk: optional artifacts are not verified by narrow skill filters.
-  - Mitigation: use unfiltered verify and plan assertions.
-- Risk: generated docs drift.
-  - Mitigation: run `make docs` after manifest edits.
+- Risk: v2 validation breaks v1 structured runs.
+  - Mitigation: v2 activates only on explicit marker or formal/evidence artifacts; tests preserve unresolved legacy evidence IDs in v1.
+- Risk: optional Lean failures block ordinary research delivery.
+  - Mitigation: formal support and formal-check requirement are separate from non-formal evidence readiness.
+- Risk: generated or remote Lean executes unsafe code during validation.
+  - Mitigation: scanner-only preflight blocks execution-capable constructs before typecheck.
+- Risk: AXLE/MCP leaks into provider routing.
+  - Mitigation: tests assert `manifest/delegation.yaml` providers and auto-provider selection exclude AXLE/MCP/Lean services.
+- Risk: runtime migration adopts stale user-owned runtime files.
+  - Mitigation: tests assert `--adopt` skips differing runtime files and only `--backup-replace` replaces them.
 
 ## Verification checkpoints
 
-- After phase 2: `make list-skills`, `make list-artifacts`, `make describe`.
-- After phase 3: targeted unittest subset.
-- After phase 4: docs diff inspected.
-- After phase 5: lifecycle and dry-run status reported.
+- After phase 1: `python -m unittest tests.test_research_workflow_integration`
+- After phase 2: `python -m unittest tests.test_runtime_integration`
+- After phase 3: manifest/profile tests and `make docs`
+- After phase 4: `python -m unittest tests.test_cross_agent_delegation`
+- Final: `make sanitize-check`, `make test`, `make runtime-smoke`

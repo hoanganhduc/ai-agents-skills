@@ -13,6 +13,8 @@ from typing import Any
 from installer.ai_agents_skills.agents import detect_agents
 from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.cli import main
+from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS, build_external_agent_prechecks
+from installer.ai_agents_skills.delegation_dispatch import EXTERNAL_PROVIDERS, build_dispatch_plan, expand_auto_providers
 from installer.ai_agents_skills.delegation_packets import RESULT_FIELDS, TASK_FIELDS, validate_result, validate_task
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
@@ -128,6 +130,64 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
         self.assertIn("may route to a live CodeWhale or DeepSeek-like CLI only", text)
         self.assertIn("capability probes satisfy the run policy", text)
         self.assertIn("OpenClaw is not a V1 `supported_agents` target", text)
+
+    def test_delegation_auto_provider_boundary_excludes_axle_mcp_and_reference_targets(self) -> None:
+        manifests = load_manifests()
+        delegation = manifests["delegation"]
+        active = set(delegation["policy"]["active_providers"])
+        reference_only = set(delegation["policy"]["reference_only_providers"])
+
+        self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot"})
+        self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot"})
+        self.assertFalse(active.intersection({"axle", "mcp", "openclaw"}))
+        self.assertEqual(reference_only, {"openclaw"})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prechecks = build_external_agent_prechecks(root, "linux", delegation, env={})
+            auto_providers = expand_auto_providers(["auto"], prechecks, max_providers=10)
+            self.assertEqual(auto_providers, ["claude", "deepseek", "copilot"])
+
+            explicit_plan = build_dispatch_plan(
+                root,
+                "linux",
+                delegation,
+                prechecks,
+                ["openclaw", "axle", "mcp"],
+                max_providers=10,
+                research=True,
+                resolved_model="current-frontier",
+                resolved_thinking="xhigh",
+                env={},
+            )
+            reasons = {item["provider"]: item["reason"] for item in explicit_plan}
+            self.assertEqual(reasons["openclaw"], "provider is not an active external CLI provider")
+            self.assertEqual(reasons["axle"], "provider is not declared in delegation policy")
+            self.assertEqual(reasons["mcp"], "provider is not declared in delegation policy")
+
+    def test_agd_docs_require_parent_owned_artifacts_evidence_mapping_and_redaction(self) -> None:
+        skill_text = (REPO_ROOT / "canonical" / "skills" / "agent-group-discuss" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        execution_text = (REPO_ROOT / "canonical" / "skills" / "agent-group-discuss" / "EXECUTION.md").read_text(
+            encoding="utf-8"
+        )
+        external_text = (
+            REPO_ROOT
+            / "canonical"
+            / "skills"
+            / "agent-group-discuss"
+            / "references"
+            / "external-cli-agents.md"
+        ).read_text(encoding="utf-8")
+
+        for text in (skill_text, execution_text, external_text):
+            self.assertIn("parent-owned", text)
+            self.assertIn("evidence mapping", text)
+            self.assertIn("redaction", text)
+        self.assertIn("research `evidence.jsonl`", execution_text)
+        self.assertIn("recovery", skill_text)
+        self.assertIn("stale capability profile", external_text)
 
 
 class CrossAgentDelegationFixtureTests(unittest.TestCase):

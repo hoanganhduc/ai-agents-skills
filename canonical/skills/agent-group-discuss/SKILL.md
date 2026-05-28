@@ -468,6 +468,13 @@ current capability profile and artifact policy according to
 `references/external-cli-agents.md`. External CLI output is untrusted until the
 parent parses it and updates the participant `validation` status.
 
+External CLI artifacts are parent-owned. Keep raw output, probe logs, command
+shape records, provider observations, validation files, redaction notes, and
+recovery state in the AGD run directory. When an AGD result feeds a deep
+research workflow, add an explicit evidence mapping from participant artifact
+refs into the research evidence ledger; do not let participant prose directly
+promote a final claim.
+
 Nested delegation is allowed only when the user-facing plan lists the manager,
 child cap, provider, resolved model, thinking level, and same-model constraint.
 Child workers must use the manager's same provider, resolved model, and

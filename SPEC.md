@@ -1,60 +1,74 @@
-# Spec: Claim-Preserving Draft Writing
+# Spec: Optional Lean Formal Verification Lane
 
 ## Objective
 
-- Add a reusable `draft-writing` workflow to `ai-agents-skills`.
-- Help agents preserve author intent across draft polishing by separating claims from wording.
-- Make the workflow installable as a skill plus optional instruction/template artifacts for supported agents.
+- Add an optional local-first Lean/formal evidence lane to the existing research workflow.
+- Preserve the default research flow while allowing v2 structured runs to track evidence, formal targets, statement-equivalence reviews, and final readiness.
+- Keep remote AXLE/MCP explicit opt-in, disabled by default, and out of provider/delegation routing.
 
 ## Assumptions
 
-1. The mechanism is procedural guidance and templates, not executable enforcement.
-2. Default real-system targets remain Codex, Claude, and DeepSeek.
-3. Copilot support is explicit and skill-adapter-only for this feature.
-4. OpenClaw remains explicit fake-root-only until native target evidence exists.
+1. Lean formalization is optional and not available for all graph theory or combinatorics claims.
+2. Local Lean/Lake checks may run only when already installed; wrappers must not install toolchains or dependencies.
+3. V1 structured research runs remain compatible unless a v2 marker or formal artifact is present.
+4. Formal evidence supports a research claim only after typecheck, placeholder/trust-base scan, statement-equivalence review, and lead/human review all pass.
+5. AXLE/MCP is a future remote-client adapter, not an installer-managed MCP server or delegation provider.
 
 ## Commands
 
+- Targeted tests: `python -m unittest tests.test_research_workflow_integration tests.test_runtime_integration tests.test_cross_agent_delegation`
 - Build/docs: `make docs`
-- Test: `make test`
+- Full tests: `make test`
 - Static: `make sanitize-check`
 - Runtime smoke: `make runtime-smoke`
 - Lifecycle: `make lifecycle-test ARGS="--matrix default --platform-shape all"`
-- Stress: `make lifecycle-test ARGS="--matrix stress --platform-shape linux"`
 
 ## Project Structure
 
-- `canonical/skills/draft-writing/SKILL.md`
-- `canonical/instructions/claim-preserving-writing.md`
-- `canonical/templates/draft-claim-ledger.md`
-- `canonical/templates/draft-revision-map.md`
+- `canonical/runtime/skills/deep-research-workflow/deep_research_workflow.py`
+- `canonical/skills/lean-formalization-intake/SKILL.md`
+- `canonical/skills/lean-strict-verification-gate/SKILL.md`
+- `canonical/runtime/skills/lean-formalization-intake/`
+- `canonical/runtime/skills/lean-strict-verification-gate/`
 - `manifest/skills.yaml`
 - `manifest/profiles.yaml`
-- `manifest/artifacts.yaml`
-- `tests/test_installer.py`
-- generated `docs/` and `docs/source/`
+- `manifest/runtime.yaml`
+- `manifest/dependencies.yaml`
+- `manifest/system-dependencies.yaml`
+- `canonical/skills/agent-group-discuss/*`
+- `installer/ai_agents_skills/runtime.py`
+- `installer/ai_agents_skills/runtime_smoke.py`
+- `tests/test_research_workflow_integration.py`
+- `tests/test_runtime_integration.py`
+- `tests/test_cross_agent_delegation.py`
 
 ## Testing Strategy
 
-- Unit: selector, artifact, dependency, Copilot, and OpenClaw tests.
-- Integration: fake-root lifecycle and installer plan/dry-run checks.
-- Manual: review generated plan output before any real-system apply.
+- Unit: v2 evidence ledger, readiness, artifact-ref parsing, formal target state machine, computation evidence, and AGD evidence resolution.
+- Runtime: formal skill smoke with missing Lean/Lake/elan/npm/npx/pip/package managers proving degraded status without installation.
+- Manifest: formal profiles explicit, `research-core` unchanged, AXLE/MCP absent from provider/delegation routing.
+- Docs: generated docs reflect manifest source of truth.
+- Lifecycle: fake-root profile coverage across Linux, macOS, Windows, and WSL path shapes where existing tooling supports it.
 
 ## Boundaries
 
-- Always: keep canonical source in the repo and propagate through installer-managed files.
-- Ask first: real-system apply to agent homes if plan output is not clean.
-- Never: write real `.openclaw` targets in this phase.
+- Always: keep default research workflow unchanged.
+- Always: keep v1 structured runs compatible.
+- Always: keep AXLE/MCP out of default profiles, runtime smoke, provider routing, and live PR CI.
+- Never: auto-install Lean, Lake, mathlib, npm packages, Python packages, credentials, configs, services, MCP servers, or background daemons.
+- Never: treat bounded computation as unrestricted formal theorem evidence.
 
 ## Success Criteria
 
-- [ ] `draft-writing` is a valid skill in manifests and docs.
-- [ ] `writing-workflow` profile selects `draft-writing`.
-- [ ] `writing-workflow` artifact profile selects the instruction doc and templates.
-- [ ] Copilot receives only the skill adapter for this feature.
-- [ ] OpenClaw remains explicit fake-root-only.
-- [ ] Relevant tests and lifecycle checks pass.
+- [ ] V2 structured research runs validate `evidence.jsonl` and formal artifacts.
+- [ ] Final readiness fails closed on unsupported, provisional-without-caveat, unverified, unresolved, or invalid formal support.
+- [ ] Formal target promotion requires valid state, typecheck, placeholder/trust-base scans, statement-equivalence row, and review.
+- [ ] Local formal skills exist and run cross-platform with no auto-install behavior.
+- [ ] Formal profiles are explicit and do not change `research-core`.
+- [ ] AGD evidence is parent-validated before use.
+- [ ] Runtime migration/adopt tests protect unmanaged files.
+- [ ] Docs and tests pass.
 
 ## Open Questions
 
-- Whether to add a future executable verifier for claim-ledger consistency.
+- Whether to implement live AXLE integration later after a separate endpoint/security review.

@@ -65,6 +65,28 @@ def root_snapshot(root: Path) -> dict[str, tuple[str, str | bytes | None]]:
 
 
 class ManifestTests(unittest.TestCase):
+    def test_skill_and_profile_membership_is_reciprocal(self) -> None:
+        manifests = load_manifests()
+        skills = manifests["skills"]["skills"]
+        profiles = manifests["profiles"]["profiles"]
+
+        for profile_name, spec in profiles.items():
+            profile_skills = spec.get("skills", [])
+            if profile_skills == ["*"]:
+                continue
+            for skill in profile_skills:
+                self.assertIn(profile_name, skills[skill]["profiles"])
+
+        explicit_profiles = {
+            profile_name: set(spec.get("skills", []))
+            for profile_name, spec in profiles.items()
+            if spec.get("skills") != ["*"]
+        }
+        for skill, spec in skills.items():
+            for profile_name in spec["profiles"]:
+                if profile_name in explicit_profiles:
+                    self.assertIn(skill, explicit_profiles[profile_name])
+
     def test_default_profile_resolves_research_core(self) -> None:
         manifests = load_manifests()
         args = Args()

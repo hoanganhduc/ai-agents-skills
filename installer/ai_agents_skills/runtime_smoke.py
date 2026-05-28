@@ -19,6 +19,8 @@ RUNTIME_SMOKE_SKILLS = (
     "formal-skeleton-helper",
     "get-available-resources",
     "graph-verifier",
+    "lean-formalization-intake",
+    "lean-strict-verification-gate",
 )
 
 
@@ -111,7 +113,7 @@ def run_smoke_case(
     platform: str,
     timeout: int,
 ) -> dict[str, Any]:
-    command_target = runtime_command_target(manifests, skill, platform)
+    command_target = runtime_command_target(manifests, skill, platform, runner["name"])
     args = smoke_args(skill, workspace)
     command = [*runner["argv"], command_target, *args]
     try:
@@ -149,8 +151,16 @@ def run_smoke_case(
     }
 
 
-def runtime_command_target(manifests: dict[str, Any], skill: str, platform: str) -> str:
-    suffix = ".bat" if platform == "windows" else ".sh"
+def runtime_command_target(
+    manifests: dict[str, Any],
+    skill: str,
+    platform: str,
+    runner_name: str | None = None,
+) -> str:
+    if platform == "windows":
+        suffix = ".ps1" if runner_name == "run_skill.ps1" else ".bat"
+    else:
+        suffix = ".sh"
     spec = manifests["runtime"]["skills"][skill]
     for entry in spec.get("files", []):
         target = entry.get("target", "")
@@ -168,6 +178,8 @@ def smoke_args(skill: str, workspace: Path) -> list[str]:
         return ["--output", str(smoke_dir / "resources.json")]
     if skill == "deep-research-workflow":
         return ["init", "--dir", str(smoke_dir), "--subdir", "deep", "--structured"]
+    if skill in {"lean-formalization-intake", "lean-strict-verification-gate"}:
+        return ["doctor"]
     return []
 
 
@@ -203,6 +215,15 @@ def validate_smoke_output(skill: str, completed: subprocess.CompletedProcess[str
         ):
             checks.append({"name": f"{name}-exists", "ok": (out_dir / name).is_file()})
         checks.append({"name": "delegation-dir-exists", "ok": (out_dir / "delegation").is_dir()})
+    elif skill in {"lean-formalization-intake", "lean-strict-verification-gate"}:
+        payload = parse_json_stdout(completed.stdout)
+        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
+        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
+        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
+        checks.append({
+            "name": "lean-status-recorded",
+            "ok": payload.get("tool_status", {}).get("lean", {}).get("status") in {"available", "tool_unavailable"},
+        })
     return checks
 
 

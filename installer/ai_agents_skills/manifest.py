@@ -92,6 +92,34 @@ def validate_manifests(
                 if dependency not in declared_dependencies:
                     raise ManifestError(f"skill {name} references unknown dependency {dependency}")
 
+    for profile_name, spec in profiles["profiles"].items():
+        if not isinstance(spec, dict):
+            raise ManifestError(f"profile {profile_name} must be an object")
+        profile_skills = spec.get("skills")
+        if not isinstance(profile_skills, list):
+            raise ManifestError(f"profile {profile_name} must contain a skills list")
+        if profile_skills == ["*"]:
+            continue
+        for skill in profile_skills:
+            if skill not in skills["skills"]:
+                raise ManifestError(f"profile {profile_name} references unknown skill {skill}")
+            if profile_name not in skills["skills"][skill].get("profiles", []):
+                raise ManifestError(
+                    f"profile {profile_name} references skill {skill} but skill does not list that profile"
+                )
+    profile_names = set(profiles["profiles"])
+    explicit_profile_skills = {
+        profile_name: set(spec.get("skills", []))
+        for profile_name, spec in profiles["profiles"].items()
+        if spec.get("skills") != ["*"]
+    }
+    for name, spec in skills["skills"].items():
+        for profile in spec.get("profiles", []):
+            if profile not in profile_names:
+                raise ManifestError(f"skill {name} references unknown profile {profile}")
+            if profile in explicit_profile_skills and name not in explicit_profile_skills[profile]:
+                raise ManifestError(f"skill {name} references profile {profile} but profile does not list that skill")
+
     declared_artifacts = set()
     for artifact_type, by_name in artifacts["artifacts"].items():
         if not isinstance(by_name, dict):

@@ -36,6 +36,66 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
     def read(self, path: Path) -> str:
         return path.read_text(encoding="utf-8")
 
+    def validate_research_dir(self, research_dir: Path, *args: str) -> tuple[int, dict]:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        completed = subprocess.run(
+            [sys.executable, str(DEEP_RESEARCH_RUNTIME), "validate", "--dir", str(research_dir), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        return completed.returncode, json.loads(completed.stdout)
+
+    def write_jsonl(self, path: Path, rows: list[dict]) -> None:
+        path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
+
+    def write_minimal_delivery(self, research_dir: Path, *, decision: str = "not-ready", report_ref: str = "") -> None:
+        blockers = [] if decision == "ready" else [{"blocker_id": "B1", "description": "not complete"}]
+        gaps = [] if decision == "ready" else ["not complete"]
+        (research_dir / "delivery.json").write_text(
+            json.dumps({
+                "decision": decision,
+                "report_ref": report_ref,
+                "checked_at": "2026-05-28T00:00:00Z",
+                "guard_output_ids": [],
+                "blockers": blockers,
+                "gaps": gaps,
+                "caveats": [],
+            }),
+            encoding="utf-8",
+        )
+
+    def make_structured_dir(self, tmp: str, *, v2: bool = False, formal: bool = False) -> Path:
+        research_dir = Path(tmp) / "research"
+        research_dir.mkdir()
+        self.write_jsonl(research_dir / "sources.jsonl", [])
+        self.write_jsonl(research_dir / "claims.jsonl", [])
+        self.write_jsonl(research_dir / "guards.jsonl", [])
+        self.write_minimal_delivery(research_dir)
+        if v2:
+            (research_dir / "research_schema.json").write_text(
+                json.dumps({"schema_version": "deep-research.run.v2"}),
+                encoding="utf-8",
+            )
+            self.write_jsonl(research_dir / "evidence.jsonl", [])
+        if formal:
+            formal_dir = research_dir / "formal"
+            (formal_dir / "input").mkdir(parents=True)
+            (formal_dir / "output").mkdir()
+            (formal_dir / "final").mkdir()
+            self.write_jsonl(formal_dir / "formal_targets.jsonl", [])
+            self.write_jsonl(formal_dir / "statement_equivalence_reviews.jsonl", [])
+        return research_dir
+
+    def test_deep_research_runtime_templates_match_canonical_templates(self) -> None:
+        for name in ("deep-research-sources.md", "deep-research-analysis.md", "deep-research-report.md"):
+            self.assertEqual(
+                (TEMPLATES / name).read_text(encoding="utf-8"),
+                (RUNTIME_WORKSPACE / "templates" / name).read_text(encoding="utf-8"),
+                name,
+            )
+
     def test_deep_research_skill_links_quality_guard_reference(self) -> None:
         skill_text = self.read(DEEP_RESEARCH / "SKILL.md")
         guard_text = self.read(DEEP_RESEARCH / "references" / "research-quality-guards.md")
@@ -201,6 +261,66 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["checked"]["delivery"], 1)
 
+    def test_deep_research_v2_formal_init_and_validate(self) -> None:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        with tempfile.TemporaryDirectory() as tmp:
+            init = subprocess.run(
+                [
+                    sys.executable,
+                    str(DEEP_RESEARCH_RUNTIME),
+                    "init",
+                    "--structured",
+                    "--schema-version",
+                    "2",
+                    "--formal",
+                    "--dir",
+                    tmp,
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            self.assertEqual(init.returncode, 0, init.stderr)
+            research_dir = Path(tmp) / "research"
+            for name in (
+                "research_schema.json",
+                "evidence.jsonl",
+                "formal/formal_targets.jsonl",
+                "formal/statement_equivalence_reviews.jsonl",
+                "formal/README.md",
+            ):
+                self.assertTrue((research_dir / name).is_file(), name)
+
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 0, payload)
+            self.assertEqual(payload["checked"]["schema_version"], 2)
+
+    def test_deep_research_v1_unresolved_evidence_ids_remain_compatible_until_v2(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp)
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{
+                    "claim_id": "C1",
+                    "claim": "A legacy claim with local evidence notes.",
+                    "source_ids": [],
+                    "evidence_ids": ["local-note"],
+                    "status": "supported",
+                }],
+            )
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 0, payload)
+
+            (research_dir / "research_schema.json").write_text(
+                json.dumps({"schema_version": "deep-research.run.v2"}),
+                encoding="utf-8",
+            )
+            self.write_jsonl(research_dir / "evidence.jsonl", [])
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("UNKNOWN_EVIDENCE_ID", {error["code"] for error in payload["errors"]})
+
     def test_deep_research_validator_rejects_ready_delivery_with_gaps(self) -> None:
         env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
         with tempfile.TemporaryDirectory() as tmp:
@@ -232,6 +352,205 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             payload = json.loads(validate.stdout)
             self.assertEqual(payload["status"], "failed")
             self.assertIn("READY_WITH_GAPS", {error["code"] for error in payload["errors"]})
+
+    def test_ready_delivery_checks_report_and_only_relevant_unverified_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp)
+            self.write_jsonl(
+                research_dir / "sources.jsonl",
+                [
+                    {"source_id": "S1", "source": "Unverified lead", "source_type": "web", "library_status": "[UNVERIFIED]"},
+                    {"source_id": "S2", "source": "Verified paper", "source_type": "paper", "library_status": "[IN_LIBRARY]"},
+                ],
+            )
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{
+                    "claim_id": "C1",
+                    "claim": "The relevant claim uses the verified source.",
+                    "source_ids": ["S2"],
+                    "evidence_ids": [],
+                    "status": "supported",
+                }],
+            )
+            (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
+            self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md")
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 0, payload)
+
+            (research_dir / "report.md").write_text("TODO: resolve this.\n", encoding="utf-8")
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("READY_REPORT_TODO", {error["code"] for error in payload["errors"]})
+
+    def test_v2_formal_target_promotion_requires_matching_equivalence_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True, formal=True)
+            self.write_jsonl(
+                research_dir / "sources.jsonl",
+                [{"source_id": "S1", "source": "Formal source", "source_type": "manuscript", "library_status": "[IN_LIBRARY]"}],
+            )
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{"claim_id": "C1", "claim": "Formal claim", "source_ids": ["S1"], "evidence_ids": ["E1"], "status": "supported"}],
+            )
+            self.write_jsonl(
+                research_dir / "evidence.jsonl",
+                [{
+                    "schema_version": "deep-research.evidence.v2",
+                    "evidence_id": "E1",
+                    "evidence_type": "formal_check",
+                    "source_ids": ["S1"],
+                    "claim_ids": ["C1"],
+                    "artifact_ref": "formal/final/proof.lean",
+                    "summary": "Local Lean check metadata.",
+                    "inspection_status": "checked",
+                    "redaction_status": "safe",
+                    "sensitivity_class": "public",
+                    "created_at": "2026-05-28T00:00:00Z",
+                    "limitations": [],
+                }],
+            )
+            self.write_jsonl(
+                research_dir / "formal" / "formal_targets.jsonl",
+                [{
+                    "schema_version": "deep-research.formal-target.v1",
+                    "formal_target_id": "FT1",
+                    "claim_ids": ["C1"],
+                    "source_ids": ["S1"],
+                    "informal_statement_ref": "sources/S1.md#theorem",
+                    "lean_statement_ref": "formal/final/proof.lean",
+                    "artifact_stage": "final_candidate",
+                    "lean_check_status": "typechecked",
+                    "placeholder_status": "no_active_placeholders",
+                    "trust_base_status": "accepted_trust_base",
+                    "statement_relation_status": "equivalent_reviewed",
+                    "review_status": "reviewed_by_lead",
+                    "claim_support_status": "supports_claim_after_equivalence_review",
+                    "formal_check_requirement": "optional",
+                    "toolchain": "lean 4",
+                    "mathlib": "recorded",
+                    "verification_evidence_ids": ["E1"],
+                    "statement_equivalence_review_ids": [],
+                }],
+            )
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("FORMAL_PROMOTION_REVIEW_ROW_MISSING", {error["code"] for error in payload["errors"]})
+
+    def test_v2_valid_formal_promotion_with_statement_review_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True, formal=True)
+            self.write_jsonl(
+                research_dir / "sources.jsonl",
+                [{"source_id": "S1", "source": "Formal source", "source_type": "manuscript", "library_status": "[IN_LIBRARY]"}],
+            )
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{"claim_id": "C1", "claim": "Formal claim", "source_ids": ["S1"], "evidence_ids": ["E1"], "status": "supported"}],
+            )
+            self.write_jsonl(
+                research_dir / "evidence.jsonl",
+                [{
+                    "schema_version": "deep-research.evidence.v2",
+                    "evidence_id": "E1",
+                    "evidence_type": "formal_check",
+                    "source_ids": ["S1"],
+                    "claim_ids": ["C1"],
+                    "artifact_ref": "formal/final/proof.lean",
+                    "summary": "Local Lean check metadata.",
+                    "inspection_status": "checked",
+                    "redaction_status": "safe",
+                    "sensitivity_class": "public",
+                    "created_at": "2026-05-28T00:00:00Z",
+                    "limitations": [],
+                }],
+            )
+            review = {
+                "schema_version": "deep-research.statement-equivalence-review.v1",
+                "statement_equivalence_review_id": "SER1",
+                "formal_target_id": "FT1",
+                "reviewer": "lead",
+                "review_status": "reviewed_by_lead",
+                "relation_status": "equivalent_reviewed",
+                "informal_statement_ref": "sources/S1.md#theorem",
+                "lean_statement_ref": "formal/final/proof.lean",
+                "compared_definitions": "same definitions",
+                "hypothesis_deltas": "none",
+                "quantifier_deltas": "none",
+                "conclusion_deltas": "none",
+                "boundary_cases": "none",
+                "limitations": "none",
+                "encoding_assumptions": "simple finite graph",
+            }
+            self.write_jsonl(research_dir / "formal" / "statement_equivalence_reviews.jsonl", [review])
+            self.write_jsonl(
+                research_dir / "formal" / "formal_targets.jsonl",
+                [{
+                    "schema_version": "deep-research.formal-target.v1",
+                    "formal_target_id": "FT1",
+                    "claim_ids": ["C1"],
+                    "source_ids": ["S1"],
+                    "informal_statement_ref": "sources/S1.md#theorem",
+                    "lean_statement_ref": "formal/final/proof.lean",
+                    "artifact_stage": "final_candidate",
+                    "lean_check_status": "typechecked",
+                    "placeholder_status": "no_active_placeholders",
+                    "trust_base_status": "accepted_trust_base",
+                    "statement_relation_status": "equivalent_reviewed",
+                    "review_status": "reviewed_by_lead",
+                    "claim_support_status": "supports_claim_after_equivalence_review",
+                    "formal_check_requirement": "optional",
+                    "toolchain": "lean 4",
+                    "mathlib": "recorded",
+                    "verification_evidence_ids": ["E1"],
+                    "statement_equivalence_review_ids": ["SER1"],
+                }],
+            )
+            (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
+            self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md")
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 0, payload)
+
+    def test_v2_weak_computation_cannot_be_only_ready_claim_support(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True)
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{"claim_id": "C1", "claim": "A universal graph claim", "source_ids": [], "evidence_ids": ["E1"], "status": "supported"}],
+            )
+            self.write_jsonl(
+                research_dir / "evidence.jsonl",
+                [{
+                    "schema_version": "deep-research.evidence.v2",
+                    "evidence_id": "E1",
+                    "evidence_type": "computation",
+                    "source_ids": [],
+                    "claim_ids": ["C1"],
+                    "artifact_ref": "checks/sample.json",
+                    "summary": "Sampled graph check.",
+                    "inspection_status": "checked",
+                    "redaction_status": "safe",
+                    "sensitivity_class": "public",
+                    "created_at": "2026-05-28T00:00:00Z",
+                    "limitations": ["sampled only"],
+                    "tool_name": "graph-verifier",
+                    "tool_version": "test",
+                    "input_encoding_ref": "checks/input.json",
+                    "checked_domain": "graphs up to n=5 sample",
+                    "graph_model_assumptions": "simple finite graph",
+                    "resource_bounds": "1s",
+                    "result_status": "partial",
+                    "coverage_status": "sampled",
+                    "enumeration_method": "sample",
+                    "timeout_status": "completed",
+                }],
+            )
+            (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
+            self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md")
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION", {error["code"] for error in payload["errors"]})
 
 
 if __name__ == "__main__":
