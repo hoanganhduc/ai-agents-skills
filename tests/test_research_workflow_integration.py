@@ -288,9 +288,10 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                 "evidence.jsonl",
                 "formal/formal_targets.jsonl",
                 "formal/statement_equivalence_reviews.jsonl",
+                "formal/artifacts/remote/axle",
                 "formal/README.md",
             ):
-                self.assertTrue((research_dir / name).is_file(), name)
+                self.assertTrue((research_dir / name).exists(), name)
 
             code, payload = self.validate_research_dir(research_dir)
             self.assertEqual(code, 0, payload)
@@ -409,6 +410,7 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                     "sensitivity_class": "public",
                     "created_at": "2026-05-28T00:00:00Z",
                     "limitations": [],
+                    "verification_source": "local_lean",
                 }],
             )
             self.write_jsonl(
@@ -447,24 +449,55 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             )
             self.write_jsonl(
                 research_dir / "claims.jsonl",
-                [{"claim_id": "C1", "claim": "Formal claim", "source_ids": ["S1"], "evidence_ids": ["E1"], "status": "supported"}],
+                [{
+                    "claim_id": "C1",
+                    "claim": "Formal claim",
+                    "source_ids": ["S1"],
+                    "evidence_ids": ["E1", "E-AXLE-1"],
+                    "status": "supported",
+                }],
             )
             self.write_jsonl(
                 research_dir / "evidence.jsonl",
-                [{
-                    "schema_version": "deep-research.evidence.v2",
-                    "evidence_id": "E1",
-                    "evidence_type": "formal_check",
-                    "source_ids": ["S1"],
-                    "claim_ids": ["C1"],
-                    "artifact_ref": "formal/final/proof.lean",
-                    "summary": "Local Lean check metadata.",
-                    "inspection_status": "checked",
-                    "redaction_status": "safe",
-                    "sensitivity_class": "public",
-                    "created_at": "2026-05-28T00:00:00Z",
-                    "limitations": [],
-                }],
+                [
+                    {
+                        "schema_version": "deep-research.evidence.v2",
+                        "evidence_id": "E1",
+                        "evidence_type": "formal_check",
+                        "source_ids": ["S1"],
+                        "claim_ids": ["C1"],
+                        "artifact_ref": "formal/final/proof.lean",
+                        "summary": "Local Lean check metadata.",
+                        "inspection_status": "checked",
+                        "redaction_status": "safe",
+                        "sensitivity_class": "public",
+                        "created_at": "2026-05-28T00:00:00Z",
+                        "limitations": [],
+                        "verification_source": "local_lean",
+                    },
+                    {
+                        "schema_version": "deep-research.evidence.v2",
+                        "evidence_id": "E-AXLE-1",
+                        "evidence_type": "axle_remote_check",
+                        "source_ids": ["S1"],
+                        "claim_ids": ["C1"],
+                        "artifact_ref": "formal/artifacts/remote/axle/E-AXLE-1.json",
+                        "summary": "Supplemental AXLE remote result.",
+                        "inspection_status": "checked",
+                        "redaction_status": "redacted",
+                        "sensitivity_class": "private",
+                        "created_at": "2026-05-28T00:00:00Z",
+                        "limitations": ["remote result is supplemental only"],
+                        "tool_name": "axiom-axle-mcp",
+                        "tool_version": "0.3.3",
+                        "endpoint": "https://mcp.axiommath.ai/mcp",
+                        "operation": "check",
+                        "payload_hash": "sha256:test",
+                        "input_encoding_ref": "formal/input/C1.json",
+                        "result_status": "passed",
+                        "expiry": "2026-12-31T00:00:00Z",
+                    },
+                ],
             )
             review = {
                 "schema_version": "deep-research.statement-equivalence-review.v1",
@@ -503,12 +536,124 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                     "formal_check_requirement": "optional",
                     "toolchain": "lean 4",
                     "mathlib": "recorded",
-                    "verification_evidence_ids": ["E1"],
+                    "verification_evidence_ids": ["E1", "E-AXLE-1"],
                     "statement_equivalence_review_ids": ["SER1"],
                 }],
             )
             (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
             self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md")
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 0, payload)
+
+    def test_v2_axle_remote_check_cannot_promote_without_local_formal_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True, formal=True)
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{"claim_id": "C1", "claim": "Formal claim", "source_ids": [], "evidence_ids": ["E-AXLE-1"], "status": "supported"}],
+            )
+            self.write_jsonl(
+                research_dir / "evidence.jsonl",
+                [{
+                    "schema_version": "deep-research.evidence.v2",
+                    "evidence_id": "E-AXLE-1",
+                    "evidence_type": "axle_remote_check",
+                    "source_ids": [],
+                    "claim_ids": ["C1"],
+                    "artifact_ref": "formal/artifacts/remote/axle/E-AXLE-1.json",
+                    "summary": "AXLE remote result.",
+                    "inspection_status": "checked",
+                    "redaction_status": "redacted",
+                    "sensitivity_class": "private",
+                    "created_at": "2026-05-28T00:00:00Z",
+                    "limitations": ["remote result is supplemental only"],
+                    "tool_name": "axiom-axle-mcp",
+                    "tool_version": "0.3.3",
+                    "endpoint": "https://axle.axiommath.ai",
+                    "operation": "check",
+                    "payload_hash": "sha256:test",
+                    "input_encoding_ref": "formal/input/C1.json",
+                    "result_status": "passed",
+                    "expiry": "2026-12-31T00:00:00Z",
+                }],
+            )
+            review = {
+                "schema_version": "deep-research.statement-equivalence-review.v1",
+                "statement_equivalence_review_id": "SER1",
+                "formal_target_id": "FT1",
+                "reviewer": "lead",
+                "review_status": "reviewed_by_lead",
+                "relation_status": "equivalent_reviewed",
+                "informal_statement_ref": "sources/S1.md#theorem",
+                "lean_statement_ref": "formal/final/proof.lean",
+                "compared_definitions": "same definitions",
+                "hypothesis_deltas": "none",
+                "quantifier_deltas": "none",
+                "conclusion_deltas": "none",
+                "boundary_cases": "none",
+                "limitations": "none",
+                "encoding_assumptions": "simple finite graph",
+            }
+            self.write_jsonl(research_dir / "formal" / "statement_equivalence_reviews.jsonl", [review])
+            self.write_jsonl(
+                research_dir / "formal" / "formal_targets.jsonl",
+                [{
+                    "schema_version": "deep-research.formal-target.v1",
+                    "formal_target_id": "FT1",
+                    "claim_ids": ["C1"],
+                    "source_ids": [],
+                    "informal_statement_ref": "sources/S1.md#theorem",
+                    "lean_statement_ref": "formal/final/proof.lean",
+                    "artifact_stage": "final_candidate",
+                    "lean_check_status": "typechecked",
+                    "placeholder_status": "no_active_placeholders",
+                    "trust_base_status": "accepted_trust_base",
+                    "statement_relation_status": "equivalent_reviewed",
+                    "review_status": "reviewed_by_lead",
+                    "claim_support_status": "supports_claim_after_equivalence_review",
+                    "formal_check_requirement": "optional",
+                    "toolchain": "remote AXLE",
+                    "mathlib": "recorded",
+                    "verification_evidence_ids": ["E-AXLE-1"],
+                    "statement_equivalence_review_ids": ["SER1"],
+                }],
+            )
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("LOCAL_FORMAL_CHECK_REQUIRED_FOR_PROMOTION", {error["code"] for error in payload["errors"]})
+
+    def test_v2_expired_axle_remote_check_is_valid_context_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True)
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{"claim_id": "C1", "claim": "Context claim", "source_ids": [], "evidence_ids": ["E-AXLE-OLD"], "status": "provisional"}],
+            )
+            self.write_jsonl(
+                research_dir / "evidence.jsonl",
+                [{
+                    "schema_version": "deep-research.evidence.v2",
+                    "evidence_id": "E-AXLE-OLD",
+                    "evidence_type": "axle_remote_check",
+                    "source_ids": [],
+                    "claim_ids": ["C1"],
+                    "artifact_ref": "formal/artifacts/remote/axle/E-AXLE-OLD.json",
+                    "summary": "Expired AXLE result retained for context only.",
+                    "inspection_status": "checked",
+                    "redaction_status": "redacted",
+                    "sensitivity_class": "private",
+                    "created_at": "2026-05-01T00:00:00Z",
+                    "limitations": ["expired; context only"],
+                    "tool_name": "axiom-axle-mcp",
+                    "tool_version": "0.3.3",
+                    "endpoint": "https://axle.axiommath.ai",
+                    "operation": "check",
+                    "payload_hash": "sha256:test",
+                    "input_encoding_ref": "formal/input/C1.json",
+                    "result_status": "expired",
+                    "expiry": "2026-05-02T00:00:00Z",
+                }],
+            )
             code, payload = self.validate_research_dir(research_dir)
             self.assertEqual(code, 0, payload)
 

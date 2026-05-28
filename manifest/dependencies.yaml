@@ -49,6 +49,15 @@
       },
       "capabilities": ["npm"]
     },
+    "uvx-cli": {
+      "description": "uvx command for optional manual AXLE MCP server execution.",
+      "version_constraint": "manual",
+      "candidates": {
+        "linux": ["uvx"],
+        "windows": ["uvx.exe", "uvx"]
+      },
+      "capabilities": ["manual-mcp-command"]
+    },
     "lean-cli": {
       "description": "Lean command line executable for optional local formal typechecking.",
       "version_constraint": ">=4",
@@ -371,6 +380,7 @@
     "ocr-runtime": {"type": "tool", "logical_tool": "ocr-runtime"},
     "zotero-credentials": {"type": "remote-service"},
     "modal-auth": {"type": "remote-service"},
+    "axle-auth": {"type": "remote-service"},
     "calibre-cli": {"type": "tool", "logical_tool": "calibre-cli"},
     "git-cli": {"type": "tool", "logical_tool": "git-cli"},
     "github-cli": {"type": "tool", "logical_tool": "github-cli"},

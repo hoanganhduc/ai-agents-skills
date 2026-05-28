@@ -194,6 +194,8 @@ For v2 structured runs, formal artifacts live under `formal/`:
   formal statement are equivalent enough to use as evidence.
 - `artifacts/` stores Lean skeletons, candidate Lean files, typecheck logs, and
   scan records.
+- `artifacts/remote/axle/` stores optional AXLE remote-result records when the
+  user explicitly chooses that manual MCP workflow.
 - `README.md` summarizes the local policy.
 
 A Lean artifact may support a final report claim only after the parent has
@@ -201,6 +203,11 @@ recorded typecheck evidence, placeholder/trust-base scan evidence, an accepted
 statement-equivalence review, and a lead or human review. Fake transports,
 stubs, `sorry`, `admit`, unsafe trust-base growth, or missing statement review
 cannot promote support.
+
+AXLE MCP output, when present, is recorded as `axle_remote_check` evidence. It
+is supplemental context only: it cannot replace local `formal_check` evidence,
+set local Lean typecheck status, satisfy placeholder/trust-base scans, or
+promote formal support on its own.
 
 Use the local helpers as optional gates:
 
@@ -280,6 +287,8 @@ Output structure guidance:
   `lean-strict-verification-gate` only for optional formalization candidates;
   they supplement the research workflow and do not replace source, computation,
   or human mathematical review.
+- Use `axiom-axle-mcp` only for manual optional AXLE MCP setup. Treat its
+  results as `axle_remote_check` evidence, not as local formal proof evidence.
 
 ## Escalation rules
 
@@ -313,6 +322,9 @@ Output structure guidance:
 - [ ] Formalized claims have `formal_targets.jsonl`,
       `statement_equivalence_reviews.jsonl`, scan/typecheck artifacts, and lead
       or human review before support is promoted
+- [ ] AXLE remote checks, if used, are recorded as supplemental
+      `axle_remote_check` evidence and paired with local `formal_check` evidence
+      before any formal support is promoted
 - [ ] Budget/model policy state is recorded only in parent-owned runbook artifacts
 - [ ] No aggregate research quality score replaces guard outputs
 

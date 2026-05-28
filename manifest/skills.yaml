@@ -186,6 +186,15 @@
       "optional_capabilities": ["lean-safety-scan", "optional-local-typecheck"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "axiom-axle-mcp": {
+      "description": "Optional inert setup helper for AxiomMath AXLE MCP formal-proof assistance.",
+      "profiles": ["formal-research-remote", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["uvx-cli", "axle-auth"],
+      "optional_capabilities": ["manual-axle-mcp-setup", "remote-formal-check-evidence"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+    },
     "model-router": {
       "description": "Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work.",
       "profiles": ["workflow-tools", "multi-agent", "serious-research", "full-research"],

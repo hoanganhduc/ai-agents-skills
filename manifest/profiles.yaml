@@ -64,11 +64,12 @@
       ]
     },
     "formal-research-remote": {
-      "description": "Reserved explicit remote formal lane profile; currently installs only local formal-lane skills until a separately reviewed remote adapter exists.",
+      "description": "Optional remote formal lane setup for AXLE MCP plus local formal-lane skills; install is inert and does not start remote services.",
       "skills": [
         "formal-skeleton-helper",
         "lean-formalization-intake",
-        "lean-strict-verification-gate"
+        "lean-strict-verification-gate",
+        "axiom-axle-mcp"
       ]
     },
     "figure": {
@@ -111,6 +112,7 @@
         "formal-skeleton-helper",
         "lean-formalization-intake",
         "lean-strict-verification-gate",
+        "axiom-axle-mcp",
         "model-router",
         "workspace-rearranger",
         "research-digest-wrapper",

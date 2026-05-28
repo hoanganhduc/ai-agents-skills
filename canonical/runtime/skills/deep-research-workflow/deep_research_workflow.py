@@ -49,6 +49,7 @@ EVIDENCE_TYPES = {
     "source_note",
     "formal_statement",
     "formal_check",
+    "axle_remote_check",
     "computation",
     "guard",
     "consent",
@@ -60,6 +61,7 @@ INSPECTION_STATUSES = {"unchecked", "checked", "failed", "not_applicable"}
 REDACTION_STATUSES = {"safe", "redacted", "private", "not_reviewed"}
 SENSITIVITY_CLASSES = {"public", "private", "unpublished", "unknown"}
 COMPUTATION_RESULT_STATUSES = {"passed", "failed", "partial", "timeout", "unavailable"}
+AXLE_REMOTE_RESULT_STATUSES = {"passed", "failed", "partial", "timeout", "unavailable", "expired"}
 COMPUTATION_COVERAGE_STATUSES = {
     "exhaustive",
     "bounded_complete",
@@ -387,7 +389,7 @@ def write_structured_files(target_dir: Path, *, force: bool, schema_version: str
         written.append(write_text(target_dir / "evidence.jsonl", "", force=force))
     if formal:
         formal_dir = target_dir / "formal"
-        for name in ("input", "output", "final"):
+        for name in ("input", "output", "final", "artifacts/remote/axle"):
             directory = formal_dir / name
             directory.mkdir(parents=True, exist_ok=True)
             written.append(directory)
@@ -404,6 +406,7 @@ def write_structured_files(target_dir: Path, *, force: bool, schema_version: str
                 "- status: not-started\n"
                 "- claim_support: none\n"
                 "- delivery_blocked_by_formal_lane: false\n"
+                "- axle_remote_check: supplemental only; cannot promote formal support without local formal_check evidence\n"
                 "- recommended_next_action: add formal targets or mark the lane deferred/not applicable\n",
                 force=force,
             ),
@@ -690,6 +693,8 @@ def validate_evidence(
         require_string_list(row.get("limitations"), errors, path, line, "limitations")
         if evidence_type == "computation":
             validate_computation_evidence(row, path, errors, line)
+        if evidence_type == "axle_remote_check":
+            validate_axle_remote_evidence(row, path, errors, line)
         if evidence_type == "consent":
             validate_consent_evidence(row, path, errors, line)
         if isinstance(evidence_id, str) and evidence_id.startswith("E-AGD-"):
@@ -723,6 +728,31 @@ def validate_computation_evidence(
         add_error(errors, "COMPUTATION_COVERAGE_STATUS_INVALID", path, f"line {line}: invalid computation coverage_status")
     if row.get("coverage_status") in {"exhaustive", "bounded_complete"} and not is_nonempty_string(row.get("exhaustiveness_argument")):
         add_error(errors, "COMPUTATION_EXHAUSTIVENESS_REQUIRED", path, f"line {line}: exhaustive computation evidence requires exhaustiveness_argument")
+
+
+def validate_axle_remote_evidence(
+    row: dict[str, Any],
+    path: Path,
+    errors: list[dict[str, Any]],
+    line: int | None,
+) -> None:
+    for field in (
+        "tool_name",
+        "tool_version",
+        "endpoint",
+        "operation",
+        "payload_hash",
+        "input_encoding_ref",
+        "result_status",
+        "expiry",
+    ):
+        if not is_nonempty_string(row.get(field)):
+            add_error(errors, "AXLE_REMOTE_EVIDENCE_FIELD_REQUIRED", path, f"line {line}: AXLE evidence requires {field}")
+    if row.get("tool_name") != "axiom-axle-mcp":
+        add_error(errors, "AXLE_REMOTE_TOOL_INVALID", path, f"line {line}: AXLE evidence tool_name must be 'axiom-axle-mcp'")
+    if row.get("result_status") not in AXLE_REMOTE_RESULT_STATUSES:
+        add_error(errors, "AXLE_REMOTE_RESULT_STATUS_INVALID", path, f"line {line}: invalid AXLE result_status")
+    validate_timestamp(row.get("expiry"), path, errors, line, "expiry")
 
 
 def validate_consent_evidence(
@@ -975,6 +1005,8 @@ def validate_formal_target_state(
         evidence = evidence_map.get(evidence_id, {})
         if evidence.get("verification_source") == "fake_transport":
             add_error(errors, "FAKE_TRANSPORT_CANNOT_PROMOTE_FORMAL_SUPPORT", path, f"line {line}: fake transport cannot promote formal support")
+    if not has_local_formal_check_evidence(row, evidence_map):
+        add_error(errors, "LOCAL_FORMAL_CHECK_REQUIRED_FOR_PROMOTION", path, f"line {line}: promoted formal support requires local formal_check evidence")
 
 
 def has_matching_statement_review(
@@ -997,6 +1029,18 @@ def has_matching_statement_review(
         if review.get("review_status") not in PROMOTION_REVIEW_STATUSES:
             continue
         return True
+    return False
+
+
+def has_local_formal_check_evidence(target: dict[str, Any], evidence_map: dict[str, dict[str, Any]]) -> bool:
+    for evidence_id in target.get("verification_evidence_ids", []):
+        evidence = evidence_map.get(evidence_id)
+        if not evidence:
+            continue
+        if evidence.get("evidence_type") != "formal_check":
+            continue
+        if evidence.get("verification_source") in {"local_lean", "local_project_command"}:
+            return True
     return False
 
 

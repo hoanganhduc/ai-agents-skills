@@ -273,8 +273,8 @@ make install ARGS="--profile research-core --dry-run"
 | `ebook` | Ebook discovery and library handoff. | `calibre`, `vnthuquan` |
 | `figure` | Structural figure generation and checking. | `tikz-draw` |
 | `formal-research` | Optional local-first Lean formalization lane for research claims. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate` |
-| `formal-research-remote` | Reserved explicit remote formal lane profile; currently installs only local formal-lane skills until a separately reviewed remote adapter exists. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate` |
-| `full-research` | All research-related skills. | `deep-research-workflow`, `source-research`, `research-briefing`, `research-report-reviewer`, `research-verification-gate`, `draft-writing`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `database-lookup`, `docling`, `get-available-resources`, `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate`, `model-router`, `workspace-rearranger`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `sagemath`, `graph-verifier`, `agent-group-discuss`, `prose`, `cross-agent-delegation`, `modal-research-compute`, `paper-review`, `annotated-review`, `vnthuquan`, `self-improving-agent`, `session-logs` |
+| `formal-research-remote` | Optional remote formal lane setup for AXLE MCP plus local formal-lane skills; install is inert and does not start remote services. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate`, `axiom-axle-mcp` |
+| `full-research` | All research-related skills. | `deep-research-workflow`, `source-research`, `research-briefing`, `research-report-reviewer`, `research-verification-gate`, `draft-writing`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `database-lookup`, `docling`, `get-available-resources`, `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate`, `axiom-axle-mcp`, `model-router`, `workspace-rearranger`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `sagemath`, `graph-verifier`, `agent-group-discuss`, `prose`, `cross-agent-delegation`, `modal-research-compute`, `paper-review`, `annotated-review`, `vnthuquan`, `self-improving-agent`, `session-logs` |
 | `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
 | `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier`, `formal-skeleton-helper` |
 | `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation` |
@@ -329,6 +329,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 |---|---|---|
 | `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `serious-research`, `full-research` |
 | `annotated-review` | Annotated paper review workflow when both annotation and review are requested. | `full-research` |
+| `axiom-axle-mcp` | Optional inert setup helper for AxiomMath AXLE MCP formal-proof assistance. | `formal-research-remote`, `full-research` |
 | `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `serious-research`, `full-research` |
 | `cross-agent-delegation` | Cross-agent delegation packet contract for bounded parent-controlled handoffs. | `multi-agent`, `serious-research`, `full-research` |
 | `database-lookup` | Structured public scientific, biomedical, regulatory, materials, and economic database lookups. | `document`, `serious-research`, `full-research` |

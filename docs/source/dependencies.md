@@ -56,12 +56,14 @@ Status vocabulary used by `precheck`:
 | `rocm-smi-tool` | AMD ROCm GPU inspection tool used by resource preflight when available. |
 | `sage-runtime` | SageMath runtime, local on Linux or WSL-backed on Windows. |
 | `tex-runtime` | TeX engine for TikZ compile checks. |
+| `uvx-cli` | uvx command for optional manual AXLE MCP server execution. |
 | `wsl-runtime` | Windows Subsystem for Linux runtime. |
 
 ## Packages And Services
 
 | Dependency | Type | Detail |
 |---|---|---|
+| `axle-auth` | `remote-service` | remote-service |
 | `calibre-cli` | `tool` | calibre-cli |
 | `docling-mcp-python-package` | `python` | docling_mcp; candidate set `docling` |
 | `docling-python-package` | `python` | docling; candidate set `docling` |
@@ -138,6 +140,7 @@ Evidence inspected:
 | `ripgrep-cli` | optional but expected by local search/session workflows | rg on PATH. | rg.exe or rg on PATH. | `session-logs`, `research workflows`, `repo inspection` |
 | `sagemath` | required for the sagemath skill and optional Sage-backed graph/TikZ workflows | Native executable via `AAS_SAGE`, `sage` on `PATH`, a local Sage install, or a Docker-backed wrapper that behaves like `sage` for `--version` and `-c` probes. | WSL-backed SageMath inside Ubuntu 24.04, detected through wsl.exe when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when available, or an ext4.vhdx presence warning when the distro image is not inspectable. | `sagemath`, `tikz-draw`, `openclaw/source research math verification` |
 | `tex-runtime` | required for TikZ compile checks and optional annotated-review LaTeX/PDF output | TeX Live or compatible distribution providing pdflatex, lualatex, or xelatex. | MiKTeX, TeX Live, or compatible distribution providing pdflatex.exe, lualatex.exe, or xelatex.exe. | `tikz-draw`, `annotated-review` |
+| `uvx-cli` | optional manual command runner for AxiomMath AXLE MCP; never invoked by installer, precheck, or smoke | uvx on PATH for manual live AXLE MCP setup. | uvx.exe or uvx on PATH for manual live AXLE MCP setup. | `axiom-axle-mcp manual setup` |
 | `wsl-runtime` | required when a Windows skill delegates to Linux-only tools | not applicable | Current SageMath flow uses direct WSL execution with an Ubuntu 24.04 distro. When precheck is run from WSL/Linux against a mounted Windows profile, the current local WSL filesystem is also inspected. Mounted rootfs directories are inspected when present; ext4.vhdx presence is reported as a degraded inspection gap because Sage inside the image cannot be verified without WSL, a local WSL filesystem, or a mounted rootfs. Docker is explicitly not required by the current Windows Sage config. | `sagemath`, `tikz-draw optional Sage graph mode` |
 
 ### Python Packages
@@ -182,6 +185,7 @@ Evidence inspected:
 
 | Integration | Description | Used By |
 |---|---|---|
+| `axiom-axle` | AxiomMath AXLE API key and MCP client configuration are configured manually outside this repo; helpers report presence only and never write config. | `axiom-axle-mcp` |
 | `github` | GitHub app/CLI authentication is configured outside this repo. | `github`, `gh-fix-ci`, `yeet` |
 | `github-copilot-cli` | Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when --agents copilot is selected; known credential sources are reported by presence rather than value, config secret values are not read, and command arguments/version output are redacted. | `copilot target` |
 | `google-drive` | Google Drive service-account or OAuth credentials are configured outside this repo. | `calibre`, `zotero optional Google Drive helpers` |

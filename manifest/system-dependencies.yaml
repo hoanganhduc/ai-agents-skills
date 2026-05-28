@@ -74,6 +74,13 @@
       "windows": "Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server.",
       "used_by": ["Codex MCP", "zotero translation server"]
     },
+    "uvx-cli": {
+      "display_name": "uvx",
+      "requirement": "optional manual command runner for AxiomMath AXLE MCP; never invoked by installer, precheck, or smoke",
+      "linux": "uvx on PATH for manual live AXLE MCP setup.",
+      "windows": "uvx.exe or uvx on PATH for manual live AXLE MCP setup.",
+      "used_by": ["axiom-axle-mcp manual setup"]
+    },
     "lean-cli": {
       "display_name": "Lean command line",
       "requirement": "optional for local formal typechecking; never installed by wrappers",
@@ -395,6 +402,10 @@
     "provider-configs": {
       "description": "OpenAI, Claude, DeepSeek, Copilot, and other provider auth/config files are intentionally excluded.",
       "used_by": ["agent frontends"]
+    },
+    "axiom-axle": {
+      "description": "AxiomMath AXLE API key and MCP client configuration are configured manually outside this repo; helpers report presence only and never write config.",
+      "used_by": ["axiom-axle-mcp"]
     }
   },
   "windows_substrate_notes": [
