@@ -1039,6 +1039,14 @@ class RuntimeIntegrationTests(unittest.TestCase):
             "skills/graph-verifier/run_graph_verifier.bat",
         )
         self.assertEqual(
+            runtime_command_target(manifests, "graph-verifier", "windows", "run_skill.ps1"),
+            "skills/graph-verifier/run_graph_verifier.bat",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-strict-verification-gate", "windows", "run_skill.ps1"),
+            "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1",
+        )
+        self.assertEqual(
             runtime_command_target(manifests, "graph-verifier", "linux"),
             "skills/graph-verifier/run_graph_verifier.sh",
         )
