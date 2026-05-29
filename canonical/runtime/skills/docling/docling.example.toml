@@ -41,6 +41,8 @@ requires_artifacts = true
 # DOCLING_ARTIFACTS_PATH in the environment.
 # artifacts_path = "/opt/docling-artifacts"
 
-# OCR.space is intentionally not configurable in Phase 1. A future explicit
-# online adapter must account for request size/rate limits and use OCR Engine 3
-# for paper extraction quality.
+# OCR.space is intentionally not configurable here. Use explicit CLI fallback
+# flags instead:
+# --ocr-fallback ocrspace --allow-remote-ocr
+# The adapter uses OCR Engine 3. Request size/rate limits and account quota
+# still apply.

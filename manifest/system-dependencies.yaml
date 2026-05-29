@@ -188,6 +188,13 @@
       "used_by": ["docling MCP integration"],
       "source": "Windows Claude docling installation instructions."
     },
+    "pypdfium2": {
+      "requirement": "pypdfium2>=4",
+      "import_name": "pypdfium2",
+      "platforms": ["linux", "windows"],
+      "used_by": ["docling OCR.space fallback PDF rendering"],
+      "source": "Docling runtime requirements for explicit OCR.space fallback page rendering."
+    },
     "rapidocr": {
       "requirement": "docling[rapidocr] extra",
       "import_name": "rapidocr",

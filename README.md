@@ -235,9 +235,9 @@ caches, downloaded documents, bytecode, archives, symlinks, sensitive material,
 and persistent execution markers.
 
 Docling is the main document/OCR runtime-backed skill. Its managed wrapper is
-local-only in this repo: sources must be local files, remote service fields are
-rejected from config, and OCR.space is not enabled. Use `scan-heavy` when you
-want stronger local OCR for image-backed papers:
+local-only by default: sources must be local files and remote service fields
+are rejected from config. Use `scan-heavy` when you want stronger local OCR
+for image-backed papers:
 
 ```bash
 bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
@@ -247,11 +247,29 @@ bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \
   --preset scan-heavy
 ```
 
+OCR.space fallback is available only through explicit remote upload flags:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \
+  --source "/path/to/paper.pdf" \
+  --to md \
+  --preset scan-heavy \
+  --ocr-fallback ocrspace \
+  --allow-remote-ocr
+```
+
+To test the live OCR.space adapter, run the explicit smoke command. It
+generates and uploads a synthetic one-page PDF, not a user document:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh ocrspace-smoke \
+  --allow-remote-ocr
+```
+
 Docling config can be passed with `--config`, `AAS_DOCLING_CONFIG`,
 `DOCLING_CONFIG`, or `$AAS_RUNTIME_WORKSPACE/config/docling.toml`. The runtime
-skill directory includes `docling.example.toml`; live config files stay outside
-the managed manifest. Any future OCR.space adapter should be a separate
-explicit opt-in path and use OCR Engine 3 for paper extraction quality.
+skill directory includes `docling.example.toml`; live config files and OCR.space
+keys stay outside the managed manifest.
 
 ## Profiles
 

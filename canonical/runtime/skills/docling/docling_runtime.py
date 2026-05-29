@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
+import html
+import io
+import json
 import os
 import re
 import sys
 from pathlib import Path
+from urllib import parse, request
 from urllib.parse import urlparse
 
 
@@ -69,6 +74,33 @@ BUILTIN_PRESETS = {
 ALLOWED_TOP_LEVEL_KEYS = {"schema_version", "default_preset", "defaults", "presets"}
 ALLOWED_OPTION_KEYS = set(DEFAULT_OPTIONS) | {"requires_artifacts"}
 LOCAL_OCR_ENGINES = {"auto", "easyocr", "ocrmac", "rapidocr", "tesseract", "tesserocr"}
+OCR_FALLBACKS = {"none", "ocrspace"}
+DEFAULT_OCR_QUALITY_THRESHOLD = 0.55
+DEFAULT_OCR_MIN_CHARS_PER_PAGE = 120
+DEFAULT_OCR_MIN_ALNUM_RATIO = 0.35
+DEFAULT_OCR_MAX_REPLACEMENT_RATIO = 0.02
+DEFAULT_OCRSPACE_MAX_PAGES = 10
+DEFAULT_OCRSPACE_DPI = 200
+DEFAULT_OCRSPACE_TIMEOUT = 60.0
+OCRSPACE_KEY_ENVS = ("OCRSPACE_API_KEY", "OCR_SPACE_API_KEY", "OCRSPACE_KEY", "OCR_SPACE_KEY")
+OCRSPACE_ENDPOINT = "https://api.ocr.space/parse/image"
+OCRSPACE_LANGUAGE_MAP = {
+    "en": "eng",
+    "eng": "eng",
+    "fr": "fre",
+    "fra": "fre",
+    "fre": "fre",
+    "de": "ger",
+    "deu": "ger",
+    "ger": "ger",
+    "es": "spa",
+    "it": "ita",
+    "pt": "por",
+    "vi": "vie",
+    "zh": "chs",
+    "zh-cn": "chs",
+    "zh-tw": "cht",
+}
 REMOTE_SCHEMES = {"http", "https", "ftp", "ftps", "s3", "gs", "az", "file"}
 REMOTE_REFERENCE_RE = re.compile(
     r"""(?ix)
@@ -128,6 +160,28 @@ def add_common_arguments(parser) -> None:
     parser.add_argument("--artifacts-path", default=None, help="Local Docling model artifact directory.")
     parser.add_argument("--num-threads", type=int, default=None)
     parser.add_argument("--device", choices=["auto", "cpu", "cuda", "mps"], default=None)
+
+
+def add_quality_arguments(parser) -> None:
+    parser.add_argument("--ocr-quality-threshold", type=float, default=DEFAULT_OCR_QUALITY_THRESHOLD)
+    parser.add_argument("--ocr-min-chars-per-page", type=int, default=DEFAULT_OCR_MIN_CHARS_PER_PAGE)
+    parser.add_argument("--ocr-min-alnum-ratio", type=float, default=DEFAULT_OCR_MIN_ALNUM_RATIO)
+    parser.add_argument("--ocr-max-replacement-ratio", type=float, default=DEFAULT_OCR_MAX_REPLACEMENT_RATIO)
+
+
+def add_remote_ocr_arguments(parser) -> None:
+    parser.add_argument("--ocr-fallback", choices=sorted(OCR_FALLBACKS), default="none")
+    parser.add_argument(
+        "--allow-remote-ocr",
+        action="store_true",
+        help="Allow explicit upload of selected local PDF pages to the configured remote OCR fallback.",
+    )
+    parser.add_argument("--ocrspace-max-pages", type=int, default=DEFAULT_OCRSPACE_MAX_PAGES)
+    parser.add_argument("--ocrspace-dpi", type=int, default=DEFAULT_OCRSPACE_DPI)
+    parser.add_argument("--ocrspace-timeout", type=float, default=DEFAULT_OCRSPACE_TIMEOUT)
+    parser.add_argument("--ocrspace-language", default=None)
+    parser.add_argument("--ocr-audit-output")
+    add_quality_arguments(parser)
 
 
 def resolve_runtime_options(args) -> dict:
@@ -245,6 +299,342 @@ def convert_with_options(converter, source: str, options: dict):
     return converter.convert(source, **conversion_kwargs(options))
 
 
+def document_text(document) -> str:
+    if hasattr(document, "export_to_text"):
+        text = document.export_to_text()
+        if text is not None:
+            return str(text)
+    texts = []
+    for item in getattr(document, "texts", []) or []:
+        value = getattr(item, "text", None)
+        if value:
+            texts.append(str(value))
+    return "\n".join(texts)
+
+
+def document_page_count(document) -> int:
+    if hasattr(document, "num_pages"):
+        try:
+            value = getattr(document, "num_pages")
+            if callable(value):
+                value = value()
+            return max(1, int(value))
+        except Exception:
+            return 1
+    return 1
+
+
+def document_quality_report(document, args) -> dict:
+    return evaluate_ocr_quality(
+        document_text(document),
+        pages=document_page_count(document),
+        threshold=float(args.ocr_quality_threshold),
+        min_chars_per_page=int(args.ocr_min_chars_per_page),
+        min_alnum_ratio=float(args.ocr_min_alnum_ratio),
+        max_replacement_ratio=float(args.ocr_max_replacement_ratio),
+    )
+
+
+def evaluate_ocr_quality(
+    text: str,
+    *,
+    pages: int,
+    threshold: float = DEFAULT_OCR_QUALITY_THRESHOLD,
+    min_chars_per_page: int = DEFAULT_OCR_MIN_CHARS_PER_PAGE,
+    min_alnum_ratio: float = DEFAULT_OCR_MIN_ALNUM_RATIO,
+    max_replacement_ratio: float = DEFAULT_OCR_MAX_REPLACEMENT_RATIO,
+) -> dict:
+    page_count = max(1, int(pages or 1))
+    threshold = _ratio(threshold, "ocr_quality_threshold")
+    min_alnum_ratio = _ratio(min_alnum_ratio, "ocr_min_alnum_ratio")
+    max_replacement_ratio = _ratio(max_replacement_ratio, "ocr_max_replacement_ratio")
+    min_chars_per_page = _positive_int(min_chars_per_page, "ocr_min_chars_per_page")
+
+    text = text or ""
+    stripped = text.strip()
+    nonspace_chars = [char for char in stripped if not char.isspace()]
+    nonspace_count = len(nonspace_chars)
+    alnum_count = sum(1 for char in nonspace_chars if char.isalnum())
+    replacement_count = stripped.count("\ufffd")
+    control_count = sum(1 for char in stripped if ord(char) < 32 and char not in "\n\r\t")
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'_-]{1,}", stripped)
+
+    chars_per_page = len(stripped) / page_count
+    words_per_page = len(words) / page_count
+    alnum_ratio = (alnum_count / nonspace_count) if nonspace_count else 0.0
+    replacement_ratio = (replacement_count / max(1, len(stripped))) if stripped else 0.0
+    control_ratio = (control_count / max(1, len(stripped))) if stripped else 0.0
+
+    score_parts = [
+        min(1.0, chars_per_page / min_chars_per_page),
+        min(1.0, words_per_page / 20.0),
+        min(1.0, alnum_ratio / min_alnum_ratio) if min_alnum_ratio else 1.0,
+        max(0.0, 1.0 - (replacement_ratio / max_replacement_ratio)) if max_replacement_ratio else 1.0,
+        max(0.0, 1.0 - (control_ratio / 0.02)),
+    ]
+    score = round(sum(score_parts) / len(score_parts), 4)
+    reasons = []
+    if not stripped:
+        reasons.append("no extracted text")
+    if chars_per_page < min_chars_per_page:
+        reasons.append("low characters per page")
+    if words_per_page < 20:
+        reasons.append("low words per page")
+    if alnum_ratio < min_alnum_ratio:
+        reasons.append("low alphanumeric ratio")
+    if replacement_ratio > max_replacement_ratio:
+        reasons.append("high replacement-character ratio")
+    if control_ratio > 0.02:
+        reasons.append("high control-character ratio")
+
+    return {
+        "schema_version": "docling-ocr-quality.v1",
+        "status": "ok" if score >= threshold and not reasons else "degraded",
+        "passes": score >= threshold and not reasons,
+        "score": score,
+        "threshold": threshold,
+        "pages": page_count,
+        "characters": len(stripped),
+        "characters_per_page": round(chars_per_page, 2),
+        "words": len(words),
+        "words_per_page": round(words_per_page, 2),
+        "alnum_ratio": round(alnum_ratio, 4),
+        "replacement_ratio": round(replacement_ratio, 4),
+        "control_ratio": round(control_ratio, 4),
+        "reasons": reasons,
+        "thresholds": {
+            "min_chars_per_page": min_chars_per_page,
+            "min_alnum_ratio": min_alnum_ratio,
+            "max_replacement_ratio": max_replacement_ratio,
+        },
+    }
+
+
+def validate_remote_ocr_args(args) -> None:
+    fallback = getattr(args, "ocr_fallback", "none")
+    if fallback == "none":
+        return
+    if fallback not in OCR_FALLBACKS:
+        raise DoclingRuntimeError(f"unsupported OCR fallback: {fallback}")
+    if not getattr(args, "allow_remote_ocr", False):
+        raise DoclingRuntimeError(f"OCR fallback {fallback} requires --allow-remote-ocr")
+    if fallback == "ocrspace" and not ocrspace_key_env():
+        joined = ", ".join(OCRSPACE_KEY_ENVS)
+        raise DoclingRuntimeError(f"OCR.space fallback requires one of these environment variables: {joined}")
+    _positive_int(getattr(args, "ocrspace_max_pages", DEFAULT_OCRSPACE_MAX_PAGES), "ocrspace_max_pages")
+    dpi = _positive_int(getattr(args, "ocrspace_dpi", DEFAULT_OCRSPACE_DPI), "ocrspace_dpi")
+    if dpi < 72 or dpi > 400:
+        raise DoclingRuntimeError("ocrspace_dpi must be between 72 and 400")
+    timeout = float(getattr(args, "ocrspace_timeout", DEFAULT_OCRSPACE_TIMEOUT))
+    if timeout <= 0:
+        raise DoclingRuntimeError("ocrspace_timeout must be positive")
+
+
+def maybe_write_audit(args, audit: dict) -> None:
+    output = getattr(args, "ocr_audit_output", None)
+    if not output:
+        return
+    write_text_output(output, json.dumps(audit, ensure_ascii=False, indent=2) + "\n", overwrite=True)
+
+
+def ocrspace_key_env() -> str | None:
+    for name in OCRSPACE_KEY_ENVS:
+        if os.environ.get(name):
+            return name
+    return None
+
+
+def _ocrspace_key() -> str:
+    env_name = ocrspace_key_env()
+    if not env_name:
+        joined = ", ".join(OCRSPACE_KEY_ENVS)
+        raise DoclingRuntimeError(f"OCR.space API key not found; set one of: {joined}")
+    return os.environ[env_name]
+
+
+def run_ocrspace_fallback(source: str, options: dict, args, *, local_quality: dict | None, local_error: dict | None) -> dict:
+    source_path = Path(source)
+    if source_path.suffix.lower() != ".pdf":
+        raise DoclingRuntimeError("OCR.space fallback currently supports local PDF sources only")
+    pages = _ocrspace_pages(source_path, options, int(args.ocrspace_max_pages))
+    language = _ocrspace_language(args, options)
+    timeout = float(args.ocrspace_timeout)
+    key = _ocrspace_key()
+    page_results = []
+    for page_number, image_bytes in render_pdf_pages(source_path, pages, int(args.ocrspace_dpi)):
+        response = call_ocrspace_image(image_bytes, key=key, language=language, timeout=timeout)
+        parsed_text, response_summary = parse_ocrspace_response(response)
+        page_results.append({
+            "page": page_number,
+            "text": parsed_text,
+            "response": response_summary,
+        })
+    return {
+        "schema_version": "docling-ocr-fallback.v1",
+        "provider": "ocrspace",
+        "engine": 3,
+        "language": language,
+        "uploaded_pages": pages,
+        "key_env": ocrspace_key_env(),
+        "local_quality": local_quality,
+        "local_error": local_error,
+        "pages": page_results,
+    }
+
+
+def render_pdf_pages(source: Path, pages: list[int], dpi: int):
+    try:
+        import pypdfium2
+    except Exception as exc:
+        raise DoclingRuntimeError("OCR.space fallback requires pypdfium2 to render PDF pages") from exc
+    try:
+        document = pypdfium2.PdfDocument(str(source))
+    except Exception as exc:
+        raise DoclingRuntimeError(f"failed to open PDF for OCR.space fallback: {source}") from exc
+    try:
+        scale = dpi / 72.0
+        for page_number in pages:
+            page = document[page_number - 1]
+            bitmap = None
+            try:
+                bitmap = page.render(scale=scale)
+                image = bitmap.to_pil()
+                buffer = io.BytesIO()
+                image.save(buffer, format="PNG")
+                yield page_number, buffer.getvalue()
+            finally:
+                if bitmap is not None:
+                    close_bitmap = getattr(bitmap, "close", None)
+                    if callable(close_bitmap):
+                        close_bitmap()
+                close_page = getattr(page, "close", None)
+                if callable(close_page):
+                    close_page()
+    finally:
+        document.close()
+
+
+def call_ocrspace_image(image_bytes: bytes, *, key: str, language: str, timeout: float) -> dict:
+    payload = parse.urlencode({
+        "base64Image": "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii"),
+        "language": language,
+        "isOverlayRequired": "false",
+        "OCREngine": "3",
+    }).encode("utf-8")
+    req = request.Request(
+        OCRSPACE_ENDPOINT,
+        data=payload,
+        headers={
+            "apikey": key,
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "ai-agents-skills-docling-ocrspace/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with request.urlopen(req, timeout=timeout) as response:
+            raw = response.read(5_000_000)
+            status = response.status
+    except Exception as exc:
+        raise DoclingRuntimeError(f"OCR.space request failed: {type(exc).__name__}: {exc}") from exc
+    try:
+        data = json.loads(raw.decode("utf-8", errors="replace"))
+    except Exception as exc:
+        raise DoclingRuntimeError(f"OCR.space returned non-JSON response with HTTP status {status}") from exc
+    data["_http_status"] = status
+    return data
+
+
+def parse_ocrspace_response(payload: dict) -> tuple[str, dict]:
+    parsed_results = payload.get("ParsedResults") or []
+    if payload.get("IsErroredOnProcessing"):
+        message = payload.get("ErrorMessage") or payload.get("ErrorDetails") or "OCR.space processing error"
+        if isinstance(message, list):
+            message = "; ".join(str(item) for item in message)
+        raise DoclingRuntimeError(f"OCR.space processing failed: {str(message)[:300]}")
+    texts = []
+    for item in parsed_results:
+        if isinstance(item, dict):
+            texts.append(str(item.get("ParsedText") or ""))
+    summary = {
+        "http_status": payload.get("_http_status"),
+        "ocr_exit_code": payload.get("OCRExitCode"),
+        "is_errored_on_processing": payload.get("IsErroredOnProcessing"),
+        "processing_time_ms": payload.get("ProcessingTimeInMilliseconds"),
+        "parsed_results_count": len(parsed_results) if isinstance(parsed_results, list) else None,
+        "parsed_text_lengths": [len(text) for text in texts],
+    }
+    return "\n".join(text.rstrip() for text in texts if text).strip(), summary
+
+
+def render_ocr_fallback_output(fallback: dict, output_format: str) -> str:
+    if output_format == "json":
+        return json.dumps(fallback, ensure_ascii=False, indent=2)
+    if output_format == "html":
+        sections = []
+        for item in fallback["pages"]:
+            sections.append(
+                f"<section><h2>OCR.space page {item['page']}</h2><pre>"
+                + html.escape(item.get("text", ""))
+                + "</pre></section>"
+            )
+        return "\n".join(sections)
+    separator = "\n\n" if output_format == "md" else "\n\f\n"
+    chunks = []
+    for item in fallback["pages"]:
+        text = item.get("text", "").strip()
+        if output_format == "md":
+            chunks.append(f"## OCR.space page {item['page']}\n\n{text}")
+        else:
+            chunks.append(text)
+    return separator.join(chunks).rstrip() + "\n"
+
+
+def _ocrspace_pages(source: Path, options: dict, max_pages: int) -> list[int]:
+    try:
+        import pypdfium2
+    except Exception as exc:
+        raise DoclingRuntimeError("OCR.space fallback requires pypdfium2 to inspect PDF pages") from exc
+    try:
+        document = pypdfium2.PdfDocument(str(source))
+    except Exception as exc:
+        raise DoclingRuntimeError(f"failed to open PDF for OCR.space fallback: {source}") from exc
+    try:
+        total_pages = len(document)
+    finally:
+        document.close()
+    if total_pages <= 0:
+        raise DoclingRuntimeError("PDF has no pages for OCR.space fallback")
+    start, end = 1, total_pages
+    if options.get("page_range"):
+        start, end = options["page_range"]
+        if start > total_pages:
+            raise DoclingRuntimeError(
+                f"page_range starts at page {start}, but PDF has only {total_pages} pages"
+            )
+        end = min(end, total_pages)
+    if options.get("max_num_pages"):
+        end = min(end, start + int(options["max_num_pages"]) - 1)
+    pages = list(range(start, end + 1))
+    if not pages:
+        raise DoclingRuntimeError("OCR.space fallback selected no PDF pages to upload")
+    if len(pages) > max_pages:
+        raise DoclingRuntimeError(
+            f"OCR.space fallback would upload {len(pages)} pages; "
+            f"raise --ocrspace-max-pages above {max_pages} or set --page-range"
+        )
+    return pages
+
+
+def _ocrspace_language(args, options: dict) -> str:
+    requested = getattr(args, "ocrspace_language", None)
+    if requested:
+        return str(requested)
+    langs = options.get("ocr_lang") or ["en"]
+    first = str(langs[0]).lower()
+    return OCRSPACE_LANGUAGE_MAP.get(first, first)
+
+
 def run_cli(callback) -> int:
     try:
         callback()
@@ -345,8 +735,8 @@ def _reject_remote_config(value, path: Path, trail: tuple[str, ...] = ()) -> Non
                 dotted = ".".join((*trail, key_text))
                 if "ocrspace" in normalized or "ocr_space" in normalized or normalized == "ocrengine":
                     raise DoclingRuntimeError(
-                        f"OCR.space configuration is not supported in Phase 1 ({path}:{dotted}); "
-                        "future OCR.space adapters must be explicit and use OCR Engine 3."
+                        f"OCR.space configuration is not supported in Docling config ({path}:{dotted}); "
+                        "use explicit CLI fallback flags: --ocr-fallback ocrspace --allow-remote-ocr."
                     )
                 raise DoclingRuntimeError(f"remote or secret-bearing Docling config key is not allowed: {path}:{dotted}")
             _reject_remote_config(child, path, (*trail, key_text))
@@ -545,6 +935,16 @@ def _positive_int(value, name: str) -> int:
         raise DoclingRuntimeError(f"{name} must be an integer") from exc
     if parsed <= 0:
         raise DoclingRuntimeError(f"{name} must be positive")
+    return parsed
+
+
+def _ratio(value, name: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise DoclingRuntimeError(f"{name} must be a number") from exc
+    if parsed < 0 or parsed > 1:
+        raise DoclingRuntimeError(f"{name} must be between 0 and 1")
     return parsed
 
 

@@ -31,7 +31,7 @@ PYTHON="$(select_python)" || {
 }
 cmd="${1:-}"
 if [[ -z "$cmd" ]]; then
-  echo "usage: run_docling.sh <doctor|convert|extract|chunk> [args...]" >&2
+  echo "usage: run_docling.sh <doctor|convert|extract|chunk|quality|ocrspace-smoke> [args...]" >&2
   exit 1
 fi
 shift || true
@@ -40,5 +40,7 @@ case "$cmd" in
   convert) exec "$PYTHON" "$ROOT/docling_convert.py" "$@" ;;
   extract) exec "$PYTHON" "$ROOT/docling_extract.py" "$@" ;;
   chunk) exec "$PYTHON" "$ROOT/docling_chunk.py" "$@" ;;
+  quality) exec "$PYTHON" "$ROOT/docling_quality.py" "$@" ;;
+  ocrspace-smoke) exec "$PYTHON" "$ROOT/docling_ocrspace_smoke.py" "$@" ;;
   *) echo "unknown subcommand: $cmd" >&2; exit 1 ;;
 esac
