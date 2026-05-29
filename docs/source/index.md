@@ -47,7 +47,8 @@ scope.
 Runtime-backed skills use managed helper files under a shared runtime root.
 Live runtime config, caches, local databases, downloaded papers, bytecode, and
 secrets stay outside the canonical source tree. The Docling wrapper is
-local-only by default; OCR.space is deferred to a future explicit adapter.
+local-only by default; OCR.space is available only as an explicit fallback
+with `--ocr-fallback ocrspace --allow-remote-ocr`.
 
 Most repository docs are generated from `installer/ai_agents_skills/docs.py`
 and manifest data. Edit the generator or manifests, run `make docs`, then use

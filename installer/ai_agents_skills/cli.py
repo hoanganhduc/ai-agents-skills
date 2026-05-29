@@ -1287,6 +1287,7 @@ def install_hint(name: str, result: dict[str, Any]) -> str:
         "rocm-smi-tool": "install ROCm tools if AMD GPU detection is needed",
         "docling-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install docling",
         "docling-mcp-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install docling-mcp",
+        "pypdfium2-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install pypdfium2",
         "rapidocr-python-package": "install Docling rapidocr support in the selected Python environment: <selected-python> -m pip install 'docling[rapidocr]'",
         "networkx-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install networkx",
         "psutil-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install psutil",

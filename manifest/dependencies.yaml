@@ -356,6 +356,7 @@
   "packages": {
     "docling-python-package": {"type": "python", "module": "docling", "candidate_set": "docling"},
     "docling-mcp-python-package": {"type": "python", "module": "docling_mcp", "candidate_set": "docling"},
+    "pypdfium2-python-package": {"type": "python", "module": "pypdfium2", "candidate_set": "docling"},
     "rapidocr-python-package": {"type": "python", "module": "rapidocr", "candidate_set": "docling"},
     "networkx-python-package": {"type": "python", "module": "networkx"},
     "psutil-python-package": {"type": "python", "module": "psutil"},

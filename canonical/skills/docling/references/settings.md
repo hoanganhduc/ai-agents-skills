@@ -5,11 +5,12 @@ local OCR engines, and local model artifacts. Remote service fields, OCR.space
 settings, endpoints, provider URLs, and secret-bearing keys are rejected by the
 runtime config loader.
 
-OCR.space is Phase 2 only. A future online adapter must be explicit, account
-for request size/rate limits, and use OCR Engine 3 for paper extraction quality.
-Splitting a PDF into one image per page can help with per-request size and
-timeout behavior, but it does not bypass account-level quota, rate, or
-concurrency limits.
+OCR.space fallback is explicit and separate from config. Use
+`--ocr-fallback ocrspace --allow-remote-ocr` only when the user accepts remote
+page upload. The adapter accounts for request size/rate limits, uses OCR
+Engine 3 for paper extraction quality, and splits a PDF into one image per page.
+Splitting can help with per-request size and timeout behavior, but it does not
+bypass account-level quota, rate, or concurrency limits.
 
 Important environment variables and settings to expose in workflows:
 
@@ -23,6 +24,7 @@ Important environment variables and settings to expose in workflows:
 - `OMP_NUM_THREADS`
 - `AAS_DOCLING_CONFIG`
 - `AAS_DOCLING_PRESET`
+- `OCRSPACE_API_KEY` or `OCR_SPACE_API_KEY`
 
 Important pipeline options:
 

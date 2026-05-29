@@ -33,7 +33,7 @@ if ($env:DOCLING_RUN_ARG_COUNT -match '^\d+$') {
 }
 
 if ($SkillArgs.Count -lt 1) {
-    Write-Error "usage: run_docling.ps1 <doctor|convert|extract|chunk> [args...]"
+    Write-Error "usage: run_docling.ps1 <doctor|convert|extract|chunk|quality|ocrspace-smoke> [args...]"
     exit 1
 }
 
@@ -44,6 +44,8 @@ $script = switch -Regex ($cmd) {
     '^(?i:convert)$' { Join-Path $PSScriptRoot "docling_convert.py"; break }
     '^(?i:extract)$' { Join-Path $PSScriptRoot "docling_extract.py"; break }
     '^(?i:chunk)$' { Join-Path $PSScriptRoot "docling_chunk.py"; break }
+    '^(?i:quality)$' { Join-Path $PSScriptRoot "docling_quality.py"; break }
+    '^(?i:ocrspace-smoke)$' { Join-Path $PSScriptRoot "docling_ocrspace_smoke.py"; break }
     default {
         Write-Error "unknown subcommand: $cmd"
         exit 1

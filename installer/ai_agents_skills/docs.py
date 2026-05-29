@@ -286,9 +286,9 @@ caches, downloaded documents, bytecode, archives, symlinks, sensitive material,
 and persistent execution markers.
 
 Docling is the main document/OCR runtime-backed skill. Its managed wrapper is
-local-only in this repo: sources must be local files, remote service fields are
-rejected from config, and OCR.space is not enabled. Use `scan-heavy` when you
-want stronger local OCR for image-backed papers:
+local-only by default: sources must be local files and remote service fields
+are rejected from config. Use `scan-heavy` when you want stronger local OCR
+for image-backed papers:
 
 ```bash
 bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
@@ -298,11 +298,29 @@ bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \\
   --preset scan-heavy
 ```
 
+OCR.space fallback is available only through explicit remote upload flags:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \\
+  --source "/path/to/paper.pdf" \\
+  --to md \\
+  --preset scan-heavy \\
+  --ocr-fallback ocrspace \\
+  --allow-remote-ocr
+```
+
+To test the live OCR.space adapter, run the explicit smoke command. It
+generates and uploads a synthetic one-page PDF, not a user document:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh ocrspace-smoke \\
+  --allow-remote-ocr
+```
+
 Docling config can be passed with `--config`, `AAS_DOCLING_CONFIG`,
 `DOCLING_CONFIG`, or `$AAS_RUNTIME_WORKSPACE/config/docling.toml`. The runtime
-skill directory includes `docling.example.toml`; live config files stay outside
-the managed manifest. Any future OCR.space adapter should be a separate
-explicit opt-in path and use OCR Engine 3 for paper extraction quality.
+skill directory includes `docling.example.toml`; live config files and OCR.space
+keys stay outside the managed manifest.
 
 ## Profiles
 
@@ -546,12 +564,12 @@ def docling_runtime_notes() -> list[str]:
         "",
         "## Docling And OCR Runtime Notes",
         "",
-        "The managed Docling runtime is intentionally local-only. The wrappers",
-        "accept local paths for `doctor`, `convert`, `extract`, and `chunk`,",
+        "The managed Docling runtime is local-only by default. The wrappers",
+        "accept local paths for `doctor`, `convert`, `extract`, `chunk`, and `quality`,",
         "load Docling lazily after argument/config validation, and reject URL",
         "sources, network-style paths, HTML/Markdown inputs with remote assets,",
         "remote service config fields, provider URLs, API tokens, and OCR.space",
-        "settings.",
+        "settings in config files.",
         "",
         "Useful local OCR controls include:",
         "",
@@ -561,6 +579,7 @@ def docling_runtime_notes() -> list[str]:
         "- `--ocr-engine auto|easyocr|ocrmac|rapidocr|tesseract|tesserocr`.",
         "- `--table-mode fast|accurate`, `--page-range`, `--max-num-pages`,",
         "  and `--max-file-size` for bounded conversions.",
+        "- `quality --source <pdf>` to score local extraction quality before fallback.",
         "",
         "Config discovery order is `--config`, `AAS_DOCLING_CONFIG`,",
         "`DOCLING_CONFIG`, `$AAS_RUNTIME_WORKSPACE/config/docling.toml`, and",
@@ -569,12 +588,20 @@ def docling_runtime_notes() -> list[str]:
         "tracked template; live configs, caches, downloaded PDFs, and runtime",
         "data are not promoted into the managed runtime manifest.",
         "",
-        "OCR.space is deliberately deferred. Splitting a PDF into one image per",
-        "page may help satisfy per-request size or timeout limits, but it does",
-        "not bypass account-level quota, rate, or concurrency limits. If an",
-        "OCR.space adapter is added later, it should be explicit, separate from",
-        "the Docling local path, redact secrets, document retries/costs, and use",
-        "OCR Engine 3 for paper extraction quality.",
+        "OCR.space is available only as an explicit remote fallback: pass",
+        "`--ocr-fallback ocrspace --allow-remote-ocr` to `convert`, provide",
+        "`OCRSPACE_API_KEY` or `OCR_SPACE_API_KEY`, and use `--ocr-audit-output`",
+        "when you need an upload/quality audit. The fallback runs only when local",
+        "Docling conversion fails or the quality gate degrades. Splitting a PDF",
+        "into one image per page may help satisfy per-request size or timeout",
+        "limits, but it does not bypass account-level quota, rate, or concurrency",
+        "limits. The adapter redacts secrets and uses OCR Engine 3 for paper",
+        "extraction quality.",
+        "",
+        "Live OCR.space smoke is separate from default post-install smoke. Run",
+        "`ocrspace-smoke --allow-remote-ocr` only when a real OCR.space key is",
+        "configured and a live remote request is acceptable. The command",
+        "generates and uploads a synthetic one-page PDF rather than user data.",
     ]
 
 

@@ -100,6 +100,34 @@ Useful local quality controls:
 - `--max-num-pages <n>`
 - `--output <path> --overwrite`
 
+Optional remote fallback is explicit and never enabled by config:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \
+  --source "/path/to/file.pdf" \
+  --to md \
+  --preset scan-heavy \
+  --ocr-fallback ocrspace \
+  --allow-remote-ocr \
+  --ocr-audit-output "/path/to/file.ocr-audit.json"
+```
+
+This runs local Docling first, evaluates extracted-text quality, and uploads
+selected local PDF pages to OCR.space only if local conversion fails or the
+quality gate degrades. It requires an OCR.space API key in `OCRSPACE_API_KEY`
+or `OCR_SPACE_API_KEY`.
+
+Live OCR.space smoke is also explicit and uses a generated synthetic PDF page,
+not a user document:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh ocrspace-smoke \
+  --allow-remote-ocr
+```
+
+This command is not part of default post-install smoke because it requires a
+real API key and a live remote request.
+
 ### Analyze structure
 
 ```bash
@@ -108,6 +136,17 @@ bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh extract   --sou
 
 Emits JSON with counts and basic structural signals such as headings, tables, pictures, and pages.
 The same `--config`, `--preset`, OCR, table, page, and limit options are accepted.
+
+### OCR quality
+
+```bash
+bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh quality \
+  --source "/path/to/file.pdf" \
+  --preset scan-heavy
+```
+
+Reports a local quality score, characters/words per page, alphanumeric ratio,
+replacement-character ratio, and reasons that would trigger fallback.
 
 ### Chunk
 
@@ -121,7 +160,7 @@ The same `--config`, `--preset`, OCR, table, page, and limit options are accepte
 
 ### Local-only policy
 
-The managed runtime is local-only in Phase 1:
+The managed runtime is local-only by default:
 
 - document sources must be local paths, not URLs or network shares
 - HTML/Markdown inputs with remote assets are rejected before conversion
@@ -129,7 +168,12 @@ The managed runtime is local-only in Phase 1:
 - Docling pipeline options force `enable_remote_services=False`
 - `vlm-local` requires a local `DOCLING_ARTIFACTS_PATH` or `artifacts_path`
 
-OCR.space remains a future Phase 2 online adapter. If it is added later, it must be an explicit opt-in path, account for free API limits, split pages only to satisfy per-request size/timeout constraints, and use OCR Engine 3 for paper extraction quality. Page-by-page splitting does not remove account-level rate, quota, or concurrency limits.
+OCR.space is available only as an explicit fallback path. It must be requested
+with both `--ocr-fallback ocrspace` and `--allow-remote-ocr`; Docling config
+files still cannot contain API keys, endpoints, OCR.space fields, or provider
+URLs. The adapter uses OCR Engine 3 for paper extraction quality. Page-by-page
+splitting can satisfy per-request size/timeout constraints, but it does not
+remove account-level rate, quota, or concurrency limits.
 
 ### Config file
 
@@ -166,6 +210,7 @@ Docling supports these environment variables directly or indirectly:
 - `OMP_NUM_THREADS`
 - `AAS_DOCLING_CONFIG`
 - `AAS_DOCLING_PRESET`
+- `OCRSPACE_API_KEY` or `OCR_SPACE_API_KEY` for explicit OCR.space fallback
 
 Use `DOCLING_ARTIFACTS_PATH` when models are prefetched or when you want offline behavior.
 
@@ -196,7 +241,7 @@ Use `DOCLING_ARTIFACTS_PATH` when models are prefetched or when you want offline
 
 - Prefer local models and local parsing by default.
 - Do not place API keys, endpoints, OCR.space fields, or provider URLs in Docling config.
-- Only add remote inference or API-backed OCR as a separate explicit adapter after review.
+- Use OCR.space only through explicit fallback flags when the user accepts remote page upload.
 - For review workflows, use Docling for parsing but keep review judgment in `paper-review` or `annotated-review`.
 
 ## Integration guidance

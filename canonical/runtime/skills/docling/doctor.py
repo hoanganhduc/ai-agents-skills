@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 
-from docling_runtime import add_common_arguments, discover_config_path, resolve_runtime_options
+from docling_runtime import add_common_arguments, discover_config_path, ocrspace_key_env, resolve_runtime_options
 
 
 def main() -> int:
@@ -20,7 +20,8 @@ def main() -> int:
         "docling_cli": False,
         "config_path": str(discover_config_path(args)) if discover_config_path(args) else None,
         "local_only": True,
-        "ocrspace": "not enabled; Phase 2 only, and must use OCR Engine 3 if added later",
+        "ocrspace": "available only through explicit --ocr-fallback ocrspace --allow-remote-ocr",
+        "ocrspace_key_env": ocrspace_key_env(),
     }
     try:
         out["effective_options"] = resolve_runtime_options(args)

@@ -143,11 +143,12 @@
       "optional_dependencies": [
         "ocr-runtime",
         "docling-mcp-python-package",
+        "pypdfium2-python-package",
         "rapidocr-python-package",
         "torch-python-package",
         "torchvision-python-package"
       ],
-      "optional_capabilities": ["ocr", "mcp-server"],
+      "optional_capabilities": ["ocr", "mcp-server", "remote-ocr-fallback"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "get-available-resources": {

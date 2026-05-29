@@ -679,6 +679,32 @@
           "mode": "0644"
         },
         {
+          "source": "skills/docling/docling_quality.py",
+          "target": "workspace/skills/docling/docling_quality.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/docling/docling_ocrspace_smoke.py",
+          "target": "workspace/skills/docling/docling_ocrspace_smoke.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/docling/docling_runtime.py",
           "target": "workspace/skills/docling/docling_runtime.py",
           "platforms": [

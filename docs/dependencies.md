@@ -84,6 +84,7 @@ Status vocabulary used by `precheck`:
 | `pylatexenc-python-package` | `python` | pylatexenc |
 | `pymupdf-python-package` | `python` | fitz |
 | `pypdf2-python-package` | `python` | PyPDF2 |
+| `pypdfium2-python-package` | `python` | pypdfium2; candidate set `docling` |
 | `pytest-python-package` | `python` | pytest |
 | `pyzotero-python-package` | `python` | pyzotero |
 | `rapidocr-python-package` | `python` | rapidocr; candidate set `docling` |
@@ -162,6 +163,7 @@ Evidence inspected:
 | `pdfplumber` | `pdfplumber` | pdfplumber>=0.10.0 | `linux`, `windows` | `zotero` |
 | `psutil` | `psutil` | psutil | `linux`, `windows` | `get-available-resources` |
 | `pylatexenc` | `pylatexenc` | pylatexenc | `linux`, `windows` | `annotated-review` |
+| `pypdfium2` | `pypdfium2` | pypdfium2>=4 | `linux`, `windows` | `docling OCR.space fallback PDF rendering` |
 | `pytest` | `pytest` | pytest>=7.0.0 | `linux`, `windows` | `zotero test suite` |
 | `pyzotero` | `pyzotero` | pyzotero>=1.10.0 | `linux`, `windows` | `zotero` |
 | `rapidocr` | `rapidocr` | docling[rapidocr] extra | `windows` | `docling OCR` |
@@ -203,12 +205,12 @@ Evidence inspected:
 
 ## Docling And OCR Runtime Notes
 
-The managed Docling runtime is intentionally local-only. The wrappers
-accept local paths for `doctor`, `convert`, `extract`, and `chunk`,
+The managed Docling runtime is local-only by default. The wrappers
+accept local paths for `doctor`, `convert`, `extract`, `chunk`, and `quality`,
 load Docling lazily after argument/config validation, and reject URL
 sources, network-style paths, HTML/Markdown inputs with remote assets,
 remote service config fields, provider URLs, API tokens, and OCR.space
-settings.
+settings in config files.
 
 Useful local OCR controls include:
 
@@ -218,6 +220,7 @@ Useful local OCR controls include:
 - `--ocr-engine auto|easyocr|ocrmac|rapidocr|tesseract|tesserocr`.
 - `--table-mode fast|accurate`, `--page-range`, `--max-num-pages`,
   and `--max-file-size` for bounded conversions.
+- `quality --source <pdf>` to score local extraction quality before fallback.
 
 Config discovery order is `--config`, `AAS_DOCLING_CONFIG`,
 `DOCLING_CONFIG`, `$AAS_RUNTIME_WORKSPACE/config/docling.toml`, and
@@ -226,12 +229,20 @@ Config discovery order is `--config`, `AAS_DOCLING_CONFIG`,
 tracked template; live configs, caches, downloaded PDFs, and runtime
 data are not promoted into the managed runtime manifest.
 
-OCR.space is deliberately deferred. Splitting a PDF into one image per
-page may help satisfy per-request size or timeout limits, but it does
-not bypass account-level quota, rate, or concurrency limits. If an
-OCR.space adapter is added later, it should be explicit, separate from
-the Docling local path, redact secrets, document retries/costs, and use
-OCR Engine 3 for paper extraction quality.
+OCR.space is available only as an explicit remote fallback: pass
+`--ocr-fallback ocrspace --allow-remote-ocr` to `convert`, provide
+`OCRSPACE_API_KEY` or `OCR_SPACE_API_KEY`, and use `--ocr-audit-output`
+when you need an upload/quality audit. The fallback runs only when local
+Docling conversion fails or the quality gate degrades. Splitting a PDF
+into one image per page may help satisfy per-request size or timeout
+limits, but it does not bypass account-level quota, rate, or concurrency
+limits. The adapter redacts secrets and uses OCR Engine 3 for paper
+extraction quality.
+
+Live OCR.space smoke is separate from default post-install smoke. Run
+`ocrspace-smoke --allow-remote-ocr` only when a real OCR.space key is
+configured and a live remote request is acceptable. The command
+generates and uploads a synthetic one-page PDF rather than user data.
 
 ## Detection Notes
 

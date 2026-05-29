@@ -41,8 +41,8 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
 - Real home-directory writes require explicit `--apply --real-system`.
 - Verification checks only installed managed artifacts.
 - The Docling document/OCR runtime is local-only by default. Stronger scanned
-  PDF extraction uses local presets such as `scan-heavy`; OCR.space is not part
-  of the managed runtime path.
+  PDF extraction uses local presets such as `scan-heavy`; OCR.space is only an
+  explicit opt-in fallback when local conversion fails or quality degrades.
 
 ## Typical Workflow
 

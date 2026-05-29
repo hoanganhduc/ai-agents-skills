@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -45,6 +46,10 @@ def no_bytecode_env() -> dict[str, str]:
         "DOCLING_DEVICE",
         "DOCLING_NUM_THREADS",
         "DOCLING_PRESET",
+        "OCRSPACE_API_KEY",
+        "OCR_SPACE_API_KEY",
+        "OCRSPACE_KEY",
+        "OCR_SPACE_KEY",
         "OPENCLAW_WORKSPACE",
     ):
         env.pop(key, None)
@@ -78,6 +83,33 @@ class DoclingRuntimeTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("--ocr-mode", completed.stdout)
         self.assertIn("--config", completed.stdout)
+        self.assertIn("--ocr-fallback", completed.stdout)
+
+    def test_quality_help_does_not_require_docling_import(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(DOCLING_DIR / "docling_quality.py"), "--help"],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env=no_bytecode_env(),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("--ocr-quality-threshold", completed.stdout)
+
+    def test_ocrspace_smoke_help_does_not_require_docling_import(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(DOCLING_DIR / "docling_ocrspace_smoke.py"), "--help"],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env=no_bytecode_env(),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("--allow-remote-ocr", completed.stdout)
 
     def test_remote_source_rejected_before_conversion(self) -> None:
         completed = subprocess.run(
@@ -130,9 +162,142 @@ OCREngine = 3
             )
 
         self.assertEqual(completed.returncode, 2)
-        self.assertIn("OCR.space configuration is not supported in Phase 1", completed.stderr)
-        self.assertIn("OCR Engine 3", completed.stderr)
+        self.assertIn("OCR.space configuration is not supported in Docling config", completed.stderr)
+        self.assertIn("--ocr-fallback ocrspace --allow-remote-ocr", completed.stderr)
         self.assertNotIn("secret-api-value", completed.stderr)
+
+    def test_ocrspace_fallback_requires_explicit_remote_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "paper.pdf"
+            source.write_bytes(b"%PDF-1.4\n")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(DOCLING_DIR / "docling_convert.py"),
+                    "--source",
+                    str(source),
+                    "--ocr-fallback",
+                    "ocrspace",
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=30,
+                env=no_bytecode_env(),
+            )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("requires --allow-remote-ocr", completed.stderr)
+
+    def test_ocrspace_fallback_requires_key_env_without_printing_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "paper.pdf"
+            source.write_bytes(b"%PDF-1.4\n")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(DOCLING_DIR / "docling_convert.py"),
+                    "--source",
+                    str(source),
+                    "--ocr-fallback",
+                    "ocrspace",
+                    "--allow-remote-ocr",
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=30,
+                env=no_bytecode_env(),
+            )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("OCR.space fallback requires", completed.stderr)
+        self.assertNotIn("secret-api-value", completed.stderr)
+
+    def test_ocrspace_smoke_requires_explicit_remote_opt_in(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(DOCLING_DIR / "docling_ocrspace_smoke.py"),
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env=no_bytecode_env(),
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("requires --allow-remote-ocr", completed.stderr)
+
+    def test_convert_rejects_existing_output_before_docling_import(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "paper.pdf"
+            output = root / "out.md"
+            source.write_bytes(b"%PDF-1.4\n")
+            output.write_text("existing", encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(DOCLING_DIR / "docling_convert.py"),
+                    "--source",
+                    str(source),
+                    "--output",
+                    str(output),
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=30,
+                env=no_bytecode_env(),
+            )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("--overwrite", completed.stderr)
+
+    def test_ocr_quality_evaluator_flags_low_text(self) -> None:
+        module = load_docling_runtime()
+        report = module.evaluate_ocr_quality("???", pages=2)
+        self.assertEqual(report["status"], "degraded")
+        self.assertFalse(report["passes"])
+        self.assertIn("low characters per page", report["reasons"])
+
+    def test_ocr_quality_evaluator_accepts_reasonable_text(self) -> None:
+        module = load_docling_runtime()
+        text = "This is a normal extracted paragraph with enough words and numbers 123. " * 20
+        report = module.evaluate_ocr_quality(text, pages=1)
+        self.assertEqual(report["status"], "ok")
+        self.assertTrue(report["passes"])
+
+    def test_ocrspace_response_parsing_and_rendering(self) -> None:
+        module = load_docling_runtime()
+        text, summary = module.parse_ocrspace_response({
+            "_http_status": 200,
+            "IsErroredOnProcessing": False,
+            "OCRExitCode": 1,
+            "ParsedResults": [{"ParsedText": "Hello page"}],
+        })
+        self.assertEqual(text, "Hello page")
+        self.assertEqual(summary["parsed_text_lengths"], [10])
+        rendered = module.render_ocr_fallback_output({"pages": [{"page": 1, "text": text}]}, "md")
+        self.assertIn("OCR.space page 1", rendered)
+        self.assertIn("Hello page", rendered)
+
+    def test_validate_remote_ocr_args_accepts_env_key_name_only(self) -> None:
+        module = load_docling_runtime()
+        args = SimpleNamespace(
+            ocr_fallback="ocrspace",
+            allow_remote_ocr=True,
+            ocrspace_max_pages=1,
+            ocrspace_dpi=200,
+            ocrspace_timeout=10,
+        )
+        with patch.dict(os.environ, {"OCRSPACE_API_KEY": "secret"}, clear=False):
+            module.validate_remote_ocr_args(args)
+            self.assertEqual(module.ocrspace_key_env(), "OCRSPACE_API_KEY")
 
     def test_output_path_requires_overwrite_for_existing_file(self) -> None:
         module = load_docling_runtime()
