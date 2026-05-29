@@ -152,6 +152,6 @@ print(f"Total: {pending_total} pending, {promoted_total} promoted, {resolved_tot
 print()
 print("Actions:")
 print("  Resolve:  change **Status**: pending -> resolved and add a short resolution note")
-print("  Promote:  distill durable rules into ~/.codex/memories/, a SKILL.md, or ~/.codex/AGENTS.md")
+print("  Promote:  distill durable rules into this repo's canonical skill, manifest, docs, runtime, or test files")
 print("  Log new:  append a structured entry to .learnings/{LEARNINGS,ERRORS,FEATURE_REQUESTS}.md")
 PY

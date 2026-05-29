@@ -349,13 +349,13 @@
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "self-improving-agent": {
-      "description": "Log durable learnings, failures, and missing capabilities.",
+      "description": "Log durable learnings and propose canonical repo integration plans across install targets.",
       "profiles": ["full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
-      "required_dependencies": [],
+      "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
-      "optional_capabilities": ["learning-log"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": ["learning-log", "canonical-integration-plan", "portable-runtime-helper"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
     },
     "session-logs": {
       "description": "Search prior local agent session logs when explicitly requested.",

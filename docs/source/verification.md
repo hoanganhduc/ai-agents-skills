@@ -39,7 +39,9 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 make lifecycle-test ARGS="--matrix full --platform-shape linux"
 make lifecycle-test ARGS="--matrix stress --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
+make fake-root-lifecycle ARGS="--skill self-improving-agent --platform-shape all"
 make runtime-smoke
+make runtime-smoke ARGS="--skills self-improving-agent"
 make install ARGS="--profile research-core --apply --post-install-smoke strict"
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
@@ -54,6 +56,7 @@ Recommended local maintainer checks mirror the CI gate:
 make sanitize-check
 make test
 make runtime-smoke
+make runtime-smoke ARGS="--skills self-improving-agent"
 make docs
 make docs-site
 make lifecycle-test ARGS="--matrix default --platform-shape all"
@@ -139,7 +142,7 @@ Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
 macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
-`axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-formalization-intake`, `lean-strict-verification-gate`, forcing copy-mode runtime installation in a temporary
+`axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-formalization-intake`, `lean-strict-verification-gate`, `self-improving-agent`, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
 `--skills` may only select skills that are supported by this runtime-smoke
@@ -148,7 +151,15 @@ harness.
 ```bash
 make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
+make runtime-smoke ARGS="--skills self-improving-agent"
 ```
+
+`self-improving-agent` has a portable offline smoke contract for its
+cross-target learning review, command-safety, error-detection, and canonical
+integration-plan helper surface. Native Windows PowerShell/CMD behavior still
+requires running the Windows `make.bat` and runtime runner checks on Windows;
+Linux-hosted Windows platform-shape tests verify install layout, not native
+Windows execution.
 
 Docling has a skill-specific runtime doctor because it may rely on a dedicated
 Docling environment and heavier OCR/model packages that are not part of the

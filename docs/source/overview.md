@@ -30,6 +30,10 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
 - Runtime-backed skills install helper scripts under a shared runtime root; live
   config, caches, local databases, and downloaded documents are outside managed
   canonical source.
+- `self-improving-agent` turns reusable failures, corrections, and missing
+  capabilities into `.learnings/` entries plus canonical repo integration plans
+  that name affected targets, OS/substrates, docs, manifests, runtime helpers,
+  and tests before implementation.
 - `precheck` detects tools and Python packages from the current substrate.
 - `plan` and `install --dry-run` preview writes before anything is changed.
 - `--install-mode auto` is the default and resolves per agent. Claude uses

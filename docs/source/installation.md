@@ -160,6 +160,13 @@ config at `$AAS_RUNTIME_WORKSPACE/config/docling.toml` or pass it with
 `config.toml`, `workspace/config/*.toml`, caches, bytecode, and downloaded
 documents so credentials and local state are not accidentally promoted.
 
+`self-improving-agent` also uses the shared runtime for its portable helpers.
+Use those runtime commands instead of paths inside an agent skill directory:
+reference install mode deliberately points back to the canonical repo and does
+not copy support files. The helper smoke contract is offline and checks the
+learning review, command-safety, error-detection, and integration-plan command
+surface without reading credentials or live config.
+
 ## Install Modes
 
 `--install-mode auto` is the default. The installer resolves that request per

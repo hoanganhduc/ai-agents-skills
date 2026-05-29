@@ -34,7 +34,7 @@ else
   output="$(cat)"
 fi
 
-pattern='(error:|Error:|FATAL|fatal:|Traceback|Exception|ModuleNotFoundError|TypeError|ImportError|Permission denied|No such file|command not found|npm ERR!|SyntaxError|NameError|KeyError|ValueError|FileNotFoundError)'
+pattern='(error:|Error:|FATAL|fatal:|Traceback|Exception|ModuleNotFoundError|TypeError|ImportError|Permission denied|Access is denied|No such file|command not found|is not recognized|FullyQualifiedErrorId|CategoryInfo|npm ERR!|SyntaxError|NameError|KeyError|ValueError|FileNotFoundError)'
 
 if echo "$output" | grep -qiE "$pattern"; then
   cat <<'EOF'
@@ -47,7 +47,7 @@ Consider whether this should be logged with `self-improving-agent`:
 - fix or workaround worth preserving
 
 Useful next step:
-  bash ~/.codex/skills/self-improving-agent/scripts/review_pending.sh
+  run the portable review-pending helper from the installed ai-agents-skills runtime
 EOF
 else
   echo "No common error markers detected."

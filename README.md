@@ -55,6 +55,12 @@ return bounded result packets, and final reports pass review and verification
 gates. The workflow tracks concrete issues and evidence gaps instead of hiding
 quality behind a single aggregate score.
 
+Reusable failures, corrections, and missing capabilities route through
+`self-improving-agent`. That skill logs local `.learnings/` entries and, when a
+lesson affects skills or settings, proposes a canonical repo integration plan
+that names affected install targets, OS/substrates, docs, manifests, runtime
+helpers, tests, and blocked coverage before any files are changed.
+
 See `docs/workflow-overview.md` for the full sanitized system description and
 workflow examples.
 
@@ -372,7 +378,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `research-verification-gate` | Final evidence, date, and gap check before delivery. | `research-core`, `serious-research`, `full-research` |
 | `rss-news-digest` | Run and manage RSS digest workflows. | `digest`, `full-research` |
 | `sagemath` | Sage-backed math, graph theory, algebra, and verification. | `math`, `full-research` |
-| `self-improving-agent` | Log durable learnings, failures, and missing capabilities. | `full-research` |
+| `self-improving-agent` | Log durable learnings and propose canonical repo integration plans across install targets. | `full-research` |
 | `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
 | `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `serious-research`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |

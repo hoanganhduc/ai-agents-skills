@@ -53,4 +53,22 @@ if echo "$cmd" | grep -qiE 'DROP\s+(DATABASE|TABLE)\s'; then
   exit 2
 fi
 
+if echo "$cmd" | grep -qiE '\b(Remove-Item|rm|del|erase)\b'; then
+  if echo "$cmd" | grep -qiE '(^|[[:space:]])(-Recurse|-r)([[:space:]]|$)' \
+    && echo "$cmd" | grep -qiE '(^|[[:space:]])(-Force|-f)([[:space:]]|$)'; then
+    echo "BLOCKED: PowerShell recursive forced deletion detected." >&2
+    exit 2
+  fi
+fi
+
+if echo "$cmd" | grep -qiE '\b(rmdir|rd)\b\s+/s\s+/q\b|\b(del|erase)\b\s+/[sq]\b'; then
+  echo "BLOCKED: CMD recursive deletion detected." >&2
+  exit 2
+fi
+
+if echo "$cmd" | grep -qiE '\b(Format-Volume|format)\b'; then
+  echo "BLOCKED: Windows volume formatting detected." >&2
+  exit 2
+fi
+
 echo "ALLOW: no lightweight safety rule matched."
