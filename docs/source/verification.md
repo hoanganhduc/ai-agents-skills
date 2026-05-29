@@ -40,6 +40,7 @@ make lifecycle-test ARGS="--matrix full --platform-shape linux"
 make lifecycle-test ARGS="--matrix stress --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
 make runtime-smoke
+make install ARGS="--profile research-core --apply --post-install-smoke strict"
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
 make verify ARGS="--skills zotero,docling --root <fake-or-real-root>"
@@ -61,6 +62,23 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 CI also checks that regenerated docs are current by running `make docs` and
 diffing `README.md` plus `docs/`. Run `make docs-site` after installing
 `docs/requirements.txt` when Sphinx rendering matters.
+
+Post-install smoke:
+
+- `install --apply` runs post-install smoke by default in `auto` mode.
+- `auto` runs installer verification, agent-visible skill smoke, and offline
+  runtime smoke for installed runtime-backed skills with safe manifest
+  contracts. Smoke failures are reported, but a successful apply still exits
+  `0`.
+- `--post-install-smoke verify` runs only installer integrity verification.
+- `--post-install-smoke strict` returns nonzero if any post-install check
+  fails, degrades, or is unsupported; the install is still recorded as applied.
+- `--post-install-smoke off` skips these checks.
+
+The post-install runtime layer is offline-only. It uses the installed runtime
+runner, copies managed runtime files into a temporary scratch workspace, strips
+secret-like environment variables, and forbids live APIs, package installation,
+MCP/client config writes, and background server starts.
 
 Result meanings:
 
@@ -121,11 +139,11 @@ Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
 macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
-`formal-skeleton-helper`, `get-available-resources`, and `graph-verifier`,
-forcing copy-mode runtime installation in a temporary root. It requires Python
-plus the runtime dependencies for those checks, including `psutil` and
-`networkx` for the default CI path. Passing `--skills` may only select skills
-that are supported by this runtime-smoke harness.
+`axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-formalization-intake`, `lean-strict-verification-gate`, forcing copy-mode runtime installation in a temporary
+root. It requires Python plus any dependencies needed by the selected smoke
+contracts, including `psutil` and `networkx` for the default CI path. Passing
+`--skills` may only select skills that are supported by this runtime-smoke
+harness.
 
 ```bash
 make runtime-smoke

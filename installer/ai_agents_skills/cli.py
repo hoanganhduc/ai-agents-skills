@@ -9,7 +9,7 @@ from typing import Any
 
 from .agents import agent_home_statuses, agent_supports_manifest_entry, all_agent_names, detect_agents
 from .apply import apply_plan
-from .capabilities import looks_like_real_system_root, smoke_artifact
+from .capabilities import looks_like_real_system_root
 from .delegation import build_external_agent_prechecks
 from .delegation_dispatch import dispatch_external_agents
 from .delegation_packets import validate_packet_file
@@ -30,6 +30,7 @@ from .openclaw_inventory import DEFAULT_MAX_ENTRIES, EVIDENCE_CLASSES, build_inv
 from .openclaw_manifest import PATH_STYLES, TARGET_AGENTS, approve_manifest, build_manifest, load_inventory, load_manifest
 from .openclaw_persistence import check_persistence_manifest_file
 from .planner import build_plan
+from .post_install_smoke import POST_INSTALL_SMOKE_MODES, run_post_install_smoke, smoke_state
 from .render import MANAGED_MARKER, canonical_skill_path
 from .runtime import runtime_inventory
 from .runtime_smoke import run_runtime_smoke
@@ -224,6 +225,18 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--dry-run", action="store_true")
     install.add_argument("--apply", action="store_true")
     install.add_argument("--real-system", action="store_true")
+    install.add_argument(
+        "--post-install-smoke",
+        choices=POST_INSTALL_SMOKE_MODES,
+        default="auto",
+        help="post-apply verification mode: auto, verify, strict, or off",
+    )
+    install.add_argument(
+        "--post-install-smoke-timeout",
+        type=int,
+        default=60,
+        help="per-command timeout in seconds for post-install runtime smoke checks",
+    )
 
     verify = sub.add_parser("verify")
     verify.add_argument("--skill")
@@ -442,7 +455,24 @@ def run(args: argparse.Namespace) -> int:
         plan = make_plan(args, manifests)
         confirm_install_process_understood(args, plan)
         result = apply_plan(args.root, plan, dry_run=not args.apply)
-        return output(result, args)
+        exit_code = 0
+        if args.apply:
+            selected, _ = resolve_install_selection(args, manifests)
+            agents = set(split_csv(args.agents)) if args.agents else None
+            result["post_install"] = run_post_install_smoke(
+                args.root,
+                manifests,
+                result,
+                skills=set(selected) if selected else None,
+                agents=agents,
+                platform=args.platform,
+                mode=args.post_install_smoke,
+                timeout=args.post_install_smoke_timeout,
+            )
+            if args.post_install_smoke == "strict" and result["post_install"].get("status") != "ok":
+                exit_code = 1
+        output(result, args)
+        return exit_code
     if args.command == "verify":
         return verify(args, manifests)
     if args.command == "smoke":
@@ -1037,27 +1067,9 @@ def verify(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
 def smoke(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     skills = resolve_skill_filter(args, manifests)
     agents = set(split_csv(args.agents)) if args.agents else None
-    state = load_state(args.root)
-    results = [
-        smoke_artifact(item)
-        for item in state.get("artifacts", [])
-        if item.get("artifact_type") == "skill-file"
-        and (not skills or item.get("skill") in skills)
-        and (not agents or item.get("agent") in agents)
-    ]
-    if not results:
-        result = {
-            "status": "no-managed-artifacts",
-            "checked": 0,
-            "results": [],
-            "reason": "no managed skill-file artifacts matched this scope",
-        }
-        output(result, args)
-        return 1
-    status = "ok" if all(item["status"] == "ok" for item in results) else "degraded"
-    result = {"status": status, "checked": len(results), "results": results}
+    result = smoke_state(args.root, skills, agents)
     output(result, args)
-    return 0 if status == "ok" else 1
+    return 0 if result["status"] == "ok" else 1
 
 
 def fake_root_lifecycle(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
@@ -1402,6 +1414,9 @@ Installation process:
 - Run `plan` or `install --dry-run` first to preview what will change.
 - `install --apply` writes the planned managed skill files, support files,
   instruction blocks, and selected artifacts.
+- After a successful apply, post-install smoke runs in mode
+  `{args.post_install_smoke}` unless disabled. It reports verify, skill smoke,
+  and offline runtime smoke results without rolling back automatically.
 - Real home-directory writes require both `--apply` and `--real-system`.
 - Existing unmanaged files are skipped unless you explicitly selected
   `--adopt`, `--backup-replace`, or `--migrate`.

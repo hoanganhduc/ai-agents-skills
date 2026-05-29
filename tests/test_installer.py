@@ -21,7 +21,7 @@ from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.render import render_artifact_content, render_reference_skill_md
 from installer.ai_agents_skills.selectors import artifact_dependency_skills, resolve_artifacts, resolve_skills
-from installer.ai_agents_skills.state import artifact_signature, save_state, write_run_record
+from installer.ai_agents_skills.state import artifact_signature, load_state, save_state, write_run_record
 from installer.ai_agents_skills.target_prechecks import path_style_for_platform
 from installer.ai_agents_skills.verify import verify
 
@@ -2016,6 +2016,12 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("docs/source/index.md", readme)
         self.assertIn("docs/source/overview.md", readme)
 
+    def test_verification_docs_describe_post_install_smoke(self) -> None:
+        text = (REPO_ROOT / "docs" / "source" / "verification.md").read_text(encoding="utf-8")
+        self.assertIn("Post-install smoke", text)
+        self.assertIn("--post-install-smoke strict", text)
+        self.assertIn("runtime smoke for installed runtime-backed skills", text.replace("\n  ", " "))
+
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
         text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")
         self.assertIn("where pwsh", text)
@@ -2279,7 +2285,7 @@ class DocsAndLauncherTests(unittest.TestCase):
                     str(root),
                     "install",
                     "--skill",
-                    "zotero",
+                    "formal-skeleton-helper",
                     "--apply",
                 ])
             self.assertEqual(code, 1)
@@ -2303,7 +2309,7 @@ class DocsAndLauncherTests(unittest.TestCase):
                     str(root),
                     "install",
                     "--skill",
-                    "zotero",
+                    "formal-skeleton-helper",
                     "--apply",
                 ])
             self.assertEqual(code, 1)
@@ -2974,6 +2980,96 @@ class DocsAndLauncherTests(unittest.TestCase):
             payload = json.loads(stream.getvalue())
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["checked"], 1)
+
+    def test_cli_install_apply_runs_post_install_smoke(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "formal-skeleton-helper",
+                    "--apply",
+                ])
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            post_install = payload["post_install"]
+            self.assertEqual(post_install["mode"], "auto")
+            self.assertEqual(post_install["status"], "ok")
+            self.assertEqual(post_install["verify"]["status"], "ok")
+            self.assertEqual(post_install["skill_smoke"]["status"], "ok")
+            self.assertEqual(post_install["runtime_smoke"]["status"], "ok")
+            self.assertTrue(Path(post_install["report_path"]).is_file())
+            state = load_state(root)
+            run = next(item for item in state["runs"] if item["run_id"] == payload["run_id"])
+            self.assertEqual(run["post_install"]["status"], "ok")
+
+    def test_cli_install_dry_run_skips_post_install_smoke(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--dry-run",
+                    "--post-install-smoke",
+                    "strict",
+                ])
+
+            self.assertEqual(code, 0)
+            payload = json.loads(stream.getvalue())
+            self.assertTrue(payload["dry_run"])
+            self.assertNotIn("post_install", payload)
+            self.assertFalse((root / ".ai-agents-skills").exists())
+
+    def test_cli_install_strict_post_install_failure_preserves_apply_json(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+                patch(
+                    "installer.ai_agents_skills.cli.run_post_install_smoke",
+                    return_value={"status": "failed", "mode": "strict", "verify": {"status": "failed"}},
+                ),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                    "--post-install-smoke",
+                    "strict",
+                ])
+
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertFalse(payload["dry_run"])
+            self.assertTrue(payload["actions"])
+            self.assertEqual(payload["post_install"]["status"], "failed")
+            self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").is_file())
 
     def test_cli_fake_root_lifecycle_runs_without_real_home(self) -> None:
         stream = io.StringIO()

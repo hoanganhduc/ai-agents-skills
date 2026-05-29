@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 
@@ -158,6 +159,8 @@ def validate_manifests(
             raise ManifestError(f"runtime skill {skill} runtime_dir must use canonical kebab-case")
         for entry in spec.get("files", []):
             validate_runtime_file(entry, runtime_source_root, f"runtime skill {skill}")
+        if "smoke" in spec:
+            validate_runtime_smoke_contract(skill, spec["smoke"])
 
     validate_delegation_manifest(delegation)
 
@@ -218,6 +221,37 @@ def validate_runtime_file(entry: dict[str, Any], runtime_source_root: Path, owne
         raise ManifestError(f"{owner} runtime source must stay under canonical/runtime: {entry['source']}")
     if Path(entry["target"]).is_absolute() or ".." in Path(entry["target"]).parts:
         raise ManifestError(f"{owner} runtime target must be relative and contained: {entry['target']}")
+
+
+def validate_runtime_smoke_contract(skill: str, smoke: Any) -> None:
+    if not isinstance(smoke, dict):
+        raise ManifestError(f"runtime skill {skill} smoke must be an object")
+    if smoke.get("schema") != "runtime-smoke.v1":
+        raise ManifestError(f"runtime skill {skill} smoke schema must be runtime-smoke.v1")
+    if smoke.get("mode") != "offline":
+        raise ManifestError(f"runtime skill {skill} smoke mode must be offline")
+    command = smoke.get("command")
+    if not isinstance(command, (dict, str)):
+        raise ManifestError(f"runtime skill {skill} smoke command must be a string or object")
+    commands = command.values() if isinstance(command, dict) else [command]
+    for target in commands:
+        if not isinstance(target, str) or not target.startswith("workspace/"):
+            raise ManifestError(f"runtime skill {skill} smoke command must be workspace-relative")
+        path = PurePosixPath(target)
+        if path.is_absolute() or ".." in path.parts:
+            raise ManifestError(f"runtime skill {skill} smoke command must stay under workspace")
+    if not isinstance(smoke.get("args", []), list):
+        raise ManifestError(f"runtime skill {skill} smoke args must be a list")
+    timeout = smoke.get("timeout_seconds")
+    if not isinstance(timeout, int) or timeout <= 0 or timeout > 120:
+        raise ManifestError(f"runtime skill {skill} smoke timeout_seconds must be between 1 and 120")
+    safety = smoke.get("safety")
+    if not isinstance(safety, dict):
+        raise ManifestError(f"runtime skill {skill} smoke safety must be an object")
+    required_forbidden = ("network", "live_api", "package_install", "server_start", "config_write", "real_secrets")
+    for field in required_forbidden:
+        if safety.get(field) != "forbidden":
+            raise ManifestError(f"runtime skill {skill} smoke safety.{field} must be forbidden")
 
 
 def skill_names(manifests: dict[str, Any]) -> list[str]:
