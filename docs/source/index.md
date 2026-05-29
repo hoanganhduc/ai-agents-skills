@@ -32,6 +32,9 @@ Latest update: {sub-ref}`today`
   [Local Library Profiles](local-library-profiles.md) before choosing paths.
 - Unsure what will be written: read [Agent Locations](agent-locations.md) and
   [Verification](verification.md).
+- Reusable failure or workflow lesson: use `self-improving-agent` to log the
+  `.learnings/` entry and propose a canonical repo integration plan with
+  install-target and OS coverage before editing shared files.
 - Research workflow motivation: start with
   [System And Research Workflow Overview](workflow-overview.md) and
   [Multi-Agent Examples](multi-agent-examples.md).

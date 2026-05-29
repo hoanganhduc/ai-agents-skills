@@ -37,6 +37,10 @@ A typical research workflow looks like this:
 5. The final answer passes through review or verification skills when the task
    needs stronger evidence control. Verification reports concrete issues and
    remaining gaps instead of an aggregate quality score.
+6. Reusable failures, corrections, or missing capabilities are logged with
+   `self-improving-agent`. When they affect shared skills or settings, the
+   learning includes a canonical repo integration plan before any target-home
+   or repo mutation.
 
 Examples:
 
@@ -57,6 +61,10 @@ Examples:
   bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
   capabilities, so the dependency graph records the substrate instead of
   hardcoding a personal path.
+- **Reusable workflow improvement:** `self-improving-agent` records local
+  `.learnings/` entries, then proposes repo-first changes across `canonical/`,
+  `manifest/`, generated docs, runtime helpers, and tests with explicit
+  target/OS coverage limits.
 
 Related pages: [Installation](installation.md), [Skills](skills.md),
 [Dependencies](dependencies.md), [Multi-Agent Examples](multi-agent-examples.md).

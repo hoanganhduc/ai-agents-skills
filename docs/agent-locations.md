@@ -47,6 +47,12 @@ aliases target Claude commands, but Codex and DeepSeek receive reference docs
 under `instructions/entrypoints` because equivalent slash-command loading is
 not assumed.
 
+Self-improvement records are workspace data, not agent-home source files.
+`self-improving-agent` writes or reviews `.learnings/` entries in the current
+workspace, then proposes canonical changes against this repository checkout.
+The generated target files should be updated through `plan` and `install`
+after the canonical repo change has been verified.
+
 Copilot is explicit-only: `--agents copilot` is required. Existing
 repository-level Copilot files under `.github/` do not activate the personal
 Copilot target. The installer reports repository Copilot surfaces in precheck

@@ -26,6 +26,7 @@ RUNTIME_SMOKE_SKILLS = (
     "graph-verifier",
     "lean-formalization-intake",
     "lean-strict-verification-gate",
+    "self-improving-agent",
 )
 
 
@@ -469,6 +470,19 @@ def validate_smoke_output(
         checks.append({"name": "placeholder-present", "ok": payload.get("snippet_contains_placeholder") is True})
         checks.append({"name": "package-pinned", "ok": payload.get("snippet_package_pinned") is True})
         checks.append({"name": "no-secret-value", "ok": "AXLE-SMOKE-CANARY" not in serialized})
+    elif skill == "self-improving-agent":
+        payload = parse_json_stdout(completed.stdout)
+        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
+        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
+        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
+        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
+        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
+        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
+        checks.append({"name": "integration-plan-fields", "ok": bool(payload.get("integration_plan_fields"))})
+        checks.append({"name": "windows-error-patterns", "ok": payload.get("windows_error_patterns") is True})
+        checks.append({"name": "windows-safety-patterns", "ok": payload.get("windows_safety_patterns") is True})
     return checks
 
 

@@ -47,7 +47,7 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `research-verification-gate` | Final evidence, date, and gap check before delivery. | `research-core`, `serious-research`, `full-research` |
 | `rss-news-digest` | Run and manage RSS digest workflows. | `digest`, `full-research` |
 | `sagemath` | Sage-backed math, graph theory, algebra, and verification. | `math`, `full-research` |
-| `self-improving-agent` | Log durable learnings, failures, and missing capabilities. | `full-research` |
+| `self-improving-agent` | Log durable learnings and propose canonical repo integration plans across install targets. | `full-research` |
 | `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
 | `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `serious-research`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |

@@ -106,6 +106,12 @@ return bounded result packets, and final reports pass review and verification
 gates. The workflow tracks concrete issues and evidence gaps instead of hiding
 quality behind a single aggregate score.
 
+Reusable failures, corrections, and missing capabilities route through
+`self-improving-agent`. That skill logs local `.learnings/` entries and, when a
+lesson affects skills or settings, proposes a canonical repo integration plan
+that names affected install targets, OS/substrates, docs, manifests, runtime
+helpers, tests, and blocked coverage before any files are changed.
+
 See `docs/workflow-overview.md` for the full sanitized system description and
 workflow examples.
 
@@ -773,7 +779,9 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 make lifecycle-test ARGS="--matrix full --platform-shape linux"
 make lifecycle-test ARGS="--matrix stress --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
+make fake-root-lifecycle ARGS="--skill self-improving-agent --platform-shape all"
 make runtime-smoke
+make runtime-smoke ARGS="--skills self-improving-agent"
 make install ARGS="--profile research-core --apply --post-install-smoke strict"
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
@@ -788,6 +796,7 @@ Recommended local maintainer checks mirror the CI gate:
 make sanitize-check
 make test
 make runtime-smoke
+make runtime-smoke ARGS="--skills self-improving-agent"
 make docs
 make docs-site
 make lifecycle-test ARGS="--matrix default --platform-shape all"
@@ -882,7 +891,15 @@ harness.
 ```bash
 make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
+make runtime-smoke ARGS="--skills self-improving-agent"
 ```
+
+`self-improving-agent` has a portable offline smoke contract for its
+cross-target learning review, command-safety, error-detection, and canonical
+integration-plan helper surface. Native Windows PowerShell/CMD behavior still
+requires running the Windows `make.bat` and runtime runner checks on Windows;
+Linux-hosted Windows platform-shape tests verify install layout, not native
+Windows execution.
 
 Docling has a skill-specific runtime doctor because it may rely on a dedicated
 Docling environment and heavier OCR/model packages that are not part of the
@@ -1903,6 +1920,10 @@ A typical research workflow looks like this:
 5. The final answer passes through review or verification skills when the task
    needs stronger evidence control. Verification reports concrete issues and
    remaining gaps instead of an aggregate quality score.
+6. Reusable failures, corrections, or missing capabilities are logged with
+   `self-improving-agent`. When they affect shared skills or settings, the
+   learning includes a canonical repo integration plan before any target-home
+   or repo mutation.
 
 Examples:
 
@@ -1923,6 +1944,10 @@ Examples:
   bodies as Linux agents. Tools such as SageMath may be detected as WSL-backed
   capabilities, so the dependency graph records the substrate instead of
   hardcoding a personal path.
+- **Reusable workflow improvement:** `self-improving-agent` records local
+  `.learnings/` entries, then proposes repo-first changes across `canonical/`,
+  `manifest/`, generated docs, runtime helpers, and tests with explicit
+  target/OS coverage limits.
 
 Related pages: [Installation](installation.md), [Skills](skills.md),
 [Dependencies](dependencies.md), [Multi-Agent Examples](multi-agent-examples.md).
@@ -2502,6 +2527,13 @@ config at `$AAS_RUNTIME_WORKSPACE/config/docling.toml` or pass it with
 `config.toml`, `workspace/config/*.toml`, caches, bytecode, and downloaded
 documents so credentials and local state are not accidentally promoted.
 
+`self-improving-agent` also uses the shared runtime for its portable helpers.
+Use those runtime commands instead of paths inside an agent skill directory:
+reference install mode deliberately points back to the canonical repo and does
+not copy support files. The helper smoke contract is offline and checks the
+learning review, command-safety, error-detection, and integration-plan command
+surface without reading credentials or live config.
+
 ## Install Modes
 
 `--install-mode auto` is the default. The installer resolves that request per
@@ -2826,6 +2858,12 @@ Instruction docs target each agent's `instructions` directory. Entrypoint
 aliases target Claude commands, but Codex and DeepSeek receive reference docs
 under `instructions/entrypoints` because equivalent slash-command loading is
 not assumed.
+
+Self-improvement records are workspace data, not agent-home source files.
+`self-improving-agent` writes or reviews `.learnings/` entries in the current
+workspace, then proposes canonical changes against this repository checkout.
+The generated target files should be updated through `plan` and `install`
+after the canonical repo change has been verified.
 
 Copilot is explicit-only: `--agents copilot` is required. Existing
 repository-level Copilot files under `.github/` do not activate the personal
