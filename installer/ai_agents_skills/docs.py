@@ -25,7 +25,7 @@ def generate_docs(manifests: dict[str, Any]) -> list[Path]:
         *write_doc_pair(docs_dir, source_dir, "audit-and-migration.md", audit_and_migration_text()),
         *write_doc_pair(docs_dir, source_dir, "openclaw-integration-plan.md", openclaw_integration_plan_text()),
         *write_doc_pair(docs_dir, source_dir, "openclaw-install-target-plan.md", openclaw_install_target_plan_text()),
-        *write_doc_pair(docs_dir, source_dir, "verification.md", verification_text()),
+        *write_doc_pair(docs_dir, source_dir, "verification.md", verification_text(manifests)),
         *write_doc_pair(docs_dir, source_dir, "architecture.md", architecture_text()),
         *write_doc_pair(docs_dir, source_dir, "installation.md", installation_text()),
         *write_doc_pair(docs_dir, source_dir, "windows.md", windows_text()),
@@ -699,8 +699,13 @@ def current_config_dependency_sections(manifests: dict[str, Any]) -> list[str]:
     return lines
 
 
-def verification_text() -> str:
-    return """# Verification
+def verification_text(manifests: dict[str, Any]) -> str:
+    runtime_smoke_skills = ", ".join(
+        f"`{skill}`"
+        for skill, spec in sorted(manifests.get("runtime", {}).get("skills", {}).items())
+        if isinstance(spec, dict) and isinstance(spec.get("smoke"), dict)
+    )
+    return f"""# Verification
 
 Verification is selective. Only installed and enabled managed artifacts from the
 installer state are checked.
@@ -742,6 +747,7 @@ make lifecycle-test ARGS="--matrix full --platform-shape linux"
 make lifecycle-test ARGS="--matrix stress --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
 make runtime-smoke
+make install ARGS="--profile research-core --apply --post-install-smoke strict"
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
 make verify ARGS="--skills zotero,docling --root <fake-or-real-root>"
@@ -763,6 +769,23 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 CI also checks that regenerated docs are current by running `make docs` and
 diffing `README.md` plus `docs/`. Run `make docs-site` after installing
 `docs/requirements.txt` when Sphinx rendering matters.
+
+Post-install smoke:
+
+- `install --apply` runs post-install smoke by default in `auto` mode.
+- `auto` runs installer verification, agent-visible skill smoke, and offline
+  runtime smoke for installed runtime-backed skills with safe manifest
+  contracts. Smoke failures are reported, but a successful apply still exits
+  `0`.
+- `--post-install-smoke verify` runs only installer integrity verification.
+- `--post-install-smoke strict` returns nonzero if any post-install check
+  fails, degrades, or is unsupported; the install is still recorded as applied.
+- `--post-install-smoke off` skips these checks.
+
+The post-install runtime layer is offline-only. It uses the installed runtime
+runner, copies managed runtime files into a temporary scratch workspace, strips
+secret-like environment variables, and forbids live APIs, package installation,
+MCP/client config writes, and background server starts.
 
 Result meanings:
 
@@ -823,11 +846,11 @@ Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
 macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
-`formal-skeleton-helper`, `get-available-resources`, and `graph-verifier`,
-forcing copy-mode runtime installation in a temporary root. It requires Python
-plus the runtime dependencies for those checks, including `psutil` and
-`networkx` for the default CI path. Passing `--skills` may only select skills
-that are supported by this runtime-smoke harness.
+{runtime_smoke_skills}, forcing copy-mode runtime installation in a temporary
+root. It requires Python plus any dependencies needed by the selected smoke
+contracts, including `psutil` and `networkx` for the default CI path. Passing
+`--skills` may only select skills that are supported by this runtime-smoke
+harness.
 
 ```bash
 make runtime-smoke
@@ -2362,6 +2385,17 @@ explains the install, uninstall, and rollback process and requires the user to
 type the displayed confirmation phrase. Real home-directory writes additionally
 require `--real-system`.
 
+After a successful `install --apply`, the installer runs post-install smoke in
+`auto` mode. That means it verifies managed installer state, checks
+agent-visible skill files, and runs offline runtime smoke for selected
+runtime-backed skills with safe smoke contracts. These checks write a bounded
+report under `.ai-agents-skills/runs/` and use temporary scratch directories
+for runtime outputs. They do not configure credentials, write MCP/client
+config, start servers, install packages, or call live services. Use
+`--post-install-smoke strict` in automation to make degraded smoke fail the
+command, `--post-install-smoke verify` for integrity-only checks, or
+`--post-install-smoke off` to skip post-install checks.
+
 ## Safe First Install
 
 Linux:
@@ -2403,6 +2437,7 @@ Real-system writes should be a final step after reviewing `plan` output:
 
 ```bash
 make install ARGS="--profile research-core --apply --real-system"
+make install ARGS="--profile research-core --apply --real-system --post-install-smoke strict"
 ```
 
 ## Runtime Files

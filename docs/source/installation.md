@@ -70,6 +70,17 @@ explains the install, uninstall, and rollback process and requires the user to
 type the displayed confirmation phrase. Real home-directory writes additionally
 require `--real-system`.
 
+After a successful `install --apply`, the installer runs post-install smoke in
+`auto` mode. That means it verifies managed installer state, checks
+agent-visible skill files, and runs offline runtime smoke for selected
+runtime-backed skills with safe smoke contracts. These checks write a bounded
+report under `.ai-agents-skills/runs/` and use temporary scratch directories
+for runtime outputs. They do not configure credentials, write MCP/client
+config, start servers, install packages, or call live services. Use
+`--post-install-smoke strict` in automation to make degraded smoke fail the
+command, `--post-install-smoke verify` for integrity-only checks, or
+`--post-install-smoke off` to skip post-install checks.
+
 ## Safe First Install
 
 Linux:
@@ -111,6 +122,7 @@ Real-system writes should be a final step after reviewing `plan` output:
 
 ```bash
 make install ARGS="--profile research-core --apply --real-system"
+make install ARGS="--profile research-core --apply --real-system --post-install-smoke strict"
 ```
 
 ## Runtime Files

@@ -16,11 +16,16 @@ from unittest.mock import patch
 from installer.ai_agents_skills.agents import detect_agents
 from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
+from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.lifecycle import uninstall
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with_runtime_file, runtime_inventory
-from installer.ai_agents_skills.runtime_smoke import runtime_command_target, selected_runtime_skills
+from installer.ai_agents_skills.runtime_smoke import (
+    run_installed_runtime_smoke,
+    runtime_command_target,
+    selected_runtime_skills,
+)
 from installer.ai_agents_skills.sanitize import has_sensitive_material
 from installer.ai_agents_skills.state import load_state
 from installer.ai_agents_skills.verify import verify
@@ -245,6 +250,33 @@ class RuntimeIntegrationTests(unittest.TestCase):
             runtime_command_target(manifests, "axiom-axle-mcp", "windows", "run_skill.ps1"),
             "skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
         )
+
+    def test_installed_runtime_smoke_uses_scratch_workspace(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            plan = build_plan(
+                root,
+                manifests,
+                ["formal-skeleton-helper"],
+                detect_agents(root, ["codex"]),
+                platform=platform,
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            result = run_installed_runtime_smoke(
+                root,
+                manifests,
+                skills={"formal-skeleton-helper"},
+                platform=platform,
+                timeout=30,
+            )
+
+            self.assertEqual(result["status"], "ok", result)
+            self.assertEqual(result["mode"], "installed")
+            self.assertFalse((root / ".codex" / "runtime" / "workspace" / "runtime-smoke").exists())
 
     def test_axiom_axle_helper_does_not_execute_install_or_leak_secret(self) -> None:
         helper = (
@@ -1068,6 +1100,24 @@ class RuntimeIntegrationTests(unittest.TestCase):
         manifests = load_manifests()
         with self.assertRaisesRegex(ValueError, "zotero"):
             selected_runtime_skills(manifests, {"zotero"})
+
+    def test_runtime_smoke_contracts_are_offline_and_workspace_relative(self) -> None:
+        manifests = load_manifests()
+        for skill in selected_runtime_skills(manifests, None):
+            with self.subTest(skill=skill):
+                smoke = manifests["runtime"]["skills"][skill]["smoke"]
+                self.assertEqual(smoke["schema"], "runtime-smoke.v1")
+                self.assertEqual(smoke["mode"], "offline")
+                self.assertGreater(smoke["timeout_seconds"], 0)
+                for value in smoke["command"].values():
+                    self.assertTrue(value.startswith("workspace/"))
+                    self.assertNotIn("..", Path(value).parts)
+                self.assertEqual(smoke["safety"]["network"], "forbidden")
+                self.assertEqual(smoke["safety"]["live_api"], "forbidden")
+                self.assertEqual(smoke["safety"]["package_install"], "forbidden")
+                self.assertEqual(smoke["safety"]["server_start"], "forbidden")
+                self.assertEqual(smoke["safety"]["config_write"], "forbidden")
+                self.assertEqual(smoke["safety"]["real_secrets"], "forbidden")
 
     def test_gdrive_credential_errors_do_not_embed_raw_secret_values(self) -> None:
         for path in (
