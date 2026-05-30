@@ -115,7 +115,7 @@ def target_notes(target: AgentTarget) -> list[str]:
         ]
     if target.name == "copilot":
         return [
-            "Copilot is explicit-only; repository-level .github surfaces do not activate this personal target.",
+            "Copilot participates in default detection when ~/.copilot exists; repository-level .github surfaces do not activate this personal target.",
         ]
     if target.name == "codex":
         return [

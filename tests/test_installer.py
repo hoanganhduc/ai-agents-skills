@@ -242,7 +242,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, [])
             self.assertEqual(plan["actions"], [])
-            self.assertEqual(len(plan["skipped_agents"]), 3)
+            self.assertEqual(len(plan["skipped_agents"]), 4)
 
     def test_symlinked_agent_home_is_skipped_without_writing_target(self) -> None:
         manifests = load_manifests()
@@ -974,11 +974,11 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     apply_plan(root, {"actions": [action], "skipped_agents": [], "root": str(root)}, dry_run=True)
             self.assertFalse((root / ".openclaw" / "skills" / "source-research" / "SKILL.md").exists())
 
-    def test_all_agent_fake_root_detects_deepseek_when_home_exists(self) -> None:
+    def test_all_default_agent_fake_root_detects_available_homes(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
-            create_agent_homes(root, "codex", "claude", "deepseek")
+            create_agent_homes(root, "codex", "claude", "deepseek", "copilot")
             from installer.ai_agents_skills.agents import detect_agents
 
             args = Args()
@@ -991,7 +991,15 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 for action in plan["actions"]
                 if action["kind"] == "file" and action["artifact_type"] == "skill-file"
             }
-            self.assertEqual(modes, {"codex": "reference", "claude": "symlink", "deepseek": "reference"})
+            self.assertEqual(
+                modes,
+                {
+                    "codex": "reference",
+                    "claude": "symlink",
+                    "deepseek": "reference",
+                    "copilot": "reference",
+                },
+            )
             skill_actions = [
                 action for action in plan["actions"]
                 if action["kind"] == "file" and action["artifact_type"] == "skill-file"
@@ -3218,16 +3226,16 @@ class DocsAndLauncherTests(unittest.TestCase):
 
 
 class CopilotTargetTests(unittest.TestCase):
-    def test_copilot_is_known_but_not_detected_by_default(self) -> None:
+    def test_copilot_is_known_and_detected_by_default(self) -> None:
         from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
 
         with fake_root() as tmp:
             root = Path(tmp)
             create_agent_homes(root, "copilot")
 
-            self.assertNotIn("copilot", all_agent_names())
+            self.assertIn("copilot", all_agent_names())
             self.assertIn("copilot", known_agent_names())
-            self.assertEqual([agent.name for agent in detect_agents(root)], [])
+            self.assertEqual([agent.name for agent in detect_agents(root)], ["copilot"])
             self.assertEqual([agent.name for agent in detect_agents(root, ["copilot"])], ["copilot"])
 
     def test_explicit_copilot_skill_install_uses_personal_skill_surface(self) -> None:

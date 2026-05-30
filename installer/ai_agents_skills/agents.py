@@ -7,8 +7,8 @@ from typing import Iterable, Mapping
 from .capabilities import looks_like_real_system_root, resolved_path_within
 
 
-DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek"]
-KNOWN_AGENT_NAMES = [*DEFAULT_AGENT_NAMES, "copilot", "openclaw"]
+DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot"]
+KNOWN_AGENT_NAMES = [*DEFAULT_AGENT_NAMES, "openclaw"]
 PORTABLE_MANIFEST_AGENT_NAMES = {"codex", "claude", "deepseek"}
 ADAPTER_AGENT_NAMES = {"copilot", "openclaw"}
 
@@ -89,7 +89,6 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             artifact_dirs={
                 "agent-persona": root / ".copilot" / "agents",
             },
-            detect_by_default=False,
             instruction_blocks_enabled=False,
         )
     if agent == "openclaw":
