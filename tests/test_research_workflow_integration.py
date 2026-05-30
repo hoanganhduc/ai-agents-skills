@@ -199,6 +199,7 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             "calibre",
             "getscipapers-requester",
             "paper-lookup",
+            "submission-venue-selector",
             "docling",
             "database-lookup",
             "paper-review",

@@ -38,6 +38,9 @@ Latest update: {sub-ref}`today`
 - Research workflow motivation: start with
   [System And Research Workflow Overview](workflow-overview.md) and
   [Multi-Agent Examples](multi-agent-examples.md).
+- Submission venue selector work: use the
+  [Submission Venue Selector Plan](submission-venue-selector-plan.md) before
+  implementing the automated venue-ranking skill.
 
 ## Safety Model
 
@@ -65,6 +68,7 @@ and `overview.md` are maintained manually as docs-site landing pages.
 overview
 workflow-overview
 multi-agent-examples
+submission-venue-selector-plan
 installation
 skills
 artifacts

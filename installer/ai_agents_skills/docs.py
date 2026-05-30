@@ -159,6 +159,8 @@ lighter platform-specific guidance than Linux and Windows.
   tools connect during real workflows.
 - [docs/multi-agent-examples.md](docs/multi-agent-examples.md): multi-agent process examples, spawn/wait
   lifecycle, and available research templates.
+- [docs/submission-venue-selector-plan.md](docs/submission-venue-selector-plan.md): implementation plan for the
+  fully automated submission venue selector skill.
 - [docs/system-profile.md](docs/system-profile.md): sanitized maintainer-system profile and how local
   tools map to skills.
 - [docs/agent-locations.md](docs/agent-locations.md): supported agent config, skill, template, command,

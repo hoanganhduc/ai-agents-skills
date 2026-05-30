@@ -1,0 +1,7 @@
+interface:
+  display_name: "Submission Venue Selector"
+  short_description: "Rank journals and conferences for a draft"
+  default_prompt: "Use $submission-venue-selector to build an evidence-backed venue shortlist for this draft."
+
+policy:
+  allow_implicit_invocation: true
