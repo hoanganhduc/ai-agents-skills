@@ -67,12 +67,12 @@ and DeepSeek personas are reference prompts. Claude entrypoint aliases are
 command files, while Codex and DeepSeek entrypoint aliases are reference
 documents under `instructions/entrypoints`.
 
-Copilot is an explicit-only target. Existing `.github/*` files or a
-`~/.copilot` directory do not activate it during default detection; use
-`--agents copilot`. The installer currently writes personal Copilot skill
-adapters to `~/.copilot/skills/<skill>/SKILL.md` and optional personal
-custom-agent profiles to `~/.copilot/agents/*.agent.md`. Repository Copilot
-surfaces such as `.github/skills`, `.github/agents`,
+Copilot is included in default target detection when `~/.copilot` exists.
+Existing repository-level `.github/*` files do not activate the personal
+Copilot target. The installer currently writes personal Copilot skill adapters
+to `~/.copilot/skills/<skill>/SKILL.md` and optional personal custom-agent
+profiles to `~/.copilot/agents/*.agent.md`. Repository Copilot surfaces such as
+`.github/skills`, `.github/agents`,
 `.github/copilot-instructions.md`, and `.github/instructions/**/*.instructions.md`
 are reported in precheck metadata but are not written by the home-root
 installer path.

@@ -189,7 +189,7 @@ Evidence inspected:
 |---|---|---|
 | `axiom-axle` | AxiomMath AXLE API key and MCP client configuration are configured manually outside this repo; helpers report presence only and never write config. | `axiom-axle-mcp` |
 | `github` | GitHub app/CLI authentication is configured outside this repo. | `github`, `gh-fix-ci`, `yeet` |
-| `github-copilot-cli` | Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when --agents copilot is selected; known credential sources are reported by presence rather than value, config secret values are not read, and command arguments/version output are redacted. | `copilot target` |
+| `github-copilot-cli` | Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when the Copilot target is detected or selected; known credential sources are reported by presence rather than value, config secret values are not read, and command arguments/version output are redacted. | `copilot target` |
 | `google-drive` | Google Drive service-account or OAuth credentials are configured outside this repo. | `calibre`, `zotero optional Google Drive helpers` |
 | `modal` | Modal token file and workspace credentials are configured outside this repo. | `modal-research-compute` |
 | `provider-configs` | OpenAI, Claude, DeepSeek, Copilot, and other provider auth/config files are intentionally excluded. | `agent frontends` |

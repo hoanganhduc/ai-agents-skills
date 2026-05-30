@@ -53,11 +53,11 @@ workspace, then proposes canonical changes against this repository checkout.
 The generated target files should be updated through `plan` and `install`
 after the canonical repo change has been verified.
 
-Copilot is explicit-only: `--agents copilot` is required. Existing
-repository-level Copilot files under `.github/` do not activate the personal
-Copilot target. The installer reports repository Copilot surfaces in precheck
-metadata, but the home-root install path writes only `~/.copilot/skills` and
-optional `~/.copilot/agents` files.
+Copilot is included in default target detection when `~/.copilot` exists.
+Existing repository-level Copilot files under `.github/` do not activate the
+personal Copilot target. The installer reports repository Copilot surfaces in
+precheck metadata, but the home-root install path writes only
+`~/.copilot/skills` and optional `~/.copilot/agents` files.
 
 OpenClaw is also explicit-only and remains fake-root-only before native target
 evidence. `precheck --json --agents openclaw` reports the `.openclaw` home
