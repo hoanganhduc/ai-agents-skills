@@ -50,6 +50,7 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `self-improving-agent` | Log durable learnings and propose canonical repo integration plans across install targets. | `full-research` |
 | `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
 | `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `serious-research`, `full-research` |
+| `submission-venue-selector` | Fully automated journal and conference venue selection for scholarly drafts. | `serious-research`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
 | `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |

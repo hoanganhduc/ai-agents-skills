@@ -108,6 +108,8 @@ lighter platform-specific guidance than Linux and Windows.
   tools connect during real workflows.
 - [docs/multi-agent-examples.md](docs/multi-agent-examples.md): multi-agent process examples, spawn/wait
   lifecycle, and available research templates.
+- [docs/submission-venue-selector-plan.md](docs/submission-venue-selector-plan.md): implementation plan for the
+  fully automated submission venue selector skill.
 - [docs/system-profile.md](docs/system-profile.md): sanitized maintainer-system profile and how local
   tools map to skills.
 - [docs/agent-locations.md](docs/agent-locations.md): supported agent config, skill, template, command,
@@ -298,12 +300,12 @@ make install ARGS="--profile research-core --dry-run"
 | `figure` | Structural figure generation and checking. | `tikz-draw` |
 | `formal-research` | Optional local-first Lean formalization lane for research claims. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate` |
 | `formal-research-remote` | Optional remote formal lane setup for AXLE MCP plus local formal-lane skills; install is inert and does not start remote services. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate`, `axiom-axle-mcp` |
-| `full-research` | All research-related skills. | `deep-research-workflow`, `source-research`, `research-briefing`, `research-report-reviewer`, `research-verification-gate`, `draft-writing`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `database-lookup`, `docling`, `get-available-resources`, `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate`, `axiom-axle-mcp`, `model-router`, `workspace-rearranger`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `sagemath`, `graph-verifier`, `agent-group-discuss`, `prose`, `cross-agent-delegation`, `modal-research-compute`, `paper-review`, `annotated-review`, `vnthuquan`, `self-improving-agent`, `session-logs` |
+| `full-research` | All research-related skills. | `deep-research-workflow`, `source-research`, `research-briefing`, `research-report-reviewer`, `research-verification-gate`, `draft-writing`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `submission-venue-selector`, `database-lookup`, `docling`, `get-available-resources`, `formal-skeleton-helper`, `lean-formalization-intake`, `lean-strict-verification-gate`, `axiom-axle-mcp`, `model-router`, `workspace-rearranger`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `sagemath`, `graph-verifier`, `agent-group-discuss`, `prose`, `cross-agent-delegation`, `modal-research-compute`, `paper-review`, `annotated-review`, `vnthuquan`, `self-improving-agent`, `session-logs` |
 | `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
 | `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier`, `formal-skeleton-helper` |
 | `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation` |
 | `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate` |
-| `serious-research` | Source-preserving research workflow with local libraries, document parsing, validation, and multi-agent orchestration. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `docling`, `database-lookup`, `paper-review`, `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation`, `get-available-resources`, `formal-skeleton-helper`, `workspace-rearranger` |
+| `serious-research` | Source-preserving research workflow with local libraries, document parsing, validation, and multi-agent orchestration. | `research-briefing`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `submission-venue-selector`, `docling`, `database-lookup`, `paper-review`, `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation`, `get-available-resources`, `formal-skeleton-helper`, `workspace-rearranger` |
 | `workflow-tools` | Reusable planning helpers for resources, model routing, formal skeletons, and workspace organization. | `get-available-resources`, `model-router`, `formal-skeleton-helper`, `workspace-rearranger` |
 | `writing-workflow` | Claim-preserving draft writing, rewriting, and revision-audit workflow. | `draft-writing` |
 
@@ -381,6 +383,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `self-improving-agent` | Log durable learnings and propose canonical repo integration plans across install targets. | `full-research` |
 | `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
 | `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `serious-research`, `full-research` |
+| `submission-venue-selector` | Fully automated journal and conference venue selection for scholarly drafts. | `serious-research`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
 | `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |

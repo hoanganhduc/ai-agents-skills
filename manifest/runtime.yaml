@@ -21,6 +21,7 @@
         "get-available-resources",
         "getscipapers-requester",
         "graph-verifier",
+        "submission-venue-selector",
         "self-improving-agent",
         "modal-research-compute",
         "research-digest-wrapper",
@@ -1256,6 +1257,82 @@
           "windows": "workspace/skills/graph-verifier/run_graph_verifier.bat"
         },
         "args": [],
+        "timeout_seconds": 20,
+        "writes": {
+          "workspace_scratch": true
+        },
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "real_secrets": "forbidden"
+        }
+      }
+    },
+    "submission-venue-selector": {
+      "runtime_dir": "submission-venue-selector",
+      "files": [
+        {
+          "source": "skills/submission-venue-selector/submission_venue_selector.py",
+          "target": "workspace/skills/submission-venue-selector/submission_venue_selector.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/submission-venue-selector/run_submission_venue_selector.bat",
+          "target": "workspace/skills/submission-venue-selector/run_submission_venue_selector.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/submission-venue-selector/run_submission_venue_selector.ps1",
+          "target": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/submission-venue-selector/run_submission_venue_selector.sh",
+          "target": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+          "macos": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+          "wsl": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+          "windows": "workspace/skills/submission-venue-selector/run_submission_venue_selector.bat",
+          "windows_ps1": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1"
+        },
+        "args": [
+          "smoke"
+        ],
         "timeout_seconds": 20,
         "writes": {
           "workspace_scratch": true

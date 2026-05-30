@@ -483,6 +483,21 @@ def validate_smoke_output(
         checks.append({"name": "integration-plan-fields", "ok": bool(payload.get("integration_plan_fields"))})
         checks.append({"name": "windows-error-patterns", "ok": payload.get("windows_error_patterns") is True})
         checks.append({"name": "windows-safety-patterns", "ok": payload.get("windows_safety_patterns") is True})
+    elif skill == "submission-venue-selector":
+        payload = parse_json_stdout(completed.stdout)
+        serialized = json.dumps(payload, sort_keys=True)
+        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
+        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
+        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
+        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
+        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
+        checks.append({"name": "real-secrets-not-read", "ok": payload.get("real_secrets_read") is False})
+        checks.append({"name": "downloads-not-attempted", "ok": payload.get("downloads_attempted") is False})
+        checks.append({"name": "mutations-not-attempted", "ok": payload.get("mutations_attempted") is False})
+        checks.append({"name": "canary-not-leaked", "ok": "SUBMISSION-VENUE-SELECTOR-CANARY" not in serialized})
+        checks.append({"name": "schema-list-present", "ok": "delivery.json" in payload.get("schemas", [])})
     return checks
 
 

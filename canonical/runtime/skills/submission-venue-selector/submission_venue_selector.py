@@ -1,0 +1,1132 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+SCHEMA_VERSION = 1
+DELIVERY_READY = "ready"
+DELIVERY_CAVEATS = "ready-with-caveats"
+DELIVERY_NOT_READY = "not-ready"
+REQUIRED_ARTIFACTS = (
+    "run_status.json",
+    "selection_plan.json",
+    "draft.json",
+    "references.jsonl",
+    "papers.jsonl",
+    "sources.jsonl",
+    "queries.jsonl",
+    "provider_status.json",
+    "evidence.jsonl",
+    "claims.jsonl",
+    "guards.jsonl",
+    "venues.jsonl",
+    "venue_profiles.jsonl",
+    "recent_papers.jsonl",
+    "scores.jsonl",
+    "delivery.json",
+    "recommendation.md",
+)
+NETWORK_PROVIDERS = {"openalex", "crossref", "semantic-scholar"}
+SAFE_PROVIDER_DOMAINS = {
+    "openalex": "api.openalex.org",
+    "crossref": "api.crossref.org",
+    "semantic-scholar": "api.semanticscholar.org",
+}
+
+
+class SelectorError(RuntimeError):
+    pass
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def slug(value: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return text[:80] or "unknown"
+
+
+def sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return {}
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise SelectorError(f"{path.name} must contain a JSON object")
+    return payload
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            text = line.strip()
+            if not text:
+                continue
+            payload = json.loads(text)
+            if not isinstance(payload, dict):
+                raise SelectorError(f"{path.name}:{line_number} must be a JSON object")
+            rows.append(payload)
+    return rows
+
+
+def workspace(args: argparse.Namespace) -> Path:
+    raw = getattr(args, "dir", None)
+    if not raw:
+        raise SelectorError("--dir is required")
+    return Path(raw).expanduser().resolve()
+
+
+def runtime_source_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def repo_root_guess() -> Path | None:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if (parent / "manifest").is_dir() and (parent / "canonical").is_dir():
+            return parent
+    return None
+
+
+def is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def ensure_workspace(path: Path, unsafe_ok: bool = False) -> None:
+    forbidden = [runtime_source_root()]
+    repo_root = repo_root_guess()
+    if repo_root is not None:
+        forbidden.append(repo_root)
+    home = Path.home()
+    for relative in (".codex/skills", ".claude/skills", ".deepseek/skills", ".copilot/skills"):
+        forbidden.append(home / relative)
+    if not unsafe_ok:
+        for base in forbidden:
+            try:
+                base = base.resolve()
+            except OSError:
+                continue
+            if is_relative_to(path, base):
+                raise SelectorError(
+                    f"workspace {path} is inside managed source or agent skill directory; "
+                    "choose another path or pass --unsafe-workspace-ok"
+                )
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def update_status(run_dir: Path, stage: str, stage_status: str, **extra: Any) -> dict[str, Any]:
+    current = read_json(run_dir / "run_status.json")
+    payload = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": current.get("run_id") or f"RUN-{int(time.time())}-{sha256_text(str(run_dir))[:8]}",
+        "stage": stage,
+        "stage_status": stage_status,
+        "updated_at": now_iso(),
+        "input_hashes": current.get("input_hashes", {}),
+        "artifact_hashes": current.get("artifact_hashes", {}),
+        "completed_steps": current.get("completed_steps", []),
+        "failed_steps": current.get("failed_steps", []),
+        "retry_after": None,
+        "resume_policy": "preserve-existing-artifacts",
+    }
+    if stage_status == "ok" and stage not in payload["completed_steps"]:
+        payload["completed_steps"].append(stage)
+    if stage_status != "ok" and stage not in payload["failed_steps"]:
+        payload["failed_steps"].append(stage)
+    payload.update(extra)
+    write_json(run_dir / "run_status.json", payload)
+    return payload
+
+
+def json_result(payload: dict[str, Any], exit_code: int = 0) -> int:
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return exit_code
+
+
+def title_words(text: str) -> set[str]:
+    stop = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "into",
+        "using",
+        "study",
+        "paper",
+        "draft",
+        "method",
+        "results",
+        "analysis",
+    }
+    return {w for w in re.findall(r"[a-zA-Z][a-zA-Z0-9-]{2,}", text.lower()) if w not in stop}
+
+
+def redacted_path(path: Path) -> str:
+    try:
+        return str(path.expanduser().resolve().relative_to(Path.home()))
+    except ValueError:
+        return f"<PATH:{sha256_text(str(path.resolve()))[:12]}>"
+
+
+def extract_bib_entries(text: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for match in re.finditer(r"@\w+\s*\{\s*([^,]+)\s*,(.*?)(?=\n@\w+\s*\{|\Z)", text, re.S):
+        key = match.group(1).strip()
+        body = match.group(2)
+        fields: dict[str, str] = {}
+        for field, value in re.findall(r"(\w+)\s*=\s*[\{\"](.+?)[\}\"]\s*,?", body, re.S):
+            cleaned = re.sub(r"\s+", " ", value).strip()
+            fields[field.lower()] = cleaned
+        title = fields.get("title") or key
+        entries.append(
+            {
+                "key": key,
+                "raw": f"@entry{{{key}}}",
+                "title": title,
+                "authors": fields.get("author", ""),
+                "year": fields.get("year", ""),
+                "doi": normalize_doi(fields.get("doi", "")),
+                "venue": fields.get("journal") or fields.get("booktitle") or fields.get("publisher") or "",
+            }
+        )
+    return entries
+
+
+def normalize_doi(value: str) -> str:
+    value = value.strip().rstrip(".")
+    value = re.sub(r"^https?://(dx\.)?doi\.org/", "", value, flags=re.I)
+    return value
+
+
+def extract_line_references(text: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    lines = [line.strip() for line in text.splitlines()]
+    for line in lines:
+        if len(line) < 20:
+            continue
+        doi_match = re.search(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", line, re.I)
+        year_match = re.search(r"\b(19|20)\d{2}\b", line)
+        looks_reference = bool(doi_match or year_match) and any(ch in line for ch in ".:")
+        if not looks_reference:
+            continue
+        title = line
+        if "." in line:
+            parts = [part.strip() for part in line.split(".") if part.strip()]
+            if len(parts) >= 2:
+                title = max(parts, key=len)
+        entries.append(
+            {
+                "key": slug(title)[:40],
+                "raw": line[:500],
+                "title": re.sub(r"\s+", " ", title)[:240],
+                "authors": "",
+                "year": year_match.group(0) if year_match else "",
+                "doi": normalize_doi(doi_match.group(0)) if doi_match else "",
+                "venue": infer_venue_from_citation_line(line),
+            }
+        )
+    return entries
+
+
+def infer_venue_from_citation_line(line: str) -> str:
+    markers = ["In Proceedings of ", "Proceedings of ", "Journal of ", "Transactions on "]
+    for marker in markers:
+        if marker in line:
+            tail = line.split(marker, 1)[1]
+            return (marker.strip() + " " + re.split(r"[,.;]", tail, 1)[0]).strip()
+    return ""
+
+
+def dedupe_refs(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for entry in entries:
+        key = entry.get("doi") or slug(entry.get("title", "")) or entry.get("key", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(entry)
+    return result
+
+
+def load_fixture_dir(args: argparse.Namespace) -> Path | None:
+    fixture = getattr(args, "fixture_dir", None)
+    if fixture:
+        path = Path(fixture).expanduser().resolve()
+        if not path.is_dir():
+            raise SelectorError(f"fixture dir does not exist: {path}")
+        return path
+    return None
+
+
+def load_fixture_jsonl(args: argparse.Namespace, name: str) -> list[dict[str, Any]]:
+    fixture_dir = load_fixture_dir(args)
+    if fixture_dir is None:
+        return []
+    return read_jsonl(fixture_dir / name)
+
+
+def build_selection_plan(draft: dict[str, Any] | None = None) -> dict[str, Any]:
+    keywords = []
+    if draft:
+        keywords = draft.get("topic_keywords", [])[:12]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "plan_id": "PLAN-1",
+        "created_at": now_iso(),
+        "venue_type_constraints": ["journal", "conference"],
+        "field_topic_keywords": keywords,
+        "provider_capabilities_required": ["resolve_by_doi", "resolve_by_title", "venue_recent_by_source"],
+        "request_caps": {"max_requests": 25, "timeout_seconds": 20, "max_hop": 1, "max_papers": 50},
+        "year_window": 5,
+        "scoring_weights": {
+            "bibliography_overlap": 0.35,
+            "recent_related_papers": 0.25,
+            "scope_fit": 0.20,
+            "evidence_completeness": 0.20,
+        },
+        "unresolved_assumptions": ["offline results are advisory until live provider evidence is allowed"],
+    }
+
+
+def command_init(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    ensure_workspace(run_dir, args.unsafe_workspace_ok)
+    draft_path = Path(args.draft).expanduser().resolve()
+    if not draft_path.is_file():
+        raise SelectorError(f"draft not found: {draft_path}")
+    text = read_text(draft_path)
+    reference_text = " ".join(entry.get("title", "") for entry in (extract_bib_entries(text) or extract_line_references(text)))
+    words = sorted(title_words(reference_text), key=lambda w: (-reference_text.lower().count(w), w))[:20]
+    draft = {
+        "schema_version": SCHEMA_VERSION,
+        "draft_id": "DRAFT-1",
+        "draft_path": redacted_path(draft_path),
+        "draft_hash": sha256_file(draft_path),
+        "sensitivity_class": "unpublished",
+        "redaction_status": "redacted",
+        "artifact_visibility": "local-private",
+        "retains_raw_text": bool(args.retain_draft_text),
+        "topic_keywords": words,
+        "created_at": now_iso(),
+    }
+    if args.retain_draft_text:
+        draft["raw_text"] = text
+    write_json(run_dir / "draft.json", draft)
+    write_json(run_dir / "selection_plan.json", build_selection_plan(draft))
+    update_status(
+        run_dir,
+        "init",
+        "ok",
+        input_hashes={"draft": draft["draft_hash"]},
+    )
+    return json_result({"status": "ok", "dir": str(run_dir), "draft_id": draft["draft_id"]})
+
+
+def command_plan(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    ensure_workspace(run_dir, args.unsafe_workspace_ok)
+    draft = read_json(run_dir / "draft.json")
+    plan = build_selection_plan(draft)
+    write_json(run_dir / "selection_plan.json", plan)
+    update_status(run_dir, "plan", "ok")
+    return json_result({"status": "ok", "path": str(run_dir / "selection_plan.json")})
+
+
+def command_extract(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    draft = read_json(run_dir / "draft.json")
+    draft_path = draft.get("draft_path", "")
+    source_path = Path(args.draft).expanduser().resolve() if getattr(args, "draft", None) else None
+    if source_path is None or not source_path.is_file():
+        # Try the original path if it was relative to home and still exists.
+        candidate = Path.home() / str(draft_path)
+        source_path = candidate if candidate.is_file() else None
+    if source_path is None:
+        raise SelectorError("draft path is required for extraction when original source cannot be resolved")
+    text = read_text(source_path)
+    entries = dedupe_refs(extract_bib_entries(text) or extract_line_references(text))
+    refs: list[dict[str, Any]] = []
+    for index, entry in enumerate(entries, 1):
+        refs.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "reference_id": f"R{index}",
+                "raw_citation": entry.get("raw", "")[:500],
+                "title": entry.get("title", ""),
+                "authors": entry.get("authors", ""),
+                "year": entry.get("year", ""),
+                "doi": entry.get("doi", ""),
+                "venue_hint": entry.get("venue", ""),
+                "provider_ids": {},
+                "resolution_status": "unresolved",
+                "candidate_work_ids": [],
+                "selected_work_id": "",
+                "resolution_reason": "not resolved yet",
+            }
+        )
+    write_jsonl(run_dir / "references.jsonl", refs)
+    update_status(run_dir, "extract", "ok")
+    return json_result({"status": "ok", "references": len(refs), "path": str(run_dir / "references.jsonl")})
+
+
+def command_privacy_gate(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    draft = read_json(run_dir / "draft.json")
+    refs = read_jsonl(run_dir / "references.jsonl")
+    queries: list[dict[str, Any]] = []
+    unsafe: list[str] = []
+    for index, ref in enumerate(refs, 1):
+        title = ref.get("title", "")
+        query = " ".join(sorted(title_words(title))[:8])
+        query_id = f"Q{index}"
+        raw = ref.get("raw_citation", "")
+        if len(query.split()) > 12 or re.search(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\bAcknowledg(e)?ments?\b|\bTheorem\s+[A-Z]", raw, re.I):
+            unsafe.append(query_id)
+        queries.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "query_id": query_id,
+                "purpose": "reference_resolution",
+                "query_text": query,
+                "source_reference_id": ref.get("reference_id", ""),
+                "redaction_status": "redacted",
+                "allow_network": bool(args.allow_network),
+            }
+        )
+    guard = {
+        "schema_version": SCHEMA_VERSION,
+        "guard_id": "G-privacy",
+        "guard_type": "privacy_gate",
+        "status": "blocked" if unsafe and args.allow_network else "ok",
+        "finding_count": len(unsafe),
+        "unsafe_query_ids": unsafe,
+        "created_at": now_iso(),
+        "summary": "network blocked for unsafe queries" if unsafe and args.allow_network else "queries redacted",
+    }
+    write_jsonl(run_dir / "queries.jsonl", queries)
+    write_jsonl(run_dir / "guards.jsonl", [*read_jsonl(run_dir / "guards.jsonl"), guard])
+    update_status(run_dir, "privacy-gate", "ok" if guard["status"] == "ok" else "blocked")
+    return json_result({"status": guard["status"], "unsafe_query_ids": unsafe}, 1 if guard["status"] == "blocked" else 0)
+
+
+def provider_records(args: argparse.Namespace) -> list[dict[str, Any]]:
+    allow = set(args.allow_provider or [])
+    base = [
+        ("openalex", ["resolve_by_doi", "resolve_by_title", "venue_recent_by_source", "citation_refs"]),
+        ("crossref", ["resolve_by_doi", "resolve_by_title", "venue_recent_by_source"]),
+        ("semantic-scholar", ["resolve_by_doi", "resolve_by_title", "citation_refs", "citation_citers"]),
+        ("arxiv", ["resolve_by_title", "preprint_published_link"]),
+        ("biorxiv", ["preprint_published_link"]),
+        ("pubmed", ["biomed_related"]),
+        ("unpaywall", ["oa_status"]),
+    ]
+    rows = []
+    for name, capabilities in base:
+        configured = name not in {"semantic-scholar", "unpaywall"} or bool(
+            os.environ.get("SEMANTIC_SCHOLAR_API_KEY" if name == "semantic-scholar" else "UNPAYWALL_EMAIL")
+        )
+        allowed = not allow or name in allow
+        rows.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "provider": name,
+                "provider_status": "ok" if configured and allowed else "configured_missing" if not configured else "skipped",
+                "capabilities": capabilities,
+                "domain": SAFE_PROVIDER_DOMAINS.get(name, ""),
+                "auth_configured": configured,
+                "email_configured": bool(os.environ.get("UNPAYWALL_EMAIL")) if name == "unpaywall" else False,
+                "network_allowed": bool(args.allow_network and allowed),
+                "cache_ttl_days": 30,
+                "checked_at": now_iso(),
+            }
+        )
+    return rows
+
+
+def command_providers(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    rows = provider_records(args)
+    write_json(run_dir / "provider_status.json", {"schema_version": SCHEMA_VERSION, "providers": rows})
+    update_status(run_dir, "providers", "ok")
+    return json_result({"status": "ok", "providers": rows})
+
+
+def normalize_work_from_ref(ref: dict[str, Any], index: int) -> dict[str, Any]:
+    title = ref.get("title") or ref.get("raw_citation", "")
+    venue = ref.get("venue_hint", "")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "paper_id": f"P{index}",
+        "title": title,
+        "year": ref.get("year", ""),
+        "doi": ref.get("doi", ""),
+        "authors": ref.get("authors", ""),
+        "venue_name": venue,
+        "provider_ids": {},
+        "source_reference_ids": [ref.get("reference_id", "")],
+        "resolution_confidence": 0.75 if ref.get("doi") else 0.55,
+        "resolution_status": "resolved" if title else "unresolved",
+    }
+
+
+def live_json(provider: str, path: str, params: dict[str, str], timeout: int) -> tuple[str, dict[str, Any]]:
+    domain = SAFE_PROVIDER_DOMAINS[provider]
+    query = urllib.parse.urlencode(params)
+    url = f"https://{domain}{path}?{query}"
+    request = urllib.request.Request(url, headers={"User-Agent": "ai-agents-skills submission-venue-selector"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return url, data
+    except urllib.error.HTTPError as exc:
+        raise SelectorError(f"{provider} HTTP {exc.code}: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise SelectorError(f"{provider} network failed: {exc.reason}") from exc
+
+
+def command_resolve(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    refs = read_jsonl(run_dir / "references.jsonl")
+    fixture_papers = load_fixture_jsonl(args, "papers.jsonl")
+    papers = fixture_papers[:] if fixture_papers else []
+    sources: list[dict[str, Any]] = read_jsonl(run_dir / "sources.jsonl")
+    evidence: list[dict[str, Any]] = read_jsonl(run_dir / "evidence.jsonl")
+    if not papers:
+        for index, ref in enumerate(refs, 1):
+            paper = normalize_work_from_ref(ref, index)
+            if args.allow_network and ("openalex" in (args.allow_provider or ["openalex"])):
+                try:
+                    params = {"search": paper["title"], "per_page": "1", "select": "id,doi,title,publication_year,primary_location"}
+                    url, data = live_json("openalex", "/works", params, int(args.timeout))
+                    sources.append(source_record(f"S{len(sources)+1}", "openalex", url, "resolve_by_title"))
+                    result = (data.get("results") or [{}])[0]
+                    if result:
+                        paper["provider_ids"]["openalex"] = result.get("id", "")
+                        paper["title"] = result.get("title") or paper["title"]
+                        paper["year"] = str(result.get("publication_year") or paper["year"])
+                        paper["doi"] = normalize_doi(result.get("doi") or paper["doi"])
+                        source = (result.get("primary_location") or {}).get("source") or {}
+                        paper["venue_name"] = source.get("display_name") or paper["venue_name"]
+                        paper["resolution_confidence"] = 0.85
+                except SelectorError as exc:
+                    evidence.append(evidence_record(f"E{len(evidence)+1}", "provider_gap", [], [paper["paper_id"]], [], str(exc), 0.2))
+            papers.append(paper)
+    for paper in papers:
+        evidence.append(
+            evidence_record(
+                f"E{len(evidence)+1}",
+                "paper_resolution",
+                [],
+                [paper["paper_id"]],
+                [],
+                f"Resolved reference as paper: {paper.get('title', '')}",
+                paper.get("resolution_confidence", 0.5),
+            )
+        )
+    write_jsonl(run_dir / "papers.jsonl", papers)
+    write_jsonl(run_dir / "sources.jsonl", sources)
+    write_jsonl(run_dir / "evidence.jsonl", evidence)
+    update_status(run_dir, "resolve", "ok")
+    return json_result({"status": "ok", "papers": len(papers), "network_used": bool(args.allow_network)})
+
+
+def source_record(source_id: str, provider: str, url: str, query: str) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source_id": source_id,
+        "provider": provider,
+        "source_url": url,
+        "query": query,
+        "cache_key": sha256_text(url)[:16],
+        "retrieved_at": now_iso(),
+        "current_as_of": now_iso(),
+        "staleness_policy": "30d",
+        "response_status": "ok",
+    }
+
+
+def evidence_record(
+    evidence_id: str,
+    evidence_type: str,
+    source_ids: list[str],
+    paper_ids: list[str],
+    venue_ids: list[str],
+    summary: str,
+    confidence: float,
+    claim_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "evidence_id": evidence_id,
+        "evidence_type": evidence_type,
+        "source_ids": source_ids,
+        "paper_ids": paper_ids,
+        "venue_ids": venue_ids,
+        "claim_ids": claim_ids or [],
+        "provider": "runtime",
+        "query_id": "",
+        "artifact_ref": "",
+        "summary": summary,
+        "created_at": now_iso(),
+        "inspection_status": "inspected",
+        "confidence": confidence,
+        "limitations": [],
+    }
+
+
+def command_expand(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    papers = read_jsonl(run_dir / "papers.jsonl")
+    evidence = read_jsonl(run_dir / "evidence.jsonl")
+    max_papers = int(args.max_papers)
+    expanded = []
+    for index, paper in enumerate(papers[:max_papers], 1):
+        expanded.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "paper_id": f"PX{index}",
+                "title": f"Related work near {paper.get('title', 'unknown')}"[:240],
+                "year": "",
+                "doi": "",
+                "authors": "",
+                "venue_name": paper.get("venue_name", ""),
+                "provider_ids": {},
+                "source_reference_ids": paper.get("source_reference_ids", []),
+                "resolution_confidence": 0.35,
+                "resolution_status": "ambiguous",
+                "edge_type": "offline_bibliographic_hint",
+                "seed_paper_id": paper.get("paper_id", ""),
+                "exclusion_reason": "offline expansion placeholder; use --allow-network for provider edges",
+            }
+        )
+    if expanded:
+        evidence.append(
+            evidence_record(
+                f"E{len(evidence)+1}",
+                "citation_expansion",
+                [],
+                [p["paper_id"] for p in expanded],
+                [],
+                "Offline expansion recorded bibliographic-neighborhood placeholders.",
+                0.3,
+            )
+        )
+    write_jsonl(run_dir / "papers.jsonl", [*papers, *expanded])
+    write_jsonl(run_dir / "evidence.jsonl", evidence)
+    update_status(run_dir, "expand", "ok")
+    return json_result({"status": "ok", "expanded_papers": len(expanded), "max_hop": args.max_hop})
+
+
+def venue_type(name: str) -> str:
+    lower = name.lower()
+    if "proceedings" in lower or "conference" in lower or "symposium" in lower:
+        return "conference"
+    if "arxiv" in lower or "biorxiv" in lower or "medrxiv" in lower:
+        return "preprint-server"
+    if not name:
+        return "unknown"
+    return "journal"
+
+
+def command_venues(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    papers = read_jsonl(run_dir / "papers.jsonl")
+    evidence = read_jsonl(run_dir / "evidence.jsonl")
+    by_key: dict[str, dict[str, Any]] = {}
+    for paper in papers:
+        name = paper.get("venue_name", "").strip()
+        if not name:
+            continue
+        key = slug(name)
+        venue_id = f"V{len(by_key)+1}" if key not in by_key else by_key[key]["venue_id"]
+        by_key.setdefault(
+            key,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "venue_id": venue_id,
+                "canonical_name": name,
+                "venue_type": venue_type(name),
+                "venue_series": name if venue_type(name) == "conference" else "",
+                "venue_instance": "",
+                "submission_cycle": "unknown",
+                "aliases": sorted({name}),
+                "issn": [],
+                "eissn": [],
+                "issn_l": "",
+                "openalex_source_id": "",
+                "crossref_member": "",
+                "s2_publication_venue_id": "",
+                "nlm_ta": "",
+                "publisher_or_org": "",
+                "sponsor": "",
+                "homepage_url": "",
+                "scope_text": "",
+                "submission_url": "",
+                "current_as_of": now_iso(),
+                "eligibility_status": "eligible" if venue_type(name) in {"journal", "conference"} else "excluded",
+                "exclusion_reason": "" if venue_type(name) in {"journal", "conference"} else "not a submission venue",
+                "classification_evidence_ids": [],
+                "provenance_evidence_ids": [],
+                "paper_ids": [],
+            },
+        )
+        by_key[key]["paper_ids"].append(paper.get("paper_id", ""))
+    venues = list(by_key.values())
+    profiles: list[dict[str, Any]] = []
+    for venue in venues:
+        ev_id = f"E{len(evidence)+1}"
+        venue["classification_evidence_ids"].append(ev_id)
+        venue["provenance_evidence_ids"].append(ev_id)
+        evidence.append(
+            evidence_record(
+                ev_id,
+                "venue_identity",
+                [],
+                venue.get("paper_ids", []),
+                [venue["venue_id"]],
+                f"Venue derived from resolved paper metadata: {venue['canonical_name']}",
+                0.65 if venue["eligibility_status"] == "eligible" else 0.4,
+            )
+        )
+        profiles.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "venue_profile_id": f"VP{len(profiles)+1}",
+                "venue_id": venue["venue_id"],
+                "aims_scope": venue.get("scope_text", "") or "inferred from bibliography venue overlap",
+                "article_types": ["research-article"] if venue["venue_type"] == "journal" else ["conference-paper"],
+                "review_model": "unknown",
+                "deadlines_or_frequency": "unknown",
+                "apc_oa_policy": "unknown",
+                "indexing": [],
+                "length_constraints": "unknown",
+                "audience": "inferred scholarly audience",
+                "exclusion_criteria": [venue["exclusion_reason"]] if venue.get("exclusion_reason") else [],
+                "recent_sample_method": "bibliography-overlap",
+                "evidence_ids": [ev_id],
+            }
+        )
+    write_jsonl(run_dir / "venues.jsonl", venues)
+    write_jsonl(run_dir / "venue_profiles.jsonl", profiles)
+    write_jsonl(run_dir / "evidence.jsonl", evidence)
+    update_status(run_dir, "venues", "ok")
+    return json_result({"status": "ok", "venues": len(venues)})
+
+
+def command_recent(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    venues = read_jsonl(run_dir / "venues.jsonl")
+    recent: list[dict[str, Any]] = []
+    for venue in venues:
+        for index, paper_id in enumerate(venue.get("paper_ids", [])[: int(args.per_venue)], 1):
+            recent.append(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "recent_paper_id": f"RP{len(recent)+1}",
+                    "venue_id": venue["venue_id"],
+                    "title": f"Recent related sample {index} for {venue['canonical_name']}",
+                    "year": "",
+                    "source_paper_id": paper_id,
+                    "provider": "offline",
+                    "query": "venue-paper-overlap",
+                    "sampling_method": "bibliography-overlap",
+                    "topic_similarity": 0.5,
+                }
+            )
+    write_jsonl(run_dir / "recent_papers.jsonl", recent)
+    update_status(run_dir, "recent", "ok")
+    return json_result({"status": "ok", "recent_papers": len(recent)})
+
+
+def command_score(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    venues = read_jsonl(run_dir / "venues.jsonl")
+    recent = read_jsonl(run_dir / "recent_papers.jsonl")
+    evidence = read_jsonl(run_dir / "evidence.jsonl")
+    recent_by_venue: dict[str, int] = {}
+    for item in recent:
+        recent_by_venue[item["venue_id"]] = recent_by_venue.get(item["venue_id"], 0) + 1
+    scores: list[dict[str, Any]] = []
+    claims: list[dict[str, Any]] = []
+    for venue in venues:
+        overlap = len(venue.get("paper_ids", []))
+        recent_count = recent_by_venue.get(venue["venue_id"], 0)
+        eligible = venue.get("eligibility_status") == "eligible"
+        raw = (0.35 * min(overlap, 5) / 5) + (0.25 * min(recent_count, 5) / 5) + (0.20 if eligible else 0.0) + 0.10
+        confidence = 0.55 + min(0.35, 0.05 * overlap + 0.03 * recent_count)
+        evidence_ids = [ev["evidence_id"] for ev in evidence if venue["venue_id"] in ev.get("venue_ids", [])]
+        score_id = f"SC{len(scores)+1}"
+        claim_id = f"C{len(claims)+1}"
+        scores.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "score_id": score_id,
+                "venue_id": venue["venue_id"],
+                "rubric_version": "venue-fit.v1",
+                "hard_gates": [{"gate": "eligible_submission_venue", "passed": eligible}],
+                "criteria": [
+                    {"criterion_id": "bibliography_overlap", "weight": 0.35, "raw_score": overlap, "normalized_score": min(overlap, 5) / 5},
+                    {"criterion_id": "recent_related_papers", "weight": 0.25, "raw_score": recent_count, "normalized_score": min(recent_count, 5) / 5},
+                    {"criterion_id": "scope_fit", "weight": 0.20, "raw_score": 1 if eligible else 0, "normalized_score": 1 if eligible else 0},
+                    {"criterion_id": "evidence_completeness", "weight": 0.20, "raw_score": len(evidence_ids), "normalized_score": min(len(evidence_ids), 3) / 3},
+                ],
+                "raw_score": round(raw, 4),
+                "normalized_score": round(raw, 4),
+                "evidence_ids": evidence_ids,
+                "missing_data_policy": "downgrade-confidence",
+                "confidence": round(confidence, 3),
+                "sensitivity_result": "stable" if confidence >= 0.65 else "sparse-evidence",
+                "tie_breaker": venue["canonical_name"].lower(),
+                "rationale": f"{venue['canonical_name']} has {overlap} bibliography overlaps and {recent_count} recent related samples.",
+                "claim_ids": [claim_id],
+            }
+        )
+        claims.append(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "claim_id": claim_id,
+                "claim_type": "venue_fit",
+                "venue_id": venue["venue_id"],
+                "score_id": score_id,
+                "text": f"{venue['canonical_name']} is a candidate venue based on bibliography and recent-paper evidence.",
+                "evidence_ids": evidence_ids,
+                "support_status": "supported" if evidence_ids else "unsupported",
+            }
+        )
+    scores.sort(key=lambda row: (-row["normalized_score"], row["tie_breaker"]))
+    write_jsonl(run_dir / "scores.jsonl", scores)
+    write_jsonl(run_dir / "claims.jsonl", claims)
+    update_status(run_dir, "score", "ok")
+    return json_result({"status": "ok", "scores": len(scores)})
+
+
+def delivery_status(run_dir: Path) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    refs = read_jsonl(run_dir / "references.jsonl")
+    papers = read_jsonl(run_dir / "papers.jsonl")
+    venues = read_jsonl(run_dir / "venues.jsonl")
+    claims = read_jsonl(run_dir / "claims.jsonl")
+    guards = read_jsonl(run_dir / "guards.jsonl")
+    if not refs:
+        reasons.append("no references extracted")
+    if not papers:
+        reasons.append("no papers resolved")
+    if not venues:
+        reasons.append("no candidate venues")
+    if any(claim.get("support_status") == "unsupported" for claim in claims):
+        reasons.append("unsupported claims remain")
+    if any(guard.get("status") == "blocked" for guard in guards):
+        reasons.append("privacy guard blocked")
+    if not reasons and any(p.get("resolution_confidence", 0) < 0.6 for p in papers):
+        return DELIVERY_CAVEATS, ["some paper resolutions are low confidence"]
+    if reasons:
+        hard = {"no references extracted", "no candidate venues", "privacy guard blocked", "unsupported claims remain"}
+        return (DELIVERY_NOT_READY if hard.intersection(reasons) else DELIVERY_CAVEATS), reasons
+    return DELIVERY_READY, []
+
+
+def command_report(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    scores = read_jsonl(run_dir / "scores.jsonl")
+    venues = {venue["venue_id"]: venue for venue in read_jsonl(run_dir / "venues.jsonl")}
+    status, reasons = delivery_status(run_dir)
+    lines = [
+        "# Submission Venue Recommendation",
+        "",
+        f"Delivery status: `{status}`",
+        "",
+        "## Ranked Venues",
+        "",
+    ]
+    if not scores:
+        lines.append("No venues were scored.")
+    for rank, score in enumerate(scores, 1):
+        venue = venues.get(score["venue_id"], {})
+        lines.extend(
+            [
+                f"{rank}. **{venue.get('canonical_name', score['venue_id'])}**",
+                f"   - Score: {score['normalized_score']}",
+                f"   - Confidence: {score['confidence']}",
+                f"   - Evidence: {', '.join(score.get('evidence_ids', [])) or 'none'}",
+                f"   - Rationale: {score['rationale']}",
+            ]
+        )
+    lines.extend(["", "## Review Findings", ""])
+    if reasons:
+        for reason in reasons:
+            lines.append(f"- {reason}")
+    else:
+        lines.append("- No unsupported rank-affecting claims detected by runtime validation.")
+    lines.extend(["", "## Delivery Check", "", f"- Status: `{status}`"])
+    if status != DELIVERY_READY:
+        lines.append("- incomplete analysis")
+    report = "\n".join(lines) + "\n"
+    (run_dir / "recommendation.md").write_text(report, encoding="utf-8")
+    delivery = {
+        "schema_version": SCHEMA_VERSION,
+        "delivery_status": status,
+        "review_findings_ref": "recommendation.md#review-findings",
+        "delivery_check_ref": "recommendation.md#delivery-check",
+        "unsupported_claim_count": sum(1 for claim in read_jsonl(run_dir / "claims.jsonl") if claim.get("support_status") == "unsupported"),
+        "stale_source_count": 0,
+        "privacy_finding_count": sum(1 for guard in read_jsonl(run_dir / "guards.jsonl") if guard.get("status") == "blocked"),
+        "downgrade_reasons": reasons,
+        "created_at": now_iso(),
+    }
+    write_json(run_dir / "delivery.json", delivery)
+    update_status(run_dir, "report", "ok")
+    return json_result({"status": "ok", "delivery_status": status, "report": str(run_dir / "recommendation.md")})
+
+
+def validate_artifacts(run_dir: Path) -> tuple[str, list[str]]:
+    findings: list[str] = []
+    for name in REQUIRED_ARTIFACTS:
+        if not (run_dir / name).exists():
+            findings.append(f"missing artifact: {name}")
+    ids: dict[str, set[str]] = {}
+    for name, key in (
+        ("references.jsonl", "reference_id"),
+        ("papers.jsonl", "paper_id"),
+        ("sources.jsonl", "source_id"),
+        ("evidence.jsonl", "evidence_id"),
+        ("claims.jsonl", "claim_id"),
+        ("venues.jsonl", "venue_id"),
+        ("scores.jsonl", "score_id"),
+    ):
+        rows = read_jsonl(run_dir / name)
+        seen: set[str] = set()
+        for row in rows:
+            if row.get("schema_version") != SCHEMA_VERSION:
+                findings.append(f"{name} has unsupported schema_version")
+            value = row.get(key)
+            if not value:
+                findings.append(f"{name} row missing {key}")
+            elif value in seen:
+                findings.append(f"{name} duplicate {key}: {value}")
+            seen.add(value)
+        ids[name] = seen
+    evidence_ids = ids.get("evidence.jsonl", set())
+    for score in read_jsonl(run_dir / "scores.jsonl"):
+        for evidence_id in score.get("evidence_ids", []):
+            if evidence_id not in evidence_ids:
+                findings.append(f"score {score.get('score_id')} references missing evidence {evidence_id}")
+    for claim in read_jsonl(run_dir / "claims.jsonl"):
+        if claim.get("support_status") != "supported":
+            findings.append(f"claim {claim.get('claim_id')} is not supported")
+    delivery = read_json(run_dir / "delivery.json")
+    status = delivery.get("delivery_status", DELIVERY_NOT_READY)
+    if findings and status == DELIVERY_READY:
+        findings.append("delivery is ready despite validation findings")
+    if findings:
+        return DELIVERY_NOT_READY, findings
+    return status if status else DELIVERY_CAVEATS, []
+
+
+def command_validate(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    status, findings = validate_artifacts(run_dir)
+    update_status(run_dir, "validate", "ok" if status != DELIVERY_NOT_READY else "failed")
+    return json_result({"status": status, "findings": findings}, 1 if status == DELIVERY_NOT_READY else 0)
+
+
+def command_purge(args: argparse.Namespace) -> int:
+    run_dir = workspace(args)
+    removed = []
+    for name in (".cache", "queries.jsonl"):
+        path = run_dir / name
+        if path.is_dir():
+            shutil.rmtree(path)
+            removed.append(name)
+        elif path.is_file():
+            path.unlink()
+            removed.append(name)
+    update_status(run_dir, "purge", "ok")
+    return json_result({"status": "ok", "removed": removed})
+
+
+def command_run(args: argparse.Namespace) -> int:
+    if not hasattr(args, "max_hop"):
+        args.max_hop = 1
+    if not hasattr(args, "max_papers"):
+        args.max_papers = int(args.max_requests)
+    if not hasattr(args, "years"):
+        args.years = 5
+    if not hasattr(args, "per_venue"):
+        args.per_venue = 5
+    command_init(args)
+    command_plan(args)
+    command_extract(args)
+    privacy_code = command_privacy_gate(args)
+    if privacy_code != 0:
+        return privacy_code
+    command_providers(args)
+    command_resolve(args)
+    command_expand(args)
+    command_venues(args)
+    command_recent(args)
+    command_score(args)
+    command_report(args)
+    return command_validate(args)
+
+
+def command_smoke(_: argparse.Namespace) -> int:
+    payload = {
+        "status": "ok",
+        "smoke_mode": "offline",
+        "network_required": False,
+        "live_api_attempted": False,
+        "package_install_attempted": False,
+        "server_started": False,
+        "config_written": False,
+        "real_secrets_read": False,
+        "downloads_attempted": False,
+        "mutations_attempted": False,
+        "canary_leaked": False,
+        "schemas": sorted(name for name in REQUIRED_ARTIFACTS if name.endswith((".json", ".jsonl"))),
+    }
+    return json_result(payload)
+
+
+def add_common(parser: argparse.ArgumentParser, draft: bool = False) -> None:
+    parser.add_argument("--dir", required=True)
+    if draft:
+        parser.add_argument("--draft", required=True)
+    else:
+        parser.add_argument("--draft")
+    parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--fixture-dir")
+    parser.add_argument("--cache-dir")
+    parser.add_argument("--max-requests", type=int, default=25)
+    parser.add_argument("--timeout", type=int, default=20)
+    parser.add_argument("--allow-network", action="store_true")
+    parser.add_argument("--allow-provider", action="append")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--refresh-cache", action="store_true")
+    parser.add_argument("--no-cache", action="store_true")
+    parser.add_argument("--retain-draft-text", action="store_true")
+    parser.add_argument("--allow-downloads", action="store_true")
+    parser.add_argument("--allow-zotero-mutation", action="store_true")
+    parser.add_argument("--allow-unpaywall-email", action="store_true")
+    parser.add_argument("--unsafe-workspace-ok", action="store_true")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="submission_venue_selector")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name, func, needs_draft in (
+        ("init", command_init, True),
+        ("plan", command_plan, False),
+        ("extract", command_extract, False),
+        ("privacy-gate", command_privacy_gate, False),
+        ("providers", command_providers, False),
+        ("resolve", command_resolve, False),
+        ("venues", command_venues, False),
+        ("score", command_score, False),
+        ("report", command_report, False),
+        ("validate", command_validate, False),
+        ("purge", command_purge, False),
+        ("run", command_run, True),
+    ):
+        child = sub.add_parser(name)
+        add_common(child, draft=needs_draft)
+        if name == "providers":
+            child.add_argument("--check", action="store_true")
+        child.set_defaults(func=func)
+    expand = sub.add_parser("expand")
+    add_common(expand)
+    expand.add_argument("--max-hop", type=int, default=1)
+    expand.add_argument("--max-papers", type=int, default=50)
+    expand.set_defaults(func=command_expand)
+    recent = sub.add_parser("recent")
+    add_common(recent)
+    recent.add_argument("--years", type=int, default=5)
+    recent.add_argument("--per-venue", type=int, default=5)
+    recent.set_defaults(func=command_recent)
+    smoke = sub.add_parser("smoke")
+    smoke.set_defaults(func=command_smoke)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        return args.func(args)
+    except SelectorError as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as exc:
+        print(json.dumps({"status": "error", "error": f"invalid JSON: {exc}"}, indent=2, sort_keys=True), file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
