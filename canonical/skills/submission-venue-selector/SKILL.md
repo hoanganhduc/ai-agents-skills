@@ -9,8 +9,8 @@ metadata:
 
 Use this skill to build an evidence-backed venue dossier for a scholarly draft.
 It can run a runtime helper that extracts references, builds candidate venues,
-collects or records related-paper evidence, scores fit, and writes a ranked
-recommendation.
+collects or records related-paper evidence, scores fit, and writes journal
+recommendations with heuristic acceptance-chance intervals.
 
 ## No Shallow Shortlist
 
@@ -19,6 +19,10 @@ comparator-paper evidence. Bibliography overlap, venue reputation, and offline
 placeholders are discovery signals, not comparator-paper evidence. If this
 evidence is unavailable, output `incomplete analysis`, keep delivery status
 `not-ready`, and do not present a final ranked shortlist.
+
+The final report must still list every candidate journal with an estimated
+acceptance-chance interval, confidence, calculation class, modifier breakdown,
+and caveats. These estimates are heuristics, not predictions or guarantees.
 
 ## Routing Boundary
 
@@ -90,6 +94,8 @@ Useful commands:
 - Raw draft text is not persisted unless `--retain-draft-text` is used.
 - Reports separate observed evidence from inferred venue fit and must mark
   placeholder-only output as `incomplete analysis`.
+- Acceptance-chance estimates are required in reports, but bare percentages and
+  predictive acceptance claims are invalid.
 
 ## Workflow
 
@@ -97,7 +103,8 @@ Useful commands:
 2. Confirm `privacy-gate` before any live provider calls.
 3. Use `providers --check` to record available provider capabilities.
 4. Resolve references and derive candidate venues.
-5. Score venues with criterion-level evidence IDs.
+5. Score venues with criterion-level evidence IDs and acceptance-chance
+   intervals.
 6. Run `validate` before treating the recommendation as deliverable.
 
 ## Read When Needed

@@ -58,37 +58,37 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
         )
         return draft
 
-    def write_recent_fixture(self, root: Path) -> Path:
+    def write_recent_fixture(self, root: Path, evidence_level: str = "abstract_inspected", per_venue: int = 3) -> Path:
         fixture = root / "fixtures"
         fixture.mkdir()
-        rows = [
-            {
-                "venue_name": "Journal of Graph Theory",
-                "title": "Recent structural graph recoloring results",
-                "year": "2025",
-                "doi": "10.1000/recent-jgt",
-                "provider": "fixture",
-                "provider_work_id": "fixture:jgt-2025",
-                "venue_source_id": "fixture:jgt",
-                "sampling_method": "fixture-provider-cache",
-                "evidence_level": "metadata_only",
-                "topic_similarity": 0.8,
-                "matched_terms": ["graph", "recoloring"],
-            },
-            {
-                "venue_name": "Proceedings of Symposium on Discrete Algorithms",
-                "title": "Recent reconfiguration algorithms for sparse structures",
-                "year": "2025",
-                "doi": "10.1000/recent-soda",
-                "provider": "fixture",
-                "provider_work_id": "fixture:soda-2025",
-                "venue_source_id": "fixture:soda",
-                "sampling_method": "fixture-provider-cache",
-                "evidence_level": "metadata_only",
-                "topic_similarity": 0.8,
-                "matched_terms": ["reconfiguration", "algorithms"],
-            },
+        rows = []
+        venues = [
+            ("Journal of Graph Theory", "jgt", "graph recoloring"),
+            ("Proceedings of Symposium on Discrete Algorithms", "soda", "reconfiguration algorithms"),
         ]
+        for venue_name, slug, topic in venues:
+            for index in range(1, per_venue + 1):
+                rows.append(
+                    {
+                        "venue_name": venue_name,
+                        "title": f"Recent {topic} comparator {index}",
+                        "year": "2025",
+                        "doi": f"10.1000/recent-{slug}-{index}",
+                        "provider": "fixture",
+                        "provider_work_id": f"fixture:{slug}-2025-{index}",
+                        "venue_source_id": f"fixture:{slug}",
+                        "sampling_method": "fixture-provider-cache",
+                        "evidence_level": evidence_level,
+                        "abstract_available": evidence_level in {"abstract_inspected", "full_text_inspected"},
+                        "full_text_status": "available" if evidence_level == "full_text_inspected" else "not_requested",
+                        "article_type": "research-article",
+                        "exclusion_status": "included",
+                        "topic_distance_rationale": "same or adjacent graph reconfiguration topic",
+                        "inspection_scope": evidence_level,
+                        "topic_similarity": 0.8,
+                        "matched_terms": topic.split(),
+                    }
+                )
         with (fixture / "recent_papers.jsonl").open("w", encoding="utf-8") as handle:
             for row in rows:
                 handle.write(json.dumps(row, sort_keys=True) + "\n")
@@ -111,6 +111,9 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
                 "venues.jsonl",
                 "venue_profiles.jsonl",
                 "scores.jsonl",
+                "scorecards.jsonl",
+                "base_rate_sources.jsonl",
+                "chance_estimates.jsonl",
                 "delivery.json",
                 "recommendation.md",
             ):
@@ -120,14 +123,49 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
             self.assertNotIn("SECRET-CODE-NAME-ALPHA", serialized)
             self.assertNotIn(str(draft), serialized)
             self.assertIn("incomplete analysis", (run_dir / "recommendation.md").read_text(encoding="utf-8"))
+            self.assertIn("Estimated acceptance chance", (run_dir / "recommendation.md").read_text(encoding="utf-8"))
             delivery = json.loads((run_dir / "delivery.json").read_text(encoding="utf-8"))
             self.assertEqual(delivery["delivery_status"], "not-ready")
+
+    def test_metadata_only_fixture_cannot_support_ready_recommendation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            draft = self.write_sample_draft(root)
+            fixture = self.write_recent_fixture(root, evidence_level="metadata_only", per_venue=3)
+            run_dir = root / "venue-run"
+            completed = run_selector(
+                "run",
+                "--dir",
+                str(run_dir),
+                "--draft",
+                str(draft),
+                "--offline",
+                "--fixture-dir",
+                str(fixture),
+                check=False,
+            )
+            payload = last_json(completed.stdout)
+
+            self.assertNotEqual(payload["status"], "ready")
+            scores = [
+                json.loads(line)
+                for line in (run_dir / "scores.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(all(score["fit_band"] != "strong fit" for score in scores))
+            estimates = [
+                json.loads(line)
+                for line in (run_dir / "chance_estimates.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(all("-" in estimate["display_interval"] for estimate in estimates))
+            self.assertTrue(all(estimate["confidence"] == "low" for estimate in estimates))
 
     def test_fixture_comparator_evidence_can_support_ready_recommendation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             draft = self.write_sample_draft(root)
-            fixture = self.write_recent_fixture(root)
+            fixture = self.write_recent_fixture(root, evidence_level="abstract_inspected", per_venue=3)
             run_dir = root / "venue-run"
             completed = run_selector(
                 "run",
@@ -151,6 +189,8 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
             self.assertTrue(all(row["source_ids"] for row in recent_rows))
             self.assertTrue(all(row["query_id"] for row in recent_rows))
             self.assertTrue(all(row["evidence_ids"] for row in recent_rows))
+            self.assertTrue(all(row["article_type"] for row in recent_rows))
+            self.assertTrue(all(row["topic_distance_rationale"] for row in recent_rows))
             self.assertTrue(all(row["provider"] != "offline" for row in recent_rows))
             scores = [
                 json.loads(line)
@@ -158,9 +198,13 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
                 if line.strip()
             ]
             for score in scores:
-                recent_criteria = [c for c in score["criteria"] if c["criterion_id"] == "recent_related_papers"]
+                recent_criteria = [c for c in score["criteria"] if c["criterion_id"] == "comparator_pattern_fit"]
                 self.assertEqual(len(recent_criteria), 1)
                 self.assertTrue(recent_criteria[0]["evidence_ids"])
+                self.assertIn(score["fit_band"], {"strong fit", "plausible fit"})
+            report = (run_dir / "recommendation.md").read_text(encoding="utf-8")
+            self.assertIn("Estimated acceptance chance if submitted as-is", report)
+            self.assertIn("heuristic estimates, not predictions", report)
 
     def test_network_requires_privacy_gate_and_explicit_provider(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
