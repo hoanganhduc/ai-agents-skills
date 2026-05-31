@@ -1154,6 +1154,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
             runtime_command_target(manifests, "deep-research-workflow", "linux"),
             "skills/deep-research-workflow/run_deep_research_workflow.sh",
         )
+        self.assertEqual(
+            runtime_command_target(manifests, "deep-research-workflow", "windows", "run_skill.ps1"),
+            "skills/deep-research-workflow/run_deep_research_workflow.ps1",
+        )
 
     def test_runtime_smoke_rejects_non_runtime_skill_scope(self) -> None:
         manifests = load_manifests()
@@ -1182,6 +1186,11 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.assertEqual(smoke["safety"]["server_start"], "forbidden")
                 self.assertEqual(smoke["safety"]["config_write"], "forbidden")
                 self.assertEqual(smoke["safety"]["real_secrets"], "forbidden")
+
+        self.assertEqual(
+            manifests["runtime"]["skills"]["deep-research-workflow"]["smoke"]["args"],
+            ["selftest"],
+        )
 
     def test_gdrive_credential_errors_do_not_embed_raw_secret_values(self) -> None:
         for path in (

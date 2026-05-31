@@ -8,6 +8,10 @@ title:
 url:
 date:
 source_type:
+library_status:
+library_check_tool:
+library_checked_at:
+library_check_ref:
 key_facts:
 relevant_claims:
 confidence:
@@ -17,6 +21,7 @@ Rules:
 
 - keep one source record per distinct source
 - link major claims back to source ids
+- record library-check provenance for paper-like sources that support v2 final claims
 - mark uncertainties instead of smoothing them away
 
 When a post-analysis figure is warranted, create a separate `figure-brief.json` rather than mixing figure instructions into source records.

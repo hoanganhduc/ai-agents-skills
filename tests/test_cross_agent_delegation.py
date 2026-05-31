@@ -189,6 +189,8 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             self.assertIn("evidence mapping", text)
             self.assertIn("redaction", text)
         self.assertIn("research `evidence.jsonl`", execution_text)
+        self.assertIn('evidence_type: "agd_result"', execution_text)
+        self.assertNotIn('kind: "agd_result"', execution_text)
         self.assertIn("recovery", skill_text)
         self.assertIn("stale capability profile", external_text)
 

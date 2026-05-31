@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .delegation import PROVIDER_CLI_SPECS, build_external_agent_prechecks, redacted_command
+from .delegation_packets import RESULT_SCHEMA_VERSION, TASK_SCHEMA_VERSION, validate_result
 from .discovery import current_platform, discover_tool
 from .state import now_run_id, preflight_state_path, sha256_text, state_dir, write_text_atomic
 
@@ -63,6 +64,10 @@ def dispatch_external_agents(args: Any, manifests: dict[str, Any]) -> dict[str, 
         return result
 
     ensure_run_dir(args.root, run_dir)
+    write_json(root=args.root, path=run_dir / "transport_manifest.json", data=transport_manifest(plan))
+    write_text(args.root, run_dir / "timeout_events.jsonl", "")
+    write_text(args.root, run_dir / "truncation_events.jsonl", "")
+    write_text(args.root, run_dir / "evidence-map.jsonl", "")
     participants = []
     for item in plan:
         if item["status"] != "ready":
@@ -82,6 +87,7 @@ def dispatch_external_agents(args: Any, manifests: dict[str, Any]) -> dict[str, 
         )
     result["participants"] = participants
     result["status"] = dispatched_status(participants)
+    write_json(args.root, run_dir / "manifest.json", run_manifest(result, participants))
     return result
 
 
@@ -131,6 +137,46 @@ def ensure_run_dir(root: Path, run_dir: Path) -> None:
         child_path = run_dir / child / ".keep"
         preflight_state_path(root, child_path)
         child_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def transport_manifest(plan: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "schema_version": "external-agent-transport-manifest.v1",
+        "participants": [
+            {
+                "participant_id": item.get("participant_id"),
+                "transport": item.get("transport"),
+                "output_contract": item.get("output_contract"),
+                "command_shape": item.get("command_shape"),
+                "status": item.get("status"),
+                "reason": item.get("reason"),
+            }
+            for item in plan
+        ],
+    }
+
+
+def run_manifest(result: dict[str, Any], participants: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "schema_version": "external-agent-run-manifest.v1",
+        "status": result.get("status"),
+        "run_id": result.get("run_id"),
+        "role": result.get("role"),
+        "template": result.get("template"),
+        "research": result.get("research"),
+        "task_ref": result.get("task_ref"),
+        "participants": [
+            {
+                "participant_id": item.get("participant_id"),
+                "status": item.get("status"),
+                "profile_ref": item.get("profile_ref"),
+                "parsed_ref": item.get("parsed_ref"),
+                "result_packet_ref": item.get("result_packet_ref"),
+                "validation_ref": item.get("validation_ref"),
+            }
+            for item in participants
+        ],
+    }
 
 
 def build_dispatch_plan(
@@ -310,11 +356,19 @@ def run_external_participant(
         model_profile=plan["research_model_policy"],
     )
     completed = run_command(plan["command"], prompt, timeout=timeout, env=env, final_marker=task_marker)
-    write_raw(root, run_dir, participant_id, completed)
+    write_raw(root, run_dir, participant_id, completed, plan["command_shape"])
     parsed = parse_result_json(completed.stdout)
     write_json(root, run_dir / "parsed" / f"{participant_id}.json", parsed)
+    normalized = normalize_result_packet(plan, parsed, task_packet_id=task_ref_id(task_text))
+    write_json(root, run_dir / "parsed" / f"{participant_id}.result.json", normalized)
     validation = validate_command_output(completed, task_marker)
+    validation["result_packet_validation"] = validate_result(normalized)
+    if validation["result_packet_validation"]:
+        validation["errors"].append("result_packet_contract_failed")
+        validation["status"] = "failed"
     write_json(root, run_dir / "validation" / f"{participant_id}.json", validation)
+    write_event_artifacts(root, run_dir, participant_id, completed, validation)
+    write_evidence_map(root, run_dir, participant_id, parsed, validation)
     return participant_result(plan, run_dir, validation["status"], validation, parsed)
 
 
@@ -383,6 +437,152 @@ def participant_prompt(
         f"{RESULT_END}\n"
         f"{final_marker}\n"
     )
+
+
+def task_ref_id(task_text: str) -> str:
+    return "task-" + sha256_text(task_text)[:12]
+
+
+def normalize_result_packet(plan: dict[str, Any], parsed: dict[str, Any], *, task_packet_id: str) -> dict[str, Any]:
+    raw_findings = parsed.get("findings", []) if isinstance(parsed, dict) else []
+    findings = normalize_findings(raw_findings)
+    evidence = normalize_evidence_from_findings(findings)
+    status = normalize_result_status(parsed.get("status") if isinstance(parsed, dict) else None)
+    participant_id = str(plan.get("participant_id", "external-participant"))
+    profile_id = str(plan.get("recipient_profile", "external-cli-reviewer"))
+    return {
+        "schema_version": RESULT_SCHEMA_VERSION,
+        "result_id": f"{participant_id}-result",
+        "task_packet_id": task_packet_id,
+        "task_schema_version": TASK_SCHEMA_VERSION,
+        "intended_recipient": "external-cli-participant",
+        "adapter_spec_id": profile_id,
+        "recipient_profile": {
+            "profile_id": profile_id,
+            "profile_version": "v1",
+            "execution_status": "reference_only",
+        },
+        "produced_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "produced_by": "external-cli-participant",
+        "provenance": [
+            {
+                "ref_id": "parent-task",
+                "kind": "task",
+                "source": "parent_dispatch_task",
+                "sensitivity": "private",
+                "access_note": "parent-owned task text outside result packet",
+            }
+        ],
+        "status": status,
+        "summary": normalize_summary(parsed),
+        "coverage_scope": "bounded external participant output; parent validation required before use",
+        "findings": findings,
+        "evidence": evidence,
+        "artifacts": [
+            {
+                "artifact_id": "A-parsed",
+                "kind": "parsed-output",
+                "ref_id": f"parsed/{participant_id}.json",
+                "description": "Parent-owned parsed external participant output.",
+            }
+        ],
+        "limitations": normalize_string_list(parsed.get("limitations") if isinstance(parsed, dict) else []),
+        "warnings": normalize_diagnostics(parsed.get("warnings") if isinstance(parsed, dict) else []),
+        "errors": normalize_diagnostics(parsed.get("errors") if isinstance(parsed, dict) else []),
+        "parent_action_request": None,
+        "next_step": "parent_decides" if status in {"completed", "partial"} else "discard",
+    }
+
+
+def normalize_result_status(value: Any) -> str:
+    if value == "ok":
+        return "completed"
+    if value == "partial":
+        return "partial"
+    if value == "blocked":
+        return "blocked"
+    return "failed"
+
+
+def normalize_summary(parsed: dict[str, Any] | None) -> str:
+    if not isinstance(parsed, dict):
+        return "No parseable result."
+    summary = parsed.get("summary")
+    if isinstance(summary, str) and summary.strip():
+        return summary.strip()
+    findings = parsed.get("findings")
+    if isinstance(findings, list):
+        return f"{len(findings)} finding(s) returned for parent validation."
+    return "Parsed result returned for parent validation."
+
+
+def normalize_findings(raw_findings: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_findings, list):
+        return []
+    findings: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_findings, start=1):
+        if isinstance(item, dict):
+            finding_id = str(item.get("id") or item.get("finding_id") or f"F{index}")
+            summary = str(item.get("summary") or item.get("rationale") or "External participant finding.")
+            evidence_refs = item.get("evidence_refs") if isinstance(item.get("evidence_refs"), list) else []
+        else:
+            finding_id = f"F{index}"
+            summary = str(item)
+            evidence_refs = []
+        findings.append({
+            "finding_id": finding_id,
+            "severity": "info",
+            "claim_or_object_ref": finding_id,
+            "evidence_refs": [str(ref) for ref in evidence_refs],
+            "confidence": "unknown",
+            "validation_status": "unchecked",
+            "rationale": summary,
+            "recommended_parent_action": "validate evidence before use",
+        })
+    return findings
+
+
+def normalize_evidence_from_findings(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    refs: list[str] = []
+    for finding in findings:
+        for ref in finding.get("evidence_refs", []):
+            if ref not in refs:
+                refs.append(ref)
+    return [
+        {
+            "evidence_id": f"EV{index}",
+            "ref_id": ref,
+            "kind": "participant-cited-ref",
+            "quote_or_summary": "Participant-supplied evidence ref; parent must validate.",
+            "status": "unchecked",
+            "evidence_disposition": "unchecked",
+            "disposition_rationale": "External participant evidence is untrusted until parent validation.",
+        }
+        for index, ref in enumerate(refs, start=1)
+    ]
+
+
+def normalize_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if value in (None, ""):
+        return []
+    return [str(value)]
+
+
+def normalize_diagnostics(value: Any) -> list[dict[str, Any]]:
+    items = value if isinstance(value, list) else ([] if value in (None, "") else [value])
+    diagnostics = []
+    for index, item in enumerate(items, start=1):
+        if isinstance(item, dict):
+            diagnostics.append({
+                "code": str(item.get("code") or f"D{index}"),
+                "message": str(item.get("message") or item),
+                "ref_id": item.get("ref_id") if item.get("ref_id") is None or isinstance(item.get("ref_id"), str) else str(item.get("ref_id")),
+            })
+        else:
+            diagnostics.append({"code": f"D{index}", "message": str(item), "ref_id": None})
+    return diagnostics
 
 
 class CompletedCommand:
@@ -512,14 +712,68 @@ def write_probe(root: Path, run_dir: Path, participant_id: str, name: str, compl
     write_text(root, base / f"{name}-stderr.txt", completed.stderr)
 
 
-def write_raw(root: Path, run_dir: Path, participant_id: str, completed: CompletedCommand) -> None:
+def write_raw(root: Path, run_dir: Path, participant_id: str, completed: CompletedCommand, command_shape: str) -> None:
     base = run_dir / "raw" / participant_id
     write_text(root, base / "stdout.txt", completed.stdout)
     write_text(root, base / "stderr.txt", completed.stderr)
+    write_text(root, base / "command-shape.txt", command_shape + "\n")
+
+
+def write_event_artifacts(
+    root: Path,
+    run_dir: Path,
+    participant_id: str,
+    completed: CompletedCommand,
+    validation: dict[str, Any],
+) -> None:
+    if completed.timed_out:
+        append_jsonl(root, run_dir / "timeout_events.jsonl", {
+            "participant_id": participant_id,
+            "status": "timeout_no_final",
+            "returncode": completed.returncode,
+            "stdout_sha256": validation.get("stdout_sha256"),
+            "stderr_sha256": validation.get("stderr_sha256"),
+        })
+    if "missing_final_marker" in validation.get("errors", []):
+        append_jsonl(root, run_dir / "truncation_events.jsonl", {
+            "participant_id": participant_id,
+            "status": "missing_final_marker",
+            "stdout_sha256": validation.get("stdout_sha256"),
+            "stderr_sha256": validation.get("stderr_sha256"),
+        })
+
+
+def write_evidence_map(
+    root: Path,
+    run_dir: Path,
+    participant_id: str,
+    parsed: dict[str, Any],
+    validation: dict[str, Any],
+) -> None:
+    findings = parsed.get("findings", []) if isinstance(parsed, dict) else []
+    if not isinstance(findings, list):
+        return
+    for index, finding in enumerate(findings, start=1):
+        finding_id = finding.get("id") if isinstance(finding, dict) else None
+        append_jsonl(root, run_dir / "evidence-map.jsonl", {
+            "participant_id": participant_id,
+            "role": "external_cli",
+            "parsed_finding_id": finding_id or f"finding-{index}",
+            "validation_artifact": f"validation/{participant_id}.json",
+            "source_artifact_refs": [f"parsed/{participant_id}.json"],
+            "redaction_status": "raw_not_promoted",
+            "parent_disposition": "pending_validation" if validation.get("status") == "ok" else "rejected",
+            "target_evidence_id": None,
+        })
 
 
 def write_json(root: Path, path: Path, data: dict[str, Any]) -> None:
     write_text(root, path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def append_jsonl(root: Path, path: Path, data: dict[str, Any]) -> None:
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    write_text(root, path, existing + json.dumps(data, sort_keys=True) + "\n")
 
 
 def write_text(root: Path, path: Path, text: str) -> None:

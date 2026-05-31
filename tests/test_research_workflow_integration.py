@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from installer.ai_agents_skills.manifest import REPO_ROOT
@@ -50,7 +51,14 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
     def write_jsonl(self, path: Path, rows: list[dict]) -> None:
         path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
 
-    def write_minimal_delivery(self, research_dir: Path, *, decision: str = "not-ready", report_ref: str = "") -> None:
+    def write_minimal_delivery(
+        self,
+        research_dir: Path,
+        *,
+        decision: str = "not-ready",
+        report_ref: str = "",
+        guard_output_ids: list[str] | None = None,
+    ) -> None:
         blockers = [] if decision == "ready" else [{"blocker_id": "B1", "description": "not complete"}]
         gaps = [] if decision == "ready" else ["not complete"]
         (research_dir / "delivery.json").write_text(
@@ -58,13 +66,88 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                 "decision": decision,
                 "report_ref": report_ref,
                 "checked_at": "2026-05-28T00:00:00Z",
-                "guard_output_ids": [],
+                "guard_output_ids": [] if guard_output_ids is None else guard_output_ids,
                 "blockers": blockers,
                 "gaps": gaps,
                 "caveats": [],
             }),
             encoding="utf-8",
         )
+
+    def paper_source_with_library_check(self, source: dict) -> dict:
+        source = dict(source)
+        source.update({
+            "library_check_tool": "zotero",
+            "library_checked_at": "2026-05-28T00:00:00Z",
+            "library_check_ref": "library/zotero-S1.json",
+        })
+        return source
+
+    def write_finalizable_v2_support(self, research_dir: Path) -> None:
+        (research_dir / "library").mkdir(exist_ok=True)
+        (research_dir / "library" / "zotero-S1.json").write_text("{}\n", encoding="utf-8")
+        (research_dir / "model").mkdir(exist_ok=True)
+        (research_dir / "model" / "catalog.json").write_text("{}\n", encoding="utf-8")
+        self.write_jsonl(
+            research_dir / "guards.jsonl",
+            [
+                {
+                    "guard_output_id": "G1",
+                    "guard": "EvidenceGuard",
+                    "status": "pass",
+                    "claim_or_scope_ref": "C1",
+                    "source_ids": [],
+                    "evidence_ids": ["E-REPORT"],
+                    "inspected_artifacts": ["report.md"],
+                    "gap": "",
+                    "blocking": False,
+                    "recommended_action": "none",
+                },
+                {
+                    "guard_output_id": "G2",
+                    "guard": "VerifyGuard",
+                    "status": "pass",
+                    "claim_or_scope_ref": "C1",
+                    "source_ids": [],
+                    "evidence_ids": ["E-REPORT"],
+                    "inspected_artifacts": ["report.md"],
+                    "gap": "",
+                    "blocking": False,
+                    "recommended_action": "none",
+                },
+            ],
+        )
+        (research_dir / "model_freshness.json").write_text(
+            json.dumps({
+                "schema_version": "deep-research.model-freshness.v1",
+                "resolved_model": "test-frontier",
+                "resolved_thinking": "xhigh",
+                "model_catalog_source": "test",
+                "model_catalog_ref": "model/catalog.json",
+                "freshness_checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "model_freshness_max_age_seconds": 86400,
+                "provider_cli_version": "not-applicable",
+                "provider_cli_status": "not_applicable",
+                "freshness_source": "test",
+            }),
+            encoding="utf-8",
+        )
+
+    def report_evidence(self) -> dict:
+        return {
+            "schema_version": "deep-research.evidence.v2",
+            "evidence_id": "E-REPORT",
+            "evidence_type": "report",
+            "source_ids": ["S1"],
+            "claim_ids": ["C1"],
+            "artifact_ref": "report.md",
+            "summary": "Checked report artifact.",
+            "inspection_status": "checked",
+            "redaction_status": "safe",
+            "sensitivity_class": "public",
+            "created_at": "2026-05-28T00:00:00Z",
+            "limitations": [],
+        }
 
     def make_structured_dir(self, tmp: str, *, v2: bool = False, formal: bool = False) -> Path:
         research_dir = Path(tmp) / "research"
@@ -323,6 +406,105 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("UNKNOWN_EVIDENCE_ID", {error["code"] for error in payload["errors"]})
 
+    def test_deep_research_selftest_reports_named_positive_and_negative_scenarios(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(DEEP_RESEARCH_RUNTIME), "selftest"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["schema_version"], "deep-research.selftest.v1")
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["positive_count"], 4)
+        self.assertEqual(payload["negative_count"], 6)
+        self.assertEqual(
+            {item["name"] for item in payload["scenarios"]},
+            {
+                "v2_ready_success",
+                "v2_ready_failure",
+                "v2_ready_with_caveats_success",
+                "v2_ready_with_caveats_failure",
+                "agd_evidence_success",
+                "agd_evidence_failure",
+                "weak_computation_failure",
+                "formal_promotion_success",
+                "formal_promotion_failure",
+                "artifact_ref_path_safety",
+            },
+        )
+        self.assertTrue(all(item["passed"] for item in payload["scenarios"]))
+
+    def test_v2_agd_result_validation_uses_evidence_type_not_id_prefix_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True)
+            agd = {
+                "schema_version": "deep-research.evidence.v2",
+                "evidence_id": "E1",
+                "evidence_type": "agd_result",
+                "source_ids": [],
+                "claim_ids": [],
+                "artifact_ref": "delegation/parsed/participant.json",
+                "summary": "AGD result.",
+                "inspection_status": "checked",
+                "redaction_status": "redacted",
+                "sensitivity_class": "private",
+                "created_at": "2026-05-28T00:00:00Z",
+                "limitations": [],
+                "agd_participant_id": "participant-1",
+                "agd_round": "1",
+                "agd_packet_ref": "delegation/parsed/participant.json",
+                "validation_status": "pending",
+                "parent_validation_owner": "parent",
+            }
+            self.write_jsonl(research_dir / "evidence.jsonl", [agd])
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("AGD_EVIDENCE_NOT_PARENT_VALIDATED", {error["code"] for error in payload["errors"]})
+
+            agd["evidence_type"] = "other"
+            agd["evidence_id"] = "E-AGD-1"
+            agd["validation_status"] = "parent_validated"
+            self.write_jsonl(research_dir / "evidence.jsonl", [agd])
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("AGD_EVIDENCE_TYPE_REQUIRED", {error["code"] for error in payload["errors"]})
+
+    def test_v2_finalizable_delivery_fails_closed_on_stale_model_freshness(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True)
+            self.write_jsonl(
+                research_dir / "sources.jsonl",
+                [self.paper_source_with_library_check({
+                    "source_id": "S1",
+                    "source": "Verified paper",
+                    "source_type": "paper",
+                    "library_status": "[IN_LIBRARY]",
+                })],
+            )
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{
+                    "claim_id": "C1",
+                    "claim": "Supported claim.",
+                    "source_ids": ["S1"],
+                    "evidence_ids": ["E-REPORT"],
+                    "status": "supported",
+                }],
+            )
+            self.write_jsonl(research_dir / "evidence.jsonl", [self.report_evidence()])
+            self.write_finalizable_v2_support(research_dir)
+            stale = json.loads((research_dir / "model_freshness.json").read_text(encoding="utf-8"))
+            stale["freshness_checked_at"] = "2020-01-01T00:00:00Z"
+            (research_dir / "model_freshness.json").write_text(json.dumps(stale), encoding="utf-8")
+            (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
+            self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md", guard_output_ids=["G1", "G2"])
+
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("MODEL_FRESHNESS_STALE", {error["code"] for error in payload["errors"]})
+
     def test_deep_research_validator_rejects_ready_delivery_with_gaps(self) -> None:
         env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
         with tempfile.TemporaryDirectory() as tmp:
@@ -390,7 +572,12 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             research_dir = self.make_structured_dir(tmp, v2=True, formal=True)
             self.write_jsonl(
                 research_dir / "sources.jsonl",
-                [{"source_id": "S1", "source": "Formal source", "source_type": "manuscript", "library_status": "[IN_LIBRARY]"}],
+                [self.paper_source_with_library_check({
+                    "source_id": "S1",
+                    "source": "Formal source",
+                    "source_type": "manuscript",
+                    "library_status": "[IN_LIBRARY]",
+                })],
             )
             self.write_jsonl(
                 research_dir / "claims.jsonl",
@@ -446,7 +633,12 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             research_dir = self.make_structured_dir(tmp, v2=True, formal=True)
             self.write_jsonl(
                 research_dir / "sources.jsonl",
-                [{"source_id": "S1", "source": "Formal source", "source_type": "manuscript", "library_status": "[IN_LIBRARY]"}],
+                [self.paper_source_with_library_check({
+                    "source_id": "S1",
+                    "source": "Formal source",
+                    "source_type": "manuscript",
+                    "library_status": "[IN_LIBRARY]",
+                })],
             )
             self.write_jsonl(
                 research_dir / "claims.jsonl",
@@ -461,6 +653,7 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             self.write_jsonl(
                 research_dir / "evidence.jsonl",
                 [
+                    self.report_evidence(),
                     {
                         "schema_version": "deep-research.evidence.v2",
                         "evidence_id": "E1",
@@ -541,8 +734,9 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                     "statement_equivalence_review_ids": ["SER1"],
                 }],
             )
+            self.write_finalizable_v2_support(research_dir)
             (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
-            self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md")
+            self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md", guard_output_ids=["G1", "G2"])
             code, payload = self.validate_research_dir(research_dir)
             self.assertEqual(code, 0, payload)
 

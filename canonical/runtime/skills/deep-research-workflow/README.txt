@@ -21,3 +21,13 @@ validate:
 
   & "$env:AAS_RUNTIME_ROOT\run_skill.bat" `
     "skills\deep-research-workflow\run_deep_research_workflow.bat" validate --dir C:\path\to\workspace\research
+
+selftest:
+
+  & "$env:AAS_RUNTIME_ROOT\run_skill.bat" `
+    "skills\deep-research-workflow\run_deep_research_workflow.bat" selftest
+
+PowerShell command target:
+
+  & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+    "skills\deep-research-workflow\run_deep_research_workflow.ps1" selftest
