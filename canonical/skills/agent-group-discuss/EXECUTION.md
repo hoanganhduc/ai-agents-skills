@@ -91,11 +91,11 @@ synthesis. Participants may point to artifact refs, but they do not own the
 delivery decision.
 
 For deep research sessions, map accepted participant evidence into the research
-`evidence.jsonl` ledger with `kind: "agd_result"` or the narrower evidence kind
-used by the workflow. The evidence mapping must preserve the participant id,
-role, source artifact ref, validation status, and parent disposition. Do not
-promote a delegated result to a final claim until the parent validates the
-referenced source, computation, proof, or artifact.
+`evidence.jsonl` ledger with `evidence_type: "agd_result"` or the narrower
+evidence type used by the workflow. The evidence mapping must preserve the
+participant id, role, source artifact ref, validation status, and parent
+disposition. Do not promote a delegated result to a final claim until the
+parent validates the referenced source, computation, proof, or artifact.
 Use target research `evidence.jsonl` ids in the mapping table so downstream
 delivery gates can trace every delegated finding.
 

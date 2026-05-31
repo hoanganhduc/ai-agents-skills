@@ -17,6 +17,12 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Pat
 & "$runtime\run_skill.bat" "skills/deep-research-workflow/run_deep_research_workflow.bat" <args>
 ```
 
+PowerShell-first runners can use the native PowerShell command target:
+
+```powershell
+& "$runtime\run_skill.ps1" "skills/deep-research-workflow/run_deep_research_workflow.ps1" <args>
+```
+
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
 
 This skill provides a Codex-native phased research workflow:
@@ -71,6 +77,18 @@ Verify the helper setup with:
 bash ~/.codex/runtime/run_skill.sh \
   skills/deep-research-workflow/run_deep_research_workflow.sh doctor
 ```
+
+Run the offline strict workflow smoke with:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/deep-research-workflow/run_deep_research_workflow.sh selftest
+```
+
+`selftest` validates named positive and negative v2 scenarios for finalizable
+delivery, AGD evidence, weak computation rejection, formal promotion, and
+artifact-ref safety. It is the preferred runtime smoke for serious-research
+installs.
 
 ## When to use
 
@@ -138,6 +156,10 @@ Allowed status values:
 
 Do not mark a source as verified based only on appearance or title shape. If identity remains unclear, keep `[UNVERIFIED]`.
 
+For v2 finalizable delivery, every paper-like source that supports a final
+claim must also record `library_check_tool`, `library_checked_at`, and
+`library_check_ref`.
+
 ### Phase 2 — Analyze
 
 Inputs:
@@ -179,6 +201,12 @@ outputs before final synthesis:
 Use the closed schema in `references/research-quality-guards.md`. Do not use a
 single aggregate research quality score.
 Structured runs record these as `guards.jsonl`.
+
+For v2 `ready` and `ready-with-caveats`, delivery is finalizable only when the
+run has non-blocking `EvidenceGuard` and `VerifyGuard` outputs, at least one
+supported claim, a checked report evidence record, current model freshness
+metadata in `model_freshness.json`, and no blocking guard gaps. Use v1 only for
+compatibility workflows that do not claim those serious-research guarantees.
 
 ### Optional formal verification lane
 

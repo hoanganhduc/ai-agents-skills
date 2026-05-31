@@ -30,6 +30,13 @@ policy here before delegation or bounded iterations begin.
 | `model_policy_source` |  |
 | `resolved_at` |  |
 | `policy_ref` |  |
+| `model_catalog_source` |  |
+| `model_catalog_ref` |  |
+| `freshness_checked_at` |  |
+| `model_freshness_max_age_seconds` | `86400` |
+| `provider_cli_version` |  |
+| `provider_cli_status` |  |
+| `freshness_source` |  |
 | `budget_owner` |  |
 | `max_depth` |  |
 | `max_hops` |  |
@@ -43,6 +50,10 @@ policy here before delegation or bounded iterations begin.
 
 These fields are parent-owned runbook state. Do not copy them into task or
 result packets. Budget state stays in the parent runbook.
+
+For deep-research v2 finalizable delivery, mirror the model freshness fields
+into `model_freshness.json`. `ready` and `ready-with-caveats` both fail closed
+when model freshness metadata is missing, partial, future-dated, or stale.
 
 ## Phase Plan
 
@@ -67,6 +78,7 @@ result packets. Budget state stays in the parent runbook.
 |---|---|---|
 | Every source has one stable ID |  |  |
 | Paper-like sources have library verification status when applicable |  |  |
+| Final claims with paper-like sources cite library check tool, timestamp, and ref |  |  |
 | Dropped sources are explained |  |  |
 | Major claims map back to source IDs |  |  |
 
@@ -163,6 +175,7 @@ the run.
 | Model or reasoning rule violated | Model policy review | Rerun affected research with the parent runbook's exact `resolved_model` and `resolved_thinking`. |
 | Iterations plateau | Iteration ledger | Stop with `plateau` and summarize remaining uncertainty. |
 | Final report or delivery check fails | Report review, verification checklist | Revise claims, evidence, or scope before delivery. |
+| Finalizable v2 delivery lacks report evidence, model freshness, or non-blocking EvidenceGuard/VerifyGuard | Deep-research validator | Keep delivery `not-ready`, repair the missing artifacts, then rerun validation. |
 
 ## Final Outcome
 

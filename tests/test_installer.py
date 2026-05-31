@@ -2198,7 +2198,19 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(payload["dispatch_plan"][0]["command_shape"], f"{Path(sys.executable).name} <args-redacted>")
             self.assertNotIn("command", payload["dispatch_plan"][0])
             run_dir = Path(payload["run_dir"])
+            self.assertTrue((run_dir / "manifest.json").is_file())
+            self.assertTrue((run_dir / "transport_manifest.json").is_file())
+            self.assertTrue((run_dir / "timeout_events.jsonl").is_file())
+            self.assertTrue((run_dir / "truncation_events.jsonl").is_file())
+            self.assertTrue((run_dir / "evidence-map.jsonl").is_file())
             self.assertTrue((run_dir / "profiles" / "claude-external-1.json").is_file())
+            self.assertTrue((run_dir / "raw" / "claude-external-1" / "command-shape.txt").is_file())
+            self.assertTrue((run_dir / "parsed" / "claude-external-1.result.json").is_file())
+            result_packet = json.loads((run_dir / "parsed" / "claude-external-1.result.json").read_text(encoding="utf-8"))
+            self.assertEqual(result_packet["schema_version"], "cross-agent-delegation.result.v1")
+            self.assertEqual(result_packet["next_step"], "parent_decides")
+            validation = json.loads((run_dir / "validation" / "claude-external-1.json").read_text(encoding="utf-8"))
+            self.assertEqual(validation["result_packet_validation"], [])
             profile = json.loads((run_dir / "profiles" / "claude-external-1.json").read_text(encoding="utf-8"))
             self.assertEqual(profile["research_model_policy"]["resolved_model"], "claude-fake-latest")
             self.assertEqual(profile["research_model_policy"]["resolved_thinking"], "xhigh")
@@ -3226,6 +3238,15 @@ class DocsAndLauncherTests(unittest.TestCase):
 
 
 class CopilotTargetTests(unittest.TestCase):
+    def test_adapter_target_readmes_capture_install_boundaries(self) -> None:
+        copilot = (REPO_ROOT / "targets" / "copilot" / "README.md").read_text(encoding="utf-8")
+        openclaw = (REPO_ROOT / "targets" / "openclaw" / "README.md").read_text(encoding="utf-8")
+
+        self.assertIn("adapter-only", copilot)
+        self.assertIn("does not receive Codex or\nClaude instruction blocks", copilot)
+        self.assertIn("fake-root-only", openclaw)
+        self.assertIn("Runtime-backed skills are blocked", openclaw)
+
     def test_copilot_is_known_and_detected_by_default(self) -> None:
         from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
 

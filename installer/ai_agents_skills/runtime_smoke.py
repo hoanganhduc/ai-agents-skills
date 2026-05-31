@@ -435,18 +435,40 @@ def validate_smoke_output(
         checks.append({"name": "resource-json-has-os", "ok": "os" in payload})
         checks.append({"name": "resource-json-has-cpu", "ok": "cpu" in payload})
     elif skill == "deep-research-workflow":
-        out_dir = Path(args[args.index("--dir") + 1]) / args[args.index("--subdir") + 1]
-        for name in (
-            "sources.md",
-            "analysis.md",
-            "report.md",
-            "sources.jsonl",
-            "claims.jsonl",
-            "guards.jsonl",
-            "delivery.json",
-        ):
-            checks.append({"name": f"{name}-exists", "ok": (out_dir / name).is_file()})
-        checks.append({"name": "delegation-dir-exists", "ok": (out_dir / "delegation").is_dir()})
+        if args == ["selftest"]:
+            payload = parse_json_stdout(completed.stdout)
+            names = {item.get("name") for item in payload.get("scenarios", []) if isinstance(item, dict)}
+            required = {
+                "v2_ready_success",
+                "v2_ready_failure",
+                "v2_ready_with_caveats_success",
+                "v2_ready_with_caveats_failure",
+                "agd_evidence_success",
+                "agd_evidence_failure",
+                "weak_computation_failure",
+                "formal_promotion_success",
+                "formal_promotion_failure",
+                "artifact_ref_path_safety",
+            }
+            checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
+            checks.append({"name": "schema-version", "ok": payload.get("schema_version") == "deep-research.selftest.v1"})
+            checks.append({"name": "positive-count", "ok": payload.get("positive_count") == 4})
+            checks.append({"name": "negative-count", "ok": payload.get("negative_count") == 6})
+            checks.append({"name": "scenario-names", "ok": names == required})
+            checks.append({"name": "scenario-results", "ok": all(item.get("passed") for item in payload.get("scenarios", []) if isinstance(item, dict))})
+        else:
+            out_dir = Path(args[args.index("--dir") + 1]) / args[args.index("--subdir") + 1]
+            for name in (
+                "sources.md",
+                "analysis.md",
+                "report.md",
+                "sources.jsonl",
+                "claims.jsonl",
+                "guards.jsonl",
+                "delivery.json",
+            ):
+                checks.append({"name": f"{name}-exists", "ok": (out_dir / name).is_file()})
+            checks.append({"name": "delegation-dir-exists", "ok": (out_dir / "delegation").is_dir()})
     elif skill in {"lean-formalization-intake", "lean-strict-verification-gate"}:
         payload = parse_json_stdout(completed.stdout)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})

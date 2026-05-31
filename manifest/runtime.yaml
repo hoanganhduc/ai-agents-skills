@@ -516,6 +516,16 @@
           "mode": "0644"
         },
         {
+          "source": "skills/deep-research-workflow/run_deep_research_workflow.ps1",
+          "target": "workspace/skills/deep-research-workflow/run_deep_research_workflow.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/deep-research-workflow/run_deep_research_workflow.sh",
           "target": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
           "platforms": [
@@ -574,15 +584,11 @@
           "linux": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
           "macos": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
           "wsl": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
+          "windows_ps1": "workspace/skills/deep-research-workflow/run_deep_research_workflow.ps1",
           "windows": "workspace/skills/deep-research-workflow/run_deep_research_workflow.bat"
         },
         "args": [
-          "init",
-          "--dir",
-          "{smoke_dir}",
-          "--subdir",
-          "deep",
-          "--structured"
+          "selftest"
         ],
         "timeout_seconds": 30,
         "writes": {

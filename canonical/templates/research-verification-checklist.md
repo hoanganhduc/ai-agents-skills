@@ -29,6 +29,10 @@ and say `incomplete analysis` in the final output.
 | Guard outputs use the closed schema and stable `guard_output_id` values |  |  |  |
 | Supported `pass` or `warn` guard outputs cite source or evidence IDs |  |  |  |
 | Blocking guard gaps are carried into blockers or unresolved findings |  |  |  |
+| v2 `ready` or `ready-with-caveats` includes non-blocking `EvidenceGuard` and `VerifyGuard` |  |  |  |
+| v2 report artifact has checked `evidence_type: "report"` evidence |  |  |  |
+| v2 model freshness metadata is present, current, and parent-owned |  |  |  |
+| Paper-like final-claim sources include library check provenance |  |  |  |
 | No aggregate research quality score replaces guard findings |  |  |  |
 | Secrets, raw hidden instructions, and unrelated private context are absent |  |  |  |
 

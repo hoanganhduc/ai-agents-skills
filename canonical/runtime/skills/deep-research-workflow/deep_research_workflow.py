@@ -7,7 +7,8 @@ import os
 import re
 import shutil
 import sys
-from datetime import datetime
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any
@@ -41,6 +42,7 @@ CONFIDENCE_VALUES = {"high", "medium", "low", "unknown"}
 GUARDS = {"ScopeGuard", "EvidenceGuard", "VerifyGuard", "BudgetGuard", "RegressionGuard"}
 GUARD_STATUSES = {"pass", "warn", "fail", "not-applicable"}
 DELIVERY_DECISIONS = {"ready", "ready-with-caveats", "not-ready"}
+FINALIZABLE_DELIVERY_DECISIONS = {"ready", "ready-with-caveats"}
 SCHEMA_VERSION = "deep-research.run.v2"
 EVIDENCE_SCHEMA_VERSION = "deep-research.evidence.v2"
 FORMAL_TARGET_SCHEMA_VERSION = "deep-research.formal-target.v1"
@@ -74,6 +76,21 @@ COMPUTATION_COVERAGE_STATUSES = {
     "unavailable",
 }
 AGD_VALIDATION_STATUSES = {"parent_validated", "invalid", "pending"}
+REQUIRED_FINALIZABLE_GUARDS = {"EvidenceGuard", "VerifyGuard"}
+MODEL_FRESHNESS_SCHEMA_VERSION = "deep-research.model-freshness.v1"
+MODEL_FRESHNESS_REQUIRED = {
+    "schema_version",
+    "resolved_model",
+    "resolved_thinking",
+    "model_catalog_source",
+    "model_catalog_ref",
+    "freshness_checked_at",
+    "model_freshness_max_age_seconds",
+    "provider_cli_version",
+    "provider_cli_status",
+    "freshness_source",
+}
+PROVIDER_CLI_STATUSES = {"available", "not_applicable"}
 FORMAL_ARTIFACT_STAGES = {"intake", "stub", "candidate_solution", "final_candidate", "archived"}
 LEAN_CHECK_STATUSES = {"not_run", "typecheck_failed", "typechecked", "command_failed", "tool_unavailable"}
 PLACEHOLDER_STATUSES = {
@@ -112,6 +129,9 @@ SOURCE_FIELDS = SOURCE_REQUIRED | {
     "identifier",
     "access_date",
     "retrieval_method",
+    "library_check_tool",
+    "library_checked_at",
+    "library_check_ref",
     "reliability_notes",
     "artifact_refs",
     "excluded",
@@ -281,6 +301,8 @@ def main(argv: list[str] | None = None) -> int:
     validate_parser.add_argument("--dir", default=".")
     validate_parser.add_argument("--schema-version", choices=["1", "2"], default=None)
 
+    sub.add_parser("selftest")
+
     args = parser.parse_args(argv)
     if args.command == "doctor":
         return doctor()
@@ -288,6 +310,10 @@ def main(argv: list[str] | None = None) -> int:
         return init(args)
     if args.command == "validate":
         result = validate_directory(Path(args.dir), schema_version=args.schema_version)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0 if result["status"] == "ok" else 1
+    if args.command == "selftest":
+        result = selftest()
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0 if result["status"] == "ok" else 1
     raise AssertionError(args.command)
@@ -387,6 +413,22 @@ def write_structured_files(target_dir: Path, *, force: bool, schema_version: str
         schema = {"schema_version": SCHEMA_VERSION}
         written.append(write_text(target_dir / "research_schema.json", json.dumps(schema, indent=2, sort_keys=True) + "\n", force=force))
         written.append(write_text(target_dir / "evidence.jsonl", "", force=force))
+        written.append(write_text(
+            target_dir / "model_freshness.json",
+            json.dumps({
+                "schema_version": MODEL_FRESHNESS_SCHEMA_VERSION,
+                "resolved_model": "",
+                "resolved_thinking": "",
+                "model_catalog_source": "",
+                "model_catalog_ref": "",
+                "freshness_checked_at": "",
+                "model_freshness_max_age_seconds": 86400,
+                "provider_cli_version": "",
+                "provider_cli_status": "not_applicable",
+                "freshness_source": "",
+            }, indent=2, sort_keys=True) + "\n",
+            force=force,
+        ))
     if formal:
         formal_dir = target_dir / "formal"
         for name in ("input", "output", "final", "artifacts/remote/axle"):
@@ -440,7 +482,7 @@ def validate_directory(root: Path, schema_version: str | None = None) -> dict[st
         evidence = read_jsonl(root / "evidence.jsonl", "evidence", errors)
         evidence_map = validate_evidence(evidence, root / "evidence.jsonl", source_map, set(claim_map), root, errors)
         validate_claim_evidence_links(claims, root / "claims.jsonl", evidence_map, errors)
-    guard_ids, blocking_guard_ids = validate_guards(
+    guard_map, blocking_guard_ids = validate_guards(
         guards,
         root / "guards.jsonl",
         set(source_map),
@@ -474,7 +516,7 @@ def validate_directory(root: Path, schema_version: str | None = None) -> dict[st
         validate_delivery(
             delivery,
             root / "delivery.json",
-            guard_ids,
+            guard_map,
             blocking_guard_ids,
             errors,
             warnings,
@@ -496,6 +538,7 @@ def validate_directory(root: Path, schema_version: str | None = None) -> dict[st
         "schema_version": 2 if v2_mode else 1,
         "evidence": len(evidence_map),
         "formal_targets": len(formal_targets),
+        "model_freshness": 1 if (root / "model_freshness.json").is_file() else 0,
     }
     return {
         "status": "ok" if not errors else "failed",
@@ -697,8 +740,10 @@ def validate_evidence(
             validate_axle_remote_evidence(row, path, errors, line)
         if evidence_type == "consent":
             validate_consent_evidence(row, path, errors, line)
-        if isinstance(evidence_id, str) and evidence_id.startswith("E-AGD-"):
+        if evidence_type == "agd_result":
             validate_agd_evidence(row, path, errors, line)
+        elif isinstance(evidence_id, str) and evidence_id.startswith("E-AGD-"):
+            add_error(errors, "AGD_EVIDENCE_TYPE_REQUIRED", path, f"line {line}: E-AGD-* evidence_id requires evidence_type 'agd_result'")
     return ids
 
 
@@ -800,8 +845,8 @@ def validate_guards(
     errors: list[dict[str, Any]],
     *,
     evidence_map: dict[str, dict[str, Any]] | None = None,
-) -> tuple[set[str], set[str]]:
-    ids: set[str] = set()
+) -> tuple[dict[str, dict[str, Any]], set[str]]:
+    ids: dict[str, dict[str, Any]] = {}
     blocking: set[str] = set()
     for row in rows:
         line = row.get("_line")
@@ -817,7 +862,7 @@ def validate_guards(
             continue
         if guard_id in ids:
             add_error(errors, "DUPLICATE_ID", path, f"line {line}: duplicate guard_output_id {guard_id}")
-        ids.add(guard_id)
+        ids[guard_id] = row
         if row.get("guard") not in GUARDS:
             add_error(errors, "GUARD_TYPE_INVALID", path, f"line {line}: unsupported guard {row.get('guard')!r}")
         status = row.get("status")
@@ -1047,7 +1092,7 @@ def has_local_formal_check_evidence(target: dict[str, Any], evidence_map: dict[s
 def validate_delivery(
     delivery: dict[str, Any],
     path: Path,
-    guard_ids: set[str],
+    guard_map: dict[str, dict[str, Any]],
     blocking_guard_ids: set[str],
     errors: list[dict[str, Any]],
     warnings: list[dict[str, Any]],
@@ -1074,21 +1119,32 @@ def validate_delivery(
     gaps = require_string_list(delivery.get("gaps"), errors, path, None, "gaps")
     caveats = require_string_list(delivery.get("caveats"), errors, path, None, "caveats")
     for guard_id in delivery_guard_ids:
-        if guard_id not in guard_ids:
+        if guard_id not in guard_map:
             add_error(errors, "UNKNOWN_GUARD_ID", path, f"delivery references unknown guard_output_id {guard_id}")
-    if blocking_guard_ids and decision == "ready":
-        add_error(errors, "BLOCKING_READY_DECISION", path, "ready delivery is invalid while blocking guard gaps remain")
-    if blocking_guard_ids and decision == "ready-with-caveats" and not caveats and not gaps:
-        add_error(errors, "BLOCKING_CAVEAT_REQUIRED", path, "blocking guard gaps require caveats or gaps")
+    if blocking_guard_ids and decision in FINALIZABLE_DELIVERY_DECISIONS:
+        add_error(errors, "BLOCKING_FINALIZABLE_DECISION", path, f"{decision} delivery is invalid while blocking guard gaps remain")
     if decision == "ready" and (blockers or gaps):
         add_error(errors, "READY_WITH_GAPS", path, "ready delivery must not carry blockers or gaps")
+    if decision in FINALIZABLE_DELIVERY_DECISIONS and blockers:
+        add_error(errors, "FINALIZABLE_WITH_BLOCKERS", path, f"{decision} delivery must not carry blockers")
     if decision == "not-ready" and not blockers and not gaps:
         warnings.append({"code": "NOT_READY_WITHOUT_GAPS", "path": str(path), "message": "not-ready delivery should list blockers or gaps"})
-    if decision == "ready":
-        validate_ready_delivery_claims(delivery, path, root, source_map, claims, evidence_map, formal_targets, v2_mode, errors)
+    if decision in FINALIZABLE_DELIVERY_DECISIONS:
+        validate_finalizable_delivery_claims(
+            delivery,
+            path,
+            root,
+            source_map,
+            claims,
+            evidence_map,
+            formal_targets,
+            v2_mode,
+            errors,
+            guard_map=guard_map,
+        )
 
 
-def validate_ready_delivery_claims(
+def validate_finalizable_delivery_claims(
     delivery: dict[str, Any],
     path: Path,
     root: Path,
@@ -1098,7 +1154,10 @@ def validate_ready_delivery_claims(
     formal_targets: dict[str, dict[str, Any]],
     v2_mode: bool,
     errors: list[dict[str, Any]],
+    *,
+    guard_map: dict[str, dict[str, Any]],
 ) -> None:
+    decision = delivery.get("decision")
     caveats = delivery.get("caveats", [])
     report_ref = delivery.get("report_ref")
     report_path = validate_artifact_ref(report_ref, root, path, errors, None, "report_ref")
@@ -1109,10 +1168,16 @@ def validate_ready_delivery_claims(
     else:
         report_text = report_path.read_text(encoding="utf-8")
         if "TODO" in report_text:
-            add_error(errors, "READY_REPORT_TODO", path, "ready delivery report contains unresolved TODO")
+            add_error(errors, "READY_REPORT_TODO", path, f"{decision} delivery report contains unresolved TODO")
         if "[UNVERIFIED]" in report_text:
-            add_error(errors, "READY_REPORT_UNVERIFIED", path, "ready delivery report contains unresolved [UNVERIFIED]")
+            add_error(errors, "READY_REPORT_UNVERIFIED", path, f"{decision} delivery report contains unresolved [UNVERIFIED]")
 
+    if not any(claim.get("status") == "supported" for claim in claims.values()):
+        add_error(errors, "FINALIZABLE_REQUIRES_SUPPORTED_CLAIM", path, f"{decision} delivery requires at least one supported claim")
+    if v2_mode:
+        validate_finalizable_guards(delivery, path, guard_map, errors)
+        validate_report_evidence(report_ref, path, evidence_map, errors)
+        validate_model_freshness(root, path, errors)
     for claim_id, claim in claims.items():
         status = claim.get("status")
         if status == "unsupported":
@@ -1129,6 +1194,7 @@ def validate_ready_delivery_claims(
             linked_evidence = [evidence_map.get(evidence_id) for evidence_id in evidence_ids if evidence_id in evidence_map]
             if not source_ids and linked_evidence and all(is_weak_computation_evidence(item) for item in linked_evidence):
                 add_error(errors, "READY_CLAIM_RELIES_ONLY_ON_WEAK_COMPUTATION", path, f"claim {claim_id} relies only on bounded/partial computation evidence")
+            validate_claim_library_provenance(claim_id, source_ids, source_map, root, path, errors)
     for target_id, target in formal_targets.items():
         if target.get("claim_support_status") == PROMOTED_SUPPORT:
             continue
@@ -1136,6 +1202,109 @@ def validate_ready_delivery_claims(
             continue
         if target.get("formal_check_requirement") == "required_for_delivery":
             add_error(errors, "READY_REQUIRED_FORMAL_TARGET_NOT_PROMOTED", path, f"required formal target {target_id} is not promoted formal support")
+
+
+def validate_finalizable_guards(
+    delivery: dict[str, Any],
+    path: Path,
+    guard_map: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    guard_ids = delivery.get("guard_output_ids", [])
+    if not isinstance(guard_ids, list):
+        return
+    seen: set[str] = set()
+    for guard_id in guard_ids:
+        guard = guard_map.get(guard_id)
+        if not guard:
+            continue
+        if guard.get("guard") in REQUIRED_FINALIZABLE_GUARDS and guard.get("status") in {"pass", "warn"} and guard.get("blocking") is False:
+            seen.add(str(guard.get("guard")))
+    missing = sorted(REQUIRED_FINALIZABLE_GUARDS - seen)
+    if missing:
+        add_error(errors, "FINALIZABLE_GUARDS_MISSING", path, f"{delivery.get('decision')} delivery requires non-blocking pass/warn guards: {missing}")
+
+
+def validate_report_evidence(
+    report_ref: Any,
+    path: Path,
+    evidence_map: dict[str, dict[str, Any]],
+    errors: list[dict[str, Any]],
+) -> None:
+    if not isinstance(report_ref, str) or not report_ref:
+        return
+    for evidence in evidence_map.values():
+        if evidence.get("evidence_type") == "report" and evidence.get("artifact_ref") == report_ref:
+            if evidence.get("inspection_status") == "checked" and evidence.get("redaction_status") in {"safe", "redacted"}:
+                return
+    add_error(errors, "FINALIZABLE_REPORT_EVIDENCE_MISSING", path, "v2 finalizable delivery requires checked report evidence for report_ref")
+
+
+def validate_claim_library_provenance(
+    claim_id: str,
+    source_ids: list[str],
+    source_map: dict[str, dict[str, Any]],
+    root: Path,
+    path: Path,
+    errors: list[dict[str, Any]],
+) -> None:
+    for source_id in source_ids:
+        source = source_map.get(source_id, {})
+        if source.get("source_type") not in PAPER_LIKE_SOURCE_TYPES:
+            continue
+        for field in ("library_check_tool", "library_checked_at", "library_check_ref"):
+            if not is_nonempty_string(source.get(field)):
+                add_error(errors, "LIBRARY_CHECK_PROVENANCE_REQUIRED", path, f"claim {claim_id} paper-like source {source_id} requires {field}")
+        if is_nonempty_string(source.get("library_checked_at")):
+            validate_timestamp(source.get("library_checked_at"), path, errors, source.get("_line"), "library_checked_at")
+        if is_nonempty_string(source.get("library_check_ref")):
+            validate_artifact_ref(source.get("library_check_ref"), root, path, errors, source.get("_line"), "library_check_ref")
+
+
+def validate_model_freshness(root: Path, path: Path, errors: list[dict[str, Any]]) -> None:
+    freshness_path = root / "model_freshness.json"
+    data = read_json(freshness_path, "model freshness", errors)
+    if not isinstance(data, dict):
+        return
+    unknown = set(data) - MODEL_FRESHNESS_REQUIRED
+    if unknown:
+        add_error(errors, "MODEL_FRESHNESS_UNKNOWN_FIELD", freshness_path, f"unknown model freshness fields: {sorted(unknown)}")
+    missing = MODEL_FRESHNESS_REQUIRED - set(data)
+    if missing:
+        add_error(errors, "MODEL_FRESHNESS_MISSING_FIELD", freshness_path, f"missing model freshness fields: {sorted(missing)}")
+    if data.get("schema_version") != MODEL_FRESHNESS_SCHEMA_VERSION:
+        add_error(errors, "MODEL_FRESHNESS_SCHEMA_VERSION_INVALID", freshness_path, "unsupported model freshness schema_version")
+    for field in (
+        "resolved_model",
+        "resolved_thinking",
+        "model_catalog_source",
+        "model_catalog_ref",
+        "freshness_checked_at",
+        "provider_cli_version",
+        "provider_cli_status",
+        "freshness_source",
+    ):
+        if not is_nonempty_string(data.get(field)):
+            add_error(errors, "MODEL_FRESHNESS_FIELD_REQUIRED", freshness_path, f"model freshness requires {field}")
+    if data.get("provider_cli_status") not in PROVIDER_CLI_STATUSES:
+        add_error(errors, "MODEL_FRESHNESS_PROVIDER_STATUS_INVALID", freshness_path, "provider_cli_status must be available or not_applicable")
+    max_age = data.get("model_freshness_max_age_seconds")
+    if not isinstance(max_age, int) or max_age <= 0:
+        add_error(errors, "MODEL_FRESHNESS_MAX_AGE_INVALID", freshness_path, "model_freshness_max_age_seconds must be a positive integer")
+        max_age = 86400
+    checked_at = parse_rfc3339(data.get("freshness_checked_at"))
+    if checked_at is None:
+        add_error(errors, "MODEL_FRESHNESS_TIMESTAMP_INVALID", freshness_path, "freshness_checked_at must be an RFC3339 UTC timestamp")
+        return
+    if checked_at.tzinfo is None:
+        checked_at = checked_at.replace(tzinfo=timezone.utc)
+    checked_at = checked_at.astimezone(timezone.utc)
+    now = datetime.now(timezone.utc)
+    if checked_at > now + timedelta(seconds=5):
+        add_error(errors, "MODEL_FRESHNESS_TIMESTAMP_FUTURE", freshness_path, "freshness_checked_at must not be in the future")
+    if now - checked_at > timedelta(seconds=max_age):
+        add_error(errors, "MODEL_FRESHNESS_STALE", freshness_path, f"model freshness is older than {max_age} seconds")
+    validate_artifact_ref(data.get("model_catalog_ref"), root, path, errors, None, "model_catalog_ref")
 
 
 def is_weak_computation_evidence(row: dict[str, Any] | None) -> bool:
@@ -1202,11 +1371,18 @@ def validate_timestamp(
     if not isinstance(value, str) or not value:
         add_error(errors, "TIMESTAMP_INVALID", path, f"line {line}: {field} must be an RFC3339 timestamp")
         return
+    if parse_rfc3339(value) is None:
+        add_error(errors, "TIMESTAMP_INVALID", path, f"line {line}: {field} must be an RFC3339 timestamp")
+
+
+def parse_rfc3339(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
     text = value[:-1] + "+00:00" if value.endswith("Z") else value
     try:
-        datetime.fromisoformat(text)
+        return datetime.fromisoformat(text)
     except ValueError:
-        add_error(errors, "TIMESTAMP_INVALID", path, f"line {line}: {field} must be an RFC3339 timestamp")
+        return None
 
 
 def validate_artifact_ref(
@@ -1293,6 +1469,416 @@ def is_nonempty_string(value: Any) -> bool:
 
 def add_error(errors: list[dict[str, Any]], code: str, path: Path, message: str) -> None:
     errors.append({"code": code, "path": str(path), "message": message})
+
+
+def selftest() -> dict[str, Any]:
+    scenarios = [
+        ("v2_ready_success", True, build_v2_ready_success),
+        ("v2_ready_failure", False, build_v2_ready_failure),
+        ("v2_ready_with_caveats_success", True, build_v2_ready_with_caveats_success),
+        ("v2_ready_with_caveats_failure", False, build_v2_ready_with_caveats_failure),
+        ("agd_evidence_success", True, build_agd_evidence_success),
+        ("agd_evidence_failure", False, build_agd_evidence_failure),
+        ("weak_computation_failure", False, build_weak_computation_failure),
+        ("formal_promotion_success", True, build_formal_promotion_success),
+        ("formal_promotion_failure", False, build_formal_promotion_failure),
+        ("artifact_ref_path_safety", False, build_artifact_ref_path_safety),
+    ]
+    results = []
+    with tempfile.TemporaryDirectory(prefix="deep-research-selftest-") as tmp:
+        base = Path(tmp)
+        for name, expected_ok, builder in scenarios:
+            root = base / name / "research"
+            root.mkdir(parents=True)
+            builder(root)
+            result = validate_directory(root, schema_version="2")
+            actual_ok = result["status"] == "ok"
+            results.append({
+                "name": name,
+                "expected_status": "ok" if expected_ok else "failed",
+                "actual_status": result["status"],
+                "passed": actual_ok == expected_ok,
+                "error_codes": [error.get("code") for error in result.get("errors", [])],
+            })
+    return {
+        "schema_version": "deep-research.selftest.v1",
+        "status": "ok" if all(item["passed"] for item in results) else "failed",
+        "positive_count": sum(1 for _, expected_ok, _ in scenarios if expected_ok),
+        "negative_count": sum(1 for _, expected_ok, _ in scenarios if not expected_ok),
+        "scenarios": results,
+    }
+
+
+def build_v2_ready_success(root: Path) -> None:
+    write_base_v2_run(root, decision="ready")
+
+
+def build_v2_ready_failure(root: Path) -> None:
+    write_base_v2_run(root, decision="ready", include_verify_guard=False)
+
+
+def build_v2_ready_with_caveats_success(root: Path) -> None:
+    write_base_v2_run(
+        root,
+        decision="ready-with-caveats",
+        extra_claim={
+            "claim_id": "C2",
+            "claim": "A caveated claim remains provisional.",
+            "source_ids": ["S2"],
+            "evidence_ids": [],
+            "status": "provisional",
+        },
+        gaps=["C2 remains provisional."],
+        caveats=["C2 remains provisional pending another source."],
+    )
+
+
+def build_v2_ready_with_caveats_failure(root: Path) -> None:
+    write_base_v2_run(
+        root,
+        decision="ready-with-caveats",
+        extra_claim={
+            "claim_id": "C2",
+            "claim": "A caveated claim remains provisional.",
+            "source_ids": ["S2"],
+            "evidence_ids": [],
+            "status": "provisional",
+        },
+        gaps=["C2 remains provisional."],
+        caveats=[],
+    )
+
+
+def build_agd_evidence_success(root: Path) -> None:
+    write_minimal_v2_not_ready(root)
+    write_jsonl_rows(root / "evidence.jsonl", [agd_evidence("E1", "parent_validated")])
+
+
+def build_agd_evidence_failure(root: Path) -> None:
+    write_minimal_v2_not_ready(root)
+    write_jsonl_rows(root / "evidence.jsonl", [agd_evidence("E1", "pending")])
+
+
+def build_weak_computation_failure(root: Path) -> None:
+    write_base_v2_run(root, decision="ready", claim_evidence_ids=["E1"], source_ids=[])
+    write_jsonl_rows(root / "evidence.jsonl", [
+        report_evidence(),
+        {
+            "schema_version": EVIDENCE_SCHEMA_VERSION,
+            "evidence_id": "E1",
+            "evidence_type": "computation",
+            "source_ids": [],
+            "claim_ids": ["C1"],
+            "artifact_ref": "checks/sample.json",
+            "summary": "Sampled graph check.",
+            "inspection_status": "checked",
+            "redaction_status": "safe",
+            "sensitivity_class": "public",
+            "created_at": "2026-05-28T00:00:00Z",
+            "limitations": ["sampled only"],
+            "tool_name": "graph-verifier",
+            "tool_version": "test",
+            "input_encoding_ref": "checks/input.json",
+            "checked_domain": "graphs up to n=5 sample",
+            "graph_model_assumptions": "simple finite graph",
+            "resource_bounds": "1s",
+            "result_status": "partial",
+            "coverage_status": "sampled",
+            "enumeration_method": "sample",
+            "timeout_status": "completed",
+        },
+    ])
+
+
+def build_formal_promotion_success(root: Path) -> None:
+    write_minimal_v2_not_ready(root, formal=True)
+    write_jsonl_rows(root / "sources.jsonl", [paper_source()])
+    write_jsonl_rows(root / "claims.jsonl", [claim_row(evidence_ids=["E1"])])
+    write_jsonl_rows(root / "evidence.jsonl", [formal_check_evidence()])
+    write_jsonl_rows(root / "formal" / "statement_equivalence_reviews.jsonl", [statement_review()])
+    write_jsonl_rows(root / "formal" / "formal_targets.jsonl", [formal_target()])
+
+
+def build_formal_promotion_failure(root: Path) -> None:
+    write_minimal_v2_not_ready(root, formal=True)
+    write_jsonl_rows(root / "claims.jsonl", [claim_row(source_ids=[], evidence_ids=["E-AXLE-1"])])
+    write_jsonl_rows(root / "evidence.jsonl", [axle_evidence()])
+    write_jsonl_rows(root / "formal" / "statement_equivalence_reviews.jsonl", [statement_review()])
+    target = formal_target(source_ids=[], verification_evidence_ids=["E-AXLE-1"])
+    target["toolchain"] = "remote AXLE"
+    write_jsonl_rows(root / "formal" / "formal_targets.jsonl", [target])
+
+
+def build_artifact_ref_path_safety(root: Path) -> None:
+    write_minimal_v2_not_ready(root)
+    evidence = report_evidence()
+    evidence["artifact_ref"] = "../outside.md"
+    write_jsonl_rows(root / "evidence.jsonl", [evidence])
+
+
+def write_base_v2_run(
+    root: Path,
+    *,
+    decision: str,
+    include_verify_guard: bool = True,
+    extra_claim: dict[str, Any] | None = None,
+    source_ids: list[str] | None = None,
+    claim_evidence_ids: list[str] | None = None,
+    gaps: list[str] | None = None,
+    caveats: list[str] | None = None,
+) -> None:
+    source_ids = ["S1"] if source_ids is None else source_ids
+    claim_evidence_ids = ["E-REPORT"] if claim_evidence_ids is None else claim_evidence_ids
+    write_minimal_v2_not_ready(root)
+    (root / "report.md").write_text("Clean report.\n", encoding="utf-8")
+    (root / "library").mkdir(exist_ok=True)
+    (root / "library" / "zotero-S1.json").write_text("{}\n", encoding="utf-8")
+    (root / "model").mkdir(exist_ok=True)
+    (root / "model" / "catalog.json").write_text("{}\n", encoding="utf-8")
+    (root / "checks").mkdir(exist_ok=True)
+    (root / "checks" / "sample.json").write_text("{}\n", encoding="utf-8")
+    write_jsonl_rows(root / "sources.jsonl", [
+        paper_source(),
+        {
+            "source_id": "S2",
+            "source": "Non-paper source",
+            "source_type": "web",
+            "library_status": "[NOT_A_PAPER]",
+        },
+    ])
+    claims = [claim_row(source_ids=source_ids, evidence_ids=claim_evidence_ids)]
+    if extra_claim:
+        claims.append(extra_claim)
+    write_jsonl_rows(root / "claims.jsonl", claims)
+    if not (root / "evidence.jsonl").read_text(encoding="utf-8").strip():
+        write_jsonl_rows(root / "evidence.jsonl", [report_evidence()])
+    guards = [
+        guard_row("G1", "EvidenceGuard", evidence_ids=["E-REPORT"]),
+    ]
+    if include_verify_guard:
+        guards.append(guard_row("G2", "VerifyGuard", evidence_ids=["E-REPORT"]))
+    write_jsonl_rows(root / "guards.jsonl", guards)
+    write_json(root / "delivery.json", {
+        "decision": decision,
+        "report_ref": "report.md",
+        "checked_at": "2026-05-28T00:00:00Z",
+        "guard_output_ids": [guard["guard_output_id"] for guard in guards],
+        "blockers": [],
+        "gaps": [] if gaps is None else gaps,
+        "caveats": [] if caveats is None else caveats,
+    })
+    write_model_freshness(root)
+
+
+def write_minimal_v2_not_ready(root: Path, *, formal: bool = False) -> None:
+    write_json(root / "research_schema.json", {"schema_version": SCHEMA_VERSION})
+    write_jsonl_rows(root / "sources.jsonl", [])
+    write_jsonl_rows(root / "claims.jsonl", [])
+    write_jsonl_rows(root / "guards.jsonl", [])
+    write_jsonl_rows(root / "evidence.jsonl", [])
+    write_json(root / "delivery.json", {
+        "decision": "not-ready",
+        "report_ref": "",
+        "checked_at": "",
+        "guard_output_ids": [],
+        "blockers": [{"blocker_id": "B1", "description": "selftest incomplete"}],
+        "gaps": ["selftest not ready"],
+        "caveats": [],
+    })
+    (root / "delegation").mkdir(exist_ok=True)
+    if formal:
+        (root / "formal").mkdir(exist_ok=True)
+        write_jsonl_rows(root / "formal" / "formal_targets.jsonl", [])
+        write_jsonl_rows(root / "formal" / "statement_equivalence_reviews.jsonl", [])
+
+
+def write_model_freshness(root: Path) -> None:
+    write_json(root / "model_freshness.json", {
+        "schema_version": MODEL_FRESHNESS_SCHEMA_VERSION,
+        "resolved_model": "selftest-frontier",
+        "resolved_thinking": "xhigh",
+        "model_catalog_source": "selftest",
+        "model_catalog_ref": "model/catalog.json",
+        "freshness_checked_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "model_freshness_max_age_seconds": 86400,
+        "provider_cli_version": "not-applicable",
+        "provider_cli_status": "not_applicable",
+        "freshness_source": "selftest",
+    })
+
+
+def paper_source() -> dict[str, Any]:
+    return {
+        "source_id": "S1",
+        "source": "Verified paper",
+        "source_type": "paper",
+        "library_status": "[IN_LIBRARY]",
+        "library_check_tool": "zotero",
+        "library_checked_at": "2026-05-28T00:00:00Z",
+        "library_check_ref": "library/zotero-S1.json",
+    }
+
+
+def claim_row(
+    *,
+    source_ids: list[str] | None = None,
+    evidence_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "claim_id": "C1",
+        "claim": "Supported claim.",
+        "source_ids": ["S1"] if source_ids is None else source_ids,
+        "evidence_ids": [] if evidence_ids is None else evidence_ids,
+        "status": "supported",
+    }
+
+
+def report_evidence() -> dict[str, Any]:
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "evidence_id": "E-REPORT",
+        "evidence_type": "report",
+        "source_ids": ["S1"],
+        "claim_ids": ["C1"],
+        "artifact_ref": "report.md",
+        "summary": "Checked report artifact.",
+        "inspection_status": "checked",
+        "redaction_status": "safe",
+        "sensitivity_class": "public",
+        "created_at": "2026-05-28T00:00:00Z",
+        "limitations": [],
+    }
+
+
+def agd_evidence(evidence_id: str, validation_status: str) -> dict[str, Any]:
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "evidence_id": evidence_id,
+        "evidence_type": "agd_result",
+        "source_ids": [],
+        "claim_ids": [],
+        "artifact_ref": "delegation/parsed/participant.json",
+        "summary": "Parent-owned AGD result.",
+        "inspection_status": "checked",
+        "redaction_status": "redacted",
+        "sensitivity_class": "private",
+        "created_at": "2026-05-28T00:00:00Z",
+        "limitations": [],
+        "agd_participant_id": "participant-1",
+        "agd_round": "1",
+        "agd_packet_ref": "delegation/parsed/participant.json",
+        "validation_status": validation_status,
+        "parent_validation_owner": "parent",
+    }
+
+
+def guard_row(guard_id: str, guard: str, *, evidence_ids: list[str]) -> dict[str, Any]:
+    return {
+        "guard_output_id": guard_id,
+        "guard": guard,
+        "status": "pass",
+        "claim_or_scope_ref": "C1",
+        "source_ids": [],
+        "evidence_ids": evidence_ids,
+        "inspected_artifacts": ["report.md"],
+        "gap": "",
+        "blocking": False,
+        "recommended_action": "none",
+    }
+
+
+def formal_check_evidence() -> dict[str, Any]:
+    row = report_evidence()
+    row.update({
+        "evidence_id": "E1",
+        "evidence_type": "formal_check",
+        "artifact_ref": "formal/final/proof.lean",
+        "summary": "Local Lean check metadata.",
+        "verification_source": "local_lean",
+    })
+    return row
+
+
+def axle_evidence() -> dict[str, Any]:
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "evidence_id": "E-AXLE-1",
+        "evidence_type": "axle_remote_check",
+        "source_ids": [],
+        "claim_ids": ["C1"],
+        "artifact_ref": "formal/artifacts/remote/axle/E-AXLE-1.json",
+        "summary": "AXLE remote result.",
+        "inspection_status": "checked",
+        "redaction_status": "redacted",
+        "sensitivity_class": "private",
+        "created_at": "2026-05-28T00:00:00Z",
+        "limitations": ["remote result is supplemental only"],
+        "tool_name": "axiom-axle-mcp",
+        "tool_version": "0.3.3",
+        "endpoint": "https://axle.axiommath.ai",
+        "operation": "check",
+        "payload_hash": "sha256:test",
+        "input_encoding_ref": "formal/input/C1.json",
+        "result_status": "passed",
+        "expiry": "2026-12-31T00:00:00Z",
+    }
+
+
+def statement_review() -> dict[str, Any]:
+    return {
+        "schema_version": STATEMENT_REVIEW_SCHEMA_VERSION,
+        "statement_equivalence_review_id": "SER1",
+        "formal_target_id": "FT1",
+        "reviewer": "lead",
+        "review_status": "reviewed_by_lead",
+        "relation_status": "equivalent_reviewed",
+        "informal_statement_ref": "sources/S1.md#theorem",
+        "lean_statement_ref": "formal/final/proof.lean",
+        "compared_definitions": "same definitions",
+        "hypothesis_deltas": "none",
+        "quantifier_deltas": "none",
+        "conclusion_deltas": "none",
+        "boundary_cases": "none",
+        "limitations": "none",
+        "encoding_assumptions": "simple finite graph",
+    }
+
+
+def formal_target(
+    *,
+    source_ids: list[str] | None = None,
+    verification_evidence_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": FORMAL_TARGET_SCHEMA_VERSION,
+        "formal_target_id": "FT1",
+        "claim_ids": ["C1"],
+        "source_ids": ["S1"] if source_ids is None else source_ids,
+        "informal_statement_ref": "sources/S1.md#theorem",
+        "lean_statement_ref": "formal/final/proof.lean",
+        "artifact_stage": "final_candidate",
+        "lean_check_status": "typechecked",
+        "placeholder_status": "no_active_placeholders",
+        "trust_base_status": "accepted_trust_base",
+        "statement_relation_status": "equivalent_reviewed",
+        "review_status": "reviewed_by_lead",
+        "claim_support_status": PROMOTED_SUPPORT,
+        "formal_check_requirement": "optional",
+        "toolchain": "lean 4",
+        "mathlib": "recorded",
+        "verification_evidence_ids": ["E1"] if verification_evidence_ids is None else verification_evidence_ids,
+        "statement_equivalence_review_ids": ["SER1"],
+    }
+
+
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def write_jsonl_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows), encoding="utf-8")
 
 
 if __name__ == "__main__":
