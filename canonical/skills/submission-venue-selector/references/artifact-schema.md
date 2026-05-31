@@ -21,6 +21,9 @@ Core artifacts:
 - `venue_profiles.jsonl`
 - `recent_papers.jsonl`
 - `scores.jsonl`
+- `scorecards.jsonl`
+- `base_rate_sources.jsonl`
+- `chance_estimates.jsonl`
 - `delivery.json`
 - `recommendation.md`
 
@@ -47,10 +50,29 @@ Important statuses:
 - `year_window`
 - `total_hits`
 - `evidence_level`
+- `article_type`
+- `exclusion_status`
+- `topic_distance_rationale`
+- `inspection_scope`
 - `current_as_of`
 
 Allowed evidence levels are `metadata_only`, `abstract_inspected`, and
 `full_text_inspected`. Full-text status must not be inferred from metadata.
+Metadata-only records are discovery evidence and must not produce `ready`
+delivery.
+
+`scorecards.jsonl` stores 0-4 anchored ordinal criteria, fit bands, risk flags,
+support status, evidence IDs, and comparator counts. It does not store
+calibrated acceptance probabilities.
+
+`base_rate_sources.jsonl` stores the acceptance-rate source used for each venue:
+official journal/publisher statistics when available, publisher/field priors,
+configured priors, or a broad fallback heuristic interval.
+
+`chance_estimates.jsonl` stores the final required acceptance-chance interval
+for each venue. Records must include source class, base-rate interval, modifier
+intervals, final interval, confidence, caveats, and a note that the estimate is
+heuristic rather than predictive.
 
 Privacy defaults:
 
