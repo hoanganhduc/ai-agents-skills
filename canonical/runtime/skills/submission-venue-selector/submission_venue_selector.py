@@ -46,6 +46,9 @@ SAFE_PROVIDER_DOMAINS = {
     "crossref": "api.crossref.org",
     "semantic-scholar": "api.semanticscholar.org",
 }
+IMPLEMENTED_LIVE_PROVIDERS = {"openalex"}
+COMPARATOR_EVIDENCE_LEVELS = {"metadata_only", "abstract_inspected", "full_text_inspected"}
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
 class SelectorError(RuntimeError):
@@ -333,6 +336,56 @@ def load_fixture_jsonl(args: argparse.Namespace, name: str) -> list[dict[str, An
     return read_jsonl(fixture_dir / name)
 
 
+def latest_privacy_guard_ok(run_dir: Path) -> bool:
+    guards = [
+        guard
+        for guard in read_jsonl(run_dir / "guards.jsonl")
+        if guard.get("guard_type") == "privacy_gate"
+    ]
+    return bool(guards and guards[-1].get("status") == "ok")
+
+
+def allowed_providers(args: argparse.Namespace) -> set[str]:
+    return set(getattr(args, "allow_provider", None) or [])
+
+
+def ensure_network_allowed(run_dir: Path, args: argparse.Namespace) -> set[str]:
+    if getattr(args, "offline", False):
+        raise SelectorError("--offline and --allow-network cannot be combined")
+    providers = allowed_providers(args)
+    if not providers:
+        raise SelectorError("--allow-network requires at least one explicit --allow-provider")
+    unsupported = providers - NETWORK_PROVIDERS
+    if unsupported:
+        raise SelectorError(f"unsupported network provider(s): {', '.join(sorted(unsupported))}")
+    if not latest_privacy_guard_ok(run_dir):
+        raise SelectorError("network access requires a prior ok privacy-gate in this workspace")
+    queries = read_jsonl(run_dir / "queries.jsonl")
+    if not queries or any(query.get("redaction_status") != "redacted" for query in queries):
+        raise SelectorError("network access requires redacted queries.jsonl")
+    return providers
+
+
+def request_caps(run_dir: Path) -> dict[str, int]:
+    plan = read_json(run_dir / "selection_plan.json")
+    caps = plan.get("request_caps", {}) if isinstance(plan.get("request_caps"), dict) else {}
+    return {
+        "max_requests": int(caps.get("max_requests", 25)),
+        "timeout_seconds": int(caps.get("timeout_seconds", 20)),
+        "max_response_bytes": int(caps.get("max_response_bytes", MAX_RESPONSE_BYTES)),
+    }
+
+
+def redacted_query_params(params: dict[str, str]) -> dict[str, str]:
+    redacted: dict[str, str] = {}
+    for key, value in params.items():
+        if key.lower() in {"search", "query", "title", "filter"}:
+            redacted[key] = f"<redacted:{sha256_text(value)[:12]}>"
+        else:
+            redacted[key] = value
+    return redacted
+
+
 def build_selection_plan(draft: dict[str, Any] | None = None) -> dict[str, Any]:
     keywords = []
     if draft:
@@ -344,7 +397,13 @@ def build_selection_plan(draft: dict[str, Any] | None = None) -> dict[str, Any]:
         "venue_type_constraints": ["journal", "conference"],
         "field_topic_keywords": keywords,
         "provider_capabilities_required": ["resolve_by_doi", "resolve_by_title", "venue_recent_by_source"],
-        "request_caps": {"max_requests": 25, "timeout_seconds": 20, "max_hop": 1, "max_papers": 50},
+        "request_caps": {
+            "max_requests": 25,
+            "timeout_seconds": 20,
+            "max_response_bytes": MAX_RESPONSE_BYTES,
+            "max_hop": 1,
+            "max_papers": 50,
+        },
         "year_window": 5,
         "scoring_weights": {
             "bibliography_overlap": 0.35,
@@ -352,7 +411,9 @@ def build_selection_plan(draft: dict[str, Any] | None = None) -> dict[str, Any]:
             "scope_fit": 0.20,
             "evidence_completeness": 0.20,
         },
-        "unresolved_assumptions": ["offline results are advisory until live provider evidence is allowed"],
+        "unresolved_assumptions": [
+            "offline bibliography overlap and placeholders are discovery-only until comparator evidence is available"
+        ],
     }
 
 
@@ -490,20 +551,31 @@ def provider_records(args: argparse.Namespace) -> list[dict[str, Any]]:
     ]
     rows = []
     for name, capabilities in base:
-        configured = name not in {"semantic-scholar", "unpaywall"} or bool(
-            os.environ.get("SEMANTIC_SCHOLAR_API_KEY" if name == "semantic-scholar" else "UNPAYWALL_EMAIL")
+        implemented = name in IMPLEMENTED_LIVE_PROVIDERS
+        configured = implemented and (
+            name not in {"semantic-scholar", "unpaywall"}
+            or bool(os.environ.get("SEMANTIC_SCHOLAR_API_KEY" if name == "semantic-scholar" else "UNPAYWALL_EMAIL"))
         )
-        allowed = not allow or name in allow
+        allowed = bool(args.allow_network and allow and name in allow)
+        if not implemented:
+            provider_status = "unsupported"
+        elif not configured:
+            provider_status = "configured_missing"
+        elif not allowed:
+            provider_status = "skipped"
+        else:
+            provider_status = "ok"
         rows.append(
             {
                 "schema_version": SCHEMA_VERSION,
                 "provider": name,
-                "provider_status": "ok" if configured and allowed else "configured_missing" if not configured else "skipped",
-                "capabilities": capabilities,
+                "provider_status": provider_status,
+                "capabilities": capabilities if implemented else [],
+                "declared_capabilities": capabilities,
                 "domain": SAFE_PROVIDER_DOMAINS.get(name, ""),
                 "auth_configured": configured,
                 "email_configured": bool(os.environ.get("UNPAYWALL_EMAIL")) if name == "unpaywall" else False,
-                "network_allowed": bool(args.allow_network and allowed),
+                "network_allowed": bool(allowed and configured),
                 "cache_ttl_days": 30,
                 "checked_at": now_iso(),
             }
@@ -537,15 +609,49 @@ def normalize_work_from_ref(ref: dict[str, Any], index: int) -> dict[str, Any]:
     }
 
 
-def live_json(provider: str, path: str, params: dict[str, str], timeout: int) -> tuple[str, dict[str, Any]]:
+def source_record(
+    source_id: str,
+    provider: str,
+    endpoint: str,
+    params: dict[str, str],
+    query_id: str,
+    response_status: str = "ok",
+) -> dict[str, Any]:
+    redacted = redacted_query_params(params)
+    cache_key = sha256_text(json.dumps({"provider": provider, "endpoint": endpoint, "params": params}, sort_keys=True))[:16]
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "source_id": source_id,
+        "provider": provider,
+        "endpoint": endpoint,
+        "query_id": query_id,
+        "query": redacted,
+        "query_hash": sha256_text(json.dumps(params, sort_keys=True)),
+        "cache_key": cache_key,
+        "retrieved_at": now_iso(),
+        "current_as_of": now_iso(),
+        "staleness_policy": "30d",
+        "response_status": response_status,
+    }
+
+
+def live_json(
+    provider: str,
+    path: str,
+    params: dict[str, str],
+    timeout: int,
+    max_response_bytes: int = MAX_RESPONSE_BYTES,
+) -> dict[str, Any]:
     domain = SAFE_PROVIDER_DOMAINS[provider]
     query = urllib.parse.urlencode(params)
     url = f"https://{domain}{path}?{query}"
     request = urllib.request.Request(url, headers={"User-Agent": "ai-agents-skills submission-venue-selector"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            return url, data
+            raw = response.read(max_response_bytes + 1)
+            if len(raw) > max_response_bytes:
+                raise SelectorError(f"{provider} response exceeded {max_response_bytes} byte cap")
+            return json.loads(raw.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise SelectorError(f"{provider} HTTP {exc.code}: {exc.reason}") from exc
     except urllib.error.URLError as exc:
@@ -559,14 +665,28 @@ def command_resolve(args: argparse.Namespace) -> int:
     papers = fixture_papers[:] if fixture_papers else []
     sources: list[dict[str, Any]] = read_jsonl(run_dir / "sources.jsonl")
     evidence: list[dict[str, Any]] = read_jsonl(run_dir / "evidence.jsonl")
+    providers = ensure_network_allowed(run_dir, args) if args.allow_network else set()
+    caps = request_caps(run_dir)
+    request_count = 0
     if not papers:
         for index, ref in enumerate(refs, 1):
             paper = normalize_work_from_ref(ref, index)
-            if args.allow_network and ("openalex" in (args.allow_provider or ["openalex"])):
+            if "openalex" in providers:
                 try:
+                    if request_count >= caps["max_requests"]:
+                        raise SelectorError("request cap reached before OpenAlex resolution")
                     params = {"search": paper["title"], "per_page": "1", "select": "id,doi,title,publication_year,primary_location"}
-                    url, data = live_json("openalex", "/works", params, int(args.timeout))
-                    sources.append(source_record(f"S{len(sources)+1}", "openalex", url, "resolve_by_title"))
+                    query_id = f"Q-live-{len(sources)+1}"
+                    data = live_json(
+                        "openalex",
+                        "/works",
+                        params,
+                        min(int(args.timeout), caps["timeout_seconds"]),
+                        caps["max_response_bytes"],
+                    )
+                    request_count += 1
+                    source_id = f"S{len(sources)+1}"
+                    sources.append(source_record(source_id, "openalex", "/works", params, query_id))
                     result = (data.get("results") or [{}])[0]
                     if result:
                         paper["provider_ids"]["openalex"] = result.get("id", "")
@@ -575,6 +695,8 @@ def command_resolve(args: argparse.Namespace) -> int:
                         paper["doi"] = normalize_doi(result.get("doi") or paper["doi"])
                         source = (result.get("primary_location") or {}).get("source") or {}
                         paper["venue_name"] = source.get("display_name") or paper["venue_name"]
+                        paper["provider_ids"]["openalex_source_id"] = source.get("id", "")
+                        paper["source_ids"] = sorted(set([*paper.get("source_ids", []), source_id]))
                         paper["resolution_confidence"] = 0.85
                 except SelectorError as exc:
                     evidence.append(evidence_record(f"E{len(evidence)+1}", "provider_gap", [], [paper["paper_id"]], [], str(exc), 0.2))
@@ -595,22 +717,7 @@ def command_resolve(args: argparse.Namespace) -> int:
     write_jsonl(run_dir / "sources.jsonl", sources)
     write_jsonl(run_dir / "evidence.jsonl", evidence)
     update_status(run_dir, "resolve", "ok")
-    return json_result({"status": "ok", "papers": len(papers), "network_used": bool(args.allow_network)})
-
-
-def source_record(source_id: str, provider: str, url: str, query: str) -> dict[str, Any]:
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "source_id": source_id,
-        "provider": provider,
-        "source_url": url,
-        "query": query,
-        "cache_key": sha256_text(url)[:16],
-        "retrieved_at": now_iso(),
-        "current_as_of": now_iso(),
-        "staleness_policy": "30d",
-        "response_status": "ok",
-    }
+    return json_result({"status": "ok", "papers": len(papers), "network_used": bool(providers), "requests": request_count})
 
 
 def evidence_record(
@@ -622,6 +729,11 @@ def evidence_record(
     summary: str,
     confidence: float,
     claim_ids: list[str] | None = None,
+    provider: str = "runtime",
+    query_id: str = "",
+    artifact_ref: str = "",
+    limitations: list[str] | None = None,
+    evidence_level: str = "metadata_only",
 ) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
@@ -631,14 +743,15 @@ def evidence_record(
         "paper_ids": paper_ids,
         "venue_ids": venue_ids,
         "claim_ids": claim_ids or [],
-        "provider": "runtime",
-        "query_id": "",
-        "artifact_ref": "",
+        "provider": provider,
+        "query_id": query_id,
+        "artifact_ref": artifact_ref,
         "summary": summary,
         "created_at": now_iso(),
         "inspection_status": "inspected",
         "confidence": confidence,
-        "limitations": [],
+        "limitations": limitations or [],
+        "evidence_level": evidence_level,
     }
 
 
@@ -646,37 +759,33 @@ def command_expand(args: argparse.Namespace) -> int:
     run_dir = workspace(args)
     papers = read_jsonl(run_dir / "papers.jsonl")
     evidence = read_jsonl(run_dir / "evidence.jsonl")
-    max_papers = int(args.max_papers)
-    expanded = []
-    for index, paper in enumerate(papers[:max_papers], 1):
-        expanded.append(
-            {
-                "schema_version": SCHEMA_VERSION,
-                "paper_id": f"PX{index}",
-                "title": f"Related work near {paper.get('title', 'unknown')}"[:240],
-                "year": "",
-                "doi": "",
-                "authors": "",
-                "venue_name": paper.get("venue_name", ""),
-                "provider_ids": {},
-                "source_reference_ids": paper.get("source_reference_ids", []),
-                "resolution_confidence": 0.35,
-                "resolution_status": "ambiguous",
-                "edge_type": "offline_bibliographic_hint",
-                "seed_paper_id": paper.get("paper_id", ""),
-                "exclusion_reason": "offline expansion placeholder; use --allow-network for provider edges",
-            }
-        )
+    expanded = load_fixture_jsonl(args, "expanded_papers.jsonl")
+    if expanded:
+        for index, paper in enumerate(expanded, 1):
+            paper.setdefault("schema_version", SCHEMA_VERSION)
+            paper.setdefault("paper_id", f"PX{index}")
+            paper.setdefault("resolution_status", "resolved")
+            paper.setdefault("edge_type", "fixture_provider_edge")
+            paper.setdefault("exclusion_reason", "")
+            paper.setdefault("provider_ids", {})
+            paper.setdefault("source_reference_ids", [])
+    else:
+        # Offline expansion is intentionally discovery-only. Do not create
+        # placeholder papers because downstream ranking must not treat them as
+        # comparator evidence.
+        expanded = []
     if expanded:
         evidence.append(
             evidence_record(
                 f"E{len(evidence)+1}",
                 "citation_expansion",
-                [],
+                sorted({source_id for p in expanded for source_id in p.get("source_ids", [])}),
                 [p["paper_id"] for p in expanded],
                 [],
-                "Offline expansion recorded bibliographic-neighborhood placeholders.",
-                0.3,
+                "Fixture-backed expansion recorded provider-like citation edges.",
+                0.7,
+                provider="fixture",
+                artifact_ref="expanded_papers.jsonl",
             )
         )
     write_jsonl(run_dir / "papers.jsonl", [*papers, *expanded])
@@ -739,6 +848,9 @@ def command_venues(args: argparse.Namespace) -> int:
             },
         )
         by_key[key]["paper_ids"].append(paper.get("paper_id", ""))
+        openalex_source_id = paper.get("provider_ids", {}).get("openalex_source_id", "")
+        if openalex_source_id and not by_key[key].get("openalex_source_id"):
+            by_key[key]["openalex_source_id"] = openalex_source_id
     venues = list(by_key.values())
     profiles: list[dict[str, Any]] = []
     for venue in venues:
@@ -761,16 +873,16 @@ def command_venues(args: argparse.Namespace) -> int:
                 "schema_version": SCHEMA_VERSION,
                 "venue_profile_id": f"VP{len(profiles)+1}",
                 "venue_id": venue["venue_id"],
-                "aims_scope": venue.get("scope_text", "") or "inferred from bibliography venue overlap",
+                "aims_scope": venue.get("scope_text", "") or "unknown; requires provider-backed scope evidence",
                 "article_types": ["research-article"] if venue["venue_type"] == "journal" else ["conference-paper"],
                 "review_model": "unknown",
                 "deadlines_or_frequency": "unknown",
                 "apc_oa_policy": "unknown",
                 "indexing": [],
                 "length_constraints": "unknown",
-                "audience": "inferred scholarly audience",
+                "audience": "unknown; requires provider-backed scope evidence",
                 "exclusion_criteria": [venue["exclusion_reason"]] if venue.get("exclusion_reason") else [],
-                "recent_sample_method": "bibliography-overlap",
+                "recent_sample_method": "pending-comparator-evidence",
                 "evidence_ids": [ev_id],
             }
         )
@@ -781,29 +893,218 @@ def command_venues(args: argparse.Namespace) -> int:
     return json_result({"status": "ok", "venues": len(venues)})
 
 
+def venue_lookup(venues: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for venue in venues:
+        result[venue.get("venue_id", "")] = venue
+        result[slug(venue.get("canonical_name", ""))] = venue
+        for alias in venue.get("aliases", []):
+            result[slug(str(alias))] = venue
+    return {key: value for key, value in result.items() if key}
+
+
+def is_placeholder_recent(row: dict[str, Any]) -> bool:
+    return (
+        row.get("provider") == "offline"
+        or row.get("sampling_method") == "bibliography-overlap"
+        or str(row.get("title", "")).startswith("Recent related sample")
+        or not str(row.get("year", "")).strip()
+    )
+
+
+def is_valid_comparator_recent(row: dict[str, Any]) -> bool:
+    if is_placeholder_recent(row):
+        return False
+    if row.get("evidence_level") not in COMPARATOR_EVIDENCE_LEVELS:
+        return False
+    for key in ("provider_work_id", "venue_source_id", "query_id"):
+        if not str(row.get(key, "")).strip():
+            return False
+    for key in ("source_ids", "evidence_ids"):
+        if not row.get(key):
+            return False
+    try:
+        return int(str(row.get("year", "0"))) > 0
+    except ValueError:
+        return False
+
+
+def normalize_recent_fixture_rows(
+    run_dir: Path,
+    fixture_rows: list[dict[str, Any]],
+    venues: list[dict[str, Any]],
+    per_venue: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    lookup = venue_lookup(venues)
+    existing_sources = read_jsonl(run_dir / "sources.jsonl")
+    evidence = read_jsonl(run_dir / "evidence.jsonl")
+    recent: list[dict[str, Any]] = []
+    per_venue_counts: dict[str, int] = {}
+    for row in fixture_rows:
+        venue_key = str(row.get("venue_id") or slug(str(row.get("venue_name") or row.get("canonical_name") or "")))
+        venue = lookup.get(venue_key)
+        if venue is None:
+            continue
+        venue_id = venue["venue_id"]
+        if per_venue_counts.get(venue_id, 0) >= per_venue:
+            continue
+        provider = str(row.get("provider") or "fixture")
+        params = {
+            "venue": venue.get("canonical_name", ""),
+            "title": str(row.get("title", "")),
+            "year": str(row.get("year", "")),
+        }
+        query_id = str(row.get("query_id") or f"Q-fixture-{len(recent)+1}")
+        source_ids = list(row.get("source_ids") or [])
+        if not source_ids:
+            source_id = f"S{len(existing_sources)+1}"
+            existing_sources.append(source_record(source_id, provider, "fixture://recent_papers", params, query_id))
+            source_ids = [source_id]
+        evidence_id = f"E{len(evidence)+1}"
+        normalized = {
+            "schema_version": SCHEMA_VERSION,
+            "recent_paper_id": str(row.get("recent_paper_id") or f"RP{len(recent)+1}"),
+            "venue_id": venue_id,
+            "title": str(row.get("title", "")),
+            "year": str(row.get("year", "")),
+            "doi": normalize_doi(str(row.get("doi", ""))),
+            "provider": provider,
+            "provider_work_id": str(row.get("provider_work_id") or row.get("work_id") or f"fixture:{sha256_text(str(row.get('title', '')))[:12]}"),
+            "venue_source_id": str(row.get("venue_source_id") or venue.get("openalex_source_id") or f"fixture:{slug(venue.get('canonical_name', ''))}"),
+            "source_ids": source_ids,
+            "query_id": query_id,
+            "evidence_ids": [evidence_id],
+            "sampling_method": str(row.get("sampling_method") or "fixture-provider-cache"),
+            "year_window": int(row.get("year_window") or read_json(run_dir / "selection_plan.json").get("year_window", 5) or 5),
+            "total_hits": int(row.get("total_hits") or 1),
+            "truncated": bool(row.get("truncated", False)),
+            "evidence_level": str(row.get("evidence_level") or "metadata_only"),
+            "abstract_available": bool(row.get("abstract_available", False)),
+            "full_text_status": str(row.get("full_text_status") or "not_requested"),
+            "similarity_method": str(row.get("similarity_method") or "fixture-topic-overlap"),
+            "topic_similarity": float(row.get("topic_similarity", 0.0)),
+            "matched_terms": list(row.get("matched_terms") or []),
+            "limitations": list(row.get("limitations") or []),
+            "current_as_of": str(row.get("current_as_of") or now_iso()),
+        }
+        evidence.append(
+            evidence_record(
+                evidence_id,
+                "comparator_paper",
+                source_ids,
+                [normalized["recent_paper_id"]],
+                [venue_id],
+                f"Comparator paper for {venue.get('canonical_name', venue_id)}: {normalized['title']}",
+                0.8,
+                provider=provider,
+                query_id=query_id,
+                artifact_ref="recent_papers.jsonl",
+                limitations=normalized["limitations"],
+                evidence_level=normalized["evidence_level"],
+            )
+        )
+        recent.append(normalized)
+        per_venue_counts[venue_id] = per_venue_counts.get(venue_id, 0) + 1
+    return recent, existing_sources, evidence
+
+
 def command_recent(args: argparse.Namespace) -> int:
     run_dir = workspace(args)
     venues = read_jsonl(run_dir / "venues.jsonl")
+    fixture_rows = load_fixture_jsonl(args, "recent_papers.jsonl")
     recent: list[dict[str, Any]] = []
-    for venue in venues:
-        for index, paper_id in enumerate(venue.get("paper_ids", [])[: int(args.per_venue)], 1):
-            recent.append(
-                {
+    sources: list[dict[str, Any]] = read_jsonl(run_dir / "sources.jsonl")
+    evidence: list[dict[str, Any]] = read_jsonl(run_dir / "evidence.jsonl")
+    if fixture_rows:
+        recent, sources, evidence = normalize_recent_fixture_rows(run_dir, fixture_rows, venues, int(args.per_venue))
+    elif args.allow_network:
+        providers = ensure_network_allowed(run_dir, args)
+        if "openalex" not in providers:
+            raise SelectorError("recent comparator collection currently requires --allow-provider openalex or fixture evidence")
+        caps = request_caps(run_dir)
+        request_count = 0
+        for venue in venues:
+            source_id_value = str(venue.get("openalex_source_id", ""))
+            if not source_id_value:
+                continue
+            if request_count >= caps["max_requests"]:
+                break
+            from_year = max(1900, datetime.now(timezone.utc).year - int(args.years))
+            params = {
+                "filter": f"primary_location.source.id:{source_id_value},from_publication_date:{from_year}-01-01",
+                "per_page": str(min(int(args.per_venue), 25)),
+                "sort": "publication_date:desc",
+                "select": "id,doi,title,publication_year,abstract_inverted_index",
+            }
+            query_id = f"Q-recent-{len(sources)+1}"
+            data = live_json(
+                "openalex",
+                "/works",
+                params,
+                min(int(args.timeout), caps["timeout_seconds"]),
+                caps["max_response_bytes"],
+            )
+            request_count += 1
+            source_id = f"S{len(sources)+1}"
+            sources.append(source_record(source_id, "openalex", "/works", params, query_id))
+            for result in (data.get("results") or [])[: int(args.per_venue)]:
+                evidence_id = f"E{len(evidence)+1}"
+                title = result.get("title") or ""
+                year = str(result.get("publication_year") or "")
+                row = {
                     "schema_version": SCHEMA_VERSION,
                     "recent_paper_id": f"RP{len(recent)+1}",
                     "venue_id": venue["venue_id"],
-                    "title": f"Recent related sample {index} for {venue['canonical_name']}",
-                    "year": "",
-                    "source_paper_id": paper_id,
-                    "provider": "offline",
-                    "query": "venue-paper-overlap",
-                    "sampling_method": "bibliography-overlap",
-                    "topic_similarity": 0.5,
+                    "title": title,
+                    "year": year,
+                    "doi": normalize_doi(result.get("doi") or ""),
+                    "provider": "openalex",
+                    "provider_work_id": result.get("id", ""),
+                    "venue_source_id": source_id_value,
+                    "source_ids": [source_id],
+                    "query_id": query_id,
+                    "evidence_ids": [evidence_id],
+                    "sampling_method": "openalex-source-recent",
+                    "year_window": int(args.years),
+                    "total_hits": int((data.get("meta") or {}).get("count") or len(data.get("results") or [])),
+                    "truncated": bool((data.get("meta") or {}).get("count", 0) > int(args.per_venue)),
+                    "evidence_level": "abstract_inspected" if result.get("abstract_inverted_index") else "metadata_only",
+                    "abstract_available": bool(result.get("abstract_inverted_index")),
+                    "full_text_status": "not_requested",
+                    "similarity_method": "provider-source-recent",
+                    "topic_similarity": 0.0,
+                    "matched_terms": [],
+                    "limitations": ["topic similarity not computed for live provider result"],
+                    "current_as_of": now_iso(),
                 }
-            )
+                evidence.append(
+                    evidence_record(
+                        evidence_id,
+                        "comparator_paper",
+                        [source_id],
+                        [row["recent_paper_id"]],
+                        [venue["venue_id"]],
+                        f"OpenAlex recent comparator paper for {venue['canonical_name']}: {title}",
+                        0.75,
+                        provider="openalex",
+                        query_id=query_id,
+                        artifact_ref="recent_papers.jsonl",
+                        limitations=row["limitations"],
+                        evidence_level=row["evidence_level"],
+                    )
+                )
+                recent.append(row)
     write_jsonl(run_dir / "recent_papers.jsonl", recent)
+    write_jsonl(run_dir / "sources.jsonl", sources)
+    write_jsonl(run_dir / "evidence.jsonl", evidence)
     update_status(run_dir, "recent", "ok")
-    return json_result({"status": "ok", "recent_papers": len(recent)})
+    return json_result(
+        {
+            "status": "ok",
+            "recent_papers": len(recent),
+            "valid_comparator_papers": sum(1 for row in recent if is_valid_comparator_recent(row)),
+        }
+    )
 
 
 def command_score(args: argparse.Namespace) -> int:
@@ -811,20 +1112,57 @@ def command_score(args: argparse.Namespace) -> int:
     venues = read_jsonl(run_dir / "venues.jsonl")
     recent = read_jsonl(run_dir / "recent_papers.jsonl")
     evidence = read_jsonl(run_dir / "evidence.jsonl")
-    recent_by_venue: dict[str, int] = {}
+    valid_recent_by_venue: dict[str, list[dict[str, Any]]] = {}
     for item in recent:
-        recent_by_venue[item["venue_id"]] = recent_by_venue.get(item["venue_id"], 0) + 1
+        if is_valid_comparator_recent(item):
+            valid_recent_by_venue.setdefault(item["venue_id"], []).append(item)
     scores: list[dict[str, Any]] = []
     claims: list[dict[str, Any]] = []
     for venue in venues:
         overlap = len(venue.get("paper_ids", []))
-        recent_count = recent_by_venue.get(venue["venue_id"], 0)
+        recent_items = valid_recent_by_venue.get(venue["venue_id"], [])
+        recent_count = len(recent_items)
         eligible = venue.get("eligibility_status") == "eligible"
+        venue_evidence_ids = [ev["evidence_id"] for ev in evidence if venue["venue_id"] in ev.get("venue_ids", [])]
+        recent_evidence_ids = sorted({ev_id for item in recent_items for ev_id in item.get("evidence_ids", [])})
+        bibliography_evidence_ids = venue.get("classification_evidence_ids", []) or venue_evidence_ids
+        scope_evidence_ids = venue.get("provenance_evidence_ids", []) or venue_evidence_ids
+        criteria = [
+            {
+                "criterion_id": "bibliography_overlap",
+                "weight": 0.35,
+                "raw_score": overlap,
+                "normalized_score": min(overlap, 5) / 5,
+                "evidence_ids": bibliography_evidence_ids,
+            },
+            {
+                "criterion_id": "recent_related_papers",
+                "weight": 0.25,
+                "raw_score": recent_count,
+                "normalized_score": min(recent_count, 5) / 5,
+                "evidence_ids": recent_evidence_ids,
+            },
+            {
+                "criterion_id": "scope_fit",
+                "weight": 0.20,
+                "raw_score": 1 if eligible else 0,
+                "normalized_score": 1 if eligible else 0,
+                "evidence_ids": scope_evidence_ids,
+            },
+            {
+                "criterion_id": "evidence_completeness",
+                "weight": 0.20,
+                "raw_score": len(set(venue_evidence_ids + recent_evidence_ids)),
+                "normalized_score": min(len(set(venue_evidence_ids + recent_evidence_ids)), 3) / 3,
+                "evidence_ids": sorted(set(venue_evidence_ids + recent_evidence_ids)),
+            },
+        ]
         raw = (0.35 * min(overlap, 5) / 5) + (0.25 * min(recent_count, 5) / 5) + (0.20 if eligible else 0.0) + 0.10
         confidence = 0.55 + min(0.35, 0.05 * overlap + 0.03 * recent_count)
-        evidence_ids = [ev["evidence_id"] for ev in evidence if venue["venue_id"] in ev.get("venue_ids", [])]
+        evidence_ids = sorted({ev_id for criterion in criteria for ev_id in criterion.get("evidence_ids", [])})
         score_id = f"SC{len(scores)+1}"
         claim_id = f"C{len(claims)+1}"
+        supported = bool(eligible and recent_evidence_ids)
         scores.append(
             {
                 "schema_version": SCHEMA_VERSION,
@@ -832,20 +1170,18 @@ def command_score(args: argparse.Namespace) -> int:
                 "venue_id": venue["venue_id"],
                 "rubric_version": "venue-fit.v1",
                 "hard_gates": [{"gate": "eligible_submission_venue", "passed": eligible}],
-                "criteria": [
-                    {"criterion_id": "bibliography_overlap", "weight": 0.35, "raw_score": overlap, "normalized_score": min(overlap, 5) / 5},
-                    {"criterion_id": "recent_related_papers", "weight": 0.25, "raw_score": recent_count, "normalized_score": min(recent_count, 5) / 5},
-                    {"criterion_id": "scope_fit", "weight": 0.20, "raw_score": 1 if eligible else 0, "normalized_score": 1 if eligible else 0},
-                    {"criterion_id": "evidence_completeness", "weight": 0.20, "raw_score": len(evidence_ids), "normalized_score": min(len(evidence_ids), 3) / 3},
-                ],
+                "criteria": criteria,
                 "raw_score": round(raw, 4),
                 "normalized_score": round(raw, 4),
                 "evidence_ids": evidence_ids,
                 "missing_data_policy": "downgrade-confidence",
                 "confidence": round(confidence, 3),
-                "sensitivity_result": "stable" if confidence >= 0.65 else "sparse-evidence",
+                "sensitivity_result": "stable" if supported and confidence >= 0.65 else "missing-comparator-evidence",
                 "tie_breaker": venue["canonical_name"].lower(),
-                "rationale": f"{venue['canonical_name']} has {overlap} bibliography overlaps and {recent_count} recent related samples.",
+                "rationale": (
+                    f"{venue['canonical_name']} has {overlap} bibliography overlaps and {recent_count} "
+                    "provider-backed comparator papers."
+                ),
                 "claim_ids": [claim_id],
             }
         )
@@ -856,9 +1192,13 @@ def command_score(args: argparse.Namespace) -> int:
                 "claim_type": "venue_fit",
                 "venue_id": venue["venue_id"],
                 "score_id": score_id,
-                "text": f"{venue['canonical_name']} is a candidate venue based on bibliography and recent-paper evidence.",
+                "text": (
+                    f"{venue['canonical_name']} is a candidate venue with comparator-paper evidence."
+                    if supported
+                    else f"{venue['canonical_name']} is only a provisional candidate until comparator-paper evidence is available."
+                ),
                 "evidence_ids": evidence_ids,
-                "support_status": "supported" if evidence_ids else "unsupported",
+                "support_status": "supported" if supported else "unsupported",
             }
         )
     scores.sort(key=lambda row: (-row["normalized_score"], row["tie_breaker"]))
@@ -875,12 +1215,17 @@ def delivery_status(run_dir: Path) -> tuple[str, list[str]]:
     venues = read_jsonl(run_dir / "venues.jsonl")
     claims = read_jsonl(run_dir / "claims.jsonl")
     guards = read_jsonl(run_dir / "guards.jsonl")
+    scores = read_jsonl(run_dir / "scores.jsonl")
+    recent = read_jsonl(run_dir / "recent_papers.jsonl")
+    valid_recent_venues = {row.get("venue_id") for row in recent if is_valid_comparator_recent(row)}
     if not refs:
         reasons.append("no references extracted")
     if not papers:
         reasons.append("no papers resolved")
     if not venues:
         reasons.append("no candidate venues")
+    if scores and any(score.get("venue_id") not in valid_recent_venues for score in scores):
+        reasons.append("missing comparator-paper evidence for one or more ranked venues")
     if any(claim.get("support_status") == "unsupported" for claim in claims):
         reasons.append("unsupported claims remain")
     if any(guard.get("status") == "blocked" for guard in guards):
@@ -888,7 +1233,13 @@ def delivery_status(run_dir: Path) -> tuple[str, list[str]]:
     if not reasons and any(p.get("resolution_confidence", 0) < 0.6 for p in papers):
         return DELIVERY_CAVEATS, ["some paper resolutions are low confidence"]
     if reasons:
-        hard = {"no references extracted", "no candidate venues", "privacy guard blocked", "unsupported claims remain"}
+        hard = {
+            "no references extracted",
+            "no candidate venues",
+            "privacy guard blocked",
+            "unsupported claims remain",
+            "missing comparator-paper evidence for one or more ranked venues",
+        }
         return (DELIVERY_NOT_READY if hard.intersection(reasons) else DELIVERY_CAVEATS), reasons
     return DELIVERY_READY, []
 
@@ -897,28 +1248,58 @@ def command_report(args: argparse.Namespace) -> int:
     run_dir = workspace(args)
     scores = read_jsonl(run_dir / "scores.jsonl")
     venues = {venue["venue_id"]: venue for venue in read_jsonl(run_dir / "venues.jsonl")}
+    recent = read_jsonl(run_dir / "recent_papers.jsonl")
+    recent_by_venue: dict[str, list[dict[str, Any]]] = {}
+    for row in recent:
+        recent_by_venue.setdefault(row.get("venue_id", ""), []).append(row)
     status, reasons = delivery_status(run_dir)
     lines = [
         "# Submission Venue Recommendation",
         "",
+    ]
+    if status != DELIVERY_READY:
+        lines.extend(["incomplete analysis", ""])
+    lines.extend(
+        [
         f"Delivery status: `{status}`",
         "",
-        "## Ranked Venues",
+        "## Ranked Venues" if status == DELIVERY_READY else "## Provisional Candidate Venues",
         "",
-    ]
+        ]
+    )
     if not scores:
         lines.append("No venues were scored.")
     for rank, score in enumerate(scores, 1):
         venue = venues.get(score["venue_id"], {})
+        comparator_count = sum(1 for row in recent_by_venue.get(score["venue_id"], []) if is_valid_comparator_recent(row))
         lines.extend(
             [
                 f"{rank}. **{venue.get('canonical_name', score['venue_id'])}**",
                 f"   - Score: {score['normalized_score']}",
                 f"   - Confidence: {score['confidence']}",
                 f"   - Evidence: {', '.join(score.get('evidence_ids', [])) or 'none'}",
+                f"   - Comparator papers: {comparator_count}",
                 f"   - Rationale: {score['rationale']}",
             ]
         )
+    lines.extend(["", "## Comparator Evidence Matrix", ""])
+    if not recent:
+        lines.append("No comparator-paper evidence is available.")
+    else:
+        lines.append("| Venue | Comparator paper | Provider | Year | Evidence level | Evidence IDs |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for row in recent:
+            venue = venues.get(row.get("venue_id", ""), {})
+            lines.append(
+                "| {venue} | {title} | {provider} | {year} | {level} | {evidence} |".format(
+                    venue=venue.get("canonical_name", row.get("venue_id", "")),
+                    title=str(row.get("title", "")).replace("|", "\\|"),
+                    provider=row.get("provider", ""),
+                    year=row.get("year", ""),
+                    level=row.get("evidence_level", ""),
+                    evidence=", ".join(row.get("evidence_ids", [])),
+                )
+            )
     lines.extend(["", "## Review Findings", ""])
     if reasons:
         for reason in reasons:
@@ -959,6 +1340,7 @@ def validate_artifacts(run_dir: Path) -> tuple[str, list[str]]:
         ("evidence.jsonl", "evidence_id"),
         ("claims.jsonl", "claim_id"),
         ("venues.jsonl", "venue_id"),
+        ("recent_papers.jsonl", "recent_paper_id"),
         ("scores.jsonl", "score_id"),
     ):
         rows = read_jsonl(run_dir / name)
@@ -974,10 +1356,51 @@ def validate_artifacts(run_dir: Path) -> tuple[str, list[str]]:
             seen.add(value)
         ids[name] = seen
     evidence_ids = ids.get("evidence.jsonl", set())
+    source_ids = ids.get("sources.jsonl", set())
+    valid_recent_venues = {
+        row.get("venue_id")
+        for row in read_jsonl(run_dir / "recent_papers.jsonl")
+        if is_valid_comparator_recent(row)
+    }
+    for source in read_jsonl(run_dir / "sources.jsonl"):
+        raw_url = str(source.get("source_url", ""))
+        if raw_url:
+            findings.append(f"source {source.get('source_id')} stores raw source_url")
+        serialized_source = json.dumps(source, sort_keys=True)
+        if re.search(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\bBearer\s+[A-Za-z0-9._-]+", serialized_source, re.I):
+            findings.append(f"source {source.get('source_id')} may contain private credential material")
+    recent_rows = read_jsonl(run_dir / "recent_papers.jsonl")
+    for recent in recent_rows:
+        recent_id = recent.get("recent_paper_id")
+        if is_placeholder_recent(recent):
+            findings.append(f"recent paper {recent_id} is placeholder or missing required year")
+        if recent.get("evidence_level") and recent.get("evidence_level") not in COMPARATOR_EVIDENCE_LEVELS:
+            findings.append(f"recent paper {recent_id} has unsupported evidence_level")
+        for source_id in recent.get("source_ids", []):
+            if source_id not in source_ids:
+                findings.append(f"recent paper {recent_id} references missing source {source_id}")
+        for evidence_id in recent.get("evidence_ids", []):
+            if evidence_id not in evidence_ids:
+                findings.append(f"recent paper {recent_id} references missing evidence {evidence_id}")
+        if recent and not is_valid_comparator_recent(recent):
+            findings.append(f"recent paper {recent_id} is not valid comparator evidence")
     for score in read_jsonl(run_dir / "scores.jsonl"):
         for evidence_id in score.get("evidence_ids", []):
             if evidence_id not in evidence_ids:
                 findings.append(f"score {score.get('score_id')} references missing evidence {evidence_id}")
+        if score.get("venue_id") not in valid_recent_venues:
+            findings.append(f"score {score.get('score_id')} lacks comparator-paper evidence")
+        for criterion in score.get("criteria", []):
+            criterion_evidence_ids = criterion.get("evidence_ids", [])
+            if not criterion_evidence_ids:
+                findings.append(f"score {score.get('score_id')} criterion {criterion.get('criterion_id')} lacks evidence IDs")
+            for evidence_id in criterion_evidence_ids:
+                if evidence_id not in evidence_ids:
+                    findings.append(
+                        f"score {score.get('score_id')} criterion {criterion.get('criterion_id')} references missing evidence {evidence_id}"
+                    )
+            if criterion.get("criterion_id") == "recent_related_papers" and not criterion_evidence_ids:
+                findings.append(f"score {score.get('score_id')} recent_related_papers lacks comparator evidence")
     for claim in read_jsonl(run_dir / "claims.jsonl"):
         if claim.get("support_status") != "supported":
             findings.append(f"claim {claim.get('claim_id')} is not supported")

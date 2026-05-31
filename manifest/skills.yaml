@@ -127,12 +127,12 @@
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "submission-venue-selector": {
-      "description": "Fully automated journal and conference venue selection for scholarly drafts.",
+      "description": "Evidence-gated journal and conference venue selection for scholarly drafts; deliverable rankings require comparator-paper evidence.",
       "profiles": ["serious-research", "full-research"],
       "supported_agents": ["codex", "claude", "deepseek"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
-      "optional_capabilities": ["venue-selection", "evidence-backed-ranking", "offline-runtime-smoke"],
+      "optional_capabilities": ["venue-selection", "comparator-paper-evidence", "evidence-backed-ranking", "offline-runtime-smoke"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "database-lookup": {

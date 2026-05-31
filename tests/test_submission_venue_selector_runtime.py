@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
+from installer.ai_agents_skills.render import render_instruction_block, render_reference_skill_md
 from installer.ai_agents_skills.runtime_smoke import runtime_command_target
 
 
@@ -50,22 +51,59 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
                 [
                     "This unpublished draft contains SECRET-CODE-NAME-ALPHA in the introduction.",
                     "@article{smith2021, title={Graph recoloring in sparse graphs}, author={Smith, A.}, year={2021}, journal={Journal of Graph Theory}, doi={10.1000/jgt.1}}",
-                    "@inproceedings{doe2022, title={Reconfiguration algorithms for colorings}, author={Doe, B.}, year={2022}, booktitle={Proceedings of Symposium on Discrete Algorithms}}",
+                    "@inproceedings{doe2022, title={Reconfiguration algorithms for colorings}, author={Doe, B.}, year={2022}, booktitle={Proceedings of Symposium on Discrete Algorithms}, doi={10.1000/soda.2}}",
                 ]
             ),
             encoding="utf-8",
         )
         return draft
 
-    def test_offline_run_creates_valid_dossier_without_raw_draft_leak(self) -> None:
+    def write_recent_fixture(self, root: Path) -> Path:
+        fixture = root / "fixtures"
+        fixture.mkdir()
+        rows = [
+            {
+                "venue_name": "Journal of Graph Theory",
+                "title": "Recent structural graph recoloring results",
+                "year": "2025",
+                "doi": "10.1000/recent-jgt",
+                "provider": "fixture",
+                "provider_work_id": "fixture:jgt-2025",
+                "venue_source_id": "fixture:jgt",
+                "sampling_method": "fixture-provider-cache",
+                "evidence_level": "metadata_only",
+                "topic_similarity": 0.8,
+                "matched_terms": ["graph", "recoloring"],
+            },
+            {
+                "venue_name": "Proceedings of Symposium on Discrete Algorithms",
+                "title": "Recent reconfiguration algorithms for sparse structures",
+                "year": "2025",
+                "doi": "10.1000/recent-soda",
+                "provider": "fixture",
+                "provider_work_id": "fixture:soda-2025",
+                "venue_source_id": "fixture:soda",
+                "sampling_method": "fixture-provider-cache",
+                "evidence_level": "metadata_only",
+                "topic_similarity": 0.8,
+                "matched_terms": ["reconfiguration", "algorithms"],
+            },
+        ]
+        with (fixture / "recent_papers.jsonl").open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, sort_keys=True) + "\n")
+        return fixture
+
+    def test_offline_run_is_not_deliverable_without_comparator_evidence_or_raw_draft_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             draft = self.write_sample_draft(root)
             run_dir = root / "venue-run"
-            completed = run_selector("run", "--dir", str(run_dir), "--draft", str(draft), "--offline")
+            completed = run_selector("run", "--dir", str(run_dir), "--draft", str(draft), "--offline", check=False)
             payload = last_json(completed.stdout)
 
-            self.assertEqual(payload["status"], "ready-with-caveats")
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertEqual(payload["status"], "not-ready")
             for name in (
                 "draft.json",
                 "references.jsonl",
@@ -81,6 +119,73 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
             serialized = "\n".join(path.read_text(encoding="utf-8") for path in run_dir.iterdir() if path.is_file())
             self.assertNotIn("SECRET-CODE-NAME-ALPHA", serialized)
             self.assertNotIn(str(draft), serialized)
+            self.assertIn("incomplete analysis", (run_dir / "recommendation.md").read_text(encoding="utf-8"))
+            delivery = json.loads((run_dir / "delivery.json").read_text(encoding="utf-8"))
+            self.assertEqual(delivery["delivery_status"], "not-ready")
+
+    def test_fixture_comparator_evidence_can_support_ready_recommendation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            draft = self.write_sample_draft(root)
+            fixture = self.write_recent_fixture(root)
+            run_dir = root / "venue-run"
+            completed = run_selector(
+                "run",
+                "--dir",
+                str(run_dir),
+                "--draft",
+                str(draft),
+                "--offline",
+                "--fixture-dir",
+                str(fixture),
+            )
+            payload = last_json(completed.stdout)
+
+            self.assertEqual(payload["status"], "ready")
+            recent_rows = [
+                json.loads(line)
+                for line in (run_dir / "recent_papers.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertTrue(recent_rows)
+            self.assertTrue(all(row["source_ids"] for row in recent_rows))
+            self.assertTrue(all(row["query_id"] for row in recent_rows))
+            self.assertTrue(all(row["evidence_ids"] for row in recent_rows))
+            self.assertTrue(all(row["provider"] != "offline" for row in recent_rows))
+            scores = [
+                json.loads(line)
+                for line in (run_dir / "scores.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for score in scores:
+                recent_criteria = [c for c in score["criteria"] if c["criterion_id"] == "recent_related_papers"]
+                self.assertEqual(len(recent_criteria), 1)
+                self.assertTrue(recent_criteria[0]["evidence_ids"])
+
+    def test_network_requires_privacy_gate_and_explicit_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            draft = self.write_sample_draft(root)
+            run_dir = root / "venue-run"
+            run_selector("init", "--dir", str(run_dir), "--draft", str(draft))
+            run_selector("extract", "--dir", str(run_dir), "--draft", str(draft))
+
+            no_guard = run_selector(
+                "resolve",
+                "--dir",
+                str(run_dir),
+                "--allow-network",
+                "--allow-provider",
+                "openalex",
+                check=False,
+            )
+            self.assertNotEqual(no_guard.returncode, 0)
+            self.assertIn("privacy-gate", no_guard.stderr)
+
+            run_selector("privacy-gate", "--dir", str(run_dir), "--draft", str(draft), "--allow-network")
+            no_provider = run_selector("resolve", "--dir", str(run_dir), "--allow-network", check=False)
+            self.assertNotEqual(no_provider.returncode, 0)
+            self.assertIn("--allow-provider", no_provider.stderr)
 
     def test_validate_fails_incomplete_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -130,6 +235,30 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
             runtime_command_target(manifests, "submission-venue-selector", "windows", "run_skill.ps1"),
             "skills/submission-venue-selector/run_submission_venue_selector.ps1",
         )
+
+    def test_docs_and_generated_adapters_expose_no_shallow_shortlist_gate(self) -> None:
+        manifests = load_manifests()
+        spec = manifests["skills"]["skills"]["submission-venue-selector"]
+        skill_source = REPO_ROOT / "canonical" / "skills" / "submission-venue-selector" / "SKILL.md"
+        paths = [
+            skill_source,
+            skill_source.parent / "references" / "report-contract.md",
+            skill_source.parent / "references" / "scoring-rubric.md",
+            skill_source.parent / "references" / "provider-policy.md",
+            skill_source.parent / "references" / "privacy-and-network-policy.md",
+            skill_source.parent / "agents" / "openai.yaml",
+        ]
+        for path in paths:
+            with self.subTest(path=path):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("comparator", text.lower())
+
+        adapter = render_reference_skill_md("submission-venue-selector", spec, "codex", skill_source)
+        instruction_block = render_instruction_block("submission-venue-selector", spec)
+        self.assertIn("comparator-paper evidence", adapter)
+        self.assertIn("not-ready", adapter)
+        self.assertIn("comparator-paper evidence", instruction_block)
+        self.assertIn("not-ready", instruction_block)
 
 
 if __name__ == "__main__":
