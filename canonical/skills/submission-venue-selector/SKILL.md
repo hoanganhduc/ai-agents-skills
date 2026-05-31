@@ -1,8 +1,8 @@
 ---
 name: submission-venue-selector
-description: Use when selecting, ranking, or validating submission venues for an existing scholarly manuscript or draft venue shortlist. Do not use for generic draft review, rewriting, paper retrieval, paper download, Zotero mutation, or one-off venue facts.
+description: Use when selecting, ranking, or validating submission venues for an existing scholarly manuscript or draft venue shortlist. A deliverable venue recommendation requires comparator-paper evidence for every ranked venue; bibliography overlap and offline placeholders are discovery signals only. Do not use for generic draft review, rewriting, paper retrieval, paper download, Zotero mutation, or one-off venue facts.
 metadata:
-  short-description: Automated journal and conference venue selection
+  short-description: Evidence-gated journal and conference venue selection
 ---
 
 # Submission Venue Selector
@@ -11,6 +11,14 @@ Use this skill to build an evidence-backed venue dossier for a scholarly draft.
 It can run a runtime helper that extracts references, builds candidate venues,
 collects or records related-paper evidence, scores fit, and writes a ranked
 recommendation.
+
+## No Shallow Shortlist
+
+A venue recommendation is deliverable only when each ranked venue has
+comparator-paper evidence. Bibliography overlap, venue reputation, and offline
+placeholders are discovery signals, not comparator-paper evidence. If this
+evidence is unavailable, output `incomplete analysis`, keep delivery status
+`not-ready`, and do not present a final ranked shortlist.
 
 ## Routing Boundary
 
@@ -38,6 +46,9 @@ bash ~/.codex/runtime/run_skill.sh \
   run --dir /path/to/venue-run --draft /path/to/draft.tex --offline
 ```
 
+This offline command is a smoke/provisional run. It is not a deliverable venue
+recommendation unless trusted fixture/cache comparator evidence is provided.
+
 Windows PowerShell:
 
 ```powershell
@@ -58,25 +69,27 @@ Useful commands:
 - `extract --dir <workspace>`
 - `privacy-gate --dir <workspace>`
 - `providers --check --dir <workspace>`
-- `resolve --dir <workspace> [--allow-network]`
+- `resolve --dir <workspace> [--allow-network --allow-provider <name>]`
 - `expand --dir <workspace>`
 - `venues --dir <workspace>`
 - `recent --dir <workspace>`
 - `score --dir <workspace>`
 - `report --dir <workspace>`
 - `validate --dir <workspace>`
-- `run --dir <workspace> --draft <path> --offline`
+- `run --dir <workspace> --draft <path> --offline` for smoke/provisional output
 - `purge --dir <workspace>`
 - `smoke`
 
 ## Safety Defaults
 
 - Local/offline by default.
-- Network requires `--allow-network` and optional `--allow-provider <name>`.
+- Network requires a prior ok `privacy-gate`, `--allow-network`, and explicit
+  `--allow-provider <name>`.
 - Downloads, Zotero mutations, and Unpaywall email use are forbidden unless
   explicitly enabled by command flags.
 - Raw draft text is not persisted unless `--retain-draft-text` is used.
-- Reports separate observed evidence from inferred venue fit.
+- Reports separate observed evidence from inferred venue fit and must mark
+  placeholder-only output as `incomplete analysis`.
 
 ## Workflow
 
@@ -84,7 +97,7 @@ Useful commands:
 2. Confirm `privacy-gate` before any live provider calls.
 3. Use `providers --check` to record available provider capabilities.
 4. Resolve references and derive candidate venues.
-5. Score venues with evidence-linked criteria.
+5. Score venues with criterion-level evidence IDs.
 6. Run `validate` before treating the recommendation as deliverable.
 
 ## Read When Needed

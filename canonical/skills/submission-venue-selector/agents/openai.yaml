@@ -1,7 +1,8 @@
 interface:
   display_name: "Submission Venue Selector"
-  short_description: "Rank journals and conferences for a draft"
-  default_prompt: "Use $submission-venue-selector to build an evidence-backed venue shortlist for this draft."
+  short_description: "Evidence-gated journal and conference venue selection"
+  default_prompt: "Use $submission-venue-selector to build an evidence-backed venue dossier. Do not deliver a ranked shortlist unless every ranked venue has comparator-paper evidence; otherwise report incomplete analysis."
 
 policy:
   allow_implicit_invocation: true
+  no_shallow_shortlist: "Bibliography overlap and offline placeholders are discovery signals only, not comparator-paper evidence."

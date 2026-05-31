@@ -94,6 +94,70 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertNotIn("run_skill.sh", target_relpaths)
             self.assertNotIn("workspace/skills/graph-verifier/run_graph_verifier.sh", target_relpaths)
 
+    def test_submission_venue_selector_installs_runtime_files_for_supported_agents(self) -> None:
+        manifests = load_manifests()
+        for agent in ("codex", "claude", "deepseek", "copilot"):
+            for platform in ("linux", "macos", "wsl", "windows"):
+                with self.subTest(agent=agent, platform=platform):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        root = Path(tmp)
+                        create_agent_home(root, agent)
+                        plan = build_plan(
+                            root,
+                            manifests,
+                            ["submission-venue-selector"],
+                            detect_agents(root, [agent]),
+                            platform=platform,
+                        )
+                        skill_actions = [
+                            item
+                            for item in plan["actions"]
+                            if item.get("artifact_type") == "skill-file" and item.get("skill") == "submission-venue-selector"
+                        ]
+                        runtime_actions = [item for item in plan["actions"] if item.get("artifact_type") == "runtime-file"]
+                        self.assertEqual(len(skill_actions), 1)
+                        self.assertNotEqual(skill_actions[0]["operation"], "skip")
+                        target_relpaths = {item["target_relpath"] for item in runtime_actions}
+                        self.assertIn(
+                            "workspace/skills/submission-venue-selector/submission_venue_selector.py",
+                            target_relpaths,
+                        )
+                        if platform == "windows":
+                            self.assertIn("run_skill.ps1", target_relpaths)
+                            self.assertIn("run_skill.bat", target_relpaths)
+                            self.assertIn(
+                                "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1",
+                                target_relpaths,
+                            )
+                            self.assertIn(
+                                "workspace/skills/submission-venue-selector/run_submission_venue_selector.bat",
+                                target_relpaths,
+                            )
+                        else:
+                            self.assertIn("run_skill.sh", target_relpaths)
+                            self.assertIn(
+                                "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
+                                target_relpaths,
+                            )
+
+    def test_openclaw_submission_venue_selector_runtime_backed_skill_is_expected_blocked(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "openclaw")
+            plan = build_plan(
+                root,
+                manifests,
+                ["submission-venue-selector"],
+                detect_agents(root, ["openclaw"]),
+            )
+            file_action = next(action for action in plan["actions"] if action["artifact_type"] == "skill-file")
+
+            self.assertEqual(file_action["classification"], "blocked")
+            self.assertEqual(file_action["operation"], "skip")
+            self.assertEqual(file_action["reason"], "OpenClaw runtime-backed skills require neutral runtime evidence")
+            self.assertFalse([action for action in plan["actions"] if action["artifact_type"] == "runtime-file"])
+
     def test_no_runtime_disables_runtime_actions(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:

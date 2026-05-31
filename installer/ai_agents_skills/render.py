@@ -62,6 +62,16 @@ def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, sour
     display_source = display_path_for_agent(source_path)
     description = str(spec["description"])
     short_description = str(spec.get("short_description", description))
+    safety_note = ""
+    if skill == "submission-venue-selector":
+        safety_note = (
+            "\n\n"
+            "        ## Mandatory Delivery Gate\n\n"
+            "        Do not deliver a ranked venue shortlist unless every ranked venue\n"
+            "        has comparator-paper evidence. Bibliography overlap and offline\n"
+            "        placeholders are discovery signals only. If comparator evidence is\n"
+            "        missing, report `incomplete analysis` and `not-ready`."
+        )
     return dedent(
         f"""\
         ---
@@ -84,6 +94,7 @@ def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, sour
         Before using this skill, read the canonical source file above and follow
         its instructions. Related reference files live next to that source file
         in the same skill directory.
+        {safety_note}
         """
     )
 
@@ -257,10 +268,18 @@ def block_id(skill: str) -> str:
 
 def render_instruction_block(skill: str, spec: dict[str, Any]) -> str:
     bid = block_id(skill)
+    extra = ""
+    if skill == "submission-venue-selector":
+        extra = (
+            "\n        - `submission-venue-selector` delivery gate: ranked recommendations require "
+            "comparator-paper evidence for every ranked venue; otherwise report "
+            "`incomplete analysis` and `not-ready`."
+        )
     return dedent(
         f"""\
         <!-- {bid}:start -->
         - `{skill}`: {spec['description']}
+        {extra}
         <!-- {bid}:end -->
         """
     )

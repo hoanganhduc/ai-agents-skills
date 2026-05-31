@@ -30,10 +30,32 @@ Important statuses:
   `excluded`
 - delivery: `ready`, `ready-with-caveats`, `not-ready`
 - provider: `ok`, `configured_missing`, `skipped`, `rate_limited`,
-  `network_failed`, `partial`
+  `network_failed`, `partial`, `unsupported`
+
+`recent_papers.jsonl` comparator records must include durable provenance:
+
+- `venue_id`
+- `title`
+- `year`
+- `provider`
+- `provider_work_id`
+- `venue_source_id`
+- `source_ids`
+- `query_id`
+- `evidence_ids`
+- `sampling_method`
+- `year_window`
+- `total_hits`
+- `evidence_level`
+- `current_as_of`
+
+Allowed evidence levels are `metadata_only`, `abstract_inspected`, and
+`full_text_inspected`. Full-text status must not be inferred from metadata.
 
 Privacy defaults:
 
 - `draft.json` stores a tokenized or relative draft path and hash.
 - Raw draft text requires `--retain-draft-text`.
 - Provider queries must be recorded in redacted form.
+- `sources.jsonl` must not persist raw query URLs, credentials, auth headers,
+  emails, or raw draft text.
