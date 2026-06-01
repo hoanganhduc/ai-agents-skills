@@ -166,6 +166,30 @@ OCREngine = 3
         self.assertIn("--ocr-fallback ocrspace --allow-remote-ocr", completed.stderr)
         self.assertNotIn("secret-api-value", completed.stderr)
 
+    def test_ocrspace_config_rejection_works_without_tomli(self) -> None:
+        module = load_docling_runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "docling.toml"
+            config.write_text(
+                """
+schema_version = 1
+[defaults]
+ocrspace = "secret-api-value"
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            args = SimpleNamespace(config=str(config), allow_openclaw_config=False)
+            with patch.dict(sys.modules, {"tomllib": None, "tomli": None}):
+                with self.assertRaises(module.DoclingRuntimeError) as caught:
+                    module._load_config(args)
+
+        message = str(caught.exception)
+        self.assertIn("OCR.space configuration is not supported in Docling config", message)
+        self.assertIn("--ocr-fallback ocrspace --allow-remote-ocr", message)
+        self.assertNotIn("secret-api-value", message)
+
     def test_ocrspace_fallback_requires_explicit_remote_opt_in(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
