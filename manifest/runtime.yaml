@@ -164,6 +164,10 @@
   "skills": {
     "annotated-review": {
       "runtime_dir": "annotated-review",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "Annotation workflows require user-provided documents and optional local tooling; no safe generic offline smoke is declared."
+      },
       "files": [
         {
           "source": "skills/annotated-review/critic.py",
@@ -269,6 +273,10 @@
     },
     "calibre": {
       "runtime_dir": "calibre",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "Calibre workflows depend on the user's local ebook library and profile selection."
+      },
       "files": [
         {
           "source": "skills/calibre/cal.py",
@@ -478,6 +486,10 @@
     },
     "deep-research-workflow": {
       "runtime_dir": "deep-research-workflow",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Selftest smoke is offline and validates the workflow guard contracts."
+      },
       "files": [
         {
           "source": "skills/deep-research-workflow/README.txt",
@@ -606,6 +618,10 @@
     },
     "digest-bridge": {
       "runtime_dir": "digest-bridge",
+      "smoke_coverage": {
+        "status": "static-only",
+        "reason": "Digest bridge helpers are covered by static/runtime inventory checks; no generic input digest is shipped for smoke."
+      },
       "files": [
         {
           "source": "skills/digest-bridge/digest_bridge.py",
@@ -646,6 +662,10 @@
     },
     "docling": {
       "runtime_dir": "docling",
+      "smoke_coverage": {
+        "status": "doctor-only",
+        "reason": "Docling conversion and OCR need local parser dependencies and documents; use the doctor path for environment checks."
+      },
       "files": [
         {
           "source": "skills/docling/docling_chunk.py",
@@ -800,6 +820,10 @@
     },
     "formal-skeleton-helper": {
       "runtime_dir": "formal-skeleton-helper",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke writes a minimal local skeleton and validates JSON output without network or secrets."
+      },
       "files": [
         {
           "source": "skills/formal-skeleton-helper/formal_skeleton_helper.py",
@@ -866,6 +890,10 @@
     },
     "axiom-axle-mcp": {
       "runtime_dir": "axiom-axle-mcp",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke validates inert AXLE setup guidance without installing packages or starting services."
+      },
       "files": [
         {
           "source": "skills/axiom-axle-mcp/axiom_axle_mcp.py",
@@ -945,6 +973,10 @@
     },
     "lean-formalization-intake": {
       "runtime_dir": "lean-formalization-intake",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Doctor smoke records local Lean availability without installing dependencies."
+      },
       "files": [
         {
           "source": "skills/lean-formalization-intake/lean_formalization_intake.py",
@@ -1021,6 +1053,10 @@
     },
     "lean-strict-verification-gate": {
       "runtime_dir": "lean-strict-verification-gate",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Doctor smoke records local Lean availability and scanner status without installing dependencies."
+      },
       "files": [
         {
           "source": "skills/lean-strict-verification-gate/lean_strict_verification_gate.py",
@@ -1097,6 +1133,10 @@
     },
     "get-available-resources": {
       "runtime_dir": "get-available-resources",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke records local resource metadata to a temporary file without network or secrets."
+      },
       "files": [
         {
           "source": "skills/get-available-resources/detect_resources.py",
@@ -1163,6 +1203,10 @@
     },
     "getscipapers-requester": {
       "runtime_dir": "getscipapers-requester",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "External paper retrieval is intentionally manual/network-gated and has no generic offline smoke."
+      },
       "files": [
         {
           "source": "skills/getscipapers-requester/GETSCIPAPERS_POLICY.md",
@@ -1216,6 +1260,10 @@
     },
     "graph-verifier": {
       "runtime_dir": "graph-verifier",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke validates a small local graph fixture and JSON result without network."
+      },
       "files": [
         {
           "source": "skills/graph-verifier/graph_verifier.py",
@@ -1279,6 +1327,10 @@
     },
     "submission-venue-selector": {
       "runtime_dir": "submission-venue-selector",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke validates schemas, privacy gates, and offline not-ready behavior without retrieval or secrets."
+      },
       "files": [
         {
           "source": "skills/submission-venue-selector/submission_venue_selector.py",
@@ -1355,6 +1407,10 @@
     },
     "self-improving-agent": {
       "runtime_dir": "self-improving-agent",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke validates local learning-plan generation without network, package installs, or config writes."
+      },
       "files": [
         {
           "source": "skills/self-improving-agent/self_improving_agent.py",
@@ -1431,6 +1487,10 @@
     },
     "modal-research-compute": {
       "runtime_dir": "modal-research-compute",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "Modal workflows require explicit external compute credentials and are not safe for generic offline smoke."
+      },
       "files": [
         {
           "source": "skills/modal-research-compute/modal_research_compute.py",
@@ -1601,6 +1661,10 @@
     },
     "research-digest-wrapper": {
       "runtime_dir": "research-digest-wrapper",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "Digest runs depend on configured topics and external feeds; no generic offline smoke is declared."
+      },
       "files": [
         {
           "source": "skills/research-digest-wrapper/research_digest.py",
@@ -1641,6 +1705,10 @@
     },
     "rss-news-digest": {
       "runtime_dir": "rss-news-digest",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "RSS digesting depends on configured feeds and network access."
+      },
       "files": [
         {
           "source": "skills/rss-news-digest/rss_news_digest.py",
@@ -1703,6 +1771,10 @@
     },
     "sagemath": {
       "runtime_dir": "sagemath",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "SageMath availability is host-dependent and too heavy for default offline CI smoke."
+      },
       "files": [
         {
           "source": "skills/sagemath/run_sage.bat",
@@ -1821,6 +1893,10 @@
     },
     "tikz-draw": {
       "runtime_dir": "tikz-draw",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "TikZ workflows depend on TeX toolchains and user-provided figure specs."
+      },
       "files": [
         {
           "source": "skills/tikz-draw/assets/checks/prevention-rules.md",
@@ -2186,6 +2262,10 @@
     },
     "vnthuquan": {
       "runtime_dir": "vnthuquan",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "Vietnam Thu Quan discovery/download flows are network and library-profile gated."
+      },
       "files": [
         {
           "source": "skills/vnthuquan/run_vnthuquan.bat",
@@ -2236,6 +2316,10 @@
     },
     "zotero": {
       "runtime_dir": "zotero",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "Zotero workflows depend on the user's local library, profile, and optional cloud credentials."
+      },
       "files": [
         {
           "source": "skills/zotero/.gitignore",

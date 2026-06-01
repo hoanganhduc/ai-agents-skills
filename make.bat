@@ -3,9 +3,9 @@ setlocal EnableExtensions DisableDelayedExpansion
 if "%~1"=="help" (
   echo Usage: make.bat ^<command^> [args...]
   echo Common commands: doctor precheck audit-system plan install verify smoke rollback uninstall
-  echo Test commands: fake-root-lifecycle lifecycle-test runtime-smoke sanitize-check test
+  echo Test commands: fake-root-lifecycle lifecycle-test runtime-smoke docs-check static-check sanitize-check test
   echo Listing commands: list-skills list-artifacts describe describe-artifact
-  echo Docs commands: docs
+  echo Docs commands: docs docs-check
   echo Runtime commands: runtime-inventory delegate-agent validate-delegation-packet
   echo OpenClaw commands: openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check
   exit /b 0
@@ -27,6 +27,8 @@ goto dispatch
 
 :dispatch
 if /I "%~1"=="docs" goto docs
+if /I "%~1"=="docs-check" goto docs_check
+if /I "%~1"=="static-check" goto static_check
 if /I "%~1"=="sanitize-check" goto sanitize_check
 if /I "%~1"=="test" goto test
 %AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" %*
@@ -34,6 +36,14 @@ exit /b %ERRORLEVEL%
 
 :docs
 %AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" generate-docs
+exit /b %ERRORLEVEL%
+
+:docs_check
+%AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" docs-check
+exit /b %ERRORLEVEL%
+
+:static_check
+%AAS_PS% -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\bootstrap_windows.ps1" --run-python tools/static_check.py
 exit /b %ERRORLEVEL%
 
 :sanitize_check

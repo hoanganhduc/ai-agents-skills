@@ -15,15 +15,17 @@ from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
 from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS
 from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
 from installer.ai_agents_skills.discovery import current_platform
-from installer.ai_agents_skills.docs import generate_docs
+from installer.ai_agents_skills.docs import check_docs_current, generate_docs, render_docs
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.render import render_artifact_content, render_reference_skill_md
 from installer.ai_agents_skills.selectors import artifact_dependency_skills, resolve_artifacts, resolve_skills
 from installer.ai_agents_skills.state import artifact_signature, load_state, save_state, write_run_record
+from installer.ai_agents_skills.target_surfaces import target_surface_for, target_surface_rows
 from installer.ai_agents_skills.target_prechecks import path_style_for_platform
 from installer.ai_agents_skills.verify import verify
+from tools.import_canonical_skills import assert_admitted_source_file
 
 
 class Args:
@@ -191,6 +193,38 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("Managed by ai-agents-skills", ledger)
         self.assertIn("Managed by ai-agents-skills", instruction)
         self.assertIn("Generated target: codex", ledger)
+
+    def test_target_surface_support_claims_are_explicit(self) -> None:
+        rows = target_surface_rows()
+
+        self.assertGreaterEqual(len(rows), 15)
+        self.assertEqual(target_surface_for("codex", "skill-file").support, "supported")
+        self.assertEqual(target_surface_for("claude", "entrypoint-alias").mechanism, "native-command")
+        self.assertEqual(target_surface_for("deepseek", "runtime-file").claim_basis, "runtime-manifest")
+        self.assertEqual(target_surface_for("copilot", "entrypoint-alias").support, "unsupported")
+        self.assertEqual(target_surface_for("openclaw", "runtime-file").support, "blocked")
+
+    def test_canonical_import_admission_blocks_runtime_and_secret_files(self) -> None:
+        accepted = [
+            Path("SKILL.md"),
+            Path("references/guide.md"),
+            Path("scripts/helper.py"),
+        ]
+        rejected = [
+            Path(".codex/config.toml"),
+            Path("hooks/pre-run.sh"),
+            Path("scripts/provider_tokens.md"),
+            Path("references/local.sqlite"),
+            Path("AGENTS.md"),
+        ]
+
+        for rel in accepted:
+            with self.subTest(rel=rel.as_posix()):
+                assert_admitted_source_file(rel)
+        for rel in rejected:
+            with self.subTest(rel=rel.as_posix()):
+                with self.assertRaises(ValueError):
+                    assert_admitted_source_file(rel)
 
 
 class PlanInstallVerifyTests(unittest.TestCase):
@@ -1974,9 +2008,9 @@ class DocsAndLauncherTests(unittest.TestCase):
 
     def test_generated_docs_include_manifest_skills(self) -> None:
         manifests = load_manifests()
-        written = generate_docs(manifests)
-        self.assertIn(REPO_ROOT / "README.md", written)
-        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        rendered = render_docs(manifests)
+        self.assertIn(REPO_ROOT / "README.md", rendered)
+        readme = rendered[REPO_ROOT / "README.md"]
         for skill in ("deep-research-workflow", "draft-writing", "source-research", "zotero", "vnthuquan"):
             self.assertIn(f"`{skill}`", readme)
         self.assertIn("`cross-provider-delegation`", readme)
@@ -1987,9 +2021,20 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("Graph Reconfiguration Specialist", readme)
         self.assertIn("docs/system-profile.md", readme)
         self.assertIn("docs/agent-locations.md", readme)
+        self.assertIn("docs/surfaces.md", readme)
         self.assertIn("docs/audit-and-migration.md", readme)
-        self.assertTrue((REPO_ROOT / "docs" / "agent-locations.md").exists())
-        self.assertTrue((REPO_ROOT / "docs" / "audit-and-migration.md").exists())
+        self.assertIn(REPO_ROOT / "docs" / "agent-locations.md", rendered)
+        self.assertIn(REPO_ROOT / "docs" / "surfaces.md", rendered)
+        self.assertIn(REPO_ROOT / "docs" / "audit-and-migration.md", rendered)
+
+    def test_generated_surfaces_docs_define_support_claim_basis(self) -> None:
+        rendered = render_docs(load_manifests())
+        text = rendered[REPO_ROOT / "docs" / "surfaces.md"]
+
+        self.assertIn("# Target Surface Support Matrix", text)
+        self.assertIn("Support claims are intentionally separate from skill selection", text)
+        self.assertIn("| `openclaw` | `runtime-file` | `blocked` | `unsupported` |", text)
+        self.assertIn("Do not infer runtime support from `supported_agents` alone", text)
 
     def test_generated_root_and_sphinx_docs_do_not_drift(self) -> None:
         tracked = [
@@ -1998,8 +2043,9 @@ class DocsAndLauncherTests(unittest.TestCase):
             *((REPO_ROOT / "docs" / "source").glob("*.md")),
         ]
         before = {path: path.read_text(encoding="utf-8") for path in tracked}
-        generate_docs(load_manifests())
+        result = check_docs_current(load_manifests())
         after = {path: path.read_text(encoding="utf-8") for path in tracked}
+        self.assertEqual(result["status"], "ok")
         self.assertEqual(after, before)
         shared_docs = sorted(
             path.name
@@ -2012,6 +2058,20 @@ class DocsAndLauncherTests(unittest.TestCase):
                 root_text = (REPO_ROOT / "docs" / name).read_text(encoding="utf-8")
                 source_text = (REPO_ROOT / "docs" / "source" / name).read_text(encoding="utf-8")
                 self.assertEqual(root_text, source_text)
+
+    def test_cli_docs_check_is_non_mutating(self) -> None:
+        tracked = [REPO_ROOT / "README.md", *((REPO_ROOT / "docs").glob("*.md"))]
+        before = {path: path.read_bytes() for path in tracked}
+        stream = io.StringIO()
+
+        with contextlib.redirect_stdout(stream):
+            code = main(["--json", "docs-check"])
+
+        payload = json.loads(stream.getvalue())
+        after = {path: path.read_bytes() for path in tracked}
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(after, before)
 
     def test_source_only_docs_are_intentional(self) -> None:
         root_docs = {path.name for path in (REPO_ROOT / "docs").glob("*.md")}
@@ -2029,6 +2089,8 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("Post-install smoke", text)
         self.assertIn("--post-install-smoke strict", text)
         self.assertIn("runtime smoke for installed runtime-backed skills", text.replace("\n  ", " "))
+        self.assertIn("Runtime smoke coverage", text)
+        self.assertIn("manual-native", text)
 
     def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
         text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")
@@ -2038,9 +2100,14 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn('if "%~1"=="help"', text)
         self.assertIn("list-artifacts", text)
         self.assertIn("runtime-smoke", text)
+        self.assertIn("docs-check", text)
+        self.assertIn("static-check", text)
         self.assertIn('if /I "%~1"=="sanitize-check"', text)
+        self.assertIn('if /I "%~1"=="docs-check"', text)
+        self.assertIn('if /I "%~1"=="static-check"', text)
         self.assertIn('if /I "%~1"=="test"', text)
         self.assertIn("--run-python tools/sanitization_check.py", text)
+        self.assertIn("--run-python tools/static_check.py", text)
         self.assertIn("--run-python -m unittest discover -s tests -v", text)
         self.assertIn("no PowerShell runtime found", text)
         self.assertLess(text.index("where pwsh"), text.index("where powershell.exe"))
@@ -2061,6 +2128,11 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("./installer/bootstrap.sh runtime-smoke $(ARGS)", text)
         self.assertIn("./installer/bootstrap.sh delegate-agent $(ARGS)", text)
         self.assertIn("generate-docs: docs", text)
+        self.assertIn("docs-check:", text)
+        self.assertIn("./installer/bootstrap.sh docs-check $(ARGS)", text)
+        self.assertIn("static-check:", text)
+        self.assertIn("./installer/bootstrap.sh --run-python tools/static_check.py", text)
+        self.assertIn("release-check: docs-check static-check sanitize-check test runtime-smoke", text)
         self.assertIn("./installer/bootstrap.sh --run-python -m sphinx", text)
 
     def test_cli_delegate_agent_research_blocks_without_resolved_model(self) -> None:

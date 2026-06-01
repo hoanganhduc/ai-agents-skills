@@ -5,6 +5,8 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any
 
+from .target_surfaces import validate_target_surfaces
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_DIR = REPO_ROOT / "manifest"
@@ -42,6 +44,7 @@ def load_manifests() -> dict[str, Any]:
     runtime = load_json_yaml(MANIFEST_DIR / "runtime.yaml")
     delegation = load_json_yaml(MANIFEST_DIR / "delegation.yaml")
     validate_manifests(skills, profiles, dependencies, artifacts, system_dependencies, runtime, delegation)
+    validate_target_surfaces()
     return {
         "skills": skills,
         "profiles": profiles,
@@ -157,6 +160,7 @@ def validate_manifests(
             raise ManifestError(f"runtime skill {skill} is not declared in skills.yaml")
         if "_" in spec.get("runtime_dir", ""):
             raise ManifestError(f"runtime skill {skill} runtime_dir must use canonical kebab-case")
+        validate_runtime_smoke_coverage(skill, spec)
         for entry in spec.get("files", []):
             validate_runtime_file(entry, runtime_source_root, f"runtime skill {skill}")
         if "smoke" in spec:
@@ -252,6 +256,23 @@ def validate_runtime_smoke_contract(skill: str, smoke: Any) -> None:
     for field in required_forbidden:
         if safety.get(field) != "forbidden":
             raise ManifestError(f"runtime skill {skill} smoke safety.{field} must be forbidden")
+
+
+def validate_runtime_smoke_coverage(skill: str, spec: dict[str, Any]) -> None:
+    coverage = spec.get("smoke_coverage")
+    if not isinstance(coverage, dict):
+        raise ManifestError(f"runtime skill {skill} is missing smoke_coverage")
+    status = coverage.get("status")
+    allowed = {"offline-smoke", "doctor-only", "manual-native", "static-only", "unsupported", "not-applicable"}
+    if status not in allowed:
+        raise ManifestError(f"runtime skill {skill} smoke_coverage.status is invalid")
+    reason = coverage.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise ManifestError(f"runtime skill {skill} smoke_coverage.reason is required")
+    if "smoke" in spec and status != "offline-smoke":
+        raise ManifestError(f"runtime skill {skill} has smoke contract but smoke_coverage is not offline-smoke")
+    if "smoke" not in spec and status == "offline-smoke":
+        raise ManifestError(f"runtime skill {skill} smoke_coverage offline-smoke requires a smoke contract")
 
 
 def skill_names(manifests: dict[str, Any]) -> list[str]:

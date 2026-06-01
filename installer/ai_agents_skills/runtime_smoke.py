@@ -73,6 +73,7 @@ def run_runtime_smoke(
             "status": status,
             "platform": host_platform,
             "selected_skills": selected_skills,
+            "coverage": runtime_smoke_coverage_rows(manifests),
             "install_action_count": len(install_result.get("actions", [])),
             "verify_status": verify_result["status"],
             "checked": len(results),
@@ -163,10 +164,11 @@ def run_installed_runtime_smoke(
                             "mode": "installed",
                             "runtime_root": str(runtime_root),
                             "skill": skill,
+                            "coverage": runtime_smoke_coverage_status(manifests, skill),
                             "runner": runner["name"],
                             "checked": 0,
                             "results": [],
-                            "reason": "runtime skill has no safe smoke contract for installed mode",
+                            "reason": runtime_smoke_coverage_reason(manifests, skill),
                         })
                         continue
                     results.append(run_smoke_case(
@@ -185,6 +187,7 @@ def run_installed_runtime_smoke(
         "mode": "installed",
         "platform": target_platform,
         "selected_skills": installed_skills,
+        "coverage": runtime_smoke_coverage_rows(manifests),
         "checked": len([item for item in results if item.get("status") != "unsupported"]),
         "results": results,
     }
@@ -195,7 +198,7 @@ def selected_runtime_skills(manifests: dict[str, Any], skills: set[str] | None) 
     selected = set(smoke_supported) if skills is None else set(skills)
     unknown = sorted(selected - smoke_supported)
     if unknown:
-        raise ValueError("skills do not have runtime smoke coverage: " + ", ".join(unknown))
+        raise ValueError("skills do not have offline runtime smoke coverage: " + ", ".join(unknown))
     return sorted(selected)
 
 
@@ -203,12 +206,46 @@ def runtime_smoke_skill_names(manifests: dict[str, Any]) -> list[str]:
     return sorted(
         skill
         for skill, spec in manifests.get("runtime", {}).get("skills", {}).items()
-        if isinstance(spec, dict) and isinstance(spec.get("smoke"), dict)
+        if (
+            isinstance(spec, dict)
+            and isinstance(spec.get("smoke"), dict)
+            and runtime_smoke_coverage_status(manifests, skill) == "offline-smoke"
+        )
     )
 
 
 def has_runtime_smoke_contract(manifests: dict[str, Any], skill: str) -> bool:
     return skill in runtime_smoke_skill_names(manifests)
+
+
+def runtime_smoke_coverage_status(manifests: dict[str, Any], skill: str) -> str:
+    spec = manifests.get("runtime", {}).get("skills", {}).get(skill, {})
+    coverage = spec.get("smoke_coverage") if isinstance(spec, dict) else None
+    if isinstance(coverage, dict) and isinstance(coverage.get("status"), str):
+        return coverage["status"]
+    return "unsupported"
+
+
+def runtime_smoke_coverage_reason(manifests: dict[str, Any], skill: str) -> str:
+    spec = manifests.get("runtime", {}).get("skills", {}).get(skill, {})
+    coverage = spec.get("smoke_coverage") if isinstance(spec, dict) else None
+    if isinstance(coverage, dict) and isinstance(coverage.get("reason"), str):
+        return coverage["reason"]
+    return "runtime skill has no smoke coverage metadata"
+
+
+def runtime_smoke_coverage_rows(manifests: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for skill in sorted(manifests.get("runtime", {}).get("skills", {})):
+        rows.append(
+            {
+                "skill": skill,
+                "status": runtime_smoke_coverage_status(manifests, skill),
+                "has_smoke_contract": has_runtime_smoke_contract(manifests, skill),
+                "reason": runtime_smoke_coverage_reason(manifests, skill),
+            }
+        )
+    return rows
 
 
 def runner_invocations(runtime_root: Path, platform: str) -> list[dict[str, Any]]:

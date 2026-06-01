@@ -4,36 +4,67 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import REPO_ROOT
+from .target_surfaces import target_surface_rows
 
 
 def generate_docs(manifests: dict[str, Any]) -> list[Path]:
+    rendered = render_docs(manifests)
+    written: list[Path] = []
+    for path, text in rendered.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_static_doc(path, text)
+        written.append(path)
+    return written
+
+
+def render_docs(manifests: dict[str, Any]) -> dict[Path, str]:
     docs_dir = REPO_ROOT / "docs"
     source_dir = docs_dir / "source"
-    docs_dir.mkdir(parents=True, exist_ok=True)
-    source_dir.mkdir(parents=True, exist_ok=True)
-    written = [
-        write_readme(manifests),
-        *write_doc_pair(docs_dir, source_dir, "skills.md", skills_text(manifests)),
-        *write_doc_pair(docs_dir, source_dir, "artifacts.md", artifacts_text(manifests)),
-        *write_doc_pair(docs_dir, source_dir, "profiles.md", profiles_text(manifests)),
-        *write_doc_pair(docs_dir, source_dir, "dependencies.md", dependencies_text(manifests)),
-        *write_doc_pair(docs_dir, source_dir, "workflow-overview.md", workflow_overview_text()),
-        *write_doc_pair(docs_dir, source_dir, "multi-agent-examples.md", multi_agent_examples_text()),
-        *write_doc_pair(docs_dir, source_dir, "system-profile.md", system_profile_text()),
-        *write_doc_pair(docs_dir, source_dir, "agent-locations.md", agent_locations_text()),
-        *write_doc_pair(docs_dir, source_dir, "local-library-profiles.md", local_library_profiles_text()),
-        *write_doc_pair(docs_dir, source_dir, "audit-and-migration.md", audit_and_migration_text()),
-        *write_doc_pair(docs_dir, source_dir, "openclaw-integration-plan.md", openclaw_integration_plan_text()),
-        *write_doc_pair(docs_dir, source_dir, "openclaw-install-target-plan.md", openclaw_install_target_plan_text()),
-        *write_doc_pair(docs_dir, source_dir, "verification.md", verification_text(manifests)),
-        *write_doc_pair(docs_dir, source_dir, "architecture.md", architecture_text()),
-        *write_doc_pair(docs_dir, source_dir, "installation.md", installation_text()),
-        *write_doc_pair(docs_dir, source_dir, "windows.md", windows_text()),
-        *write_doc_pair(docs_dir, source_dir, "linux.md", linux_text()),
-        *write_doc_pair(docs_dir, source_dir, "troubleshooting.md", troubleshooting_text()),
-        *write_doc_pair(docs_dir, source_dir, "uninstall-rollback.md", uninstall_text()),
-    ]
-    return written
+    rendered: dict[Path, str] = {REPO_ROOT / "README.md": readme_text(manifests)}
+    for name, text in generated_doc_texts(manifests).items():
+        rendered[docs_dir / name] = text
+        rendered[source_dir / name] = text
+    return rendered
+
+
+def generated_doc_texts(manifests: dict[str, Any]) -> dict[str, str]:
+    return {
+        "skills.md": skills_text(manifests),
+        "artifacts.md": artifacts_text(manifests),
+        "profiles.md": profiles_text(manifests),
+        "dependencies.md": dependencies_text(manifests),
+        "workflow-overview.md": workflow_overview_text(),
+        "multi-agent-examples.md": multi_agent_examples_text(),
+        "system-profile.md": system_profile_text(),
+        "agent-locations.md": agent_locations_text(),
+        "local-library-profiles.md": local_library_profiles_text(),
+        "audit-and-migration.md": audit_and_migration_text(),
+        "openclaw-integration-plan.md": openclaw_integration_plan_text(),
+        "openclaw-install-target-plan.md": openclaw_install_target_plan_text(),
+        "verification.md": verification_text(manifests),
+        "surfaces.md": surfaces_text(manifests),
+        "architecture.md": architecture_text(),
+        "installation.md": installation_text(),
+        "windows.md": windows_text(),
+        "linux.md": linux_text(),
+        "troubleshooting.md": troubleshooting_text(),
+        "uninstall-rollback.md": uninstall_text(),
+    }
+
+
+def check_docs_current(manifests: dict[str, Any]) -> dict[str, Any]:
+    stale: list[dict[str, str]] = []
+    missing: list[str] = []
+    for path, expected in render_docs(manifests).items():
+        expected_text = expected.strip() + "\n"
+        if not path.exists():
+            missing.append(str(path.relative_to(REPO_ROOT)))
+            continue
+        actual = path.read_text(encoding="utf-8")
+        if actual != expected_text:
+            stale.append({"path": str(path.relative_to(REPO_ROOT)), "status": "stale"})
+    status = "ok" if not stale and not missing else "stale"
+    return {"status": status, "stale": stale, "missing": missing}
 
 
 def write_doc_pair(docs_dir: Path, source_dir: Path, name: str, text: str) -> list[Path]:
@@ -45,11 +76,15 @@ def write_doc_pair(docs_dir: Path, source_dir: Path, name: str, text: str) -> li
 
 def write_readme(manifests: dict[str, Any]) -> Path:
     path = REPO_ROOT / "README.md"
+    path.write_text(readme_text(manifests), encoding="utf-8")
+    return path
+
+
+def readme_text(manifests: dict[str, Any]) -> str:
     skills_table = skill_table(manifests)
     profiles_table = profiles_table_text(manifests)
     artifact_profiles_table = artifact_profiles_table_text(manifests)
-    path.write_text(
-        f"""# AI Agents Skills
+    return f"""# AI Agents Skills
 
 <div align="center">
   <a href="https://www.buymeacoffee.com/hoanganhduc" target="_blank" rel="noopener noreferrer">
@@ -165,6 +200,8 @@ lighter platform-specific guidance than Linux and Windows.
   tools map to skills.
 - [docs/agent-locations.md](docs/agent-locations.md): supported agent config, skill, template, command,
   persona, and tool-shim locations.
+- [docs/surfaces.md](docs/surfaces.md): generated target-surface support
+  states, render mechanisms, and claim basis.
 - [docs/local-library-profiles.md](docs/local-library-profiles.md): local Zotero/Calibre
   discovery, profile selection, and mutation safety rules.
 - [docs/audit-and-migration.md](docs/audit-and-migration.md): audit output, staged migration, unmanaged
@@ -378,10 +415,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 ```
 
 {skills_table}
-""",
-        encoding="utf-8",
-    )
-    return path
+"""
 
 
 def skills_text(manifests: dict[str, Any]) -> str:
@@ -738,8 +772,13 @@ def verification_text(manifests: dict[str, Any]) -> str:
     runtime_smoke_skills = ", ".join(
         f"`{skill}`"
         for skill, spec in sorted(manifests.get("runtime", {}).get("skills", {}).items())
-        if isinstance(spec, dict) and isinstance(spec.get("smoke"), dict)
+        if (
+            isinstance(spec, dict)
+            and isinstance(spec.get("smoke"), dict)
+            and spec.get("smoke_coverage", {}).get("status") == "offline-smoke"
+        )
     )
+    runtime_coverage = runtime_smoke_coverage_table(manifests)
     return f"""# Verification
 
 Verification is selective. Only installed and enabled managed artifacts from the
@@ -797,6 +836,7 @@ Recommended local maintainer checks mirror the CI gate:
 ```bash
 make sanitize-check
 make test
+make docs-check
 make runtime-smoke
 make runtime-smoke ARGS="--skills self-improving-agent"
 make docs
@@ -804,8 +844,9 @@ make docs-site
 make lifecycle-test ARGS="--matrix default --platform-shape all"
 ```
 
-CI also checks that regenerated docs are current by running `make docs` and
-diffing `README.md` plus `docs/`. Run `make docs-site` after installing
+CI checks generated docs with `make docs-check`, which renders expected docs
+without mutating `README.md` or `docs/`. Run `make docs` only when you intend
+to refresh generated files. Run `make docs-site` after installing
 `docs/requirements.txt` when Sphinx rendering matters.
 
 Post-install smoke:
@@ -890,6 +931,10 @@ contracts, including `psutil` and `networkx` for the default CI path. Passing
 `--skills` may only select skills that are supported by this runtime-smoke
 harness.
 
+Runtime smoke coverage classes are explicit for every runtime-backed skill:
+
+{runtime_coverage}
+
 ```bash
 make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
@@ -919,6 +964,17 @@ Related pages: [Installation](installation.md), [Audit And Migration](audit-and-
 [OpenClaw Install Target Plan](openclaw-install-target-plan.md),
 [Uninstall And Rollback](uninstall-rollback.md), [Troubleshooting](troubleshooting.md).
 """
+
+
+def runtime_smoke_coverage_table(manifests: dict[str, Any]) -> str:
+    rows = ["| Skill | Coverage | Smoke Contract | Reason |", "|---|---|---|---|"]
+    for skill, spec in sorted(manifests.get("runtime", {}).get("skills", {}).items()):
+        coverage = spec.get("smoke_coverage", {}) if isinstance(spec, dict) else {}
+        status = coverage.get("status", "unsupported")
+        reason = coverage.get("reason", "")
+        has_contract = "yes" if isinstance(spec, dict) and isinstance(spec.get("smoke"), dict) else "no"
+        rows.append(f"| `{skill}` | `{status}` | {has_contract} | {md_cell(reason)} |")
+    return "\n".join(rows)
 
 
 def openclaw_integration_plan_text() -> str:
@@ -2223,6 +2279,58 @@ def skill_table(manifests: dict[str, Any]) -> str:
     for name, spec in sorted(manifests["skills"]["skills"].items()):
         profiles = ", ".join(f"`{p}`" for p in spec.get("profiles", []))
         rows.append(f"| `{name}` | {spec['description']} | {profiles} |")
+    return "\n".join(rows)
+
+
+def surfaces_text(manifests: dict[str, Any]) -> str:
+    skill_count = len(manifests["skills"]["skills"])
+    return (
+        "# Target Surface Support Matrix\n\n"
+        "Support claims are intentionally separate from skill selection. "
+        "This generated page separates install eligibility from support claims. "
+        "`supported_agents` in `manifest/skills.yaml` and `manifest/artifacts.yaml` "
+        "is selection eligibility; the rows below state how each target surface is "
+        "rendered, whether it is supported, degraded, blocked, manual, or unsupported, "
+        "and what code or policy backs that claim. Do not infer runtime support from "
+        "`supported_agents` alone.\n\n"
+        f"The current manifest contains {skill_count} installable skills; the matrix "
+        "below describes the target/surface support contract that those generated "
+        "skill and artifact plans use.\n\n"
+        "OpenClaw source/import evidence and OpenClaw install-target behavior are "
+        "separate. Source/import evidence never authorizes real `.openclaw` writes; "
+        "current OpenClaw install-target behavior remains fake-root scoped.\n\n"
+        f"{surface_matrix_table()}\n\n"
+        "Claim levels used here:\n\n"
+        "- `supported`: installer behavior is implemented for the listed surface.\n"
+        "- `fallback` or `degraded`: the installer can proceed with reduced or apply-time fallback behavior.\n"
+        "- `blocked`: the installer intentionally refuses the surface.\n"
+        "- `manual`: the surface needs explicit fake-root/manual evidence and is not a real-system support claim.\n"
+        "- `unsupported`: the target does not receive that surface today.\n"
+    )
+
+
+def surface_matrix_table() -> str:
+    rows = [
+        "| Target | Surface | State | Mechanism | Scope | Claim Basis | Notes |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for row in target_surface_rows():
+        rows.append(
+            "| "
+            + " | ".join(
+                md_cell(value)
+                for value in (
+                    f"`{row['target']}`",
+                    f"`{row['surface']}`",
+                    f"`{row['support']}`",
+                    f"`{row['mechanism']}`",
+                    row["execution_scope"],
+                    f"`{row['claim_basis']}`",
+                    row["notes"],
+                )
+            )
+            + " |"
+        )
     return "\n".join(rows)
 
 

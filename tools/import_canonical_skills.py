@@ -21,6 +21,34 @@ DEFAULT_INCLUDE_FILES = {
 DEFAULT_INCLUDE_DIRS = {"references", "assets", "scripts", "templates", "agents"}
 EXCLUDED_PARTS = {"implementation", "integration", "plans", "research", "__pycache__", ".git"}
 EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".bak", ".tmp"}
+ADMISSION_DENIED_PARTS = {
+    ".claude",
+    ".codex",
+    ".deepseek",
+    ".copilot",
+    ".openclaw",
+    ".mcp",
+    "hooks",
+    "node_modules",
+}
+ADMISSION_DENIED_NAMES = {
+    ".env",
+    "CLAUDE.md",
+    "AGENTS.md",
+    "config.json",
+    "config.toml",
+    "mcp.json",
+    ".mcp.json",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "Dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "Procfile",
+}
+ADMISSION_DENIED_SUFFIXES = {".service", ".timer", ".plist", ".db", ".sqlite"}
 
 
 def main() -> int:
@@ -89,11 +117,26 @@ def selected_files(source_dir: Path) -> list[Path]:
         rel = path.relative_to(source_dir)
         if any(part in EXCLUDED_PARTS for part in rel.parts):
             continue
+        assert_admitted_source_file(rel)
         if path.suffix in EXCLUDED_SUFFIXES or path.name.startswith("."):
             continue
         if rel.name in DEFAULT_INCLUDE_FILES or rel.parts[0] in DEFAULT_INCLUDE_DIRS:
             files.append(path)
     return sorted(files)
+
+
+def assert_admitted_source_file(rel: Path) -> None:
+    lowered_parts = {part.lower() for part in rel.parts}
+    if lowered_parts & ADMISSION_DENIED_PARTS:
+        raise ValueError(f"refusing risky imported path: {rel}")
+    denied_names = {name.lower() for name in ADMISSION_DENIED_NAMES}
+    if rel.name in ADMISSION_DENIED_NAMES or rel.name.lower() in denied_names:
+        raise ValueError(f"refusing risky imported file: {rel}")
+    if rel.suffix in ADMISSION_DENIED_SUFFIXES or rel.suffix.lower() in ADMISSION_DENIED_SUFFIXES:
+        raise ValueError(f"refusing risky imported file type: {rel}")
+    lower_name = rel.name.lower()
+    if "secret" in lower_name or "credential" in lower_name or "provider" in lower_name:
+        raise ValueError(f"refusing risky imported file: {rel}")
 
 
 def write_skill(

@@ -39,9 +39,7 @@ jobs:
           pip install -r docs/requirements.txt
 
       - name: Verify generated docs are current
-        run: |
-          make docs
-          git diff --exit-code -- README.md docs
+        run: make docs-check
 
       - name: Build documentation
         run: |

@@ -14,7 +14,7 @@ from .delegation import build_external_agent_prechecks
 from .delegation_dispatch import dispatch_external_agents
 from .delegation_packets import validate_packet_file
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
-from .docs import generate_docs
+from .docs import check_docs_current, generate_docs
 from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
 from .lifecycle_matrix import run_lifecycle_matrix
@@ -83,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     describe_artifact = sub.add_parser("describe-artifact")
     describe_artifact.add_argument("artifact")
     sub.add_parser("generate-docs")
+    sub.add_parser("docs-check")
 
     library_profile_audit = sub.add_parser("library-profile-audit")
     library_profile_audit.add_argument("--profile", help="optional skill profile label for reporting")
@@ -349,6 +350,10 @@ def run(args: argparse.Namespace) -> int:
     if args.command == "generate-docs":
         written = generate_docs(manifests)
         return output({"written": [str(path) for path in written]}, args)
+    if args.command == "docs-check":
+        result = check_docs_current(manifests)
+        output(result, args)
+        return 0 if result["status"] == "ok" else 1
     if args.command == "library-profile-audit":
         result = audit_library_profiles(
             args.root,
@@ -1338,6 +1343,7 @@ def command_help() -> dict[str, Any]:
         "describe",
         "describe-artifact",
         "generate-docs",
+        "docs-check",
         "openclaw-inventory",
         "openclaw-dry-run-manifest",
         "openclaw-approve-manifest",
@@ -1357,6 +1363,7 @@ def command_help() -> dict[str, Any]:
             "make lifecycle-test ARGS=\"--matrix default --platform-shape all\"",
             "make delegate-agent ARGS=\"--provider auto --task 'review this claim' --dry-run\"",
             "make docs",
+            "make docs-check",
         ],
     }
 
