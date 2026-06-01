@@ -1,4 +1,4 @@
-.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke runtime-inventory delegate-agent validate-delegation-packet list-skills list-artifacts describe describe-artifact docs generate-docs docs-site sanitize-check test
+.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke runtime-inventory delegate-agent validate-delegation-packet list-skills list-artifacts describe describe-artifact docs docs-check generate-docs docs-site static-check sanitize-check release-check test
 
 ARGS ?=
 
@@ -94,6 +94,9 @@ docs:
 
 generate-docs: docs
 
+docs-check:
+	./installer/bootstrap.sh docs-check $(ARGS)
+
 docs-site:
 	./installer/bootstrap.sh --run-python -c 'import importlib.util, sys; missing = [m for m in ("sphinx", "myst_parser", "sphinx_rtd_theme") if importlib.util.find_spec(m) is None]; sys.exit("Install docs dependencies first: python -m pip install -r docs/requirements.txt; missing: " + ", ".join(missing) if missing else 0)'
 	./installer/bootstrap.sh --run-python -m sphinx -b html docs/source docs/_build/html
@@ -101,6 +104,12 @@ docs-site:
 sanitize-check:
 	./installer/bootstrap.sh --run-python tools/sanitization_check.py
 	./installer/bootstrap.sh --run-python -m unittest discover -s tests -p 'test_sanitization.py' -v
+
+static-check:
+	./installer/bootstrap.sh --run-python tools/static_check.py
+
+release-check: docs-check static-check sanitize-check test runtime-smoke
+	./installer/bootstrap.sh lifecycle-test --matrix default --platform-shape all $(ARGS)
 
 test:
 	./installer/bootstrap.sh --run-python -m unittest discover -s tests -v

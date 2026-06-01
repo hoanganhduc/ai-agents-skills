@@ -114,6 +114,8 @@ lighter platform-specific guidance than Linux and Windows.
   tools map to skills.
 - [docs/agent-locations.md](docs/agent-locations.md): supported agent config, skill, template, command,
   persona, and tool-shim locations.
+- [docs/surfaces.md](docs/surfaces.md): generated target-surface support
+  states, render mechanisms, and claim basis.
 - [docs/local-library-profiles.md](docs/local-library-profiles.md): local Zotero/Calibre
   discovery, profile selection, and mutation safety rules.
 - [docs/audit-and-migration.md](docs/audit-and-migration.md): audit output, staged migration, unmanaged

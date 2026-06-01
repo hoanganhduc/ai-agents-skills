@@ -24,6 +24,7 @@ from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with
 from installer.ai_agents_skills.runtime_smoke import (
     run_installed_runtime_smoke,
     runtime_command_target,
+    runtime_smoke_coverage_rows,
     selected_runtime_skills,
 )
 from installer.ai_agents_skills.sanitize import has_sensitive_material
@@ -1168,6 +1169,17 @@ class RuntimeIntegrationTests(unittest.TestCase):
         manifests = load_manifests()
         with self.assertRaisesRegex(ValueError, "zotero"):
             selected_runtime_skills(manifests, {"zotero"})
+
+    def test_runtime_smoke_coverage_classifies_non_offline_skills(self) -> None:
+        manifests = load_manifests()
+        rows = {row["skill"]: row for row in runtime_smoke_coverage_rows(manifests)}
+
+        self.assertEqual(rows["graph-verifier"]["status"], "offline-smoke")
+        self.assertEqual(rows["zotero"]["status"], "manual-native")
+        self.assertEqual(rows["docling"]["status"], "doctor-only")
+        self.assertNotIn("zotero", selected_runtime_skills(manifests, None))
+        self.assertIn("local library", rows["zotero"]["reason"])
+        self.assertTrue(all(row["reason"] for row in rows.values()))
 
     def test_runtime_smoke_contracts_are_offline_and_workspace_relative(self) -> None:
         manifests = load_manifests()

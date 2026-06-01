@@ -55,6 +55,7 @@ Recommended local maintainer checks mirror the CI gate:
 ```bash
 make sanitize-check
 make test
+make docs-check
 make runtime-smoke
 make runtime-smoke ARGS="--skills self-improving-agent"
 make docs
@@ -62,8 +63,9 @@ make docs-site
 make lifecycle-test ARGS="--matrix default --platform-shape all"
 ```
 
-CI also checks that regenerated docs are current by running `make docs` and
-diffing `README.md` plus `docs/`. Run `make docs-site` after installing
+CI checks generated docs with `make docs-check`, which renders expected docs
+without mutating `README.md` or `docs/`. Run `make docs` only when you intend
+to refresh generated files. Run `make docs-site` after installing
 `docs/requirements.txt` when Sphinx rendering matters.
 
 Post-install smoke:
@@ -147,6 +149,32 @@ root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
 `--skills` may only select skills that are supported by this runtime-smoke
 harness.
+
+Runtime smoke coverage classes are explicit for every runtime-backed skill:
+
+| Skill | Coverage | Smoke Contract | Reason |
+|---|---|---|---|
+| `annotated-review` | `manual-native` | no | Annotation workflows require user-provided documents and optional local tooling; no safe generic offline smoke is declared. |
+| `axiom-axle-mcp` | `offline-smoke` | yes | Smoke validates inert AXLE setup guidance without installing packages or starting services. |
+| `calibre` | `manual-native` | no | Calibre workflows depend on the user's local ebook library and profile selection. |
+| `deep-research-workflow` | `offline-smoke` | yes | Selftest smoke is offline and validates the workflow guard contracts. |
+| `digest-bridge` | `static-only` | no | Digest bridge helpers are covered by static/runtime inventory checks; no generic input digest is shipped for smoke. |
+| `docling` | `doctor-only` | no | Docling conversion and OCR need local parser dependencies and documents; use the doctor path for environment checks. |
+| `formal-skeleton-helper` | `offline-smoke` | yes | Smoke writes a minimal local skeleton and validates JSON output without network or secrets. |
+| `get-available-resources` | `offline-smoke` | yes | Smoke records local resource metadata to a temporary file without network or secrets. |
+| `getscipapers-requester` | `manual-native` | no | External paper retrieval is intentionally manual/network-gated and has no generic offline smoke. |
+| `graph-verifier` | `offline-smoke` | yes | Smoke validates a small local graph fixture and JSON result without network. |
+| `lean-formalization-intake` | `offline-smoke` | yes | Doctor smoke records local Lean availability without installing dependencies. |
+| `lean-strict-verification-gate` | `offline-smoke` | yes | Doctor smoke records local Lean availability and scanner status without installing dependencies. |
+| `modal-research-compute` | `manual-native` | no | Modal workflows require explicit external compute credentials and are not safe for generic offline smoke. |
+| `research-digest-wrapper` | `manual-native` | no | Digest runs depend on configured topics and external feeds; no generic offline smoke is declared. |
+| `rss-news-digest` | `manual-native` | no | RSS digesting depends on configured feeds and network access. |
+| `sagemath` | `manual-native` | no | SageMath availability is host-dependent and too heavy for default offline CI smoke. |
+| `self-improving-agent` | `offline-smoke` | yes | Smoke validates local learning-plan generation without network, package installs, or config writes. |
+| `submission-venue-selector` | `offline-smoke` | yes | Smoke validates schemas, privacy gates, and offline not-ready behavior without retrieval or secrets. |
+| `tikz-draw` | `manual-native` | no | TikZ workflows depend on TeX toolchains and user-provided figure specs. |
+| `vnthuquan` | `manual-native` | no | Vietnam Thu Quan discovery/download flows are network and library-profile gated. |
+| `zotero` | `manual-native` | no | Zotero workflows depend on the user's local library, profile, and optional cloud credentials. |
 
 ```bash
 make runtime-smoke

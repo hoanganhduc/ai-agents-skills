@@ -76,6 +76,7 @@ profiles
 dependencies
 system-profile
 agent-locations
+surfaces
 local-library-profiles
 audit-and-migration
 openclaw-integration-plan
