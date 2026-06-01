@@ -80,18 +80,31 @@ def check_powershell_syntax(files: list[Path]) -> list[str]:
     if not shell:
         return []
     errors: list[str] = []
-    script = (
-        "$tokens=$null; $errs=$null; "
-        "[System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$tokens, [ref]$errs) | Out-Null; "
-        "if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Error $_.Message }; exit 1 }"
-    )
     for path in files:
         if path.suffix.lower() != ".ps1":
             continue
-        result = subprocess.run([shell, "-NoProfile", "-Command", script, str(path)], capture_output=True, text=True)
+        result = subprocess.run(
+            [shell, "-NoProfile", "-Command", powershell_parse_script(path)],
+            capture_output=True,
+            text=True,
+        )
         if result.returncode != 0:
             errors.append(f"powershell-syntax:{path}:{(result.stderr or result.stdout).strip()}")
     return errors
+
+
+def powershell_parse_script(path: Path) -> str:
+    absolute_path = powershell_single_quoted(str(path.resolve()))
+    return (
+        "$tokens=$null; $errs=$null; "
+        f"$path={absolute_path}; "
+        "[System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errs) | Out-Null; "
+        "if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Error $_.Message }; exit 1 }"
+    )
+
+
+def powershell_single_quoted(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def check_windows_path_hazards(files: list[Path]) -> list[str]:
