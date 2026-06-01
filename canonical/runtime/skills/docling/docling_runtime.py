@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import base64
 import html
 import io
@@ -678,17 +679,99 @@ def _load_config(args) -> dict:
         raise DoclingRuntimeError(f"remote Docling config path is not allowed: {_redact(str(path))}")
     if not path.exists():
         raise DoclingRuntimeError(f"Docling config does not exist: {path}")
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - used on Python 3.10
-        import tomli as tomllib
-
-    with path.open("rb") as handle:
-        config = tomllib.load(handle)
+    config = _load_toml(path)
     if not isinstance(config, dict):
         raise DoclingRuntimeError(f"Docling config must be a TOML table: {path}")
     _validate_config_schema(config, path)
     return config
+
+
+def _load_toml(path: Path) -> dict:
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover - used on Python 3.10 without stdlib tomllib
+        try:
+            import tomli as tomllib
+        except ImportError:
+            return _load_basic_toml(path)
+
+    with path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def _load_basic_toml(path: Path) -> dict:
+    config: dict = {}
+    current = config
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = _strip_toml_comment(raw_line).strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            if not section or section.startswith("["):
+                raise DoclingRuntimeError(f"unsupported Docling config syntax at {path}:{line_number}")
+            current = config
+            for part in section.split("."):
+                part = part.strip()
+                if not part:
+                    raise DoclingRuntimeError(f"unsupported Docling config syntax at {path}:{line_number}")
+                child = current.setdefault(part, {})
+                if not isinstance(child, dict):
+                    raise DoclingRuntimeError(f"Docling config section conflicts with scalar at {path}:{line_number}")
+                current = child
+            continue
+        if "=" not in line:
+            raise DoclingRuntimeError(f"unsupported Docling config syntax at {path}:{line_number}")
+        key, value = line.split("=", 1)
+        current[key.strip()] = _parse_basic_toml_value(value.strip(), path, line_number)
+    return config
+
+
+def _strip_toml_comment(line: str) -> str:
+    in_single = False
+    in_double = False
+    escaped = False
+    for index, char in enumerate(line):
+        if in_double and escaped:
+            escaped = False
+            continue
+        if in_double and char == "\\":
+            escaped = True
+            continue
+        if char == "'" and not in_double:
+            in_single = not in_single
+            continue
+        if char == '"' and not in_single:
+            in_double = not in_double
+            continue
+        if char == "#" and not in_single and not in_double:
+            return line[:index]
+    return line
+
+
+def _parse_basic_toml_value(value: str, path: Path, line_number: int):
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    if value.startswith(('"', "'")):
+        try:
+            return ast.literal_eval(value)
+        except (SyntaxError, ValueError) as exc:
+            raise DoclingRuntimeError(f"unsupported Docling config string at {path}:{line_number}") from exc
+    if value.startswith("[") and value.endswith("]"):
+        try:
+            normalized = re.sub(r"\btrue\b", "True", value, flags=re.IGNORECASE)
+            normalized = re.sub(r"\bfalse\b", "False", normalized, flags=re.IGNORECASE)
+            return ast.literal_eval(normalized)
+        except (SyntaxError, ValueError) as exc:
+            raise DoclingRuntimeError(f"unsupported Docling config array at {path}:{line_number}") from exc
+    if re.fullmatch(r"[+-]?\d+", value):
+        return int(value)
+    if re.fullmatch(r"[+-]?(\d+\.\d*|\d*\.\d+)([eE][+-]?\d+)?", value):
+        return float(value)
+    raise DoclingRuntimeError(f"unsupported Docling config value at {path}:{line_number}")
 
 
 def _resolve_preset(name: str, config: dict) -> dict:
