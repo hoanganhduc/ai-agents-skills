@@ -9,6 +9,7 @@
     "full": {
       "description": "Install every currently portable runtime file declared in this manifest.",
       "skills": [
+        "autonomous-research-loop-runtime",
         "annotated-review",
         "axiom-axle-mcp",
         "calibre",
@@ -162,6 +163,91 @@
     }
   ],
   "skills": {
+    "autonomous-research-loop-runtime": {
+      "runtime_dir": "autonomous-research-loop-runtime",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke validates local loop ledger initialization, append, validation, and status without network, package installs, provider CLIs, config writes, or subagent spawning."
+      },
+      "files": [
+        {
+          "source": "skills/autonomous-research-loop-runtime/autonomous_research_loop_runtime.py",
+          "target": "workspace/skills/autonomous-research-loop-runtime/autonomous_research_loop_runtime.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
+          "target": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
+          "target": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+          "target": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+          "macos": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+          "wsl": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
+          "windows": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
+          "windows_ps1": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1"
+        },
+        "args": [
+          "selftest"
+        ],
+        "timeout_seconds": 20,
+        "writes": {
+          "workspace_scratch": true
+        },
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_AUTONOMOUS_RESEARCH_LOOP_CANARY": "AUTONOMOUS-RESEARCH-LOOP-CANARY"
+        }
+      }
+    },
     "annotated-review": {
       "runtime_dir": "annotated-review",
       "smoke_coverage": {

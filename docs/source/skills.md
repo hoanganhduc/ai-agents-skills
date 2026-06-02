@@ -22,6 +22,8 @@ Some older local skill names are accepted as migration aliases. For example, `de
 |---|---|---|
 | `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `serious-research`, `full-research` |
 | `annotated-review` | Annotated paper review workflow when both annotation and review are requested. | `full-research` |
+| `autonomous-research-loop` | Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs. | `research-core`, `serious-research`, `workflow-tools`, `multi-agent`, `full-research` |
+| `autonomous-research-loop-runtime` | Offline runtime helper for autonomous research loop ledger initialization, iteration appends, validation, status, and selftest. | `research-core`, `serious-research`, `workflow-tools`, `multi-agent`, `full-research` |
 | `axiom-axle-mcp` | Optional inert setup helper for AxiomMath AXLE MCP formal-proof assistance. | `formal-research-remote`, `full-research` |
 | `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `serious-research`, `full-research` |
 | `cross-agent-delegation` | Cross-agent delegation packet contract for bounded parent-controlled handoffs. | `multi-agent`, `serious-research`, `full-research` |
