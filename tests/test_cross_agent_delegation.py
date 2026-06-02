@@ -96,7 +96,14 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
         args.profile = "multi-agent"
         self.assertEqual(
             set(resolve_skills(args, manifests)),
-            {"agent-group-discuss", "model-router", "prose", SKILL},
+            {
+                "agent-group-discuss",
+                "autonomous-research-loop",
+                "autonomous-research-loop-runtime",
+                "model-router",
+                "prose",
+                SKILL,
+            },
         )
         args.profile = "research-core"
         self.assertNotIn(SKILL, resolve_skills(args, manifests))

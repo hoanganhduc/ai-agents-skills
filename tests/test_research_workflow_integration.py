@@ -274,6 +274,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
         skills = set(resolve_skills(args, manifests))
         expected = {
             "research-briefing",
+            "autonomous-research-loop",
+            "autonomous-research-loop-runtime",
             "deep-research-workflow",
             "source-research",
             "research-report-reviewer",

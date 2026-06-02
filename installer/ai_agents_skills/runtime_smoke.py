@@ -19,6 +19,7 @@ from .verify import verify
 
 
 RUNTIME_SMOKE_SKILLS = (
+    "autonomous-research-loop-runtime",
     "axiom-axle-mcp",
     "deep-research-workflow",
     "formal-skeleton-helper",
@@ -557,6 +558,21 @@ def validate_smoke_output(
         checks.append({"name": "mutations-not-attempted", "ok": payload.get("mutations_attempted") is False})
         checks.append({"name": "canary-not-leaked", "ok": "SUBMISSION-VENUE-SELECTOR-CANARY" not in serialized})
         checks.append({"name": "schema-list-present", "ok": "delivery.json" in payload.get("schemas", [])})
+    elif skill == "autonomous-research-loop-runtime":
+        payload = parse_json_stdout(completed.stdout)
+        serialized = json.dumps(payload, sort_keys=True)
+        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
+        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
+        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
+        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
+        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
+        checks.append({"name": "provider-cli-not-attempted", "ok": payload.get("provider_cli_attempted") is False})
+        checks.append({"name": "subagents-not-spawned", "ok": payload.get("subagents_spawned") is False})
+        checks.append({"name": "run-dir-created", "ok": payload.get("run_dir_created") is True})
+        checks.append({"name": "validation-ok", "ok": payload.get("validation_status") == "ok"})
+        checks.append({"name": "canary-not-leaked", "ok": "AUTONOMOUS-RESEARCH-LOOP-CANARY" not in serialized})
     return checks
 
 

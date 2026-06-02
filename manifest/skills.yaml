@@ -1,6 +1,24 @@
 {
   "schema_version": 1,
   "skills": {
+    "autonomous-research-loop": {
+      "description": "Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs.",
+      "profiles": ["research-core", "serious-research", "workflow-tools", "multi-agent", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek", "copilot", "openclaw"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": ["bounded-research-loop", "evidence-gates", "panel-loop-handoff", "recovery-ledger"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "autonomous-research-loop-runtime": {
+      "description": "Offline runtime helper for autonomous research loop ledger initialization, iteration appends, validation, status, and selftest.",
+      "profiles": ["research-core", "serious-research", "workflow-tools", "multi-agent", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek", "copilot"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": [],
+      "optional_capabilities": ["offline-runtime-smoke", "loop-ledger-validation", "local-recovery-state"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+    },
     "deep-research-workflow": {
       "description": "Phased source-preserving research workflow: search, analyze, write, with citation handoff.",
       "profiles": ["research-core", "serious-research", "full-research"],

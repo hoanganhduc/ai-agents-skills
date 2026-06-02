@@ -1,0 +1,22 @@
+{
+  "blockers": [],
+  "caveats": [
+    "No repository implementation was performed.",
+    "Live provider probes for Claude, Copilot, and DeepSeek/CodeWhale were not run.",
+    "Native Windows and macOS verification were not run.",
+    "Explicit OpenClaw fake-root coverage was not run because this is still a plan and the skill does not exist yet.",
+    "OpenClaw remains explicit fake-root-only; real-system OpenClaw writes are not part of this plan.",
+    "License and attribution details must be checked before adapting upstream skill text.",
+    "Provider documentation and model availability are time-sensitive and should be rechecked before implementation."
+  ],
+  "checked_at": "2026-06-02T06:57:30Z",
+  "decision": "ready-with-caveats",
+  "gaps": [
+    "implementation task breakdown remains for a follow-up engineering phase",
+    "live provider readiness remains unverified by design",
+    "all-target/all-OS readiness remains a planned acceptance gate, not an executed result",
+    "runtime-smoke readiness requires a future manifest-declared smoke contract for the companion runtime helper"
+  ],
+  "guard_output_ids": ["G1", "G2", "G3", "G4", "G5"],
+  "report_ref": "research/report.md"
+}
