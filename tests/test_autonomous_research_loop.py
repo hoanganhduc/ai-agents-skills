@@ -34,6 +34,109 @@ def create_agent_home(root: Path, agent: str) -> None:
     (root / f".{agent}").mkdir(parents=True, exist_ok=True)
 
 
+def run_helper(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(HELPER), *args],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=check,
+    )
+
+
+def init_loop(run_dir: Path, *, max_iterations: int = 2) -> None:
+    run_helper(
+        "init",
+        "--dir",
+        str(run_dir),
+        "--goal",
+        "integrate autonomous research loop",
+        "--success-criteria",
+        "ledger validates",
+        "--max-iterations",
+        str(max_iterations),
+    )
+
+
+def append_iteration(
+    run_dir: Path,
+    decision: str,
+    *,
+    objective: str = "record evidence gate result",
+    claim_id: str | None = None,
+    evidence_id: str | None = None,
+    stop_reason: str | None = None,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    command = [
+        "append-iteration",
+        "--dir",
+        str(run_dir),
+        "--mode",
+        "bounded-research",
+        "--objective",
+        objective,
+        "--decision",
+        decision,
+        "--source-id",
+        "S1",
+        "--guard-ref",
+        "G1",
+        "--remaining-gap",
+        "second pass",
+    ]
+    if claim_id:
+        command.extend(["--claim-id", claim_id])
+    if evidence_id:
+        command.extend(["--evidence-id", evidence_id])
+    if stop_reason:
+        command.extend(["--stop-reason", stop_reason])
+    return run_helper(*command, check=check)
+
+
+def read_loop_json(run_dir: Path, filename: str) -> dict[str, object]:
+    return json.loads((run_dir / filename).read_text(encoding="utf-8"))
+
+
+def write_loop_json(run_dir: Path, filename: str, payload: dict[str, object]) -> None:
+    (run_dir / filename).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def write_iterations(run_dir: Path, records: list[dict[str, object]]) -> None:
+    (run_dir / "iterations.jsonl").write_text(
+        "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+
+def iteration_record(number: int, decision: str) -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "iteration": number,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "mode": "bounded-research",
+        "objective": f"iteration {number}",
+        "input_refs": [],
+        "evidence_checked": {
+            "source_ids": [],
+            "claim_ids": [],
+            "evidence_ids": [],
+            "guard_refs": [],
+        },
+        "actions_taken": [],
+        "output": "",
+        "remaining_gaps": [],
+        "budget_delta": {
+            "iterations": 1,
+            "tokens": 0,
+            "usd": 0.0,
+            "wall_time_seconds": 0,
+        },
+        "decision": decision,
+        "stop_reason": "",
+    }
+
+
 class AutonomousResearchLoopTests(unittest.TestCase):
     def test_runtime_helper_selftest_is_offline_and_validates_ledger(self) -> None:
         completed = subprocess.run(
@@ -61,50 +164,8 @@ class AutonomousResearchLoopTests(unittest.TestCase):
     def test_runtime_helper_init_append_validate_status_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "loop"
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(HELPER),
-                    "init",
-                    "--dir",
-                    str(run_dir),
-                    "--goal",
-                    "integrate autonomous research loop",
-                    "--success-criteria",
-                    "ledger validates",
-                    "--max-iterations",
-                    "2",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=True,
-            )
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(HELPER),
-                    "append-iteration",
-                    "--dir",
-                    str(run_dir),
-                    "--mode",
-                    "bounded-research",
-                    "--objective",
-                    "record evidence gate result",
-                    "--decision",
-                    "continue",
-                    "--source-id",
-                    "S1",
-                    "--guard-ref",
-                    "G1",
-                    "--remaining-gap",
-                    "second pass",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=20,
-                check=True,
-            )
+            init_loop(run_dir)
+            append_iteration(run_dir, "continue")
             validate = subprocess.run(
                 [sys.executable, str(HELPER), "validate", "--dir", str(run_dir)],
                 capture_output=True,
@@ -127,6 +188,175 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             self.assertEqual(status_payload["status"], "ok")
             self.assertEqual(status_payload["state_status"], "running")
             self.assertEqual(status_payload["last_decision"], "continue")
+
+    def test_runtime_helper_rejects_final_continue_and_preserves_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=2)
+            append_iteration(run_dir, "continue")
+
+            rejected = run_helper(
+                "append-iteration",
+                "--dir",
+                str(run_dir),
+                "--mode",
+                "bounded-research",
+                "--objective",
+                "invalid final continue",
+                "--decision",
+                "continue",
+                check=False,
+            )
+
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("final allowed iteration", rejected.stdout)
+            self.assertEqual(len((run_dir / "iterations.jsonl").read_text(encoding="utf-8").splitlines()), 1)
+
+    def test_runtime_helper_rejects_early_stop_without_success_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+
+            rejected_reason = append_iteration(
+                run_dir,
+                "stop",
+                objective="premature non-proof stop",
+                stop_reason="budget_exhausted",
+                evidence_id="E1",
+                check=False,
+            )
+            rejected_evidence = append_iteration(
+                run_dir,
+                "stop",
+                objective="premature proof stop without evidence",
+                stop_reason="proof_found",
+                check=False,
+            )
+
+            self.assertNotEqual(rejected_reason.returncode, 0)
+            self.assertIn("success/proof stop_reason", rejected_reason.stdout)
+            self.assertNotEqual(rejected_evidence.returncode, 0)
+            self.assertIn("claim_id or evidence_id", rejected_evidence.stdout)
+            self.assertEqual((run_dir / "iterations.jsonl").read_text(encoding="utf-8"), "")
+
+    def test_runtime_helper_allows_early_success_stop_with_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+
+            append_iteration(
+                run_dir,
+                "stop",
+                objective="proof found",
+                stop_reason="proof_found",
+                evidence_id="proof-artifact-1",
+            )
+
+            status = json.loads(run_helper("status", "--dir", str(run_dir)).stdout)
+            self.assertEqual(status["state_status"], "stopped")
+            self.assertEqual(status["remaining_iterations"], 2)
+
+    def test_runtime_helper_allows_final_terminal_stop_and_rejects_later_append(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=2)
+            append_iteration(run_dir, "continue")
+            append_iteration(run_dir, "stop", objective="budget exhausted")
+
+            rejected = append_iteration(run_dir, "continue", objective="over budget", check=False)
+
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("loop status is stopped", rejected.stdout)
+            status = json.loads(run_helper("status", "--dir", str(run_dir)).stdout)
+            self.assertEqual(status["state_status"], "stopped")
+            self.assertEqual(status["remaining_iterations"], 0)
+
+    def test_runtime_helper_validate_fails_for_early_stop_without_success_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+            state = read_loop_json(run_dir, "loop_state.json")
+            budget = read_loop_json(run_dir, "budget.json")
+            state["status"] = "stopped"
+            state["last_iteration"] = 1
+            budget["spent_iterations"] = 1
+            write_loop_json(run_dir, "loop_state.json", state)
+            write_loop_json(run_dir, "budget.json", budget)
+            write_iterations(run_dir, [iteration_record(1, "stop")])
+
+            validate = run_helper("validate", "--dir", str(run_dir), check=False)
+
+            self.assertNotEqual(validate.returncode, 0)
+            payload = json.loads(validate.stdout)
+            self.assertIn(
+                "iteration 1 early stop before max_iterations must use a success/proof stop_reason",
+                payload["errors"],
+            )
+            self.assertIn(
+                "iteration 1 early stop before max_iterations must cite claim_ids or evidence_ids",
+                payload["errors"],
+            )
+
+    def test_runtime_helper_validate_fails_when_iteration_count_exceeds_max(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=1)
+            state = read_loop_json(run_dir, "loop_state.json")
+            budget = read_loop_json(run_dir, "budget.json")
+            state["status"] = "stopped"
+            state["last_iteration"] = 2
+            budget["spent_iterations"] = 2
+            write_loop_json(run_dir, "loop_state.json", state)
+            write_loop_json(run_dir, "budget.json", budget)
+            write_iterations(run_dir, [iteration_record(1, "continue"), iteration_record(2, "stop")])
+
+            validate = run_helper("validate", "--dir", str(run_dir), check=False)
+
+            self.assertNotEqual(validate.returncode, 0)
+            payload = json.loads(validate.stdout)
+            self.assertIn("iterations.jsonl exceeds budget.json max_iterations", payload["errors"])
+
+    def test_runtime_helper_validate_fails_when_spent_iterations_desyncs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+            state = read_loop_json(run_dir, "loop_state.json")
+            state["status"] = "running"
+            state["last_iteration"] = 1
+            write_loop_json(run_dir, "loop_state.json", state)
+            write_iterations(run_dir, [iteration_record(1, "continue")])
+
+            validate = run_helper("validate", "--dir", str(run_dir), check=False)
+
+            self.assertNotEqual(validate.returncode, 0)
+            payload = json.loads(validate.stdout)
+            self.assertIn("budget.json spent_iterations must equal iterations.jsonl record count", payload["errors"])
+
+    def test_runtime_helper_validate_fails_for_running_exhausted_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=1)
+            state = read_loop_json(run_dir, "loop_state.json")
+            budget = read_loop_json(run_dir, "budget.json")
+            state["status"] = "running"
+            state["last_iteration"] = 1
+            budget["spent_iterations"] = 1
+            write_loop_json(run_dir, "loop_state.json", state)
+            write_loop_json(run_dir, "budget.json", budget)
+            write_iterations(run_dir, [iteration_record(1, "continue")])
+
+            validate = run_helper("validate", "--dir", str(run_dir), check=False)
+            status = run_helper("status", "--dir", str(run_dir), check=False)
+
+            self.assertNotEqual(validate.returncode, 0)
+            validate_payload = json.loads(validate.stdout)
+            status_payload = json.loads(status.stdout)
+            self.assertIn(
+                "loop_state.json status cannot be running when iteration budget is exhausted",
+                validate_payload["errors"],
+            )
+            self.assertEqual(status_payload["status"], "failed")
+            self.assertEqual(status_payload["remaining_iterations"], 0)
 
     def test_canonical_skill_installs_to_openclaw_without_runtime_or_support_files(self) -> None:
         manifests = load_manifests()

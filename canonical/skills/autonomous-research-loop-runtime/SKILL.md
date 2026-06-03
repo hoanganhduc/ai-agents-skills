@@ -37,6 +37,14 @@ bash ~/.codex/runtime/run_skill.sh skills/autonomous-research-loop-runtime/run_a
 bash ~/.codex/runtime/run_skill.sh skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh status --dir research/run
 ```
 
+The helper is authoritative for local ledger and iteration-budget invariants.
+It rejects appends after `max_iterations`, rejects continuing decisions on the
+final allowed iteration, rejects early `stop` records that lack success/proof
+evidence, and validation fails ledgers whose spent iteration count, iteration
+records, terminal decisions, and running status disagree. It enforces the
+presence of proof/success evidence references; it does not validate the
+semantic truth of a claimed proof.
+
 On Windows, use the installed runtime runner with the native launcher target:
 
 ```bat
@@ -60,4 +68,6 @@ The helper:
 - does not spawn subagents
 
 Use the canonical `autonomous-research-loop` skill for orchestration policy and
-this helper only for local ledger mechanics.
+this helper only for local ledger mechanics. This helper does not validate the
+semantic truth of a proof or success claim; record that evidence in the loop
+artifacts and apply the orchestration policy's evidence gates.

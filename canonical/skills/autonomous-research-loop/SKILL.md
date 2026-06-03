@@ -91,6 +91,14 @@ Before starting an autonomous run:
    - repeated plateau according to the declared plateau rule
 5. Initialize or validate the loop files.
 
+The maximum iteration budget is a hard cap, not a target to exceed while
+searching for success. A loop may run fewer iterations when success or a true
+hard stop condition occurs, but it must never append more than
+`max_iterations` records. A normal early `stop` before the final allowed
+iteration is valid only when the success criteria are met and the iteration
+cites proof/success evidence. Otherwise continue, revise, delegate, or mark the
+loop `blocked` with the blocker recorded.
+
 ## Iteration Protocol
 
 Each iteration must record:
@@ -106,8 +114,12 @@ Each iteration must record:
 - budget consumed or estimated
 - decision: `continue`, `revise`, `delegate`, `stop`, or `blocked`
 
-Only continue when the next iteration has a concrete objective and remaining
-budget.
+Only use a continuing decision (`continue`, `revise`, or `delegate`) when the
+next iteration has a concrete objective and remaining budget. The final allowed
+iteration must be terminal (`stop` or `blocked`); if success criteria have not
+been satisfied by then, stop as budget exhausted instead of leaving the loop
+`running`. Before the final allowed iteration, `stop` must mean success/proof
+found and must cite at least one claim or evidence id.
 
 ## Evidence Gates
 
