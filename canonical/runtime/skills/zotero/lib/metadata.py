@@ -444,12 +444,11 @@ def fetch_metadata(identifier, translation_server="http://localhost:1969", confi
         except (ValueError, RuntimeError, TimeoutError, ConnectionError) as exc:
             translation_error = exc
 
-    if input_type != "url" or translation_error is None:
-        try:
-            metadata = _fetch_via_translation_server(lookup_url, translation_server)
-            return _finalize_metadata(metadata, input_type, normalized), input_type, normalized
-        except (ConnectionError, ValueError, RuntimeError, TimeoutError) as exc:
-            translation_error = exc
+    try:
+        metadata = _fetch_via_translation_server(lookup_url, translation_server)
+        return _finalize_metadata(metadata, input_type, normalized), input_type, normalized
+    except (ConnectionError, ValueError, RuntimeError, TimeoutError) as exc:
+        translation_error = exc
 
     if input_type in {"doi", "arxiv", "isbn"}:
         metadata = _fetch_direct(input_type, normalized)

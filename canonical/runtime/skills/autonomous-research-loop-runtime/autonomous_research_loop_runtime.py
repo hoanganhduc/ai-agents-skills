@@ -16,6 +16,9 @@ from typing import Any
 SCHEMA_VERSION = "1.0"
 DEFAULT_PLATEAU_RULE = "stop after three consecutive iterations with no new evidence or reduced uncertainty"
 VALID_DECISIONS = {"continue", "revise", "delegate", "stop", "blocked"}
+TERMINAL_DECISIONS = {"stop", "blocked"}
+TERMINAL_STATUSES = {"stopped", "blocked"}
+SUCCESS_STOP_REASONS = {"success", "success_criteria_met", "proof", "proof_found", "found_proof", "proved"}
 VALID_MODES = {
     "monitor",
     "bounded-research",
@@ -72,6 +75,25 @@ def append_jsonl(path: Path, data: dict[str, Any]) -> None:
 
 def parse_many(values: list[str] | None) -> list[str]:
     return [value for value in values or [] if value]
+
+
+def normalized_stop_reason(reason: object) -> str:
+    return str(reason or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def is_success_stop_reason(reason: object) -> bool:
+    return normalized_stop_reason(reason) in SUCCESS_STOP_REASONS
+
+
+def has_success_evidence(record: dict[str, Any]) -> bool:
+    evidence_checked = record.get("evidence_checked")
+    if not isinstance(evidence_checked, dict):
+        return False
+    claim_ids = evidence_checked.get("claim_ids")
+    evidence_ids = evidence_checked.get("evidence_ids")
+    return any(isinstance(item, str) and item for item in claim_ids or []) or any(
+        isinstance(item, str) and item for item in evidence_ids or []
+    )
 
 
 def loop_paths(run_dir: Path) -> dict[str, Path]:
@@ -168,7 +190,25 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
     state = read_json(paths["state"])
     budget = read_json(paths["budget"])
     iterations = read_iterations(paths["iterations"])
+    max_iterations = int(budget["max_iterations"])
+    spent_iterations = int(budget.get("spent_iterations", 0))
+    if state.get("status") in TERMINAL_STATUSES:
+        raise ValueError(f"cannot append iteration after loop status is {state.get('status')}")
+    if len(iterations) >= max_iterations:
+        raise ValueError("cannot append iteration because max_iterations is exhausted")
+    if spent_iterations >= max_iterations:
+        raise ValueError("cannot append iteration because spent_iterations reached max_iterations")
     number = len(iterations) + 1
+    remaining_after_append = max_iterations - number
+    if remaining_after_append == 0 and args.decision not in TERMINAL_DECISIONS:
+        raise ValueError("final allowed iteration must use decision stop or blocked, not a continuing decision")
+    claim_ids = parse_many(args.claim_id)
+    evidence_ids = parse_many(args.evidence_id)
+    if args.decision == "stop" and remaining_after_append > 0:
+        if not is_success_stop_reason(args.stop_reason):
+            raise ValueError("early stop before max_iterations requires a success/proof stop_reason")
+        if not claim_ids and not evidence_ids:
+            raise ValueError("early stop before max_iterations requires at least one claim_id or evidence_id")
     now = utc_now()
     record = {
         "schema_version": SCHEMA_VERSION,
@@ -179,8 +219,8 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
         "input_refs": parse_many(args.input_ref),
         "evidence_checked": {
             "source_ids": parse_many(args.source_id),
-            "claim_ids": parse_many(args.claim_id),
-            "evidence_ids": parse_many(args.evidence_id),
+            "claim_ids": claim_ids,
+            "evidence_ids": evidence_ids,
             "guard_refs": parse_many(args.guard_ref),
         },
         "actions_taken": parse_many(args.action_taken),
@@ -200,7 +240,7 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
     state["last_iteration"] = number
     state["updated_at"] = now
     state["status"] = "blocked" if args.decision == "blocked" else "stopped" if args.decision == "stop" else "running"
-    budget["spent_iterations"] = int(budget.get("spent_iterations", 0)) + 1
+    budget["spent_iterations"] = number
     budget["spent_tokens"] = int(budget.get("spent_tokens", 0)) + args.tokens
     budget["spent_usd"] = float(budget.get("spent_usd", 0.0)) + args.usd
     budget["updated_at"] = now
@@ -275,6 +315,19 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
             value = budget.get(field)
             if not isinstance(value, int) or value < 0:
                 errors.append(f"budget.json {field} must be a non-negative integer")
+        spent_iterations = budget.get("spent_iterations", 0)
+        if not isinstance(spent_iterations, int) or spent_iterations < 0:
+            errors.append("budget.json spent_iterations must be a non-negative integer")
+        else:
+            max_iterations = budget.get("max_iterations")
+            if isinstance(max_iterations, int) and max_iterations >= 0:
+                remaining_iterations = max(0, max_iterations - spent_iterations)
+                if len(iterations) > max_iterations:
+                    errors.append("iterations.jsonl exceeds budget.json max_iterations")
+                if spent_iterations != len(iterations):
+                    errors.append("budget.json spent_iterations must equal iterations.jsonl record count")
+                if state and state.get("status") == "running" and remaining_iterations == 0:
+                    errors.append("loop_state.json status cannot be running when iteration budget is exhausted")
 
     expected = 1
     for record in iterations:
@@ -287,6 +340,29 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
         if "objective" not in record:
             errors.append(f"iteration {expected} missing objective")
         expected += 1
+    if budget and iterations:
+        max_iterations = budget.get("max_iterations")
+        spent_iterations = budget.get("spent_iterations")
+        if isinstance(max_iterations, int) and isinstance(spent_iterations, int):
+            remaining_iterations = max(0, max_iterations - spent_iterations)
+            last = iterations[-1]
+            if last.get("decision") not in TERMINAL_DECISIONS and remaining_iterations == 0:
+                errors.append("latest iteration cannot have a continuing decision when iteration budget is exhausted")
+            for record in iterations:
+                iteration_number = record.get("iteration")
+                if (
+                    record.get("decision") == "stop"
+                    and isinstance(iteration_number, int)
+                    and iteration_number < max_iterations
+                ):
+                    if not is_success_stop_reason(record.get("stop_reason")):
+                        errors.append(
+                            f"iteration {iteration_number} early stop before max_iterations must use a success/proof stop_reason"
+                        )
+                    if not has_success_evidence(record):
+                        errors.append(
+                            f"iteration {iteration_number} early stop before max_iterations must cite claim_ids or evidence_ids"
+                        )
 
     return {
         "status": "failed" if errors else "ok",
@@ -358,7 +434,7 @@ def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
             input_ref=[],
             source_id=[],
             claim_id=[],
-            evidence_id=[],
+            evidence_id=["offline-smoke-evidence"],
             guard_ref=["offline-smoke"],
             action_taken=["initialized ledger"],
             output="selftest complete",
@@ -366,7 +442,7 @@ def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
             tokens=0,
             usd=0.0,
             wall_time_seconds=0,
-            stop_reason="selftest finished",
+            stop_reason="success",
         )
         append_iteration(append_args)
         validation = validate_loop_dir(run_dir)

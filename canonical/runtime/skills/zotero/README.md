@@ -86,15 +86,16 @@ DOI/arXiv/ISBN/URL
 - `webdav_url`, `webdav_user` — WebDAV endpoint
 - `gdrive_folder_id` — Google Drive folder for Zotero PDFs
 - `zotfile_pattern` — PDF rename pattern (default: `{%a_}{%y_}{%t} {[%T]}`)
-- `translation_server` — Translation Server URL (optional when direct fallback/WSL helper is sufficient)
+- `translation_server` — Translation Server URL for DOI/arXiv/ISBN and generic URL metadata
 - `wsl_translation_distro` — WSL distro used for URL metadata fallback (default: `Ubuntu-24.04`)
 - `wsl_translation_repo` — WSL-local translation-server source checkout for URL metadata fallback (default: `~/zotero-translation-server`)
 
 ## Windows runtime note
 
-On Windows, the generic-URL translation path can use the WSL helper route
-through `scripts/wsl_url_translate.sh` and a WSL-local source checkout at
-`~/zotero-translation-server`.
+For generic URLs, the runtime tries the WSL helper route first when it is
+available, then falls back to the configured Translation Server `/web` endpoint.
+The WSL route uses `scripts/wsl_url_translate.sh` and a WSL-local source checkout
+at `~/zotero-translation-server`.
 
 The Docker-based translation-server path in this skill directory is kept only as a legacy/optional
 path. It is not required for the Windows runtime wrapper.

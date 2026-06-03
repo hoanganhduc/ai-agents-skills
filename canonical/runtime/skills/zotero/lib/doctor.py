@@ -9,7 +9,7 @@ import subprocess
 def run_doctor(config):
     checks = []
     checks.append(_check_translation_server(config))
-    checks.append(_check_wsl_translation_helper(config))
+    checks.append(_check_url_metadata(config))
     checks.append(_check_zotero_api(config))
     checks.append(_check_webdav(config))
     checks.append(_check_gdrive(config))
@@ -37,19 +37,23 @@ def _check_translation_server(config):
                 )}
 
 
-def _check_wsl_translation_helper(config):
+def _check_url_metadata(config):
     try:
-        from lib.metadata import _fetch_url_via_wsl
-        item = _fetch_url_via_wsl("https://en.wikipedia.org/wiki/Zotero", config)
+        from lib.metadata import fetch_metadata
+        item, input_type, _normalized = fetch_metadata(
+            "https://en.wikipedia.org/wiki/Zotero",
+            config.get("translation_server", "http://localhost:1969"),
+            config,
+        )
         title = (item or {}).get("title", "").strip() or "metadata returned"
         return {
-            "name": "WSL URL Translation",
+            "name": "URL metadata translation",
             "ok": True,
-            "message": f"WSL helper returned metadata for generic URLs ({title})",
+            "message": f"Generic URL metadata works via {input_type} input ({title})",
         }
     except Exception as e:
         return {
-            "name": "WSL URL Translation",
+            "name": "URL metadata translation",
             "ok": False,
             "message": str(e),
         }

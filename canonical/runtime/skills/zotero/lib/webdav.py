@@ -65,6 +65,10 @@ class WebDAVClient:
         Returns:
             True on success, raises on failure.
         """
+        pdf_filename = os.path.basename(pdf_filename or "")
+        if not pdf_filename:
+            raise ValueError("pdf_filename must be a non-empty filename")
+
         # Create zip in memory
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
