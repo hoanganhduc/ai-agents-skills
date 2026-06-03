@@ -146,8 +146,12 @@ When starting or repairing the local server, prefer the runtime helper:
 bash ~/.codex/runtime/workspace/skills/zotero/scripts/start-translation-server.sh
 ```
 
-Then run `doctor` and require the Translation Server check to pass before
-metadata-dependent add/update workflows:
+Then run `doctor` before metadata-dependent add/update workflows. A reachable
+Translation Server is preferred. If it is unreachable, DOI/arXiv/ISBN metadata
+may still resolve through the direct fallback when runtime dependencies are
+installed, and generic URL metadata may use the configured WSL helper path.
+Treat other failed `doctor` checks as blockers unless the user explicitly asks
+for a degraded diagnostic path:
 
 ```bash
 bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh doctor
@@ -184,7 +188,7 @@ bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh update <key> --item-
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh update <key> --attach-local-file "/path/to/file.pdf"
+bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh update <key> --attach-file "/path/to/file.pdf"
 ```
 
 ```bash
@@ -250,7 +254,7 @@ If the user asks to add a paper and does not specify a collection:
 - `doctor` for end-to-end health checks
 - `sync-cache` before heavy library inspection if the cache may be stale
 - `notes <key>` when the user wants child-note context for an item
-- `update <key> --attach-local-file ...` when a retrieved or local file should be attached to an existing Zotero item
+- `update <key> --attach-file ...` when a retrieved or local file should be attached to an existing Zotero item
 
 ## Fallback rule
 

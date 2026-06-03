@@ -44,8 +44,11 @@ proof/success artifact, and validation fails ledgers whose spent iteration
 count, iteration records, terminal decisions, and running status disagree.
 
 For an early proof/success stop, at least one `--evidence-id ID` must resolve to
-`proof_artifacts/ID.json` inside the loop directory. The artifact id must be
-filename-safe, and the JSON artifact must include:
+`proof_artifacts/ID.json` inside the loop directory. Early proof/success stop
+reasons are `success`, `success_criteria_met`, `proof`, `proof_found`,
+`found_proof`, and `proved`. The artifact id must be 1-128 characters of
+letters, digits, underscore, hyphen, or dot and must start with a letter or
+digit. The JSON artifact must include:
 
 ```json
 {
@@ -62,9 +65,13 @@ filename-safe, and the JSON artifact must include:
 }
 ```
 
-The helper checks that the artifact exists, the id matches, the checker status
-is `passed`, and `proof_path` is an existing relative file within the loop
-directory. It does not run Lean, Coq, SageMath, or another checker itself.
+The helper checks that the artifact exists, `id` matches the evidence id,
+`schema_version` is `1.0`, `machine_checkable` is `true`, `artifact_type` is
+one of `lean`, `coq`, `isabelle`, `agda`, `sagemath`, `python-verifier`, or
+`external-verifier`, `checker.name` is non-empty, `checker.status` is `passed`,
+`target` is non-empty, and `proof_path` is an existing relative file within
+the loop directory. It does not run Lean, Coq, SageMath, or another checker
+itself.
 
 On Windows, use the installed runtime runner with the native launcher target:
 
