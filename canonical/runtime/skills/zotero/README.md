@@ -44,10 +44,13 @@ zot clean-staging
 ## Architecture
 
 ```
-DOI/arXiv/ISBN/URL
+DOI/arXiv/ISBN
   → Translation Server when reachable
   → otherwise direct DOI/arXiv/ISBN fallback
-  → otherwise WSL helper fallback for generic URLs on this Windows setup
+Generic URL
+  → WSL helper when configured and available
+  → otherwise Translation Server /web endpoint
+Resolved metadata
   → Duplicate check (DOI-only)
   → PDF download chain (getscipapers → Semantic Scholar → arXiv)
   → PDF verification (magic bytes, page count, aspect ratio, title match)
@@ -64,7 +67,7 @@ DOI/arXiv/ISBN/URL
 |-----------|---------|
 | `zot.py` | CLI entry point |
 | `lib/config.py` | Config loader (SecretRef-aware) |
-| `lib/metadata.py` | Translation Server client (auto-detect DOI/arXiv/ISBN/URL) |
+| `lib/metadata.py` | Metadata resolver with Translation Server, WSL URL, and direct DOI/arXiv/ISBN fallback paths |
 | `lib/zotero_client.py` | pyzotero wrapper (exponential backoff on 429/5xx) |
 | `lib/downloader.py` | PDF download chain (branched by input type) |
 | `lib/verifier.py` | PDF validation (reject stubs, slides, wrong papers) |
@@ -90,6 +93,15 @@ DOI/arXiv/ISBN/URL
 - `wsl_translation_distro` — WSL distro used for URL metadata fallback (default: `Ubuntu-24.04`)
 - `wsl_translation_repo` — WSL-local translation-server source checkout for URL metadata fallback (default: `~/zotero-translation-server`)
 
+## Dependency behavior
+
+`lib/metadata.py` can be imported and can detect input types without
+`requests`, which keeps offline and unit checks lightweight. Live metadata
+lookups for DOI/arXiv/ISBN/URL still require `requests` from
+`requirements.txt`. CLI startup imports `pyzotero` through
+`lib/zotero_client.py`, so operational CLI use requires the runtime
+dependencies to be installed.
+
 ## Windows runtime note
 
 For generic URLs, the runtime tries the WSL helper route first when it is
@@ -103,11 +115,11 @@ path. It is not required for the Windows runtime wrapper.
 ## Testing
 
 ```bash
-# Unit + mocked tests (no credentials needed)
-python3 -m pytest tests/ -v
+# From the repository root: unit + mocked tests (no credentials needed)
+python3 -m unittest tests.test_zotero_webdav_metadata -v
 
-# Live integration tests (requires credentials)
-python3 -m pytest tests/ --live -v
+# Full repository test suite
+make test
 ```
 
 ## Cron Jobs

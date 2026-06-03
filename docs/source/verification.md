@@ -50,18 +50,34 @@ make smoke ARGS="--skill zotero --root <fake-or-real-root>"
 python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
-Recommended local maintainer checks mirror the CI gate:
+Fast local maintainer checks:
 
 ```bash
+make static-check
 make sanitize-check
 make test
 make docs-check
 make runtime-smoke
-make runtime-smoke ARGS="--skills self-improving-agent"
-make docs
-make docs-site
 make lifecycle-test ARGS="--matrix default --platform-shape all"
 ```
+
+Closest single-host CI parity pass:
+
+```bash
+make static-check
+make sanitize-check
+make test
+make docs-check
+python -m pip install networkx psutil
+make runtime-smoke
+python -m pip install -r docs/requirements.txt
+make docs-site
+make lifecycle-test ARGS="--matrix stress --platform-shape all"
+```
+
+Linux CI runs the stress lifecycle matrix across all platform shapes. Python
+3.10 compatibility, macOS, and Windows jobs run narrower subsets that still
+include static checks, sanitizer checks, tests, and generated-doc checks.
 
 CI checks generated docs with `make docs-check`, which renders expected docs
 without mutating `README.md` or `docs/`. Run `make docs` only when you intend
@@ -90,6 +106,11 @@ Result meanings:
 - `ok`: all selected managed artifacts passed their checks.
 - `no-managed-artifacts`: the selected scope has no installer-managed files to check.
 - `missing` or failed checks: a managed file, marker, block, or format-specific condition no longer matches recorded state.
+
+CLI exit codes: `verify`, `smoke`, `runtime-smoke`, `lifecycle-test`, and
+`docs-check` exit `0` only for `ok`. Status values such as
+`no-managed-artifacts`, `degraded`, `stale`, or `failed` are nonzero unless a
+higher-level lifecycle scenario intentionally records them as expected.
 
 Current skill checks:
 

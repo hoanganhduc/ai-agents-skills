@@ -139,8 +139,12 @@ The GitHub Pages site is built from `docs/source` and deployed by
 
 Most checked-in docs are generated. Edit `installer/ai_agents_skills/docs.py`
 and the manifests for generated pages, then run `make docs`; CI checks that
-`README.md` and `docs/` are current. `docs/source/index.md` and
-`docs/source/overview.md` are maintained manually as docs-site landing pages.
+generated docs are current. Generated docs are `README.md`, each page emitted
+by `generated_doc_texts()` under `docs/`, and the mirrored copies under
+`docs/source/`. `docs/source/index.md`, `docs/source/overview.md`, and
+`docs/source/submission-venue-selector-plan.md` are maintained manually;
+`docs/submission-venue-selector-plan.md` is the top-level manual copy of the
+same plan.
 
 ## Acknowledgements
 
@@ -161,9 +165,10 @@ cd ai-agents-skills
 
 Requires Python 3.10 or newer. Linux and macOS examples use `make` and the
 POSIX bootstrap script. Windows examples use `make.bat`, which requires
-`pwsh` or `powershell.exe`.
+`pwsh` or `powershell.exe`. The installer only plans targets for existing
+agent homes; absent homes are reported and skipped.
 
-Linux:
+Linux/macOS:
 
 ```bash
 make doctor
@@ -177,6 +182,9 @@ make install ARGS="--profile research-core --dry-run"
 make lifecycle-test ARGS="--matrix default --platform-shape all"
 make fake-root-lifecycle ARGS="--profile research-core --platform-shape linux"
 ```
+
+For a macOS-shaped fake-root check, use `--platform-shape macos` in the final
+command.
 
 Windows:
 
@@ -206,6 +214,12 @@ and examples use fake roots. Existing unmanaged files are skipped by default;
 use `--adopt`, `--backup-replace`, or `--migrate` only after reviewing `plan`
 output.
 
+After reviewing `plan` output, a real install uses both write gates:
+
+```bash
+make install ARGS="--profile research-core --apply --real-system"
+```
+
 Skills install in `--install-mode auto` by default so the repo remains the
 single maintained source without hiding agent-loader differences. `plan --json`
 shows the effective mode, agent policy evidence, apply-time symlink fallback,
@@ -226,13 +240,14 @@ dependency-bound artifacts should also install their backing skills.
 - `make.bat <command> ...` is the normal native Windows wrapper.
 - `./installer/bootstrap.sh <command> ...` and
   `python -m installer.ai_agents_skills <command> ...` are direct entrypoints
-  for debugging wrapper behavior.
-- `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` inspect
-  manifest content without planning writes.
-- `docs` regenerates generated documentation; `docs-site` builds the local
-  Sphinx site when `docs/requirements.txt` is installed.
-- `sanitize-check`, `test`, `runtime-smoke`, and `lifecycle-test` are
-  maintainer verification commands.
+  for installer CLI commands when debugging wrapper behavior.
+- Installer CLI commands include `doctor`, `precheck`, `audit-system`, `plan`,
+  `install`, `verify`, `smoke`, `rollback`, `uninstall`, `runtime-smoke`,
+  `lifecycle-test`, `list-skills`, `list-artifacts`, `describe`, and
+  `describe-artifact`.
+- Makefile-only maintainer targets include `docs`, `docs-site`, `docs-check`,
+  `static-check`, `sanitize-check`, `test`, and `release-check`; run them
+  through `make` or `make.bat`, not as installer CLI commands.
 
 ## Runtime-Backed Skills
 

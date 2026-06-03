@@ -1,11 +1,11 @@
 # AI Agents Skills Documentation
 
 Shared, sanitized skill bodies, settings metadata, and installers for Codex,
-Claude, and DeepSeek. The docs describe a research workstation where multiple
-agent frontends share one canonical skill repository, while local software such
-as Python, TeX, optional SageMath, library tools, document parsers, and public
-database clients are detected as external capabilities instead of being
-hardcoded.
+Claude, DeepSeek, and explicit Copilot adapters. The docs describe a research
+workstation where multiple agent frontends share one canonical skill
+repository, while local software such as Python, TeX, optional SageMath,
+library tools, document parsers, and public database clients are detected as
+external capabilities instead of being hardcoded.
 
 Latest update: {sub-ref}`today`
 
@@ -57,9 +57,12 @@ local-only by default; OCR.space is available only as an explicit fallback
 with `--ocr-fallback ocrspace --allow-remote-ocr`.
 
 Most repository docs are generated from `installer/ai_agents_skills/docs.py`
-and manifest data. Edit the generator or manifests, run `make docs`, then use
-`make docs-site` when you need to preview the Sphinx site. This `index.md` page
-and `overview.md` are maintained manually as docs-site landing pages.
+and manifest data. Generated docs are `README.md`, each page emitted by
+`generated_doc_texts()` under `docs/`, and mirrored copies under `docs/source/`.
+Edit the generator or manifests, run `make docs`, then use `make docs-site`
+when you need to preview the Sphinx site. This `index.md` page, `overview.md`,
+and `submission-venue-selector-plan.md` are maintained manually as docs-site
+pages.
 
 ```{toctree}
 :maxdepth: 2
