@@ -109,7 +109,48 @@ def write_iterations(run_dir: Path, records: list[dict[str, object]]) -> None:
     )
 
 
-def iteration_record(number: int, decision: str) -> dict[str, object]:
+def write_proof_artifact(
+    run_dir: Path,
+    evidence_id: str = "proof-artifact-1",
+    *,
+    checker_status: str = "passed",
+    machine_checkable: bool = True,
+    proof_path: str = "proofs/proof.txt",
+) -> None:
+    proof_file = run_dir / proof_path
+    proof_file.parent.mkdir(parents=True, exist_ok=True)
+    proof_file.write_text("machine-checkable proof fixture\n", encoding="utf-8", newline="\n")
+    artifact_dir = run_dir / "proof_artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / f"{evidence_id}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "id": evidence_id,
+                "artifact_type": "python-verifier",
+                "machine_checkable": machine_checkable,
+                "target": "test theorem",
+                "proof_path": proof_path,
+                "checker": {
+                    "name": "fixture-checker",
+                    "status": checker_status,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def iteration_record(
+    number: int,
+    decision: str,
+    *,
+    evidence_ids: list[str] | None = None,
+    stop_reason: str = "",
+) -> dict[str, object]:
     return {
         "schema_version": "1.0",
         "iteration": number,
@@ -120,7 +161,7 @@ def iteration_record(number: int, decision: str) -> dict[str, object]:
         "evidence_checked": {
             "source_ids": [],
             "claim_ids": [],
-            "evidence_ids": [],
+            "evidence_ids": evidence_ids or [],
             "guard_refs": [],
         },
         "actions_taken": [],
@@ -133,7 +174,7 @@ def iteration_record(number: int, decision: str) -> dict[str, object]:
             "wall_time_seconds": 0,
         },
         "decision": decision,
-        "stop_reason": "",
+        "stop_reason": stop_reason,
     }
 
 
@@ -232,17 +273,28 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                 stop_reason="proof_found",
                 check=False,
             )
+            rejected_artifact = append_iteration(
+                run_dir,
+                "stop",
+                objective="premature proof stop without proof artifact",
+                stop_reason="proof_found",
+                evidence_id="missing-proof",
+                check=False,
+            )
 
             self.assertNotEqual(rejected_reason.returncode, 0)
             self.assertIn("success/proof stop_reason", rejected_reason.stdout)
             self.assertNotEqual(rejected_evidence.returncode, 0)
-            self.assertIn("claim_id or evidence_id", rejected_evidence.stdout)
+            self.assertIn("proof artifact evidence_id", rejected_evidence.stdout)
+            self.assertNotEqual(rejected_artifact.returncode, 0)
+            self.assertIn("valid proof artifact", rejected_artifact.stdout)
             self.assertEqual((run_dir / "iterations.jsonl").read_text(encoding="utf-8"), "")
 
     def test_runtime_helper_allows_early_success_stop_with_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "loop"
             init_loop(run_dir, max_iterations=3)
+            write_proof_artifact(run_dir)
 
             append_iteration(
                 run_dir,
@@ -255,6 +307,23 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             status = json.loads(run_helper("status", "--dir", str(run_dir)).stdout)
             self.assertEqual(status["state_status"], "stopped")
             self.assertEqual(status["remaining_iterations"], 2)
+
+    def test_runtime_helper_rejects_unsafe_proof_evidence_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+
+            rejected = append_iteration(
+                run_dir,
+                "stop",
+                objective="proof found",
+                stop_reason="proof_found",
+                evidence_id="../proof",
+                check=False,
+            )
+
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("proof evidence_id", rejected.stdout)
 
     def test_runtime_helper_allows_final_terminal_stop_and_rejects_later_append(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -293,7 +362,44 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                 payload["errors"],
             )
             self.assertIn(
-                "iteration 1 early stop before max_iterations must cite claim_ids or evidence_ids",
+                "iteration 1 early stop before max_iterations must cite proof artifact evidence_ids",
+                payload["errors"],
+            )
+
+    def test_runtime_helper_validate_fails_for_early_stop_with_invalid_proof_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+            write_proof_artifact(run_dir, checker_status="failed")
+            state = read_loop_json(run_dir, "loop_state.json")
+            budget = read_loop_json(run_dir, "budget.json")
+            state["status"] = "stopped"
+            state["last_iteration"] = 1
+            budget["spent_iterations"] = 1
+            write_loop_json(run_dir, "loop_state.json", state)
+            write_loop_json(run_dir, "budget.json", budget)
+            write_iterations(
+                run_dir,
+                [
+                    iteration_record(
+                        1,
+                        "stop",
+                        evidence_ids=["proof-artifact-1"],
+                        stop_reason="proof_found",
+                    )
+                ],
+            )
+
+            validate = run_helper("validate", "--dir", str(run_dir), check=False)
+
+            self.assertNotEqual(validate.returncode, 0)
+            payload = json.loads(validate.stdout)
+            self.assertIn(
+                "iteration 1 early stop before max_iterations must cite a valid proof artifact",
+                payload["errors"],
+            )
+            self.assertIn(
+                "iteration 1: proof artifact 'proof-artifact-1' checker.status must be 'passed'",
                 payload["errors"],
             )
 

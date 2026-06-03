@@ -96,8 +96,8 @@ searching for success. A loop may run fewer iterations when success or a true
 hard stop condition occurs, but it must never append more than
 `max_iterations` records. A normal early `stop` before the final allowed
 iteration is valid only when the success criteria are met and the iteration
-cites proof/success evidence. Otherwise continue, revise, delegate, or mark the
-loop `blocked` with the blocker recorded.
+cites a machine-checkable proof/success artifact. Otherwise continue, revise,
+delegate, or mark the loop `blocked` with the blocker recorded.
 
 ## Iteration Protocol
 
@@ -119,7 +119,7 @@ next iteration has a concrete objective and remaining budget. The final allowed
 iteration must be terminal (`stop` or `blocked`); if success criteria have not
 been satisfied by then, stop as budget exhausted instead of leaving the loop
 `running`. Before the final allowed iteration, `stop` must mean success/proof
-found and must cite at least one claim or evidence id.
+found and must cite at least one evidence id that resolves to a proof artifact.
 
 ## Evidence Gates
 
@@ -127,6 +127,10 @@ Apply the relevant gates before accepting an iteration output:
 
 - Source claims require source IDs or file references.
 - Current facts require dated source checks.
+- Early proof/success stops require an evidence id backed by a local
+  machine-checkable proof artifact, such as
+  `proof_artifacts/<evidence_id>.json`, whose checker metadata reports a
+  passed check and whose proof file exists in the loop directory.
 - Code or workflow changes require local inspection of relevant files.
 - Multi-agent conclusions require synthesis that separates agreement,
   disagreement, assumptions, and unresolved questions.
