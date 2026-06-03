@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import tempfile
 import uuid
@@ -19,6 +20,9 @@ VALID_DECISIONS = {"continue", "revise", "delegate", "stop", "blocked"}
 TERMINAL_DECISIONS = {"stop", "blocked"}
 TERMINAL_STATUSES = {"stopped", "blocked"}
 SUCCESS_STOP_REASONS = {"success", "success_criteria_met", "proof", "proof_found", "found_proof", "proved"}
+PROOF_ARTIFACT_DIRNAME = "proof_artifacts"
+PROOF_ARTIFACT_TYPES = {"lean", "coq", "isabelle", "agda", "sagemath", "python-verifier", "external-verifier"}
+SAFE_EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 VALID_MODES = {
     "monitor",
     "bounded-research",
@@ -85,15 +89,86 @@ def is_success_stop_reason(reason: object) -> bool:
     return normalized_stop_reason(reason) in SUCCESS_STOP_REASONS
 
 
-def has_success_evidence(record: dict[str, Any]) -> bool:
+def proof_artifacts_dir(run_dir: Path) -> Path:
+    return run_dir / PROOF_ARTIFACT_DIRNAME
+
+
+def is_safe_evidence_id(evidence_id: object) -> bool:
+    return isinstance(evidence_id, str) and SAFE_EVIDENCE_ID.fullmatch(evidence_id) is not None
+
+
+def proof_artifact_path(run_dir: Path, evidence_id: str) -> Path:
+    return proof_artifacts_dir(run_dir) / f"{evidence_id}.json"
+
+
+def validate_relative_proof_path(run_dir: Path, raw_path: object, evidence_id: str) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return [f"proof artifact {evidence_id!r} proof_path must be a non-empty relative path"]
+    candidate = Path(raw_path)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return [f"proof artifact {evidence_id!r} proof_path must stay inside the loop directory"]
+    resolved_run_dir = run_dir.resolve()
+    resolved_proof = (resolved_run_dir / candidate).resolve()
+    try:
+        resolved_proof.relative_to(resolved_run_dir)
+    except ValueError:
+        errors.append(f"proof artifact {evidence_id!r} proof_path must stay inside the loop directory")
+    if not resolved_proof.is_file():
+        errors.append(f"proof artifact {evidence_id!r} proof_path does not exist: {raw_path}")
+    return errors
+
+
+def validate_proof_artifact(run_dir: Path, evidence_id: object) -> list[str]:
+    if not is_safe_evidence_id(evidence_id):
+        return [
+            "proof evidence_id must be 1-128 characters of letters, digits, underscore, hyphen, or dot, "
+            "and must start with a letter or digit"
+        ]
+    evidence_id = str(evidence_id)
+    path = proof_artifact_path(run_dir, evidence_id)
+    if not path.exists():
+        return [f"proof artifact for evidence_id {evidence_id!r} is missing: {PROOF_ARTIFACT_DIRNAME}/{evidence_id}.json"]
+    try:
+        artifact = read_json(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return [f"invalid proof artifact for evidence_id {evidence_id!r}: {exc}"]
+
+    errors: list[str] = []
+    if artifact.get("id") != evidence_id:
+        errors.append(f"proof artifact {evidence_id!r} id must match evidence_id")
+    if artifact.get("schema_version") != SCHEMA_VERSION:
+        errors.append(f"proof artifact {evidence_id!r} schema_version must be {SCHEMA_VERSION!r}")
+    if artifact.get("machine_checkable") is not True:
+        errors.append(f"proof artifact {evidence_id!r} machine_checkable must be true")
+    if artifact.get("artifact_type") not in PROOF_ARTIFACT_TYPES:
+        errors.append(f"proof artifact {evidence_id!r} artifact_type is invalid")
+
+    checker = artifact.get("checker")
+    if not isinstance(checker, dict):
+        errors.append(f"proof artifact {evidence_id!r} checker must be an object")
+    else:
+        if not isinstance(checker.get("name"), str) or not checker.get("name", "").strip():
+            errors.append(f"proof artifact {evidence_id!r} checker.name must be non-empty")
+        if checker.get("status") != "passed":
+            errors.append(f"proof artifact {evidence_id!r} checker.status must be 'passed'")
+
+    if not isinstance(artifact.get("target"), str) or not artifact.get("target", "").strip():
+        errors.append(f"proof artifact {evidence_id!r} target must be non-empty")
+    errors.extend(validate_relative_proof_path(run_dir, artifact.get("proof_path"), evidence_id))
+    return errors
+
+
+def valid_proof_artifact_evidence_ids(run_dir: Path, evidence_ids: list[str]) -> list[str]:
+    return [evidence_id for evidence_id in evidence_ids if not validate_proof_artifact(run_dir, evidence_id)]
+
+
+def record_evidence_ids(record: dict[str, Any]) -> list[str]:
     evidence_checked = record.get("evidence_checked")
     if not isinstance(evidence_checked, dict):
-        return False
-    claim_ids = evidence_checked.get("claim_ids")
+        return []
     evidence_ids = evidence_checked.get("evidence_ids")
-    return any(isinstance(item, str) and item for item in claim_ids or []) or any(
-        isinstance(item, str) and item for item in evidence_ids or []
-    )
+    return [item for item in evidence_ids or [] if isinstance(item, str) and item]
 
 
 def loop_paths(run_dir: Path) -> dict[str, Path]:
@@ -150,6 +225,7 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
     write_json(paths["budget"], budget)
     paths["iterations"].parent.mkdir(parents=True, exist_ok=True)
     paths["iterations"].write_text("", encoding="utf-8", newline="\n")
+    proof_artifacts_dir(run_dir).mkdir(parents=True, exist_ok=True)
     paths["recovery"].write_text(
         "\n".join(
             [
@@ -173,6 +249,7 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
         "action": "init",
         "dir": str(run_dir),
         "files": {name: str(path) for name, path in paths.items()},
+        "directories": {"proof_artifacts": str(proof_artifacts_dir(run_dir))},
     }
 
 
@@ -207,8 +284,16 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
     if args.decision == "stop" and remaining_after_append > 0:
         if not is_success_stop_reason(args.stop_reason):
             raise ValueError("early stop before max_iterations requires a success/proof stop_reason")
-        if not claim_ids and not evidence_ids:
-            raise ValueError("early stop before max_iterations requires at least one claim_id or evidence_id")
+        if not evidence_ids:
+            raise ValueError("early stop before max_iterations requires at least one proof artifact evidence_id")
+        proof_errors: list[str] = []
+        for evidence_id in evidence_ids:
+            proof_errors.extend(validate_proof_artifact(run_dir, evidence_id))
+        if len(proof_errors) == len(evidence_ids) or not valid_proof_artifact_evidence_ids(run_dir, evidence_ids):
+            raise ValueError(
+                "early stop before max_iterations requires at least one evidence_id with a valid proof artifact: "
+                + "; ".join(proof_errors)
+            )
     now = utc_now()
     record = {
         "schema_version": SCHEMA_VERSION,
@@ -359,10 +444,20 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
                         errors.append(
                             f"iteration {iteration_number} early stop before max_iterations must use a success/proof stop_reason"
                         )
-                    if not has_success_evidence(record):
+                    evidence_ids = record_evidence_ids(record)
+                    if not evidence_ids:
                         errors.append(
-                            f"iteration {iteration_number} early stop before max_iterations must cite claim_ids or evidence_ids"
+                            f"iteration {iteration_number} early stop before max_iterations must cite proof artifact evidence_ids"
                         )
+                    elif not valid_proof_artifact_evidence_ids(run_dir, evidence_ids):
+                        errors.append(
+                            f"iteration {iteration_number} early stop before max_iterations must cite a valid proof artifact"
+                        )
+                        for evidence_id in evidence_ids:
+                            errors.extend(
+                                f"iteration {iteration_number}: {error}"
+                                for error in validate_proof_artifact(run_dir, evidence_id)
+                            )
 
     return {
         "status": "failed" if errors else "ok",
@@ -426,6 +521,24 @@ def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
             max_child_workers=0,
         )
         init_loop(init_args)
+        proof_path = run_dir / "proofs" / "offline_smoke.proof"
+        proof_path.parent.mkdir(parents=True, exist_ok=True)
+        proof_path.write_text("offline smoke proof artifact\n", encoding="utf-8", newline="\n")
+        write_json(
+            proof_artifact_path(run_dir, "offline-smoke-evidence"),
+            {
+                "schema_version": SCHEMA_VERSION,
+                "id": "offline-smoke-evidence",
+                "artifact_type": "python-verifier",
+                "machine_checkable": True,
+                "target": "offline smoke test",
+                "proof_path": "proofs/offline_smoke.proof",
+                "checker": {
+                    "name": "offline-smoke",
+                    "status": "passed",
+                },
+            },
+        )
         append_args = argparse.Namespace(
             dir=str(run_dir),
             mode="bounded-research",

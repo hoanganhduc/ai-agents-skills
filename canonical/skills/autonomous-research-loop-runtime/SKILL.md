@@ -39,11 +39,32 @@ bash ~/.codex/runtime/run_skill.sh skills/autonomous-research-loop-runtime/run_a
 
 The helper is authoritative for local ledger and iteration-budget invariants.
 It rejects appends after `max_iterations`, rejects continuing decisions on the
-final allowed iteration, rejects early `stop` records that lack success/proof
-evidence, and validation fails ledgers whose spent iteration count, iteration
-records, terminal decisions, and running status disagree. It enforces the
-presence of proof/success evidence references; it does not validate the
-semantic truth of a claimed proof.
+final allowed iteration, rejects early `stop` records that lack a valid
+proof/success artifact, and validation fails ledgers whose spent iteration
+count, iteration records, terminal decisions, and running status disagree.
+
+For an early proof/success stop, at least one `--evidence-id ID` must resolve to
+`proof_artifacts/ID.json` inside the loop directory. The artifact id must be
+filename-safe, and the JSON artifact must include:
+
+```json
+{
+  "schema_version": "1.0",
+  "id": "proof-artifact-1",
+  "artifact_type": "lean",
+  "machine_checkable": true,
+  "target": "the theorem or success target",
+  "proof_path": "proofs/theorem.lean",
+  "checker": {
+    "name": "lean",
+    "status": "passed"
+  }
+}
+```
+
+The helper checks that the artifact exists, the id matches, the checker status
+is `passed`, and `proof_path` is an existing relative file within the loop
+directory. It does not run Lean, Coq, SageMath, or another checker itself.
 
 On Windows, use the installed runtime runner with the native launcher target:
 
@@ -68,6 +89,6 @@ The helper:
 - does not spawn subagents
 
 Use the canonical `autonomous-research-loop` skill for orchestration policy and
-this helper only for local ledger mechanics. This helper does not validate the
-semantic truth of a proof or success claim; record that evidence in the loop
-artifacts and apply the orchestration policy's evidence gates.
+this helper only for local ledger mechanics. This helper validates that an
+early proof stop points to a passed machine-checkable proof artifact record; it
+does not independently validate the semantic truth of the proof.
