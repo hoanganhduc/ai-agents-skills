@@ -8,8 +8,6 @@ import subprocess
 from xml.etree import ElementTree
 from urllib.parse import quote
 
-import requests
-
 # Patterns for input type detection
 DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[^\s]+$")
 DOI_URL_PATTERN = re.compile(r"https?://(?:dx\.)?doi\.org/(10\.\d{4,9}/[^\s]+)")
@@ -18,6 +16,17 @@ ARXIV_URL_PATTERN = re.compile(r"https?://arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{4,5}
 ARXIV_OLD_PATTERN = re.compile(r"^(?:arXiv:)?([a-z-]+/\d{7}(?:v\d+)?)$", re.IGNORECASE)
 ISBN_PATTERN = re.compile(r"^(?:ISBN[:\s-]?)?([\d-]{10,17}[X]?)$", re.IGNORECASE)
 URL_PATTERN = re.compile(r"^https?://")
+
+
+def _requests():
+    try:
+        import requests
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Zotero metadata network lookups require requests. "
+            "Install the Zotero runtime dependencies first."
+        ) from exc
+    return requests
 
 
 def detect_input_type(identifier):
@@ -151,6 +160,7 @@ def _crossref_item_type(message):
 
 
 def _fetch_via_translation_server(lookup_url, translation_server):
+    requests = _requests()
     server_ok = False
     try:
         requests.get(translation_server, timeout=5)
@@ -193,6 +203,7 @@ def _fetch_via_translation_server(lookup_url, translation_server):
 
 
 def _fetch_doi_direct(doi):
+    requests = _requests()
     url = f"https://api.crossref.org/works/{quote(doi, safe='')}"
     resp = requests.get(
         url,
@@ -230,6 +241,7 @@ def _fetch_doi_direct(doi):
 
 
 def _fetch_arxiv_direct(arxiv_id):
+    requests = _requests()
     url = f"https://export.arxiv.org/api/query?id_list={quote(arxiv_id, safe='')}"
     resp = None
     api_error = None
@@ -319,6 +331,7 @@ def _fetch_arxiv_direct(arxiv_id):
 
 
 def _fetch_isbn_direct(isbn):
+    requests = _requests()
     url = (
         "https://openlibrary.org/api/books"
         f"?bibkeys=ISBN:{quote(isbn, safe='')}&format=json&jscmd=data"

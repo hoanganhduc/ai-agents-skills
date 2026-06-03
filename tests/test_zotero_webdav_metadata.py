@@ -49,6 +49,16 @@ def _restore_modules(previous):
             sys.modules[name] = module
 
 
+def _block_requests_import():
+    previous = {
+        "requests": sys.modules.get("requests", _MISSING),
+        "requests.auth": sys.modules.get("requests.auth", _MISSING),
+    }
+    sys.modules["requests"] = None
+    sys.modules["requests.auth"] = None
+    return previous
+
+
 def load_webdav_module():
     spec = importlib.util.spec_from_file_location("canonical_zotero_webdav", WEBDAV_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -78,6 +88,27 @@ def load_metadata_module():
 
 
 class ZoteroMetadataTests(unittest.TestCase):
+    def test_metadata_module_import_does_not_require_requests(self) -> None:
+        previous_modules = _block_requests_import()
+        try:
+            metadata_module = load_metadata_module()
+        finally:
+            _restore_modules(previous_modules)
+
+        self.assertEqual(
+            metadata_module.detect_input_type("https://example.test/article"),
+            ("url", "https://example.test/article"),
+        )
+
+    def test_metadata_network_lookup_reports_missing_requests(self) -> None:
+        metadata_module = load_metadata_module()
+        previous_modules = _block_requests_import()
+        try:
+            with self.assertRaisesRegex(RuntimeError, "require requests"):
+                metadata_module._fetch_doi_direct("10.1000/example")
+        finally:
+            _restore_modules(previous_modules)
+
     def test_url_fetch_falls_back_to_translation_server_after_wsl_error(self) -> None:
         metadata_module = load_metadata_module()
         calls = []
