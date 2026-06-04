@@ -854,6 +854,86 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             code, payload = self.validate_research_dir(research_dir)
             self.assertEqual(code, 0, payload)
 
+    def test_v2_lean_declaration_search_is_context_evidence_and_cannot_promote_without_local_formal_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True, formal=True)
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{"claim_id": "C1", "claim": "Formal claim", "source_ids": [], "evidence_ids": ["E-LEANEXPLORE-1"], "status": "supported"}],
+            )
+            self.write_jsonl(
+                research_dir / "evidence.jsonl",
+                [{
+                    "schema_version": "deep-research.evidence.v2",
+                    "evidence_id": "E-LEANEXPLORE-1",
+                    "evidence_type": "lean_declaration_search",
+                    "source_ids": [],
+                    "claim_ids": ["C1"],
+                    "artifact_ref": "formal/artifacts/search/leanexplore/E-LEANEXPLORE-1.json",
+                    "summary": "LeanExplore declaration search result.",
+                    "inspection_status": "checked",
+                    "redaction_status": "safe",
+                    "sensitivity_class": "public",
+                    "created_at": "2026-05-28T00:00:00Z",
+                    "limitations": ["declaration retrieval only"],
+                    "tool_name": "lean-explore-mcp",
+                    "tool_version": "manual",
+                    "backend": "local",
+                    "operation": "search",
+                    "query": "finite tree leaf theorem",
+                    "payload_hash": "sha256:test",
+                    "input_encoding_ref": "formal/input/C1.json",
+                    "result_status": "found",
+                }],
+            )
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 0, payload)
+
+            review = {
+                "schema_version": "deep-research.statement-equivalence-review.v1",
+                "statement_equivalence_review_id": "SER1",
+                "formal_target_id": "FT1",
+                "reviewer": "lead",
+                "review_status": "reviewed_by_lead",
+                "relation_status": "equivalent_reviewed",
+                "informal_statement_ref": "sources/S1.md#theorem",
+                "lean_statement_ref": "formal/final/proof.lean",
+                "compared_definitions": "same definitions",
+                "hypothesis_deltas": "none",
+                "quantifier_deltas": "none",
+                "conclusion_deltas": "none",
+                "boundary_cases": "none",
+                "limitations": "none",
+                "encoding_assumptions": "simple finite graph",
+            }
+            self.write_jsonl(research_dir / "formal" / "statement_equivalence_reviews.jsonl", [review])
+            self.write_jsonl(
+                research_dir / "formal" / "formal_targets.jsonl",
+                [{
+                    "schema_version": "deep-research.formal-target.v1",
+                    "formal_target_id": "FT1",
+                    "claim_ids": ["C1"],
+                    "source_ids": [],
+                    "informal_statement_ref": "sources/S1.md#theorem",
+                    "lean_statement_ref": "formal/final/proof.lean",
+                    "artifact_stage": "final_candidate",
+                    "lean_check_status": "typechecked",
+                    "placeholder_status": "no_active_placeholders",
+                    "trust_base_status": "accepted_trust_base",
+                    "statement_relation_status": "equivalent_reviewed",
+                    "review_status": "reviewed_by_lead",
+                    "claim_support_status": "supports_claim_after_equivalence_review",
+                    "formal_check_requirement": "optional",
+                    "toolchain": "lean declaration search",
+                    "mathlib": "recorded",
+                    "verification_evidence_ids": ["E-LEANEXPLORE-1"],
+                    "statement_equivalence_review_ids": ["SER1"],
+                }],
+            )
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("LOCAL_FORMAL_CHECK_REQUIRED_FOR_PROMOTION", {error["code"] for error in payload["errors"]})
+
     def test_v2_weak_computation_cannot_be_only_ready_claim_support(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             research_dir = self.make_structured_dir(tmp, v2=True)

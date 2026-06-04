@@ -222,6 +222,8 @@ For v2 structured runs, formal artifacts live under `formal/`:
   formal statement are equivalent enough to use as evidence.
 - `artifacts/` stores Lean skeletons, candidate Lean files, typecheck logs, and
   scan records.
+- `artifacts/search/leanexplore/` stores optional LeanExplore declaration-search
+  records when the user explicitly chooses that manual MCP workflow.
 - `artifacts/remote/axle/` stores optional AXLE remote-result records when the
   user explicitly chooses that manual MCP workflow.
 - `README.md` summarizes the local policy.
@@ -237,21 +239,27 @@ is supplemental context only: it cannot replace local `formal_check` evidence,
 set local Lean typecheck status, satisfy placeholder/trust-base scans, or
 promote formal support on its own.
 
+LeanExplore MCP output, when present, is recorded as `lean_declaration_search`
+evidence. It is supplemental retrieval context only: it can help locate
+declarations, modules, source links, dependencies, and informalizations before
+drafting Lean, but it cannot replace local `formal_check` evidence or promote
+formal support on its own.
+
 Use the local helpers as optional gates:
 
 ```bash
 bash ~/.codex/runtime/run_skill.sh \
-  skills/lean-formalization-intake/run_lean_formalization_intake.sh assess --claim-id C1 --statement "..."
+  skills/lean-formalization-intake/run_lean_formalization_intake.sh assess --claim-id C1 --claim "..."
 ```
 
 ```bash
 bash ~/.codex/runtime/run_skill.sh \
-  skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh verify --input formal/artifacts/C1.lean --artifact-stage final --typecheck
+  skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh verify --input formal/artifacts/C1.lean --artifact-stage final_candidate --typecheck
 ```
 
-These helpers do not install Lean, Lake, Mathlib, MCP servers, AXLE adapters, or
-provider tooling. They report local availability and fail closed when a required
-tool is unavailable.
+These helpers do not install Lean, Lake, Mathlib, MCP servers, AXLE adapters,
+LeanExplore packages, local search data, or provider tooling. They report local
+availability and fail closed when a required tool is unavailable.
 
 ### Optional post-analysis figure handoff
 
@@ -311,10 +319,13 @@ Output structure guidance:
 - Use `paper-lookup` during Phase 1 when external literature metadata/discovery is needed after the local library-first workflow.
 - Use `research_digest_wrapper` or `rss_news_digest` to seed Phase 1 when the task starts from tracked topics, alerts, or feeds.
 - Use `tikz-draw` only after Phase 2 when there is an explicit figure request or a clear post-analysis figure brief to execute.
-- Use `formal-skeleton-helper`, `lean-formalization-intake`, and
-  `lean-strict-verification-gate` only for optional formalization candidates;
-  they supplement the research workflow and do not replace source, computation,
-  or human mathematical review.
+- Use `formal-skeleton-helper`, `lean-formalization-intake`,
+  `lean-explore-mcp`, and `lean-strict-verification-gate` only for optional
+  formalization candidates; they supplement the research workflow and do not
+  replace source, computation, or human mathematical review.
+- Use `lean-explore-mcp` only for manual optional Lean declaration search setup.
+  Treat its results as `lean_declaration_search` evidence, not as local formal
+  proof evidence.
 - Use `axiom-axle-mcp` only for manual optional AXLE MCP setup. Treat its
   results as `axle_remote_check` evidence, not as local formal proof evidence.
 
@@ -350,6 +361,9 @@ Output structure guidance:
 - [ ] Formalized claims have `formal_targets.jsonl`,
       `statement_equivalence_reviews.jsonl`, scan/typecheck artifacts, and lead
       or human review before support is promoted
+- [ ] LeanExplore declaration searches, if used, are recorded as supplemental
+      `lean_declaration_search` evidence and do not replace local
+      `formal_check` evidence
 - [ ] AXLE remote checks, if used, are recorded as supplemental
       `axle_remote_check` evidence and paired with local `formal_check` evidence
       before any formal support is promoted

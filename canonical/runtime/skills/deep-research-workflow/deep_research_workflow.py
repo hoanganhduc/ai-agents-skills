@@ -51,6 +51,7 @@ EVIDENCE_TYPES = {
     "source_note",
     "formal_statement",
     "formal_check",
+    "lean_declaration_search",
     "axle_remote_check",
     "computation",
     "guard",
@@ -64,6 +65,9 @@ REDACTION_STATUSES = {"safe", "redacted", "private", "not_reviewed"}
 SENSITIVITY_CLASSES = {"public", "private", "unpublished", "unknown"}
 COMPUTATION_RESULT_STATUSES = {"passed", "failed", "partial", "timeout", "unavailable"}
 AXLE_REMOTE_RESULT_STATUSES = {"passed", "failed", "partial", "timeout", "unavailable", "expired"}
+LEAN_DECLARATION_SEARCH_BACKENDS = {"api", "local", "unknown"}
+LEAN_DECLARATION_SEARCH_OPERATIONS = {"search", "get_by_id"}
+LEAN_DECLARATION_SEARCH_RESULT_STATUSES = {"found", "not_found", "partial", "unavailable", "error"}
 COMPUTATION_COVERAGE_STATUSES = {
     "exhaustive",
     "bounded_complete",
@@ -190,6 +194,8 @@ EVIDENCE_FIELDS = EVIDENCE_REQUIRED | {
     "consent_run_id",
     "endpoint",
     "operation",
+    "backend",
+    "query",
     "payload_hash",
     "expiry",
 }
@@ -431,7 +437,7 @@ def write_structured_files(target_dir: Path, *, force: bool, schema_version: str
         ))
     if formal:
         formal_dir = target_dir / "formal"
-        for name in ("input", "output", "final", "artifacts/remote/axle"):
+        for name in ("input", "output", "final", "artifacts/remote/axle", "artifacts/search/leanexplore"):
             directory = formal_dir / name
             directory.mkdir(parents=True, exist_ok=True)
             written.append(directory)
@@ -448,6 +454,7 @@ def write_structured_files(target_dir: Path, *, force: bool, schema_version: str
                 "- status: not-started\n"
                 "- claim_support: none\n"
                 "- delivery_blocked_by_formal_lane: false\n"
+                "- lean_declaration_search: supplemental retrieval only; cannot promote formal support without local formal_check evidence\n"
                 "- axle_remote_check: supplemental only; cannot promote formal support without local formal_check evidence\n"
                 "- recommended_next_action: add formal targets or mark the lane deferred/not applicable\n",
                 force=force,
@@ -736,6 +743,8 @@ def validate_evidence(
         require_string_list(row.get("limitations"), errors, path, line, "limitations")
         if evidence_type == "computation":
             validate_computation_evidence(row, path, errors, line)
+        if evidence_type == "lean_declaration_search":
+            validate_lean_declaration_search_evidence(row, path, errors, line)
         if evidence_type == "axle_remote_check":
             validate_axle_remote_evidence(row, path, errors, line)
         if evidence_type == "consent":
@@ -773,6 +782,34 @@ def validate_computation_evidence(
         add_error(errors, "COMPUTATION_COVERAGE_STATUS_INVALID", path, f"line {line}: invalid computation coverage_status")
     if row.get("coverage_status") in {"exhaustive", "bounded_complete"} and not is_nonempty_string(row.get("exhaustiveness_argument")):
         add_error(errors, "COMPUTATION_EXHAUSTIVENESS_REQUIRED", path, f"line {line}: exhaustive computation evidence requires exhaustiveness_argument")
+
+
+def validate_lean_declaration_search_evidence(
+    row: dict[str, Any],
+    path: Path,
+    errors: list[dict[str, Any]],
+    line: int | None,
+) -> None:
+    for field in (
+        "tool_name",
+        "tool_version",
+        "backend",
+        "operation",
+        "query",
+        "payload_hash",
+        "input_encoding_ref",
+        "result_status",
+    ):
+        if not is_nonempty_string(row.get(field)):
+            add_error(errors, "LEAN_DECLARATION_SEARCH_FIELD_REQUIRED", path, f"line {line}: Lean declaration search evidence requires {field}")
+    if row.get("tool_name") != "lean-explore-mcp":
+        add_error(errors, "LEAN_DECLARATION_SEARCH_TOOL_INVALID", path, f"line {line}: Lean declaration search tool_name must be 'lean-explore-mcp'")
+    if row.get("backend") not in LEAN_DECLARATION_SEARCH_BACKENDS:
+        add_error(errors, "LEAN_DECLARATION_SEARCH_BACKEND_INVALID", path, f"line {line}: invalid Lean declaration search backend")
+    if row.get("operation") not in LEAN_DECLARATION_SEARCH_OPERATIONS:
+        add_error(errors, "LEAN_DECLARATION_SEARCH_OPERATION_INVALID", path, f"line {line}: invalid Lean declaration search operation")
+    if row.get("result_status") not in LEAN_DECLARATION_SEARCH_RESULT_STATUSES:
+        add_error(errors, "LEAN_DECLARATION_SEARCH_RESULT_STATUS_INVALID", path, f"line {line}: invalid Lean declaration search result_status")
 
 
 def validate_axle_remote_evidence(

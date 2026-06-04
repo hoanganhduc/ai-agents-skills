@@ -1229,6 +1229,12 @@ def discover_dependency(
                 "status": "manual",
                 "reason": "remote credentials or account state must be configured outside this repo",
             }
+        elif package.get("type") == "manual-data":
+            result = {
+                "logical_name": name,
+                "status": "manual",
+                "reason": "local data or cache must be prepared outside this repo",
+            }
         else:
             result = {"logical_name": name, "status": "unknown", "reason": "unknown package type"}
     else:
@@ -1312,10 +1318,13 @@ def install_hint(name: str, result: dict[str, Any]) -> str:
         "google-auth-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install google-auth",
         "ebooklib-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install ebooklib",
         "modal-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install modal",
+        "lean-explore-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install lean-explore",
         "torch-python-package": "install torch in the selected Python environment; use the platform-appropriate PyTorch index",
         "torchvision-python-package": "install torchvision in the selected Python environment; use the platform-appropriate PyTorch index",
         "zotero-credentials": "configure Zotero credentials outside this repo",
         "modal-auth": "configure Modal authentication outside this repo",
+        "leanexplore-auth": "configure LeanExplore API credentials outside this repo",
+        "lean-explore-local-cache": "prepare LeanExplore local data outside this repo with lean-explore data fetch",
     }
     return hints.get(name, "install or configure this dependency, then rerun precheck")
 

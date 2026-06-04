@@ -205,6 +205,15 @@
       "optional_capabilities": ["formal-lane-intake", "lean-tool-detection"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "lean-explore-mcp": {
+      "description": "Optional inert LeanExplore MCP setup helper for Lean declaration search.",
+      "profiles": ["formal-research", "formal-research-remote", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["lean-explore-python-package", "leanexplore-auth", "lean-explore-local-cache"],
+      "optional_capabilities": ["manual-lean-explore-mcp-setup", "lean-declaration-search-evidence"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+    },
     "lean-strict-verification-gate": {
       "description": "Scanner-first Lean artifact verification gate that separates typecheck status from claim support.",
       "profiles": ["formal-research", "formal-research-remote", "full-research"],

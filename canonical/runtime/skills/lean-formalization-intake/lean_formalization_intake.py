@@ -3,20 +3,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
 
 TOOLS = ("lean", "lake", "elan", "npm", "npx", "pip")
 FORMAL_REQUIREMENTS = {"not_requested", "optional", "explicitly_requested", "required_for_delivery"}
+TOOL_ENV = {
+    "lean": "AAS_LEAN",
+    "lake": "AAS_LAKE",
+}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="lean-formalization-intake")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("doctor")
+    doctor = sub.add_parser("doctor")
+    doctor.add_argument("--probe", action="store_true", help="run non-installing version/toolchain probes")
     assess = sub.add_parser("assess")
     assess.add_argument("--claim", default="")
     assess.add_argument("--claim-id", default="")
@@ -25,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "doctor":
-        emit(doctor_payload())
+        emit(doctor_payload(probe=args.probe))
         return 0
     if args.command == "assess":
         payload = assess_claim(args.claim, args.claim_id, args.formal_check_requirement)
@@ -38,25 +45,92 @@ def main(argv: list[str] | None = None) -> int:
     raise AssertionError(args.command)
 
 
-def doctor_payload() -> dict[str, Any]:
-    return {
+def doctor_payload(*, probe: bool) -> dict[str, Any]:
+    tools = tool_status()
+    payload = {
         "status": "ok",
-        "tool_status": tool_status(),
+        "tool_status": tools,
         "no_auto_install": True,
         "network_required": False,
         "installs_attempted": False,
     }
+    if probe:
+        payload["probe_status"] = probe_status(tools)
+    return payload
 
 
 def tool_status() -> dict[str, dict[str, Any]]:
     status: dict[str, dict[str, Any]] = {}
     for tool in TOOLS:
-        path = shutil.which(tool)
-        status[tool] = {
-            "status": "available" if path else "tool_unavailable",
-            "path": path or "",
-        }
+        status[tool] = single_tool_status(tool)
     return status
+
+
+def single_tool_status(name: str) -> dict[str, Any]:
+    env_var = TOOL_ENV.get(name)
+    if env_var:
+        env_value = os.environ.get(env_var, "").strip()
+        if env_value:
+            resolved = resolve_candidate(env_value)
+            return {
+                "status": "available" if resolved else "tool_unavailable",
+                "path": resolved or env_value,
+                "source": "env",
+                "env_var": env_var,
+            }
+    path = shutil.which(name)
+    if path:
+        return {"status": "available", "path": path, "source": "path"}
+    elan_candidate = Path.home() / ".elan" / "bin" / executable_name(name)
+    if elan_candidate.is_file():
+        return {"status": "available", "path": str(elan_candidate), "source": "elan-home"}
+    return {"status": "tool_unavailable", "path": "", "source": "not-found"}
+
+
+def executable_name(name: str) -> str:
+    return f"{name}.exe" if os.name == "nt" else name
+
+
+def resolve_candidate(candidate: str) -> str:
+    expanded = str(Path(candidate).expanduser())
+    if any(sep in candidate for sep in ("/", "\\")):
+        path = Path(expanded)
+        return str(path) if path.is_file() else ""
+    return shutil.which(candidate) or ""
+
+
+def probe_status(tools: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "lean_version": probe_command(tools.get("lean", {}).get("path", ""), ["--version"]),
+        "lake_version": probe_command(tools.get("lake", {}).get("path", ""), ["--version"]),
+        "elan_show": probe_command(tools.get("elan", {}).get("path", ""), ["show"]),
+        "limitations": [
+            "version probes execute local tools but do not install dependencies",
+            "cache and mathlib readiness are not proven by these probes",
+        ],
+    }
+
+
+def probe_command(executable: str, args: list[str]) -> dict[str, str]:
+    if not executable:
+        return {"status": "tool_unavailable", "stdout": "", "stderr": ""}
+    try:
+        completed = subprocess.run(
+            [executable, *args],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "command_failed", "stdout": "", "stderr": "timeout after 5 seconds"}
+    except OSError as exc:
+        return {"status": "command_failed", "stdout": "", "stderr": str(exc)}
+    return {
+        "status": "ok" if completed.returncode == 0 else "command_failed",
+        "stdout": completed.stdout[-2000:],
+        "stderr": completed.stderr[-2000:],
+    }
 
 
 def assess_claim(claim: str, claim_id: str, formal_requirement: str) -> dict[str, Any]:
