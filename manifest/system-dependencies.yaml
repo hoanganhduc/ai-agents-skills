@@ -30,7 +30,7 @@
       "requirement": "required for runtime-backed skills and the installer",
       "linux": "Native Python 3.10+ detected from environment override, repo venv, python3, or python.",
       "windows": "Native Python 3.10+ detected from environment override, repo venv, C:\\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python.",
-      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "submission-venue-selector", "annotated-review", "modal-research-compute", "session-logs", "lean-formalization-intake", "lean-strict-verification-gate"]
+      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "submission-venue-selector", "annotated-review", "modal-research-compute", "session-logs", "lean-formalization-intake", "lean-explore-mcp", "lean-strict-verification-gate"]
     },
     "bash-or-posix-shell": {
       "display_name": "Bash or POSIX-compatible shell",
@@ -342,6 +342,13 @@
       "used_by": ["modal-research-compute"],
       "source": "Modal research-compute docs and Modal app imports."
     },
+    "lean-explore": {
+      "requirement": "lean-explore",
+      "import_name": "lean_explore",
+      "platforms": ["linux", "windows"],
+      "used_by": ["lean-explore-mcp"],
+      "source": "LeanExplore MCP documentation and runtime helper readiness checks."
+    },
     "local-getscipapers-helper": {
       "requirement": "optional local helper package with a maintainer-specific import name",
       "import_name": "redacted",
@@ -413,6 +420,10 @@
     "axiom-axle": {
       "description": "AxiomMath AXLE API key and MCP client configuration are configured manually outside this repo; helpers report presence only and never write config.",
       "used_by": ["axiom-axle-mcp"]
+    },
+    "leanexplore": {
+      "description": "LeanExplore API key, MCP client configuration, and local search data are configured manually outside this repo; helpers report presence only and never write config or download data.",
+      "used_by": ["lean-explore-mcp"]
     }
   },
   "windows_substrate_notes": [

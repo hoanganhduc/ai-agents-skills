@@ -97,6 +97,7 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("research-briefing", selected)
         self.assertNotIn("tikz-draw", selected)
         self.assertNotIn("axiom-axle-mcp", selected)
+        self.assertNotIn("lean-explore-mcp", selected)
 
     def test_axiom_axle_is_explicit_remote_formal_skill(self) -> None:
         manifests = load_manifests()
@@ -115,6 +116,27 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("axiom-axle-mcp", resolve_skills(args, manifests))
         args.profile = "research-core"
         self.assertNotIn("axiom-axle-mcp", resolve_skills(args, manifests))
+
+    def test_lean_explore_mcp_is_explicit_formal_skill(self) -> None:
+        manifests = load_manifests()
+        skill = manifests["skills"]["skills"]["lean-explore-mcp"]
+
+        self.assertEqual(set(skill["profiles"]), {"formal-research", "formal-research-remote", "full-research"})
+        self.assertIn("lean-explore-python-package", skill["optional_dependencies"])
+        self.assertIn("leanexplore-auth", skill["optional_dependencies"])
+        self.assertIn("lean-explore-local-cache", skill["optional_dependencies"])
+
+        args = Args()
+        args.profile = "formal-research"
+        self.assertIn("lean-explore-mcp", resolve_skills(args, manifests))
+        args.profile = "formal-research-remote"
+        self.assertIn("lean-explore-mcp", resolve_skills(args, manifests))
+        args.profile = "full-research"
+        self.assertIn("lean-explore-mcp", resolve_skills(args, manifests))
+        args.profile = "research-core"
+        self.assertNotIn("lean-explore-mcp", resolve_skills(args, manifests))
+        args.profile = "serious-research"
+        self.assertNotIn("lean-explore-mcp", resolve_skills(args, manifests))
 
     def test_delegation_manifest_requires_true_cross_provider_policy(self) -> None:
         delegation = load_manifests()["delegation"]

@@ -14,7 +14,7 @@
       ]
     },
     "serious-research": {
-      "description": "Source-preserving research workflow with local libraries, document parsing, validation, and multi-agent orchestration.",
+      "description": "Source-preserving research workflow with local libraries, document parsing, validation, multi-agent orchestration, and Lean skeleton support only; use formal-research for Lean verification.",
       "skills": [
         "research-briefing",
         "autonomous-research-loop",
@@ -61,18 +61,20 @@
       "skills": ["sagemath", "graph-verifier", "formal-skeleton-helper"]
     },
     "formal-research": {
-      "description": "Optional local-first Lean formalization lane for research claims.",
+      "description": "Optional Lean formalization lane with local checks and declaration-search setup.",
       "skills": [
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-explore-mcp",
         "lean-strict-verification-gate"
       ]
     },
     "formal-research-remote": {
-      "description": "Optional remote formal lane setup for AXLE MCP plus local formal-lane skills; install is inert and does not start remote services.",
+      "description": "Optional remote formal lane setup for LeanExplore and AXLE MCP plus local formal-lane skills; install is inert and does not start remote services.",
       "skills": [
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-explore-mcp",
         "lean-strict-verification-gate",
         "axiom-axle-mcp"
       ]
@@ -121,6 +123,7 @@
         "get-available-resources",
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-explore-mcp",
         "lean-strict-verification-gate",
         "axiom-axle-mcp",
         "model-router",

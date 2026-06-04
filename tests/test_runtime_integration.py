@@ -316,6 +316,32 @@ class RuntimeIntegrationTests(unittest.TestCase):
             "skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
         )
 
+    def test_lean_explore_mcp_runtime_smoke_skill_is_supported_and_uses_platform_launchers(self) -> None:
+        manifests = load_manifests()
+        selected = set(selected_runtime_skills(manifests, {"lean-explore-mcp"}))
+
+        self.assertEqual(selected, {"lean-explore-mcp"})
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-explore-mcp", "linux"),
+            "skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-explore-mcp", "macos"),
+            "skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-explore-mcp", "wsl"),
+            "skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-explore-mcp", "windows", "run_skill.bat"),
+            "skills/lean-explore-mcp/run_lean_explore_mcp.bat",
+        )
+        self.assertEqual(
+            runtime_command_target(manifests, "lean-explore-mcp", "windows", "run_skill.ps1"),
+            "skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
+        )
+
     def test_installed_runtime_smoke_uses_scratch_workspace(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -415,6 +441,99 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
             self.assertEqual(list(root.rglob("*")), [])
 
+    def test_lean_explore_mcp_helper_does_not_execute_install_start_server_or_leak_secret(self) -> None:
+        helper = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-explore-mcp"
+            / "lean_explore_mcp.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_bin = Path(tmp) / "bin"
+            fake_bin.mkdir()
+            marker = Path(tmp) / "executed"
+            for name in ("lean-explore", "lean-explore.exe", "pip", "pip.exe", "python -m pip"):
+                fake = fake_bin / name
+                fake.write_text(f"#!/usr/bin/env sh\ntouch {marker}\nexit 99\n", encoding="utf-8")
+                fake.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": str(fake_bin),
+                "LEANEXPLORE_API_KEY": "LEANEXPLORE-SMOKE-CANARY",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+
+            commands = (
+                ("doctor",),
+                ("smoke",),
+                ("config-snippet", "--backend", "api"),
+                ("config-snippet", "--backend", "local"),
+            )
+            for command in commands:
+                completed = subprocess.run(
+                    [sys.executable, str(helper), *command],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                payload = json.loads(completed.stdout)
+                serialized = json.dumps(payload, sort_keys=True)
+                self.assertTrue(payload["no_auto_install"])
+                self.assertFalse(payload["installs_attempted"])
+                self.assertFalse(payload["live_api_attempted"])
+                self.assertFalse(payload["config_written"])
+                self.assertFalse(payload["server_started"])
+                self.assertFalse(payload["downloads_attempted"])
+                self.assertNotIn("LEANEXPLORE-SMOKE-CANARY", serialized)
+                if command == ("doctor",):
+                    self.assertEqual(payload["auth_status"], "present")
+                if command == ("config-snippet", "--backend", "api"):
+                    command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
+                    self.assertEqual(command_payload["args"], ["mcp", "serve", "--backend", "api"])
+                    self.assertEqual(command_payload["env"]["LEANEXPLORE_API_KEY"], "<LEANEXPLORE_API_KEY>")
+                if command == ("config-snippet", "--backend", "local"):
+                    command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
+                    self.assertEqual(command_payload["args"], ["mcp", "serve", "--backend", "local"])
+                    self.assertNotIn("env", command_payload)
+
+            self.assertFalse(marker.exists())
+
+    def test_lean_explore_mcp_helper_does_not_write_config_or_state(self) -> None:
+        helper = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-explore-mcp"
+            / "lean_explore_mcp.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+
+            commands = (
+                ("doctor",),
+                ("smoke",),
+                ("config-snippet", "--backend", "api"),
+                ("config-snippet", "--backend", "local"),
+            )
+            for command in commands:
+                completed = subprocess.run(
+                    [sys.executable, str(helper), *command],
+                    capture_output=True,
+                    text=True,
+                    cwd=root,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+            self.assertEqual(list(root.rglob("*")), [])
+
     def test_formal_runtime_doctor_does_not_execute_or_install_toolchain_commands(self) -> None:
         helper_paths = [
             Path(__file__).resolve().parents[1]
@@ -452,6 +571,170 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.assertTrue(payload["no_auto_install"])
                 self.assertFalse(payload["installs_attempted"])
             self.assertFalse(marker.exists())
+
+    def test_formal_helpers_doctor_honors_explicit_tool_env_without_executing(self) -> None:
+        helper_paths = [
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-formalization-intake"
+            / "lean_formalization_intake.py",
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-strict-verification-gate"
+            / "lean_strict_verification_gate.py",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_lean = root / "fake-lean"
+            fake_lake = root / "fake-lake"
+            marker = root / "executed"
+            for path in (fake_lean, fake_lake):
+                path.write_text(f"#!/usr/bin/env sh\ntouch {marker}\nexit 99\n", encoding="utf-8")
+                path.chmod(0o755)
+            env = {**os.environ, "AAS_LEAN": str(fake_lean), "AAS_LAKE": str(fake_lake)}
+            for helper in helper_paths:
+                completed = subprocess.run(
+                    [sys.executable, str(helper), "doctor"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                payload = json.loads(completed.stdout)
+                self.assertEqual(payload["tool_status"]["lean"]["path"], str(fake_lean))
+                self.assertEqual(payload["tool_status"]["lean"]["source"], "env")
+                self.assertEqual(payload["tool_status"]["lake"]["path"], str(fake_lake))
+                self.assertEqual(payload["tool_status"]["lake"]["source"], "env")
+            self.assertFalse(marker.exists())
+
+    def test_lean_strict_gate_direct_runner_uses_explicit_lean(self) -> None:
+        helper = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-strict-verification-gate"
+            / "lean_strict_verification_gate.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lean_args = root / "lean-args.txt"
+            fake_lean = root / "lean"
+            fake_lean.write_text(
+                "#!/usr/bin/env sh\n"
+                f"printf '%s\\n' \"$@\" > {lean_args}\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_lean.chmod(0o755)
+            lean_file = root / "proof.lean"
+            lean_file.write_text("theorem demo : True := by\n  trivial\n", encoding="utf-8")
+            env = {**os.environ, "AAS_LEAN": str(fake_lean)}
+
+            payload = self.run_json_helper(
+                [
+                    sys.executable,
+                    str(helper),
+                    "verify",
+                    "--input",
+                    str(lean_file),
+                    "--artifact-stage",
+                    "final_candidate",
+                    "--typecheck",
+                ],
+                env=env,
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["lean_check_status"], "typechecked")
+            self.assertEqual(payload["runner"], "direct-lean")
+            self.assertEqual(payload["tool_status"]["lean"]["source"], "env")
+            self.assertEqual(lean_args.read_text(encoding="utf-8").strip(), str(lean_file))
+
+    def test_lean_strict_gate_lake_env_runner_requires_lake_project_and_uses_project_cwd(self) -> None:
+        helper = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-strict-verification-gate"
+            / "lean_strict_verification_gate.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            project = root / "project"
+            project.mkdir()
+            (project / "lakefile.toml").write_text("name = \"formal\"\n", encoding="utf-8")
+            lake_args = root / "lake-args.txt"
+            lake_cwd = root / "lake-cwd.txt"
+            fake_lake = root / "lake"
+            fake_lake.write_text(
+                "#!/usr/bin/env sh\n"
+                f"pwd > {lake_cwd}\n"
+                f"printf '%s\\n' \"$@\" > {lake_args}\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake_lake.chmod(0o755)
+            lean_file = root / "proof.lean"
+            lean_file.write_text("theorem demo : True := by\n  trivial\n", encoding="utf-8")
+            env = {**os.environ, "AAS_LAKE": str(fake_lake)}
+
+            payload = self.run_json_helper(
+                [
+                    sys.executable,
+                    str(helper),
+                    "verify",
+                    "--input",
+                    str(lean_file),
+                    "--artifact-stage",
+                    "final_candidate",
+                    "--typecheck",
+                    "--runner",
+                    "lake-env-lean",
+                    "--project-root",
+                    str(project),
+                ],
+                env=env,
+            )
+
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["lean_check_status"], "typechecked")
+            self.assertEqual(payload["runner"], "lake-env-lean")
+            self.assertEqual(payload["typecheck_cwd"], str(project.resolve()))
+            self.assertEqual(lake_cwd.read_text(encoding="utf-8").strip(), str(project.resolve()))
+            self.assertEqual(
+                lake_args.read_text(encoding="utf-8").splitlines(),
+                ["env", "lean", str(lean_file.resolve())],
+            )
+
+            missing_project = root / "missing-project"
+            missing_project.mkdir()
+            failed_payload = self.run_json_helper(
+                [
+                    sys.executable,
+                    str(helper),
+                    "verify",
+                    "--input",
+                    str(lean_file),
+                    "--artifact-stage",
+                    "final_candidate",
+                    "--typecheck",
+                    "--runner",
+                    "lake-env-lean",
+                    "--project-root",
+                    str(missing_project),
+                ],
+                env=env,
+                expected_returncode=1,
+            )
+            self.assertEqual(failed_payload["lean_check_status"], "command_failed")
+            self.assertIn("lakefile", failed_payload["typecheck_stderr"])
 
     def test_lean_strict_gate_scan_blocks_placeholders_unsafe_constructs_and_bad_encoding(self) -> None:
         helper = (
@@ -501,8 +784,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(bad_payload["findings"][0]["kind"], "invalid_utf8")
 
-    def run_json_helper(self, argv: list[str], *, expected_returncode: int = 0) -> dict[str, Any]:
-        completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+    def run_json_helper(self, argv: list[str], *, expected_returncode: int = 0, env: dict[str, str] | None = None) -> dict[str, Any]:
+        completed = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)
         self.assertEqual(completed.returncode, expected_returncode, completed.stderr)
         return json.loads(completed.stdout)
 

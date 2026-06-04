@@ -144,13 +144,16 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
         active = set(delegation["policy"]["active_providers"])
         reference_only = set(delegation["policy"]["reference_only_providers"])
         axle_skill = manifests["skills"]["skills"]["axiom-axle-mcp"]
+        lean_explore_skill = manifests["skills"]["skills"]["lean-explore-mcp"]
 
         self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot"})
         self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot"})
-        self.assertFalse(active.intersection({"axiom-axle-mcp", "axle", "mcp", "openclaw"}))
+        self.assertFalse(active.intersection({"axiom-axle-mcp", "axle", "lean-explore-mcp", "lean-explore", "mcp", "openclaw"}))
         self.assertEqual(reference_only, {"openclaw"})
         self.assertEqual(set(axle_skill["profiles"]), {"formal-research-remote", "full-research"})
+        self.assertEqual(set(lean_explore_skill["profiles"]), {"formal-research", "formal-research-remote", "full-research"})
         self.assertNotIn("axiom-axle-mcp", delegation["providers"])
+        self.assertNotIn("lean-explore-mcp", delegation["providers"])
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -163,7 +166,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
                 "linux",
                 delegation,
                 prechecks,
-                ["openclaw", "axle", "mcp"],
+                ["openclaw", "axle", "lean-explore", "mcp"],
                 max_providers=10,
                 research=True,
                 resolved_model="current-frontier",
@@ -173,6 +176,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             reasons = {item["provider"]: item["reason"] for item in explicit_plan}
             self.assertEqual(reasons["openclaw"], "provider is not an active external CLI provider")
             self.assertEqual(reasons["axle"], "provider is not declared in delegation policy")
+            self.assertEqual(reasons["lean-explore"], "provider is not declared in delegation policy")
             self.assertEqual(reasons["mcp"], "provider is not declared in delegation policy")
 
     def test_agd_docs_require_parent_owned_artifacts_evidence_mapping_and_redaction(self) -> None:

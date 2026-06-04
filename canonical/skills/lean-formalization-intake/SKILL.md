@@ -40,6 +40,14 @@ bash ~/.codex/runtime/run_skill.sh \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh doctor
 ```
 
+Run non-installing version/toolchain probes when you need reproducibility
+metadata:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/lean-formalization-intake/run_lean_formalization_intake.sh doctor --probe
+```
+
 Assess a claim:
 
 ```bash
@@ -49,6 +57,10 @@ bash ~/.codex/runtime/run_skill.sh \
   --claim-id C1 \
   --output formal/intake-C1.json
 ```
+
+Set `AAS_LEAN` or `AAS_LAKE` to select a specific already-installed local
+executable. Invalid explicit paths are reported as unavailable instead of being
+masked by another tool on `PATH`.
 
 The helper never installs Lean, Lake, mathlib, Python packages, Node packages, credentials, services, or MCP servers.
 

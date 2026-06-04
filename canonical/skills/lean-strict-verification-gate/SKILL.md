@@ -38,6 +38,14 @@ bash ~/.codex/runtime/run_skill.sh \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh doctor
 ```
 
+Run non-installing version/toolchain probes when you need reproducibility
+metadata:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh doctor --probe
+```
+
 Scan a Lean file without running Lean:
 
 ```bash
@@ -56,6 +64,25 @@ bash ~/.codex/runtime/run_skill.sh \
   --artifact-stage final_candidate \
   --typecheck
 ```
+
+For a user-managed Lake workspace, use the explicit Lake environment runner.
+The helper requires a project root containing `lakefile.lean` or
+`lakefile.toml`, records the project context, and still runs the scanner before
+typechecking:
+
+```bash
+bash ~/.codex/runtime/run_skill.sh \
+  skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh verify \
+  --input formal/final/proof.lean \
+  --artifact-stage final_candidate \
+  --typecheck \
+  --runner lake-env-lean \
+  --project-root /path/to/lean/project
+```
+
+Set `AAS_LEAN` or `AAS_LAKE` to select a specific already-installed local
+executable. Invalid explicit paths fail closed instead of silently using a
+different tool.
 
 The helper never installs Lean, Lake, mathlib, npm packages, Python packages, credentials, services, or MCP servers. Missing Lean reports `tool_unavailable`.
 

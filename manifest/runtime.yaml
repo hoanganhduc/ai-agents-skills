@@ -18,6 +18,7 @@
         "docling",
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-explore-mcp",
         "lean-strict-verification-gate",
         "get-available-resources",
         "getscipapers-requester",
@@ -1054,6 +1055,89 @@
         },
         "env_canaries": {
           "AXLE_API_KEY": "AXLE-SMOKE-CANARY"
+        }
+      }
+    },
+    "lean-explore-mcp": {
+      "runtime_dir": "lean-explore-mcp",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke validates inert LeanExplore MCP setup guidance without installing packages, starting services, or calling live APIs."
+      },
+      "files": [
+        {
+          "source": "skills/lean-explore-mcp/lean_explore_mcp.py",
+          "target": "workspace/skills/lean-explore-mcp/lean_explore_mcp.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-explore-mcp/run_lean_explore_mcp.bat",
+          "target": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
+          "target": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+          "target": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+          "macos": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+          "wsl": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
+          "windows": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.bat",
+          "windows_ps1": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1"
+        },
+        "args": [
+          "smoke"
+        ],
+        "timeout_seconds": 15,
+        "writes": {
+          "workspace_scratch": true
+        },
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "LEANEXPLORE_API_KEY": "LEANEXPLORE-SMOKE-CANARY"
         }
       }
     },
