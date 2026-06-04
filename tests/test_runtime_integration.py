@@ -36,6 +36,33 @@ def create_agent_home(root: Path, agent: str = "codex") -> None:
     (root / f".{agent}").mkdir(parents=True)
 
 
+def create_fake_tool(root: Path, name: str, args_path: Path, *, cwd_path: Path | None = None) -> Path:
+    recorder = root / f"{name}_recorder.py"
+    lines = [
+        "from pathlib import Path",
+        "import sys",
+        f"Path({str(args_path)!r}).write_text('\\n'.join(sys.argv[1:]) + ('\\n' if len(sys.argv) > 1 else ''), encoding='utf-8')",
+    ]
+    if cwd_path is not None:
+        lines.insert(2, "import pathlib")
+        lines.append(f"Path({str(cwd_path)!r}).write_text(str(pathlib.Path.cwd()) + '\\n', encoding='utf-8')")
+    recorder.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if os.name == "nt":
+        wrapper = root / f"{name}.cmd"
+        wrapper.write_text(
+            f"@echo off\r\n\"{sys.executable}\" \"{recorder}\" %*\r\nexit /b %ERRORLEVEL%\r\n",
+            encoding="utf-8",
+        )
+        return wrapper
+    wrapper = root / name
+    wrapper.write_text(
+        f"#!/usr/bin/env sh\nexec \"{sys.executable}\" \"{recorder}\" \"$@\"\n",
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    return wrapper
+
+
 class RuntimeIntegrationTests(unittest.TestCase):
     def test_runtime_files_are_root_scoped_and_installed_with_runtime_backed_skill(self) -> None:
         manifests = load_manifests()
@@ -624,14 +651,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             lean_args = root / "lean-args.txt"
-            fake_lean = root / "lean"
-            fake_lean.write_text(
-                "#!/usr/bin/env sh\n"
-                f"printf '%s\\n' \"$@\" > {lean_args}\n"
-                "exit 0\n",
-                encoding="utf-8",
-            )
-            fake_lean.chmod(0o755)
+            fake_lean = create_fake_tool(root, "lean", lean_args)
             lean_file = root / "proof.lean"
             lean_file.write_text("theorem demo : True := by\n  trivial\n", encoding="utf-8")
             env = {**os.environ, "AAS_LEAN": str(fake_lean)}
@@ -672,15 +692,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             (project / "lakefile.toml").write_text("name = \"formal\"\n", encoding="utf-8")
             lake_args = root / "lake-args.txt"
             lake_cwd = root / "lake-cwd.txt"
-            fake_lake = root / "lake"
-            fake_lake.write_text(
-                "#!/usr/bin/env sh\n"
-                f"pwd > {lake_cwd}\n"
-                f"printf '%s\\n' \"$@\" > {lake_args}\n"
-                "exit 0\n",
-                encoding="utf-8",
-            )
-            fake_lake.chmod(0o755)
+            fake_lake = create_fake_tool(root, "lake", lake_args, cwd_path=lake_cwd)
             lean_file = root / "proof.lean"
             lean_file.write_text("theorem demo : True := by\n  trivial\n", encoding="utf-8")
             env = {**os.environ, "AAS_LAKE": str(fake_lake)}
