@@ -168,6 +168,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 {
                     "HOME": str(root / "home"),
                     "XDG_DATA_HOME": str(xdg_data),
+                    "LOCALAPPDATA": str(xdg_data),
                     "VNTHUQUAN_ASSISTANT_HOME": str(root / "runtime"),
                 },
                 clear=False,
@@ -178,7 +179,12 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.assertIsNotNone(spec)
                 self.assertIsNotNone(spec.loader)
                 module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                previous = sys.dont_write_bytecode
+                sys.dont_write_bytecode = True
+                try:
+                    spec.loader.exec_module(module)
+                finally:
+                    sys.dont_write_bytecode = previous
 
             self.assertEqual(module.RUN_DIR, xdg_data / "ai-agents-skills" / "runs" / "vnthuquan")
             self.assertEqual(module.STATE_DIR, xdg_data / "ai-agents-skills" / "state" / "vnthuquan")
@@ -202,6 +208,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 {
                     "HOME": str(root / "home"),
                     "XDG_DATA_HOME": str(xdg_data),
+                    "LOCALAPPDATA": str(xdg_data),
                 },
                 clear=False,
             ):
@@ -213,7 +220,12 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     self.assertIsNotNone(spec)
                     self.assertIsNotNone(spec.loader)
                     module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
+                    previous = sys.dont_write_bytecode
+                    sys.dont_write_bytecode = True
+                    try:
+                        spec.loader.exec_module(module)
+                    finally:
+                        sys.dont_write_bytecode = previous
                     run_root = module.default_direct_run_root("run-test")
                 finally:
                     sys.path.remove(str(source.parent))
