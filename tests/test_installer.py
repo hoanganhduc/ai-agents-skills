@@ -3453,8 +3453,8 @@ class OpenCodeTargetTests(unittest.TestCase):
         with fake_root() as tmp:
             root = Path(tmp)
             create_agent_homes(root, "opencode")
-            fake_cli = root / "opencode"
-            fake_cli.write_text(
+            fake_impl = root / "opencode_fake.py"
+            fake_impl.write_text(
                 "\n".join([
                     "#!/usr/bin/env python3",
                     "import json, sys",
@@ -3473,7 +3473,16 @@ class OpenCodeTargetTests(unittest.TestCase):
                 ]) + "\n",
                 encoding="utf-8",
             )
-            fake_cli.chmod(0o755)
+            if sys.platform.startswith("win"):
+                fake_cli = root / "opencode.cmd"
+                fake_cli.write_text(
+                    f'@echo off\r\n"{sys.executable}" "%~dp0opencode_fake.py" %*\r\n',
+                    encoding="utf-8",
+                )
+            else:
+                fake_cli = root / "opencode"
+                fake_cli.write_text(fake_impl.read_text(encoding="utf-8"), encoding="utf-8")
+                fake_cli.chmod(0o755)
 
             plan = build_plan(
                 root,
@@ -3493,7 +3502,7 @@ class OpenCodeTargetTests(unittest.TestCase):
                     "PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}",
                 },
             ):
-                result = run_opencode_native_smoke(root, agents={"opencode"}, platform="linux")
+                result = run_opencode_native_smoke(root, agents={"opencode"}, platform=current_platform())
 
             self.assertEqual(result["status"], "ok")
             check_names = {check["name"] for check in result["checks"]}
