@@ -36,7 +36,7 @@ Scope:
 
 Evidence inspected for this plan:
 
-- existing installer target code for Codex, Claude, and DeepSeek
+- existing installer target code for Codex, Claude, DeepSeek, Copilot, and OpenCode
 - existing OpenClaw source/import pipeline modules and tests
 - existing OpenClaw integration and verification documentation
 - a sanitized local OpenClaw inventory with deny-by-default content policy
@@ -64,7 +64,7 @@ Concrete repo artifacts inspected:
 
 Confirmed from repo inspection:
 
-- default install targets are currently Codex, Claude, and DeepSeek
+- default install targets are currently Codex, Claude, DeepSeek, Copilot, and OpenCode
 - OpenClaw is a known explicit target for restricted fake-root layout tests
 - OpenClaw code in this repository is currently a quarantined source/import
   pipeline with explicit roots, sanitized inventories, immutable manifests,
@@ -488,7 +488,7 @@ Real-system gate:
 
 OpenClaw target support is acceptable only when:
 
-- default installer behavior is unchanged for Codex, Claude, and DeepSeek
+- default installer behavior is unchanged for Codex, Claude, DeepSeek, Copilot, and OpenCode
 - OpenClaw is explicit-only and absent from default target discovery
 - early OpenClaw writes are fake-root-only
 - all real `.openclaw` writes, including `.openclaw/ai-agents-skills`, are

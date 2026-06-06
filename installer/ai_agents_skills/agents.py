@@ -186,6 +186,8 @@ def known_agent_names() -> list[str]:
 
 def agent_supports_manifest_entry(agent: str, supported_agents: Iterable[str]) -> bool:
     declared = set(supported_agents)
+    if agent in declared:
+        return True
     if agent in ADAPTER_AGENT_NAMES:
         return bool(declared.intersection(PORTABLE_MANIFEST_AGENT_NAMES))
-    return agent in declared
+    return False

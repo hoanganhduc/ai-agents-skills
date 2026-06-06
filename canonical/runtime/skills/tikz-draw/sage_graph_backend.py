@@ -11,13 +11,37 @@ from typing import Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-PLATFORM_NAME = "claude" if ".claude" in SCRIPT_DIR.parts else "codex"
 IS_WINDOWS = os.name == "nt"
+
+
+def detect_platform_name(script_dir: Path) -> str:
+    parts = set(script_dir.parts)
+    if ".codex" in parts:
+        return "codex"
+    if ".claude" in parts:
+        return "claude"
+    if ".deepseek" in parts:
+        return "deepseek"
+    return "ai-agents-skills"
+
+
+def default_shared_workspace() -> Path:
+    if os.environ.get("AAS_RUNTIME_WORKSPACE"):
+        return Path(os.environ["AAS_RUNTIME_WORKSPACE"]).expanduser()
+    if IS_WINDOWS:
+        root = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))).expanduser()
+        return root / "ai-agents-skills" / "runtime" / "workspace"
+    return Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))).expanduser() / "ai-agents-skills" / "runtime" / "workspace"
+
+
+PLATFORM_NAME = detect_platform_name(SCRIPT_DIR)
 SAGE_WORKSPACE = (
     (Path.home() / ".codex" / "runtime" / "workspace")
     if IS_WINDOWS and PLATFORM_NAME == "codex"
     else (Path.home() / ".claude")
     if IS_WINDOWS and PLATFORM_NAME == "claude"
+    else default_shared_workspace()
+    if IS_WINDOWS
     else Path("/tmp") / "tikz-draw-sage-runtime" / PLATFORM_NAME
 )
 SAFE_GRAPH_EXPR = re.compile(r"^(graphs\.[A-Za-z_][A-Za-z0-9_]*\([^\"'=;`]*\)|Graph\([A-Za-z0-9_{}\[\](),:.\s-]*\))$")

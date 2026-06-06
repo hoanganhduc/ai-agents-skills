@@ -45,9 +45,22 @@ SCHEMA_DIR = ASSETS_DIR / "spec-schema"
 CHECKS_DIR = ASSETS_DIR / "checks"
 STYLES_DIR = ASSETS_DIR / "styles"
 TEMPLATES_DIR = ASSETS_DIR / "templates" / "tikz-snippets"
-PLATFORM_NAME = "claude" if ".claude" in SCRIPT_DIR.parts else "codex"
 IS_WINDOWS = os.name == "nt"
 CLI_PROG = "run_tikz_draw.bat" if IS_WINDOWS else "run_tikz_draw.sh"
+
+
+def detect_platform_name(script_dir: Path) -> str:
+    parts = set(script_dir.parts)
+    if ".codex" in parts:
+        return "codex"
+    if ".claude" in parts:
+        return "claude"
+    if ".deepseek" in parts:
+        return "deepseek"
+    return "ai-agents-skills"
+
+
+PLATFORM_NAME = detect_platform_name(SCRIPT_DIR)
 
 SUPPORTED_FAMILIES = {"flowchart", "dag", "tree", "commutative", "graph"}
 SEMANTIC_VERIFIER_FAMILIES = tuple(SUPPORTED_SEMANTIC_FAMILIES)
@@ -1323,7 +1336,17 @@ def default_direct_run_root(run_id: str) -> Path:
     home = Path.home()
     if PLATFORM_NAME == "codex":
         return home / ".codex" / "runs" / "tikz-draw" / run_id
-    return home / ".claude" / "data" / "runs" / "tikz-draw" / run_id
+    if os.environ.get("AAS_RUNS_ROOT"):
+        runs_root = Path(os.environ["AAS_RUNS_ROOT"]).expanduser()
+    elif os.environ.get("AAS_DATA_ROOT"):
+        runs_root = Path(os.environ["AAS_DATA_ROOT"]).expanduser() / "runs"
+    elif IS_WINDOWS and os.environ.get("LOCALAPPDATA"):
+        runs_root = Path(os.environ["LOCALAPPDATA"]).expanduser() / "ai-agents-skills" / "runs"
+    elif os.environ.get("XDG_DATA_HOME"):
+        runs_root = Path(os.environ["XDG_DATA_HOME"]).expanduser() / "ai-agents-skills" / "runs"
+    else:
+        runs_root = home / ".local" / "share" / "ai-agents-skills" / "runs"
+    return runs_root / "tikz-draw" / run_id
 
 
 def resolve_output_dir(

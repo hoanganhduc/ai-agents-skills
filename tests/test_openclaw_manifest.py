@@ -9,7 +9,7 @@ from pathlib import Path
 
 from installer.ai_agents_skills.cli import main
 from installer.ai_agents_skills.openclaw_inventory import build_inventory
-from installer.ai_agents_skills.openclaw_manifest import build_manifest
+from installer.ai_agents_skills.openclaw_manifest import TARGET_AGENTS, build_manifest
 from tests.test_openclaw_inventory import CANARY_TEXT, fake_root_path, make_source_root, snapshot
 
 
@@ -69,6 +69,30 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
             self.assertTrue(any(action["operation"] == "create-reference-doc" for action in manifest["actions"]))
             self.assertTrue(any(action["operation"] == "create-template" for action in manifest["actions"]))
             self.assertTrue(any(action["operation"] == "no-op" for action in manifest["actions"]))
+
+    def test_default_target_agents_include_opencode_home(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_root = fake_root_path(tmp, "fake-openclaw")
+            target_root = fake_root_path(tmp, "fake-home")
+            source_root.mkdir()
+            target_root.mkdir()
+            make_source_root(source_root)
+            manifest = build_manifest(build_inventory(source_root), target_root, created_at=CREATED_AT)
+
+            self.assertEqual(TARGET_AGENTS, ("codex", "claude", "deepseek", "copilot", "opencode"))
+            self.assertEqual(manifest["target_agent_refs"], ["claude", "codex", "copilot", "deepseek", "opencode"])
+            self.assertTrue(
+                any(
+                    action["target"]["relative_path"].startswith(".copilot/openclaw-review/")
+                    for action in manifest["actions"]
+                )
+            )
+            self.assertTrue(
+                any(
+                    action["target"]["relative_path"].startswith(".config/opencode/openclaw-review/")
+                    for action in manifest["actions"]
+                )
+            )
 
     def test_manifest_generation_is_deterministic_for_fixed_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

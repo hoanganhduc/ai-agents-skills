@@ -318,7 +318,7 @@ Execution:
 
 Run directory:
 
-- `$HOME/.codex/runs/agent_group_discuss/<run_id>/`
+- `${AAS_RUNS_ROOT:-$HOME/.local/share/ai-agents-skills/runs}/agent_group_discuss/<run_id>/`
 
 Files written by the orchestrator:
 

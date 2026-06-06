@@ -10,7 +10,7 @@ $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 $runtimeRoot = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..\..")).Path }
 $runtimeWorkspace = if ($env:AAS_RUNTIME_WORKSPACE) { $env:AAS_RUNTIME_WORKSPACE } else { Join-Path $runtimeRoot "workspace" }
-$env:VNTHUQUAN_TARGET = if ($env:VNTHUQUAN_TARGET) { $env:VNTHUQUAN_TARGET } else { "windows-codex" }
+$env:VNTHUQUAN_TARGET = if ($env:VNTHUQUAN_TARGET) { $env:VNTHUQUAN_TARGET } else { "windows-ai-agents-skills" }
 $env:VNTHUQUAN_ASSISTANT_HOME = if ($env:VNTHUQUAN_ASSISTANT_HOME) { $env:VNTHUQUAN_ASSISTANT_HOME } else { $runtimeRoot }
 $env:VNTHUQUAN_CALIBRE_RUNNER = if ($env:VNTHUQUAN_CALIBRE_RUNNER) { $env:VNTHUQUAN_CALIBRE_RUNNER } else { Join-Path $runtimeRoot "run_skill.bat" }
 $env:VNTHUQUAN_CALIBRE_SCRIPT = if ($env:VNTHUQUAN_CALIBRE_SCRIPT) { $env:VNTHUQUAN_CALIBRE_SCRIPT } else { "skills\calibre\run_cal.bat" }
@@ -18,7 +18,7 @@ $env:VNTHUQUAN_CALIBRE_CACHE_PATH = if ($env:VNTHUQUAN_CALIBRE_CACHE_PATH) { $en
 
 $python = Join-Path $env:USERPROFILE ".vnthuquan_venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $python)) {
-    Write-Output '{"ok": false, "target": "windows-codex", "command": "bootstrap", "error_code": "missing_windows_venv", "message": "Expected %USERPROFILE%\\.vnthuquan_venv\\Scripts\\python.exe"}'
+    Write-Output '{"ok": false, "target": "windows-ai-agents-skills", "command": "bootstrap", "error_code": "missing_windows_venv", "message": "Expected %USERPROFILE%\\.vnthuquan_venv\\Scripts\\python.exe"}'
     exit 127
 }
 

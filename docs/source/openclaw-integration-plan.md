@@ -28,7 +28,7 @@ In scope:
 - explicit native-evidence records for scoped support claims
 - inert persistence checks for hook and schedule material
 - dry-run review UX and named gates
-- native evidence requirements for Codex, Claude, and DeepSeek
+- native evidence requirements for Codex, Claude, DeepSeek, Copilot, and OpenCode
 - inert documentation and templates only
 
 Out of scope by default:
@@ -62,7 +62,7 @@ Out of scope by default:
 | 1. Read-only sanitized inventory | Inspect explicit source roots without creating install input. | Bounded scanner that emits allowlisted sanitized metadata only. | Sanitized inventory review. |
 | 2. Immutable dry-run manifest | Describe candidate target actions without applying them. | Strict content-addressed candidate manifest with stable action IDs and source/target separation. | Immutable manifest review. |
 | 3. Gated apply and uninstall | Apply only exact reviewed manifests. | Journaled fake-root and later real-target apply/uninstall guarded by drift checks and rollback. | Fake-root verification plus explicit apply confirmation. |
-| 4. Native agent support | Prove loaders before claiming support. | Dated evidence for Codex, Claude, and DeepSeek by platform, path style, shell, runtime, and install mode. | Native evidence review. |
+| 4. Native agent support | Prove loaders before claiming support. | Dated evidence for Codex, Claude, DeepSeek, Copilot, and OpenCode by platform, path style, shell, runtime, and install mode. | Native evidence review. |
 | 5. Hooks and schedules | Add persistent execution only after a separate threat model. | Inert docs/templates first; persistent execution only behind explicit separate approval. | Persistence-specific approval and rollback evidence. |
 
 ## Phase 0 Deliverables

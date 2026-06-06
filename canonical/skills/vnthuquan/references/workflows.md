@@ -60,14 +60,15 @@ Create a bounded dry-run queue:
 bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh queue --query "Kim Dung" --limit 5 --format epub --json
 ```
 
-Queue creation writes a timestamped manifest under `~/.codex/runs/vnthuquan/`
-unless `--manifest PATH` is supplied. Listing queues require `--limit` or
+Queue creation writes a timestamped manifest under
+`${AAS_RUNS_ROOT:-~/.local/share/ai-agents-skills/runs}/vnthuquan/` unless
+`--manifest PATH` is supplied. Listing queues require `--limit` or
 `--pages` so the crawl is bounded.
 
 Execute a queue:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh execute-queue ~/.codex/runs/vnthuquan/queue-YYYYMMDD-HHMMSS-NNNNNN.json --jobs 1 --yes --json
+bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh execute-queue ~/.local/share/ai-agents-skills/runs/vnthuquan/queue-YYYYMMDD-HHMMSS-NNNNNN.json --jobs 1 --yes --json
 ```
 
 Queue execution writes a result log under the run directory and returns
@@ -76,7 +77,7 @@ Queue execution writes a result log under the run directory and returns
 Recover failed queue items:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh requeue-failed ~/.codex/runs/vnthuquan/queue-result-YYYYMMDD-HHMMSS-NNNNNN.json --json
+bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh requeue-failed ~/.local/share/ai-agents-skills/runs/vnthuquan/queue-result-YYYYMMDD-HHMMSS-NNNNNN.json --json
 ```
 
 The retry manifest contains only failed, non-skipped items that still have a
@@ -127,8 +128,10 @@ Write behavior:
 - refuses execution when duplicate candidates exist unless `--allow-duplicate`
   is present
 - runs one bounded Calibre write attempt and does not retry automatically
-- records the write result under `~/.codex/runs/vnthuquan/` and appends an
-  audit line to `~/.codex/state/vnthuquan/calibre-writes.jsonl`
+- records the write result under
+  `${AAS_RUNS_ROOT:-~/.local/share/ai-agents-skills/runs}/vnthuquan/` and
+  appends an audit line to
+  `${AAS_STATE_ROOT:-~/.local/share/ai-agents-skills/state}/vnthuquan/calibre-writes.jsonl`
 - returns the Calibre ID, Drive path, metadata, and recovery notes when the
   Calibre write returns them
 
@@ -138,13 +141,13 @@ payload.
 
 ## State Layout
 
-Local Codex paths:
+Local state paths:
 
-- run directory: `~/.codex/runs/vnthuquan/`
-- state directory: `~/.codex/state/vnthuquan/`
-- config path: `~/.codex/state/vnthuquan/config.json`
-- archive path: `~/.codex/state/vnthuquan/downloads.jsonl`
-- cache path: `~/.codex/state/vnthuquan/http-cache.json`
+- run directory: `${AAS_RUNS_ROOT:-~/.local/share/ai-agents-skills/runs}/vnthuquan/`
+- state directory: `${AAS_STATE_ROOT:-~/.local/share/ai-agents-skills/state}/vnthuquan/`
+- config path: `${AAS_STATE_ROOT:-~/.local/share/ai-agents-skills/state}/vnthuquan/config.json`
+- archive path: `${AAS_STATE_ROOT:-~/.local/share/ai-agents-skills/state}/vnthuquan/downloads.jsonl`
+- cache path: `${AAS_STATE_ROOT:-~/.local/share/ai-agents-skills/state}/vnthuquan/http-cache.json`
 
 Run directories are for temporary manifests and transcripts. State directories
 are for persistent wrapper-managed config, archive, and cache files.

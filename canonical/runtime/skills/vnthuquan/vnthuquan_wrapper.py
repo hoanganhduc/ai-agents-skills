@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Codex runtime wrapper for the vnthuquan package."""
+"""ai-agents-skills runtime wrapper for the vnthuquan package."""
 
 from __future__ import annotations
 
@@ -55,10 +55,31 @@ def nested_runner_env() -> dict[str, str]:
 
 
 HOME = Path.home()
-TARGET = os.environ.get("VNTHUQUAN_TARGET", "local-codex")
-ASSISTANT_HOME = Path(os.environ.get("VNTHUQUAN_ASSISTANT_HOME", str(HOME / ".codex"))).expanduser()
-RUN_DIR = Path(os.environ.get("VNTHUQUAN_RUN_DIR", str(ASSISTANT_HOME / "runs" / "vnthuquan"))).expanduser()
-STATE_DIR = Path(os.environ.get("VNTHUQUAN_STATE_DIR", str(ASSISTANT_HOME / "state" / "vnthuquan"))).expanduser()
+
+
+def default_data_root() -> Path:
+    if os.environ.get("AAS_DATA_ROOT"):
+        return Path(os.environ["AAS_DATA_ROOT"]).expanduser()
+    if platform.system().lower().startswith("windows") and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]).expanduser() / "ai-agents-skills"
+    if os.environ.get("XDG_DATA_HOME"):
+        return Path(os.environ["XDG_DATA_HOME"]).expanduser() / "ai-agents-skills"
+    return HOME / ".local" / "share" / "ai-agents-skills"
+
+
+def data_subdir(env_name: str, child: str) -> Path:
+    if os.environ.get(env_name):
+        root = Path(os.environ[env_name]).expanduser()
+    else:
+        root = DEFAULT_DATA_ROOT / child
+    return root / "vnthuquan"
+
+
+TARGET = os.environ.get("VNTHUQUAN_TARGET", "local-ai-agents-skills")
+DEFAULT_DATA_ROOT = default_data_root()
+ASSISTANT_HOME = Path(os.environ.get("VNTHUQUAN_ASSISTANT_HOME", str(DEFAULT_DATA_ROOT))).expanduser()
+RUN_DIR = Path(os.environ.get("VNTHUQUAN_RUN_DIR", str(data_subdir("AAS_RUNS_ROOT", "runs")))).expanduser()
+STATE_DIR = Path(os.environ.get("VNTHUQUAN_STATE_DIR", str(data_subdir("AAS_STATE_ROOT", "state")))).expanduser()
 CONFIG_PATH = STATE_DIR / "config.json"
 ARCHIVE_PATH = STATE_DIR / "downloads.jsonl"
 CACHE_PATH = STATE_DIR / "http-cache.json"
@@ -1323,17 +1344,18 @@ def phase_not_implemented(command: str) -> dict[str, Any]:
 
 def command_help_text(command: str) -> str | None:
     if command == "queue":
-        return """vnthuquan Codex wrapper queue
+        return """vnthuquan assistant wrapper queue
 
 Usage:
   run_vnthuquan.sh queue --query QUERY --limit N [--format epub|pdf|text|audio] [--json]
   run_vnthuquan.sh queue --category CATEGORY --pages N [--format epub|pdf|text|audio] [--json]
 
-Creates a dry-run queue manifest under ~/.codex/runs/vnthuquan by default.
+Creates a dry-run queue manifest under the shared ai-agents-skills runs
+directory by default.
 Use execute-queue MANIFEST --yes to execute it.
 """
     if command == "execute-queue":
-        return """vnthuquan Codex wrapper execute-queue
+        return """vnthuquan assistant wrapper execute-queue
 
 Usage:
   run_vnthuquan.sh execute-queue MANIFEST --yes [--jobs N|auto] [--progress] [--json]
@@ -1341,7 +1363,7 @@ Usage:
 Executes a queue manifest with the wrapper-managed archive path.
 """
     if command == "requeue-failed":
-        return """vnthuquan Codex wrapper requeue-failed
+        return """vnthuquan assistant wrapper requeue-failed
 
 Usage:
   run_vnthuquan.sh requeue-failed QUEUE_RESULT_JSON [--manifest PATH] [--json]
@@ -1354,7 +1376,7 @@ result log.
     if command == "archive":
         return "Usage: run_vnthuquan.sh archive path|list [--json]\n"
     if command == "add-to-calibre":
-        return """vnthuquan Codex wrapper add-to-calibre
+        return """vnthuquan assistant wrapper add-to-calibre
 
 Usage:
   run_vnthuquan.sh add-to-calibre PATH [--dry-run] [--title TITLE] [--author AUTHOR] [--json]
