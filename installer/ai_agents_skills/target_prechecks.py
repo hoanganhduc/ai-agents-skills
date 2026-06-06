@@ -117,6 +117,12 @@ def target_notes(target: AgentTarget) -> list[str]:
         return [
             "Copilot participates in default detection when ~/.copilot exists; repository-level .github surfaces do not activate this personal target.",
         ]
+    if target.name == "opencode":
+        return [
+            "OpenCode participates in default detection when ~/.config/opencode exists.",
+            "OpenCode auto mode copies regular SKILL.md files and support files for cross-platform parity.",
+            "OpenCode native smoke uses isolated XDG directories when the opencode CLI is available.",
+        ]
     if target.name == "codex":
         return [
             "Codex auto mode uses reference adapters because symlinked SKILL.md discovery is not assumed.",

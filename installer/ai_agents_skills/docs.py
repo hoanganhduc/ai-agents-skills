@@ -100,13 +100,13 @@ def readme_text(manifests: dict[str, Any]) -> str:
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
-![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot-black)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
-Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek, and
-explicit adapter targets such as GitHub Copilot.
+Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
+GitHub Copilot, and OpenCode.
 
 ## System Summary
 
@@ -116,14 +116,13 @@ product, and it may not behave as desired on other machines, other agent
 versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
-Codex, Claude, DeepSeek, and explicit adapter targets such as GitHub Copilot
-can each load local skills, while this repository keeps the shared research
-workflows, profiles, delegation settings, dependency metadata, and installer
-logic in one place.
+Codex, Claude, DeepSeek, GitHub Copilot, and OpenCode can each load local
+skills, while this repository keeps the shared research workflows, profiles,
+delegation settings, dependency metadata, and installer logic in one place.
 
 The research stack is organized as:
 
-- agent frontends: Codex, Claude, DeepSeek, and explicit Copilot adapters
+- agent frontends: Codex, Claude, DeepSeek, GitHub Copilot, and OpenCode
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers
@@ -671,7 +670,7 @@ def current_config_dependency_sections(manifests: dict[str, Any]) -> list[str]:
         "## Current Linux And Windows Config Inventory",
         "",
         "This sanitized inventory is derived from the maintainer's current Linux",
-        "and Windows Codex, Claude, DeepSeek, and explicit Copilot-target configs where",
+        "and Windows Codex, Claude, DeepSeek, Copilot, and OpenCode-target configs where",
         "present. It intentionally excludes",
         "auth files, provider secrets, session/history/log files, local library",
         "databases, caches, backups, and file-history snapshots.",
@@ -2408,8 +2407,8 @@ def architecture_text() -> str:
     return """# Architecture
 
 This page explains how the repository turns one canonical skill catalog into
-agent-specific files for Codex, Claude, DeepSeek, and explicit adapter targets
-such as GitHub Copilot.
+agent-specific files for Codex, Claude, DeepSeek, GitHub Copilot, and
+OpenCode.
 
 The manifests are the source of truth:
 
@@ -2455,24 +2454,24 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode copies canonical skill files and support files by default for cross-platform parity. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
-| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude receives Markdown subagents, Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
-| `entrypoint-alias` | Optional quick-action aliases. Claude receives command files; Codex and DeepSeek receive reference documents. |
+| `entrypoint-alias` | Optional quick-action aliases. Claude and OpenCode receive command files; Codex and DeepSeek receive reference documents. |
 | `runtime-file` | Root-scoped copied runtime runners and skill helper files. Runtime files are never installed as per-agent skills and are verified by transformed source hash, newline policy, mode, and secret scan. |
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
 Target rendering is intentionally adapter-heavy where native behavior has not
-been proven. Codex personas are TOML custom-agent files, Claude personas are
-Markdown subagents, Copilot personas are `.agent.md` custom-agent profiles,
-and DeepSeek personas are reference prompts. Claude entrypoint aliases are
-command files, while Codex and DeepSeek entrypoint aliases are reference
-documents under `instructions/entrypoints`.
+been proven. Codex personas are TOML custom-agent files, Claude and OpenCode
+personas are Markdown subagents, Copilot personas are `.agent.md` custom-agent
+profiles, and DeepSeek personas are reference prompts. Claude and OpenCode
+entrypoint aliases are command files, while Codex and DeepSeek entrypoint
+aliases are reference documents under `instructions/entrypoints`.
 
 Copilot is included in default target detection when `~/.copilot` exists.
 Existing repository-level `.github/*` files do not activate the personal
@@ -2484,15 +2483,22 @@ profiles to `~/.copilot/agents/*.agent.md`. Repository Copilot surfaces such as
 are reported in precheck metadata but are not written by the home-root
 installer path.
 
+OpenCode is included in default target detection when `~/.config/opencode`
+exists. The installer writes user-global OpenCode skills, rules, agents,
+commands, templates, and instruction docs under `~/.config/opencode`. Project
+`.opencode/` directories remain project-local and do not activate the global
+install target.
+
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
 detected, not as the default global Codex target.
 
 Portable runtime runners accept workspace-relative skill commands only. They
 set runtime-specific environment variables such as `AAS_RUNTIME_ROOT`,
-`AAS_RUNTIME_WORKSPACE`, and `AAS_SECRETS_FILE`, and set OpenClaw-compatible
-variables only to Codex-owned runtime paths. Absolute paths and `..` traversal
-are rejected by the runtime wrappers.
+`AAS_RUNTIME_WORKSPACE`, and `AAS_SECRETS_FILE`. OpenCode and other non-Codex
+targets use the neutral shared `ai-agents-skills` runtime root unless a
+runtime root is supplied explicitly. Absolute paths and `..` traversal are
+rejected by the runtime wrappers.
 
 Safety boundary:
 
@@ -2551,6 +2557,9 @@ settings are available.
 OpenClaw
 prechecks report the current fake-root-only gate and evidence requirements
 without enabling real `.openclaw` writes.
+OpenCode prechecks report the user-global `~/.config/opencode` target,
+OpenCode-native artifact directories, copy-mode default, and native smoke
+expectations without reading config contents or credentials.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
@@ -2586,10 +2595,12 @@ require `--real-system`.
 After a successful `install --apply`, the installer runs post-install smoke in
 `auto` mode. That means it verifies managed installer state, checks
 agent-visible skill files, and runs offline runtime smoke for selected
-runtime-backed skills with safe smoke contracts. These checks write a bounded
-report under `.ai-agents-skills/runs/` and use temporary scratch directories
-for runtime outputs. They do not configure credentials, write MCP/client
-config, start servers, install packages, or call live services. Use
+runtime-backed skills with safe smoke contracts. When OpenCode is selected and
+the `opencode` CLI is available, it also runs isolated native discovery smoke
+for OpenCode paths, skills, and agents. These checks write a bounded report
+under `.ai-agents-skills/runs/` and use temporary scratch directories for
+runtime outputs. They do not configure credentials, write MCP/client config,
+start servers, install packages, or call live services. Use
 `--post-install-smoke strict` in automation to make degraded smoke fail the
 command, `--post-install-smoke verify` for integrity-only checks, or
 `--post-install-smoke off` to skip post-install checks.
@@ -2625,10 +2636,9 @@ make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
 Fake-root plans detect only agent homes that exist under the fake root. Create
-`.codex`, `.claude`, `.deepseek`, or explicitly requested `.copilot` inside
-the fake root for the agents you want to exercise; a fake root with no agent
-homes produces no install actions, no managed installer state, and later
-verification may report
+`.codex`, `.claude`, `.deepseek`, `.copilot`, or `.config/opencode` inside the
+fake root for the agents you want to exercise; a fake root with no agent homes
+produces no install actions, no managed installer state, and later verification may report
 `no-managed-artifacts`.
 
 Real-system writes should be a final step after reviewing `plan` output:
@@ -2688,14 +2698,17 @@ records the reason in `plan --json`. Symlink creation itself is verified during
 apply; if a symlink cannot be created, skill files fall back to reference
 adapters and support files fall back to copied files.
 
-Codex, DeepSeek, and Copilot are compatibility exceptions. Current Codex skill
+Codex, DeepSeek, Copilot, and OpenCode are compatibility exceptions. Current Codex skill
 discovery loads regular user `SKILL.md` files but ignores file-symlinked user
 `SKILL.md` files. DeepSeek native symlinked `SKILL.md` loading has not been
 verified. Copilot agent skills are regular `SKILL.md` files in
 `~/.copilot/skills` or `.github/skills`; symlinked skill loading is not
-assumed. In default auto mode, these agents therefore resolve skill files to
-reference adapters that point at the canonical repo skill. `plan --json` shows
-the effective `install_mode`, `mode_reason`, `capability_evidence`, and
+assumed. OpenCode native skills are regular files under
+`~/.config/opencode/skills`, and auto mode copies canonical skill files plus
+support files for cross-platform parity. In default auto mode, Codex, DeepSeek,
+and Copilot resolve skill files to reference adapters that point at the
+canonical repo skill, while OpenCode resolves to copy mode. `plan --json`
+shows the effective `install_mode`, `mode_reason`, `capability_evidence`, and
 fallback mode for each target before anything is written.
 
 Use `--install-mode symlink` to force symlinked skill files for every agent.
@@ -2772,10 +2785,10 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters, while OpenCode uses copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
-| Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
+| Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
 
 Related pages: [Dependencies](dependencies.md), [Audit And Migration](audit-and-migration.md),
@@ -2971,6 +2984,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | Claude | `~/.claude` | `~/.claude/skills/<skill>/` | `~/.claude/CLAUDE.md` |
 | DeepSeek | `~/.deepseek` | `~/.deepseek/skills/<skill>/` | `~/.deepseek/AGENTS.md` |
 | Copilot | `~/.copilot` | `~/.copilot/skills/<skill>/` | not modified |
+| OpenCode | `~/.config/opencode` | `~/.config/opencode/skills/<skill>/` | `~/.config/opencode/AGENTS.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
 
 Optional or compatibility skill locations:
@@ -2980,6 +2994,7 @@ Optional or compatibility skill locations:
 | Codex | `~/.agents/skills` | Optional workspace/local target where supported; not the default global target. |
 | DeepSeek | `~/.agents/skills`, `./skills` | Workspace-local locations that may shadow global DeepSeek skills. |
 | Copilot | `~/.agents/skills` | Compatibility location reported but not used as the primary target. |
+| OpenCode | `~/.claude/skills`, `~/.agents/skills` | Compatibility locations reported but not used as the primary write target. |
 
 Optional artifact-class target directories:
 
@@ -2989,21 +3004,22 @@ Optional artifact-class target directories:
 | Claude | `~/.claude/agents` | `~/.claude/templates` | `~/.claude/commands` | `~/.claude/tools` |
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 | Copilot | `~/.copilot/agents` | not supported | not supported | not supported |
+| OpenCode | `~/.config/opencode/agents` | `~/.config/opencode/templates` | `~/.config/opencode/commands` | `~/.config/opencode/tools` |
 | OpenClaw | not supported | not supported | not supported | not supported |
 
 Rendered artifact behavior differs by agent:
 
-| Artifact | Codex | Claude | DeepSeek | Copilot | OpenClaw |
-|---|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
-| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Not supported. |
-| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Not supported. |
-| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Not supported; OpenClaw instruction files are not modified. |
+| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | OpenClaw |
+|---|---|---|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copy-only in fake roots for eligible `SKILL.md` files. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Not supported. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Not supported. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. |
 
 Instruction docs target each agent's `instructions` directory. Entrypoint
-aliases target Claude commands, but Codex and DeepSeek receive reference docs
-under `instructions/entrypoints` because equivalent slash-command loading is
-not assumed.
+aliases target Claude and OpenCode commands, but Codex and DeepSeek receive
+reference docs under `instructions/entrypoints` because equivalent
+slash-command loading is not assumed.
 
 Self-improvement records are workspace data, not agent-home source files.
 `self-improving-agent` writes or reviews `.learnings/` entries in the current
@@ -3016,6 +3032,12 @@ Existing repository-level Copilot files under `.github/` do not activate the
 personal Copilot target. The installer reports repository Copilot surfaces in
 precheck metadata, but the home-root install path writes only
 `~/.copilot/skills` and optional `~/.copilot/agents` files.
+
+OpenCode is included in default target detection when `~/.config/opencode`
+exists. Project `.opencode/` directories are project-local and do not activate
+the global OpenCode target. The installer writes global OpenCode skills, rules,
+agents, commands, templates, instruction docs, and declared tool/plugin
+artifacts under `~/.config/opencode`.
 
 OpenClaw is also explicit-only and remains fake-root-only before native target
 evidence. `precheck --json --agents openclaw` reports the `.openclaw` home

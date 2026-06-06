@@ -162,6 +162,8 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
             checks.append({"name": "codex-persona-schema", "ok": "developer_instructions" in text})
         if artifact.get("agent") == "claude":
             checks.append({"name": "claude-persona-frontmatter", "ok": text.lstrip().startswith("---")})
+        if artifact.get("agent") == "opencode":
+            checks.append({"name": "opencode-persona-subagent", "ok": "mode: subagent" in text})
     return {
         "agent": artifact.get("agent"),
         "skill": artifact.get("skill"),

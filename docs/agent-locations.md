@@ -13,6 +13,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | Claude | `~/.claude` | `~/.claude/skills/<skill>/` | `~/.claude/CLAUDE.md` |
 | DeepSeek | `~/.deepseek` | `~/.deepseek/skills/<skill>/` | `~/.deepseek/AGENTS.md` |
 | Copilot | `~/.copilot` | `~/.copilot/skills/<skill>/` | not modified |
+| OpenCode | `~/.config/opencode` | `~/.config/opencode/skills/<skill>/` | `~/.config/opencode/AGENTS.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
 
 Optional or compatibility skill locations:
@@ -22,6 +23,7 @@ Optional or compatibility skill locations:
 | Codex | `~/.agents/skills` | Optional workspace/local target where supported; not the default global target. |
 | DeepSeek | `~/.agents/skills`, `./skills` | Workspace-local locations that may shadow global DeepSeek skills. |
 | Copilot | `~/.agents/skills` | Compatibility location reported but not used as the primary target. |
+| OpenCode | `~/.claude/skills`, `~/.agents/skills` | Compatibility locations reported but not used as the primary write target. |
 
 Optional artifact-class target directories:
 
@@ -31,21 +33,22 @@ Optional artifact-class target directories:
 | Claude | `~/.claude/agents` | `~/.claude/templates` | `~/.claude/commands` | `~/.claude/tools` |
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 | Copilot | `~/.copilot/agents` | not supported | not supported | not supported |
+| OpenCode | `~/.config/opencode/agents` | `~/.config/opencode/templates` | `~/.config/opencode/commands` | `~/.config/opencode/tools` |
 | OpenClaw | not supported | not supported | not supported | not supported |
 
 Rendered artifact behavior differs by agent:
 
-| Artifact | Codex | Claude | DeepSeek | Copilot | OpenClaw |
-|---|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
-| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Not supported. |
-| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Not supported. |
-| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Not supported; OpenClaw instruction files are not modified. |
+| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | OpenClaw |
+|---|---|---|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copy-only in fake roots for eligible `SKILL.md` files. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Not supported. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Not supported. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. |
 
 Instruction docs target each agent's `instructions` directory. Entrypoint
-aliases target Claude commands, but Codex and DeepSeek receive reference docs
-under `instructions/entrypoints` because equivalent slash-command loading is
-not assumed.
+aliases target Claude and OpenCode commands, but Codex and DeepSeek receive
+reference docs under `instructions/entrypoints` because equivalent
+slash-command loading is not assumed.
 
 Self-improvement records are workspace data, not agent-home source files.
 `self-improving-agent` writes or reviews `.learnings/` entries in the current
@@ -58,6 +61,12 @@ Existing repository-level Copilot files under `.github/` do not activate the
 personal Copilot target. The installer reports repository Copilot surfaces in
 precheck metadata, but the home-root install path writes only
 `~/.copilot/skills` and optional `~/.copilot/agents` files.
+
+OpenCode is included in default target detection when `~/.config/opencode`
+exists. Project `.opencode/` directories are project-local and do not activate
+the global OpenCode target. The installer writes global OpenCode skills, rules,
+agents, commands, templates, instruction docs, and declared tool/plugin
+artifacts under `~/.config/opencode`.
 
 OpenClaw is also explicit-only and remains fake-root-only before native target
 evidence. `precheck --json --agents openclaw` reports the `.openclaw` home

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -7,10 +8,10 @@ from typing import Iterable, Mapping
 from .capabilities import looks_like_real_system_root, resolved_path_within
 
 
-DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot"]
+DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot", "opencode"]
 KNOWN_AGENT_NAMES = [*DEFAULT_AGENT_NAMES, "openclaw"]
 PORTABLE_MANIFEST_AGENT_NAMES = {"codex", "claude", "deepseek"}
-ADAPTER_AGENT_NAMES = {"copilot", "openclaw"}
+ADAPTER_AGENT_NAMES = {"copilot", "opencode", "openclaw"}
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,24 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             },
             instruction_blocks_enabled=False,
         )
+    if agent == "opencode":
+        home = opencode_home(root)
+        return AgentTarget(
+            name="opencode",
+            home=home,
+            skills_dir=home / "skills",
+            instructions_file=home / "AGENTS.md",
+            optional_skills_dirs=(root / ".claude" / "skills", root / ".agents" / "skills"),
+            artifact_dirs={
+                "agent-persona": home / "agents",
+                "template": home / "templates",
+                "instruction-doc": home / "instructions",
+                "entrypoint-alias": home / "commands",
+                "command": home / "commands",
+                "tool-shim": home / "tools",
+                "plugin": home / "plugins",
+            },
+        )
     if agent == "openclaw":
         return AgentTarget(
             name="openclaw",
@@ -102,6 +121,22 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             fake_root_only=True,
         )
     raise ValueError(f"unknown agent: {agent}")
+
+
+def opencode_home(root: Path) -> Path:
+    config_base = contained_xdg_config_home(root)
+    return config_base / "opencode"
+
+
+def contained_xdg_config_home(root: Path) -> Path:
+    configured = os.environ.get("XDG_CONFIG_HOME")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        if resolved_path_within(root, candidate):
+            return candidate
+    return root / ".config"
 
 
 def detect_agents(root: Path, requested: Iterable[str] | None = None) -> list[AgentTarget]:
