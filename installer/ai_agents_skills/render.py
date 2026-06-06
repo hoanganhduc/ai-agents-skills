@@ -14,7 +14,10 @@ MANAGED_MARKER = "Managed by ai-agents-skills"
 def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
     canonical = load_canonical_skill(skill)
     if canonical is not None:
-        return add_managed_header(canonical, agent)
+        content = add_managed_header(canonical, agent)
+        if agent == "opencode":
+            return add_opencode_skill_note(content)
+        return content
     description = str(spec["description"])
     optional = spec.get("optional_capabilities", [])
     optional_text = "\n".join(f"- {item}" for item in optional) or "- none"
@@ -175,6 +178,16 @@ def render_persona(name: str, spec: dict[str, Any], agent: str, body: str) -> st
             f"{instructions}\n"
         )
         return add_managed_support_header(content, agent, f"agent-persona:{name}.agent.md")
+    if agent == "opencode":
+        content = (
+            f"---\n"
+            f"name: {yaml_scalar(name)}\n"
+            f"description: {yaml_scalar(str(spec['description']))}\n"
+            f"mode: subagent\n"
+            f"---\n\n"
+            f"{instructions}\n"
+        )
+        return add_managed_support_header(content, agent, f"agent-persona:{name}.md")
     content = dedent(
         f"""\
         # {name}
@@ -201,6 +214,14 @@ def render_entrypoint(name: str, spec: dict[str, Any], agent: str, body: str) ->
             f"{body.strip()}\n\n"
             f"Backing skill: {skills}\n"
         )
+    elif agent == "opencode":
+        content = (
+            f"---\n"
+            f"description: {yaml_scalar(str(spec['description']))}\n"
+            f"---\n\n"
+            f"{body.strip()}\n\n"
+            f"Backing skill: {skills}\n"
+        )
     else:
         content = dedent(
             f"""\
@@ -215,6 +236,28 @@ def render_entrypoint(name: str, spec: dict[str, Any], agent: str, body: str) ->
             """
         )
     return add_managed_support_header(content, agent, f"entrypoint-alias:{name}.md")
+
+
+def add_opencode_skill_note(content: str) -> str:
+    note = dedent(
+        """\
+
+        ## OpenCode Runtime Notes
+
+        This skill is installed as an OpenCode-native `SKILL.md`. For runtime-backed
+        helpers, prefer the shared ai-agents-skills runtime root and the
+        `AAS_RUNTIME_ROOT` override instead of assuming a Codex-specific runtime
+        path.
+        """
+    )
+    if "## OpenCode Runtime Notes" in content:
+        return content
+    if content.startswith("---\n"):
+        end = content.find("\n---", 4)
+        if end != -1:
+            insert_at = end + len("\n---")
+            return content[:insert_at] + note + content[insert_at:]
+    return note.lstrip() + "\n\n" + content
 
 
 def toml_escape(value: str) -> str:

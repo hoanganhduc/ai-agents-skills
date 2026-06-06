@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
+from .opencode import run_opencode_native_smoke
 from .capabilities import smoke_artifact
 from .runtime_smoke import run_installed_runtime_smoke
 from .state import load_state, preflight_state_path, save_state, state_dir, validate_run_id, write_text_atomic
@@ -64,11 +65,26 @@ def run_post_install_smoke(
                 timeout=timeout,
             ),
         )
+        result["opencode_smoke"] = guarded_check(
+            "opencode-smoke",
+            lambda: run_opencode_native_smoke(
+                root,
+                agents=agents,
+                platform=platform,
+                timeout=timeout,
+            ),
+        )
     else:
         result["skill_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["runtime_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
+        result["opencode_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
 
-    result["status"] = aggregate_status(result["verify"], result["skill_smoke"], result["runtime_smoke"])
+    result["status"] = aggregate_status(
+        result["verify"],
+        result["skill_smoke"],
+        result["runtime_smoke"],
+        result["opencode_smoke"],
+    )
     write_report_and_state_summary(root, run_id, result)
     return result
 
@@ -143,5 +159,6 @@ def compact_summary(result: dict[str, Any]) -> dict[str, Any]:
         "verify_status": result.get("verify", {}).get("status"),
         "skill_smoke_status": result.get("skill_smoke", {}).get("status"),
         "runtime_smoke_status": result.get("runtime_smoke", {}).get("status"),
+        "opencode_smoke_status": result.get("opencode_smoke", {}).get("status"),
         "report_path": result.get("report_path"),
     }

@@ -12,16 +12,19 @@ OpenClaw source/import evidence and OpenClaw install-target behavior are separat
 | `claude` | `skill-file` | `supported` | `symlink` | native Claude skill file | `policy` | Auto mode links to canonical SKILL.md with apply-time fallback. |
 | `deepseek` | `skill-file` | `supported` | `reference-adapter` | agent-visible regular SKILL.md adapter pointing at canonical source | `policy` | Auto mode uses reference adapters because native symlink loading is not verified. |
 | `copilot` | `skill-file` | `supported` | `reference-adapter` | personal GitHub Copilot skill adapter | `policy` | Copilot receives personal skill/persona surfaces only; commands/templates are unsupported. |
+| `opencode` | `skill-file` | `supported` | `copy` | OpenCode-native regular SKILL.md file with copied support files | `policy` | Auto mode copies canonical skills for cross-platform parity; explicit reference and symlink modes remain available with evidence. |
 | `openclaw` | `skill-file` | `manual` | `fake-root-copy` | fake-root install-target layout only | `fake-root-only` | OpenClaw real-system target writes stay blocked until native target evidence exists. |
 | `codex` | `entrypoint-alias` | `supported` | `reference-doc` | non-executing quick-action reference | `renderer` | Codex does not receive native slash-command registrations from this artifact class. |
 | `claude` | `entrypoint-alias` | `supported` | `native-command` | Claude command file | `renderer` | Claude is the only current target that receives native command files for entrypoint aliases. |
 | `deepseek` | `entrypoint-alias` | `supported` | `reference-doc` | non-executing quick-action reference | `renderer` | DeepSeek receives entrypoint references rather than native command registrations. |
 | `copilot` | `entrypoint-alias` | `unsupported` | `unsupported` | not installed | `planner` | Copilot optional artifacts are limited to supported personal surfaces. |
+| `opencode` | `entrypoint-alias` | `supported` | `native-command` | OpenCode command markdown file | `renderer` | OpenCode receives native command aliases under ~/.config/opencode/commands. |
 | `openclaw` | `entrypoint-alias` | `unsupported` | `unsupported` | not installed | `fake-root-only` | OpenClaw commands/aliases remain outside target support. |
 | `codex` | `runtime-file` | `supported` | `runtime-copy` | root-scoped managed runtime helpers | `runtime-manifest` | Runtime files are copied under the selected root runtime, not per-agent skill folders. |
 | `claude` | `runtime-file` | `supported` | `runtime-copy` | root-scoped managed runtime helpers | `runtime-manifest` | Runtime files are copied under the selected root runtime, not per-agent skill folders. |
 | `deepseek` | `runtime-file` | `supported` | `runtime-copy` | root-scoped managed runtime helpers | `runtime-manifest` | Runtime files are copied under the selected root runtime, not per-agent skill folders. |
 | `copilot` | `runtime-file` | `supported` | `runtime-copy` | root-scoped managed runtime helpers | `runtime-manifest` | Runtime files are copied under the selected root runtime, not per-agent skill folders. |
+| `opencode` | `runtime-file` | `supported` | `runtime-copy` | root-scoped managed runtime helpers | `runtime-manifest` | Runtime files are copied under the neutral shared ai-agents-skills runtime root, not inside OpenCode config. |
 | `openclaw` | `runtime-file` | `blocked` | `unsupported` | not installed | `fake-root-only` | OpenClaw-associated shared runtime writes are blocked until separate native evidence exists. |
 
 Claim levels used here:

@@ -14,13 +14,13 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
-![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot-black)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
-Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek, and
-explicit adapter targets such as GitHub Copilot.
+Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
+GitHub Copilot, and OpenCode.
 
 ## System Summary
 
@@ -30,14 +30,13 @@ product, and it may not behave as desired on other machines, other agent
 versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
-Codex, Claude, DeepSeek, and explicit adapter targets such as GitHub Copilot
-can each load local skills, while this repository keeps the shared research
-workflows, profiles, delegation settings, dependency metadata, and installer
-logic in one place.
+Codex, Claude, DeepSeek, GitHub Copilot, and OpenCode can each load local
+skills, while this repository keeps the shared research workflows, profiles,
+delegation settings, dependency metadata, and installer logic in one place.
 
 The research stack is organized as:
 
-- agent frontends: Codex, Claude, DeepSeek, and explicit Copilot adapters
+- agent frontends: Codex, Claude, DeepSeek, GitHub Copilot, and OpenCode
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers

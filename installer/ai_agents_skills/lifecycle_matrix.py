@@ -145,6 +145,11 @@ STRESS_EXTRA_SCENARIOS: tuple[LifecycleScenario, ...] = (
         agent_subset=("deepseek",),
     ),
     LifecycleScenario(
+        name="opencode-only-auto",
+        description="clean auto-mode install for OpenCode only",
+        agent_subset=("opencode",),
+    ),
+    LifecycleScenario(
         name="special-path-clean-auto",
         description="clean auto-mode install under a path with spaces and punctuation",
         path_variant="spaces",
@@ -253,7 +258,7 @@ def run_lifecycle_case(
         root.mkdir(parents=True, exist_ok=True)
         active_requested_agents = list(scenario.agent_subset or tuple(requested_agents))
         for agent in active_requested_agents:
-            (root / f".{agent}").mkdir(parents=True, exist_ok=True)
+            target_for(root, agent).home.mkdir(parents=True, exist_ok=True)
         agents = detect_agents(root, active_requested_agents)
         selected = scenario_skills(scenario, manifests)
         selected_artifacts = scenario_artifacts(scenario, manifests)

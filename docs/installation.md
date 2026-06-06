@@ -38,6 +38,9 @@ settings are available.
 OpenClaw
 prechecks report the current fake-root-only gate and evidence requirements
 without enabling real `.openclaw` writes.
+OpenCode prechecks report the user-global `~/.config/opencode` target,
+OpenCode-native artifact directories, copy-mode default, and native smoke
+expectations without reading config contents or credentials.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
@@ -73,10 +76,12 @@ require `--real-system`.
 After a successful `install --apply`, the installer runs post-install smoke in
 `auto` mode. That means it verifies managed installer state, checks
 agent-visible skill files, and runs offline runtime smoke for selected
-runtime-backed skills with safe smoke contracts. These checks write a bounded
-report under `.ai-agents-skills/runs/` and use temporary scratch directories
-for runtime outputs. They do not configure credentials, write MCP/client
-config, start servers, install packages, or call live services. Use
+runtime-backed skills with safe smoke contracts. When OpenCode is selected and
+the `opencode` CLI is available, it also runs isolated native discovery smoke
+for OpenCode paths, skills, and agents. These checks write a bounded report
+under `.ai-agents-skills/runs/` and use temporary scratch directories for
+runtime outputs. They do not configure credentials, write MCP/client config,
+start servers, install packages, or call live services. Use
 `--post-install-smoke strict` in automation to make degraded smoke fail the
 command, `--post-install-smoke verify` for integrity-only checks, or
 `--post-install-smoke off` to skip post-install checks.
@@ -112,10 +117,9 @@ make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
 Fake-root plans detect only agent homes that exist under the fake root. Create
-`.codex`, `.claude`, `.deepseek`, or explicitly requested `.copilot` inside
-the fake root for the agents you want to exercise; a fake root with no agent
-homes produces no install actions, no managed installer state, and later
-verification may report
+`.codex`, `.claude`, `.deepseek`, `.copilot`, or `.config/opencode` inside the
+fake root for the agents you want to exercise; a fake root with no agent homes
+produces no install actions, no managed installer state, and later verification may report
 `no-managed-artifacts`.
 
 Real-system writes should be a final step after reviewing `plan` output:
@@ -175,14 +179,17 @@ records the reason in `plan --json`. Symlink creation itself is verified during
 apply; if a symlink cannot be created, skill files fall back to reference
 adapters and support files fall back to copied files.
 
-Codex, DeepSeek, and Copilot are compatibility exceptions. Current Codex skill
+Codex, DeepSeek, Copilot, and OpenCode are compatibility exceptions. Current Codex skill
 discovery loads regular user `SKILL.md` files but ignores file-symlinked user
 `SKILL.md` files. DeepSeek native symlinked `SKILL.md` loading has not been
 verified. Copilot agent skills are regular `SKILL.md` files in
 `~/.copilot/skills` or `.github/skills`; symlinked skill loading is not
-assumed. In default auto mode, these agents therefore resolve skill files to
-reference adapters that point at the canonical repo skill. `plan --json` shows
-the effective `install_mode`, `mode_reason`, `capability_evidence`, and
+assumed. OpenCode native skills are regular files under
+`~/.config/opencode/skills`, and auto mode copies canonical skill files plus
+support files for cross-platform parity. In default auto mode, Codex, DeepSeek,
+and Copilot resolve skill files to reference adapters that point at the
+canonical repo skill, while OpenCode resolves to copy mode. `plan --json`
+shows the effective `install_mode`, `mode_reason`, `capability_evidence`, and
 fallback mode for each target before anything is written.
 
 Use `--install-mode symlink` to force symlinked skill files for every agent.
@@ -259,10 +266,10 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters, while OpenCode uses copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
-| Persona selected | Codex gets TOML, Claude gets Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
+| Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
 
 Related pages: [Dependencies](dependencies.md), [Audit And Migration](audit-and-migration.md),

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from installer.ai_agents_skills.agents import detect_agents
+from installer.ai_agents_skills.agents import detect_agents, target_for
 from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
 from installer.ai_agents_skills.discovery import current_platform
@@ -33,7 +33,7 @@ from installer.ai_agents_skills.verify import verify
 
 
 def create_agent_home(root: Path, agent: str = "codex") -> None:
-    (root / f".{agent}").mkdir(parents=True)
+    target_for(root, agent).home.mkdir(parents=True)
 
 
 def create_fake_tool(root: Path, name: str, args_path: Path, *, cwd_path: Path | None = None) -> Path:
@@ -122,9 +122,37 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertNotIn("run_skill.sh", target_relpaths)
             self.assertNotIn("workspace/skills/graph-verifier/run_graph_verifier.sh", target_relpaths)
 
+    def test_opencode_only_runtime_uses_neutral_shared_root(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "opencode")
+            plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                detect_agents(root, ["opencode"]),
+                platform="linux",
+            )
+            runtime_actions = [item for item in plan["actions"] if item["artifact_type"] == "runtime-file"]
+            self.assertTrue(runtime_actions)
+            self.assertTrue(
+                all(
+                    str(root / ".local" / "share" / "ai-agents-skills" / "runtime") in item["path"]
+                    for item in runtime_actions
+                )
+            )
+            self.assertFalse(any(".config/opencode" in item["path"] for item in runtime_actions))
+            self.assertFalse(any(".codex/runtime" in item["path"] for item in runtime_actions))
+
+            apply_plan(root, plan, dry_run=False)
+            self.assertTrue((root / ".local" / "share" / "ai-agents-skills" / "runtime" / "run_skill.sh").is_file())
+            self.assertTrue((root / ".config" / "opencode" / "skills" / "graph-verifier" / "SKILL.md").is_file())
+            self.assertEqual(verify(root)["status"], "ok")
+
     def test_submission_venue_selector_installs_runtime_files_for_supported_agents(self) -> None:
         manifests = load_manifests()
-        for agent in ("codex", "claude", "deepseek", "copilot"):
+        for agent in ("codex", "claude", "deepseek", "copilot", "opencode"):
             for platform in ("linux", "macos", "wsl", "windows"):
                 with self.subTest(agent=agent, platform=platform):
                     with tempfile.TemporaryDirectory() as tmp:

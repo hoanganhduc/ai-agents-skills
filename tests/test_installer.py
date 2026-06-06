@@ -11,6 +11,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
+from installer.ai_agents_skills.agents import target_for
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
 from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS
 from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
@@ -48,7 +49,7 @@ def fake_root() -> tempfile.TemporaryDirectory[str]:
 
 def create_agent_homes(root: Path, *agents: str) -> None:
     for agent in agents:
-        (root / f".{agent}").mkdir(parents=True, exist_ok=True)
+        target_for(root, agent).home.mkdir(parents=True, exist_ok=True)
 
 
 def root_snapshot(root: Path) -> dict[str, tuple[str, str | bytes | None]]:
@@ -224,6 +225,8 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(target_surface_for("claude", "entrypoint-alias").mechanism, "native-command")
         self.assertEqual(target_surface_for("deepseek", "runtime-file").claim_basis, "runtime-manifest")
         self.assertEqual(target_surface_for("copilot", "entrypoint-alias").support, "unsupported")
+        self.assertEqual(target_surface_for("opencode", "skill-file").mechanism, "copy")
+        self.assertEqual(target_surface_for("opencode", "entrypoint-alias").mechanism, "native-command")
         self.assertEqual(target_surface_for("openclaw", "runtime-file").support, "blocked")
 
     def test_canonical_import_admission_blocks_runtime_and_secret_files(self) -> None:
@@ -298,7 +301,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, [])
             self.assertEqual(plan["actions"], [])
-            self.assertEqual(len(plan["skipped_agents"]), 4)
+            self.assertEqual(len(plan["skipped_agents"]), 5)
 
     def test_symlinked_agent_home_is_skipped_without_writing_target(self) -> None:
         manifests = load_manifests()
@@ -1034,7 +1037,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
-            create_agent_homes(root, "codex", "claude", "deepseek", "copilot")
+            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode")
             from installer.ai_agents_skills.agents import detect_agents
 
             args = Args()
@@ -1054,6 +1057,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     "claude": "symlink",
                     "deepseek": "reference",
                     "copilot": "reference",
+                    "opencode": "copy",
                 },
             )
             skill_actions = [
@@ -2770,7 +2774,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             )
 
     def test_cli_precheck_reports_all_targets_for_all_platform_overrides(self) -> None:
-        target_names = ["codex", "claude", "deepseek", "copilot", "openclaw"]
+        target_names = ["codex", "claude", "deepseek", "copilot", "opencode", "openclaw"]
         expected_path_styles = {
             "linux": "posix",
             "macos": "posix",
@@ -2809,6 +2813,8 @@ class DocsAndLauncherTests(unittest.TestCase):
                     self.assertEqual(by_target["codex"]["capabilities"]["default_install_mode"], "reference")
                     self.assertEqual(by_target["claude"]["capabilities"]["default_install_mode"], "symlink")
                     self.assertEqual(by_target["deepseek"]["capabilities"]["default_install_mode"], "reference")
+                    self.assertEqual(by_target["opencode"]["status"], "ready")
+                    self.assertEqual(by_target["opencode"]["capabilities"]["default_install_mode"], "copy")
                     self.assertEqual(by_target["openclaw"]["status"], "fake-root-only")
                     self.assertEqual(by_target["openclaw"]["capabilities"]["default_install_mode"], "copy")
                     self.assertEqual(by_target["copilot"]["status"], "ready")
@@ -3331,15 +3337,183 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertIn("Managed by ai-agents-skills", file_actions[0]["content"])
 
 
+class OpenCodeTargetTests(unittest.TestCase):
+    def test_opencode_is_known_and_detected_by_default(self) -> None:
+        from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "opencode")
+
+            self.assertIn("opencode", all_agent_names())
+            self.assertIn("opencode", known_agent_names())
+            self.assertEqual([agent.name for agent in detect_agents(root)], ["opencode"])
+            self.assertEqual([agent.name for agent in detect_agents(root, ["opencode"])], ["opencode"])
+
+    def test_project_local_opencode_dir_does_not_activate_global_target(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            (root / ".opencode").mkdir()
+
+            self.assertEqual(detect_agents(root, ["opencode"]), [])
+
+    def test_opencode_auto_mode_copies_skill_and_support_files(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "opencode")
+            args = Args()
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["opencode"]),
+                requested_agents=["opencode"],
+            )
+            skill_action = next(
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            )
+            self.assertEqual(skill_action["install_mode"], "copy")
+            self.assertEqual(Path(skill_action["path"]), root / ".config" / "opencode" / "skills" / "deep-research-workflow" / "SKILL.md")
+            self.assertIn("OpenCode native skills are regular SKILL.md files", skill_action["mode_reason"])
+
+            apply_plan(root, plan, dry_run=False)
+            skill = root / ".config" / "opencode" / "skills" / "deep-research-workflow" / "SKILL.md"
+            support = root / ".config" / "opencode" / "skills" / "deep-research-workflow" / "references" / "output-structure.md"
+            self.assertTrue(skill.is_file())
+            self.assertTrue(support.is_file())
+            self.assertIn("OpenCode Runtime Notes", skill.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_opencode_installs_managed_rules_persona_command_and_docs(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "opencode")
+            args = Args()
+            args.skills = "deep-research-workflow"
+            args.artifact_profile = "workflow-artifacts"
+            selected = resolve_skills(args, manifests)
+            artifacts = resolve_artifacts(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["opencode"]),
+                artifacts=artifacts,
+                requested_agents=["opencode"],
+            )
+            action_paths = {Path(action["path"]) for action in plan["actions"] if "path" in action}
+            self.assertNotIn(root / ".config" / "opencode" / "opencode.json", action_paths)
+            self.assertNotIn(root / ".config" / "opencode" / "opencode.jsonc", action_paths)
+
+            apply_plan(root, plan, dry_run=False)
+            home = root / ".config" / "opencode"
+            agent = home / "agents" / "code-reviewer.md"
+            command = home / "commands" / "deep-research.md"
+            template = home / "templates" / "SPEC.md"
+            instruction = home / "instructions" / "engineering-lifecycle.md"
+            rules = home / "AGENTS.md"
+            self.assertTrue(agent.is_file())
+            self.assertTrue(command.is_file())
+            self.assertTrue(template.is_file())
+            self.assertTrue(instruction.is_file())
+            self.assertTrue(rules.is_file())
+            self.assertIn("mode: subagent", agent.read_text(encoding="utf-8"))
+            self.assertIn("Backing skill", command.read_text(encoding="utf-8"))
+            self.assertIn("ai-agents-skills:deep-research-workflow", rules.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_opencode_uses_contained_xdg_config_home(self) -> None:
+        from installer.ai_agents_skills.agents import target_for
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(root / "xdg-config")}):
+                target = target_for(root, "opencode")
+
+            self.assertEqual(target.home, root / "xdg-config" / "opencode")
+
+    def test_opencode_native_smoke_uses_isolated_cli_discovery(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+        from installer.ai_agents_skills.opencode import run_opencode_native_smoke
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "opencode")
+            fake_cli = root / "opencode"
+            fake_cli.write_text(
+                "\n".join([
+                    "#!/usr/bin/env python3",
+                    "import json, sys",
+                    "args = sys.argv[1:]",
+                    "if '--version' in args:",
+                    "    print('1.16.0')",
+                    "elif args[-2:] == ['debug', 'paths']:",
+                    "    print('config /isolated/.config/opencode')",
+                    "elif args[-2:] == ['debug', 'skill']:",
+                    "    print(json.dumps([{'name': 'zotero', 'description': 'Zotero'}]))",
+                    "elif args[-2:] == ['agent', 'list']:",
+                    "    print('code-reviewer (subagent)')",
+                    "else:",
+                    "    print('unexpected', args)",
+                    "    sys.exit(1)",
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            fake_cli.chmod(0o755)
+
+            plan = build_plan(
+                root,
+                manifests,
+                ["zotero"],
+                detect_agents(root, ["opencode"]),
+                artifacts=[("agent-persona", "code-reviewer")],
+                runtime_profile="none",
+                requested_agents=["opencode"],
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "AAS_OPENCODE": str(fake_cli),
+                    "PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}",
+                },
+            ):
+                result = run_opencode_native_smoke(root, agents={"opencode"}, platform="linux")
+
+            self.assertEqual(result["status"], "ok")
+            check_names = {check["name"] for check in result["checks"]}
+            self.assertIn("debug-paths", check_names)
+            self.assertIn("opencode-skill-visible:zotero", check_names)
+            self.assertIn("opencode-agent-visible:code-reviewer", check_names)
+
+
 class CopilotTargetTests(unittest.TestCase):
     def test_adapter_target_readmes_capture_install_boundaries(self) -> None:
         copilot = (REPO_ROOT / "targets" / "copilot" / "README.md").read_text(encoding="utf-8")
         openclaw = (REPO_ROOT / "targets" / "openclaw" / "README.md").read_text(encoding="utf-8")
+        opencode = (REPO_ROOT / "targets" / "opencode" / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("adapter-only", copilot)
         self.assertIn("does not receive Codex or\nClaude instruction blocks", copilot)
         self.assertIn("fake-root-only", openclaw)
         self.assertIn("Runtime-backed skills are blocked", openclaw)
+        self.assertIn("full install target", opencode)
+        self.assertIn("~/.config/opencode", opencode)
 
     def test_copilot_is_known_and_detected_by_default(self) -> None:
         from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names

@@ -69,6 +69,15 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "Copilot receives personal skill/persona surfaces only; commands/templates are unsupported.",
     ),
     TargetSurface(
+        "opencode",
+        "skill-file",
+        "supported",
+        "copy",
+        "OpenCode-native regular SKILL.md file with copied support files",
+        "policy",
+        "Auto mode copies canonical skills for cross-platform parity; explicit reference and symlink modes remain available with evidence.",
+    ),
+    TargetSurface(
         "openclaw",
         "skill-file",
         "manual",
@@ -114,6 +123,15 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "Copilot optional artifacts are limited to supported personal surfaces.",
     ),
     TargetSurface(
+        "opencode",
+        "entrypoint-alias",
+        "supported",
+        "native-command",
+        "OpenCode command markdown file",
+        "renderer",
+        "OpenCode receives native command aliases under ~/.config/opencode/commands.",
+    ),
+    TargetSurface(
         "openclaw",
         "entrypoint-alias",
         "unsupported",
@@ -157,6 +175,15 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "root-scoped managed runtime helpers",
         "runtime-manifest",
         "Runtime files are copied under the selected root runtime, not per-agent skill folders.",
+    ),
+    TargetSurface(
+        "opencode",
+        "runtime-file",
+        "supported",
+        "runtime-copy",
+        "root-scoped managed runtime helpers",
+        "runtime-manifest",
+        "Runtime files are copied under the neutral shared ai-agents-skills runtime root, not inside OpenCode config.",
     ),
     TargetSurface(
         "openclaw",
