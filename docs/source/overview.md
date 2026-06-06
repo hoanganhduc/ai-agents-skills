@@ -1,7 +1,8 @@
 # Overview
 
 AI Agents Skills is an experimental, personal-use repository for sharing
-research-oriented agent skills and settings across Codex, Claude, and DeepSeek.
+research-oriented agent skills and settings across Codex, Claude, DeepSeek,
+and OpenCode.
 It is designed for combinatorics and graph theory workflows, but the installer
 and documentation are written so other users can inspect, dry-run, and install
 only the parts that fit their own machines.
@@ -9,11 +10,12 @@ only the parts that fit their own machines.
 The repository is a generator and installer, not a copied dotfiles folder. It
 keeps reusable skill bodies, dependency metadata, profiles, optional artifacts,
 and target-specific rendering logic in one source tree. Agent homes such as
-`~/.codex`, `~/.claude`, and `~/.deepseek` are runtime targets. Default skill
-installs use auto mode: Claude links back to the canonical repo files, while
-Codex and DeepSeek receive reference adapters unless native loader evidence
-justifies a different policy. Explicit symlink, reference, and copy modes are
-available when you need to force one strategy.
+`~/.codex`, `~/.claude`, `~/.deepseek`, and `~/.config/opencode` are runtime
+targets. Default skill installs use auto mode: Claude links back to the
+canonical repo files, Codex and DeepSeek receive reference adapters, and
+OpenCode receives copied native skill files plus support files unless native
+loader evidence justifies a different policy. Explicit symlink, reference, and
+copy modes are available when you need to force one strategy.
 
 Most checked-in documentation is generated from
 `installer/ai_agents_skills/docs.py`, with manifest-derived tables inserted
@@ -38,10 +40,10 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
 - `plan` and `install --dry-run` preview writes before anything is changed.
 - `--install-mode auto` is the default and resolves per agent. Claude uses
   symlinked skill files. Codex uses reference adapters because current Codex
-  discovery ignores file-symlinked user `SKILL.md` files, and DeepSeek uses
+  discovery ignores file-symlinked user `SKILL.md` files, DeepSeek uses
   reference adapters because native symlinked skill loading has not been
-  verified. `symlink`, `reference`, and `copy` force one strategy for every
-  agent.
+  verified, and OpenCode uses copied native skill files. `symlink`,
+  `reference`, and `copy` force one strategy for every agent.
 - Real home-directory writes require explicit `--apply --real-system`.
 - Verification checks only installed managed artifacts.
 - The Docling document/OCR runtime is local-only by default. Stronger scanned

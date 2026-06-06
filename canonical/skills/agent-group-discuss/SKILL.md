@@ -294,7 +294,7 @@ If exceeded, write the best available synthesis from completed rounds and mark t
 
 Create a run folder under:
 
-- `$HOME/.codex/runs/agent_group_discuss/<run_id>/`
+- `${AAS_RUNS_ROOT:-$HOME/.local/share/ai-agents-skills/runs}/agent_group_discuss/<run_id>/`
 
 Before launching any participant:
 

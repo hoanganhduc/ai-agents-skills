@@ -149,6 +149,21 @@ class ManifestTests(unittest.TestCase):
         self.assertTrue(delegation["nested_delegation"]["enabled"])
         self.assertTrue(delegation["nested_delegation"]["require_same_model_as_manager"])
 
+    def test_portable_manifest_entries_explicitly_support_opencode(self) -> None:
+        manifests = load_manifests()
+        portable = {"codex", "claude", "deepseek"}
+
+        for name, spec in manifests["skills"]["skills"].items():
+            supported = set(spec["supported_agents"])
+            if portable.issubset(supported):
+                self.assertIn("opencode", supported, name)
+
+        for artifact_type, artifacts in manifests["artifacts"]["artifacts"].items():
+            for name, spec in artifacts.items():
+                supported = set(spec["supported_agents"])
+                if portable.issubset(supported):
+                    self.assertIn("opencode", supported, f"{artifact_type}:{name}")
+
     def test_deepseek_cli_candidates_prefer_codewhale_rename(self) -> None:
         candidates = PROVIDER_CLI_SPECS["deepseek"]["candidates"]
 
@@ -3350,6 +3365,15 @@ class OpenCodeTargetTests(unittest.TestCase):
             self.assertEqual([agent.name for agent in detect_agents(root)], ["opencode"])
             self.assertEqual([agent.name for agent in detect_agents(root, ["opencode"])], ["opencode"])
 
+    def test_opencode_support_is_visible_in_describe_output(self) -> None:
+        manifests = load_manifests()
+
+        self.assertIn("opencode", manifests["skills"]["skills"]["agent-group-discuss"]["supported_agents"])
+        self.assertIn(
+            "opencode",
+            manifests["artifacts"]["artifacts"]["entrypoint-alias"]["research-team"]["supported_agents"],
+        )
+
     def test_project_local_opencode_dir_does_not_activate_global_target(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -3509,6 +3533,19 @@ class OpenCodeTargetTests(unittest.TestCase):
             self.assertIn("debug-paths", check_names)
             self.assertIn("opencode-skill-visible:zotero", check_names)
             self.assertIn("opencode-agent-visible:code-reviewer", check_names)
+
+    def test_portable_skill_run_state_docs_do_not_force_codex_home(self) -> None:
+        checked_paths = [
+            REPO_ROOT / "canonical" / "skills" / "agent-group-discuss" / "SKILL.md",
+            REPO_ROOT / "canonical" / "skills" / "agent-group-discuss" / "EXECUTION.md",
+            REPO_ROOT / "canonical" / "skills" / "vnthuquan" / "references" / "workflows.md",
+        ]
+
+        for path in checked_paths:
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn(".codex/runs", text, str(path))
+            self.assertNotIn(".codex/state", text, str(path))
+            self.assertIn("ai-agents-skills", text, str(path))
 
 
 class CopilotTargetTests(unittest.TestCase):

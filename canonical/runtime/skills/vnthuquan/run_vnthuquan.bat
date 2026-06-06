@@ -12,7 +12,7 @@ for %%I in ("%RUNTIME_ROOT%") do set "RUNTIME_ROOT=%%~fI"
 set "RUNTIME_WORKSPACE=%AAS_RUNTIME_WORKSPACE%"
 if not defined RUNTIME_WORKSPACE set "RUNTIME_WORKSPACE=%RUNTIME_ROOT%\workspace"
 for %%I in ("%RUNTIME_WORKSPACE%") do set "RUNTIME_WORKSPACE=%%~fI"
-if not defined VNTHUQUAN_TARGET set "VNTHUQUAN_TARGET=windows-codex"
+if not defined VNTHUQUAN_TARGET set "VNTHUQUAN_TARGET=windows-ai-agents-skills"
 if not defined VNTHUQUAN_ASSISTANT_HOME set "VNTHUQUAN_ASSISTANT_HOME=%RUNTIME_ROOT%"
 if not defined VNTHUQUAN_CALIBRE_RUNNER set "VNTHUQUAN_CALIBRE_RUNNER=%RUNTIME_ROOT%\run_skill.bat"
 if not defined VNTHUQUAN_CALIBRE_SCRIPT set "VNTHUQUAN_CALIBRE_SCRIPT=skills\calibre\run_cal.bat"
@@ -20,7 +20,7 @@ if not defined VNTHUQUAN_CALIBRE_CACHE_PATH set "VNTHUQUAN_CALIBRE_CACHE_PATH=%R
 
 set "VNTHUQUAN_PYTHON=%USERPROFILE%\.vnthuquan_venv\Scripts\python.exe"
 if not exist "%VNTHUQUAN_PYTHON%" (
-  echo {"ok": false, "target": "windows-codex", "command": "bootstrap", "error_code": "missing_windows_venv", "message": "Expected %USERPROFILE%\\.vnthuquan_venv\\Scripts\\python.exe"}
+  echo {"ok": false, "target": "windows-ai-agents-skills", "command": "bootstrap", "error_code": "missing_windows_venv", "message": "Expected %USERPROFILE%\\.vnthuquan_venv\\Scripts\\python.exe"}
   exit /b 127
 )
 

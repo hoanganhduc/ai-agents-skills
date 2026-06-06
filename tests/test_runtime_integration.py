@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import importlib.util
 import json
 import os
 import shutil
@@ -149,6 +150,77 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertTrue((root / ".local" / "share" / "ai-agents-skills" / "runtime" / "run_skill.sh").is_file())
             self.assertTrue((root / ".config" / "opencode" / "skills" / "graph-verifier" / "SKILL.md").is_file())
             self.assertEqual(verify(root)["status"], "ok")
+
+    def test_vnthuquan_defaults_use_neutral_data_root(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "vnthuquan"
+            / "vnthuquan_wrapper.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            xdg_data = root / "xdg-data"
+            with patch.dict(
+                os.environ,
+                {
+                    "HOME": str(root / "home"),
+                    "XDG_DATA_HOME": str(xdg_data),
+                    "VNTHUQUAN_ASSISTANT_HOME": str(root / "runtime"),
+                },
+                clear=False,
+            ):
+                for key in ("AAS_DATA_ROOT", "AAS_RUNS_ROOT", "AAS_STATE_ROOT", "VNTHUQUAN_RUN_DIR", "VNTHUQUAN_STATE_DIR"):
+                    os.environ.pop(key, None)
+                spec = importlib.util.spec_from_file_location("vnthuquan_wrapper_defaults_test", source)
+                self.assertIsNotNone(spec)
+                self.assertIsNotNone(spec.loader)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+            self.assertEqual(module.RUN_DIR, xdg_data / "ai-agents-skills" / "runs" / "vnthuquan")
+            self.assertEqual(module.STATE_DIR, xdg_data / "ai-agents-skills" / "state" / "vnthuquan")
+            self.assertNotIn(".codex", str(module.RUN_DIR))
+            self.assertNotIn(".codex", str(module.STATE_DIR))
+
+    def test_tikz_direct_mode_defaults_to_neutral_data_root_outside_codex(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "tikz-draw"
+            / "tikz_draw.py"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            xdg_data = root / "xdg-data"
+            with patch.dict(
+                os.environ,
+                {
+                    "HOME": str(root / "home"),
+                    "XDG_DATA_HOME": str(xdg_data),
+                },
+                clear=False,
+            ):
+                for key in ("AAS_DATA_ROOT", "AAS_RUNS_ROOT"):
+                    os.environ.pop(key, None)
+                sys.path.insert(0, str(source.parent))
+                try:
+                    spec = importlib.util.spec_from_file_location("tikz_draw_defaults_test", source)
+                    self.assertIsNotNone(spec)
+                    self.assertIsNotNone(spec.loader)
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    run_root = module.default_direct_run_root("run-test")
+                finally:
+                    sys.path.remove(str(source.parent))
+
+            self.assertEqual(run_root, xdg_data / "ai-agents-skills" / "runs" / "tikz-draw" / "run-test")
+            self.assertEqual(module.PLATFORM_NAME, "ai-agents-skills")
+            self.assertNotIn(".codex", str(run_root))
 
     def test_submission_venue_selector_installs_runtime_files_for_supported_agents(self) -> None:
         manifests = load_manifests()

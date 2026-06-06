@@ -50,11 +50,11 @@ planned, reviewed, and verified.
 
 ## Install-target model
 
-- Codex, Claude, and DeepSeek are normal skill targets declared in
+- Codex, Claude, DeepSeek, Copilot, and OpenCode are normal skill targets declared in
   `manifest/skills.yaml`.
-- Copilot is explicit-only. It can receive skill adapters and supported
-  personas, but not instruction blocks, templates, or command artifacts unless
-  the installer gains that support.
+- Copilot can receive skill adapters and supported personas, but not
+  instruction blocks, templates, or command artifacts unless the installer
+  gains that support.
 - OpenClaw is explicit-only and fake-root-only before native target evidence.
   Real `.openclaw` writes, instruction blocks, symlink/reference modes,
   unclassified support files, and runtime-backed skills remain blocked until

@@ -418,10 +418,11 @@ skills they depend on.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets follow auto mode: Claude links to `canonical/skills`, while Codex and
-DeepSeek receive reference adapters unless native loader evidence justifies a
-different policy. Explicit `symlink`, `reference`, and `copy` modes force the
-same strategy for every agent. Use `--skill` or `--skills` for narrow installs.
+targets follow auto mode: Claude links to `canonical/skills`, Codex and
+DeepSeek receive reference adapters, and OpenCode receives copied native skill
+files plus support files unless native loader evidence justifies a different
+policy. Explicit `symlink`, `reference`, and `copy` modes force the same
+strategy for every agent. Use `--skill` or `--skills` for narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"
@@ -1043,7 +1044,7 @@ In scope:
 - explicit native-evidence records for scoped support claims
 - inert persistence checks for hook and schedule material
 - dry-run review UX and named gates
-- native evidence requirements for Codex, Claude, and DeepSeek
+- native evidence requirements for Codex, Claude, DeepSeek, Copilot, and OpenCode
 - inert documentation and templates only
 
 Out of scope by default:
@@ -1077,7 +1078,7 @@ Out of scope by default:
 | 1. Read-only sanitized inventory | Inspect explicit source roots without creating install input. | Bounded scanner that emits allowlisted sanitized metadata only. | Sanitized inventory review. |
 | 2. Immutable dry-run manifest | Describe candidate target actions without applying them. | Strict content-addressed candidate manifest with stable action IDs and source/target separation. | Immutable manifest review. |
 | 3. Gated apply and uninstall | Apply only exact reviewed manifests. | Journaled fake-root and later real-target apply/uninstall guarded by drift checks and rollback. | Fake-root verification plus explicit apply confirmation. |
-| 4. Native agent support | Prove loaders before claiming support. | Dated evidence for Codex, Claude, and DeepSeek by platform, path style, shell, runtime, and install mode. | Native evidence review. |
+| 4. Native agent support | Prove loaders before claiming support. | Dated evidence for Codex, Claude, DeepSeek, Copilot, and OpenCode by platform, path style, shell, runtime, and install mode. | Native evidence review. |
 | 5. Hooks and schedules | Add persistent execution only after a separate threat model. | Inert docs/templates first; persistent execution only behind explicit separate approval. | Persistence-specific approval and rollback evidence. |
 
 ## Phase 0 Deliverables
@@ -1488,7 +1489,7 @@ Scope:
 
 Evidence inspected for this plan:
 
-- existing installer target code for Codex, Claude, and DeepSeek
+- existing installer target code for Codex, Claude, DeepSeek, Copilot, and OpenCode
 - existing OpenClaw source/import pipeline modules and tests
 - existing OpenClaw integration and verification documentation
 - a sanitized local OpenClaw inventory with deny-by-default content policy
@@ -1516,7 +1517,7 @@ Concrete repo artifacts inspected:
 
 Confirmed from repo inspection:
 
-- default install targets are currently Codex, Claude, and DeepSeek
+- default install targets are currently Codex, Claude, DeepSeek, Copilot, and OpenCode
 - OpenClaw is a known explicit target for restricted fake-root layout tests
 - OpenClaw code in this repository is currently a quarantined source/import
   pipeline with explicit roots, sanitized inventories, immutable manifests,
@@ -1940,7 +1941,7 @@ Real-system gate:
 
 OpenClaw target support is acceptable only when:
 
-- default installer behavior is unchanged for Codex, Claude, and DeepSeek
+- default installer behavior is unchanged for Codex, Claude, DeepSeek, Copilot, and OpenCode
 - OpenClaw is explicit-only and absent from default target discovery
 - early OpenClaw writes are fake-root-only
 - all real `.openclaw` writes, including `.openclaw/ai-agents-skills`, are
@@ -1989,7 +1990,7 @@ The system has three layers:
 
 | Layer | Role |
 |---|---|
-| Agent frontends | Codex, Claude, and DeepSeek receive user requests and load installed skill instructions. |
+| Agent frontends | Codex, Claude, DeepSeek, Copilot, and OpenCode receive user requests and load installed skill instructions. |
 | Shared skill repository | `manifest/` selects skills and profiles; `canonical/skills/` stores reusable workflows; `targets/` holds agent-specific notes. |
 | Runtime and software tools | Python, TeX, optional SageMath, local library tools, document parsers, public databases, and external retrieval helpers do the actual work when a skill needs them. |
 
@@ -2900,8 +2901,8 @@ for your own machine.
 The observed setup is best understood as shared research logic plus
 agent-local installation targets:
 
-- Codex, Claude, and DeepSeek each load skills from their own supported local
-  skill/config locations.
+- Codex, Claude, DeepSeek, Copilot, and OpenCode each load skills from their own
+  supported local skill/config locations.
 - This repository holds the reusable skill bodies and dependency metadata.
 - The installer detects which agent homes exist, installs only those targets,
   and skips absent agents without requiring their tools.
@@ -3151,8 +3152,8 @@ opted in with backup, locking, dry-run, and post-write verification.
 Target integration rules:
 
 - Choose one canonical repo per run and record its path plus commit/hash.
-- Generate an inventory of every selected Codex, Claude, and DeepSeek home
-  before writing.
+- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, and OpenCode
+  home before writing.
 - Store generated profile manifests with checksums/version stamps in selected
   target homes.
 - Keep secrets and credentials outside this repo.

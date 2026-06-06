@@ -12,7 +12,7 @@ from .openclaw_inventory import DENYLIST_VERSION, REDACTION_VERSION, SCHEMA_VERS
 
 MANIFEST_SCHEMA_VERSION = "openclaw.apply-manifest.v1"
 GENERATOR_VERSION = "openclaw-manifest.phase2.v1"
-TARGET_AGENTS = ("codex", "claude", "deepseek")
+TARGET_AGENTS = ("codex", "claude", "deepseek", "copilot", "opencode")
 PATH_STYLES = ("posix", "windows-drive", "windows-unc", "wsl-posix", "mounted-windows")
 DEFAULT_TARGET_AGENTS = TARGET_AGENTS
 
@@ -34,6 +34,8 @@ AGENT_HOME_DIR = {
     "codex": ".codex",
     "claude": ".claude",
     "deepseek": ".deepseek",
+    "copilot": ".copilot",
+    "opencode": ".config/opencode",
 }
 
 OPERATION_BY_CATEGORY = {

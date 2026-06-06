@@ -277,14 +277,14 @@ Wrapper requirements:
 
 ## Install Targets
 
-Codex, Claude, and DeepSeek:
+Codex, Claude, DeepSeek, and OpenCode:
 
 - Normal skill install with runtime files managed by the shared runtime root.
 - Manifest support must include active skill loading and runtime actions.
 
 Copilot:
 
-- Explicit adapter install only.
+- Default-detected adapter install when the Copilot home exists.
 - No unsupported instruction, template, command, hook, plugin, or management
   artifacts.
 - Add explicit tests for Copilot install selection and blocked artifact classes.

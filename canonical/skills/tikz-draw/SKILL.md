@@ -31,7 +31,7 @@ Typical cases:
 
 ## Runtime helper
 
-The Codex runtime helper exposes one stable verb set:
+The runtime helper exposes one stable verb set:
 
 - `doctor`
 - `contract`
@@ -47,7 +47,7 @@ The Codex runtime helper exposes one stable verb set:
 - `review`
 - `extract`
 
-Run it through the shared Codex wrapper:
+Run it through the shared runtime wrapper:
 
 ```bash
 bash ~/.codex/runtime/run_skill.sh \
@@ -77,7 +77,9 @@ bash ~/.codex/runtime/run_skill.sh \
 
 If `--out-dir` is omitted in direct mode, the helper allocates:
 
-- `~/.codex/runs/tikz-draw/<run_id>/`
+- Codex: `~/.codex/runs/tikz-draw/<run_id>/`
+- other installed targets:
+  `${AAS_RUNS_ROOT:-~/.local/share/ai-agents-skills/runs}/tikz-draw/<run_id>/`
 
 For research or mathematical figures, first let the runtime write the intent
 contract or provide one explicitly:
