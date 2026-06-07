@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 from installer.ai_agents_skills.sanitize import has_sensitive_material, sanitize_text
@@ -46,6 +47,12 @@ class SanitizationTests(unittest.TestCase):
 
     def test_sanitization_check_skips_local_virtualenvs(self) -> None:
         self.assertIn(".venv", sanitization_check.SKIP_DIRS)
+
+    def test_sanitization_check_skips_codex_run_artifacts(self) -> None:
+        self.assertTrue(
+            sanitization_check.should_skip_path(Path(".codex/runs/agent_group_discuss/repo_review/final.md"))
+        )
+        self.assertFalse(sanitization_check.should_skip_path(Path("docs/source/installation.md")))
 
 
 if __name__ == "__main__":
