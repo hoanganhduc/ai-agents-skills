@@ -22,7 +22,7 @@ for your own machine.
 The observed setup is best understood as shared research logic plus
 agent-local installation targets:
 
-- Codex, Claude, DeepSeek, Copilot, and OpenCode each load skills from their own
+- Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity each load skills from their own
   supported local skill/config locations.
 - This repository holds the reusable skill bodies and dependency metadata.
 - The installer detects which agent homes exist, installs only those targets,

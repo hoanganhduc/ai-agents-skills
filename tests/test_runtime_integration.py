@@ -151,6 +151,34 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertTrue((root / ".config" / "opencode" / "skills" / "graph-verifier" / "SKILL.md").is_file())
             self.assertEqual(verify(root)["status"], "ok")
 
+    def test_antigravity_only_runtime_uses_neutral_shared_root(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "antigravity")
+            plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                detect_agents(root, ["antigravity"]),
+                platform="linux",
+            )
+            runtime_actions = [item for item in plan["actions"] if item["artifact_type"] == "runtime-file"]
+            self.assertTrue(runtime_actions)
+            self.assertTrue(
+                all(
+                    str(root / ".local" / "share" / "ai-agents-skills" / "runtime") in item["path"]
+                    for item in runtime_actions
+                )
+            )
+            self.assertFalse(any(".gemini/antigravity-cli" in item["path"] for item in runtime_actions))
+            self.assertFalse(any(".codex/runtime" in item["path"] for item in runtime_actions))
+
+            apply_plan(root, plan, dry_run=False)
+            self.assertTrue((root / ".local" / "share" / "ai-agents-skills" / "runtime" / "run_skill.sh").is_file())
+            self.assertTrue((root / ".gemini" / "antigravity-cli" / "skills" / "graph-verifier.md").is_file())
+            self.assertEqual(verify(root)["status"], "ok")
+
     def test_vnthuquan_defaults_use_neutral_data_root(self) -> None:
         source = (
             Path(__file__).resolve().parents[1]
@@ -236,7 +264,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
     def test_submission_venue_selector_installs_runtime_files_for_supported_agents(self) -> None:
         manifests = load_manifests()
-        for agent in ("codex", "claude", "deepseek", "copilot", "opencode"):
+        for agent in ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity"):
             for platform in ("linux", "macos", "wsl", "windows"):
                 with self.subTest(agent=agent, platform=platform):
                     with tempfile.TemporaryDirectory() as tmp:

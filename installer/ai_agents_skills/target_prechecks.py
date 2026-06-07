@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .agents import AgentTarget, agent_home_status, target_for
+from .antigravity import ANTIGRAVITY_CLI_TOOL_SPEC, build_antigravity_precheck
 from .capabilities import (
     AGENT_SKILL_LOADER_POLICY,
     existing_parents,
@@ -45,6 +46,14 @@ def _precheck_targets(
 
 def _build_target_precheck(root: Path, platform: str, target: AgentTarget) -> dict[str, Any]:
     base = build_base_target_precheck(root, platform, target)
+    if target.name == "antigravity":
+        cli_result = discover_tool("antigravity-cli", ANTIGRAVITY_CLI_TOOL_SPEC, platform, root)
+        antigravity = build_antigravity_precheck(root, platform, cli_result)
+        antigravity_status = antigravity["status"]
+        antigravity.update(base)
+        antigravity["base"] = base
+        antigravity["antigravity_status"] = antigravity_status
+        return antigravity
     if target.name != "copilot":
         return base
 
@@ -122,6 +131,13 @@ def target_notes(target: AgentTarget) -> list[str]:
             "OpenCode participates in default detection when ~/.config/opencode exists.",
             "OpenCode auto mode copies regular SKILL.md files and support files for cross-platform parity.",
             "OpenCode native smoke uses isolated XDG directories when the opencode CLI is available.",
+        ]
+    if target.name == "antigravity":
+        return [
+            "Antigravity participates in default detection when ~/.gemini/antigravity-cli exists.",
+            "Antigravity auto mode writes flat global Markdown skill adapters under ~/.gemini/antigravity-cli/skills/.",
+            "Managed plugin payloads are placed under ~/.gemini/antigravity-cli/plugins/ai-agents-skills/.",
+            "Native smoke uses isolated HOME and app-data directories when the agy CLI is available.",
         ]
     if target.name == "codex":
         return [

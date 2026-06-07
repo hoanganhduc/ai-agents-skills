@@ -1,8 +1,8 @@
 # Architecture
 
 This page explains how the repository turns one canonical skill catalog into
-agent-specific files for Codex, Claude, DeepSeek, GitHub Copilot, and
-OpenCode.
+agent-specific files for Codex, Claude, DeepSeek, GitHub Copilot, OpenCode,
+and Antigravity CLI.
 
 The manifests are the source of truth:
 
@@ -48,24 +48,30 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode copies canonical skill files and support files by default for cross-platform parity. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, Copilot, and Antigravity skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. Antigravity adapters are flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`. OpenCode copies canonical skill files and support files by default for cross-platform parity. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
-| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
-| `entrypoint-alias` | Optional quick-action aliases. Claude and OpenCode receive command files; Codex and DeepSeek receive reference documents. |
+| `entrypoint-alias` | Optional quick-action aliases. Claude and OpenCode receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents. |
+| `plugin` | Antigravity receives a managed `ai-agents-skills` plugin marker and payload directory when Antigravity artifacts are installed. |
+| `mcp-config` | Antigravity receives a no-op plugin-scoped `mcp_config.json` scaffold with an empty `mcpServers` map. |
+| `hook-config` | Antigravity receives a no-op plugin-scoped `hooks.json` scaffold. |
+| `settings-file` | Antigravity receives a sparse no-op `settings.json` scaffold in its global CLI home. |
 | `runtime-file` | Root-scoped copied runtime runners and skill helper files. Runtime files are never installed as per-agent skills and are verified by transformed source hash, newline policy, mode, and secret scan. |
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
 Target rendering is intentionally adapter-heavy where native behavior has not
 been proven. Codex personas are TOML custom-agent files, Claude and OpenCode
-personas are Markdown subagents, Copilot personas are `.agent.md` custom-agent
+personas are Markdown subagents, Antigravity personas are plugin-scoped
+Markdown agent definitions, Copilot personas are `.agent.md` custom-agent
 profiles, and DeepSeek personas are reference prompts. Claude and OpenCode
-entrypoint aliases are command files, while Codex and DeepSeek entrypoint
-aliases are reference documents under `instructions/entrypoints`.
+entrypoint aliases are command files, Antigravity entrypoint aliases are flat
+global Markdown skill aliases, and Codex and DeepSeek entrypoint aliases are
+reference documents under `instructions/entrypoints`.
 
 Copilot is included in default target detection when `~/.copilot` exists.
 Existing repository-level `.github/*` files do not activate the personal
@@ -83,16 +89,24 @@ commands, templates, and instruction docs under `~/.config/opencode`. Project
 `.opencode/` directories remain project-local and do not activate the global
 install target.
 
+Antigravity is included in default target detection when
+`~/.gemini/antigravity-cli` exists. The installer writes flat global Markdown
+skills under `~/.gemini/antigravity-cli/skills/`, managed global context blocks
+under `~/.gemini/GEMINI.md`, and the managed `ai-agents-skills` plugin payload
+under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`. Project-local
+`.agents/` directories remain project/workspace-local and do not activate the
+global Antigravity target.
+
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
 detected, not as the default global Codex target.
 
 Portable runtime runners accept workspace-relative skill commands only. They
 set runtime-specific environment variables such as `AAS_RUNTIME_ROOT`,
-`AAS_RUNTIME_WORKSPACE`, and `AAS_SECRETS_FILE`. OpenCode and other non-Codex
-targets use the neutral shared `ai-agents-skills` runtime root unless a
-runtime root is supplied explicitly. Absolute paths and `..` traversal are
-rejected by the runtime wrappers.
+`AAS_RUNTIME_WORKSPACE`, and `AAS_SECRETS_FILE`. OpenCode, Antigravity, and
+other non-Codex targets use the neutral shared `ai-agents-skills` runtime root
+unless a runtime root is supplied explicitly. Absolute paths and `..` traversal
+are rejected by the runtime wrappers.
 
 Safety boundary:
 

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from installer.ai_agents_skills.agents import detect_agents
+from installer.ai_agents_skills.agents import detect_agents, target_for
 from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
@@ -31,7 +31,7 @@ HELPER = (
 
 
 def create_agent_home(root: Path, agent: str) -> None:
-    (root / f".{agent}").mkdir(parents=True, exist_ok=True)
+    target_for(root, agent).home.mkdir(parents=True, exist_ok=True)
 
 
 def run_helper(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -514,7 +514,7 @@ class AutonomousResearchLoopTests(unittest.TestCase):
 
     def test_runtime_companion_installs_for_supported_agents_on_all_platforms(self) -> None:
         manifests = load_manifests()
-        for agent in ("codex", "claude", "deepseek", "copilot"):
+        for agent in ("codex", "claude", "deepseek", "copilot", "antigravity"):
             for platform in ("linux", "macos", "windows", "wsl"):
                 with self.subTest(agent=agent, platform=platform):
                     with tempfile.TemporaryDirectory() as tmp:

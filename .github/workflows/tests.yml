@@ -137,6 +137,9 @@ jobs:
       - name: Run platform lifecycle smoke
         run: make lifecycle-test ARGS="--matrix default --platform-shape macos"
 
+      - name: Run Antigravity-only lifecycle smoke
+        run: make lifecycle-test ARGS="--scenario antigravity-only-auto --platform-shape macos"
+
   windows:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -191,3 +194,7 @@ jobs:
       - name: Run platform lifecycle smoke
         shell: cmd
         run: make.bat lifecycle-test --matrix default --platform-shape windows
+
+      - name: Run Antigravity-only lifecycle smoke
+        shell: cmd
+        run: make.bat lifecycle-test --scenario antigravity-only-auto --platform-shape windows

@@ -164,100 +164,100 @@
       "spec": {
         "description": "Project or research specification template.",
         "source": "SPEC.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "tasks-plan": {
         "description": "Planning template for decomposing a scoped task.",
         "source": "tasks-plan.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "tasks-todo": {
         "description": "Execution checklist template.",
         "source": "tasks-todo.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "draft-claim-ledger": {
         "description": "Claim ledger template for preserving author intent before rewriting.",
         "source": "draft-claim-ledger.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["draft-writing"]
       },
       "draft-revision-map": {
         "description": "Revision audit template for detecting claim-level draft drift.",
         "source": "draft-revision-map.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["draft-writing"]
       },
       "research-scope-brief": {
         "description": "Pre-research scope, assumptions, evidence plan, and start decision template.",
         "source": "research-scope-brief.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["research-briefing"]
       },
       "research-evidence-matrix": {
         "description": "Claim-to-source evidence matrix for research analysis and uncertainty tracking.",
         "source": "research-evidence-matrix.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["deep-research-workflow"]
       },
       "research-verification-checklist": {
         "description": "Final research delivery checklist for evidence coverage, gaps, and readiness.",
         "source": "research-verification-checklist.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["research-report-reviewer", "research-verification-gate"]
       },
       "research-workflow-runbook": {
         "description": "Multi-phase research runbook for state, artifacts, delegation, recovery, and delivery gates.",
         "source": "research-workflow-runbook.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["deep-research-workflow", "research-verification-gate"]
       },
       "hierarchical-agent-delegation": {
         "description": "Hierarchical manager-worker delegation template for bounded multi-runner workflows.",
         "source": "hierarchical-agent-delegation.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["cross-agent-delegation"]
       },
       "cross-provider-research-panel": {
         "description": "Cross-provider research panel template with latest-model and highest-thinking constraints.",
         "source": "cross-provider-research-panel.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation"]
       },
       "manager-worker-research-review": {
         "description": "Manager-worker research review template with same-model nested worker constraints.",
         "source": "manager-worker-research-review.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation"]
       },
       "repo-comparison-research": {
         "description": "Repository comparison research template with source-preserving evidence requirements.",
         "source": "repo-comparison-research.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["deep-research-workflow", "agent-group-discuss"]
       },
       "evidence-synthesis-critique": {
         "description": "Evidence synthesis critique template for validating delegated research outputs.",
         "source": "evidence-synthesis-critique.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["research-report-reviewer", "research-verification-gate"]
       },
       "deep-research-sources": {
         "description": "Source handoff table for phased deep research.",
         "source": "deep-research-sources.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["deep-research-workflow"]
       },
       "deep-research-analysis": {
         "description": "Analysis-phase note template for source-preserving synthesis.",
         "source": "deep-research-analysis.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["deep-research-workflow"]
       },
       "deep-research-report": {
         "description": "Final report template for research synthesis.",
         "source": "deep-research-report.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["deep-research-workflow"]
       }
     },
@@ -265,88 +265,88 @@
       "engineering-lifecycle": {
         "description": "Spec-plan-tasks-implement-verify lifecycle guide.",
         "source": "engineering-lifecycle.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "claim-preserving-writing": {
         "description": "Guidance for preserving claims, evidence, caveats, and revision deltas during drafting.",
         "source": "claim-preserving-writing.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["draft-writing"]
       },
       "research-quick-actions": {
         "description": "Short command and routing references for common research actions.",
         "source": "research-quick-actions.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "cross-provider-delegation": {
         "description": "Guidance for template-driven cross-provider delegation with safe nested workers.",
         "source": "cross-provider-delegation.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation", "model-router"]
       },
       "python-quality-gates": {
         "description": "Suggested Python verification gates for research and installer code.",
         "source": "python-quality-gates.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "modal-offload-routing": {
         "description": "When to keep work local and when to route heavy compute elsewhere.",
         "source": "modal-offload-routing.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["modal-research-compute"]
       },
       "scrapling-integration": {
         "description": "Guidance for browser-heavy extraction when default web tooling is insufficient.",
         "source": "scrapling-integration.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "language-style-rules": {
         "description": "Portable language and file-type style notes adapted from local agent rules.",
         "source": "language-style-rules.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       }
     },
     "agent-persona": {
       "literature-scout": {
         "description": "Finds relevant literature, missing citations, and source-quality risks.",
         "source": "literature-scout.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "math-explorer": {
         "description": "Explores examples, counterexamples, invariants, and graph-theory structure.",
         "source": "math-explorer.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "proof-checker": {
         "description": "Audits mathematical proofs for gaps, hidden assumptions, and invalid reductions.",
         "source": "proof-checker.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "paper-reviewer": {
         "description": "Reviews papers and drafts for correctness, evidence, organization, and contribution clarity.",
         "source": "paper-reviewer.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "code-reviewer": {
         "description": "Reviews code for bugs, regressions, security risks, and missing tests.",
         "source": "code-reviewer.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "test-reviewer": {
         "description": "Reviews test plans and coverage for meaningful behavioral protection.",
         "source": "test-reviewer.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "security-reviewer": {
         "description": "Reviews security-sensitive changes and configuration boundaries.",
         "source": "security-reviewer.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       }
     },
     "management-notice": {
       "repo-management": {
         "description": "Managed notice explaining that ai-agents-skills is the source repo and local agent homes are runtime targets.",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       }
     },
     "entrypoint-alias": {
@@ -354,79 +354,79 @@
         "description": "Start source-preserving phased research.",
         "source": "deep-research.md",
         "depends_on_skills": ["deep-research-workflow"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "research-team": {
         "description": "Start template-based multi-agent research or review.",
         "source": "research-team.md",
         "depends_on_skills": ["agent-group-discuss"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "review": {
         "description": "Run a review-oriented workflow.",
         "source": "review.md",
         "depends_on_skills": ["paper-review"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "tikz": {
         "description": "Route structural figure work to TikZ workflow.",
         "source": "tikz.md",
         "depends_on_skills": ["tikz-draw"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "sage": {
         "description": "Route graph theory or algebra computation to SageMath workflow.",
         "source": "sage.md",
         "depends_on_skills": ["sagemath"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "zotero": {
         "description": "Route paper library work to Zotero workflow.",
         "source": "zotero.md",
         "depends_on_skills": ["zotero"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "docling": {
         "description": "Route document parsing to Docling workflow.",
         "source": "docling.md",
         "depends_on_skills": ["docling"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "calibre": {
         "description": "Route ebook and Calibre-library work.",
         "source": "calibre.md",
         "depends_on_skills": ["calibre"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "vnthuquan": {
         "description": "Route Vietnam Thu Quan ebook discovery.",
         "source": "vnthuquan.md",
         "depends_on_skills": ["vnthuquan"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "research-compute": {
         "description": "Route heavy compute planning and offload decisions.",
         "source": "research-compute.md",
         "depends_on_skills": ["modal-research-compute"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "rss": {
         "description": "Route RSS digest workflows.",
         "source": "rss.md",
         "depends_on_skills": ["rss-news-digest"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "digest": {
         "description": "Route tracked-topic research digest workflows.",
         "source": "digest.md",
         "depends_on_skills": ["research-digest-wrapper"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "getscipapers": {
         "description": "Route external paper retrieval fallback.",
         "source": "getscipapers.md",
         "depends_on_skills": ["getscipapers-requester"],
-        "supported_agents": ["codex", "claude", "deepseek", "opencode"]
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       }
     }
   }

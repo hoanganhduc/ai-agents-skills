@@ -8,6 +8,10 @@ SUPPORT_STATES = {"supported", "fallback", "degraded", "blocked", "manual", "uns
 MECHANISMS = {
     "native-command",
     "native-skill",
+    "plugin",
+    "settings-file",
+    "mcp-config",
+    "hook-config",
     "reference-adapter",
     "reference-doc",
     "copy",
@@ -17,7 +21,7 @@ MECHANISMS = {
     "instruction-block",
     "unsupported",
 }
-CLAIM_BASES = {"policy", "renderer", "planner", "runtime-manifest", "fake-root-only"}
+CLAIM_BASES = {"policy", "renderer", "planner", "runtime-manifest", "fake-root-only", "official-docs"}
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,15 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "Auto mode copies canonical skills for cross-platform parity; explicit reference and symlink modes remain available with evidence.",
     ),
     TargetSurface(
+        "antigravity",
+        "skill-file",
+        "supported",
+        "reference-adapter",
+        "Antigravity global flat Markdown skill file",
+        "official-docs",
+        "Auto mode writes ~/.gemini/antigravity-cli/skills/<skill>.md adapters, matching the documented global skill layout.",
+    ),
+    TargetSurface(
         "openclaw",
         "skill-file",
         "manual",
@@ -130,6 +143,15 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "OpenCode command markdown file",
         "renderer",
         "OpenCode receives native command aliases under ~/.config/opencode/commands.",
+    ),
+    TargetSurface(
+        "antigravity",
+        "entrypoint-alias",
+        "supported",
+        "native-skill",
+        "Antigravity global flat Markdown skill alias",
+        "renderer",
+        "Entry-point aliases render as global Antigravity Markdown skills under ~/.gemini/antigravity-cli/skills/.",
     ),
     TargetSurface(
         "openclaw",
@@ -186,6 +208,15 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "Runtime files are copied under the neutral shared ai-agents-skills runtime root, not inside OpenCode config.",
     ),
     TargetSurface(
+        "antigravity",
+        "runtime-file",
+        "supported",
+        "runtime-copy",
+        "root-scoped managed runtime helpers",
+        "runtime-manifest",
+        "Runtime files use the neutral shared ai-agents-skills runtime root, not a Codex-specific runtime path.",
+    ),
+    TargetSurface(
         "openclaw",
         "runtime-file",
         "blocked",
@@ -193,6 +224,60 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "not installed",
         "fake-root-only",
         "OpenClaw-associated shared runtime writes are blocked until separate native evidence exists.",
+    ),
+    TargetSurface(
+        "antigravity",
+        "agent-persona",
+        "supported",
+        "plugin",
+        "Antigravity plugin agent definition",
+        "official-docs",
+        "Personas are installed under ~/.gemini/antigravity-cli/plugins/ai-agents-skills/agents/ with the plugin manifest.",
+    ),
+    TargetSurface(
+        "antigravity",
+        "plugin",
+        "supported",
+        "plugin",
+        "Antigravity native plugin package",
+        "official-docs",
+        "The installer creates plugin.json and a managed plugin payload under ~/.gemini/antigravity-cli/plugins/ai-agents-skills/.",
+    ),
+    TargetSurface(
+        "antigravity",
+        "global-context",
+        "supported",
+        "instruction-block",
+        "managed block in ~/.gemini/GEMINI.md",
+        "official-docs",
+        "Skill and repo-management instruction blocks use the documented Antigravity global developer context file.",
+    ),
+    TargetSurface(
+        "antigravity",
+        "settings-file",
+        "supported",
+        "settings-file",
+        "sparse Antigravity settings JSON",
+        "official-docs",
+        "A no-op settings.json scaffold is managed under ~/.gemini/antigravity-cli/settings.json when Antigravity artifacts are installed.",
+    ),
+    TargetSurface(
+        "antigravity",
+        "mcp-config",
+        "supported",
+        "mcp-config",
+        "plugin-scoped Antigravity MCP config",
+        "official-docs",
+        "A no-op mcp_config.json scaffold with an empty mcpServers map is installed inside the managed Antigravity plugin.",
+    ),
+    TargetSurface(
+        "antigravity",
+        "hook-config",
+        "supported",
+        "hook-config",
+        "plugin-scoped Antigravity hooks config",
+        "official-docs",
+        "A no-op hooks.json scaffold is installed inside the managed Antigravity plugin.",
     ),
 )
 

@@ -8,10 +8,10 @@ from typing import Iterable, Mapping
 from .capabilities import looks_like_real_system_root, resolved_path_within
 
 
-DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot", "opencode"]
+DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity"]
 KNOWN_AGENT_NAMES = [*DEFAULT_AGENT_NAMES, "openclaw"]
 PORTABLE_MANIFEST_AGENT_NAMES = {"codex", "claude", "deepseek"}
-ADAPTER_AGENT_NAMES = {"copilot", "opencode", "openclaw"}
+ADAPTER_AGENT_NAMES = {"copilot", "opencode", "antigravity", "openclaw"}
 
 
 @dataclass(frozen=True)
@@ -26,9 +26,20 @@ class AgentTarget:
     detect_by_default: bool = True
     instruction_blocks_enabled: bool = True
     fake_root_only: bool = False
+    skill_file_layout: str = "directory"
 
     def target_dir_for(self, artifact_type: str) -> Path:
         return self.artifact_dirs.get(artifact_type, self.skills_dir)
+
+    def skill_file_for(self, skill: str) -> Path:
+        if self.skill_file_layout == "flat-md":
+            return self.skills_dir / f"{skill}.md"
+        return self.skills_dir / skill / "SKILL.md"
+
+    def support_dir_for(self, skill: str) -> Path:
+        if self.name == "antigravity":
+            return self.home / "plugins" / "ai-agents-skills" / "skills" / skill
+        return self.skills_dir / skill
 
 
 def target_for(root: Path, agent: str) -> AgentTarget:
@@ -110,6 +121,27 @@ def target_for(root: Path, agent: str) -> AgentTarget:
                 "plugin": home / "plugins",
             },
         )
+    if agent == "antigravity":
+        home = antigravity_home(root)
+        plugin_home = home / "plugins" / "ai-agents-skills"
+        return AgentTarget(
+            name="antigravity",
+            home=home,
+            skills_dir=home / "skills",
+            instructions_file=root / ".gemini" / "GEMINI.md",
+            legacy_skills_dirs=(root / ".gemini" / "skills", root / ".agents" / "skills"),
+            optional_skills_dirs=(root / ".agents" / "skills", root / ".gemini" / "skills"),
+            artifact_dirs={
+                "agent-persona": plugin_home / "agents",
+                "template": plugin_home / "templates",
+                "instruction-doc": plugin_home / "rules",
+                "entrypoint-alias": home / "skills",
+                "command": plugin_home / "skills",
+                "tool-shim": plugin_home / "tools",
+                "plugin": plugin_home,
+            },
+            skill_file_layout="flat-md",
+        )
     if agent == "openclaw":
         return AgentTarget(
             name="openclaw",
@@ -126,6 +158,10 @@ def target_for(root: Path, agent: str) -> AgentTarget:
 def opencode_home(root: Path) -> Path:
     config_base = contained_xdg_config_home(root)
     return config_base / "opencode"
+
+
+def antigravity_home(root: Path) -> Path:
+    return root / ".gemini" / "antigravity-cli"
 
 
 def contained_xdg_config_home(root: Path) -> Path:
@@ -182,6 +218,12 @@ def all_agent_names() -> list[str]:
 
 def known_agent_names() -> list[str]:
     return list(KNOWN_AGENT_NAMES)
+
+
+def skill_path_is_agent_visible(agent: str, path: Path, skill: str) -> bool:
+    if agent == "antigravity":
+        return path.name == f"{skill}.md"
+    return path.name == "SKILL.md" and path.parent.name == skill
 
 
 def agent_supports_manifest_entry(agent: str, supported_agents: Iterable[str]) -> bool:
