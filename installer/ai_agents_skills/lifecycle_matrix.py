@@ -150,6 +150,11 @@ STRESS_EXTRA_SCENARIOS: tuple[LifecycleScenario, ...] = (
         agent_subset=("opencode",),
     ),
     LifecycleScenario(
+        name="antigravity-only-auto",
+        description="clean auto-mode install for Antigravity only",
+        agent_subset=("antigravity",),
+    ),
+    LifecycleScenario(
         name="special-path-clean-auto",
         description="clean auto-mode install under a path with spaces and punctuation",
         path_variant="spaces",
@@ -408,7 +413,7 @@ def seed_fixture(
     skill = selected[0]
     if scenario.seed == "unmanaged":
         for agent in agents:
-            target = target_for(root, agent.name).skills_dir / skill / "SKILL.md"
+            target = target_for(root, agent.name).skill_file_for(skill)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(f"user-owned {agent.name} {skill}\n", encoding="utf-8")
         return
@@ -418,7 +423,7 @@ def seed_fixture(
             raise ValueError(f"scenario {scenario.name} requested legacy seed for skill without alias: {skill}")
         alias = aliases[0]
         for agent in agents:
-            target = target_for(root, agent.name).skills_dir / alias / "SKILL.md"
+            target = target_for(root, agent.name).skill_file_for(alias)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(f"legacy {agent.name} {alias}\n", encoding="utf-8")
         return

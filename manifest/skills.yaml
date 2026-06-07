@@ -4,7 +4,7 @@
     "autonomous-research-loop": {
       "description": "Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs.",
       "profiles": ["research-core", "serious-research", "workflow-tools", "multi-agent", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "openclaw"],
+      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["bounded-research-loop", "evidence-gates", "panel-loop-handoff", "recovery-ledger"],
@@ -13,7 +13,7 @@
     "autonomous-research-loop-runtime": {
       "description": "Offline runtime helper for autonomous research loop ledger initialization, iteration appends, validation, status, and selftest.",
       "profiles": ["research-core", "serious-research", "workflow-tools", "multi-agent", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["offline-runtime-smoke", "loop-ledger-validation", "local-recovery-state"],
@@ -22,7 +22,7 @@
     "deep-research-workflow": {
       "description": "Phased source-preserving research workflow: search, analyze, write, with citation handoff.",
       "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["zotero-credentials", "requests-python-package"],
       "optional_capabilities": ["zotero-cross-check", "figure-handoff"],
@@ -31,7 +31,7 @@
     "source-research": {
       "description": "General web and source-gathering research workflow for current-information synthesis.",
       "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["web-source-synthesis"],
@@ -40,7 +40,7 @@
     "research-briefing": {
       "description": "Scope nontrivial research before execution with evidence plan and workflow recommendation.",
       "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
@@ -49,7 +49,7 @@
     "research-report-reviewer": {
       "description": "Review draft research reports for unsupported claims, ambiguity, and evidence gaps.",
       "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
@@ -58,7 +58,7 @@
     "research-verification-gate": {
       "description": "Final evidence, date, and gap check before delivery.",
       "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
@@ -67,7 +67,7 @@
     "draft-writing": {
       "description": "Claim-preserving draft writing workflow for controlled rewriting, polishing, and revision audits.",
       "profiles": ["writing-workflow", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["claim-ledger", "revision-delta-audit"],
@@ -76,7 +76,7 @@
     "zotero": {
       "description": "Zotero paper search, retrieval, ingest, and collection workflow.",
       "profiles": ["library", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [
         "python-runtime",
         "pyzotero-python-package",
@@ -106,7 +106,7 @@
     "calibre": {
       "description": "Calibre ebook lookup and library helper workflows.",
       "profiles": ["library", "ebook", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [
         "python-runtime",
         "requests-python-package",
@@ -129,7 +129,7 @@
     "getscipapers-requester": {
       "description": "External paper retrieval fallback after local library checks.",
       "profiles": ["library", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["external-retrieval"],
@@ -138,7 +138,7 @@
     "paper-lookup": {
       "description": "External paper metadata and discovery fallback.",
       "profiles": ["library", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["metadata-lookup"],
@@ -147,7 +147,7 @@
     "submission-venue-selector": {
       "description": "Evidence-gated journal and conference venue selection for scholarly drafts; deliverable rankings require comparator-paper evidence.",
       "profiles": ["serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["venue-selection", "comparator-paper-evidence", "evidence-backed-ranking", "offline-runtime-smoke"],
@@ -156,7 +156,7 @@
     "database-lookup": {
       "description": "Structured public scientific, biomedical, regulatory, materials, and economic database lookups.",
       "profiles": ["document", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["record-oriented-lookup"],
@@ -165,7 +165,7 @@
     "docling": {
       "description": "Parse, convert, OCR, chunk, and analyze documents.",
       "profiles": ["document", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime", "docling-python-package"],
       "optional_dependencies": [
         "ocr-runtime",
@@ -181,7 +181,7 @@
     "get-available-resources": {
       "description": "Detect CPU, memory, disk, and optional accelerator availability before heavy local work.",
       "profiles": ["workflow-tools", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime", "psutil-python-package"],
       "optional_dependencies": ["nvidia-smi-tool", "rocm-smi-tool"],
       "optional_capabilities": ["resource-planning"],
@@ -190,7 +190,7 @@
     "formal-skeleton-helper": {
       "description": "Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs.",
       "profiles": ["workflow-tools", "math", "formal-research", "formal-research-remote", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["lean-skeleton"],
@@ -199,7 +199,7 @@
     "lean-formalization-intake": {
       "description": "Optional local-first Lean formalization intake and suitability decision workflow.",
       "profiles": ["formal-research", "formal-research-remote", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["lean-cli", "lake-cli", "mathlib-cache"],
       "optional_capabilities": ["formal-lane-intake", "lean-tool-detection"],
@@ -208,7 +208,7 @@
     "lean-explore-mcp": {
       "description": "Optional inert LeanExplore MCP setup helper for Lean declaration search.",
       "profiles": ["formal-research", "formal-research-remote", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["lean-explore-python-package", "leanexplore-auth", "lean-explore-local-cache"],
       "optional_capabilities": ["manual-lean-explore-mcp-setup", "lean-declaration-search-evidence"],
@@ -217,7 +217,7 @@
     "lean-strict-verification-gate": {
       "description": "Scanner-first Lean artifact verification gate that separates typecheck status from claim support.",
       "profiles": ["formal-research", "formal-research-remote", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["lean-cli", "lake-cli", "mathlib-cache"],
       "optional_capabilities": ["lean-safety-scan", "optional-local-typecheck"],
@@ -226,7 +226,7 @@
     "axiom-axle-mcp": {
       "description": "Optional inert setup helper for AxiomMath AXLE MCP formal-proof assistance.",
       "profiles": ["formal-research-remote", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["uvx-cli", "axle-auth"],
       "optional_capabilities": ["manual-axle-mcp-setup", "remote-formal-check-evidence"],
@@ -235,7 +235,7 @@
     "model-router": {
       "description": "Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work.",
       "profiles": ["workflow-tools", "multi-agent", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["subagent-routing"],
@@ -244,7 +244,7 @@
     "workspace-rearranger": {
       "description": "Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion.",
       "profiles": ["workflow-tools", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["workspace-cleanup"],
@@ -253,7 +253,7 @@
     "research-digest-wrapper": {
       "description": "Run tracked-topic research digests.",
       "profiles": ["digest", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [
         "python-runtime",
         "requests-python-package",
@@ -266,7 +266,7 @@
     "rss-news-digest": {
       "description": "Run and manage RSS digest workflows.",
       "profiles": ["digest", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime", "feedparser-python-package"],
       "optional_dependencies": [],
       "optional_capabilities": ["feed-management"],
@@ -275,7 +275,7 @@
     "digest-bridge": {
       "description": "Convert digest output into paper retrieval manifests.",
       "profiles": ["digest", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["manifest-generation"],
@@ -284,7 +284,7 @@
     "tikz-draw": {
       "description": "Structural TikZ figure generation, compile, review, and semantic checks.",
       "profiles": ["figure", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [
         "python-runtime",
         "tex-runtime",
@@ -302,7 +302,7 @@
     "sagemath": {
       "description": "Sage-backed math, graph theory, algebra, and verification.",
       "profiles": ["math", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["sage-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["wsl-backed-sage"],
@@ -311,7 +311,7 @@
     "graph-verifier": {
       "description": "Lightweight graph sanity checks.",
       "profiles": ["math", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime", "networkx-python-package"],
       "optional_dependencies": [],
       "optional_capabilities": ["networkx-checks"],
@@ -320,7 +320,7 @@
     "agent-group-discuss": {
       "description": "Multi-agent discussion, review, and research orchestration.",
       "profiles": ["multi-agent", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["role-templates"],
@@ -329,7 +329,7 @@
     "prose": {
       "description": "Structured reproducible research and workflow orchestration.",
       "profiles": ["multi-agent", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["structured-workflow"],
@@ -338,7 +338,7 @@
     "cross-agent-delegation": {
       "description": "Cross-agent delegation packet contract for bounded parent-controlled handoffs.",
       "profiles": ["multi-agent", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["packet-contract"],
@@ -347,7 +347,7 @@
     "modal-research-compute": {
       "description": "Route heavy compute jobs to Modal through a local broker.",
       "profiles": ["full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["modal-python-package", "modal-auth"],
       "optional_capabilities": ["remote-cpu", "remote-gpu"],
@@ -356,7 +356,7 @@
     "paper-review": {
       "description": "Single-agent paper review workflow.",
       "profiles": ["serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [],
       "optional_dependencies": ["zotero-credentials"],
       "optional_capabilities": ["library-document-routing"],
@@ -365,7 +365,7 @@
     "annotated-review": {
       "description": "Annotated paper review workflow when both annotation and review are requested.",
       "profiles": ["full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": [
         "python-runtime",
         "pymupdf-python-package",
@@ -378,7 +378,7 @@
     "vnthuquan": {
       "description": "Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff.",
       "profiles": ["ebook", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["calibre-cli"],
       "optional_capabilities": ["calibre-dry-run-handoff"],
@@ -387,7 +387,7 @@
     "self-improving-agent": {
       "description": "Log durable learnings and propose canonical repo integration plans across install targets.",
       "profiles": ["full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["learning-log", "canonical-integration-plan", "portable-runtime-helper"],
@@ -396,7 +396,7 @@
     "session-logs": {
       "description": "Search prior local agent session logs when explicitly requested.",
       "profiles": ["full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["local-history-search"],

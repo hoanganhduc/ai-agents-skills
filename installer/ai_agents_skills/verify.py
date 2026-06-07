@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .capabilities import skill_path_is_agent_visible
 from .render import MANAGED_MARKER, block_id
 from .runtime import runtime_mode_ok, runtime_newline_ok
 from .sanitize import has_sensitive_material
@@ -94,7 +95,10 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
             "ok": expected_hash is not None and sha256_file(path) == expected_hash,
         })
         if artifact.get("artifact_type") == "skill-file" and path.exists():
-            checks.append({"name": "agent-visible", "ok": path.parent.name == artifact["skill"]})
+            checks.append({
+                "name": "agent-visible",
+                "ok": skill_path_is_agent_visible(str(artifact.get("agent")), path, str(artifact["skill"])),
+            })
         return {
             "agent": artifact.get("agent"),
             "skill": artifact.get("skill"),
@@ -118,7 +122,10 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         checks.append({"name": "metadata-valid", "ok": skill_metadata_valid(text, artifact["skill"])})
         checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
-        checks.append({"name": "agent-visible", "ok": path.parent.name == artifact["skill"]})
+        checks.append({
+            "name": "agent-visible",
+            "ok": skill_path_is_agent_visible(str(artifact.get("agent")), path, str(artifact["skill"])),
+        })
     if artifact.get("artifact_type") == "skill-support-file" and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
@@ -154,6 +161,20 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
+        if artifact.get("agent") == "antigravity" and artifact.get("artifact_type") == "entrypoint-alias":
+            checks.append({"name": "antigravity-skill-frontmatter", "ok": skill_metadata_valid(text, str(artifact.get("artifact_name")))})
+    if artifact.get("artifact_type") == "plugin" and path.exists():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
+        checks.append({"name": "antigravity-plugin-json", "ok": antigravity_plugin_json_valid(text) if artifact.get("agent") == "antigravity" else True})
+    if artifact.get("artifact_type") in {"mcp-config", "hook-config", "settings-file"} and path.exists():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
+        if artifact.get("agent") == "antigravity":
+            checks.append({
+                "name": f"antigravity-{artifact.get('artifact_type')}-json",
+                "ok": antigravity_native_config_valid(str(artifact.get("artifact_type")), text),
+            })
     if artifact.get("artifact_type") == "agent-persona" and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
@@ -164,6 +185,8 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
             checks.append({"name": "claude-persona-frontmatter", "ok": text.lstrip().startswith("---")})
         if artifact.get("agent") == "opencode":
             checks.append({"name": "opencode-persona-subagent", "ok": "mode: subagent" in text})
+        if artifact.get("agent") == "antigravity":
+            checks.append({"name": "antigravity-persona-frontmatter", "ok": text.lstrip().startswith("---") and "target: antigravity" in text})
     return {
         "agent": artifact.get("agent"),
         "skill": artifact.get("skill"),
@@ -185,7 +208,10 @@ def verify_symlink_artifact(path: Path, artifact: dict[str, Any], checks: list[d
     if artifact.get("artifact_type") == "skill-file" and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "metadata-valid", "ok": skill_metadata_valid(text, artifact["skill"])})
-        checks.append({"name": "agent-visible", "ok": path.parent.name == artifact["skill"]})
+        checks.append({
+            "name": "agent-visible",
+            "ok": skill_path_is_agent_visible(str(artifact.get("agent")), path, str(artifact["skill"])),
+        })
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
     if artifact.get("artifact_type") == "skill-support-file" and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -222,6 +248,33 @@ def skill_metadata_valid(text: str, skill: str) -> bool:
         and data.get("name") == skill
         and isinstance(data.get("description"), str)
     )
+
+
+def antigravity_plugin_json_valid(text: str) -> bool:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("name") == "ai-agents-skills"
+        and isinstance(data.get("version"), str)
+        and isinstance(data.get("components"), list)
+    )
+
+
+def antigravity_native_config_valid(artifact_type: str, text: str) -> bool:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    if artifact_type == "mcp-config":
+        return isinstance(data.get("mcpServers"), dict)
+    if artifact_type in {"hook-config", "settings-file"}:
+        return True
+    return False
 
 
 def extract_frontmatter(text: str) -> str | None:

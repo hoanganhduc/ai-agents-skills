@@ -70,7 +70,7 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
             self.assertTrue(any(action["operation"] == "create-template" for action in manifest["actions"]))
             self.assertTrue(any(action["operation"] == "no-op" for action in manifest["actions"]))
 
-    def test_default_target_agents_include_opencode_home(self) -> None:
+    def test_default_target_agents_include_opencode_and_antigravity_homes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
             target_root = fake_root_path(tmp, "fake-home")
@@ -79,8 +79,11 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
             make_source_root(source_root)
             manifest = build_manifest(build_inventory(source_root), target_root, created_at=CREATED_AT)
 
-            self.assertEqual(TARGET_AGENTS, ("codex", "claude", "deepseek", "copilot", "opencode"))
-            self.assertEqual(manifest["target_agent_refs"], ["claude", "codex", "copilot", "deepseek", "opencode"])
+            self.assertEqual(TARGET_AGENTS, ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity"))
+            self.assertEqual(
+                manifest["target_agent_refs"],
+                ["antigravity", "claude", "codex", "copilot", "deepseek", "opencode"],
+            )
             self.assertTrue(
                 any(
                     action["target"]["relative_path"].startswith(".copilot/openclaw-review/")
@@ -90,6 +93,12 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
             self.assertTrue(
                 any(
                     action["target"]["relative_path"].startswith(".config/opencode/openclaw-review/")
+                    for action in manifest["actions"]
+                )
+            )
+            self.assertTrue(
+                any(
+                    action["target"]["relative_path"].startswith(".gemini/antigravity-cli/openclaw-review/")
                     for action in manifest["actions"]
                 )
             )

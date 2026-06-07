@@ -17,6 +17,8 @@ def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
         content = add_managed_header(canonical, agent)
         if agent == "opencode":
             return add_opencode_skill_note(content)
+        if agent == "antigravity":
+            return add_antigravity_skill_note(content)
         return content
     description = str(spec["description"])
     optional = spec.get("optional_capabilities", [])
@@ -75,7 +77,7 @@ def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, sour
             "        placeholders are discovery signals only. If comparator evidence is\n"
             "        missing, report `incomplete analysis` and `not-ready`."
         )
-    return dedent(
+    content = dedent(
         f"""\
         ---
         name: {yaml_scalar(skill)}
@@ -100,6 +102,9 @@ def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, sour
         {safety_note}
         """
     )
+    if agent == "antigravity":
+        return add_antigravity_skill_note(content)
+    return content
 
 
 def display_path_for_agent(path: Path) -> str:
@@ -188,6 +193,16 @@ def render_persona(name: str, spec: dict[str, Any], agent: str, body: str) -> st
             f"{instructions}\n"
         )
         return add_managed_support_header(content, agent, f"agent-persona:{name}.md")
+    if agent == "antigravity":
+        content = (
+            f"---\n"
+            f"name: {yaml_scalar(name)}\n"
+            f"description: {yaml_scalar(str(spec['description']))}\n"
+            f"target: antigravity\n"
+            f"---\n\n"
+            f"{instructions}\n"
+        )
+        return add_managed_support_header(content, agent, f"agent-persona:{name}.md")
     content = dedent(
         f"""\
         # {name}
@@ -222,6 +237,15 @@ def render_entrypoint(name: str, spec: dict[str, Any], agent: str, body: str) ->
             f"{body.strip()}\n\n"
             f"Backing skill: {skills}\n"
         )
+    elif agent == "antigravity":
+        content = (
+            f"---\n"
+            f"name: {yaml_scalar(name)}\n"
+            f"description: {yaml_scalar(str(spec['description']))}\n"
+            f"---\n\n"
+            f"{body.strip()}\n\n"
+            f"Backing skill: {skills}\n"
+        )
     else:
         content = dedent(
             f"""\
@@ -251,6 +275,27 @@ def add_opencode_skill_note(content: str) -> str:
         """
     )
     if "## OpenCode Runtime Notes" in content:
+        return content
+    if content.startswith("---\n"):
+        end = content.find("\n---", 4)
+        if end != -1:
+            insert_at = end + len("\n---")
+            return content[:insert_at] + note + content[insert_at:]
+    return note.lstrip() + "\n\n" + content
+
+
+def add_antigravity_skill_note(content: str) -> str:
+    note = dedent(
+        """\
+
+        ## Antigravity CLI Runtime Notes
+
+        This skill is installed as an Antigravity CLI global Markdown skill under
+        `~/.gemini/antigravity-cli/skills/`. Plugin payloads managed by this
+        installer live under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`.
+        """
+    )
+    if "## Antigravity CLI Runtime Notes" in content:
         return content
     if content.startswith("---\n"):
         end = content.find("\n---", 4)

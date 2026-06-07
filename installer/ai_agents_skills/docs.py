@@ -100,13 +100,13 @@ def readme_text(manifests: dict[str, Any]) -> str:
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
-![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode-black)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
 Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
-GitHub Copilot, and OpenCode.
+GitHub Copilot, OpenCode, and Antigravity CLI.
 
 ## System Summary
 
@@ -116,13 +116,14 @@ product, and it may not behave as desired on other machines, other agent
 versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
-Codex, Claude, DeepSeek, GitHub Copilot, and OpenCode can each load local
-skills, while this repository keeps the shared research workflows, profiles,
-delegation settings, dependency metadata, and installer logic in one place.
+Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI can
+each load local skills, while this repository keeps the shared research
+workflows, profiles, delegation settings, dependency metadata, and installer
+logic in one place.
 
 The research stack is organized as:
 
-- agent frontends: Codex, Claude, DeepSeek, GitHub Copilot, and OpenCode
+- agent frontends: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers
@@ -419,10 +420,12 @@ Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
 targets follow auto mode: Claude links to `canonical/skills`, Codex and
-DeepSeek receive reference adapters, and OpenCode receives copied native skill
-files plus support files unless native loader evidence justifies a different
-policy. Explicit `symlink`, `reference`, and `copy` modes force the same
-strategy for every agent. Use `--skill` or `--skills` for narrow installs.
+DeepSeek receive reference adapters, OpenCode receives copied native skill
+files plus support files, and Antigravity receives flat global Markdown
+adapters plus native plugin/config scaffolds unless native loader evidence
+justifies a different policy. Explicit `symlink`, `reference`, and `copy`
+modes force the same strategy for every agent. Use `--skill` or `--skills` for
+narrow installs.
 
 ```bash
 make plan ARGS="--skill zotero"
@@ -671,7 +674,7 @@ def current_config_dependency_sections(manifests: dict[str, Any]) -> list[str]:
         "## Current Linux And Windows Config Inventory",
         "",
         "This sanitized inventory is derived from the maintainer's current Linux",
-        "and Windows Codex, Claude, DeepSeek, Copilot, and OpenCode-target configs where",
+        "and Windows target configs for Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity where",
         "present. It intentionally excludes",
         "auth files, provider secrets, session/history/log files, local library",
         "databases, caches, backups, and file-history snapshots.",
@@ -1044,7 +1047,7 @@ In scope:
 - explicit native-evidence records for scoped support claims
 - inert persistence checks for hook and schedule material
 - dry-run review UX and named gates
-- native evidence requirements for Codex, Claude, DeepSeek, Copilot, and OpenCode
+- native evidence requirements for Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
 - inert documentation and templates only
 
 Out of scope by default:
@@ -1078,7 +1081,7 @@ Out of scope by default:
 | 1. Read-only sanitized inventory | Inspect explicit source roots without creating install input. | Bounded scanner that emits allowlisted sanitized metadata only. | Sanitized inventory review. |
 | 2. Immutable dry-run manifest | Describe candidate target actions without applying them. | Strict content-addressed candidate manifest with stable action IDs and source/target separation. | Immutable manifest review. |
 | 3. Gated apply and uninstall | Apply only exact reviewed manifests. | Journaled fake-root and later real-target apply/uninstall guarded by drift checks and rollback. | Fake-root verification plus explicit apply confirmation. |
-| 4. Native agent support | Prove loaders before claiming support. | Dated evidence for Codex, Claude, DeepSeek, Copilot, and OpenCode by platform, path style, shell, runtime, and install mode. | Native evidence review. |
+| 4. Native agent support | Prove loaders before claiming support. | Dated evidence for Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity by platform, path style, shell, runtime, and install mode. | Native evidence review. |
 | 5. Hooks and schedules | Add persistent execution only after a separate threat model. | Inert docs/templates first; persistent execution only behind explicit separate approval. | Persistence-specific approval and rollback evidence. |
 
 ## Phase 0 Deliverables
@@ -1489,7 +1492,7 @@ Scope:
 
 Evidence inspected for this plan:
 
-- existing installer target code for Codex, Claude, DeepSeek, Copilot, and OpenCode
+- existing installer target code for Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
 - existing OpenClaw source/import pipeline modules and tests
 - existing OpenClaw integration and verification documentation
 - a sanitized local OpenClaw inventory with deny-by-default content policy
@@ -1517,7 +1520,7 @@ Concrete repo artifacts inspected:
 
 Confirmed from repo inspection:
 
-- default install targets are currently Codex, Claude, DeepSeek, Copilot, and OpenCode
+- default install targets are currently Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
 - OpenClaw is a known explicit target for restricted fake-root layout tests
 - OpenClaw code in this repository is currently a quarantined source/import
   pipeline with explicit roots, sanitized inventories, immutable manifests,
@@ -1941,7 +1944,7 @@ Real-system gate:
 
 OpenClaw target support is acceptable only when:
 
-- default installer behavior is unchanged for Codex, Claude, DeepSeek, Copilot, and OpenCode
+- default installer behavior is unchanged for Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
 - OpenClaw is explicit-only and absent from default target discovery
 - early OpenClaw writes are fake-root-only
 - all real `.openclaw` writes, including `.openclaw/ai-agents-skills`, are
@@ -1990,7 +1993,7 @@ The system has three layers:
 
 | Layer | Role |
 |---|---|
-| Agent frontends | Codex, Claude, DeepSeek, Copilot, and OpenCode receive user requests and load installed skill instructions. |
+| Agent frontends | Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity receive user requests and load installed skill instructions. |
 | Shared skill repository | `manifest/` selects skills and profiles; `canonical/skills/` stores reusable workflows; `targets/` holds agent-specific notes. |
 | Runtime and software tools | Python, TeX, optional SageMath, local library tools, document parsers, public databases, and external retrieval helpers do the actual work when a skill needs them. |
 
@@ -2408,8 +2411,8 @@ def architecture_text() -> str:
     return """# Architecture
 
 This page explains how the repository turns one canonical skill catalog into
-agent-specific files for Codex, Claude, DeepSeek, GitHub Copilot, and
-OpenCode.
+agent-specific files for Codex, Claude, DeepSeek, GitHub Copilot, OpenCode,
+and Antigravity CLI.
 
 The manifests are the source of truth:
 
@@ -2455,24 +2458,30 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode copies canonical skill files and support files by default for cross-platform parity. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, Copilot, and Antigravity skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. Antigravity adapters are flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`. OpenCode copies canonical skill files and support files by default for cross-platform parity. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
-| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
-| `entrypoint-alias` | Optional quick-action aliases. Claude and OpenCode receive command files; Codex and DeepSeek receive reference documents. |
+| `entrypoint-alias` | Optional quick-action aliases. Claude and OpenCode receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents. |
+| `plugin` | Antigravity receives a managed `ai-agents-skills` plugin marker and payload directory when Antigravity artifacts are installed. |
+| `mcp-config` | Antigravity receives a no-op plugin-scoped `mcp_config.json` scaffold with an empty `mcpServers` map. |
+| `hook-config` | Antigravity receives a no-op plugin-scoped `hooks.json` scaffold. |
+| `settings-file` | Antigravity receives a sparse no-op `settings.json` scaffold in its global CLI home. |
 | `runtime-file` | Root-scoped copied runtime runners and skill helper files. Runtime files are never installed as per-agent skills and are verified by transformed source hash, newline policy, mode, and secret scan. |
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
 Target rendering is intentionally adapter-heavy where native behavior has not
 been proven. Codex personas are TOML custom-agent files, Claude and OpenCode
-personas are Markdown subagents, Copilot personas are `.agent.md` custom-agent
+personas are Markdown subagents, Antigravity personas are plugin-scoped
+Markdown agent definitions, Copilot personas are `.agent.md` custom-agent
 profiles, and DeepSeek personas are reference prompts. Claude and OpenCode
-entrypoint aliases are command files, while Codex and DeepSeek entrypoint
-aliases are reference documents under `instructions/entrypoints`.
+entrypoint aliases are command files, Antigravity entrypoint aliases are flat
+global Markdown skill aliases, and Codex and DeepSeek entrypoint aliases are
+reference documents under `instructions/entrypoints`.
 
 Copilot is included in default target detection when `~/.copilot` exists.
 Existing repository-level `.github/*` files do not activate the personal
@@ -2490,16 +2499,24 @@ commands, templates, and instruction docs under `~/.config/opencode`. Project
 `.opencode/` directories remain project-local and do not activate the global
 install target.
 
+Antigravity is included in default target detection when
+`~/.gemini/antigravity-cli` exists. The installer writes flat global Markdown
+skills under `~/.gemini/antigravity-cli/skills/`, managed global context blocks
+under `~/.gemini/GEMINI.md`, and the managed `ai-agents-skills` plugin payload
+under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`. Project-local
+`.agents/` directories remain project/workspace-local and do not activate the
+global Antigravity target.
+
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
 detected, not as the default global Codex target.
 
 Portable runtime runners accept workspace-relative skill commands only. They
 set runtime-specific environment variables such as `AAS_RUNTIME_ROOT`,
-`AAS_RUNTIME_WORKSPACE`, and `AAS_SECRETS_FILE`. OpenCode and other non-Codex
-targets use the neutral shared `ai-agents-skills` runtime root unless a
-runtime root is supplied explicitly. Absolute paths and `..` traversal are
-rejected by the runtime wrappers.
+`AAS_RUNTIME_WORKSPACE`, and `AAS_SECRETS_FILE`. OpenCode, Antigravity, and
+other non-Codex targets use the neutral shared `ai-agents-skills` runtime root
+unless a runtime root is supplied explicitly. Absolute paths and `..` traversal
+are rejected by the runtime wrappers.
 
 Safety boundary:
 
@@ -2561,6 +2578,11 @@ without enabling real `.openclaw` writes.
 OpenCode prechecks report the user-global `~/.config/opencode` target,
 OpenCode-native artifact directories, copy-mode default, and native smoke
 expectations without reading config contents or credentials.
+Antigravity prechecks report the user-global
+`~/.gemini/antigravity-cli` target, flat global skill directory, managed plugin
+payload, sparse settings file, plugin-scoped MCP config, plugin-scoped hooks
+config, `agy` CLI discovery status, and native smoke expectations without
+reading config contents or credentials.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
@@ -2598,10 +2620,14 @@ After a successful `install --apply`, the installer runs post-install smoke in
 agent-visible skill files, and runs offline runtime smoke for selected
 runtime-backed skills with safe smoke contracts. When OpenCode is selected and
 the `opencode` CLI is available, it also runs isolated native discovery smoke
-for OpenCode paths, skills, and agents. These checks write a bounded report
-under `.ai-agents-skills/runs/` and use temporary scratch directories for
-runtime outputs. They do not configure credentials, write MCP/client config,
-start servers, install packages, or call live services. Use
+for OpenCode paths, skills, and agents. When Antigravity is selected and the
+`agy` CLI is available, it runs isolated native smoke for `agy --help`,
+`agy plugin list`, global skill file shape, plugin manifest, MCP config, hook
+config, and settings scaffolds. These checks write a bounded report under
+`.ai-agents-skills/runs/` and use temporary scratch directories for runtime
+outputs. They do not configure credentials, start servers, install packages,
+or call live services. Antigravity MCP and hook files are no-op JSON scaffolds
+unless a future manifest declares live entries. Use
 `--post-install-smoke strict` in automation to make degraded smoke fail the
 command, `--post-install-smoke verify` for integrity-only checks, or
 `--post-install-smoke off` to skip post-install checks.
@@ -2699,29 +2725,34 @@ records the reason in `plan --json`. Symlink creation itself is verified during
 apply; if a symlink cannot be created, skill files fall back to reference
 adapters and support files fall back to copied files.
 
-Codex, DeepSeek, Copilot, and OpenCode are compatibility exceptions. Current Codex skill
-discovery loads regular user `SKILL.md` files but ignores file-symlinked user
-`SKILL.md` files. DeepSeek native symlinked `SKILL.md` loading has not been
-verified. Copilot agent skills are regular `SKILL.md` files in
-`~/.copilot/skills` or `.github/skills`; symlinked skill loading is not
-assumed. OpenCode native skills are regular files under
+Codex, DeepSeek, Copilot, OpenCode, and Antigravity are compatibility
+exceptions. Current Codex skill discovery loads regular user `SKILL.md` files
+but ignores file-symlinked user `SKILL.md` files. DeepSeek native symlinked
+`SKILL.md` loading has not been verified. Copilot agent skills are regular
+`SKILL.md` files in `~/.copilot/skills` or `.github/skills`; symlinked skill
+loading is not assumed. OpenCode native skills are regular files under
 `~/.config/opencode/skills`, and auto mode copies canonical skill files plus
-support files for cross-platform parity. In default auto mode, Codex, DeepSeek,
-and Copilot resolve skill files to reference adapters that point at the
-canonical repo skill, while OpenCode resolves to copy mode. `plan --json`
-shows the effective `install_mode`, `mode_reason`, `capability_evidence`, and
-fallback mode for each target before anything is written.
+support files for cross-platform parity. Antigravity global skills are flat
+Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, so auto
+mode writes reference adapters in that native global skill directory and
+creates the managed Antigravity plugin/config scaffolds. In default auto mode,
+Codex, DeepSeek, Copilot, and Antigravity resolve skill files to reference
+adapters that point at the canonical repo skill, while OpenCode resolves to
+copy mode. `plan --json` shows the effective `install_mode`, `mode_reason`,
+`capability_evidence`, and fallback mode for each target before anything is
+written.
 
 Use `--install-mode symlink` to force symlinked skill files for every agent.
 This is useful for testing future loader behavior, but it can produce Codex
 skill targets that current Codex will not discover.
 
 Use `--install-mode reference` for agents or environments that should not load
-symlinked skills. This mode writes a thin `SKILL.md` adapter into every agent
-settings directory. The adapter tells the agent where the canonical repo skill
-file is and does not copy support files. If a previously managed skill is
-switched to reference mode, obsolete managed support files may be planned for
-removal because the adapter now points back to the repo copy.
+symlinked skills. This mode writes a thin adapter into every agent settings
+directory, using `SKILL.md` for directory-shaped targets and `<skill>.md` for
+Antigravity. The adapter tells the agent where the canonical repo skill file is
+and does not copy support files. If a previously managed skill is switched to
+reference mode, obsolete managed support files may be planned for removal
+because the adapter now points back to the repo copy.
 
 When targeting a mounted Windows profile from Linux or WSL, verify that the
 reference path written into the adapter is readable by the target agent runtime.
@@ -2786,10 +2817,10 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters, while OpenCode uses copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, Copilot, and Antigravity skill files to reference adapters, while OpenCode uses copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
-| Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
+| Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Antigravity gets plugin-scoped Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
 | Windows SageMath | Prefer WSL-backed detection when native SageMath is absent. |
 
 Related pages: [Dependencies](dependencies.md), [Audit And Migration](audit-and-migration.md),
@@ -2901,7 +2932,7 @@ for your own machine.
 The observed setup is best understood as shared research logic plus
 agent-local installation targets:
 
-- Codex, Claude, DeepSeek, Copilot, and OpenCode each load skills from their own
+- Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity each load skills from their own
   supported local skill/config locations.
 - This repository holds the reusable skill bodies and dependency metadata.
 - The installer detects which agent homes exist, installs only those targets,
@@ -2986,6 +3017,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | DeepSeek | `~/.deepseek` | `~/.deepseek/skills/<skill>/` | `~/.deepseek/AGENTS.md` |
 | Copilot | `~/.copilot` | `~/.copilot/skills/<skill>/` | not modified |
 | OpenCode | `~/.config/opencode` | `~/.config/opencode/skills/<skill>/` | `~/.config/opencode/AGENTS.md` |
+| Antigravity | `~/.gemini/antigravity-cli` | `~/.gemini/antigravity-cli/skills/<skill>.md` | `~/.gemini/GEMINI.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
 
 Optional or compatibility skill locations:
@@ -2996,6 +3028,7 @@ Optional or compatibility skill locations:
 | DeepSeek | `~/.agents/skills`, `./skills` | Workspace-local locations that may shadow global DeepSeek skills. |
 | Copilot | `~/.agents/skills` | Compatibility location reported but not used as the primary target. |
 | OpenCode | `~/.claude/skills`, `~/.agents/skills` | Compatibility locations reported but not used as the primary write target. |
+| Antigravity | `.agents/skills`, `~/.gemini/skills` | Workspace and Gemini compatibility locations reported but not used as the global write target. |
 
 Optional artifact-class target directories:
 
@@ -3006,21 +3039,23 @@ Optional artifact-class target directories:
 | DeepSeek | `~/.deepseek/agents` | `~/.deepseek/templates` | `~/.deepseek/commands` | `~/.deepseek/tools` |
 | Copilot | `~/.copilot/agents` | not supported | not supported | not supported |
 | OpenCode | `~/.config/opencode/agents` | `~/.config/opencode/templates` | `~/.config/opencode/commands` | `~/.config/opencode/tools` |
+| Antigravity | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/agents` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/templates` | `~/.gemini/antigravity-cli/skills/<alias>.md` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/tools` |
 | OpenClaw | not supported | not supported | not supported | not supported |
 
 Rendered artifact behavior differs by agent:
 
-| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | OpenClaw |
-|---|---|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copy-only in fake roots for eligible `SKILL.md` files. |
-| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Not supported. |
-| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Not supported. |
-| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. |
+| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | OpenClaw |
+|---|---|---|---|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Flat Markdown reference adapter in `~/.gemini/antigravity-cli/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Not supported. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Not supported. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Not supported; OpenClaw instruction files are not modified. |
 
-Instruction docs target each agent's `instructions` directory. Entrypoint
-aliases target Claude and OpenCode commands, but Codex and DeepSeek receive
-reference docs under `instructions/entrypoints` because equivalent
-slash-command loading is not assumed.
+Instruction docs target each agent's `instructions` or rules directory.
+Entrypoint aliases target Claude and OpenCode commands and Antigravity global
+Markdown skill aliases, but Codex and DeepSeek receive reference docs under
+`instructions/entrypoints` because equivalent slash-command loading is not
+assumed.
 
 Self-improvement records are workspace data, not agent-home source files.
 `self-improving-agent` writes or reviews `.learnings/` entries in the current
@@ -3039,6 +3074,14 @@ exists. Project `.opencode/` directories are project-local and do not activate
 the global OpenCode target. The installer writes global OpenCode skills, rules,
 agents, commands, templates, instruction docs, and declared tool/plugin
 artifacts under `~/.config/opencode`.
+
+Antigravity is included in default target detection when
+`~/.gemini/antigravity-cli` exists. Project `.agents/` directories are
+workspace-local and do not activate the global Antigravity target. The
+installer writes flat global Markdown skills, managed global context, and the
+managed `ai-agents-skills` plugin payload under
+`~/.gemini/antigravity-cli/plugins/ai-agents-skills`, including no-op MCP,
+hook, and settings scaffolds.
 
 OpenClaw is also explicit-only and remains fake-root-only before native target
 evidence. `precheck --json --agents openclaw` reports the `.openclaw` home
@@ -3152,7 +3195,7 @@ opted in with backup, locking, dry-run, and post-write verification.
 Target integration rules:
 
 - Choose one canonical repo per run and record its path plus commit/hash.
-- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, and OpenCode
+- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
   home before writing.
 - Store generated profile manifests with checksums/version stamps in selected
   target homes.
@@ -3283,13 +3326,15 @@ installer found a compatibility or alias path and will skip it unless
 and removes the legacy alias directory.
 
 Default installs use `--install-mode auto`, resolved per agent. Claude receives
-symlinked skill files when the filesystem supports them. Codex and DeepSeek
-receive reference adapters by default: Codex ignores file-symlinked user
-`SKILL.md` files, and DeepSeek native symlinked skill loading has not been
-verified. Use `--install-mode symlink` only when you intentionally want to
-force links for every agent. Use
-`--install-mode reference` to force adapters for every agent. If an agent
-requires regular files in its settings directory, use `--install-mode copy`.
+symlinked skill files when the filesystem supports them. Codex, DeepSeek, and
+Antigravity receive reference adapters by default: Codex ignores
+file-symlinked user `SKILL.md` files, DeepSeek native symlinked skill loading
+has not been verified, and Antigravity uses documented flat global Markdown
+skill files under `~/.gemini/antigravity-cli/skills/`. Use
+`--install-mode symlink` only when you intentionally want to force links for
+every agent. Use `--install-mode reference` to force adapters for every agent.
+If an agent requires regular files in its settings directory, use
+`--install-mode copy`.
 
 Useful inspection commands:
 
@@ -3313,7 +3358,7 @@ Common cases:
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
 | Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled this way by default. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
 | Windows wrapper reports no PowerShell runtime | `make.bat` could not find `pwsh` or `powershell.exe`. | Install PowerShell, run from a shell where it is on PATH, or use the POSIX bootstrap script from a compatible environment. |
-| Fake-root install has no actions | The fake root does not contain any `.codex`, `.claude`, or `.deepseek` home directories. | Create the agent homes you want to test under the fake root, or use `lifecycle-test` to create managed fake roots automatically. |
+| Fake-root install has no actions | The fake root does not contain any detected agent homes such as `.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`, or `.gemini/antigravity-cli`. | Create the agent homes you want to test under the fake root, or use `lifecycle-test` to create managed fake roots automatically. |
 | Docs freshness check fails in CI | Generated docs are stale. | Edit `installer/ai_agents_skills/docs.py` or manifests, run `make docs`, and commit the resulting `README.md` and `docs/` changes. |
 | Forced symlink smoke is degraded for Codex or DeepSeek | Current loader evidence does not prove file-symlinked `SKILL.md` loading for those agents. | Use default auto mode or reference mode unless intentionally testing loader behavior. |
 | Verify returns `no-managed-artifacts` | The selected scope has no state recorded by this installer. | Run install/adopt/migrate first, or verify a different scope. |

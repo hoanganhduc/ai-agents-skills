@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 from typing import Any
 
-
 AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
     "codex": {
         "symlink_skill_file": False,
@@ -30,6 +29,11 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "symlink_skill_file": False,
         "default_mode": "copy",
         "reason": "OpenCode native skills are regular SKILL.md files; auto mode copies canonical skill files and support files for cross-platform parity.",
+    },
+    "antigravity": {
+        "symlink_skill_file": False,
+        "default_mode": "reference",
+        "reason": "Antigravity CLI global skills are flat Markdown files; auto mode installs regular reference adapters in the official skills directory.",
     },
     "openclaw": {
         "symlink_skill_file": False,
@@ -144,7 +148,10 @@ def smoke_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
             "reason": "smoke checks only apply to skill-file artifacts",
             "checks": checks,
         }
-    checks.append({"name": "agent-visible-path", "ok": path.parent.name == artifact.get("skill")})
+    checks.append({
+        "name": "agent-visible-path",
+        "ok": skill_path_is_agent_visible(str(agent), path, str(artifact.get("skill"))),
+    })
     if install_mode == "symlink":
         policy = AGENT_SKILL_LOADER_POLICY.get(agent or "", {})
         supported = bool(policy.get("symlink_skill_file", True))
@@ -155,9 +162,9 @@ def smoke_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         else:
             reason = "symlink mode matches the recorded agent loader policy"
     elif install_mode == "reference":
-        reason = "reference adapter is a regular agent-visible SKILL.md file"
+        reason = "reference adapter is a regular agent-visible skill file"
     elif install_mode == "copy":
-        reason = "copy mode is a regular agent-visible SKILL.md file"
+        reason = "copy mode is a regular agent-visible skill file"
     else:
         status = "unsupported"
         reason = f"unknown install mode: {install_mode}"
@@ -171,3 +178,9 @@ def smoke_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         "reason": reason,
         "checks": checks,
     }
+
+
+def skill_path_is_agent_visible(agent: str, path: Path, skill: str) -> bool:
+    if agent == "antigravity":
+        return path.name == f"{skill}.md"
+    return path.name == "SKILL.md" and path.parent.name == skill

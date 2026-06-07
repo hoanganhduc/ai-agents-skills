@@ -154,7 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_manifest.add_argument(
         "--target-agents",
         default=",".join(TARGET_AGENTS),
-        help="comma-separated target agents; defaults to codex,claude,deepseek,copilot,opencode",
+        help="comma-separated target agents; defaults to codex,claude,deepseek,copilot,opencode,antigravity",
     )
     openclaw_manifest.add_argument("--path-style", choices=PATH_STYLES, default="posix")
     openclaw_manifest.add_argument(
@@ -868,11 +868,8 @@ def skill_coverage(agent: Any, manifests: dict[str, Any], state: dict[str, Any] 
         for skill, skill_aliases in aliases.items()
         for alias in skill_aliases
     }
-    names = {
-        path.parent.name
-        for path in agent.skills_dir.glob("*/SKILL.md")
-        if path.is_file()
-    } if agent.skills_dir.exists() else set()
+    skill_paths = skill_paths_for_agent(agent)
+    names = set(skill_paths)
     legacy_present = {
         alias_to_canonical[name]: name
         for name in names
@@ -889,7 +886,7 @@ def skill_coverage(agent: Any, manifests: dict[str, Any], state: dict[str, Any] 
     managed = []
     unmanaged = []
     for name in sorted(names & canonical):
-        path = agent.skills_dir / name / "SKILL.md"
+        path = skill_paths[name]
         if skill_is_managed(name, path, state_managed):
             managed.append(name)
         else:
@@ -903,6 +900,22 @@ def skill_coverage(agent: Any, manifests: dict[str, Any], state: dict[str, Any] 
         "unmanaged_canonical": unmanaged,
         "legacy_aliases_present": legacy_present,
         "extra_local": sorted(names - canonical - set(alias_to_canonical)),
+    }
+
+
+def skill_paths_for_agent(agent: Any) -> dict[str, Path]:
+    if not agent.skills_dir.exists():
+        return {}
+    if getattr(agent, "skill_file_layout", "") == "flat-md":
+        return {
+            path.stem: path
+            for path in agent.skills_dir.glob("*.md")
+            if path.is_file()
+        }
+    return {
+        path.parent.name: path
+        for path in agent.skills_dir.glob("*/SKILL.md")
+        if path.is_file()
     }
 
 

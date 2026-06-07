@@ -149,7 +149,7 @@ class ManifestTests(unittest.TestCase):
         self.assertTrue(delegation["nested_delegation"]["enabled"])
         self.assertTrue(delegation["nested_delegation"]["require_same_model_as_manager"])
 
-    def test_portable_manifest_entries_explicitly_support_opencode(self) -> None:
+    def test_portable_manifest_entries_explicitly_support_adapter_targets(self) -> None:
         manifests = load_manifests()
         portable = {"codex", "claude", "deepseek"}
 
@@ -157,12 +157,14 @@ class ManifestTests(unittest.TestCase):
             supported = set(spec["supported_agents"])
             if portable.issubset(supported):
                 self.assertIn("opencode", supported, name)
+                self.assertIn("antigravity", supported, name)
 
         for artifact_type, artifacts in manifests["artifacts"]["artifacts"].items():
             for name, spec in artifacts.items():
                 supported = set(spec["supported_agents"])
                 if portable.issubset(supported):
                     self.assertIn("opencode", supported, f"{artifact_type}:{name}")
+                    self.assertIn("antigravity", supported, f"{artifact_type}:{name}")
 
     def test_deepseek_cli_candidates_prefer_codewhale_rename(self) -> None:
         candidates = PROVIDER_CLI_SPECS["deepseek"]["candidates"]
@@ -242,6 +244,10 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(target_surface_for("copilot", "entrypoint-alias").support, "unsupported")
         self.assertEqual(target_surface_for("opencode", "skill-file").mechanism, "copy")
         self.assertEqual(target_surface_for("opencode", "entrypoint-alias").mechanism, "native-command")
+        self.assertEqual(target_surface_for("antigravity", "skill-file").mechanism, "reference-adapter")
+        self.assertEqual(target_surface_for("antigravity", "plugin").mechanism, "plugin")
+        self.assertEqual(target_surface_for("antigravity", "mcp-config").mechanism, "mcp-config")
+        self.assertEqual(target_surface_for("antigravity", "hook-config").mechanism, "hook-config")
         self.assertEqual(target_surface_for("openclaw", "runtime-file").support, "blocked")
 
     def test_canonical_import_admission_blocks_runtime_and_secret_files(self) -> None:
@@ -316,7 +322,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, [])
             self.assertEqual(plan["actions"], [])
-            self.assertEqual(len(plan["skipped_agents"]), 5)
+            self.assertEqual(len(plan["skipped_agents"]), 6)
 
     def test_symlinked_agent_home_is_skipped_without_writing_target(self) -> None:
         manifests = load_manifests()
@@ -1052,7 +1058,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
-            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode")
+            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode", "antigravity")
             from installer.ai_agents_skills.agents import detect_agents
 
             args = Args()
@@ -1073,6 +1079,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     "deepseek": "reference",
                     "copilot": "reference",
                     "opencode": "copy",
+                    "antigravity": "reference",
                 },
             )
             skill_actions = [
@@ -2789,7 +2796,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             )
 
     def test_cli_precheck_reports_all_targets_for_all_platform_overrides(self) -> None:
-        target_names = ["codex", "claude", "deepseek", "copilot", "opencode", "openclaw"]
+        target_names = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"]
         expected_path_styles = {
             "linux": "posix",
             "macos": "posix",
@@ -2830,6 +2837,12 @@ class DocsAndLauncherTests(unittest.TestCase):
                     self.assertEqual(by_target["deepseek"]["capabilities"]["default_install_mode"], "reference")
                     self.assertEqual(by_target["opencode"]["status"], "ready")
                     self.assertEqual(by_target["opencode"]["capabilities"]["default_install_mode"], "copy")
+                    self.assertEqual(by_target["antigravity"]["status"], "ready")
+                    self.assertEqual(by_target["antigravity"]["capabilities"]["default_install_mode"], "reference")
+                    self.assertIn(
+                        by_target["antigravity"]["antigravity_status"],
+                        {"cli-missing", "supported", "offline-unverified"},
+                    )
                     self.assertEqual(by_target["openclaw"]["status"], "fake-root-only")
                     self.assertEqual(by_target["openclaw"]["capabilities"]["default_install_mode"], "copy")
                     self.assertEqual(by_target["copilot"]["status"], "ready")
@@ -3548,11 +3561,192 @@ class OpenCodeTargetTests(unittest.TestCase):
             self.assertIn("ai-agents-skills", text, str(path))
 
 
+class AntigravityTargetTests(unittest.TestCase):
+    def test_antigravity_is_known_and_detected_by_default(self) -> None:
+        from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "antigravity")
+
+            self.assertIn("antigravity", all_agent_names())
+            self.assertIn("antigravity", known_agent_names())
+            self.assertEqual([agent.name for agent in detect_agents(root)], ["antigravity"])
+            self.assertEqual([agent.name for agent in detect_agents(root, ["antigravity"])], ["antigravity"])
+
+    def test_antigravity_support_is_visible_in_describe_output(self) -> None:
+        manifests = load_manifests()
+
+        self.assertIn("antigravity", manifests["skills"]["skills"]["agent-group-discuss"]["supported_agents"])
+        self.assertIn(
+            "antigravity",
+            manifests["artifacts"]["artifacts"]["entrypoint-alias"]["research-team"]["supported_agents"],
+        )
+
+    def test_project_local_agents_dir_does_not_activate_antigravity_global_target(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            (root / ".agents" / "skills").mkdir(parents=True)
+
+            self.assertEqual(detect_agents(root, ["antigravity"]), [])
+
+    def test_antigravity_full_install_scaffolds_native_surfaces(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "antigravity")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["antigravity"]),
+                runtime_profile="none",
+                requested_agents=["antigravity"],
+            )
+            skill_action = next(
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            )
+            self.assertEqual(skill_action["install_mode"], "reference")
+            self.assertEqual(Path(skill_action["path"]), root / ".gemini" / "antigravity-cli" / "skills" / "zotero.md")
+            self.assertIn("Antigravity CLI global skills are flat Markdown files", skill_action["mode_reason"])
+            scaffold_types = {
+                action["artifact_type"]
+                for action in plan["actions"]
+                if action.get("agent") == "antigravity" and action.get("skill") == "repo-management"
+            }
+            self.assertIn("plugin", scaffold_types)
+            self.assertIn("mcp-config", scaffold_types)
+            self.assertIn("hook-config", scaffold_types)
+            self.assertIn("settings-file", scaffold_types)
+
+            apply_plan(root, plan, dry_run=False)
+            home = root / ".gemini" / "antigravity-cli"
+            self.assertTrue((home / "skills" / "zotero.md").is_file())
+            self.assertTrue((home / "plugins" / "ai-agents-skills" / "plugin.json").is_file())
+            self.assertTrue((home / "plugins" / "ai-agents-skills" / "mcp_config.json").is_file())
+            self.assertTrue((home / "plugins" / "ai-agents-skills" / "hooks.json").is_file())
+            self.assertTrue((home / "settings.json").is_file())
+            self.assertTrue((root / ".gemini" / "GEMINI.md").is_file())
+            self.assertIn("Antigravity CLI Runtime Notes", (home / "skills" / "zotero.md").read_text(encoding="utf-8"))
+            self.assertIn("ai-agents-skills:zotero", (root / ".gemini" / "GEMINI.md").read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_antigravity_installs_plugin_artifacts_and_entrypoints(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "antigravity")
+            plan = build_plan(
+                root,
+                manifests,
+                ["deep-research-workflow"],
+                detect_agents(root, ["antigravity"]),
+                artifacts=[
+                    ("agent-persona", "code-reviewer"),
+                    ("entrypoint-alias", "deep-research"),
+                    ("instruction-doc", "engineering-lifecycle"),
+                    ("template", "spec"),
+                ],
+                runtime_profile="none",
+                requested_agents=["antigravity"],
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            home = root / ".gemini" / "antigravity-cli"
+            persona = home / "plugins" / "ai-agents-skills" / "agents" / "code-reviewer.md"
+            alias = home / "skills" / "deep-research.md"
+            rule = home / "plugins" / "ai-agents-skills" / "rules" / "engineering-lifecycle.md"
+            template = home / "plugins" / "ai-agents-skills" / "templates" / "SPEC.md"
+            self.assertTrue(persona.is_file())
+            self.assertTrue(alias.is_file())
+            self.assertTrue(rule.is_file())
+            self.assertTrue(template.is_file())
+            self.assertIn("target: antigravity", persona.read_text(encoding="utf-8"))
+            self.assertIn("name: \"deep-research\"", alias.read_text(encoding="utf-8"))
+            self.assertIn("Backing skill", alias.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_antigravity_native_smoke_uses_isolated_cli_discovery(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+        from installer.ai_agents_skills.antigravity import run_antigravity_native_smoke
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "antigravity")
+            fake_impl = root / "agy_fake.py"
+            fake_impl.write_text(
+                "\n".join([
+                    "#!/usr/bin/env python3",
+                    "import sys",
+                    "args = sys.argv[1:]",
+                    "if '--version' in args:",
+                    "    print('agy 2.0.0')",
+                    "elif '--help' in args:",
+                    "    print('Usage: agy')",
+                    "elif args == ['plugin', 'list']:",
+                    "    print('ai-agents-skills enabled')",
+                    "else:",
+                    "    print('unexpected', args)",
+                    "    sys.exit(1)",
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            if sys.platform.startswith("win"):
+                fake_cli = root / "agy.cmd"
+                fake_cli.write_text(
+                    f'@echo off\r\n"{sys.executable}" "%~dp0agy_fake.py" %*\r\n',
+                    encoding="utf-8",
+                )
+            else:
+                fake_cli = root / "agy"
+                fake_cli.write_text(fake_impl.read_text(encoding="utf-8"), encoding="utf-8")
+                fake_cli.chmod(0o755)
+
+            plan = build_plan(
+                root,
+                manifests,
+                ["zotero"],
+                detect_agents(root, ["antigravity"]),
+                runtime_profile="none",
+                requested_agents=["antigravity"],
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "AAS_ANTIGRAVITY": str(fake_cli),
+                    "PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}",
+                },
+            ):
+                result = run_antigravity_native_smoke(root, agents={"antigravity"}, platform=current_platform())
+
+            self.assertEqual(result["status"], "ok")
+            check_names = {check["name"] for check in result["checks"]}
+            self.assertIn("help", check_names)
+            self.assertIn("plugin-list", check_names)
+            self.assertIn("antigravity-global-skill-file:zotero", check_names)
+            self.assertIn("antigravity-plugin-visible:ai-agents-skills", check_names)
+
+
 class CopilotTargetTests(unittest.TestCase):
     def test_adapter_target_readmes_capture_install_boundaries(self) -> None:
         copilot = (REPO_ROOT / "targets" / "copilot" / "README.md").read_text(encoding="utf-8")
         openclaw = (REPO_ROOT / "targets" / "openclaw" / "README.md").read_text(encoding="utf-8")
         opencode = (REPO_ROOT / "targets" / "opencode" / "README.md").read_text(encoding="utf-8")
+        antigravity = (REPO_ROOT / "targets" / "antigravity" / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("adapter-only", copilot)
         self.assertIn("does not receive Codex or\nClaude instruction blocks", copilot)
@@ -3560,6 +3754,8 @@ class CopilotTargetTests(unittest.TestCase):
         self.assertIn("Runtime-backed skills are blocked", openclaw)
         self.assertIn("full install target", opencode)
         self.assertIn("~/.config/opencode", opencode)
+        self.assertIn("full install target", antigravity)
+        self.assertIn("~/.gemini/antigravity-cli", antigravity)
 
     def test_copilot_is_known_and_detected_by_default(self) -> None:
         from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names

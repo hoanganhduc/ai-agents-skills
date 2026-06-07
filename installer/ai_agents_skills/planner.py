@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +21,7 @@ from .render import (
     render_skill_md,
 )
 from .runtime import build_runtime_actions
-from .state import load_state, sha256_file, sha256_text
+from .state import artifact_signature, load_state, sha256_file, sha256_text
 
 
 def build_plan(
@@ -57,7 +58,7 @@ def build_plan(
         for agent in agents:
             if not skill_supported_by_agent(spec, agent):
                 continue
-            skill_file = agent.skills_dir / skill / "SKILL.md"
+            skill_file = agent.skill_file_for(skill)
             source_path = canonical_skill_path(skill)
             source = source_path if source_path.exists() else None
             block_reason = target_skill_block_reason(agent, skill, manifests, install_mode)
@@ -147,6 +148,7 @@ def build_plan(
                     backup_replace=backup_replace,
                 )
             )
+    actions.extend(antigravity_native_scaffold_actions(agents, actions, adopt, backup_replace))
     actions.extend(
         build_runtime_actions(
             root=root,
@@ -190,6 +192,76 @@ def artifact_supported_by_agent(artifact_type: str, spec: dict[str, Any], agent:
     if agent.name == "copilot" and artifact_type != "agent-persona":
         return False
     return agent_supports_manifest_entry(agent.name, spec["supported_agents"])
+
+
+def antigravity_native_scaffold_actions(
+    agents: list[AgentTarget],
+    actions: list[dict[str, Any]],
+    adopt: bool,
+    backup_replace: bool,
+) -> list[dict[str, Any]]:
+    antigravity_agents = [agent for agent in agents if agent.name == "antigravity"]
+    if not antigravity_agents:
+        return []
+    active_antigravity_actions = [
+        action for action in actions
+        if action.get("agent") == "antigravity" and skill_action_is_active(action)
+    ]
+    if not active_antigravity_actions:
+        return []
+    agent = antigravity_agents[0]
+    plugin_dir = agent.target_dir_for("plugin")
+    scaffold_specs = [
+        (
+            plugin_dir / "plugin.json",
+            "plugin",
+            "plugin:ai-agents-skills",
+            "ai-agents-skills",
+            {
+                "name": "ai-agents-skills",
+                "version": "0.1.0",
+                "description": "Managed ai-agents-skills plugin payload for Antigravity CLI.",
+                "author": "ai-agents-skills",
+                "components": ["skills", "agents", "rules", "templates", "tools", "mcp", "hooks"],
+            },
+        ),
+        (
+            plugin_dir / "mcp_config.json",
+            "mcp-config",
+            "mcp-config:ai-agents-skills",
+            "ai-agents-skills",
+            {"mcpServers": {}},
+        ),
+        (
+            plugin_dir / "hooks.json",
+            "hook-config",
+            "hook-config:ai-agents-skills",
+            "ai-agents-skills",
+            {},
+        ),
+        (
+            agent.home / "settings.json",
+            "settings-file",
+            "settings-file:antigravity",
+            "antigravity",
+            {},
+        ),
+    ]
+    scaffold_actions = []
+    for path, artifact_type, artifact_id, artifact_name, data in scaffold_specs:
+        action = classify_file_action(
+            agent=agent.name,
+            skill="repo-management",
+            path=path,
+            content=json.dumps(data, indent=2, sort_keys=True) + "\n",
+            artifact_type=artifact_type,
+            adopt=adopt,
+            backup_replace=backup_replace,
+        )
+        action["artifact_id"] = artifact_id
+        action["artifact_name"] = artifact_name
+        scaffold_actions.append(action)
+    return scaffold_actions
 
 
 def target_skill_block_reason(
@@ -347,6 +419,17 @@ def artifact_action(
         if not backing_skill_available(agent, skill, skill_specs, skill_actions)
     ]
     path = artifact_target_path(agent, artifact_type, name, spec)
+    if agent.name == "antigravity" and artifact_type == "entrypoint-alias" and name in skill_specs:
+        action = blocked_file_action(
+            agent=agent.name,
+            skill=name,
+            path=path,
+            artifact_type=artifact_type,
+            reason="Antigravity global skill alias name conflicts with a managed skill file",
+        )
+        action["artifact_id"] = f"{artifact_type}:{name}"
+        action["artifact_name"] = name
+        return action
     content = render_artifact_content(artifact_type, name, spec, agent.name)
     action = classify_file_action(
         agent=agent.name,
@@ -393,7 +476,7 @@ def backing_skill_available(
     action = skill_actions.get((agent.name, skill))
     if action and skill_action_is_active(action):
         return True
-    path = agent.skills_dir / skill / "SKILL.md"
+    path = agent.skill_file_for(skill)
     if not path.exists():
         return False
     if not path.is_file() and not path.is_symlink():
@@ -433,7 +516,7 @@ def support_file_actions(
         except UnicodeDecodeError:
             continue
         content = add_managed_support_header(raw, agent.name, str(relative).replace("\\", "/"))
-        path = agent.skills_dir / skill / relative
+        path = agent.support_dir_for(skill) / relative
         platform_reason = support_file_platform_block_reason(relative, platform)
         if platform_reason is not None:
             actions.append(
@@ -638,13 +721,16 @@ def classify_file_action(
 def find_legacy_skill(agent: AgentTarget, skill: str, manifests: dict[str, Any]) -> Path | None:
     aliases = manifests["skills"].get("legacy_aliases", {}).get(skill, [])
     for name in aliases:
-        candidate = agent.skills_dir / name / "SKILL.md"
+        candidate = agent.skill_file_for(name)
         if candidate.exists():
             return candidate
     names = [skill, *aliases]
     for skills_dir in agent.legacy_skills_dirs:
         for name in names:
-            candidate = skills_dir / name / "SKILL.md"
+            if agent.skill_file_layout == "flat-md":
+                candidate = skills_dir / f"{name}.md"
+            else:
+                candidate = skills_dir / name / "SKILL.md"
             if candidate.exists():
                 return candidate
     return None
@@ -656,6 +742,20 @@ def legacy_removal_action(
     legacy_path: Path,
     canonical_path: Path,
 ) -> dict[str, Any]:
+    if agent.skill_file_layout == "flat-md":
+        return {
+            "kind": "managed-file-remove",
+            "agent": agent.name,
+            "skill": skill,
+            "path": str(legacy_path),
+            "legacy_path": str(legacy_path),
+            "canonical_path": str(canonical_path),
+            "classification": "legacy",
+            "operation": "remove-obsolete",
+            "artifact_type": "legacy-skill-file",
+            "installed_signature": artifact_signature(legacy_path),
+            "reason": "legacy alias removed after canonical migration",
+        }
     return {
         "kind": "legacy-dir",
         "agent": agent.name,

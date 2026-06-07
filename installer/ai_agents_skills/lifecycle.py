@@ -357,6 +357,11 @@ def remove_artifact(item: dict[str, Any], root: Path | None = None) -> None:
         "entrypoint-alias",
         "command",
         "tool-shim",
+        "plugin",
+        "mcp-config",
+        "hook-config",
+        "settings-file",
+        "legacy-skill-file",
     }:
         remove_file(path)
         cleanup_recorded_parent_dirs(root, item)

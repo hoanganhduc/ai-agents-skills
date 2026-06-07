@@ -104,7 +104,7 @@ Status vocabulary used by `precheck`:
 ## Current Linux And Windows Config Inventory
 
 This sanitized inventory is derived from the maintainer's current Linux
-and Windows Codex, Claude, DeepSeek, Copilot, and OpenCode-target configs where
+and Windows target configs for Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity where
 present. It intentionally excludes
 auth files, provider secrets, session/history/log files, local library
 databases, caches, backups, and file-history snapshots.

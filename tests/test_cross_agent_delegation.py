@@ -87,7 +87,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
     def test_manifest_profile_and_runtime_boundaries(self) -> None:
         manifests = load_manifests()
         spec = manifests["skills"]["skills"][SKILL]
-        self.assertEqual(set(spec["supported_agents"]), {"codex", "claude", "deepseek", "opencode"})
+        self.assertEqual(set(spec["supported_agents"]), {"codex", "claude", "deepseek", "opencode", "antigravity"})
         self.assertEqual(set(spec["profiles"]), {"multi-agent", "serious-research", "full-research"})
         self.assertEqual(spec["required_dependencies"], [])
         self.assertNotIn(SKILL, manifests["runtime"]["skills"])
