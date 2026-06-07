@@ -7,10 +7,19 @@ from installer.ai_agents_skills.sanitize import has_sensitive_material
 
 
 SKIP_DIRS = {".git", ".learnings", ".venv", "__pycache__", "_build"}
+SKIP_PREFIXES = {
+    Path(".codex") / "runs",
+}
 ALLOWLIST = {
     Path("installer/ai_agents_skills/sanitize.py"),
     Path("tests/test_sanitization.py"),
 }
+
+
+def should_skip_path(path: Path) -> bool:
+    if any(part in SKIP_DIRS for part in path.parts):
+        return True
+    return any(path == prefix or prefix in path.parents for prefix in SKIP_PREFIXES)
 
 
 def main() -> int:
@@ -18,9 +27,9 @@ def main() -> int:
     for path in Path(".").rglob("*"):
         if not path.is_file():
             continue
-        if any(part in SKIP_DIRS for part in path.parts):
-            continue
         rel = path.relative_to(".")
+        if should_skip_path(rel):
+            continue
         if rel in ALLOWLIST:
             continue
         try:
