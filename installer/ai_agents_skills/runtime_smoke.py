@@ -285,10 +285,20 @@ def run_smoke_case(
     command_target = runtime_command_target(manifests, skill, platform, runner["name"])
     args = smoke_args(manifests, skill, workspace)
     effective_timeout = smoke_timeout(manifests, skill, timeout)
-    command = [*runner["argv"], command_target, *args]
+    command = [*runner["argv"], command_target]
     env = smoke_env(manifests, skill, workspace)
+    checks_override: list[dict[str, Any]] | None = None
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=effective_timeout, env=env)
+        if skill == "deep-research-workflow" and args == ["selftest"]:
+            completed, checks_override = run_deep_research_workflow_smoke(
+                command,
+                workspace=workspace,
+                timeout=effective_timeout,
+                env=env,
+                args=args,
+            )
+        else:
+            completed = run_smoke_process(command, args=args, timeout=effective_timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         return {
             "status": "failed",
@@ -304,7 +314,7 @@ def run_smoke_case(
             "stderr_tail": (exc.stderr or "")[-2000:],
         }
     try:
-        checks = validate_smoke_output(manifests, skill, completed, args)
+        checks = validate_smoke_output(manifests, skill, completed, args) if checks_override is None else checks_override
     except Exception as exc:
         checks = [
             {"name": "exit-zero", "ok": completed.returncode == 0},
@@ -327,6 +337,67 @@ def run_smoke_case(
     if runtime_root is not None:
         result["runtime_root"] = str(runtime_root)
     return result
+
+
+def run_smoke_process(
+    command: list[str],
+    *,
+    args: list[str],
+    timeout: int,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [*command, *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        env=env,
+    )
+
+
+def run_deep_research_workflow_smoke(
+    command: list[str],
+    *,
+    workspace: Path,
+    timeout: int,
+    env: dict[str, str],
+    args: list[str],
+) -> tuple[subprocess.CompletedProcess[str], list[dict[str, Any]] | None]:
+    first = run_smoke_process(command, args=args, timeout=timeout, env=env)
+    if first.returncode == 0 or not is_deep_research_selftest_unsupported(first):
+        return first, None
+
+    smoke_dir = workspace / "runtime-smoke"
+    out_dir = smoke_dir / "deep"
+    init_args = ["init", "--dir", str(smoke_dir), "--subdir", "deep", "--structured", "--schema-version", "2"]
+    init_result = run_smoke_process(command, args=init_args, timeout=timeout, env=env)
+
+    checks: list[dict[str, Any]] = [
+        {"name": "deep-research-selftest-unsupported", "ok": True},
+        {"name": "deep-research-smoke-init", "ok": init_result.returncode == 0},
+    ]
+    if init_result.returncode != 0:
+        return init_result, checks
+
+    validate_args = [
+        "validate",
+        "--dir",
+        str(out_dir),
+        "--schema-version",
+        "2",
+    ]
+    validate_result = run_smoke_process(command, args=validate_args, timeout=timeout, env=env)
+    validate_checks = validate_smoke_output({}, "deep-research-workflow", validate_result, validate_args)
+    checks.extend(validate_checks)
+    return validate_result, checks
+
+
+def is_deep_research_selftest_unsupported(result: subprocess.CompletedProcess[str]) -> bool:
+    if result.returncode == 0:
+        return False
+    text = f"{result.stdout} {result.stderr}".lower()
+    return "invalid command: selftest" in text
 
 
 def runtime_command_target(
@@ -498,7 +569,10 @@ def validate_smoke_output(
             checks.append({"name": "scenario-names", "ok": names == required})
             checks.append({"name": "scenario-results", "ok": all(item.get("passed") for item in payload.get("scenarios", []) if isinstance(item, dict))})
         else:
-            out_dir = Path(args[args.index("--dir") + 1]) / args[args.index("--subdir") + 1]
+            dir_index = args.index("--dir")
+            out_dir = Path(args[dir_index + 1])
+            if "--subdir" in args:
+                out_dir = out_dir / args[args.index("--subdir") + 1]
             for name in (
                 "sources.md",
                 "analysis.md",
@@ -510,6 +584,9 @@ def validate_smoke_output(
             ):
                 checks.append({"name": f"{name}-exists", "ok": (out_dir / name).is_file()})
             checks.append({"name": "delegation-dir-exists", "ok": (out_dir / "delegation").is_dir()})
+            if "validate" in args:
+                payload = parse_json_stdout(completed.stdout)
+                checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
     elif skill in {"lean-formalization-intake", "lean-strict-verification-gate"}:
         payload = parse_json_stdout(completed.stdout)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
