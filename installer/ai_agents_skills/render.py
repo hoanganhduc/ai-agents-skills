@@ -375,9 +375,8 @@ def render_instruction_block(skill: str, spec: dict[str, Any]) -> str:
 
 def render_management_notice(agent: str) -> str:
     bid = block_id("repo-management")
-    return dedent(
-        f"""\
-        <!-- {bid}:start -->
+    body = dedent(
+        """\
         ## ai-agents-skills management notice
 
         This agent home may contain files managed by the `ai-agents-skills`
@@ -389,10 +388,29 @@ def render_management_notice(agent: str) -> str:
         Use `plan` or `audit-system` before applying changes. Uninstall and
         rollback remove only managed files and managed blocks recorded by this
         installer.
-
-        Generated target: {agent}.
-        <!-- {bid}:end -->
         """
+    ).strip()
+    if agent == "antigravity":
+        body += "\n\n" + dedent(
+            """\
+            Antigravity CLI workspace guardrails:
+            - Resolve the intended workspace from an explicit user path first, then
+              the current working directory, then the enclosing git root.
+            - If the active workspace is missing or ambiguous, stop and ask before
+              editing files, running repo-changing commands, or falling back to a
+              scratch directory.
+            - Read workspace instruction files such as `GEMINI.md`, `AGENTS.md`,
+              and relevant `.agents/` workflow docs before concluding that local
+              instructions or skills are unavailable.
+            - Treat planning as preview-first: summarize the plan and wait for
+              explicit confirmation before execution.
+            """
+        ).strip()
+    return (
+        f"<!-- {bid}:start -->\n"
+        f"{body}\n\n"
+        f"Generated target: {agent}.\n"
+        f"<!-- {bid}:end -->\n"
     )
 
 

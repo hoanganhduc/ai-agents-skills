@@ -24,6 +24,17 @@ no-op JSON files by default. They establish reversible installer ownership of
 the native surfaces without enabling unknown servers, commands, hooks, models,
 API keys, or credentials.
 
+To adapt existing Antigravity settings to the current machine or repository
+without copying a static JSON blob, use:
+
+```bash
+./installer/bootstrap.sh --root "$HOME" antigravity-fixup --workspace /path/to/repo --apply
+```
+
+This preserves existing settings, trims malformed `gcp.project` whitespace,
+adds the selected workspace to `trustedWorkspaces`, and disables empty
+status-line stubs that can surface misleading cwd metadata.
+
 Project-local `.agents/` directories do not activate the global Antigravity
 target by themselves.
 
