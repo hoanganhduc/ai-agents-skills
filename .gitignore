@@ -1,6 +1,16 @@
 .venv/
 .ai-agents-skills/
 .learnings/
+.claude/
+.codex/
+.copilot/
+.cursor/
+.deepseek/
+.gemini/
+.openclaw/
+.opencode/
+.research/*
+!.research/research-workflow-templates/
 .env
 .env.*
 !.env.example
