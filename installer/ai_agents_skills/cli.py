@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .agents import agent_home_statuses, agent_supports_manifest_entry, all_agent_names, detect_agents
+from .antigravity_fixup import antigravity_fixup
 from .apply import apply_plan
 from .capabilities import looks_like_real_system_root
 from .delegation import build_external_agent_prechecks
@@ -199,6 +200,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor")
     add_selection_args(doctor)
+
+    antigravity_fixup_parser = sub.add_parser("antigravity-fixup")
+    antigravity_fixup_parser.add_argument("--workspace", help="single workspace directory to trust")
+    antigravity_fixup_parser.add_argument("--workspaces", help="comma-separated workspace directories to trust")
+    antigravity_fixup_parser.add_argument("--apply", action="store_true")
 
     precheck = sub.add_parser("precheck")
     add_selection_args(precheck)
@@ -448,6 +454,16 @@ def run(args: argparse.Namespace) -> int:
         return 0 if result["status"] == "inert-only" else 1
     if args.command == "doctor":
         return doctor(args, manifests)
+    if args.command == "antigravity-fixup":
+        return output(
+            antigravity_fixup(
+                args.root,
+                workspace=args.workspace,
+                workspaces=args.workspaces,
+                apply=args.apply,
+            ),
+            args,
+        )
     if args.command == "precheck":
         return precheck(args, manifests)
     if args.command == "audit-system":
@@ -1345,6 +1361,7 @@ def install_hint(name: str, result: dict[str, Any]) -> str:
 def command_help() -> dict[str, Any]:
     commands = [
         "doctor",
+        "antigravity-fixup",
         "precheck",
         "audit-system",
         "library-profile-audit",
