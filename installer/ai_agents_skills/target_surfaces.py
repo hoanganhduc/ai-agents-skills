@@ -85,10 +85,10 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "antigravity",
         "skill-file",
         "supported",
-        "reference-adapter",
-        "Antigravity global flat Markdown skill file",
+        "copy",
+        "Antigravity global flat Markdown skill file with the embedded canonical body",
         "official-docs",
-        "Auto mode writes ~/.gemini/antigravity-cli/skills/<skill>.md adapters, matching the documented global skill layout.",
+        "Auto mode writes ~/.gemini/antigravity-cli/skills/<skill>.md with the full canonical skill body and copies support files, matching the documented global skill layout.",
     ),
     TargetSurface(
         "openclaw",

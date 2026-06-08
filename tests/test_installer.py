@@ -244,7 +244,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(target_surface_for("copilot", "entrypoint-alias").support, "unsupported")
         self.assertEqual(target_surface_for("opencode", "skill-file").mechanism, "copy")
         self.assertEqual(target_surface_for("opencode", "entrypoint-alias").mechanism, "native-command")
-        self.assertEqual(target_surface_for("antigravity", "skill-file").mechanism, "reference-adapter")
+        self.assertEqual(target_surface_for("antigravity", "skill-file").mechanism, "copy")
         self.assertEqual(target_surface_for("antigravity", "plugin").mechanism, "plugin")
         self.assertEqual(target_surface_for("antigravity", "mcp-config").mechanism, "mcp-config")
         self.assertEqual(target_surface_for("antigravity", "hook-config").mechanism, "hook-config")
@@ -1079,7 +1079,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     "deepseek": "reference",
                     "copilot": "reference",
                     "opencode": "copy",
-                    "antigravity": "reference",
+                    "antigravity": "copy",
                 },
             )
             skill_actions = [
@@ -2838,7 +2838,7 @@ class DocsAndLauncherTests(unittest.TestCase):
                     self.assertEqual(by_target["opencode"]["status"], "ready")
                     self.assertEqual(by_target["opencode"]["capabilities"]["default_install_mode"], "copy")
                     self.assertEqual(by_target["antigravity"]["status"], "ready")
-                    self.assertEqual(by_target["antigravity"]["capabilities"]["default_install_mode"], "reference")
+                    self.assertEqual(by_target["antigravity"]["capabilities"]["default_install_mode"], "copy")
                     self.assertIn(
                         by_target["antigravity"]["antigravity_status"],
                         {"cli-missing", "supported", "offline-unverified"},
@@ -3615,7 +3615,7 @@ class AntigravityTargetTests(unittest.TestCase):
                 action for action in plan["actions"]
                 if action["kind"] == "file" and action["artifact_type"] == "skill-file"
             )
-            self.assertEqual(skill_action["install_mode"], "reference")
+            self.assertEqual(skill_action["install_mode"], "copy")
             self.assertEqual(Path(skill_action["path"]), root / ".gemini" / "antigravity-cli" / "skills" / "zotero.md")
             self.assertIn("Antigravity CLI global skills are flat Markdown files", skill_action["mode_reason"])
             scaffold_types = {
@@ -3636,7 +3636,10 @@ class AntigravityTargetTests(unittest.TestCase):
             self.assertTrue((home / "plugins" / "ai-agents-skills" / "hooks.json").is_file())
             self.assertTrue((home / "settings.json").is_file())
             self.assertTrue((root / ".gemini" / "GEMINI.md").is_file())
-            self.assertIn("Antigravity CLI Runtime Notes", (home / "skills" / "zotero.md").read_text(encoding="utf-8"))
+            zotero_text = (home / "skills" / "zotero.md").read_text(encoding="utf-8")
+            self.assertIn("Antigravity CLI Runtime Notes", zotero_text)
+            self.assertNotIn("This is a thin adapter", zotero_text)
+            self.assertIn("## Routing rule", zotero_text)
             self.assertIn("ai-agents-skills:zotero", (root / ".gemini" / "GEMINI.md").read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 

@@ -2458,7 +2458,7 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, Copilot, and Antigravity skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. Antigravity adapters are flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`. OpenCode copies canonical skill files and support files by default for cross-platform parity. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode and Antigravity copy the full canonical skill body and support files by default; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
@@ -2734,11 +2734,11 @@ loading is not assumed. OpenCode native skills are regular files under
 `~/.config/opencode/skills`, and auto mode copies canonical skill files plus
 support files for cross-platform parity. Antigravity global skills are flat
 Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, so auto
-mode writes reference adapters in that native global skill directory and
-creates the managed Antigravity plugin/config scaffolds. In default auto mode,
-Codex, DeepSeek, Copilot, and Antigravity resolve skill files to reference
-adapters that point at the canonical repo skill, while OpenCode resolves to
-copy mode. `plan --json` shows the effective `install_mode`, `mode_reason`,
+mode copies the full canonical skill body into that native global skill
+directory and creates the managed Antigravity plugin/config scaffolds. In
+default auto mode, Codex, DeepSeek, and Copilot resolve skill files to reference
+adapters that point at the canonical repo skill, while OpenCode and Antigravity
+resolve to copy mode. `plan --json` shows the effective `install_mode`, `mode_reason`,
 `capability_evidence`, and fallback mode for each target before anything is
 written.
 
@@ -2817,7 +2817,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, Copilot, and Antigravity skill files to reference adapters, while OpenCode uses copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters, while OpenCode and Antigravity use copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Antigravity gets plugin-scoped Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |

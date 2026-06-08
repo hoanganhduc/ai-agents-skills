@@ -197,11 +197,11 @@ loading is not assumed. OpenCode native skills are regular files under
 `~/.config/opencode/skills`, and auto mode copies canonical skill files plus
 support files for cross-platform parity. Antigravity global skills are flat
 Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, so auto
-mode writes reference adapters in that native global skill directory and
-creates the managed Antigravity plugin/config scaffolds. In default auto mode,
-Codex, DeepSeek, Copilot, and Antigravity resolve skill files to reference
-adapters that point at the canonical repo skill, while OpenCode resolves to
-copy mode. `plan --json` shows the effective `install_mode`, `mode_reason`,
+mode copies the full canonical skill body into that native global skill
+directory and creates the managed Antigravity plugin/config scaffolds. In
+default auto mode, Codex, DeepSeek, and Copilot resolve skill files to reference
+adapters that point at the canonical repo skill, while OpenCode and Antigravity
+resolve to copy mode. `plan --json` shows the effective `install_mode`, `mode_reason`,
 `capability_evidence`, and fallback mode for each target before anything is
 written.
 
@@ -280,7 +280,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, Copilot, and Antigravity skill files to reference adapters, while OpenCode uses copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters, while OpenCode and Antigravity use copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Antigravity gets plugin-scoped Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |

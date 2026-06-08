@@ -32,8 +32,8 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
     },
     "antigravity": {
         "symlink_skill_file": False,
-        "default_mode": "reference",
-        "reason": "Antigravity CLI global skills are flat Markdown files; auto mode installs regular reference adapters in the official skills directory.",
+        "default_mode": "copy",
+        "reason": "Antigravity CLI global skills are flat Markdown files; auto mode copies the full canonical skill body into the official skills directory so triggered skills work without reaching outside the workspace sandbox.",
     },
     "openclaw": {
         "symlink_skill_file": False,
