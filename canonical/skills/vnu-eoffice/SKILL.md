@@ -1,6 +1,6 @@
 ---
 name: vnu-eoffice
-description: Use VNU eOffice functions from any supported agent target: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram.
+description: "Use VNU eOffice functions from any supported agent target: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram."
 user-invocable: true
 disable-model-invocation: false
 metadata: {"requires":{"bins":["python3"]}}
