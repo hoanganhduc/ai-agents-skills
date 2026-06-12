@@ -7,7 +7,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
+from .capabilities import normalized_path_within, resolved_path_within
+from .openclaw_target_gate import real_openclaw_path_block_reason
 from .state import (
     artifact_signature,
     load_state,
@@ -557,8 +558,9 @@ def preflight_uninstall_actions(root: Path, actions: list[dict[str, Any]]) -> No
         path = Path(action["artifact"])
         if not path_within(root, path):
             raise ValueError(f"refusing uninstall for artifact outside selected root: {path}")
-        if real_openclaw_artifact_blocked(root, action, path):
-            raise ValueError("refusing real-system OpenClaw uninstall before native target evidence")
+        openclaw_block = real_openclaw_artifact_block_reason(root, action, path, operation="uninstall")
+        if openclaw_block is not None:
+            raise ValueError(openclaw_block)
         if action.get("artifact_type") in {"instruction-block", "management-notice"}:
             safety_reason = instruction_file_safety_reason(path)
             if safety_reason is not None:
@@ -594,8 +596,9 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
         path = Path(item["artifact"])
         if not path_within(root, path):
             raise ValueError(f"refusing rollback for artifact outside selected root: {path}")
-        if real_openclaw_artifact_blocked(root, item, path):
-            raise ValueError("refusing real-system OpenClaw rollback before native target evidence")
+        openclaw_block = real_openclaw_artifact_block_reason(root, item, path, operation="rollback")
+        if openclaw_block is not None:
+            raise ValueError(openclaw_block)
         backup = item.get("backup")
         if backup and not path_within(state_dir(root) / "backups", Path(backup)):
             raise ValueError(f"refusing rollback because backup is outside installer state: {backup}")
@@ -636,11 +639,17 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
 
 
 def real_openclaw_artifact_blocked(root: Path, item: dict[str, Any], path: Path) -> bool:
-    return (
-        item.get("agent") == "openclaw"
-        and looks_like_real_system_root(root)
-        and normalized_path_within(root / ".openclaw", path)
-    )
+    return real_openclaw_artifact_block_reason(root, item, path, operation="apply") is not None
+
+
+def real_openclaw_artifact_block_reason(
+    root: Path,
+    item: dict[str, Any],
+    path: Path,
+    *,
+    operation: str,
+) -> str | None:
+    return real_openclaw_path_block_reason(root, path, operation=operation, agent=str(item.get("agent")))
 
 
 def backup_integrity_ok(item: dict[str, Any], backup_path: Path) -> bool:

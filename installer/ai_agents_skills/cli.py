@@ -30,9 +30,21 @@ from .openclaw_evidence import build_evidence, load_evidence, native_support_sum
 from .openclaw_inventory import DEFAULT_MAX_ENTRIES, EVIDENCE_CLASSES, build_inventory
 from .openclaw_manifest import PATH_STYLES, TARGET_AGENTS, approve_manifest, build_manifest, load_inventory, load_manifest
 from .openclaw_persistence import check_persistence_manifest_file
-from .planner import build_plan
+from .openclaw_target_apply import (
+    apply_target_manifest_file,
+    probe_openclaw_target,
+    uninstall_target_manifest,
+)
+from .openclaw_target_evidence import load_target_evidence
+from .openclaw_target_manifest import (
+    approve_target_manifest,
+    build_skill_file_target_manifest,
+    load_target_manifest,
+)
+from .openclaw_target_paths import OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE
+from .planner import build_plan, openclaw_skill_content_block_reason, openclaw_skill_support_block_reason
 from .post_install_smoke import POST_INSTALL_SMOKE_MODES, run_post_install_smoke, smoke_state
-from .render import MANAGED_MARKER, canonical_skill_path
+from .render import MANAGED_MARKER, canonical_skill_path, render_skill_md
 from .runtime import runtime_inventory
 from .runtime_smoke import run_runtime_smoke
 from .selectors import (
@@ -197,6 +209,56 @@ def build_parser() -> argparse.ArgumentParser:
 
     openclaw_persistence = sub.add_parser("openclaw-persistence-check")
     openclaw_persistence.add_argument("--manifest", type=Path, required=True)
+
+    openclaw_target_probe = sub.add_parser("openclaw-target-probe")
+    openclaw_target_probe.add_argument("--openclaw-bin", default="openclaw")
+    openclaw_target_probe.add_argument("--skill", help="skill path to include in target-pre-state evidence")
+    openclaw_target_probe.add_argument("--include-canary", action="store_true")
+    openclaw_target_probe.add_argument(
+        "--path-style",
+        choices=["posix", "windows-drive", "windows-unc", "wsl-posix", "mounted-windows"],
+        default="posix",
+    )
+    openclaw_target_probe.add_argument("--captured-at")
+
+    openclaw_target_manifest = sub.add_parser("openclaw-target-dry-run-manifest")
+    openclaw_target_manifest.add_argument("--skill", required=True)
+    openclaw_target_manifest.add_argument(
+        "--evidence",
+        type=Path,
+        action="append",
+        required=True,
+        help="OpenClaw target evidence JSON file; repeat for each evidence record",
+    )
+    openclaw_target_manifest.add_argument(
+        "--action-class",
+        choices=["canary-skill-file", "managed-skill-file"],
+        default="managed-skill-file",
+    )
+    openclaw_target_manifest.add_argument("--created-at")
+
+    openclaw_target_approve = sub.add_parser("openclaw-target-approve-manifest")
+    openclaw_target_approve.add_argument("--manifest", type=Path, required=True)
+    openclaw_target_approve.add_argument("--reviewer", required=True)
+    openclaw_target_approve.add_argument("--reviewed-at")
+
+    openclaw_target_apply = sub.add_parser("openclaw-target-apply-manifest")
+    openclaw_target_apply.add_argument("--manifest", type=Path, required=True)
+    openclaw_target_apply.add_argument("--apply", action="store_true")
+    openclaw_target_apply.add_argument("--real-system", action="store_true")
+    openclaw_target_apply.add_argument(
+        "--confirm-openclaw-real-write",
+        help=f"exact confirmation phrase: {OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE}",
+    )
+
+    openclaw_target_uninstall = sub.add_parser("openclaw-target-uninstall-manifest")
+    openclaw_target_uninstall.add_argument("--manifest-id")
+    openclaw_target_uninstall.add_argument("--apply", action="store_true")
+    openclaw_target_uninstall.add_argument("--real-system", action="store_true")
+    openclaw_target_uninstall.add_argument(
+        "--confirm-openclaw-real-write",
+        help=f"exact confirmation phrase: {OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE}",
+    )
 
     doctor = sub.add_parser("doctor")
     add_selection_args(doctor)
@@ -452,6 +514,77 @@ def run(args: argparse.Namespace) -> int:
         result = check_persistence_manifest_file(args.manifest)
         output(result, args)
         return 0 if result["status"] == "inert-only" else 1
+    if args.command == "openclaw-target-probe":
+        return output(
+            probe_openclaw_target(
+                args.root,
+                openclaw_bin=args.openclaw_bin,
+                skill=args.skill,
+                include_canary=args.include_canary,
+                platform=args.platform,
+                path_style=args.path_style,
+                captured_at=args.captured_at,
+            ),
+            args,
+        )
+    if args.command == "openclaw-target-dry-run-manifest":
+        skill = canonical_skill_name(args.skill, manifests)
+        if skill is None:
+            raise ValueError(f"unknown skill: {args.skill}")
+        if skill in manifests.get("runtime", {}).get("skills", {}):
+            raise ValueError("OpenClaw target real-system manifests do not support runtime-backed skills")
+        content_reason = openclaw_skill_content_block_reason(skill)
+        if content_reason is not None:
+            raise ValueError(content_reason)
+        support_reason = openclaw_skill_support_block_reason(skill)
+        if support_reason is not None:
+            raise ValueError(support_reason)
+        spec = manifests["skills"]["skills"][skill]
+        content = render_skill_md(skill, spec, "openclaw")
+        evidence_items = [load_target_evidence(path) for path in args.evidence]
+        return output(
+            build_skill_file_target_manifest(
+                root=args.root,
+                skill=skill,
+                content=content,
+                evidence_items=evidence_items,
+                action_class=args.action_class,
+                created_at=args.created_at,
+            ),
+            args,
+        )
+    if args.command == "openclaw-target-approve-manifest":
+        return output(
+            approve_target_manifest(
+                load_target_manifest(args.manifest),
+                reviewer=args.reviewer,
+                reviewed_at=args.reviewed_at,
+            ),
+            args,
+        )
+    if args.command == "openclaw-target-apply-manifest":
+        return output(
+            apply_target_manifest_file(
+                args.manifest,
+                args.root,
+                dry_run=not args.apply,
+                real_system=args.real_system,
+                confirm_phrase=args.confirm_openclaw_real_write,
+                post_apply_check=is_real_system_root(args.root),
+            ),
+            args,
+        )
+    if args.command == "openclaw-target-uninstall-manifest":
+        return output(
+            uninstall_target_manifest(
+                args.root,
+                manifest_id=args.manifest_id,
+                dry_run=not args.apply,
+                real_system=args.real_system,
+                confirm_phrase=args.confirm_openclaw_real_write,
+            ),
+            args,
+        )
     if args.command == "doctor":
         return doctor(args, manifests)
     if args.command == "antigravity-fixup":
@@ -1391,6 +1524,11 @@ def command_help() -> dict[str, Any]:
         "openclaw-record-evidence",
         "openclaw-validate-evidence",
         "openclaw-persistence-check",
+        "openclaw-target-probe",
+        "openclaw-target-dry-run-manifest",
+        "openclaw-target-approve-manifest",
+        "openclaw-target-apply-manifest",
+        "openclaw-target-uninstall-manifest",
     ]
     return {
         "usage": "make <target> ARGS=\"...\" or make.bat <command> ...",

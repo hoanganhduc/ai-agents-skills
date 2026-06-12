@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from .agents import AgentTarget, agent_home_statuses, agent_supports_manifest_entry
-from .capabilities import effective_install_mode_with_evidence, looks_like_real_system_root
+from .capabilities import effective_install_mode_with_evidence
 from .discovery import current_platform
 from .manifest import REPO_ROOT
+from .openclaw_target_gate import openclaw_target_block_reason
 from .render import (
     MANAGED_MARKER,
     add_managed_support_header,
@@ -61,7 +62,7 @@ def build_plan(
             skill_file = agent.skill_file_for(skill)
             source_path = canonical_skill_path(skill)
             source = source_path if source_path.exists() else None
-            block_reason = target_skill_block_reason(agent, skill, manifests, install_mode)
+            block_reason = target_skill_block_reason(root, agent, skill, manifests, install_mode)
             if block_reason is not None:
                 file_action = blocked_file_action(
                     agent=agent.name,
@@ -102,7 +103,7 @@ def build_plan(
                 source_path=source,
                 fallback_content=fallback_content,
             )
-            block_openclaw_conflict_mode(agent.name, file_action)
+            block_openclaw_conflict_mode(root, agent.name, file_action)
             actions.append(file_action)
             skill_actions[(agent.name, skill)] = file_action
             if skill_action_is_active(file_action):
@@ -138,6 +139,7 @@ def build_plan(
                 continue
             actions.append(
                 artifact_action(
+                    root=root,
                     agent=agent,
                     artifact_type=artifact_type,
                     name=name,
@@ -177,8 +179,8 @@ def plannable_agents(root: Path, agents: list[AgentTarget]) -> tuple[list[AgentT
 
 
 def target_plan_block_reason(root: Path, agent: AgentTarget) -> str | None:
-    if agent.fake_root_only and looks_like_real_system_root(root):
-        return "OpenClaw target writes are fake-root only before native target evidence"
+    if agent.name == "openclaw":
+        return openclaw_target_block_reason(root, operation="plan", agent=agent.name)
     return None
 
 
@@ -265,6 +267,7 @@ def antigravity_native_scaffold_actions(
 
 
 def target_skill_block_reason(
+    root: Path,
     agent: AgentTarget,
     skill: str,
     manifests: dict[str, Any],
@@ -275,9 +278,19 @@ def target_skill_block_reason(
     if agent.name != "openclaw":
         return None
     if requested_mode in {"reference", "symlink"}:
-        return f"OpenClaw {requested_mode} install mode requires native target evidence"
+        return openclaw_target_block_reason(
+            root,
+            operation="plan",
+            agent=agent.name,
+            action_class=requested_mode,
+        )
     if skill in manifests.get("runtime", {}).get("skills", {}):
-        return "OpenClaw runtime-backed skills require neutral runtime evidence"
+        return openclaw_target_block_reason(
+            root,
+            operation="plan",
+            agent=agent.name,
+            action_class="runtime-backed-skill",
+        )
     content_reason = openclaw_skill_content_block_reason(skill)
     if content_reason is not None:
         return content_reason
@@ -320,14 +333,20 @@ def openclaw_skill_support_block_reason(skill: str) -> str | None:
     return None
 
 
-def block_openclaw_conflict_mode(agent_name: str, action: dict[str, Any]) -> None:
+def block_openclaw_conflict_mode(root: Path, agent_name: str, action: dict[str, Any]) -> None:
     if agent_name != "openclaw":
         return
     if action.get("operation") not in {"adopt", "backup-replace", "migrate-install"}:
         return
+    action_class = "migrate" if action.get("operation") == "migrate-install" else str(action.get("operation"))
     action["classification"] = "blocked"
     action["operation"] = "skip"
-    action["reason"] = "OpenClaw adopt, backup-replace, and migrate require native target evidence"
+    action["reason"] = openclaw_target_block_reason(
+        root,
+        operation="plan",
+        agent=agent_name,
+        action_class=action_class,
+    )
 
 
 def runtime_enabled_skills(
@@ -378,6 +397,7 @@ def obsolete_support_file_actions(state: dict[str, Any], agent: str, skill: str)
 
 
 def artifact_action(
+    root: Path,
     agent: AgentTarget,
     artifact_type: str,
     name: str,
@@ -442,7 +462,7 @@ def artifact_action(
     )
     action["artifact_id"] = f"{artifact_type}:{name}"
     action["artifact_name"] = name
-    block_openclaw_conflict_mode(agent.name, action)
+    block_openclaw_conflict_mode(root, agent.name, action)
     if missing:
         action["operation"] = "skip"
         action["classification"] = "blocked"

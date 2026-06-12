@@ -1,4 +1,4 @@
-.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke runtime-inventory delegate-agent validate-delegation-packet list-skills list-artifacts describe describe-artifact docs docs-check generate-docs docs-site static-check sanitize-check release-check test
+.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check openclaw-target-probe openclaw-target-dry-run-manifest openclaw-target-approve-manifest openclaw-target-apply-manifest openclaw-target-uninstall-manifest plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke runtime-inventory delegate-agent validate-delegation-packet list-skills list-artifacts describe describe-artifact docs docs-check generate-docs docs-site static-check sanitize-check release-check test
 
 ARGS ?=
 
@@ -40,6 +40,21 @@ openclaw-validate-evidence:
 
 openclaw-persistence-check:
 	./installer/bootstrap.sh openclaw-persistence-check $(ARGS)
+
+openclaw-target-probe:
+	./installer/bootstrap.sh openclaw-target-probe $(ARGS)
+
+openclaw-target-dry-run-manifest:
+	./installer/bootstrap.sh openclaw-target-dry-run-manifest $(ARGS)
+
+openclaw-target-approve-manifest:
+	./installer/bootstrap.sh openclaw-target-approve-manifest $(ARGS)
+
+openclaw-target-apply-manifest:
+	./installer/bootstrap.sh openclaw-target-apply-manifest $(ARGS)
+
+openclaw-target-uninstall-manifest:
+	./installer/bootstrap.sh openclaw-target-uninstall-manifest $(ARGS)
 
 plan:
 	./installer/bootstrap.sh plan $(ARGS)

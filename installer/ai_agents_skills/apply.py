@@ -6,10 +6,10 @@ from typing import Any
 
 from .capabilities import (
     existing_parents,
-    looks_like_real_system_root,
     normalized_path_within,
     resolved_path_within,
 )
+from .openclaw_target_gate import real_openclaw_path_block_reason
 from .render import replace_or_append_block
 from .runtime import apply_runtime_file_action, preflight_runtime_action
 from .state import (
@@ -97,12 +97,9 @@ def preflight_action(root: Path, action: dict[str, Any]) -> None:
         preflight_runtime_action(root, action)
         return
     path = Path(action["path"])
-    if (
-        action.get("agent") == "openclaw"
-        and looks_like_real_system_root(root)
-        and normalized_path_within(root / ".openclaw", path)
-    ):
-        raise ValueError("refusing real-system OpenClaw writes before native target evidence")
+    openclaw_block = real_openclaw_path_block_reason(root, path, operation="apply", agent=str(action.get("agent")))
+    if openclaw_block is not None:
+        raise ValueError(openclaw_block)
     if not normalized_path_within(root, path) or not resolved_path_within(root, path.parent):
         raise ValueError(f"refusing to apply artifact outside selected root: {path}")
     for parent in existing_parents(path.parent, root):

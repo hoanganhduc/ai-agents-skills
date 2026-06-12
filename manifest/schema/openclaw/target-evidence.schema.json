@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/target-evidence.schema.json",
+  "title": "OpenClaw Target Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": true,
+    "evidence_id": true,
+    "generator_version": true,
+    "target": true,
+    "phase": true,
+    "evidence_type": true,
+    "evidence_source": true,
+    "platform": true,
+    "path_style": true,
+    "openclaw_version": true,
+    "captured_at": true,
+    "observed_behavior": true,
+    "artifact_hashes": true,
+    "limitations": true,
+    "authorizes_real_writes": true,
+    "approval_eligible": true,
+    "target_realpath": true,
+    "managed_skills_realpath": true,
+    "checks": true
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/phase1"
+    },
+    {
+      "$ref": "#/$defs/phase2"
+    }
+  ],
+  "$defs": {
+    "phase1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "evidence_id",
+        "generator_version",
+        "target",
+        "phase",
+        "evidence_type",
+        "evidence_source",
+        "platform",
+        "path_style",
+        "captured_at",
+        "observed_behavior",
+        "limitations",
+        "authorizes_real_writes",
+        "approval_eligible"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "openclaw.target-evidence.v1"
+        },
+        "evidence_id": {
+          "type": "string",
+          "pattern": "^target_evidence_[A-Za-z0-9_.-]+$"
+        },
+        "generator_version": {
+          "const": "openclaw-target-evidence.phase1.v1"
+        },
+        "target": {
+          "const": "openclaw"
+        },
+        "phase": {
+          "const": "phase1-non-authorizing"
+        },
+        "evidence_type": {
+          "enum": [
+            "native-loader",
+            "native-inertness",
+            "helper-invocation",
+            "runtime-root",
+            "quiescence-lock",
+            "target-pre-state"
+          ]
+        },
+        "evidence_source": {
+          "enum": [
+            "native-probe",
+            "manual-review",
+            "fixture",
+            "upstream-doc"
+          ]
+        },
+        "platform": {
+          "$ref": "#/$defs/platform"
+        },
+        "path_style": {
+          "$ref": "#/$defs/path_style"
+        },
+        "openclaw_version": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "observed_behavior": {
+          "type": "string"
+        },
+        "artifact_hashes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "authorizes_real_writes": {
+          "const": false
+        },
+        "approval_eligible": {
+          "const": false
+        }
+      }
+    },
+    "phase2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "evidence_id",
+        "generator_version",
+        "target",
+        "phase",
+        "evidence_type",
+        "evidence_source",
+        "platform",
+        "path_style",
+        "captured_at",
+        "observed_behavior",
+        "limitations",
+        "authorizes_real_writes",
+        "approval_eligible",
+        "target_realpath",
+        "managed_skills_realpath",
+        "checks"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "openclaw.target-evidence.v2"
+        },
+        "evidence_id": {
+          "type": "string",
+          "pattern": "^target_evidence_[A-Za-z0-9_.-]+$"
+        },
+        "generator_version": {
+          "const": "openclaw-target-evidence.phase2.v1"
+        },
+        "target": {
+          "const": "openclaw"
+        },
+        "phase": {
+          "const": "phase2-authorizing"
+        },
+        "evidence_type": {
+          "enum": [
+            "native-loader",
+            "native-managed-skill-root",
+            "native-managed-skill-canary",
+            "target-pre-state",
+            "quiescence-lock"
+          ]
+        },
+        "evidence_source": {
+          "const": "native-probe"
+        },
+        "platform": {
+          "$ref": "#/$defs/platform"
+        },
+        "path_style": {
+          "$ref": "#/$defs/path_style"
+        },
+        "openclaw_version": {
+          "type": "string"
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "observed_behavior": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_hashes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "limitations": {
+          "type": "array",
+          "maxItems": 0,
+          "items": {
+            "type": "string"
+          }
+        },
+        "authorizes_real_writes": {
+          "const": true
+        },
+        "approval_eligible": {
+          "const": true
+        },
+        "target_realpath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "managed_skills_realpath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^.*$": true
+          },
+          "minProperties": 1
+        }
+      }
+    },
+    "platform": {
+      "enum": [
+        "linux",
+        "macos",
+        "windows",
+        "wsl-native",
+        "wsl-mounted-windows",
+        "ci-container"
+      ]
+    },
+    "path_style": {
+      "enum": [
+        "posix",
+        "windows-drive",
+        "windows-unc",
+        "wsl-posix",
+        "mounted-windows"
+      ]
+    }
+  }
+}

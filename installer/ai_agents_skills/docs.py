@@ -100,13 +100,14 @@ def readme_text(manifests: dict[str, Any]) -> str:
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
-![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity-black)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity%20%7C%20OpenClaw-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
 Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
-GitHub Copilot, OpenCode, and Antigravity CLI.
+GitHub Copilot, OpenCode, Antigravity CLI, and restricted OpenClaw fake-root
+targets.
 
 ## System Summary
 
@@ -117,13 +118,15 @@ versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
 Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI can
-each load local skills, while this repository keeps the shared research
-workflows, profiles, delegation settings, dependency metadata, and installer
-logic in one place.
+each load local skills. OpenClaw participates as a default fake-root-only
+target for normal installer flows and has a separate reviewed v2 skill-file
+path for real-system target writes. This repository keeps the
+shared research workflows, profiles, delegation settings, dependency metadata,
+and installer logic in one place.
 
 The research stack is organized as:
 
-- agent frontends: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI
+- agent frontends and targets: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, and restricted OpenClaw
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers
@@ -208,8 +211,8 @@ lighter platform-specific guidance than Linux and Windows.
   local skill handling, and Windows-native verification notes.
 - [docs/openclaw-integration-plan.md](docs/openclaw-integration-plan.md): gated OpenClaw integration plan,
   risk fixes, and acceptance criteria.
-- [docs/openclaw-install-target-plan.md](docs/openclaw-install-target-plan.md): future OpenClaw-as-install-target
-  policy, phases, and tests.
+- [docs/openclaw-install-target-plan.md](docs/openclaw-install-target-plan.md): restricted OpenClaw-as-install-target
+  policy, v2 skill-file gate, phases, and tests.
 - [docs/verification.md](docs/verification.md): installed-artifact verification model.
 - [docs/architecture.md](docs/architecture.md): manifest-to-target rendering,
   install modes, artifact classes, and safety boundaries.
@@ -470,7 +473,8 @@ def skills_text(manifests: dict[str, Any]) -> str:
         "Some older local skill names are accepted as migration aliases. "
         "For example, `deep-research` maps to `deep-research-workflow`, "
         "`smart_model_router` maps to `model-router`, and `openclaw-research` "
-        "maps to `source-research`. Use `audit-system` and a reviewed "
+        "maps to `source-research`. OpenClaw-style `self-improvement` and "
+        "`self_improvement` map to `self-improving-agent`. Use `audit-system` and a reviewed "
         "`--migrate` plan before replacing legacy alias directories.\n\n"
         + skill_table(manifests)
         + "\n\n"
@@ -1456,24 +1460,41 @@ Related pages: [Audit And Migration](audit-and-migration.md),
 def openclaw_install_target_plan_text() -> str:
     return """# OpenClaw Install Target Plan
 
-This plan covers OpenClaw as a future install target for canonical
+This plan covers OpenClaw as a restricted install target for canonical
 `ai-agents-skills` skills. It is separate from the existing
 [OpenClaw Integration Plan](openclaw-integration-plan.md), which treats
 OpenClaw as a legacy source for sanitized inventory and migration review.
 
-The current implemented scope is restricted fake-root target support only. The
-installer can recognize explicit `--agents openclaw` in fake roots and copy
-eligible `SKILL.md` files to `.openclaw/skills/<skill>/SKILL.md`, but it must
-not claim OpenClaw native target support until fake-root lifecycle tests,
-native loader evidence, and native inertness evidence exist.
+The current implemented scope has two layers. Normal installer support remains
+restricted fake-root target support: the installer includes OpenClaw in the
+default target set, detects eligible fake-root `.openclaw` homes, and can copy
+eligible `SKILL.md` files to `.openclaw/skills/<skill>/SKILL.md`, but normal
+`plan`, `install`, `uninstall`, and `rollback` flows still must not write under
+a real `.openclaw` tree. A separate `openclaw-target-*` command family now
+implements a narrow reviewed v2 real-system path for
+`.openclaw/skills/<skill>/SKILL.md` only.
 
 Implemented fail-closed behavior:
 
-- OpenClaw is not default-detected
-- explicit OpenClaw requests without an `.openclaw` home report the missing
-  target and create no directories or files
-- real-system OpenClaw plans, applies, uninstalls, and rollbacks are blocked
-  before native target evidence
+- OpenClaw participates in default target detection when an eligible fake-root
+  `.openclaw` home exists
+- default or explicit OpenClaw requests without an `.openclaw` home report the
+  missing target and create no directories or files
+- normal real-system OpenClaw plans, applies, uninstalls, and rollbacks remain
+  blocked outside the explicit `openclaw-target-*` path
+- the Phase 1 OpenClaw target gate reports blocked real-system decisions
+  without enabling normal installer write eligibility
+- `openclaw.target-evidence.v1` and `openclaw.target-manifest.v1` schemas are
+  non-authorizing scaffolds; they cannot emit approval-eligible real-path
+  action IDs, approval hashes, or write records
+- `openclaw.target-evidence.v2` and `openclaw.target-manifest.v2` can authorize
+  only reviewed `copy` writes to `skills/<skill>/SKILL.md` under an existing
+  `.openclaw/skills` root
+- `openclaw-target-apply-manifest` requires an approved immutable v2 manifest,
+  immediate target pre-state recheck, an OpenClaw-specific confirmation phrase,
+  and `--real-system` for real home roots
+- v2 uninstall deletes only unchanged files recorded by
+  `.ai-agents-skills/openclaw-target-state.json`
 - OpenClaw instruction blocks and management notices are not generated
 - symlink and reference install modes are blocked for OpenClaw
 - manifest runtime-backed skills are blocked until neutral runtime evidence
@@ -1499,6 +1520,10 @@ Evidence inspected for this plan:
 - redacted `openclaw.json` key/type structure only; values were not read
 - an observed skill-like directory at `.openclaw/skills/<name>/SKILL.md`
   with helper files
+- local native OpenClaw command behavior for `openclaw --version`,
+  `openclaw skills --help`, and `openclaw skills list --json`
+- installed native OpenClaw loader code showing managed skills are loaded from
+  `CONFIG_DIR/skills` as `<skill>/SKILL.md`
 
 Concrete repo artifacts inspected:
 
@@ -1509,9 +1534,16 @@ Concrete repo artifacts inspected:
 - `installer/ai_agents_skills/openclaw_inventory.py`
 - `installer/ai_agents_skills/openclaw_evidence.py`
 - `installer/ai_agents_skills/openclaw_apply.py`
+- `installer/ai_agents_skills/openclaw_target_gate.py`
+- `installer/ai_agents_skills/openclaw_target_evidence.py`
+- `installer/ai_agents_skills/openclaw_target_manifest.py`
+- `installer/ai_agents_skills/openclaw_target_paths.py`
+- `installer/ai_agents_skills/openclaw_target_apply.py`
 - `tests/test_installer.py`
 - `tests/test_runtime_integration.py`
 - `tests/test_openclaw_phase0.py`
+- `tests/test_openclaw_target_phase1.py`
+- `tests/test_openclaw_target_v2.py`
 - `tests/test_openclaw_inventory.py`
 - `tests/test_openclaw_manifest.py`
 - `tests/test_openclaw_apply.py`
@@ -1520,12 +1552,18 @@ Concrete repo artifacts inspected:
 
 Confirmed from repo inspection:
 
-- default install targets are currently Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
-- OpenClaw is a known explicit target for restricted fake-root layout tests
+- default install targets are currently Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity, and OpenClaw
+- OpenClaw is a default target for restricted fake-root layout tests
+- OpenClaw has a Phase 1 target capability record and central target gate that
+  preserves normal installer real-system denials
+- OpenClaw has a separate v2 target-evidence, target-manifest, apply, and
+  uninstall path for reviewed real-system skill-file writes only
 - OpenClaw code in this repository is currently a quarantined source/import
   pipeline with explicit roots, sanitized inventories, immutable manifests,
   fake-root apply, evidence recording, and persistence blocking
 - default installer behavior must remain unchanged for existing targets
+- default OpenClaw installer behavior must remain fake-root-only unless the
+  explicit `openclaw-target-*` command path is used
 
 Confirmed from sanitized host evidence:
 
@@ -1536,9 +1574,9 @@ Confirmed from sanitized host evidence:
 
 incomplete analysis
 
-Still unchecked before real native support:
+Still unchecked before expanding beyond the implemented v2 skill-file path:
 
-- whether OpenClaw loads `.openclaw/skills/<skill>/SKILL.md`
+- live canary visibility on this host for a newly written managed skill
 - whether OpenClaw loads support files beside `SKILL.md`
 - whether OpenClaw follows symlinks or relative helper paths safely
 - how OpenClaw invokes helper scripts, sets working directories, and passes
@@ -1549,25 +1587,32 @@ Still unchecked before real native support:
 - precedence among `skills`, `plugin-skills`, `plugins`, `agents`,
   `subagents`, `qmd`, and workspace-local locations
 - cross-platform OpenClaw layouts on macOS, Windows, and WSL
-- real-system rollback behavior while OpenClaw is running
+- live rollback behavior while OpenClaw is running
 
 ## Decision
 
-OpenClaw should start as a restricted, explicit-only target class. It should
-not be default-detected and should not behave like a normal peer of Codex,
-Claude, or DeepSeek until native loader and native inertness evidence exist.
+OpenClaw should start as a restricted default target class. It may participate
+in default fake-root target detection, but it should not behave like a normal
+real-system peer of Codex, Claude, or DeepSeek. Real-system writes are
+available only through the explicit reviewed v2 OpenClaw target manifest path,
+and only for managed `SKILL.md` files.
 
 Resolve install-mode policy by phase:
 
-- Before native loader and native inertness evidence: copy-mode may be
-  exercised in fake roots only. Real OpenClaw systems remain dry-run only; no
-  files may be written anywhere under a real `.openclaw` tree, including
-  `.openclaw/ai-agents-skills/...`.
-- Native loader evidence is necessary but not sufficient for real writes.
-  After native loader evidence, OpenClaw `auto` may resolve to `copy` only
-  within scopes otherwise allowed by current evidence and gates. Real
-  active-loader copy still requires native inertness evidence, an approved
-  real-system gate, and artifact-specific evidence where applicable.
+- Normal installer copy-mode may be exercised in fake roots only. Normal
+  `plan`, `install`, `uninstall`, and `rollback` flows must not write anywhere
+  under a real `.openclaw` tree, including `.openclaw/ai-agents-skills/...`.
+- The implemented v2 real-system gate can copy only
+  `.openclaw/skills/<skill>/SKILL.md`. It requires native loader evidence,
+  native managed-skill-root evidence, target pre-state evidence,
+  quiescence/lock evidence, an approved content-addressed target manifest, an
+  OpenClaw-specific confirmation phrase, and `--real-system` for real home
+  roots. Managed non-canary skill writes also require a native managed canary
+  evidence record.
+- Native loader evidence is necessary but not sufficient for broader real
+  writes. Support files, runtime-backed skills, symlinks, reference adapters,
+  instruction files, plugins, hooks, config, and runtime surfaces remain
+  blocked until separate evidence and approval gates exist.
 - Symlink mode stays blocked until separately proven.
 - Reference mode is not an active OpenClaw loader mode unless OpenClaw is
   proven to follow reference adapters.
@@ -1585,16 +1630,19 @@ Target identity:
 
 Detection policy:
 
-- do not include OpenClaw in default target detection
-- require explicit `--agents openclaw`
-- require an explicit fake root for early lifecycle tests
-- require a future explicit OpenClaw home option or approved manifest for real
-  systems
+- include OpenClaw in default target detection when an eligible `.openclaw`
+  fake-root home exists
+- never create `.openclaw` only because OpenClaw is in the default target set
+- allow explicit `--agents openclaw` for targeted prechecks and plans
+- require a fake root for normal lifecycle writes
+- require an approved v2 OpenClaw target manifest for the narrow real-system
+  `SKILL.md` path
 
 Artifact policy:
 
-- early fake-root MVP allows only skill files and skill support files in fake
-  roots
+- normal fake-root MVP allows only eligible skill files in fake roots
+- v2 real-system target manifests allow only `skills/<skill>/SKILL.md` with
+  action class `canary-skill-file` or `managed-skill-file`
 - every OpenClaw support-file action must be backed by explicit manifest
   metadata from `manifest/schema/openclaw/target-support-file.schema.json`
   for artifact class, execution role, compatibility tuple, platforms, path
@@ -1609,7 +1657,7 @@ Artifact policy:
   evidence proves the target namespace is not loaded, executed, synced,
   indexed into active context, or otherwise behavior-affecting
 - `.openclaw/ai-agents-skills/...` is a candidate quarantined namespace only;
-  it is not exempt from the no-real-write rule
+  it is not part of the v2 real-system write exception
 
 Runtime policy:
 
@@ -1637,7 +1685,7 @@ Runtime script classes:
 
 | Class | Examples | MVP policy |
 |---|---|---|
-| Text support files | Markdown, JSON, YAML, Python modules read as text, reference files shipped beside `SKILL.md` | May be copied as support files in fake roots with normal managed-file verification. |
+| Text support files | Markdown, JSON, YAML, Python modules read as text, reference files shipped beside `SKILL.md` | Fake-root only when explicit OpenClaw support-file metadata exists; unclassified support files fail closed. |
 | Executable helper scripts | `scripts/*.sh`, executable Python helpers, shell launchers | Fake-root only until helper-invocation evidence exists; preserve bytes, newline form, shebang, and executable mode instead of prepending managed headers. Real installs require helper-invocation evidence scoped by OpenClaw version, platform/path style, shell, cwd, argv, env allowlist, executable mode, line endings, support-file visibility, and paths with spaces. |
 | Binary support files | Images, compiled helpers, archives, opaque assets | Blocked until a binary artifact policy and verification model exist. |
 | Shared runtime files | `run_skill.sh`, `run_skill.ps1`, runtime workspace helpers, portable libraries | May be installed only to a repo-managed shared runtime root outside known agent homes and active loader/config/runtime areas; OpenClaw skills must not point at `~/.codex/runtime` or any Codex runtime path. |
@@ -1665,22 +1713,25 @@ Runtime-backed skill design:
 
 Real-system write policy:
 
-- before native loader evidence, native inertness evidence, artifact-specific
-  evidence where required, and an OpenClaw-specific real-system approval gate,
-  the installer must not plan or apply any write under a real `.openclaw` tree,
-  including `.openclaw/skills`,
+- normal installer flows must not plan or apply any write under a real
+  `.openclaw` tree, including `.openclaw/skills`,
   `.openclaw/ai-agents-skills`, config, runtime, hooks, plugins, cache/state,
   or any descendant
-- the only allowed OpenClaw target writes before that gate are fake-root
-  lifecycle fixtures
+- the only implemented real-system exception is the explicit
+  `openclaw-target-apply-manifest` path for approved v2
+  `skills/<skill>/SKILL.md` copy actions
+- the v2 gate requires existing `.openclaw` and `.openclaw/skills`
+  directories, target path shape `skills/<skill>/SKILL.md`, no symlinked
+  target parents, managed OpenClaw skill content, no Codex runtime paths,
+  native-loader evidence, native managed-skill-root evidence, target-pre-state
+  evidence, quiescence evidence, and canary evidence for non-canary managed
+  skill writes
 - OpenClaw-associated shared runtime-root writes are also fake-root-only until
   a dedicated real-system runtime approval gate exists; those manifests must
   bind target realpath, runtime realpath, source commit, artifact hashes,
   evidence IDs, pre-state hashes, and action classes
-- before Phase 8, real-system OpenClaw dry-run output may contain only
-  non-actionable diagnostics or explicitly rejected proposals, not manifest
-  actions, action IDs, approval hashes, or approval-eligible real `.openclaw`
-  write records
+- v1 target-evidence and target-manifest records remain non-actionable
+  diagnostics and cannot authorize real `.openclaw` write records
 - every write must have a manifest action, precondition, collision policy,
   rollback record, and uninstall check
 - existing OpenClaw files are preserve-only by default
@@ -1756,6 +1807,42 @@ The fake-root OpenClaw target can use copy mode because copy mode records file
 hashes and support files in the existing installer model. That does not imply
 real OpenClaw loader support until evidence upgrades the target policy.
 
+Implemented Phase 1 scaffolding:
+
+- `openclaw_target_gate.py` is the central non-authorizing policy evaluator for
+  OpenClaw target detection, planning, apply preflight, runtime preflight,
+  uninstall, and rollback. It returns structured blocked or fake-root-only
+  decisions and never returns real-write eligibility in Phase 1.
+- `openclaw_target_evidence.py` validates `openclaw.target-evidence.v1`
+  records. These records must set `authorizes_real_writes: false` and
+  `approval_eligible: false`; existing `openclaw.evidence.v1` source/import
+  evidence is rejected for target authorization.
+- `openclaw_target_manifest.py` validates `openclaw.target-manifest.v1`
+  diagnostic manifests. These manifests must keep `real_write_status:
+  blocked`, `authorizes_real_writes: false`, and `approval_eligible: false`;
+  existing `openclaw.apply-manifest.v1` source/import manifests are rejected
+  for OpenClaw-as-target authorization.
+
+Implemented v2 real-system skill-file path:
+
+- `openclaw_target_evidence.py` also validates `openclaw.target-evidence.v2`
+  records from native probes. Authorizing evidence must be limitation-free,
+  content-addressed, bound to one target realpath and managed skills realpath,
+  and sourced from `native-probe`.
+- `openclaw_target_manifest.py` also validates `openclaw.target-manifest.v2`
+  records. A v2 manifest is not authorizing until its approval record has
+  `review_status: approved` and `approval_hash` equal to the immutable
+  `manifest_id`.
+- `openclaw_target_paths.py` limits real-system OpenClaw target paths to
+  `skills/<skill>/SKILL.md` and requires canonical kebab-case skill names.
+- `openclaw_target_apply.py` is the only implementation that writes through
+  the v2 path. It records a transaction before mutation, rechecks target
+  pre-state immediately before each write, writes only managed skill content,
+  runs native post-apply checks for real home roots, and uninstalls only files
+  whose current hash still matches the recorded install hash.
+- Normal `plan`, `install`, `uninstall`, and `rollback` still use the Phase 1
+  gate and remain blocked for real-system OpenClaw writes.
+
 Runtime-file planning must stay root-scoped. A runtime-backed OpenClaw skill
 may require shared runtime files, but those files must be planned under the
 runtime root, not inside `.openclaw`. Runtime support is acceptable only when
@@ -1773,7 +1860,7 @@ apply and uninstall.
 
 Recommended implementation issues:
 
-1. Target capability model and explicit-only OpenClaw registry entry.
+1. Target capability model and default OpenClaw registry entry.
 2. OpenClaw-target evidence schema with separate loader and inertness records.
 3. Skill compatibility and manifest eligibility layer for OpenClaw.
 4. OpenClaw support-file manifest metadata and fail-closed classification via
@@ -1787,22 +1874,24 @@ Recommended implementation issues:
 10. Helper-invocation evidence gate for runtime-backed and executable-helper
    skills.
 11. Generated-doc contract test for this plan.
-12. Real-system dry-run manifest gate.
+12. Real-system v2 target evidence and manifest gate for skill files.
 13. Real-system quiescence/lock and write-time pre-state recheck gate.
-14. Real-system apply/uninstall gate after native loader evidence, native
-   inertness evidence, required artifact-specific evidence, and real-system
-   approval.
+14. Real-system apply/uninstall gate for approved `SKILL.md` copy actions.
+15. Later support-file, runtime-backed skill, symlink/reference, inert
+   namespace, and OpenClaw-native execution surface gates.
 
 ## Required Tests
 
 Default and explicit selection:
 
-- default detection ignores real or fake `.openclaw`
-- `--agents openclaw` is required for any OpenClaw plan
-- `--agents openclaw` without an explicit fake root or future approved real
-  gate fails closed
-- real `.openclaw` paths never appear in write actions before native loader
-  evidence, native inertness evidence, and an approved real-system gate
+- default detection includes eligible fake-root `.openclaw` homes
+- default detection does not create `.openclaw` when it is absent
+- explicit `--agents openclaw` remains available for targeted checks
+- default or explicit OpenClaw selection without an existing fake-root
+  `.openclaw` home fails closed
+- normal installer real `.openclaw` paths never appear in write actions; the
+  only real-system write actions are produced by approved v2
+  `openclaw-target-*` manifests
 
 Fake-root lifecycle:
 
@@ -1820,6 +1909,8 @@ Planning safety:
 - `backup-replace`, `adopt`, and `migrate` are disabled for OpenClaw MVP
   unless explicitly designed
 - unmanaged existing `.openclaw/skills/<skill>/SKILL.md` is skipped by default
+- v2 target manifest generation refuses existing unmanaged
+  `.openclaw/skills/<skill>/SKILL.md`
 
 Path safety:
 
@@ -1873,8 +1964,8 @@ Runtime safety:
 - planner/runtime behavior tests reject Codex runtime paths in rendered
   OpenClaw artifacts, unclassified support files, compatibility tuple
   mismatches, invalid neutral runtime roots, missing executable-helper gates,
-  real `.openclaw` write actions before gates, and pre-Phase-8 approval
-  actions
+  real `.openclaw` write actions outside the v2 skill-file gate, and
+  approval-eligible v1 target records
 - OpenClaw-associated shared runtime-root writes remain fake-root-only until
   the dedicated real-system runtime approval gate is implemented and tested
 - runtime wrappers reject absolute command paths and `..` traversal
@@ -1886,35 +1977,45 @@ Evidence safety:
 - fixture-only, manual-review, and upstream-doc evidence cannot enable active
   or inert real OpenClaw writes
 - OpenClaw-source evidence and OpenClaw-target evidence are separate
+- `manifest/schema/openclaw/target-evidence.schema.json` and
+  `manifest/schema/openclaw/target-manifest.schema.json` require
+  non-authorizing Phase 1 records and authorizing Phase 2 records with
+  distinct schema versions
 - existing `openclaw.evidence.v1` source/import evidence cannot approve
-  OpenClaw target writes; target approval requires new target evidence types
-  and fields for native loader, native inertness, helper invocation, and
-  runtime-root observations
-- native target evidence must be scoped by OpenClaw version, platform, path
-  style, shell, install mode, command summary, cwd, argv, environment policy,
-  helper visibility, observed behavior, and limitation
-- native inertness evidence must prove candidate namespaces are not loaded,
-  executed, indexed into active context, synced as command/config, or otherwise
-  behavior-affecting
+  OpenClaw target writes; v2 skill-file target approval requires native
+  loader, native managed-skill-root, target pre-state, quiescence, and, for
+  non-canary managed writes, native managed-canary evidence
+- v2 native target evidence must be scoped by OpenClaw version, platform, path
+  style, target realpath, managed skills realpath, observed behavior, and
+  limitation-free probe checks
+- future inert namespace evidence must prove candidate namespaces are not
+  loaded, executed, indexed into active context, synced as command/config, or
+  otherwise behavior-affecting
 - evidence summaries must distinguish fake-root isolation from native loader
   proof
 
 Docs contract:
 
 - generated docs include this install-target plan
-- the plan says no real `.openclaw` writes before native inertness evidence
+- generated docs name the Phase 1 target gate, target evidence schema, and
+  target manifest schema as non-authorizing scaffolding
+- the plan says normal installer flows still cannot write real `.openclaw`
+  paths and that v2 real-system writes are limited to
+  `skills/<skill>/SKILL.md`
 - the central real-system write policy names native loader evidence and native
-  inertness evidence separately
-- pre-Phase-8 real-system dry-run output is non-actionable and not
+  managed-skill-root evidence separately
+- v1 target-evidence and target-manifest output is non-actionable and not
   approval-eligible
+- v2 target manifests require approval before apply
 - OpenClaw support-file actions require explicit manifest metadata, and
   unclassified support files fail closed
 - docs/source OpenClaw install-target plan output matches the root docs copy
 - docs tests assert key safety claims in their normative sections, not only in
   checklists
-- docs tests assert the full negative sentence, including `no files may be
-  written anywhere under a real .openclaw tree`
-- `.openclaw/ai-agents-skills/...` is not exempt from the no-real-write rule
+- docs tests assert the full normal-installer negative sentence and the exact
+  v2 exception path
+- `.openclaw/ai-agents-skills/...` is not part of the v2 real-system write
+  exception
 - fake-root copy is not native loader proof
 - shared runtime root is outside known agent homes and active
   loader/config/runtime areas
@@ -1925,35 +2026,37 @@ Docs contract:
 
 Real-system gate:
 
-- real home roots remain rejected before the future OpenClaw-specific gate
+- normal installer flows reject real home roots for OpenClaw writes
 - OpenClaw-associated shared runtime-root writes remain rejected before a
   dedicated real-system runtime approval gate
-- pre-Phase-8 real-system dry-run output may contain only non-actionable
-  diagnostics or explicitly rejected proposals, not approval-eligible action
-  manifests
-- approved real-system manifests must match the exact target realpath, manifest
-  hash, source repo commit, artifact hashes, native evidence IDs, runtime root,
-  pre-state hash, and allowed action classes
+- v2 real-system dry-run output may contain only `skills/<skill>/SKILL.md`
+  actions with action class `canary-skill-file` or `managed-skill-file`
+- approved v2 real-system manifests must match the exact target realpath,
+  managed skills realpath, manifest hash, artifact hash, native evidence IDs,
+  pre-state signature, and allowed action class
 - any drift in source evidence, target pre-state, schema version, permissions,
   or action policy fails closed before writes
-- real apply, uninstall, and rollback must fail closed unless OpenClaw is
-  stopped, locked, or otherwise quiescent; target pre-state and write policy
-  must be rechecked after lock acquisition and immediately before writes
+- real apply and uninstall must fail closed unless OpenClaw is stopped, locked,
+  or otherwise quiescent; target pre-state and write policy must be rechecked
+  immediately before writes
+- v2 uninstall deletes only unchanged files recorded by the OpenClaw target
+  state journal and cleans only recorded empty parent directories
 
 ## Acceptance Criteria
 
 OpenClaw target support is acceptable only when:
 
 - default installer behavior is unchanged for Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
-- OpenClaw is explicit-only and absent from default target discovery
-- early OpenClaw writes are fake-root-only
-- all real `.openclaw` writes, including `.openclaw/ai-agents-skills`, are
-  impossible before native loader evidence, native inertness evidence,
-  artifact-specific evidence where required, and an OpenClaw-specific
-  real-system approval gate
+- OpenClaw participates in default target discovery when an eligible fake-root
+  `.openclaw` home exists
+- normal OpenClaw installer writes are fake-root-only
+- real-system OpenClaw writes are possible only through approved v2
+  `openclaw-target-*` manifests for `skills/<skill>/SKILL.md`
+- all other real `.openclaw` writes, including `.openclaw/ai-agents-skills`,
+  support files, config, runtime, hooks, plugins, and cache/state, are
+  impossible before separate evidence and approval gates
 - fake-root copy may be exercised before native evidence, but real active-loader
-  copy is allowed only after native loader evidence, native inertness evidence,
-  artifact-specific evidence where required, and the real-system approval gate
+  copy is limited to the v2 skill-file gate
 - runtime-backed skills use a shared runtime root outside known agent homes and
   active loader/config/runtime areas and do not depend on any Codex runtime
   path
@@ -1993,7 +2096,7 @@ The system has three layers:
 
 | Layer | Role |
 |---|---|
-| Agent frontends | Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity receive user requests and load installed skill instructions. |
+| Agent frontends and targets | Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity receive user requests and load installed skill instructions; OpenClaw is a restricted fake-root target for normal installer flows, with reviewed v2 real-system skill-file writes only through `openclaw-target-*`. |
 | Shared skill repository | `manifest/` selects skills and profiles; `canonical/skills/` stores reusable workflows; `targets/` holds agent-specific notes. |
 | Runtime and software tools | Python, TeX, optional SageMath, local library tools, document parsers, public databases, and external retrieval helpers do the actual work when a skill needs them. |
 
@@ -2933,7 +3036,9 @@ The observed setup is best understood as shared research logic plus
 agent-local installation targets:
 
 - Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity each load skills from their own
-  supported local skill/config locations.
+  supported local skill/config locations; OpenClaw is represented as a
+  fake-root-only target for normal installer flows, with reviewed v2
+  real-system skill-file writes only through `openclaw-target-*`.
 - This repository holds the reusable skill bodies and dependency metadata.
 - The installer detects which agent homes exist, installs only those targets,
   and skips absent agents without requiring their tools.
@@ -3083,11 +3188,13 @@ managed `ai-agents-skills` plugin payload under
 `~/.gemini/antigravity-cli/plugins/ai-agents-skills`, including no-op MCP,
 hook, and settings scaffolds.
 
-OpenClaw is also explicit-only and remains fake-root-only before native target
-evidence. `precheck --json --agents openclaw` reports the `.openclaw` home
-shape and current gates, but real `.openclaw` writes, runtime-backed skills,
-support files, symlink/reference modes, and instruction-file edits remain
-blocked until the OpenClaw install-target plan requirements are met.
+OpenClaw is included in default target detection when an eligible `.openclaw`
+fake-root home exists, and remains fake-root-only before native target
+evidence. `precheck --json --agents openclaw` still reports the `.openclaw`
+home shape and current gates for targeted checks, but real `.openclaw` writes,
+runtime-backed skills, support files, symlink/reference modes, and
+instruction-file edits remain blocked until the OpenClaw install-target plan
+requirements are met.
 
 These optional artifact classes are intentionally not installed by default.
 They require explicit artifact selection because commands, personas, hooks, and
@@ -3195,8 +3302,8 @@ opted in with backup, locking, dry-run, and post-write verification.
 Target integration rules:
 
 - Choose one canonical repo per run and record its path plus commit/hash.
-- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
-  home before writing.
+- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity,
+  and fake-root OpenClaw home before writing.
 - Store generated profile manifests with checksums/version stamps in selected
   target homes.
 - Keep secrets and credentials outside this repo.

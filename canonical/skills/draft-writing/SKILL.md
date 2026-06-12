@@ -54,6 +54,11 @@ Use the instruction doc `claim-preserving-writing.md` for detailed guidance
 when the task involves multiple sections, citation-sensitive prose, or repeated
 revision rounds.
 
+For mathematical or LaTeX manuscripts, also apply `language-style-rules.md`.
+In particular, check that concepts are defined before use, unnecessary local
+terminology is removed, result introductions explain each statement's role, and
+long proofs begin with a clear proof idea.
+
 ## Output Rules
 
 - Separate author-provided intent from model-inferred improvements.

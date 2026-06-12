@@ -13,6 +13,7 @@ from .capabilities import (
 )
 from .copilot import COPILOT_CLI_TOOL_SPEC, build_copilot_precheck
 from .discovery import discover_tool
+from .openclaw_target_gate import openclaw_target_decision
 
 
 TARGET_STATUS_BY_HOME_REASON = {
@@ -71,7 +72,7 @@ def _build_target_precheck(root: Path, platform: str, target: AgentTarget) -> di
 def build_base_target_precheck(root: Path, platform: str, target: AgentTarget) -> dict[str, Any]:
     home = agent_home_status(root, target)
     policy = AGENT_SKILL_LOADER_POLICY.get(target.name, {})
-    return {
+    result = {
         "target": target.name,
         "status": target_status(target, home),
         "platform": platform,
@@ -98,6 +99,7 @@ def build_base_target_precheck(root: Path, platform: str, target: AgentTarget) -
             "default_install_mode": policy.get("default_mode"),
             "symlink_skill_file": policy.get("symlink_skill_file"),
             "install_mode_reason": policy.get("reason"),
+            "target_capabilities": dict(target.target_capabilities),
         },
         "read_policy": {
             "file_contents_read": False,
@@ -106,6 +108,9 @@ def build_base_target_precheck(root: Path, platform: str, target: AgentTarget) -
         "home_status": home,
         "notes": target_notes(target),
     }
+    if target.name == "openclaw":
+        result["target_gate"] = openclaw_target_decision(root, operation="precheck", path=target.home)
+    return result
 
 
 def target_status(target: AgentTarget, home: dict[str, str | bool]) -> str:
@@ -119,7 +124,7 @@ def target_status(target: AgentTarget, home: dict[str, str | bool]) -> str:
 def target_notes(target: AgentTarget) -> list[str]:
     if target.name == "openclaw":
         return [
-            "OpenClaw is explicit-only and fake-root-only before native target evidence.",
+            "OpenClaw is a default target but remains fake-root-only before native target evidence.",
             "Runtime-backed skills, support files, symlink/reference modes, and real-system writes remain blocked.",
         ]
     if target.name == "copilot":
