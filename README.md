@@ -14,13 +14,14 @@
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
-![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity-black)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity%20%7C%20OpenClaw-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
 
 Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
-GitHub Copilot, OpenCode, and Antigravity CLI.
+GitHub Copilot, OpenCode, Antigravity CLI, and restricted OpenClaw fake-root
+targets.
 
 ## System Summary
 
@@ -31,13 +32,15 @@ versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
 Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI can
-each load local skills, while this repository keeps the shared research
-workflows, profiles, delegation settings, dependency metadata, and installer
-logic in one place.
+each load local skills. OpenClaw participates as a default fake-root-only
+target for normal installer flows and has a separate reviewed v2 skill-file
+path for real-system target writes. This repository keeps the
+shared research workflows, profiles, delegation settings, dependency metadata,
+and installer logic in one place.
 
 The research stack is organized as:
 
-- agent frontends: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI
+- agent frontends and targets: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, and restricted OpenClaw
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers
@@ -122,8 +125,8 @@ lighter platform-specific guidance than Linux and Windows.
   local skill handling, and Windows-native verification notes.
 - [docs/openclaw-integration-plan.md](docs/openclaw-integration-plan.md): gated OpenClaw integration plan,
   risk fixes, and acceptance criteria.
-- [docs/openclaw-install-target-plan.md](docs/openclaw-install-target-plan.md): future OpenClaw-as-install-target
-  policy, phases, and tests.
+- [docs/openclaw-install-target-plan.md](docs/openclaw-install-target-plan.md): restricted OpenClaw-as-install-target
+  policy, v2 skill-file gate, phases, and tests.
 - [docs/verification.md](docs/verification.md): installed-artifact verification model.
 - [docs/architecture.md](docs/architecture.md): manifest-to-target rendering,
   install modes, artifact classes, and safety boundaries.

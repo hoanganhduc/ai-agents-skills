@@ -420,7 +420,7 @@
     "getscipapers-requester": ["getscipapers_requester"],
     "graph-verifier": ["graph_verifier"],
     "agent-group-discuss": ["agent_group_discuss"],
-    "self-improving-agent": ["self_improving_agent"],
+    "self-improving-agent": ["self_improving_agent", "self-improvement", "self_improvement"],
     "formal-skeleton-helper": ["formal_skeleton_helper"],
     "model-router": ["smart_model_router"],
     "workspace-rearranger": ["workspace_rearranger"],

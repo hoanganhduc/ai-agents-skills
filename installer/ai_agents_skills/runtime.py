@@ -9,9 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
+from .capabilities import normalized_path_within, resolved_path_within
 from .discovery import current_platform
 from .manifest import REPO_ROOT
+from .openclaw_target_gate import real_openclaw_path_block_reason
 from .sanitize import has_sensitive_material, sanitize_text
 from .state import artifact_signature, sha256_file
 
@@ -548,8 +549,9 @@ def preflight_runtime_action(root: Path, action: dict[str, Any]) -> None:
     source = Path(action.get("source_path", ""))
     if not normalized_path_within(root, path) or not resolved_path_within(root, path.parent):
         raise ValueError(f"refusing to apply runtime artifact outside selected root: {path}")
-    if looks_like_real_system_root(root) and normalized_path_within(root / ".openclaw", path):
-        raise ValueError("refusing real-system OpenClaw runtime writes before native target evidence")
+    openclaw_block = real_openclaw_path_block_reason(root, path, operation="runtime", agent="runtime")
+    if openclaw_block is not None:
+        raise ValueError(openclaw_block)
     if not normalized_path_within(RUNTIME_SOURCE_ROOT, source) or not resolved_path_within(RUNTIME_SOURCE_ROOT, source.parent):
         raise ValueError(f"refusing runtime source outside canonical runtime root: {source}")
     for parent in existing_parents(path.parent, root):

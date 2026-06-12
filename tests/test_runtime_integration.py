@@ -1325,7 +1325,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 runtime_root=root / ".openclaw" / "ai-agents-skills" / "runtime",
             )
 
-            with patch("installer.ai_agents_skills.runtime.looks_like_real_system_root", return_value=True):
+            with patch("installer.ai_agents_skills.openclaw_target_gate.looks_like_real_system_root", return_value=True):
                 with self.assertRaisesRegex(ValueError, "OpenClaw runtime writes"):
                     apply_plan(root, plan, dry_run=True)
 

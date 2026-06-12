@@ -183,9 +183,12 @@ class ManifestTests(unittest.TestCase):
     def test_legacy_alias_resolves_to_canonical(self) -> None:
         manifests = load_manifests()
         args = Args()
-        args.skills = "deep-research,research_digest_wrapper,openclaw-research"
+        args.skills = "deep-research,research_digest_wrapper,openclaw-research,self-improvement,self_improvement"
         selected = resolve_skills(args, manifests)
-        self.assertEqual(selected, ["deep-research-workflow", "research-digest-wrapper", "source-research"])
+        self.assertEqual(
+            selected,
+            ["deep-research-workflow", "research-digest-wrapper", "self-improving-agent", "source-research"],
+        )
 
     def test_writing_workflow_profile_resolves_draft_writing(self) -> None:
         manifests = load_manifests()
@@ -322,7 +325,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, [])
             self.assertEqual(plan["actions"], [])
-            self.assertEqual(len(plan["skipped_agents"]), 6)
+            self.assertEqual(len(plan["skipped_agents"]), 7)
 
     def test_symlinked_agent_home_is_skipped_without_writing_target(self) -> None:
         manifests = load_manifests()
@@ -548,6 +551,29 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(file_actions[0]["operation"], "skip")
             self.assertEqual(file_actions[0]["legacy_path"], str(legacy))
             self.assertEqual(block_actions[0]["operation"], "skip")
+
+    def test_self_improving_agent_legacy_aliases_are_skipped_by_default(self) -> None:
+        manifests = load_manifests()
+
+        from installer.ai_agents_skills.agents import detect_agents
+
+        for alias in ("self-improvement", "self_improvement"):
+            with self.subTest(alias=alias):
+                with fake_root() as tmp:
+                    root = Path(tmp)
+                    create_agent_homes(root, "claude")
+                    legacy = root / ".claude" / "skills" / alias / "SKILL.md"
+                    legacy.parent.mkdir(parents=True)
+                    legacy.write_text("legacy self improvement skill\n", encoding="utf-8")
+
+                    args = Args()
+                    args.skills = "self-improving-agent"
+                    selected = resolve_skills(args, manifests)
+                    plan = build_plan(root, manifests, selected, detect_agents(root))
+                    file_actions = [a for a in plan["actions"] if a["kind"] == "file"]
+                    self.assertEqual(file_actions[0]["classification"], "legacy")
+                    self.assertEqual(file_actions[0]["operation"], "skip")
+                    self.assertEqual(file_actions[0]["legacy_path"], str(legacy))
 
     def test_windows_unmanaged_and_legacy_fixture_requires_adopt_migrate(self) -> None:
         manifests = load_manifests()
@@ -811,14 +837,16 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertNotIn("\\canonical\\skills\\zotero\\SKILL.md", text)
             self.assertEqual(verify(root)["status"], "ok")
 
-    def test_openclaw_is_explicit_only_and_fake_root_eligible(self) -> None:
+    def test_openclaw_is_known_detected_by_default_and_fake_root_eligible(self) -> None:
+        from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
+
         with fake_root() as tmp:
             root = Path(tmp)
             create_agent_homes(root, "openclaw")
 
-            from installer.ai_agents_skills.agents import detect_agents
-
-            self.assertEqual(detect_agents(root), [])
+            self.assertIn("openclaw", all_agent_names())
+            self.assertIn("openclaw", known_agent_names())
+            self.assertEqual([agent.name for agent in detect_agents(root)], ["openclaw"])
             self.assertEqual([agent.name for agent in detect_agents(root, ["openclaw"])], ["openclaw"])
 
     def test_openclaw_fake_root_installs_skill_file_without_instruction_block(self) -> None:
@@ -1027,7 +1055,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             args = Args()
             args.skills = "source-research"
             selected = resolve_skills(args, manifests)
-            with patch("installer.ai_agents_skills.planner.looks_like_real_system_root", return_value=True):
+            with patch("installer.ai_agents_skills.openclaw_target_gate.looks_like_real_system_root", return_value=True):
                 plan = build_plan(root, manifests, selected, [target_for(root, "openclaw")])
             self.assertEqual(plan["actions"], [])
             self.assertIn(
@@ -1049,7 +1077,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 "artifact_type": "skill-file",
                 "install_mode": "copy",
             }
-            with patch("installer.ai_agents_skills.apply.looks_like_real_system_root", return_value=True):
+            with patch("installer.ai_agents_skills.openclaw_target_gate.looks_like_real_system_root", return_value=True):
                 with self.assertRaisesRegex(ValueError, "real-system OpenClaw"):
                     apply_plan(root, {"actions": [action], "skipped_agents": [], "root": str(root)}, dry_run=True)
             self.assertFalse((root / ".openclaw" / "skills" / "source-research" / "SKILL.md").exists())
@@ -1058,7 +1086,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
-            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode", "antigravity")
+            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw")
             from installer.ai_agents_skills.agents import detect_agents
 
             args = Args()
@@ -1080,14 +1108,19 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     "copilot": "reference",
                     "opencode": "copy",
                     "antigravity": "copy",
+                    "openclaw": "copy",
                 },
             )
             skill_actions = [
                 action for action in plan["actions"]
                 if action["kind"] == "file" and action["artifact_type"] == "skill-file"
             ]
-            self.assertTrue(all(action.get("mode_reason") for action in skill_actions))
-            self.assertTrue(all(action.get("capability_evidence") for action in skill_actions))
+            active_skill_actions = [
+                action for action in skill_actions
+                if action["classification"] != "blocked"
+            ]
+            self.assertTrue(all(action.get("mode_reason") for action in active_skill_actions))
+            self.assertTrue(all(action.get("capability_evidence") for action in active_skill_actions))
 
     def test_all_agent_fake_root_install_verify_uninstall_lifecycle(self) -> None:
         manifests = load_manifests()
@@ -2694,12 +2727,14 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(stream.getvalue())
             self.assertEqual(payload["detected_agents"], [])
+            self.assertIn("openclaw", payload["skipped_agents"])
             self.assertEqual(len(payload["target_prechecks"]), 1)
             target = payload["target_prechecks"][0]
             self.assertEqual(target["target"], "openclaw")
             self.assertEqual(target["status"], "home-missing")
             self.assertEqual(target["target_home"]["status"], "missing")
             self.assertTrue(target["capabilities"]["fake_root_only"])
+            self.assertTrue(target["capabilities"]["detect_by_default"])
             self.assertFalse((root / ".openclaw").exists())
             self.assert_target_precheck_schema(target)
 
@@ -2878,7 +2913,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             root = Path(tmp)
             create_agent_homes(root, "openclaw")
             stream = io.StringIO()
-            with patch("installer.ai_agents_skills.agents.looks_like_real_system_root", return_value=True):
+            with patch("installer.ai_agents_skills.openclaw_target_gate.looks_like_real_system_root", return_value=True):
                 with contextlib.redirect_stdout(stream):
                     code = main([
                         "--json",
@@ -2893,6 +2928,9 @@ class DocsAndLauncherTests(unittest.TestCase):
             target = json.loads(stream.getvalue())["target_prechecks"][0]
             self.assertEqual(target["status"], "blocked-real-system")
             self.assertFalse(target["home_status"]["eligible"])
+            self.assertEqual(target["target_gate"]["status"], "blocked")
+            self.assertFalse(target["target_gate"]["allowed"])
+            self.assertEqual(target["capabilities"]["target_capabilities"]["real_write_status"], "blocked")
 
     def test_cli_precheck_reports_symlinked_parent_paths_as_blocked(self) -> None:
         with fake_root() as tmp:
@@ -3754,6 +3792,8 @@ class CopilotTargetTests(unittest.TestCase):
         self.assertIn("adapter-only", copilot)
         self.assertIn("does not receive Codex or\nClaude instruction blocks", copilot)
         self.assertIn("fake-root-only", openclaw)
+        self.assertIn("openclaw-target-*", openclaw)
+        self.assertIn("SKILL.md` only", openclaw)
         self.assertIn("Runtime-backed skills are blocked", openclaw)
         self.assertIn("full install target", opencode)
         self.assertIn("~/.config/opencode", opencode)

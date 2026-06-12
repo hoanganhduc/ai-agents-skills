@@ -80,11 +80,13 @@ managed `ai-agents-skills` plugin payload under
 `~/.gemini/antigravity-cli/plugins/ai-agents-skills`, including no-op MCP,
 hook, and settings scaffolds.
 
-OpenClaw is also explicit-only and remains fake-root-only before native target
-evidence. `precheck --json --agents openclaw` reports the `.openclaw` home
-shape and current gates, but real `.openclaw` writes, runtime-backed skills,
-support files, symlink/reference modes, and instruction-file edits remain
-blocked until the OpenClaw install-target plan requirements are met.
+OpenClaw is included in default target detection when an eligible `.openclaw`
+fake-root home exists, and remains fake-root-only before native target
+evidence. `precheck --json --agents openclaw` still reports the `.openclaw`
+home shape and current gates for targeted checks, but real `.openclaw` writes,
+runtime-backed skills, support files, symlink/reference modes, and
+instruction-file edits remain blocked until the OpenClaw install-target plan
+requirements are met.
 
 These optional artifact classes are intentionally not installed by default.
 They require explicit artifact selection because commands, personas, hooks, and

@@ -88,8 +88,8 @@ opted in with backup, locking, dry-run, and post-write verification.
 Target integration rules:
 
 - Choose one canonical repo per run and record its path plus commit/hash.
-- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity
-  home before writing.
+- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity,
+  and fake-root OpenClaw home before writing.
 - Store generated profile manifests with checksums/version stamps in selected
   target homes.
 - Keep secrets and credentials outside this repo.

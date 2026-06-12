@@ -1,0 +1,402 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hoanganhduc.github.io/ai-agents-skills/schema/openclaw/target-manifest.schema.json",
+  "title": "OpenClaw Target Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "manifest_schema_version": true,
+    "manifest_id": true,
+    "generator_version": true,
+    "created_at": true,
+    "phase": true,
+    "target_agent_refs": true,
+    "home_root_realpath": true,
+    "target_realpath": true,
+    "managed_skills_realpath": true,
+    "gate_policy_version": true,
+    "real_write_status": true,
+    "authorizes_real_writes": true,
+    "approval_eligible": true,
+    "target_evidence_schema_version": true,
+    "target_evidence": true,
+    "actions": true,
+    "approval": true,
+    "openclaw_version": true
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/phase1"
+    },
+    {
+      "$ref": "#/$defs/phase2"
+    }
+  ],
+  "$defs": {
+    "phase1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_schema_version",
+        "manifest_id",
+        "generator_version",
+        "created_at",
+        "phase",
+        "target_agent_refs",
+        "target_realpath",
+        "gate_policy_version",
+        "real_write_status",
+        "authorizes_real_writes",
+        "approval_eligible",
+        "actions",
+        "approval"
+      ],
+      "properties": {
+        "manifest_schema_version": {
+          "const": "openclaw.target-manifest.v1"
+        },
+        "manifest_id": {
+          "$ref": "#/$defs/manifest_id"
+        },
+        "generator_version": {
+          "const": "openclaw-target-manifest.phase1.v1"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "phase": {
+          "const": "phase1-non-authorizing"
+        },
+        "target_agent_refs": {
+          "$ref": "#/$defs/openclaw_refs"
+        },
+        "target_realpath": {
+          "type": "string"
+        },
+        "gate_policy_version": {
+          "const": "openclaw-target-gate.phase1.v1"
+        },
+        "real_write_status": {
+          "const": "blocked"
+        },
+        "authorizes_real_writes": {
+          "const": false
+        },
+        "approval_eligible": {
+          "const": false
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/phase1_action"
+          }
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "review_status"
+          ],
+          "properties": {
+            "review_status": {
+              "enum": [
+                "diagnostic-only",
+                "unreviewed"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "phase2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_schema_version",
+        "manifest_id",
+        "generator_version",
+        "created_at",
+        "phase",
+        "target_agent_refs",
+        "home_root_realpath",
+        "target_realpath",
+        "managed_skills_realpath",
+        "gate_policy_version",
+        "real_write_status",
+        "authorizes_real_writes",
+        "approval_eligible",
+        "target_evidence_schema_version",
+        "target_evidence",
+        "actions",
+        "approval"
+      ],
+      "properties": {
+        "manifest_schema_version": {
+          "const": "openclaw.target-manifest.v2"
+        },
+        "manifest_id": {
+          "$ref": "#/$defs/manifest_id"
+        },
+        "generator_version": {
+          "const": "openclaw-target-manifest.phase2.v1"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "phase": {
+          "const": "phase2-authorizing"
+        },
+        "target_agent_refs": {
+          "$ref": "#/$defs/openclaw_refs"
+        },
+        "home_root_realpath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_realpath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "managed_skills_realpath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "gate_policy_version": {
+          "const": "openclaw-target-gate.phase1.v1"
+        },
+        "real_write_status": {
+          "const": "approval-required"
+        },
+        "authorizes_real_writes": {
+          "const": true
+        },
+        "approval_eligible": {
+          "const": true
+        },
+        "target_evidence_schema_version": {
+          "const": "openclaw.target-evidence.v2"
+        },
+        "target_evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "patternProperties": {
+              "^.*$": true
+            }
+          }
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/phase2_action"
+          }
+        },
+        "approval": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "review_status"
+          ],
+          "properties": {
+            "review_status": {
+              "enum": [
+                "unreviewed",
+                "approved",
+                "rejected"
+              ]
+            },
+            "reviewer": {
+              "type": "string"
+            },
+            "reviewed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "approval_hash": {
+              "$ref": "#/$defs/manifest_id"
+            }
+          }
+        },
+        "openclaw_version": {
+          "type": "string"
+        }
+      }
+    },
+    "phase1_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "action_class",
+        "target",
+        "diagnostic_only",
+        "approval_eligible",
+        "writes_real_path"
+      ],
+      "properties": {
+        "action_id": {
+          "$ref": "#/$defs/action_id"
+        },
+        "action_class": {
+          "enum": [
+            "diagnostic-only",
+            "blocked-real-write"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/phase1_target"
+        },
+        "diagnostic_only": {
+          "const": true
+        },
+        "approval_eligible": {
+          "const": false
+        },
+        "writes_real_path": {
+          "const": false
+        }
+      }
+    },
+    "phase2_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "action_class",
+        "operation",
+        "target",
+        "diagnostic_only",
+        "approval_eligible",
+        "writes_real_path",
+        "artifact_type",
+        "install_mode",
+        "skill",
+        "content",
+        "expected_hash",
+        "pre_state",
+        "rollback_policy",
+        "post_apply_native_check"
+      ],
+      "properties": {
+        "action_id": {
+          "$ref": "#/$defs/action_id"
+        },
+        "action_class": {
+          "enum": [
+            "canary-skill-file",
+            "managed-skill-file"
+          ]
+        },
+        "operation": {
+          "enum": [
+            "create",
+            "no-op"
+          ]
+        },
+        "target": {
+          "$ref": "#/$defs/phase2_target"
+        },
+        "diagnostic_only": {
+          "const": false
+        },
+        "approval_eligible": {
+          "const": true
+        },
+        "writes_real_path": {
+          "const": true
+        },
+        "artifact_type": {
+          "const": "skill-file"
+        },
+        "install_mode": {
+          "const": "copy"
+        },
+        "skill": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,127}$"
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "pre_state": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^.*$": true
+          }
+        },
+        "rollback_policy": {
+          "const": "delete-only-if-unchanged"
+        },
+        "post_apply_native_check": {
+          "const": true
+        }
+      }
+    },
+    "phase1_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_agent",
+        "relative_path"
+      ],
+      "properties": {
+        "target_agent": {
+          "const": "openclaw"
+        },
+        "relative_path": {
+          "type": "string"
+        }
+      }
+    },
+    "phase2_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_agent",
+        "relative_path",
+        "containment_policy"
+      ],
+      "properties": {
+        "target_agent": {
+          "const": "openclaw"
+        },
+        "relative_path": {
+          "type": "string",
+          "pattern": "^skills/[a-z0-9][a-z0-9-]{0,127}/SKILL\\.md$"
+        },
+        "containment_policy": {
+          "const": "must-stay-under-openclaw-home"
+        }
+      }
+    },
+    "manifest_id": {
+      "type": "string",
+      "pattern": "^target_manifest_[A-Za-z0-9_.-]+$"
+    },
+    "action_id": {
+      "type": "string",
+      "pattern": "^target_action_[A-Za-z0-9_.-]+$"
+    },
+    "openclaw_refs": {
+      "type": "array",
+      "prefixItems": [
+        {
+          "const": "openclaw"
+        }
+      ],
+      "minItems": 1,
+      "maxItems": 1
+    }
+  }
+}

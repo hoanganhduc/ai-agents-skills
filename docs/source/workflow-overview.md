@@ -13,7 +13,7 @@ The system has three layers:
 
 | Layer | Role |
 |---|---|
-| Agent frontends | Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity receive user requests and load installed skill instructions. |
+| Agent frontends and targets | Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity receive user requests and load installed skill instructions; OpenClaw is a restricted fake-root target for normal installer flows, with reviewed v2 real-system skill-file writes only through `openclaw-target-*`. |
 | Shared skill repository | `manifest/` selects skills and profiles; `canonical/skills/` stores reusable workflows; `targets/` holds agent-specific notes. |
 | Runtime and software tools | Python, TeX, optional SageMath, local library tools, document parsers, public databases, and external retrieval helpers do the actual work when a skill needs them. |
 
