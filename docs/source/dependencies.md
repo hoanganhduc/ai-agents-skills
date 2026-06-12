@@ -64,6 +64,7 @@ Status vocabulary used by `precheck`:
 | Dependency | Type | Detail |
 |---|---|---|
 | `axle-auth` | `remote-service` | remote-service |
+| `beautifulsoup4-python-package` | `python` | bs4 |
 | `calibre-cli` | `tool` | calibre-cli |
 | `docling-mcp-python-package` | `python` | docling_mcp; candidate set `docling` |
 | `docling-python-package` | `python` | docling; candidate set `docling` |
@@ -97,8 +98,10 @@ Status vocabulary used by `precheck`:
 | `rocm-smi-tool` | `tool` | rocm-smi-tool |
 | `shapely-python-package` | `python` | shapely |
 | `svgelements-python-package` | `python` | svgelements |
+| `telegram-bot-config` | `remote-service` | remote-service |
 | `torch-python-package` | `python` | torch; candidate set `docling` |
 | `torchvision-python-package` | `python` | torchvision; candidate set `docling` |
+| `vnu-eoffice-python-package` | `python` | vnu_eoffice; candidate set `agent` |
 | `zotero-credentials` | `remote-service` | remote-service |
 
 ## Current Linux And Windows Config Inventory

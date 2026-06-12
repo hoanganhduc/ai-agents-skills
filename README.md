@@ -409,5 +409,6 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `submission-venue-selector` | Evidence-gated journal and conference venue selection for scholarly drafts; deliverable rankings require comparator-paper evidence. | `serious-research`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
+| `vnu-eoffice` | Use VNU eOffice functions from any supported agent target: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram. |  |
 | `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `serious-research`, `full-research` |
