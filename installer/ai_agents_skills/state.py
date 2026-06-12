@@ -244,7 +244,7 @@ def write_text_atomic(path: Path, content: str) -> None:
         text=False,
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
