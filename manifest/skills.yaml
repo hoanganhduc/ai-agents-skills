@@ -37,6 +37,15 @@
       "optional_capabilities": ["web-source-synthesis"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "vnu-eoffice": {
+      "description": "Use VNU eOffice functions from any supported agent target: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram.",
+      "profiles": [],
+      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"],
+      "required_dependencies": ["python-runtime", "requests-python-package", "beautifulsoup4-python-package"],
+      "optional_dependencies": ["vnu-eoffice-python-package", "telegram-bot-config"],
+      "optional_capabilities": ["vnu-eoffice-monitoring", "telegram-document-delivery", "multi-page-fetch", "numbered-document-selection"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
     "research-briefing": {
       "description": "Scope nontrivial research before execution with evidence plan and workflow recommendation.",
       "profiles": ["research-core", "serious-research", "full-research"],
