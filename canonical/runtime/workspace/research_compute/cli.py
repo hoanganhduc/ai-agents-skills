@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import re
+import shutil
+import socket
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,6 +53,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("deploy", help="Deploy the shared Modal app using the current config")
 
+    bootstrap_parser = subparsers.add_parser(
+        "bootstrap",
+        help="One-time setup: generate config if absent, authenticate gh, check deps, run doctor",
+    )
+    bootstrap_parser.add_argument("--install-deps", action="store_true", help="pip install --user any missing required deps")
+    bootstrap_parser.add_argument("--no-auth", action="store_true", help="skip the gh authentication step")
+
     return parser
 
 
@@ -56,6 +69,21 @@ def main(argv: list[str] | None = None) -> int:
 
     root = workspace_root()
     config_path = Path(args.config).expanduser().resolve() if args.config else default_config_path(root)
+
+    if args.command == "bootstrap":
+        try:
+            result = command_bootstrap(
+                config_path=config_path,
+                root=root,
+                install_deps=args.install_deps,
+                auth=not args.no_auth,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+            return 1
+        print(json.dumps({"ok": True, **result}, indent=2))
+        return 0
+
     config = load_config(config_path)
     state_root = ensure_root(config.state_root(root))
 
@@ -431,6 +459,134 @@ def command_resume(
 
 def command_deploy(*, config: Any, root: Path) -> dict[str, Any]:
     return deploy_modal_app(config=config, workspace_root=root)
+
+
+def command_bootstrap(*, config_path: Path, root: Path, install_deps: bool, auth: bool) -> dict[str, Any]:
+    """One-time, opt-in machine setup for the broker.
+
+    Generates research-compute.toml from the example if absent (never clobbers an
+    existing one, so it does not fight a config that another tool manages),
+    authenticates the GitHub CLI for the GitHub Actions lane, checks Python deps,
+    and reports `doctor`. Interactive `gh` steps run only in a TTY.
+    """
+    summary: dict[str, Any] = {
+        "config": _bootstrap_config(config_path=config_path, root=root),
+        "gh": _bootstrap_gh(auth=auth),
+        "deps": _bootstrap_deps(install=install_deps),
+    }
+    summary["doctor"] = _bootstrap_doctor(config_path=config_path, root=root)
+    return summary
+
+
+def _detect_platform() -> str:
+    if sys.platform.startswith("linux"):
+        return "linux"
+    if sys.platform == "darwin":
+        return "macos"
+    if sys.platform.startswith("win"):
+        return "windows"
+    return sys.platform
+
+
+def _replace_toml_scalar(text: str, key: str, value: str) -> str:
+    pattern = re.compile(rf'(?m)^({re.escape(key)}\s*=\s*)"[^"]*"')
+    return pattern.sub(rf'\g<1>"{value}"', text, count=1)
+
+
+def _bootstrap_config(*, config_path: Path, root: Path) -> dict[str, Any]:
+    if config_path.exists():
+        return {"path": str(config_path), "generated": False, "reason": "already exists; left unchanged"}
+    example = example_config_path(root)
+    if not example.exists():
+        return {"path": str(config_path), "generated": False, "error": f"example config not found: {example}"}
+    install_id = socket.gethostname() or "research-compute"
+    platform_name = _detect_platform()
+    text = example.read_text(encoding="utf-8")
+    text = _replace_toml_scalar(text, "install_id", install_id)
+    text = _replace_toml_scalar(text, "platform", platform_name)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(text, encoding="utf-8")
+    return {
+        "path": str(config_path),
+        "generated": True,
+        "install_id": install_id,
+        "platform": platform_name,
+        "note": "generated from the example; set [gha].enabled and fill [gha].repos to use GitHub Actions compute",
+    }
+
+
+def _parse_gh_scopes(text: str) -> set[str]:
+    scopes: set[str] = set()
+    for line in text.splitlines():
+        if "scope" in line.lower():
+            scopes.update(token.strip() for token in re.findall(r"'([^']+)'", line))
+    return scopes
+
+
+def _bootstrap_gh(*, auth: bool) -> dict[str, Any]:
+    if shutil.which("gh") is None:
+        return {"installed": False, "hint": "install the GitHub CLI: https://cli.github.com"}
+    status = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=20)
+    authenticated = status.returncode == 0
+    combined = (status.stdout or "") + (status.stderr or "")
+    has_user_scope = "user" in _parse_gh_scopes(combined)
+    info: dict[str, Any] = {
+        "installed": True,
+        "authenticated": authenticated,
+        "has_user_scope": has_user_scope,
+    }
+    if not auth:
+        info["action"] = "skipped (--no-auth)"
+        return info
+    interactive = sys.stdin.isatty() and sys.stdout.isatty()
+    if not authenticated:
+        if interactive:
+            info["action"] = "ran `gh auth login -s user`"
+            info["exit_code"] = subprocess.run(["gh", "auth", "login", "-s", "user"]).returncode
+        else:
+            info["action"] = "authentication required (non-interactive shell)"
+            info["run"] = "gh auth login -s user"
+    elif not has_user_scope:
+        if interactive:
+            info["action"] = "ran `gh auth refresh -s user`"
+            info["exit_code"] = subprocess.run(["gh", "auth", "refresh", "-h", "github.com", "-s", "user"]).returncode
+        else:
+            info["action"] = "missing 'user' scope (needed for Actions billing reads)"
+            info["run"] = "gh auth refresh -h github.com -s user"
+    else:
+        info["action"] = "ok"
+    return info
+
+
+def _bootstrap_deps(*, install: bool) -> dict[str, Any]:
+    required = ["tomli"] if sys.version_info < (3, 11) else []
+    optional = ["modal", "networkx", "psutil"]
+    missing_required = [name for name in required if importlib.util.find_spec(name) is None]
+    missing_optional = [name for name in optional if importlib.util.find_spec(name) is None]
+    info: dict[str, Any] = {
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "missing_required": missing_required,
+        "missing_optional": missing_optional,
+    }
+    if install and missing_required:
+        info["exit_code"] = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--user", *missing_required]
+        ).returncode
+        info["installed"] = missing_required
+    elif missing_required:
+        info["hint"] = f"{sys.executable} -m pip install --user " + " ".join(missing_required)
+    if missing_optional:
+        info["optional_hint"] = f"{sys.executable} -m pip install --user " + " ".join(missing_optional)
+    return info
+
+
+def _bootstrap_doctor(*, config_path: Path, root: Path) -> dict[str, Any]:
+    try:
+        config = load_config(config_path)
+        state_root = ensure_root(config.state_root(root))
+        return command_doctor(config=config, config_path=config_path, state_root=state_root)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
 
 
 def persist_plan(*, state_root: Path, job: dict[str, Any], plan: dict[str, Any]) -> None:
