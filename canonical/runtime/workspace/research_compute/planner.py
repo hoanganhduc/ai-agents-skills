@@ -62,6 +62,30 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
     risk_flags: list[str] = []
     reasoning: list[str] = []
 
+    # --- backend routing: explicit override > automatic order [local, modal, gha] ---
+    backend_override = str(policy.get("backend", "") or "").lower()
+    gha_target = str(job.get("gha_target", "") or template or "")
+    gha_repos = dict(getattr(config, "gha_repos", {}) or {})
+    gha_available = bool(getattr(config, "gha_enabled", False)) and gha_target in gha_repos
+    runtime_sec = estimate_runtime_sec(parameters, constraints)
+
+    if backend_override == "local":
+        return finalize_plan(decision="local_cpu", execution_primitive=execution_primitive,
+            accepted=True, estimated_cost_usd=0.0, estimated_runtime_sec=runtime_sec,
+            risk_flags=risk_flags, required_policy_exceptions=[],
+            reasoning_summary="Explicit override: run locally.")
+    if backend_override == "gha":
+        if not gha_available:
+            return finalize_plan(decision="rejected", execution_primitive=execution_primitive,
+                accepted=False, estimated_cost_usd=0.0, estimated_runtime_sec=runtime_sec,
+                risk_flags=risk_flags + ["gha_target_not_registered"],
+                required_policy_exceptions=["gha_registration"],
+                reasoning_summary=f"Explicit gha requested but target '{gha_target}' is not registered/enabled.")
+        return finalize_plan(decision="gha", execution_primitive=execution_primitive,
+            accepted=True, estimated_cost_usd=0.0, estimated_runtime_sec=runtime_sec,
+            risk_flags=risk_flags, required_policy_exceptions=[],
+            reasoning_summary=f"Explicit override: GitHub Actions (target '{gha_target}'); minutes budget enforced at submit.")
+
     if template and template not in SUPPORTED_TEMPLATES:
         risk_flags.append("template_not_yet_supported")
 
@@ -114,6 +138,15 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
     else:
         decision = "local_cpu"
         reasoning.append("The job does not exceed the current remote-offload thresholds.")
+
+    # routing order local>modal>gha: explicit modal forces remote; gha is the after-modal
+    # fallback when Modal isn't ready (gha is otherwise reached by explicit override above).
+    if backend_override == "modal" and decision == "local_cpu":
+        decision = "modal_cpu"
+        reasoning.append("Explicit override: Modal (forced remote).")
+    elif not backend_override and decision.startswith("modal_") and not modal_ready and gha_available and not gpu_signal:
+        decision = "gha"
+        reasoning.append("Routing order local>modal>gha: Modal not ready; routing to GitHub Actions.")
 
     if execution_primitive == "sandbox" and decision.startswith("modal_"):
         decision = "modal_sandbox_experimental"

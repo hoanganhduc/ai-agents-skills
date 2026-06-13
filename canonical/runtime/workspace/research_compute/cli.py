@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import caller_cwd, default_config_path, example_config_path, load_config, modal_config_path, workspace_root
 from .modal_backend import cancel_function_call, deploy_modal_app, modal_ready_summary, run_remote_job, submit_remote_job, wait_for_result
+from . import github_actions_backend as gha
 from .planner import normalize_job, plan_job
 from .state import append_event, attempt_dir, ensure_root, job_dir, manifest_path, next_attempt_id, plan_path, read_json, status_path, write_json
 
@@ -103,15 +104,22 @@ def main(argv: list[str] | None = None) -> int:
 
 def command_doctor(*, config: Any, config_path: Path, state_root: Path) -> dict[str, Any]:
     modal_summary = modal_ready_summary(config, modal_config_path())
-    return {
+    summary = {
         "config_path": str(config_path),
         "config_exists": config_path.exists(),
         "example_config_path": str(example_config_path(workspace_root())),
         "workspace_root": str(workspace_root()),
         "caller_cwd": str(caller_cwd()),
         "state_root": str(state_root),
+        "routing_order": list(getattr(config, "routing_order", [])),
         **modal_summary,
     }
+    if getattr(config, "gha_enabled", False):
+        try:
+            summary["gha"] = gha.doctor(config)
+        except Exception as exc:  # noqa: BLE001
+            summary["gha"] = {"ready": False, "error": str(exc)}
+    return summary
 
 
 def command_plan(*, job: dict[str, Any], config: Any, state_root: Path, persist: bool) -> dict[str, Any]:
@@ -152,6 +160,12 @@ def command_submit(
             "status": "rejected",
             "plan": plan,
         }
+
+    if plan["decision"] == "gha":
+        return command_submit_gha(
+            job=normalized, plan=plan, config=config, config_path=config_path,
+            state_root=state_root, wait=wait, timeout=timeout,
+        )
 
     if not str(plan["decision"]).startswith("modal_"):
         update_status(
@@ -235,6 +249,70 @@ def command_submit(
         "config_path": str(config_path),
     }
     return result
+
+
+def command_submit_gha(
+    *,
+    job: dict[str, Any],
+    plan: dict[str, Any],
+    config: Any,
+    config_path: Path,
+    state_root: Path,
+    wait: bool,
+    timeout: float | None,
+) -> dict[str, Any]:
+    """Submit to GitHub Actions: fail-closed minutes budget gate (reserve worst case) ->
+    dispatch the private repo's experiment.yml -> correlate by run-name -> optional wait/fetch."""
+    job_id = job["job_id"]
+    template = str(job.get("template", "") or "")
+    gha_target = str(job.get("gha_target", "") or template)
+    repo_cfg = dict((config.gha_repos or {}).get(gha_target, {}))
+    if not repo_cfg:
+        update_status(state_root=state_root, job_id=job_id, status="rejected", plan=plan)
+        return {"job_id": job_id, "status": "rejected", "plan": plan,
+                "message": f"gha target '{gha_target}' is not registered"}
+
+    parameters = dict(job.get("payload", {}).get("parameters", {}) or {})
+    cells = int(job.get("constraints", {}).get("matrix_cells", 1) or 1)
+
+    try:  # fail-closed budget gate + worst-case reservation
+        budget = gha.budget_gate(job_id=job_id, repo_cfg=repo_cfg, config=config,
+                                 state_root=state_root, cells=cells)
+    except gha.GhaBudgetError as exc:
+        update_status(state_root=state_root, job_id=job_id, status="rejected", plan=plan)
+        return {"job_id": job_id, "status": "rejected", "plan": plan, "reason": str(exc)}
+
+    gha.dispatch(job_id=job_id, repo_cfg=repo_cfg, parameters=parameters)
+    run_id = gha.correlate(repo=repo_cfg["repo"],
+                           workflow=repo_cfg.get("workflow", "experiment.yml"), job_id=job_id)
+
+    attempt_id = next_attempt_id(state_root, job_id)
+    attempt_root = ensure_root(attempt_dir(state_root, job_id, attempt_id))
+    submission_record = {"job_id": job_id, "attempt_id": attempt_id, "submitted_at": timestamp(),
+                         "decision": "gha", "gha_repo": repo_cfg["repo"], "gha_run_id": run_id,
+                         "budget": budget}
+    write_json(attempt_root / "submission.json", submission_record)
+    append_event(job_dir(state_root, job_id) / "events.jsonl", {"event": "submitted", **submission_record})
+    update_status(state_root=state_root, job_id=job_id, status="submitted", plan=plan, attempt_id=attempt_id)
+    status = read_json(status_path(state_root, job_id))
+    status.update({"gha_run_id": run_id, "gha_repo": repo_cfg["repo"]})
+    write_json(status_path(state_root, job_id), status)
+
+    if wait and run_id:
+        conclusion = gha.wait(repo=repo_cfg["repo"], run_id=run_id, timeout=timeout)
+        fetched = gha.fetch(repo=repo_cfg["repo"], job_id=job_id,
+                            dest=ensure_root(attempt_root / "download"),
+                            state_root=state_root, run_id=run_id)
+        write_json(attempt_root / "result.json", fetched["result"])
+        update_status(state_root=state_root, job_id=job_id,
+                      status="completed" if conclusion == "success" else conclusion,
+                      plan=plan, attempt_id=attempt_id)
+        return {"job_id": job_id, "status": conclusion, "attempt_id": attempt_id,
+                "gha_run_id": run_id, "budget": budget, "actual_minutes": fetched["actual_minutes"],
+                "result_manifest_path": str(attempt_root / "result.json")}
+
+    return {"job_id": job_id, "status": "submitted", "attempt_id": attempt_id,
+            "gha_run_id": run_id, "budget": budget, "plan": plan, "config_path": str(config_path)}
 
 
 def command_wait(*, job_id: str, config: Any, state_root: Path, timeout: float | None) -> dict[str, Any]:

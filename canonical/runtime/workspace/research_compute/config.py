@@ -38,6 +38,11 @@ class BrokerConfig:
     allowed_gpu_families: list[str]
     per_job_cost_cap_usd: float
     default_archive_backend: str
+    routing_order: list[str] = field(default_factory=lambda: ["local", "modal", "gha"])
+    gha_enabled: bool = False
+    gha_included_minutes: int = 0
+    gha_repos: dict[str, Any] = field(default_factory=dict)
+    modal_monthly_budget_usd: float = 0.0
     functions: FunctionMap = field(default_factory=FunctionMap)
     defaults: BrokerDefaults = field(default_factory=BrokerDefaults)
 
@@ -95,6 +100,11 @@ def load_config(path: Path | None = None) -> BrokerConfig:
         allowed_gpu_families=list(data.get("allowed_gpu_families", [])),
         per_job_cost_cap_usd=float(data.get("per_job_cost_cap_usd", 5.0)),
         default_archive_backend=data.get("default_archive_backend", "local"),
+        routing_order=list(data.get("routing_order", ["local", "modal", "gha"])),
+        gha_enabled=bool(data.get("gha", {}).get("enabled", False)),
+        gha_included_minutes=int(data.get("gha", {}).get("included_minutes", 0)),
+        gha_repos=dict(data.get("gha", {}).get("repos", {})),
+        modal_monthly_budget_usd=float(data.get("modal_monthly_budget_usd", 0.0)),
         functions=functions,
         defaults=defaults,
     )
