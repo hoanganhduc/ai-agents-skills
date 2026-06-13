@@ -49,6 +49,7 @@
         "instruction-doc:cross-provider-delegation",
         "instruction-doc:python-quality-gates",
         "instruction-doc:modal-offload-routing",
+        "instruction-doc:github-actions-offload-routing",
         "instruction-doc:scrapling-integration",
         "instruction-doc:language-style-rules"
       ]
@@ -133,6 +134,7 @@
         "instruction-doc:cross-provider-delegation",
         "instruction-doc:python-quality-gates",
         "instruction-doc:modal-offload-routing",
+        "instruction-doc:github-actions-offload-routing",
         "instruction-doc:scrapling-integration",
         "instruction-doc:language-style-rules",
         "agent-persona:literature-scout",
@@ -292,6 +294,12 @@
       "modal-offload-routing": {
         "description": "When to keep work local and when to route heavy compute elsewhere.",
         "source": "modal-offload-routing.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["modal-research-compute"]
+      },
+      "github-actions-offload-routing": {
+        "description": "When to route compute to GitHub Actions (private repo, budget-gated, after local and Modal).",
+        "source": "github-actions-offload-routing.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["modal-research-compute"]
       },
