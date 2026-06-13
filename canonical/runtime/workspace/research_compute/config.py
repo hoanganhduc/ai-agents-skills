@@ -6,12 +6,6 @@ from pathlib import Path
 from typing import Any
 
 
-try:
-    import tomllib  # type: ignore[attr-defined]
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib  # type: ignore[no-redef]
-
-
 @dataclass
 class BrokerDefaults:
     auto_submit: bool = True
@@ -111,5 +105,12 @@ def load_config(path: Path | None = None) -> BrokerConfig:
 
 
 def load_toml(path: Path) -> dict[str, Any]:
+    # Imported lazily so the broker (and `bootstrap`) import without a TOML parser
+    # installed -- only actual config loading needs it. On a bare Python 3.10 host
+    # this lets `bootstrap --install-deps` install tomli before any config is read.
+    try:
+        import tomllib  # Python 3.11+
+    except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+        import tomli as tomllib  # type: ignore[no-redef]
     with path.open("rb") as handle:
         return tomllib.load(handle)
