@@ -1763,6 +1763,32 @@
           "mode": "0644"
         },
         {
+          "source": "workspace/research_compute/budget_ledger.py",
+          "target": "workspace/research_compute/budget_ledger.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/github_actions_backend.py",
+          "target": "workspace/research_compute/github_actions_backend.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "workspace/research_compute/modal_backend.py",
           "target": "workspace/research_compute/modal_backend.py",
           "platforms": [
