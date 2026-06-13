@@ -25,12 +25,22 @@ to **GitHub Actions** in addition to local and Modal.
 4. Heavier‑than‑GHA work (GPU, > 6 h, ≫ included minutes) goes to Modal/local — never expand
    GHA into a general compute pool.
 
-## Commands
+## Setup & commands
+The broker installs to each target's runtime root (single source of truth: `~/ai-agents-skills`)
+and runs via `run_skill.sh`. Resolve the runtime root for the current agent, then `bootstrap`
+once (generate config if absent, authenticate `gh`, check deps, run `doctor`):
 ```
-… research_compute doctor                 # shows routing_order + gha readiness
-… research_compute submit job.json        # job: {"gha_target":"…","policy":{"backend":"gha"},"payload":{"parameters":{…}}}
-… research_compute wait <job_id> ; … fetch <job_id>
+# codex -> ~/.codex/runtime ; claude and others -> ~/.local/share/ai-agents-skills/runtime
+runtime="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"; [ -d "$runtime" ] || runtime="$HOME/.codex/runtime"
+run() { bash "$runtime/run_skill.sh" skills/modal-research-compute/run_modal_research_compute.sh "$@"; }
+
+run bootstrap                  # one-time setup (config + gh auth + deps + doctor)
+run doctor                     # routing_order + gha readiness
+run submit job.json --wait     # {"gha_target":"…","policy":{"backend":"gha"},"payload":{"parameters":{…}}}
+run fetch <job_id> --dest ./out
 ```
-Implementation: `github_actions_backend.py` (dispatch/correlate/wait/fetch + budget),
-`budget_ledger.py` (reservations), `planner.py` (`routing_order` + override). Full design:
+On the Claude target the documented `~/.claude/skills/_run.sh skills/modal-research-compute/…`
+wrapper forwards to the same runtime. Implementation: `github_actions_backend.py`
+(dispatch/correlate/wait/fetch + budget), `budget_ledger.py` (reservations), `planner.py`
+(`routing_order` + override), `cli.py` (`bootstrap`). Full design:
 `coding-system-rebuild/docs/github-actions-experiment-runner-plan.md`.
