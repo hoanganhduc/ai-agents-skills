@@ -9,6 +9,12 @@ allowed_gpu_families = ["T4", "L4", "A10", "A100", "H100"]
 per_job_cost_cap_usd = 5.0
 default_archive_backend = "local"
 
+# Automatic backend order. The planner takes the first feasible, within-budget
+# backend; naming a backend in a job's policy ("local"|"modal"|"gha") overrides it.
+routing_order = ["local", "modal", "gha"]
+# Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.
+modal_monthly_budget_usd = 0.0
+
 [functions]
 modal_cpu = "run_cpu_job"
 modal_highmem_cpu = "run_highmem_job"
@@ -18,3 +24,30 @@ modal_sandbox_experimental = "run_sandbox_job"
 [defaults]
 auto_submit = true
 wait_poll_seconds = 5
+
+# ---------------------------------------------------------------------------
+# GitHub Actions ToS compliance. GitHub's Additional Product Terms restrict
+# Actions on GitHub-hosted runners to "the production, testing, deployment, or
+# publication of the software project associated with the repository," and forbid
+# disproportionate / serverless burden. In this broker, Actions compute runs ONLY
+# inside a private research repo, executes that repo's own committed experiment
+# code (parameters are DATA, never executed), as that project's own validation,
+# budget-gated and kept proportionate, and is the LAST automatic backend (after
+# local and Modal) -- never a general compute pool. Source: GitHub Terms for
+# Additional Products and Features -> GitHub Actions.
+# ---------------------------------------------------------------------------
+[gha]
+enabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes
+included_minutes = 0        # 0 = auto-detect from the account plan
+
+# One block per private research repo that carries an in-repo experiment.yml.
+# The broker sends only parameters (data); it never sends code.
+# [gha.repos.my_experiments]
+# repo = "owner/PrivateResearchRepo"   # MUST be private
+# ref = "main"
+# workflow = "experiment.yml"
+# runtime = "python"                   # python | sage | cpp
+# experiment = "my_sweep"
+# runner_os = "linux"                  # minute multiplier: linux 1x, windows 2x, macos 10x
+# timeout_minutes = 30
+# monthly_minute_budget = <minutes>   # optional per-repo cap

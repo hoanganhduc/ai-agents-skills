@@ -2,7 +2,7 @@
 name: modal-research-compute
 description: Use when a research or engineering task needs automatic heavy-compute routing through the local broker for Modal-backed remote CPU, high-memory CPU, or GPU execution.
 metadata:
-  short-description: Route heavy compute to Modal through the Codex broker
+  short-description: Route heavy compute to Modal or GitHub Actions through the local broker
 ---
 
 # Modal Research Compute
@@ -28,7 +28,7 @@ Use this skill when the task is about:
 - remote execution of generated experiment code
 - GPU-suitable document, embedding, reranking, or tensor workloads
 
-This skill is the Codex integration layer for the local `research_compute` broker.
+This skill is the integration layer for the local `research_compute` broker.
 
 ## When to prefer this skill
 
@@ -46,31 +46,33 @@ This skill is the Codex integration layer for the local `research_compute` broke
 
 ## Runtime commands
 
-Linux:
+Linux (resolve the installed runtime root for the current agent, then call `run_skill.sh`):
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+# codex -> ~/.codex/runtime ; claude and other agents -> ~/.local/share/ai-agents-skills/runtime
+runtime="${AAS_RUNTIME_ROOT:-}"
+if [ -z "$runtime" ]; then
+  for candidate in "$HOME/.local/share/ai-agents-skills/runtime" "$HOME/.codex/runtime"; do
+    [ -d "$candidate" ] && runtime="$candidate" && break
+  done
+fi
+run() { bash "$runtime/run_skill.sh" skills/modal-research-compute/run_modal_research_compute.sh "$@"; }
+```
+
+```bash
+run bootstrap                          # one-time: generate config if absent, authenticate gh, check deps, doctor
+run doctor                             # broker + config + Modal + (if enabled) GitHub Actions readiness
+run plan   /path/to/job.json
+run submit /path/to/job.json
+run wait   <job_id>
+run fetch  <job_id> --dest /path/to/output
+```
+
+On the Claude target the documented wrapper forwards to the same runtime, so this is equivalent:
+
+```bash
+bash ~/.claude/skills/_run.sh \
   skills/modal-research-compute/run_modal_research_compute.sh doctor
-```
-
-```bash
-bash ~/.codex/runtime/run_skill.sh \
-  skills/modal-research-compute/run_modal_research_compute.sh plan /path/to/job.json
-```
-
-```bash
-bash ~/.codex/runtime/run_skill.sh \
-  skills/modal-research-compute/run_modal_research_compute.sh submit /path/to/job.json
-```
-
-```bash
-bash ~/.codex/runtime/run_skill.sh \
-  skills/modal-research-compute/run_modal_research_compute.sh wait <job_id>
-```
-
-```bash
-bash ~/.codex/runtime/run_skill.sh \
-  skills/modal-research-compute/run_modal_research_compute.sh fetch <job_id> --dest /path/to/output
 ```
 
 Windows:
@@ -89,4 +91,6 @@ Windows:
 - `doctor` and `plan` work without a deployed Modal app. `submit`, `wait`, `fetch`, and `deploy` need the host to be Modal-ready.
 - Linux hosts become Modal-ready after `python3 -m pip install --user --upgrade modal` and `modal token set` or `modal token new`.
 - Windows hosts should install `modal` into `%USERPROFILE%\.codex\.venv`; the wrapper adds `%USERPROFILE%\.codex\.venv\Scripts` to `PATH` so broker deploy can find `modal.exe`.
-- Broker state persists under the Codex memories tree, while fetched outputs materialize under the caller workspace by default.
+- Broker state persists under the runtime memories tree, while fetched outputs materialize under the caller workspace by default.
+- One-time per machine, run `bootstrap`: it generates `research-compute.toml` from the example if absent (never overwriting an existing one), authenticates `gh`, checks deps, and runs `doctor`. Use this to set up a host that does not have the full system installer.
+- GitHub Actions ToS compliance: the broker's `gha` lane runs only inside a private research repo, executes that repo's own committed experiment code (parameters are data, never executed), is budget-gated, and is the last automatic backend after local and Modal — never a general compute pool. Configure it under `[gha]` in `research-compute.toml`.
