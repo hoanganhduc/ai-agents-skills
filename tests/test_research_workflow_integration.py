@@ -298,6 +298,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             "intent-interview",
             "decision-doubt-loop",
             "source-grounded-decisions",
+            "adversarial-boundary-gate",
+            "behavior-preserving-cleanup",
         }
         self.assertEqual(skills, expected)
 
