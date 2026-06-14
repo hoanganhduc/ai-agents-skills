@@ -1,6 +1,6 @@
 [project]
 name = "ai-agents-skills"
-version = "0.1.0"
+version = "0.1.1"
 description = "Manifest-driven shared skills installer for Codex, Claude, and DeepSeek"
 requires-python = ">=3.10"
 license = "GPL-3.0-or-later"
