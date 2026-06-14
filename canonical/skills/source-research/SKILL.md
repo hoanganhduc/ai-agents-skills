@@ -26,15 +26,15 @@ Open these only when relevant:
 
 - Generic paper, article, preprint, DOI, ISBN, and book retrieval or sharing requests route to `zotero` first.
 - Explicit Calibre-library ebook operations route to `calibre`.
-- External paper or book retrieval routes to `getscipapers_requester` only if Zotero does not satisfy the request or the user explicitly wants a download from outside the library.
-- Multi-agent discussion/review/research routes to `agent_group_discuss` by default and `prose` for more structured workflows.
+- External paper or book retrieval routes to `getscipapers-requester` only if Zotero does not satisfy the request or the user explicitly wants a download from outside the library.
+- Multi-agent discussion/review/research routes to `agent-group-discuss` by default and `prose` for more structured workflows.
 - Annotated paper review routes to `annotated-review` only when the user explicitly asks for both annotation and review.
 - Review-only paper tasks route to `paper-review`.
-- Topic/news digests route to `research_digest_wrapper` or `rss_news_digest`.
-- Digest-to-paper extraction routes to `digest_bridge`.
+- Topic/news digests route to `research-digest-wrapper` or `rss-news-digest`.
+- Digest-to-paper extraction routes to `digest-bridge`.
 - Explicit phased deep research with structured source handoff routes to `deep-research-workflow`.
 - Explicit TikZ drawing, refactoring, extraction, compile, or diagram-review requests route to `tikz-draw`.
-- Small graph-theoretic verification routes to `graph_verifier`.
+- Small graph-theoretic verification routes to `graph-verifier`.
 - Mathematical research tasks that need heavy graph-theoretic, combinatorial, algebraic, or spectral computation route to `sagemath`.
 
 ## Default workflow
@@ -58,7 +58,7 @@ Open these only when relevant:
 - If a research task needs a diagram, keep the research in `deep-research-workflow` first and hand off to `tikz-draw` only after analysis identifies a concrete figure worth generating.
 - For literature retrieval requests, check the relevant local library workflow before browsing or external download.
 - For review tasks that need a paper/book, use the lookup order `zotero` -> `calibre` -> online fallback.
-- For digest follow-up, use `digest_bridge` to extract identifiers before bulk paper retrieval.
+- For digest follow-up, use `digest-bridge` to extract identifiers before bulk paper retrieval.
 - For explicit Calibre ebook-library workflows, prefer `calibre` over improvised filesystem search.
 - For mathematical verification, prefer local Python for small checks and route to `sagemath` when the computation needs SageMath-native capabilities.
 - Never use `curl`, `wget`, ad hoc browser fetches, or direct publisher-site HTTP requests as a substitute for the library tools on paper/book retrieval tasks.
@@ -96,13 +96,13 @@ Good matches:
 - Use `deep-research-workflow` for single-agent phased deep research that needs explicit source handoff across search, analysis, and final writing.
 - Use `tikz-draw` for explicit TikZ figure generation, refactoring, extraction, compile, or review work, especially when the output should follow a structure-first brief -> spec -> render flow.
 - Use `calibre` for explicit Calibre library operations: ebook search/get by ID, sending Calibre-managed books, add/update, tags, shelves, sync, remove, convert, export, doctor, and clean.
-- Use `getscipapers_requester` only for external retrieval or DOI/ISBN resolution after Zotero does not satisfy the request, or when the user explicitly wants an outside download rather than a library copy. For review tasks that need a document, check `calibre` after `zotero` and before this fallback.
+- Use `getscipapers-requester` only for external retrieval or DOI/ISBN resolution after Zotero does not satisfy the request, or when the user explicitly wants an outside download rather than a library copy. For review tasks that need a document, check `calibre` after `zotero` and before this fallback.
 - If an externally retrieved book file should be added to the ebook library, hand off to `calibre` for the final add/update step.
 - Use `annotated-review` only for annotate+review paper flows.
 - Use `paper-review` for single-agent review-only paper flows such as review, critique, hard review, or issue-finding requests.
-- Use `agent_group_discuss` for conversational multi-agent discussion, review, or research panels.
+- Use `agent-group-discuss` for conversational multi-agent discussion, review, or research panels.
 - Use `prose` when the user wants explicit multi-agent research-and-synthesis orchestration.
-- Use `research_digest_wrapper` and `rss_news_digest` for tracked-topic and RSS-based research updates.
-- Use `graph_verifier` for lightweight graph sanity checks before escalating to SageMath.
-- Use `digest_bridge` to turn digest results into identifiers and manifests for retrieval.
+- Use `research-digest-wrapper` and `rss-news-digest` for tracked-topic and RSS-based research updates.
+- Use `graph-verifier` for lightweight graph sanity checks before escalating to SageMath.
+- Use `digest-bridge` to turn digest results into identifiers and manifests for retrieval.
 - Use `sagemath` for graph invariants, algebraic checks, spectral computations, exhaustive counterexample search, and other math tasks beyond lightweight local tooling.

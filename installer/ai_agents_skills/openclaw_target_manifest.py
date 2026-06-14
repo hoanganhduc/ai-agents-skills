@@ -30,6 +30,7 @@ MANIFEST_SCHEMA_VERSION_V2 = "openclaw.target-manifest.v2"
 MANIFEST_SCHEMA_VERSION = MANIFEST_SCHEMA_VERSION_V1
 GENERATOR_VERSION = "openclaw-target-manifest.phase1.v1"
 GENERATOR_VERSION_V2 = "openclaw-target-manifest.phase2.v1"
+GATE_POLICY_VERSION_V2 = "openclaw-target-gate.phase2.v1"
 PHASE = "phase1-non-authorizing"
 PHASE_V2 = "phase2-authorizing"
 TARGET_AGENTS = ("openclaw",)
@@ -146,7 +147,7 @@ def build_skill_file_target_manifest(
         "home_root_realpath": str(root.expanduser().resolve(strict=False)),
         "target_realpath": paths["home_realpath"],
         "managed_skills_realpath": paths["managed_skills_realpath"],
-        "gate_policy_version": GATE_POLICY_VERSION,
+        "gate_policy_version": GATE_POLICY_VERSION_V2,
         "real_write_status": "approval-required",
         "authorizes_real_writes": True,
         "approval_eligible": True,
@@ -308,7 +309,7 @@ def validate_target_manifest_v2(manifest: dict[str, Any], *, require_approved: b
         raise ValueError("OpenClaw target manifest generator version is not supported")
     if manifest["phase"] != PHASE_V2:
         raise ValueError("OpenClaw target manifest phase is not supported")
-    if manifest["gate_policy_version"] != GATE_POLICY_VERSION:
+    if manifest["gate_policy_version"] != GATE_POLICY_VERSION_V2:
         raise ValueError("OpenClaw target manifest gate policy is not supported")
     if manifest["target_agent_refs"] != ["openclaw"]:
         raise ValueError("OpenClaw target manifest target_agent_refs must be ['openclaw']")

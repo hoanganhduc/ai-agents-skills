@@ -23,7 +23,7 @@ Do **not** use this skill when the user explicitly asks for both annotation and 
 In that case, use `annotated-review` instead.
 
 If the user explicitly asks for multiple agents, a panel, or a multi-agent review,
-use `agent_group_discuss` instead of this skill.
+use `agent-group-discuss` instead of this skill.
 
 ## Document lookup order for review tasks
 
@@ -31,7 +31,7 @@ If the user did not already provide a source path, attached file, PDF, or source
 
 1. check `zotero`
 2. if not found there, check `calibre`
-3. only if neither library has the document, use an online path such as `getscipapers_requester`
+3. only if neither library has the document, use an online path such as `getscipapers-requester`
 
 For review tasks, do not go online before checking both local libraries.
 
@@ -96,4 +96,4 @@ For each issue:
 
 - review-only -> this skill
 - annotate + review -> `annotated-review`
-- multi-agent review -> `agent_group_discuss`
+- multi-agent review -> `agent-group-discuss`

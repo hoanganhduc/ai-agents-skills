@@ -12,6 +12,12 @@ Use the read-only audit before configuring or changing library-backed skills:
 make library-profile-audit ARGS="--profile library --json"
 ```
 
+Installing a local-library skill installs agent instructions and managed helper
+artifacts only. It does not mutate Zotero or Calibre libraries by itself.
+Library writes happen later through the runtime skill workflow, with explicit
+library/profile selection and the skill's own dry-run, backup, and verification
+gates.
+
 Mounted Windows profiles can be inspected from Linux, but that evidence is
 degraded for native Windows execution:
 
@@ -85,12 +91,12 @@ explicit library path. Guarded direct SQLite is fallback only. Windows-mounted
 or cloud-backed Calibre libraries are read-only from Linux unless explicitly
 opted in with backup, locking, dry-run, and post-write verification.
 
-Target integration rules:
+Audit boundary:
 
-- Choose one canonical repo per run and record its path plus commit/hash.
-- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity,
-  and fake-root OpenClaw home before writing.
-- Store generated profile manifests with checksums/version stamps in selected
-  target homes.
-- Keep secrets and credentials outside this repo.
-- Put safety gates in the shared runtime/core so adapters cannot bypass them.
+- `library-profile-audit` is read-only. It reports discovered candidates,
+  validation evidence, profile status, and recommended next checks.
+- The audit does not write target inventories, profile manifests, or selected
+  paths into agent homes.
+- Any future workflow that writes profile manifests must choose one canonical
+  repo per run, record its path plus commit/hash, keep secrets outside this repo,
+  and put safety gates in shared runtime/core so adapters cannot bypass them.

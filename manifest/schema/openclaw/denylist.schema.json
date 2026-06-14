@@ -75,6 +75,9 @@
                 "codex-target",
                 "claude-target",
                 "deepseek-target",
+                "copilot-target",
+                "opencode-target",
+                "antigravity-target",
                 "all-targets"
               ]
             }

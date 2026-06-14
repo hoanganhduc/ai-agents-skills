@@ -57,8 +57,8 @@ requires `pwsh` or `powershell.exe`. The direct Python entrypoint is useful for
 debugging wrapper behavior:
 
 ```bash
-python -m installer.ai_agents_skills help
-python -m installer.ai_agents_skills describe zotero
+python3 -m installer.ai_agents_skills help
+python3 -m installer.ai_agents_skills describe zotero
 ```
 
 Use `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` to
@@ -126,9 +126,10 @@ make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
 Fake-root plans detect only agent homes that exist under the fake root. Create
-`.codex`, `.claude`, `.deepseek`, `.copilot`, or `.config/opencode` inside the
-fake root for the agents you want to exercise; a fake root with no agent homes
-produces no install actions, no managed installer state, and later verification may report
+`.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`,
+`.gemini/antigravity-cli`, or `.openclaw` inside the fake root for the agents
+you want to exercise; a fake root with no agent homes produces no install actions,
+no managed installer state, and later verification may report
 `no-managed-artifacts`.
 
 Real-system writes should be a final step after reviewing `plan` output:
@@ -157,7 +158,7 @@ Before promoting files from an existing local runtime into this repo, inspect
 that source with the read-only inventory command:
 
 ```bash
-python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
+python3 -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
 The inventory denies configs, databases, caches, downloaded documents, SQLite

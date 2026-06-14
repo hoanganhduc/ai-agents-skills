@@ -17,7 +17,7 @@ Keep this order:
 - `zotero` first for paper/library retrieval
 - `calibre` second for review tasks needing a local document
 - `paper-lookup` for external metadata/discovery
-- `getscipapers_requester` for actual external retrieval when needed
+- `getscipapers-requester` for actual external retrieval when needed
 
 ## Good use cases
 

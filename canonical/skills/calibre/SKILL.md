@@ -41,7 +41,7 @@ This uses the vendored Codex runtime copy of the Calibre workflow.
 - For review tasks that require locating a paper or book and the user did not
   supply the file/path, use Calibre immediately after Zotero and before any
   online retrieval.
-- If Zotero does not satisfy a generic retrieval request and the user wants an outside download, use `getscipapers_requester` first, then return to `calibre` if the resulting file should be added to the ebook library.
+- If Zotero does not satisfy a generic retrieval request and the user wants an outside download, use `getscipapers-requester` first, then return to `calibre` if the resulting file should be added to the ebook library.
 
 ## Base path
 

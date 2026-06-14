@@ -164,7 +164,7 @@
           "minLength": 1
         },
         "gate_policy_version": {
-          "const": "openclaw-target-gate.phase1.v1"
+          "const": "openclaw-target-gate.phase2.v1"
         },
         "real_write_status": {
           "const": "approval-required"

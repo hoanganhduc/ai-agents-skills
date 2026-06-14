@@ -15,10 +15,10 @@ and removes the legacy alias directory.
 
 Default installs use `--install-mode auto`, resolved per agent. Claude receives
 symlinked skill files when the filesystem supports them. Codex, DeepSeek, and
-Antigravity receive reference adapters by default: Codex ignores
-file-symlinked user `SKILL.md` files, DeepSeek native symlinked skill loading
-has not been verified, and Antigravity uses documented flat global Markdown
-skill files under `~/.gemini/antigravity-cli/skills/`. Use
+Copilot receive reference adapters by default because their symlinked skill
+loading is not assumed. OpenCode and Antigravity receive copied regular files;
+Antigravity uses documented flat global Markdown skill files under
+`~/.gemini/antigravity-cli/skills/`. Use
 `--install-mode symlink` only when you intentionally want to force links for
 every agent. Use `--install-mode reference` to force adapters for every agent.
 If an agent requires regular files in its settings directory, use

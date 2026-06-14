@@ -36,7 +36,7 @@ Use this skill first for any paper request involving:
 - "my papers"
 - "my collections"
 
-Prefer this over `getscipapers_requester` whenever the request involves the user's library.
+Prefer this over `getscipapers-requester` whenever the request involves the user's library.
 
 ## Base path
 
@@ -258,7 +258,7 @@ If the user asks to add a paper and does not specify a collection:
 
 ## Fallback rule
 
-Only route to `getscipapers_requester` if:
+Only route to `getscipapers-requester` if:
 
 - the paper is not in Zotero
 - the Calibre library also does not satisfy the request when the task is a review

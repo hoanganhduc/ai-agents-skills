@@ -17,7 +17,7 @@ from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS
 from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
 from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.docs import check_docs_current, generate_docs, render_docs
-from installer.ai_agents_skills.lifecycle import rollback, uninstall
+from installer.ai_agents_skills.lifecycle import apply_uninstall_action, plan_uninstall_action, rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.render import render_artifact_content, render_reference_skill_md
@@ -367,6 +367,34 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             self.assertFalse((root / ".codex" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertFalse((outside / "state.json").exists())
+
+    def test_apply_refuses_target_drift_after_plan(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                install_mode="copy",
+                runtime_profile="none",
+            )
+            target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            target.parent.mkdir(parents=True)
+            target.write_text("created after planning\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "target changed since plan"):
+                apply_plan(root, plan, dry_run=False)
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "created after planning\n")
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
 
     def test_atomic_text_replace_does_not_follow_existing_target_symlink(self) -> None:
         with fake_root() as tmp, fake_root() as outside_tmp:
@@ -1278,6 +1306,37 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(target.exists())
             self.assertFalse(instructions.exists())
 
+    def test_rollback_unmanages_adopted_file_without_deleting_or_rechecking_content(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            existing = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("user-owned before adoption\n", encoding="utf-8")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                adopt=True,
+                runtime_profile="none",
+            )
+            result = apply_plan(root, plan, dry_run=False)
+            existing.write_text("user-owned after adoption\n", encoding="utf-8")
+
+            rollback(root, run_id=result["run_id"], dry_run=False)
+
+            self.assertTrue(existing.exists())
+            self.assertEqual(existing.read_text(encoding="utf-8"), "user-owned after adoption\n")
+            self.assertFalse((root / ".claude" / "CLAUDE.md").exists())
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
+
     def test_multi_skill_rollback_removes_shared_instruction_blocks_atomically(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1564,6 +1623,34 @@ class PlanInstallVerifyTests(unittest.TestCase):
             checks = {check["name"]: check["ok"] for check in block_result["checks"]}
             self.assertFalse(checks["managed-block-match"])
 
+    def test_verify_detects_duplicate_managed_instruction_block(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            apply_plan(root, plan, dry_run=False)
+            instructions = root / ".claude" / "CLAUDE.md"
+            text = instructions.read_text(encoding="utf-8")
+            start_marker = "<!-- ai-agents-skills:zotero:start -->"
+            end_marker = "<!-- ai-agents-skills:zotero:end -->"
+            start = text.index(start_marker)
+            end = text.index(end_marker, start) + len(end_marker)
+            instructions.write_text(text + "\n" + text[start:end] + "\n", encoding="utf-8")
+
+            result = verify(root)
+
+            self.assertEqual(result["status"], "failed")
+            block_result = next(item for item in result["results"] if item["artifact_type"] == "instruction-block")
+            checks = {check["name"]: check["ok"] for check in block_result["checks"]}
+            self.assertFalse(checks["managed-block-unique"])
+            self.assertFalse(checks["managed-block-present"])
+
     def test_verify_detects_changed_managed_file_signature(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1678,6 +1765,41 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(target.read_text(encoding="utf-8"), "user edit after install\n")
             self.assertIn("skip-conflict", {action["operation"] for action in result["actions"]})
             self.assertNotEqual(verify(root)["status"], "no-managed-artifacts")
+
+    def test_uninstall_refuses_stale_planned_delete(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                install_mode="copy",
+                runtime_profile="none",
+            )
+            apply_plan(root, plan, dry_run=False)
+            target = root / ".claude" / "skills" / "zotero" / "SKILL.md"
+            state_item = next(
+                item for item in load_state(root)["artifacts"]
+                if item["artifact"] == str(target)
+            )
+            action = plan_uninstall_action(state_item, root)
+            self.assertEqual(action["operation"], "delete-created")
+            target.write_text("changed after uninstall planning\n", encoding="utf-8")
+
+            result = apply_uninstall_action(action, root)
+
+            self.assertEqual(result["operation"], "skip-conflict")
+            self.assertEqual(result["reason"], "artifact changed since uninstall planning")
+            self.assertTrue(target.exists())
+            self.assertEqual(target.read_text(encoding="utf-8"), "changed after uninstall planning\n")
 
     def test_uninstall_unmanages_adopted_file_without_deleting_it(self) -> None:
         manifests = load_manifests()
