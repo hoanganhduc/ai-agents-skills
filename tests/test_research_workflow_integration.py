@@ -297,6 +297,7 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             "workspace-rearranger",
             "intent-interview",
             "decision-doubt-loop",
+            "source-grounded-decisions",
         }
         self.assertEqual(skills, expected)
 

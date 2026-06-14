@@ -73,6 +73,15 @@
       "optional_capabilities": [],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "source-grounded-decisions": {
+      "description": "Ground version- and spec-sensitive decisions in cited authoritative sources; flag when unverified.",
+      "profiles": ["serious-research", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": [],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
     "research-report-reviewer": {
       "description": "Review draft research reports for unsupported claims, ambiguity, and evidence gaps.",
       "profiles": ["research-core", "serious-research", "full-research"],

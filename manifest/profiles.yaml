@@ -40,7 +40,8 @@
         "formal-skeleton-helper",
         "workspace-rearranger",
         "intent-interview",
-        "decision-doubt-loop"
+        "decision-doubt-loop",
+        "source-grounded-decisions"
       ]
     },
     "writing-workflow": {
@@ -147,7 +148,8 @@
         "self-improving-agent",
         "session-logs",
         "intent-interview",
-        "decision-doubt-loop"
+        "decision-doubt-loop",
+        "source-grounded-decisions"
       ]
     }
   },
