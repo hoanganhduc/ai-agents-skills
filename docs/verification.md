@@ -42,12 +42,12 @@ make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill self-improving-agent --platform-shape all"
 make runtime-smoke
 make runtime-smoke ARGS="--skills self-improving-agent"
-make install ARGS="--profile research-core --apply --post-install-smoke strict"
+make install ARGS="--profile research-core --apply --root <fake-root> --post-install-smoke strict"
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
 make verify ARGS="--skills zotero,docling --root <fake-or-real-root>"
 make smoke ARGS="--skill zotero --root <fake-or-real-root>"
-python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
+python3 -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
 Fast local maintainer checks:
@@ -68,9 +68,9 @@ make static-check
 make sanitize-check
 make test
 make docs-check
-python -m pip install networkx psutil
+python3 -m pip install networkx psutil
 make runtime-smoke
-python -m pip install -r docs/requirements.txt
+python3 -m pip install -r docs/requirements.txt
 make docs-site
 make lifecycle-test ARGS="--matrix stress --platform-shape all"
 ```

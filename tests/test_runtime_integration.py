@@ -18,10 +18,10 @@ from installer.ai_agents_skills.agents import detect_agents, target_for
 from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
 from installer.ai_agents_skills.discovery import current_platform
-from installer.ai_agents_skills.lifecycle import uninstall
+from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
-from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with_runtime_file, runtime_inventory
+from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with_runtime_file, runtime_denied_patterns, runtime_inventory
 from installer.ai_agents_skills.runtime_smoke import (
     run_installed_runtime_smoke,
     runtime_command_target,
@@ -65,6 +65,11 @@ def create_fake_tool(root: Path, name: str, args_path: Path, *, cwd_path: Path |
 
 
 class RuntimeIntegrationTests(unittest.TestCase):
+    def test_runtime_denied_patterns_match_manifest(self) -> None:
+        manifests = load_manifests()
+
+        self.assertEqual(tuple(manifests["runtime"]["denied_patterns"]), runtime_denied_patterns())
+
     def test_runtime_files_are_root_scoped_and_installed_with_runtime_backed_skill(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -99,6 +104,44 @@ class RuntimeIntegrationTests(unittest.TestCase):
             uninstall_result = uninstall(root, skills={"graph-verifier"}, dry_run=False)
             self.assertTrue(any(item["artifact_type"] == "runtime-file" for item in uninstall_result["removed"]))
             self.assertFalse((root / ".codex" / "runtime" / "workspace" / "skills" / "graph-verifier" / "graph_verifier.py").exists())
+
+    def test_rollback_preserves_runtime_runner_when_other_runtime_skill_remains(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            agents = detect_agents(root, ["codex"])
+            graph_plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                agents,
+                platform="linux",
+            )
+            graph_result = apply_plan(root, graph_plan, dry_run=False)
+            formal_plan = build_plan(
+                root,
+                manifests,
+                ["formal-skeleton-helper"],
+                agents,
+                platform="linux",
+            )
+            apply_plan(root, formal_plan, dry_run=False)
+
+            runtime_root = root / ".codex" / "runtime"
+            runner = runtime_root / "run_skill.sh"
+            graph_runtime = runtime_root / "workspace" / "skills" / "graph-verifier" / "graph_verifier.py"
+            formal_runtime = runtime_root / "workspace" / "skills" / "formal-skeleton-helper" / "run_formal_skeleton.sh"
+            self.assertTrue(runner.is_file())
+            self.assertTrue(graph_runtime.is_file())
+            self.assertTrue(formal_runtime.is_file())
+
+            rollback(root, run_id=graph_result["run_id"], dry_run=False)
+
+            self.assertTrue(runner.is_file())
+            self.assertFalse(graph_runtime.exists())
+            self.assertTrue(formal_runtime.is_file())
+            self.assertEqual(verify(root)["status"], "ok")
 
     def test_windows_runtime_plan_filters_posix_runtime_files(self) -> None:
         manifests = load_manifests()

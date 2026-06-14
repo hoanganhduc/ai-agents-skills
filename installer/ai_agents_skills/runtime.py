@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import json
 import os
 import shutil
 import stat
 import tempfile
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,7 @@ from .state import artifact_signature, sha256_file
 
 RUNTIME_SOURCE_ROOT = REPO_ROOT / "canonical" / "runtime"
 TEXT_SUFFIXES = {".bat", ".json", ".md", ".ps1", ".py", ".sh", ".toml", ".txt", ".yaml", ".yml"}
-CONFIG_DENIED_PATTERNS = (
+FALLBACK_DENIED_PATTERNS = (
     ".env",
     "**/.env",
     "*.env",
@@ -87,8 +89,6 @@ CONFIG_DENIED_PATTERNS = (
     "**/*.timer",
     "*.plist",
     "**/*.plist",
-)
-STATE_DENIED_PATTERNS = (
     "workspace/data/**",
     "**/reports/**",
     "**/__pycache__/**",
@@ -264,6 +264,7 @@ def runtime_file_action(
         "source_sha256": expected_hash,
         "canonical_source_sha256": source_hash,
         "current_hash": current_hash if target.exists() else None,
+        "current_signature": artifact_signature(target),
         "mode": entry.get("mode", "0644"),
         "newline_policy": entry.get("newline"),
         "file_type": entry.get("type", "text"),
@@ -326,13 +327,24 @@ def runtime_source_block_reason(source: Path, entry: dict[str, Any]) -> str | No
     return None
 
 
+@lru_cache(maxsize=1)
+def runtime_denied_patterns() -> tuple[str, ...]:
+    manifest_path = REPO_ROOT / "manifest" / "runtime.yaml"
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        return FALLBACK_DENIED_PATTERNS
+    patterns = data.get("denied_patterns")
+    if not isinstance(patterns, list) or not all(isinstance(item, str) and item for item in patterns):
+        return FALLBACK_DENIED_PATTERNS
+    return tuple(patterns)
+
+
 def runtime_path_denied(relative: str) -> bool:
     normalized = relative.replace("\\", "/")
-    if any(fnmatch.fnmatch(normalized, pattern) for pattern in STATE_DENIED_PATTERNS):
-        return True
     if runtime_example_config(normalized):
         return False
-    return any(fnmatch.fnmatch(normalized, pattern) for pattern in CONFIG_DENIED_PATTERNS)
+    return any(fnmatch.fnmatch(normalized, pattern) for pattern in runtime_denied_patterns())
 
 
 def runtime_example_config(relative: str) -> bool:
@@ -559,6 +571,17 @@ def preflight_runtime_action(root: Path, action: dict[str, Any]) -> None:
             raise ValueError(f"refusing to apply runtime artifact through symlinked parent: {parent}")
         if not parent.is_dir():
             raise ValueError(f"refusing to apply runtime artifact through non-directory parent: {parent}")
+    if action.get("operation") != "skip" and not planned_runtime_state_unchanged(path, action):
+        raise ValueError(f"refusing to apply runtime artifact because target changed since plan: {path}")
+
+
+def planned_runtime_state_unchanged(path: Path, action: dict[str, Any]) -> bool:
+    planned = action.get("current_signature")
+    if planned is None:
+        return True
+    from .state import signatures_match
+
+    return signatures_match(artifact_signature(path), planned)
 
 
 def existing_parents(path: Path, root: Path) -> list[Path]:

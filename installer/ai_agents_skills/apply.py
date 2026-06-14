@@ -122,6 +122,15 @@ def preflight_action(root: Path, action: dict[str, Any]) -> None:
             or not resolved_path_within(root, legacy_path.parent)
         ):
             raise ValueError(f"refusing to remove legacy path outside selected root: {path}")
+    if action.get("operation") != "skip" and not planned_state_unchanged(path, action):
+        raise ValueError(f"refusing to apply artifact because target changed since plan: {path}")
+
+
+def planned_state_unchanged(path: Path, action: dict[str, Any]) -> bool:
+    planned = action.get("current_signature")
+    if planned is None:
+        return True
+    return signatures_match(artifact_signature(path), planned)
 
 
 def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:

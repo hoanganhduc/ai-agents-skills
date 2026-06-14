@@ -1,4 +1,4 @@
-# agent_group_discuss
+# agent-group-discuss
 
 This is the Codex-adapted multi-agent discussion and review orchestrator.
 

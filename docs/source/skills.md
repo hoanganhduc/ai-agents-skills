@@ -14,7 +14,7 @@ make lifecycle-test ARGS="--scenario clean-auto --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
 ```
 
-Installation is partial by default: selecting one skill installs only that skill, its support files when the selected install mode needs them, and the managed instruction block for that installed or adopted skill. Skipped skills do not receive instruction blocks. Default `auto` mode links Claude skill files to `canonical/skills`, while Codex and DeepSeek receive reference adapters unless native loader evidence justifies a different policy. Explicit `symlink`, `reference`, and `copy` modes force the same strategy for every agent. In `reference` mode, the installed `SKILL.md` is an adapter that points back to this repo; support files remain in `canonical/skills/<skill>/` instead of being copied into the agent home.
+Installation is partial by default: selecting one skill installs only that skill, its support files when the selected install mode needs them, and the managed instruction block for that installed or adopted skill. Skipped skills do not receive instruction blocks. Default `auto` mode links Claude skill files to `canonical/skills`, while Codex, DeepSeek, and Copilot receive reference adapters unless native loader evidence justifies a different policy. OpenCode and Antigravity receive copied regular files by default. Explicit `symlink`, `reference`, and `copy` modes force the same strategy for every agent. In `reference` mode, the installed `SKILL.md` is an adapter that points back to this repo; support files remain in `canonical/skills/<skill>/` instead of being copied into the agent home.
 
 Some older local skill names are accepted as migration aliases. For example, `deep-research` maps to `deep-research-workflow`, `smart_model_router` maps to `model-router`, and `openclaw-research` maps to `source-research`. OpenClaw-style `self-improvement` and `self_improvement` map to `self-improving-agent`. Use `audit-system` and a reviewed `--migrate` plan before replacing legacy alias directories.
 
@@ -61,7 +61,7 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `submission-venue-selector` | Evidence-gated journal and conference venue selection for scholarly drafts; deliverable rankings require comparator-paper evidence. | `serious-research`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
-| `vnu-eoffice` | Use VNU eOffice functions from any supported agent target: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram. |  |
+| `vnu-eoffice` | Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram. |  |
 | `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `serious-research`, `full-research` |
 

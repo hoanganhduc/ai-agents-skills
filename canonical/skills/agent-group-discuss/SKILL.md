@@ -86,7 +86,7 @@ OpenClaw concepts must be translated to Codex tools as follows:
 - OpenClaw resume session -> Codex `resume_agent`
 - OpenClaw terminate/cleanup -> Codex `close_agent`
 - OpenClaw local execution -> Codex `functions.exec_command`
-- OpenClaw proof or graph computation helpers -> Codex `sagemath`, `graph_verifier`, `formal_skeleton_helper`, or local `functions.exec_command`
+- OpenClaw proof or graph computation helpers -> Codex `sagemath`, `graph-verifier`, `formal-skeleton-helper`, or local `functions.exec_command`
 
 ## Participant execution model
 
@@ -581,8 +581,8 @@ If a decisive counterexample or fatal gap is found:
 When a template calls for computational or formal checking, prefer:
 
 - `sagemath` for heavy graph-theoretic or algebraic computation
-- `graph_verifier` for lightweight graph checks
-- `formal_skeleton_helper` for Lean-style scaffolding
+- `graph-verifier` for lightweight graph checks
+- `formal-skeleton-helper` for Lean-style scaffolding
 - `functions.exec_command` for local scripts or test harnesses
 
 Use the role-vs-orchestrator computation split from `EXECUTION.md` so verification stays independent when the template requires it.

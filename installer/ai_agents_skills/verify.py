@@ -145,7 +145,9 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         checks.append({"name": "instruction-regular-file", "ok": instruction_regular})
     if artifact.get("artifact_type") in {"instruction-block", "management-notice"} and instruction_regular:
         text = path.read_text(encoding="utf-8", errors="replace")
-        managed_block = extract_managed_block(text, block_id(artifact["skill"]))
+        identifier = block_id(artifact["skill"])
+        checks.append({"name": "managed-block-unique", "ok": managed_block_unique(text, identifier)})
+        managed_block = extract_managed_block(text, identifier)
         checks.append({"name": "managed-block-present", "ok": managed_block is not None})
         expected_block = artifact.get("managed_block")
         if expected_block is not None:
@@ -221,6 +223,8 @@ def verify_symlink_artifact(path: Path, artifact: dict[str, Any], checks: list[d
 def extract_managed_block(text: str, identifier: str) -> str | None:
     start = f"<!-- {identifier}:start -->"
     end = f"<!-- {identifier}:end -->"
+    if not managed_block_unique(text, identifier):
+        return None
     start_index = text.find(start)
     if start_index == -1:
         return None
@@ -228,6 +232,18 @@ def extract_managed_block(text: str, identifier: str) -> str | None:
     if end_index == -1:
         return None
     return text[start_index:end_index + len(end)]
+
+
+def managed_block_unique(text: str, identifier: str) -> bool:
+    start = f"<!-- {identifier}:start -->"
+    end = f"<!-- {identifier}:end -->"
+    start_count = text.count(start)
+    end_count = text.count(end)
+    return (
+        start_count == 1
+        and end_count == 1
+        and text.find(start) < text.find(end)
+    )
 
 
 def skill_metadata_valid(text: str, skill: str) -> bool:

@@ -38,7 +38,10 @@
       "enum": [
         "codex",
         "claude",
-        "deepseek"
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity"
       ]
     },
     "agent_version": {

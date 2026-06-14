@@ -58,5 +58,5 @@ cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.loc
 
 - Use this after a digest run, not as a replacement for the digest itself.
 - Respect `--source` and `--min-score` filters instead of broad requests when the user wants a narrower batch.
-- If the user wants actual external retrieval, follow the manifest or request output into `getscipapers_requester`.
+- If the user wants actual external retrieval, follow the manifest or request output into `getscipapers-requester`.
 - `scan` is the dry-run discovery step; `request` is the transition into manifest/watch creation.

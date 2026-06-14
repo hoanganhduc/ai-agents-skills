@@ -317,7 +317,7 @@ Output structure guidance:
 - Use `docling` before or between Phases 1 and 2 when local PDFs, HTML exports, or office documents need structure-aware parsing.
 - Use `database-lookup` during Phase 1 when the task depends on structured public database records rather than general web synthesis.
 - Use `paper-lookup` during Phase 1 when external literature metadata/discovery is needed after the local library-first workflow.
-- Use `research_digest_wrapper` or `rss_news_digest` to seed Phase 1 when the task starts from tracked topics, alerts, or feeds.
+- Use `research-digest-wrapper` or `rss-news-digest` to seed Phase 1 when the task starts from tracked topics, alerts, or feeds.
 - Use `tikz-draw` only after Phase 2 when there is an explicit figure request or a clear post-analysis figure brief to execute.
 - Use `formal-skeleton-helper`, `lean-formalization-intake`,
   `lean-explore-mcp`, and `lean-strict-verification-gate` only for optional
@@ -333,7 +333,7 @@ Output structure guidance:
 
 - Stay in this skill for single-agent phased deep research.
 - Escalate to `prose` when the user explicitly wants structured multi-agent research-and-synthesis orchestration.
-- Escalate to `agent_group_discuss` when the user wants panel-style discussion, debate, or multi-agent research perspectives.
+- Escalate to `agent-group-discuss` when the user wants panel-style discussion, debate, or multi-agent research perspectives.
 
 ## Guardrails
 

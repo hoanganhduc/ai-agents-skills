@@ -429,6 +429,7 @@ def artifact_action(
             "artifact_type": "management-notice",
             "artifact_id": f"{artifact_type}:{name}",
             "artifact_name": name,
+            "current_signature": artifact_signature(agent.instructions_file),
         }
         if reason:
             action["reason"] = reason
@@ -724,6 +725,7 @@ def classify_file_action(
         "install_mode": install_mode,
         "mode_reason": mode_reason,
         "capability_evidence": capability_evidence,
+        "current_signature": artifact_signature(path),
     }
     if source_path is not None:
         result["source_path"] = str(source_path)
@@ -774,6 +776,7 @@ def legacy_removal_action(
             "operation": "remove-obsolete",
             "artifact_type": "legacy-skill-file",
             "installed_signature": artifact_signature(legacy_path),
+            "current_signature": artifact_signature(legacy_path),
             "reason": "legacy alias removed after canonical migration",
         }
     return {
@@ -786,6 +789,7 @@ def legacy_removal_action(
         "classification": "legacy",
         "operation": "remove-legacy",
         "artifact_type": "legacy-skill-dir",
+        "current_signature": artifact_signature(legacy_path.parent),
         "reason": "legacy alias removed after canonical migration",
     }
 
@@ -861,6 +865,7 @@ def classify_instruction_block(
         "classification": classification,
         "operation": operation,
         "artifact_type": "instruction-block",
+        "current_signature": artifact_signature(agent.instructions_file),
     }
     if reason:
         action["reason"] = reason

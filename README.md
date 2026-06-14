@@ -245,8 +245,8 @@ dependency-bound artifacts should also install their backing skills.
 - `make <target> ARGS="..."` is the normal Linux/macOS wrapper.
 - `make.bat <command> ...` is the normal native Windows wrapper.
 - `./installer/bootstrap.sh <command> ...` and
-  `python -m installer.ai_agents_skills <command> ...` are direct entrypoints
-  for installer CLI commands when debugging wrapper behavior.
+  `python3 -m installer.ai_agents_skills <command> ...` are direct POSIX
+  entrypoints for installer CLI commands when debugging wrapper behavior.
 - Installer CLI commands include `doctor`, `precheck`, `audit-system`, `plan`,
   `install`, `verify`, `smoke`, `rollback`, `uninstall`, `runtime-smoke`,
   `lifecycle-test`, `list-skills`, `list-artifacts`, `describe`, and
@@ -420,6 +420,6 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `submission-venue-selector` | Evidence-gated journal and conference venue selection for scholarly drafts; deliverable rankings require comparator-paper evidence. | `serious-research`, `full-research` |
 | `tikz-draw` | Structural TikZ figure generation, compile, review, and semantic checks. | `figure`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
-| `vnu-eoffice` | Use VNU eOffice functions from any supported agent target: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram. |  |
+| `vnu-eoffice` | Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram. |  |
 | `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `serious-research`, `full-research` |

@@ -69,13 +69,14 @@ def rollback(
     dry_run: bool = True,
 ) -> dict[str, Any]:
     state = load_state(root)
+    lifecycle_scope = state.get("artifacts", [])
     if run_id:
         actions = load_run_actions(root, state, run_id)
     else:
-        actions = state.get("artifacts", [])
+        actions = lifecycle_scope
     targets = [
-        item for item in filter_artifacts(actions, skills, agents, artifacts)
-        if item.get("managed") and item.get("applied", True)
+        item for item in filter_artifacts(actions, skills, agents, artifacts, lifecycle_scope=lifecycle_scope)
+        if rollback_target_item(item)
     ]
     mark_created_instruction_file_groups(targets)
     if dry_run:
@@ -106,6 +107,7 @@ def filter_artifacts(
     skills: set[str] | None,
     agents: set[str] | None,
     artifact_ids: set[str] | None = None,
+    lifecycle_scope: list[Any] | None = None,
 ) -> list[dict[str, Any]]:
     selected = []
     for item in artifacts:
@@ -122,7 +124,15 @@ def filter_artifacts(
         selected.append(item)
     if artifact_ids:
         return selected
-    return expand_runtime_lifecycle_scope(artifacts, selected)
+    return expand_runtime_lifecycle_scope(lifecycle_scope or artifacts, selected)
+
+
+def rollback_target_item(item: dict[str, Any]) -> bool:
+    if item.get("managed") is not True:
+        return False
+    if item.get("applied", True):
+        return True
+    return item.get("uninstall", {}).get("action") == "unmanage-only"
 
 
 def expand_runtime_lifecycle_scope(artifacts: list[Any], selected: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -163,6 +173,11 @@ def expand_runtime_lifecycle_scope(artifacts: list[Any], selected: list[dict[str
         item for item in runtime_skill_records
         if item.get("key") not in selected_keys
     ]
+    if remaining_runtime_skills:
+        return [
+            item for item in selected
+            if not (item.get("artifact_type") == "runtime-file" and item.get("skill") == "runtime-runner")
+        ]
     if not remaining_runtime_skills:
         for item in runtime_runner_records:
             if item.get("key") not in selected_keys:
@@ -266,14 +281,18 @@ def plan_block_uninstall(item: dict[str, Any]) -> str:
     path = Path(item["artifact"])
     if not path.exists():
         return "forget-missing"
+    text = path.read_text(encoding="utf-8", errors="replace")
+    issue = managed_block_issue(text, item["skill"])
+    if issue == "missing":
+        return "forget-missing"
+    if issue is not None:
+        return "skip-conflict"
     if (
         item.get("uninstall", {}).get("action") == "restore-backup"
         and signatures_match(artifact_signature(path), item.get("installed_signature"))
     ):
-        text_for_count = path.read_text(encoding="utf-8", errors="replace")
-        if text_for_count.count("<!-- ai-agents-skills:") == 2:
+        if text.count("<!-- ai-agents-skills:") == 2:
             return "restore-backup"
-    text = path.read_text(encoding="utf-8", errors="replace")
     current_block = extract_managed_block(text, item["skill"])
     if current_block is None:
         return "forget-missing"
@@ -301,6 +320,14 @@ def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> 
     if root is not None and not path_within(root, Path(action["artifact"])):
         result["operation"] = "skip-conflict"
         result["reason"] = "artifact path outside selected root"
+        return result
+    if (
+        operation in {"delete-created", "restore-backup", "restore-removed"}
+        and action.get("artifact_type") not in {"instruction-block", "management-notice"}
+        and not uninstall_pre_state_unchanged(action)
+    ):
+        result["operation"] = "skip-conflict"
+        result["reason"] = "artifact changed since uninstall planning"
         return result
     if operation in {"unmanage-only", "forget-missing"}:
         result["completed"] = True
@@ -378,14 +405,15 @@ def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) 
     start = f"<!-- {marker}:start -->"
     end = f"<!-- {marker}:end -->"
     text = path.read_text(encoding="utf-8")
-    if start in text and end in text:
-        before, rest = text.split(start, 1)
-        _, after = rest.split(end, 1)
-        cleaned = (before.rstrip() + "\n" + after.lstrip()).strip()
-        if delete_if_empty and not cleaned:
-            path.unlink()
-            return
-        write_text_atomic(path, cleaned + "\n")
+    if managed_block_issue(text, skill) is not None:
+        return
+    before, rest = text.split(start, 1)
+    _, after = rest.split(end, 1)
+    cleaned = (before.rstrip() + "\n" + after.lstrip()).strip()
+    if delete_if_empty and not cleaned:
+        path.unlink()
+        return
+    write_text_atomic(path, cleaned + "\n")
 
 
 def remove_managed_block_precise(item: dict[str, Any]) -> None:
@@ -422,6 +450,8 @@ def managed_block_span(text: str, skill: str) -> tuple[int, int] | None:
     marker = f"ai-agents-skills:{skill}"
     start_marker = f"<!-- {marker}:start -->"
     end_marker = f"<!-- {marker}:end -->"
+    if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+        return None
     start = text.find(start_marker)
     if start == -1:
         return None
@@ -431,7 +461,24 @@ def managed_block_span(text: str, skill: str) -> tuple[int, int] | None:
     return start, end + len(end_marker)
 
 
+def managed_block_issue(text: str, skill: str) -> str | None:
+    marker = f"ai-agents-skills:{skill}"
+    start_marker = f"<!-- {marker}:start -->"
+    end_marker = f"<!-- {marker}:end -->"
+    start_count = text.count(start_marker)
+    end_count = text.count(end_marker)
+    if start_count == 0 and end_count == 0:
+        return "missing"
+    if start_count != 1 or end_count != 1:
+        return "malformed-or-duplicated"
+    if text.find(start_marker) > text.find(end_marker):
+        return "malformed-or-duplicated"
+    return None
+
+
 def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
+    if item.get("uninstall", {}).get("action") == "unmanage-only":
+        return
     path = Path(item["artifact"])
     if item.get("artifact_type") in {"instruction-block", "management-notice"}:
         previous = item.get("previous_state_artifact")
@@ -599,6 +646,8 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
         openclaw_block = real_openclaw_artifact_block_reason(root, item, path, operation="rollback")
         if openclaw_block is not None:
             raise ValueError(openclaw_block)
+        if item.get("uninstall", {}).get("action") == "unmanage-only":
+            continue
         backup = item.get("backup")
         if backup and not path_within(state_dir(root) / "backups", Path(backup)):
             raise ValueError(f"refusing rollback because backup is outside installer state: {backup}")
@@ -622,6 +671,11 @@ def preflight_rollback_targets(root: Path, state: dict[str, Any], targets: list[
             raise ValueError(f"refusing rollback because instruction file is missing: {path}")
         text = path.read_text(encoding="utf-8", errors="replace")
         for item in group:
+            issue = managed_block_issue(text, item["skill"])
+            if issue == "missing":
+                raise ValueError(f"refusing rollback because managed block is missing: {path}")
+            if issue is not None:
+                raise ValueError(f"refusing rollback because managed block is malformed or duplicated: {path}")
             current_block = extract_managed_block(text, item["skill"])
             expected_block = item.get("managed_block")
             if current_block is None:
@@ -657,6 +711,13 @@ def backup_integrity_ok(item: dict[str, Any], backup_path: Path) -> bool:
     if expected is None:
         return True
     return signatures_match(artifact_signature(backup_path), expected)
+
+
+def uninstall_pre_state_unchanged(action: dict[str, Any]) -> bool:
+    planned = action.get("current_signature")
+    if planned is None:
+        return True
+    return signatures_match(artifact_signature(Path(action["artifact"])), planned)
 
 
 def strip_managed_blocks(text: str, skills: list[str]) -> str:

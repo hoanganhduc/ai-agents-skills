@@ -53,6 +53,9 @@
               "codex",
               "claude",
               "deepseek",
+              "copilot",
+              "opencode",
+              "antigravity",
               "unknown"
             ]
           },
@@ -61,6 +64,9 @@
               "codex",
               "claude",
               "deepseek",
+              "copilot",
+              "opencode",
+              "antigravity",
               "all",
               "none"
             ]

@@ -331,8 +331,8 @@ dependency-bound artifacts should also install their backing skills.
 - `make <target> ARGS="..."` is the normal Linux/macOS wrapper.
 - `make.bat <command> ...` is the normal native Windows wrapper.
 - `./installer/bootstrap.sh <command> ...` and
-  `python -m installer.ai_agents_skills <command> ...` are direct entrypoints
-  for installer CLI commands when debugging wrapper behavior.
+  `python3 -m installer.ai_agents_skills <command> ...` are direct POSIX
+  entrypoints for installer CLI commands when debugging wrapper behavior.
 - Installer CLI commands include `doctor`, `precheck`, `audit-system`, `plan`,
   `install`, `verify`, `smoke`, `rollback`, `uninstall`, `runtime-smoke`,
   `lifecycle-test`, `list-skills`, `list-artifacts`, `describe`, and
@@ -466,8 +466,9 @@ def skills_text(manifests: dict[str, Any]) -> str:
         "them, and the managed instruction block for that installed or adopted "
         "skill. Skipped skills do not receive instruction blocks. Default "
         "`auto` mode links Claude skill files to `canonical/skills`, while "
-        "Codex and DeepSeek receive reference adapters unless native loader "
-        "evidence justifies a different policy. Explicit `symlink`, "
+        "Codex, DeepSeek, and Copilot receive reference adapters unless native "
+        "loader evidence justifies a different policy. OpenCode and Antigravity "
+        "receive copied regular files by default. Explicit `symlink`, "
         "`reference`, and `copy` modes force the same strategy for every "
         "agent. In `reference` mode, the installed `SKILL.md` is an adapter "
         "that points back to this repo; support files remain in "
@@ -848,12 +849,12 @@ make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill self-improving-agent --platform-shape all"
 make runtime-smoke
 make runtime-smoke ARGS="--skills self-improving-agent"
-make install ARGS="--profile research-core --apply --post-install-smoke strict"
+make install ARGS="--profile research-core --apply --root <fake-root> --post-install-smoke strict"
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
 make verify ARGS="--skills zotero,docling --root <fake-or-real-root>"
 make smoke ARGS="--skill zotero --root <fake-or-real-root>"
-python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
+python3 -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
 Fast local maintainer checks:
@@ -874,9 +875,9 @@ make static-check
 make sanitize-check
 make test
 make docs-check
-python -m pip install networkx psutil
+python3 -m pip install networkx psutil
 make runtime-smoke
-python -m pip install -r docs/requirements.txt
+python3 -m pip install -r docs/requirements.txt
 make docs-site
 make lifecycle-test ARGS="--matrix stress --platform-shape all"
 ```
@@ -2700,8 +2701,8 @@ requires `pwsh` or `powershell.exe`. The direct Python entrypoint is useful for
 debugging wrapper behavior:
 
 ```bash
-python -m installer.ai_agents_skills help
-python -m installer.ai_agents_skills describe zotero
+python3 -m installer.ai_agents_skills help
+python3 -m installer.ai_agents_skills describe zotero
 ```
 
 Use `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` to
@@ -2769,9 +2770,10 @@ make fake-root-lifecycle ARGS="--profile research-core --platform-shape all"
 ```
 
 Fake-root plans detect only agent homes that exist under the fake root. Create
-`.codex`, `.claude`, `.deepseek`, `.copilot`, or `.config/opencode` inside the
-fake root for the agents you want to exercise; a fake root with no agent homes
-produces no install actions, no managed installer state, and later verification may report
+`.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`,
+`.gemini/antigravity-cli`, or `.openclaw` inside the fake root for the agents
+you want to exercise; a fake root with no agent homes produces no install actions,
+no managed installer state, and later verification may report
 `no-managed-artifacts`.
 
 Real-system writes should be a final step after reviewing `plan` output:
@@ -2800,7 +2802,7 @@ Before promoting files from an existing local runtime into this repo, inspect
 that source with the read-only inventory command:
 
 ```bash
-python -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
+python3 -m installer.ai_agents_skills --json runtime-inventory --source-root <runtime-root>
 ```
 
 The inventory denies configs, databases, caches, downloaded documents, SQLite
@@ -3154,7 +3156,7 @@ Rendered artifact behavior differs by agent:
 
 | Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | OpenClaw |
 |---|---|---|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Flat Markdown reference adapter in `~/.gemini/antigravity-cli/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copied flat Markdown skill file in `~/.gemini/antigravity-cli/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
 | Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Not supported. |
 | Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Not supported. |
 | Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Not supported; OpenClaw instruction files are not modified. |
@@ -3229,6 +3231,12 @@ Use the read-only audit before configuring or changing library-backed skills:
 make library-profile-audit ARGS="--profile library --json"
 ```
 
+Installing a local-library skill installs agent instructions and managed helper
+artifacts only. It does not mutate Zotero or Calibre libraries by itself.
+Library writes happen later through the runtime skill workflow, with explicit
+library/profile selection and the skill's own dry-run, backup, and verification
+gates.
+
 Mounted Windows profiles can be inspected from Linux, but that evidence is
 degraded for native Windows execution:
 
@@ -3302,15 +3310,15 @@ explicit library path. Guarded direct SQLite is fallback only. Windows-mounted
 or cloud-backed Calibre libraries are read-only from Linux unless explicitly
 opted in with backup, locking, dry-run, and post-write verification.
 
-Target integration rules:
+Audit boundary:
 
-- Choose one canonical repo per run and record its path plus commit/hash.
-- Generate an inventory of every selected Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity,
-  and fake-root OpenClaw home before writing.
-- Store generated profile manifests with checksums/version stamps in selected
-  target homes.
-- Keep secrets and credentials outside this repo.
-- Put safety gates in the shared runtime/core so adapters cannot bypass them.
+- `library-profile-audit` is read-only. It reports discovered candidates,
+  validation evidence, profile status, and recommended next checks.
+- The audit does not write target inventories, profile manifests, or selected
+  paths into agent homes.
+- Any future workflow that writes profile manifests must choose one canonical
+  repo per run, record its path plus commit/hash, keep secrets outside this repo,
+  and put safety gates in shared runtime/core so adapters cannot bypass them.
 """
 
 
@@ -3437,10 +3445,10 @@ and removes the legacy alias directory.
 
 Default installs use `--install-mode auto`, resolved per agent. Claude receives
 symlinked skill files when the filesystem supports them. Codex, DeepSeek, and
-Antigravity receive reference adapters by default: Codex ignores
-file-symlinked user `SKILL.md` files, DeepSeek native symlinked skill loading
-has not been verified, and Antigravity uses documented flat global Markdown
-skill files under `~/.gemini/antigravity-cli/skills/`. Use
+Copilot receive reference adapters by default because their symlinked skill
+loading is not assumed. OpenCode and Antigravity receive copied regular files;
+Antigravity uses documented flat global Markdown skill files under
+`~/.gemini/antigravity-cli/skills/`. Use
 `--install-mode symlink` only when you intentionally want to force links for
 every agent. Use `--install-mode reference` to force adapters for every agent.
 If an agent requires regular files in its settings directory, use

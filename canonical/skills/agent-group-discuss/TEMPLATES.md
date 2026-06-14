@@ -329,7 +329,7 @@ Round 3:
 
 - orchestrator runs verification using:
   - `sagemath` for brute force, invariant checks, and enumeration
-  - `graph_verifier` for lighter sanity checks
+  - `graph-verifier` for lighter sanity checks
   - structural checks for graph-class membership and size claims
   - bibliographic checks
   - formal checks when formalization is part of the task
@@ -406,7 +406,7 @@ Round 2:
 
 Codex adaptation:
 
-- use `formal_skeleton_helper` when a scaffold is needed quickly
+- use `formal-skeleton-helper` when a scaffold is needed quickly
 - use local Lean tooling through `functions.exec_command` if the environment supports it
 - distinguish mathematical gaps from formalization friction
 

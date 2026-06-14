@@ -43,7 +43,7 @@ Rendered artifact behavior differs by agent:
 
 | Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | OpenClaw |
 |---|---|---|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Flat Markdown reference adapter in `~/.gemini/antigravity-cli/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copied flat Markdown skill file in `~/.gemini/antigravity-cli/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
 | Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Not supported. |
 | Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Not supported. |
 | Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Not supported; OpenClaw instruction files are not modified. |

@@ -132,7 +132,10 @@
                 "enum": [
                   "codex",
                   "claude",
-                  "deepseek"
+                  "deepseek",
+                  "copilot",
+                  "opencode",
+                  "antigravity"
                 ]
               },
               "path_style": {

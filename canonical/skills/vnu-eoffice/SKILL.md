@@ -1,6 +1,6 @@
 ---
 name: vnu-eoffice
-description: "Use VNU eOffice functions from any supported agent target: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram."
+description: "Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram."
 user-invocable: true
 disable-model-invocation: false
 metadata: {"requires":{"bins":["python3"]}}
@@ -20,19 +20,20 @@ Core rules:
 - If a target adapter provides persisted item numbers, use that adapter's `items` command before resolving an ambiguous follow-up request.
 
 Execution surface:
-- Prefer the installed package CLI: `python -m vnu_eoffice <command>` or `vnu-eoffice <command>`.
+- Prefer the installed package CLI: `python3 -m vnu_eoffice <command>` or `vnu-eoffice <command>`.
+- This skill requires an importable `vnu_eoffice` package/checkout or `vnu-eoffice` executable. If neither is available, report the missing dependency instead of claiming eOffice access.
 - If the package is not importable, use the target's normal project checkout mechanism to make `vnu_eoffice` importable. Do not hardcode a user-specific checkout path into the skill.
 - Target adapters may wrap the package CLI with extra commands such as `latest`, `items`, and item-number download. Keep those adapters outside this canonical skill body.
 - Secrets and Telegram config must come from the existing runtime environment or local secret store. This skill intentionally does not provide secret setup instructions.
 
 Common commands:
-- `python -m vnu_eoffice test-login`
-- `python -m vnu_eoffice monitor --no-notify --limit 60 --pages 2 --min-level MEDIUM`
-- `python -m vnu_eoffice list --limit 10 --pages 2 --modules den,di`
-- `python -m vnu_eoffice search "<keywords>" --limit 10 --pages 2 --modules den,di`
-- `python -m vnu_eoffice search "<keywords>" --limit 5 --pages 2 --has-attach`
-- `python -m vnu_eoffice download --id den:12345`
-- `python -m vnu_eoffice send --id di:98765 --delete-after`
+- `python3 -m vnu_eoffice test-login`
+- `python3 -m vnu_eoffice monitor --no-notify --limit 60 --pages 2 --min-level MEDIUM`
+- `python3 -m vnu_eoffice list --limit 10 --pages 2 --modules den,di`
+- `python3 -m vnu_eoffice search "<keywords>" --limit 10 --pages 2 --modules den,di`
+- `python3 -m vnu_eoffice search "<keywords>" --limit 5 --pages 2 --has-attach`
+- `python3 -m vnu_eoffice download --id den:12345`
+- `python3 -m vnu_eoffice send --id di:98765 --delete-after`
 
 Natural-language routing:
 - "start updates now" or "check updates now": run `monitor --no-notify`, then reply with a titled summary.
