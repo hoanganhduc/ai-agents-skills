@@ -295,6 +295,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             "get-available-resources",
             "formal-skeleton-helper",
             "workspace-rearranger",
+            "intent-interview",
+            "decision-doubt-loop",
         }
         self.assertEqual(skills, expected)
 

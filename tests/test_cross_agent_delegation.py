@@ -100,6 +100,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
                 "agent-group-discuss",
                 "autonomous-research-loop",
                 "autonomous-research-loop-runtime",
+                "decision-doubt-loop",
                 "model-router",
                 "prose",
                 SKILL,

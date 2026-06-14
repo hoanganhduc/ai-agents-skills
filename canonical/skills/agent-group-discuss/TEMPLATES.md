@@ -14,6 +14,7 @@ The user can request a template by name, or the orchestrator can auto-select bas
 | General math/TCS claim, algorithm analysis, combinatorial argument | **Structured Research Team** |
 | Token sliding/jumping, reduction proof, gadget verification, reconfiguration, PSPACE reduction | **Graph Reconfiguration Specialist** |
 | "formalize this lemma", "Lean proof", "fix this sorry", "formalization" | **Lean Formalization Team** |
+| a single high-stakes / boundary / control-flow decision to vet in-flight | **Single-Decision Doubt Review** |
 
 If multiple templates match, prefer the more domain-specific one.
 
@@ -414,3 +415,42 @@ Final output:
 - Lean file or scaffold status
 - list of missing lemmas
 - assessment of whether formalization reveals a gap in the paper proof
+
+---
+
+## Template: Single-Decision Doubt Review
+
+A bounded, in-flight adversarial review of one non-trivial decision (see the `decision-doubt-loop` skill). Independent skeptics try to disprove the decision before it stands; this is not a full manuscript or proof review.
+
+When to use:
+
+- a single decision crosses a boundary, changes control flow, asserts an unprovable property, is high-stakes or irreversible, or carries a research conclusion
+- you want fresh-context skeptics rather than the context that produced the decision
+
+Mode: `review`
+Profile: `premium`
+Interaction: `star`
+
+Roles:
+
+| # | Role | Reasoning | Task |
+|---|------|-----------|------|
+| 1 | Correctness Skeptic | R4 | Reuse the `code-reviewer` (code) or `proof-checker` (argument) lens. Try to show the decision or its reduction is wrong; attack the load-bearing assumption. |
+| 2 | Boundary and Risk Skeptic | R4 | Reuse the `security-reviewer` lens. Find failures at boundaries, on untrusted input, or in irreversible/outward-facing effects. |
+| 3 | Evidence Skeptic | R4 | Reuse the `test-reviewer` (or `paper-reviewer` for research) lens. Demand the evidence: is the claim verified, or assumed? |
+
+Rounds:
+
+Round 1:
+
+- each skeptic, independently, attempts to refute the decision and names its single strongest objection
+
+Round 2:
+
+- orchestrator synthesizes a verdict: STANDS (no objection survives), REVISED (state the change), or BLOCKED (needs user input), with the load-bearing assumption's status
+
+Hard rules:
+
+- skeptics must try to disprove, not approve
+- one decision per run; keep it bounded
+- a surviving decision is recorded as STANDS, not re-litigated

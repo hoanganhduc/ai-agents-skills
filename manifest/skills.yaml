@@ -55,6 +55,24 @@
       "optional_capabilities": [],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
+    "intent-interview": {
+      "description": "Elicit and confirm real intent one question at a time before any brief, spec, or code.",
+      "profiles": ["research-core", "serious-research", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": [],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "decision-doubt-loop": {
+      "description": "In-flight fresh-context adversarial review of a non-trivial decision before it stands.",
+      "profiles": ["serious-research", "full-research", "multi-agent"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "required_dependencies": [],
+      "optional_dependencies": [],
+      "optional_capabilities": [],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
     "research-report-reviewer": {
       "description": "Review draft research reports for unsupported claims, ambiguity, and evidence gaps.",
       "profiles": ["research-core", "serious-research", "full-research"],
