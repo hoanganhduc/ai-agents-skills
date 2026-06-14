@@ -45,6 +45,7 @@
       "artifacts": [
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:operating-discipline",
+        "instruction-doc:delivery-verification-gate",
         "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
@@ -131,6 +132,7 @@
         "template:deep-research-report",
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:operating-discipline",
+        "instruction-doc:delivery-verification-gate",
         "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
@@ -274,6 +276,11 @@
       "operating-discipline": {
         "description": "Always-on cross-task behaviors (surface assumptions, manage confusion, push back, scope discipline, verify) plus an index of which gate to invoke when.",
         "source": "operating-discipline.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
+      "delivery-verification-gate": {
+        "description": "Pre-delivery gate for code/config/automation changes: prove with a seen-to-fail check, confirm no regression, delegate a multi-axis review. Engineering analog of research-verification-gate.",
+        "source": "delivery-verification-gate.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "claim-preserving-writing": {
