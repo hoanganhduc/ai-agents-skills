@@ -44,6 +44,7 @@
       "description": "Agent-readable workflow guidance documents copied outside skill folders.",
       "artifacts": [
         "instruction-doc:engineering-lifecycle",
+        "instruction-doc:operating-discipline",
         "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
@@ -129,6 +130,7 @@
         "template:deep-research-analysis",
         "template:deep-research-report",
         "instruction-doc:engineering-lifecycle",
+        "instruction-doc:operating-discipline",
         "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
@@ -267,6 +269,11 @@
       "engineering-lifecycle": {
         "description": "Spec-plan-tasks-implement-verify lifecycle guide.",
         "source": "engineering-lifecycle.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
+      "operating-discipline": {
+        "description": "Always-on cross-task behaviors (surface assumptions, manage confusion, push back, scope discipline, verify) plus an index of which gate to invoke when.",
+        "source": "operating-discipline.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "claim-preserving-writing": {
