@@ -221,7 +221,7 @@ def antigravity_native_scaffold_actions(
             "ai-agents-skills",
             {
                 "name": "ai-agents-skills",
-                "version": "0.1.0",
+                "version": "0.1.1",
                 "description": "Managed ai-agents-skills plugin payload for Antigravity CLI.",
                 "author": "ai-agents-skills",
                 "components": ["skills", "agents", "rules", "templates", "tools", "mcp", "hooks"],
