@@ -612,6 +612,7 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
     lines.extend(current_config_dependency_sections(manifests))
     lines.extend(docling_runtime_notes())
     lines.extend(slides_to_video_runtime_notes())
+    lines.extend(manim_math_animation_runtime_notes())
     lines.extend(
         [
             "",
@@ -723,6 +724,35 @@ def slides_to_video_runtime_notes() -> list[str]:
         "filtergraph building, captions, clip args, and the approval gate) with no",
         "network, package install, ffmpeg, or TTS. Run `doctor` to report whether",
         "ffmpeg, fonts, and the venv packages are present before a real render.",
+    ]
+
+
+def manim_math_animation_runtime_notes() -> list[str]:
+    return [
+        "",
+        "## Manim Math Animation Runtime Notes",
+        "",
+        "`manim-math-animation` is the optional Manim companion to slides-to-video.",
+        "From a JSON scene spec (equations + optional title + emphasis) it generates",
+        "a Manim scene and renders a SILENT clip normalized to the slides-to-video",
+        "canonical profile (resolution, fps, yuv420p, silent 48 kHz stereo AAC), so",
+        "the clip splices into a deck without re-encoding. Narration stays in",
+        "slides-to-video (one timing owner per segment); Manim is rendered silent.",
+        "",
+        "Animations: Write of typeset equations (handwriting feel),",
+        "TransformMatchingTex morphing between steps, and Indicate/Circumscribe/",
+        "Flash/Wiggle emphasis. Vietnamese/other-script prose uses the spec `title`",
+        "via Pango Text + a Unicode font; math (MathTex) is language-neutral.",
+        "",
+        "Manim is heavier than the default smoke contract: it needs a LaTeX distro",
+        "with dvisvgm + the standalone/preview packages + cm-super, the cairo/pango",
+        "dev libraries, and ffmpeg (the `manim-tex-runtime` system dependency), plus",
+        "Manim CE in a dedicated venv at `~/.local/share/manim-math-animation-venv`",
+        "created by `setup`. The default `selftest` smoke is offline and presence-",
+        "free: it validates the scene-spec round-trip, the generated Manim source,",
+        "and the manim/ffmpeg argv builders with no Manim, LaTeX, or ffmpeg. Run",
+        "`doctor` to confirm the render toolchain before `render`; a real render is",
+        "intentionally not part of default CI smoke.",
     ]
 
 
