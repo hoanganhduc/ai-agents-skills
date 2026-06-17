@@ -165,7 +165,7 @@ Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
 macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
-`autonomous-research-loop-runtime`, `axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-strict-verification-gate`, `self-improving-agent`, `slides-to-video`, `submission-venue-selector`, forcing copy-mode runtime installation in a temporary
+`autonomous-research-loop-runtime`, `axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-strict-verification-gate`, `manim-math-animation`, `self-improving-agent`, `slides-to-video`, `submission-venue-selector`, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
 `--skills` may only select skills that are supported by this runtime-smoke
@@ -189,6 +189,7 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 | `lean-explore-mcp` | `offline-smoke` | yes | Smoke validates inert LeanExplore MCP setup guidance without installing packages, starting services, or calling live APIs. |
 | `lean-formalization-intake` | `offline-smoke` | yes | Doctor smoke records local Lean availability without installing dependencies. |
 | `lean-strict-verification-gate` | `offline-smoke` | yes | Doctor smoke records local Lean availability and scanner status without installing dependencies. |
+| `manim-math-animation` | `offline-smoke` | yes | Selftest validates scene-spec round-trips, the generated Manim source (Write/MathTex/TransformMatchingTex/emphasis), and the manim/ffmpeg argv builders with no network, package install, Manim, LaTeX, or ffmpeg. |
 | `modal-research-compute` | `manual-native` | no | Modal workflows require explicit external compute credentials and are not safe for generic offline smoke. |
 | `research-digest-wrapper` | `manual-native` | no | Digest runs depend on configured topics and external feeds; no generic offline smoke is declared. |
 | `rss-news-digest` | `manual-native` | no | RSS digesting depends on configured feeds and network access. |

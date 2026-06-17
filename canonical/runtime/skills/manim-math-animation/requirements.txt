@@ -1,0 +1,6 @@
+# manim-math-animation dedicated venv (~/.local/share/manim-math-animation-venv).
+# Manim CE is MIT. System tools (NOT here): a LaTeX distro with dvisvgm +
+# standalone/preview + cm-super, cairo/pango dev libs, and ffmpeg.
+# Installed by: run_manim_math_animation.sh setup
+manim==0.20.1
+numpy>=1.26

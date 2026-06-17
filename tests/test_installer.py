@@ -115,6 +115,25 @@ class ManifestTests(unittest.TestCase):
         args.profile = "research-core"
         self.assertNotIn("slides-to-video", resolve_skills(args, manifests))
 
+    def test_manim_math_animation_skill_and_runtime_registered(self) -> None:
+        manifests = load_manifests()
+        skill = manifests["skills"]["skills"]["manim-math-animation"]
+        self.assertEqual(set(skill["profiles"]), {"media", "full-research"})
+        for agent in ("codex", "claude", "deepseek", "opencode", "antigravity"):
+            self.assertIn(agent, skill["supported_agents"])
+        self.assertIn("ffmpeg-system-tool", skill["required_dependencies"])
+        self.assertIn("manim-python-package", skill["optional_dependencies"])
+
+        runtime_skill = manifests["runtime"]["skills"]["manim-math-animation"]
+        self.assertEqual(runtime_skill["smoke_coverage"]["status"], "offline-smoke")
+        targets = {entry["target"] for entry in runtime_skill["files"]}
+        self.assertIn("workspace/skills/manim-math-animation/manim_math_animation_runtime.py", targets)
+        self.assertIn("workspace/skills/manim-math-animation/mma/scenegen.py", targets)
+
+        args = Args()
+        args.profile = "media"
+        self.assertIn("manim-math-animation", resolve_skills(args, manifests))
+
     def test_default_profile_resolves_research_core(self) -> None:
         manifests = load_manifests()
         args = Args()

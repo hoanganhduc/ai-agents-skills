@@ -154,12 +154,13 @@
         "source-grounded-decisions",
         "adversarial-boundary-gate",
         "behavior-preserving-cleanup",
-        "slides-to-video"
+        "slides-to-video",
+        "manim-math-animation"
       ]
     },
     "media": {
-      "description": "Narrated, captioned presentation and lecture videos from prepared slides.",
-      "skills": ["slides-to-video"]
+      "description": "Narrated, captioned presentation and lecture videos from prepared slides, with optional Manim math animation.",
+      "skills": ["slides-to-video", "manim-math-animation"]
     }
   },
   "default_profile": "research-core"

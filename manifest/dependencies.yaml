@@ -245,6 +245,15 @@
         "windows": ["soffice.exe", "soffice"]
       },
       "capabilities": ["pptx-render"]
+    },
+    "manim-tex-runtime": {
+      "description": "LaTeX engine with dvisvgm and standalone/preview (plus cairo/pango) for Manim MathTex rendering.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["dvisvgm"],
+        "windows": ["dvisvgm.exe", "dvisvgm"]
+      },
+      "capabilities": ["manim-latex"]
     }
   },
   "python_candidate_sets": {
@@ -430,6 +439,8 @@
     "soundfile-python-package": {"type": "python", "module": "soundfile"},
     "ffmpeg-system-tool": {"type": "tool", "logical_tool": "ffmpeg-system-tool"},
     "espeak-ng-system-tool": {"type": "tool", "logical_tool": "espeak-ng-system-tool"},
-    "libreoffice-system-tool": {"type": "tool", "logical_tool": "libreoffice-system-tool"}
+    "libreoffice-system-tool": {"type": "tool", "logical_tool": "libreoffice-system-tool"},
+    "manim-python-package": {"type": "python", "module": "manim"},
+    "manim-tex-runtime": {"type": "tool", "logical_tool": "manim-tex-runtime"}
   }
 }

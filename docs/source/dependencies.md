@@ -49,6 +49,7 @@ Status vocabulary used by `precheck`:
 | `lake-cli` | Lake command line executable for optional Lean project checks. |
 | `lean-cli` | Lean command line executable for optional local formal typechecking. |
 | `libreoffice-system-tool` | LibreOffice (soffice) headless for rendering PPTX decks to PDF. |
+| `manim-tex-runtime` | LaTeX engine with dvisvgm and standalone/preview (plus cairo/pango) for Manim MathTex rendering. |
 | `mathlib-cache` | Manually managed mathlib cache or project dependency state for optional Lean checks. |
 | `node-runtime` | Node runtime for MCP servers that use npx. |
 | `nvidia-smi-tool` | NVIDIA GPU inspection tool used by resource preflight when available. |
@@ -85,6 +86,8 @@ Status vocabulary used by `precheck`:
 | `lean-explore-python-package` | `python` | lean_explore; candidate set `agent` |
 | `leanexplore-auth` | `remote-service` | remote-service |
 | `libreoffice-system-tool` | `tool` | libreoffice-system-tool |
+| `manim-python-package` | `python` | manim |
+| `manim-tex-runtime` | `tool` | manim-tex-runtime |
 | `modal-auth` | `remote-service` | remote-service |
 | `modal-python-package` | `python` | modal; candidate set `agent` |
 | `networkx-python-package` | `python` | networkx |
@@ -154,6 +157,7 @@ Evidence inspected:
 | `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate` |
 | `libreoffice` | optional, required only for PPTX input rendering | soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | soffice.exe on PATH from a LibreOffice install. | `slides-to-video PPTX input` |
 | `make-or-command-wrapper` | optional convenience entrypoint | make invokes installer commands. | make.bat invokes installer commands without requiring GNU Make. | `installation` |
+| `manim-tex-runtime` | required for manim-math-animation rendering (heavier than plain tex-runtime) | LaTeX (texlive + texlive-latex-extra + cm-super) with dvisvgm and the standalone/preview packages, plus libcairo2-dev and libpango1.0-dev; e.g. apt-get install dvisvgm texlive texlive-latex-extra libcairo2-dev libpango1.0-dev. | MiKTeX/TeX Live providing latex + dvisvgm + standalone/preview; cairo/pango ship in the Manim Windows wheels. | `manim-math-animation` |
 | `mathlib-cache` | optional manually prepared Lean dependency cache | Existing project-local mathlib cache or manually prepared Lake cache. | Existing project-local mathlib cache or manually prepared Lake cache. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `modal-cli` | optional until submit/deploy/wait/fetch are used | Installed by the modal Python package and authenticated with modal token set/new. | Installed into the agent virtualenv; wrappers add the venv Scripts directory to PATH. | `modal-research-compute` |
 | `node-runtime` | required for Node-backed MCP servers and optional Zotero translation-server workflows | Node.js 18+ with npm. | Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server. | `Codex MCP`, `zotero translation server` |
@@ -183,6 +187,7 @@ Evidence inspected:
 | `kokoro` | `kokoro` | kokoro>=0.9.4 | `linux`, `windows` | `slides-to-video` |
 | `lean-explore` | `lean_explore` | lean-explore | `linux`, `windows` | `lean-explore-mcp` |
 | `local-getscipapers-helper` | `redacted` | optional local helper package with a maintainer-specific import name | `windows` | `zotero metadata fallback` |
+| `manim` | `manim` | manim==0.20.1 | `linux`, `windows` | `manim-math-animation` |
 | `modal` | `modal` | modal | `linux`, `windows` | `modal-research-compute` |
 | `networkx` | `networkx` | networkx | `linux`, `windows`, `remote-modal` | `graph-verifier`, `modal-research-compute` |
 | `numpy` | `numpy` | numpy==1.26.4 for TikZ semantic verifier; numpy in Modal CPU image | `linux`, `windows`, `remote-modal` | `tikz-draw`, `modal-research-compute` |
@@ -314,6 +319,30 @@ core (pairing, re-basing, the engine ladder, verbalization, effect
 filtergraph building, captions, clip args, and the approval gate) with no
 network, package install, ffmpeg, or TTS. Run `doctor` to report whether
 ffmpeg, fonts, and the venv packages are present before a real render.
+
+## Manim Math Animation Runtime Notes
+
+`manim-math-animation` is the optional Manim companion to slides-to-video.
+From a JSON scene spec (equations + optional title + emphasis) it generates
+a Manim scene and renders a SILENT clip normalized to the slides-to-video
+canonical profile (resolution, fps, yuv420p, silent 48 kHz stereo AAC), so
+the clip splices into a deck without re-encoding. Narration stays in
+slides-to-video (one timing owner per segment); Manim is rendered silent.
+
+Animations: Write of typeset equations (handwriting feel),
+TransformMatchingTex morphing between steps, and Indicate/Circumscribe/
+Flash/Wiggle emphasis. Vietnamese/other-script prose uses the spec `title`
+via Pango Text + a Unicode font; math (MathTex) is language-neutral.
+
+Manim is heavier than the default smoke contract: it needs a LaTeX distro
+with dvisvgm + the standalone/preview packages + cm-super, the cairo/pango
+dev libraries, and ffmpeg (the `manim-tex-runtime` system dependency), plus
+Manim CE in a dedicated venv at `~/.local/share/manim-math-animation-venv`
+created by `setup`. The default `selftest` smoke is offline and presence-
+free: it validates the scene-spec round-trip, the generated Manim source,
+and the manim/ffmpeg argv builders with no Manim, LaTeX, or ffmpeg. Run
+`doctor` to confirm the render toolchain before `render`; a real render is
+intentionally not part of default CI smoke.
 
 ## Detection Notes
 

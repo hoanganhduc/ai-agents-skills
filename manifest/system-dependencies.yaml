@@ -185,6 +185,13 @@
       "linux": "soffice/libreoffice on PATH, e.g. apt-get install libreoffice.",
       "windows": "soffice.exe on PATH from a LibreOffice install.",
       "used_by": ["slides-to-video PPTX input"]
+    },
+    "manim-tex-runtime": {
+      "display_name": "Manim LaTeX/graphics toolchain",
+      "requirement": "required for manim-math-animation rendering (heavier than plain tex-runtime)",
+      "linux": "LaTeX (texlive + texlive-latex-extra + cm-super) with dvisvgm and the standalone/preview packages, plus libcairo2-dev and libpango1.0-dev; e.g. apt-get install dvisvgm texlive texlive-latex-extra libcairo2-dev libpango1.0-dev.",
+      "windows": "MiKTeX/TeX Live providing latex + dvisvgm + standalone/preview; cairo/pango ship in the Manim Windows wheels.",
+      "used_by": ["manim-math-animation"]
     }
   },
   "python_packages": {
@@ -425,6 +432,13 @@
       "platforms": ["linux", "windows"],
       "used_by": ["slides-to-video"],
       "source": "WAV writing for Kokoro output in slides-to-video."
+    },
+    "manim": {
+      "requirement": "manim==0.20.1",
+      "import_name": "manim",
+      "platforms": ["linux", "windows"],
+      "used_by": ["manim-math-animation"],
+      "source": "Manim CE for math-animation clip rendering."
     }
   },
   "node_packages": {

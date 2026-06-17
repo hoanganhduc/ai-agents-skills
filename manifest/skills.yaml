@@ -485,6 +485,15 @@
         "offline-smoke"
       ],
       "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+    },
+    "manim-math-animation": {
+      "description": "Render Manim math animations (handwritten-style equation Write, equation morphing, emphasis) to a silent clip normalized for splicing into slides-to-video or standalone use.",
+      "profiles": ["media", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "required_dependencies": ["python-runtime", "ffmpeg-system-tool"],
+      "optional_dependencies": ["manim-python-package", "numpy-python-package", "manim-tex-runtime"],
+      "optional_capabilities": ["equation-write", "equation-morph", "emphasis-animation", "silent-interlude-clips", "offline-smoke"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
     }
   },
   "legacy_aliases": {
