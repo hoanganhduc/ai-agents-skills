@@ -87,7 +87,8 @@
         "entrypoint-alias:rss",
         "entrypoint-alias:digest",
         "entrypoint-alias:getscipapers",
-        "entrypoint-alias:slides-to-video"
+        "entrypoint-alias:slides-to-video",
+        "entrypoint-alias:manim-math-animation"
       ]
     },
     "repo-management": {
@@ -169,6 +170,7 @@
         "entrypoint-alias:digest",
         "entrypoint-alias:getscipapers",
         "entrypoint-alias:slides-to-video",
+        "entrypoint-alias:manim-math-animation",
         "management-notice:repo-management"
       ]
     }
@@ -477,6 +479,12 @@
         "description": "Route narrated, captioned slide-video creation to the slides-to-video skill.",
         "source": "slides-to-video.md",
         "depends_on_skills": ["slides-to-video"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
+      "manim-math-animation": {
+        "description": "Route math-animation (Write/morph equations) clip creation to the manim-math-animation skill.",
+        "source": "manim-math-animation.md",
+        "depends_on_skills": ["manim-math-animation"],
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       }
     }
