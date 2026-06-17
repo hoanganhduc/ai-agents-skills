@@ -33,10 +33,18 @@ with the untrusted-content discipline in
 4. **Resolve.** Fix or contain each real finding before delivery; disclose any
    residual risk.
 
+If fresh-context security review is unavailable for an outward-facing,
+irreversible, credential-adjacent, or untrusted-content-heavy deliverable, do not
+self-clear the boundary. Output `BLOCKED-FRESH-CONTEXT-UNAVAILABLE`, list the
+unreviewed boundaries, and ask for explicit user direction. For lower-risk local
+deliverables, disclose that the fresh-context check was unavailable and proceed
+only after narrowing the output or receiving confirmation.
+
 ## Output contract
 
 A short visible note: `Boundaries`, `Abuse cases checked`, `Findings`
-(NONE | FIXED | RESIDUAL), and any residual risk disclosed.
+(NONE | FIXED | RESIDUAL | BLOCKED-FRESH-CONTEXT-UNAVAILABLE), and any residual
+risk disclosed.
 
 ## Guardrails
 

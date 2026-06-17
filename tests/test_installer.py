@@ -237,6 +237,98 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("Managed by ai-agents-skills", instruction)
         self.assertIn("Generated target: codex", ledger)
 
+    def test_risk_gated_confirmation_artifact_renders_for_workflow_profiles(self) -> None:
+        manifests = load_manifests()
+        artifact_specs = manifests["artifacts"]["artifacts"]
+        args = Args()
+        args.no_skills = True
+        args.artifact_profile = "workflow-instructions"
+        workflow_instructions = resolve_artifacts(args, manifests)
+
+        args.artifact_profile = "workflow-artifacts"
+        workflow_artifacts = resolve_artifacts(args, manifests)
+
+        self.assertIn(("instruction-doc", "risk-gated-confirmation"), workflow_instructions)
+        self.assertIn(("instruction-doc", "risk-gated-confirmation"), workflow_artifacts)
+
+        rendered = render_artifact_content(
+            "instruction-doc",
+            "risk-gated-confirmation",
+            artifact_specs["instruction-doc"]["risk-gated-confirmation"],
+            "codex",
+        )
+
+        self.assertIn("# Risk-Gated Confirmation", rendered)
+        self.assertIn("PROCEED <short-scope>", rendered)
+        self.assertIn("Generated target: codex", rendered)
+
+    def test_workflow_gate_canonical_text_is_present(self) -> None:
+        expectations = {
+            "canonical/instructions/operating-discipline.md": [
+                "Goal",
+                "Evidence to inspect",
+                "Out of scope",
+                "risk-gated",
+                "Latest intent wins",
+            ],
+            "canonical/instructions/engineering-lifecycle.md": [
+                "Investigate",
+                "prior posts",
+                "incomplete analysis",
+            ],
+            "canonical/instructions/risk-gated-confirmation.md": [
+                "risk-gated",
+                "PROCEED <short-scope>",
+                "Ask for explicit confirmation",
+            ],
+            "canonical/skills/decision-doubt-loop/SKILL.md": [
+                "BLOCKED-FRESH-CONTEXT-UNAVAILABLE",
+            ],
+            "canonical/skills/adversarial-boundary-gate/SKILL.md": [
+                "BLOCKED-FRESH-CONTEXT-UNAVAILABLE",
+            ],
+            "canonical/skills/source-research/SKILL.md": [
+                '"download" alone is not an outside-library opt-out',
+                "Ask for explicit confirmation before spawning subagents",
+            ],
+            "canonical/skills/getscipapers-requester/SKILL.md": [
+                "not to check/use the library",
+                "multiple plausible matches",
+            ],
+            "canonical/skills/zotero/SKILL.md": [
+                "library-mutating or outward-facing",
+                "not to check/use the library",
+            ],
+            "canonical/skills/calibre/SKILL.md": [
+                "library-mutating or outward-facing",
+                "Use `--index` only after showing candidates",
+            ],
+            "canonical/skills/research-report-reviewer/SKILL.md": [
+                "sources.jsonl",
+                "claims.jsonl",
+                "guards.jsonl",
+                "delivery.json",
+            ],
+            "canonical/skills/research-verification-gate/SKILL.md": [
+                "sources.jsonl",
+                "requested format/style context",
+            ],
+            "canonical/skills/draft-writing/SKILL.md": [
+                "prior posts, templates, house style",
+                "before drafting",
+            ],
+            "canonical/instructions/claim-preserving-writing.md": [
+                "prior posts, templates, house style",
+                "before generating the first draft",
+            ],
+        }
+
+        for rel_path, needles in expectations.items():
+            text = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
+            for needle in needles:
+                with self.subTest(path=rel_path, needle=needle):
+                    self.assertIn(needle, text)
+
     def test_target_surface_support_claims_are_explicit(self) -> None:
         rows = target_surface_rows()
 

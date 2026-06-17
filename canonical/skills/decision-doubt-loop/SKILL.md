@@ -49,10 +49,19 @@ decision. Do not self-review inline; spawn it.
 4. **Resolve.** If the reviewer refutes the decision or its load-bearing assumption,
    course-correct now. If it survives, record that the decision stands and move on.
 
+If fresh-context review is unavailable for a high-risk, irreversible,
+security-sensitive, or outward-facing decision, do not substitute an inline
+self-review. Output `BLOCKED-FRESH-CONTEXT-UNAVAILABLE`, state the decision and
+why it is gated, and ask for explicit user direction. For lower-risk decisions,
+you may proceed only after disclosing that the fresh-context check was unavailable
+and either receiving confirmation or narrowing the decision to a reversible local
+step.
+
 ## Output contract
 
 A short visible note: `Decision`, `Load-bearing assumption`, `Doubt verdict`
-(STANDS | REVISED | BLOCKED), and the one change made if revised.
+(STANDS | REVISED | BLOCKED | BLOCKED-FRESH-CONTEXT-UNAVAILABLE), and the one
+change made if revised.
 
 ## Guardrails
 

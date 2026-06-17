@@ -1,46 +1,31 @@
 # Tasks
 
 - [x] Task: Refresh lifecycle artifacts.
-  - Acceptance: `SPEC.md`, `tasks/plan.md`, and `tasks/todo.md` describe the formal-lane implementation.
-  - Verify: files exist and align with `plan_fixed_v3.md`.
+  - Acceptance: `SPEC.md`, `tasks/plan.md`, and `tasks/todo.md` describe repo-only workflow gates.
+  - Verify: files are updated in this patch.
   - Files: `SPEC.md`, `tasks/plan.md`, `tasks/todo.md`
 
-- [x] Task: Implement v2 research artifacts and readiness.
-  - Acceptance: v2 marker/evidence/formal artifacts validate; v1 compatibility remains intact.
-  - Verify: targeted research workflow tests pass.
-  - Files: `canonical/runtime/skills/deep-research-workflow/deep_research_workflow.py`, `tests/test_research_workflow_integration.py`
+- [x] Task: Add canonical workflow gate policy.
+  - Acceptance: intent, investigation, and confirmation gates are documented with concrete risk thresholds.
+  - Verify: targeted tests inspect canonical text.
+  - Files: `canonical/instructions/operating-discipline.md`, `canonical/instructions/engineering-lifecycle.md`, `canonical/instructions/risk-gated-confirmation.md`
 
-- [x] Task: Add local formal skills and wrappers.
-  - Acceptance: intake and strict verification skills exist, run cross-platform, degrade when Lean is missing, and do not install dependencies.
-  - Verify: runtime integration tests and runtime smoke contracts pass.
-  - Files: `canonical/skills/lean-formalization-intake/`, `canonical/skills/lean-strict-verification-gate/`, `canonical/runtime/skills/lean-formalization-intake/`, `canonical/runtime/skills/lean-strict-verification-gate/`
+- [x] Task: Tighten research and retrieval workflows.
+  - Acceptance: local-library-first, disambiguation, dry-run/confirmation, and structured-artifact delivery checks are explicit.
+  - Verify: targeted tests inspect skill docs.
+  - Files: selected `canonical/skills/*/SKILL.md` and references.
 
-- [x] Task: Register manifests and profiles.
-  - Acceptance: `formal-research` is local-only, `formal-research-remote` is explicit, and `research-core` is unchanged.
-  - Verify: selector/manifest/docs tests pass.
-  - Files: `manifest/skills.yaml`, `manifest/profiles.yaml`, `manifest/runtime.yaml`, `manifest/dependencies.yaml`, `manifest/system-dependencies.yaml`
+- [x] Task: Add pre-draft context gate for writing.
+  - Acceptance: draft-writing requires prior examples/templates/style/context before new prose generation.
+  - Verify: targeted tests inspect skill docs.
+  - Files: `canonical/skills/draft-writing/SKILL.md`, `canonical/instructions/claim-preserving-writing.md`
 
-- [x] Task: Add optional AXLE MCP setup helper.
-  - Acceptance: helper supports `doctor`, `config-snippet`, and `smoke`; runs on Linux, macOS, Windows, and WSL; never installs packages, starts MCP servers, writes config, calls live APIs, or prints credential values.
-  - Verify: AXLE runtime helper tests and `make runtime-smoke ARGS="--skills axiom-axle-mcp"` pass.
-  - Files: `canonical/skills/axiom-axle-mcp/`, `canonical/runtime/skills/axiom-axle-mcp/`, `installer/ai_agents_skills/runtime_smoke.py`, `tests/test_runtime_integration.py`
+- [x] Task: Register portable instruction artifact.
+  - Acceptance: risk-gated confirmation can be installed through workflow instruction artifacts.
+  - Verify: manifest/render tests pass.
+  - Files: `manifest/artifacts.yaml`
 
-- [x] Task: Add AXLE supplemental evidence validation.
-  - Acceptance: `axle_remote_check` evidence validates with explicit endpoint/operation/hash/expiry metadata but cannot promote formal support unless local `formal_check` evidence is also linked.
-  - Verify: research workflow AXLE evidence tests pass.
-  - Files: `canonical/runtime/skills/deep-research-workflow/deep_research_workflow.py`, `canonical/skills/deep-research-workflow/SKILL.md`, `tests/test_research_workflow_integration.py`
-
-- [x] Task: Add AGD and delegation boundaries.
-  - Acceptance: parent-owned AGD artifact rules and evidence mapping are documented and tested; AXLE/MCP is not a provider.
-  - Verify: cross-agent delegation tests pass.
-  - Files: `canonical/skills/agent-group-discuss/*`, `tests/test_cross_agent_delegation.py`
-
-- [x] Task: Add migration and runtime safety tests.
-  - Acceptance: stale runtime `--adopt` skips differing files; no-auto-install and provider-boundary tests pass.
-  - Verify: runtime and installer tests pass.
-  - Files: `installer/ai_agents_skills/runtime.py`, `installer/ai_agents_skills/runtime_smoke.py`, `tests/test_runtime_integration.py`, `tests/test_installer.py`
-
-- [x] Task: Regenerate docs and verify.
-  - Acceptance: generated docs reflect manifest source of truth and verification gates pass.
-  - Verify: `make docs`, targeted tests, `make test`, `make runtime-smoke`.
-  - Files: `README.md`, `docs/`, `docs/source/`
+- [x] Task: Add tests and regenerate docs.
+  - Acceptance: tests and docs reflect new policy.
+  - Verify: `make docs-check` and targeted unittest pass.
+  - Files: `tests/test_installer.py`, `README.md`, `docs/`, `docs/source/`

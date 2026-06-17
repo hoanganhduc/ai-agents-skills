@@ -13,7 +13,12 @@ Use this as the last gate before claiming a research output is ready.
 
 - the stated scope was actually answered
 - important claims still have supporting evidence
+- available structured artifacts (`sources.jsonl`, `claims.jsonl`,
+  `guards.jsonl`, `delivery.json`, source ledgers, evidence maps) were inspected
+  when present
 - time-sensitive facts include concrete dates when needed
+- requested format/style context was inspected for blog, article, report, or
+  other format-matched writing
 - remaining gaps are disclosed
 - `incomplete analysis` is used when material scope is still unchecked
 
