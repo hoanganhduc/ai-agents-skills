@@ -86,7 +86,8 @@
         "entrypoint-alias:research-compute",
         "entrypoint-alias:rss",
         "entrypoint-alias:digest",
-        "entrypoint-alias:getscipapers"
+        "entrypoint-alias:getscipapers",
+        "entrypoint-alias:slides-to-video"
       ]
     },
     "repo-management": {
@@ -167,6 +168,7 @@
         "entrypoint-alias:rss",
         "entrypoint-alias:digest",
         "entrypoint-alias:getscipapers",
+        "entrypoint-alias:slides-to-video",
         "management-notice:repo-management"
       ]
     }
@@ -469,6 +471,12 @@
         "description": "Route external paper retrieval fallback.",
         "source": "getscipapers.md",
         "depends_on_skills": ["getscipapers-requester"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
+      "slides-to-video": {
+        "description": "Route narrated, captioned slide-video creation to the slides-to-video skill.",
+        "source": "slides-to-video.md",
+        "depends_on_skills": ["slides-to-video"],
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       }
     }
