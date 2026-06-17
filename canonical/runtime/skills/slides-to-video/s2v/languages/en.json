@@ -1,0 +1,63 @@
+{
+  "language": "en",
+  "tier": "tuned",
+  "font_hint": "Noto Sans",
+  "voices": {
+    "edge": {
+      "default": "en-US-AvaMultilingualNeural",
+      "female": "en-US-AvaMultilingualNeural",
+      "male": "en-US-AndrewMultilingualNeural"
+    },
+    "kokoro": {"default": "af_heart", "female": "af_heart", "male": "am_michael"},
+    "piper": {"default": "en_US-lessac-medium"}
+  },
+  "roles": {
+    "presenter": {"rate": "+6%", "pitch": "+0Hz", "volume": "+0%"},
+    "teacher": {"rate": "-8%", "pitch": "+2Hz", "volume": "+0%"},
+    "lecturer": {"rate": "+0%", "pitch": "+0Hz", "volume": "+0%"},
+    "narrator": {"rate": "-5%", "pitch": "-3Hz", "volume": "+0%"},
+    "pitch": {"rate": "+12%", "pitch": "+5Hz", "volume": "+6%"}
+  },
+  "math": {
+    "patterns": [
+      {"re": "\\\\frac\\{([^{}]+)\\}\\{([^{}]+)\\}", "repl": "\\1 over \\2"},
+      {"re": "\\\\sqrt\\{([^{}]+)\\}", "repl": "the square root of \\1"},
+      {"re": "\\^\\s*2\\b", "repl": " squared"},
+      {"re": "\\^\\s*3\\b", "repl": " cubed"},
+      {"re": "\\^\\s*\\{?([0-9a-zA-Z]+)\\}?", "repl": " to the power of \\1"}
+    ],
+    "symbols": {
+      "≤": " less than or equal to ",
+      "≥": " greater than or equal to ",
+      "≠": " not equal to ",
+      "≈": " approximately ",
+      "±": " plus or minus ",
+      "×": " times ",
+      "·": " times ",
+      "÷": " divided by ",
+      "→": " approaches ",
+      "∞": " infinity ",
+      "∑": " the sum of ",
+      "∏": " the product of ",
+      "∫": " the integral of ",
+      "√": " the square root of ",
+      "π": " pi ",
+      "θ": " theta ",
+      "α": " alpha ",
+      "β": " beta ",
+      "λ": " lambda ",
+      "∈": " in ",
+      "∉": " not in ",
+      "∀": " for all ",
+      "∃": " there exists ",
+      "∪": " union ",
+      "∩": " intersect ",
+      "⊂": " subset of ",
+      "∅": " the empty set ",
+      "−": " minus ",
+      "+": " plus ",
+      "=": " equals ",
+      "%": " percent "
+    }
+  }
+}

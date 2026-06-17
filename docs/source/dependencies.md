@@ -42,10 +42,13 @@ Status vocabulary used by `precheck`:
 | Logical Tool | Description |
 |---|---|
 | `calibre-cli` | Calibre command line tools for ebook metadata and conversion. |
+| `espeak-ng-system-tool` | eSpeak NG phonemizer used by offline TTS engines (Kokoro/Piper). |
+| `ffmpeg-system-tool` | FFmpeg/ffprobe for video encoding, audio normalization, and duration probing. |
 | `git-cli` | Git command line client for repository-backed workflows and GitHub publishing. |
 | `github-cli` | GitHub CLI for workflows that need local Actions, PR, issue, or authentication commands. |
 | `lake-cli` | Lake command line executable for optional Lean project checks. |
 | `lean-cli` | Lean command line executable for optional local formal typechecking. |
+| `libreoffice-system-tool` | LibreOffice (soffice) headless for rendering PPTX decks to PDF. |
 | `mathlib-cache` | Manually managed mathlib cache or project dependency state for optional Lean checks. |
 | `node-runtime` | Node runtime for MCP servers that use npx. |
 | `nvidia-smi-tool` | NVIDIA GPU inspection tool used by resource preflight when available. |
@@ -69,27 +72,36 @@ Status vocabulary used by `precheck`:
 | `docling-mcp-python-package` | `python` | docling_mcp; candidate set `docling` |
 | `docling-python-package` | `python` | docling; candidate set `docling` |
 | `ebooklib-python-package` | `python` | ebooklib |
+| `edge-tts-python-package` | `python` | edge_tts |
+| `espeak-ng-system-tool` | `tool` | espeak-ng-system-tool |
 | `feedparser-python-package` | `python` | feedparser |
+| `ffmpeg-system-tool` | `tool` | ffmpeg-system-tool |
 | `git-cli` | `tool` | git-cli |
 | `github-cli` | `tool` | github-cli |
 | `google-api-python-client-package` | `python` | googleapiclient |
 | `google-auth-python-package` | `python` | google.oauth2 |
+| `kokoro-python-package` | `python` | kokoro |
 | `lean-explore-local-cache` | `manual-data` | manual-data |
 | `lean-explore-python-package` | `python` | lean_explore; candidate set `agent` |
 | `leanexplore-auth` | `remote-service` | remote-service |
+| `libreoffice-system-tool` | `tool` | libreoffice-system-tool |
 | `modal-auth` | `remote-service` | remote-service |
 | `modal-python-package` | `python` | modal; candidate set `agent` |
 | `networkx-python-package` | `python` | networkx |
 | `numpy-python-package` | `python` | numpy |
 | `nvidia-smi-tool` | `tool` | nvidia-smi-tool |
 | `ocr-runtime` | `tool` | ocr-runtime |
+| `pdf2image-python-package` | `python` | pdf2image |
 | `pdfplumber-python-package` | `python` | pdfplumber |
+| `pillow-python-package` | `python` | PIL |
+| `piper-tts-python-package` | `python` | piper |
 | `psutil-python-package` | `python` | psutil |
 | `pylatexenc-python-package` | `python` | pylatexenc |
 | `pymupdf-python-package` | `python` | fitz |
 | `pypdf2-python-package` | `python` | PyPDF2 |
 | `pypdfium2-python-package` | `python` | pypdfium2; candidate set `docling` |
 | `pytest-python-package` | `python` | pytest |
+| `python-pptx-python-package` | `python` | pptx |
 | `pyzotero-python-package` | `python` | pyzotero |
 | `rapidocr-python-package` | `python` | rapidocr; candidate set `docling` |
 | `requests-python-package` | `python` | requests |
@@ -97,6 +109,7 @@ Status vocabulary used by `precheck`:
 | `ripgrep-cli` | `tool` | ripgrep-cli |
 | `rocm-smi-tool` | `tool` | rocm-smi-tool |
 | `shapely-python-package` | `python` | shapely |
+| `soundfile-python-package` | `python` | soundfile |
 | `svgelements-python-package` | `python` | svgelements |
 | `telegram-bot-config` | `remote-service` | remote-service |
 | `torch-python-package` | `python` | torch; candidate set `docling` |
@@ -132,11 +145,14 @@ Evidence inspected:
 | `bash-or-posix-shell` | required on Linux and inside WSL-backed Windows flows | Used by shared runtime runner and shell skill wrappers. | Used through WSL for SageMath and other Linux-substrate commands. | `runtime wrappers`, `sagemath`, `make` |
 | `calibre-cli` | optional for richer ebook library operations | calibredb and ebook-convert on PATH. | calibredb.exe and ebook-convert.exe on PATH. | `calibre`, `vnthuquan` |
 | `docling-cli` | optional CLI layer for docling workflows | Current Claude docs use <LINUX_HOME>/.local/share/docling-venv/bin/docling. | Current Claude docs use <WINDOWS_HOME>/.venv-docling/Scripts/docling.exe. | `docling` |
+| `espeak-ng` | optional, for offline TTS (Kokoro/Piper phonemization) | espeak-ng on PATH, e.g. apt-get install espeak-ng. | espeak-ng on PATH from the espeak-ng releases. | `slides-to-video offline TTS` |
+| `ffmpeg` | required for slides-to-video rendering (video encode, audio normalize, duration probe) | FFmpeg + ffprobe on PATH (LGPL build with libx264), e.g. apt-get install ffmpeg. | ffmpeg.exe + ffprobe.exe on PATH (LGPL build), via winget/choco or a static build. | `slides-to-video` |
 | `git-cli` | required for repository workflows and publishing | git on PATH. | git.exe or git on PATH. | `GitHub workflows`, `repo install/update examples` |
 | `github-cli` | optional for GitHub workflows that need local gh commands | gh on PATH with auth configured when needed. | gh.exe or gh on PATH with auth configured when needed. | `github`, `gh-fix-ci`, `yeet` |
 | `gpu-inspection-tools` | optional resource preflight enhancement | nvidia-smi for NVIDIA or rocm-smi for AMD when present. | nvidia-smi.exe or rocm-smi.exe when present; WSL GPU visibility depends on host driver support. | `get-available-resources` |
 | `lake-cli` | optional for local Lean project checks; never installed by wrappers | Lake executable on PATH, via AAS_LAKE, or via an existing elan install. | Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate` |
+| `libreoffice` | optional, required only for PPTX input rendering | soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | soffice.exe on PATH from a LibreOffice install. | `slides-to-video PPTX input` |
 | `make-or-command-wrapper` | optional convenience entrypoint | make invokes installer commands. | make.bat invokes installer commands without requiring GNU Make. | `installation` |
 | `mathlib-cache` | optional manually prepared Lean dependency cache | Existing project-local mathlib cache or manually prepared Lake cache. | Existing project-local mathlib cache or manually prepared Lake cache. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `modal-cli` | optional until submit/deploy/wait/fetch are used | Installed by the modal Python package and authenticated with modal token set/new. | Installed into the agent virtualenv; wrappers add the venv Scripts directory to PATH. | `modal-research-compute` |
@@ -154,29 +170,36 @@ Evidence inspected:
 
 | Package | Import | Requirement | Platforms | Used By |
 |---|---|---|---|---|
+| `Pillow` | `PIL` | Pillow>=10.2 | `linux`, `windows` | `slides-to-video` |
 | `PyMuPDF` | `fitz` | pymupdf; tikz semantic verifier pins PyMuPDF==1.27.2.2 | `linux`, `windows` | `annotated-review`, `tikz-draw` |
 | `PyPDF2` | `PyPDF2` | PyPDF2>=3.0.0 | `linux`, `windows` | `zotero`, `calibre` |
 | `docling` | `docling` | docling>=2.88.0,<3 | `linux`, `windows` | `docling` |
 | `docling-mcp` | `docling_mcp` | docling-mcp | `windows` | `docling MCP integration` |
 | `ebooklib` | `ebooklib` | ebooklib>=0.18 | `linux`, `windows` | `calibre EPUB metadata` |
+| `edge-tts` | `edge_tts` | edge-tts>=7,<8 | `linux`, `windows` | `slides-to-video` |
 | `feedparser` | `feedparser` | feedparser | `linux`, `windows` | `research-digest-wrapper`, `rss-news-digest` |
 | `google-api-python-client` | `googleapiclient` | google-api-python-client>=2.100.0 | `linux`, `windows` | `calibre Google Drive sync`, `zotero Google Drive helpers` |
 | `google-auth` | `google.oauth2` | google-auth>=2.23.0 | `linux`, `windows` | `calibre Google Drive sync`, `zotero Google Drive helpers` |
+| `kokoro` | `kokoro` | kokoro>=0.9.4 | `linux`, `windows` | `slides-to-video` |
 | `lean-explore` | `lean_explore` | lean-explore | `linux`, `windows` | `lean-explore-mcp` |
 | `local-getscipapers-helper` | `redacted` | optional local helper package with a maintainer-specific import name | `windows` | `zotero metadata fallback` |
 | `modal` | `modal` | modal | `linux`, `windows` | `modal-research-compute` |
 | `networkx` | `networkx` | networkx | `linux`, `windows`, `remote-modal` | `graph-verifier`, `modal-research-compute` |
 | `numpy` | `numpy` | numpy==1.26.4 for TikZ semantic verifier; numpy in Modal CPU image | `linux`, `windows`, `remote-modal` | `tikz-draw`, `modal-research-compute` |
+| `pdf2image` | `pdf2image` | pdf2image>=1.17 | `linux`, `windows` | `slides-to-video` |
 | `pdfplumber` | `pdfplumber` | pdfplumber>=0.10.0 | `linux`, `windows` | `zotero` |
+| `piper-tts` | `piper` | piper-tts>=1.2 | `linux`, `windows` | `slides-to-video` |
 | `psutil` | `psutil` | psutil | `linux`, `windows` | `get-available-resources` |
 | `pylatexenc` | `pylatexenc` | pylatexenc | `linux`, `windows` | `annotated-review` |
 | `pypdfium2` | `pypdfium2` | pypdfium2>=4 | `linux`, `windows` | `docling OCR.space fallback PDF rendering` |
 | `pytest` | `pytest` | pytest>=7.0.0 | `linux`, `windows` | `zotero test suite` |
+| `python-pptx` | `pptx` | python-pptx>=1.0 | `linux`, `windows` | `slides-to-video` |
 | `pyzotero` | `pyzotero` | pyzotero>=1.10.0 | `linux`, `windows` | `zotero` |
 | `rapidocr` | `rapidocr` | docling[rapidocr] extra | `windows` | `docling OCR` |
 | `requests` | `requests` | requests>=2.28.0 | `linux`, `windows` | `zotero`, `calibre`, `research-digest-wrapper` |
 | `responses` | `responses` | responses>=0.23.0 | `linux`, `windows` | `zotero test suite` |
 | `shapely` | `shapely` | shapely==2.1.2 for TikZ semantic verifier | `linux`, `windows` | `tikz-draw` |
+| `soundfile` | `soundfile` | soundfile>=0.12 | `linux`, `windows` | `slides-to-video` |
 | `svgelements` | `svgelements` | svgelements==1.9.6 for optional SVG parsing parity | `linux`, `windows` | `tikz-draw` |
 | `tomli` | `tomli` | tomli>=2 on Python <3.11 for Docling TOML config parsing | `linux`, `windows` | `docling` |
 | `torch` | `torch` | torch CPU wheel for Windows docling; torch in Modal GPU image | `windows`, `remote-modal` | `docling Windows setup`, `modal GPU jobs` |
@@ -251,6 +274,46 @@ Live OCR.space smoke is separate from default post-install smoke. Run
 `ocrspace-smoke --allow-remote-ocr` only when a real OCR.space key is
 configured and a live remote request is acceptable. The command
 generates and uploads a synthetic one-page PDF rather than user data.
+
+## Slides-To-Video Runtime Notes
+
+`slides-to-video` turns prepared slides (PNG/PDF/PPTX) into a narrated,
+captioned MP4 using only free tools. `ffmpeg` is the one required system
+tool (use an LGPL build); `espeak-ng` is needed for offline TTS and
+LibreOffice only for PPTX input. Python packages install into a dedicated
+venv at `~/.local/share/slides-to-video-venv` via the `setup` subcommand;
+the wrappers auto-select that venv (or `S2V_PYTHON` / `AAS_RUNTIME_PYTHON`).
+
+Install the system tools first, then run `setup`, then `doctor`:
+Debian/Ubuntu `sudo apt-get install ffmpeg espeak-ng libreoffice`,
+Fedora `sudo dnf install ffmpeg espeak-ng libreoffice`, macOS
+`brew install ffmpeg espeak-ng` (LibreOffice via cask), Windows
+`winget install Gyan.FFmpeg eSpeak-NG.eSpeak-NG`. LibreOffice is only
+needed for PPTX input and `espeak-ng` only for offline TTS.
+
+It runs a three-phase, human-in-the-loop flow: `analyze` (ingest slides),
+`draft` then `verbalize` (per-slide spoken transcript, math read aloud),
+and `render` -- which is blocked until `approve` pins the transcript SHA,
+and re-blocks automatically if the transcript changes afterward.
+
+Timing is duration-driven: each slide's narration is synthesized,
+normalized to WAV, measured with `ffprobe`, and its clip is set to exactly
+that length, then clips concatenate losslessly. Captions (SRT + VTT) are
+engine-agnostic and re-based on the same measured durations.
+
+TTS uses a language-aware ladder: edge-tts (online, best) then offline
+Kokoro/Piper, dropping engines without a voice for the language -- e.g.
+Vietnamese routes to edge-tts `vi-VN` then Piper `vi_VN`, never Kokoro.
+English and Vietnamese ship tuned lexicons (voices + spoken math); other
+languages are supported generically via live edge-tts voice enumeration.
+Tier-1 effects (Ken Burns, highlight, spotlight, laser, reveal) run as
+ffmpeg filters on the slide pixels and need no slide source.
+
+The default `selftest` smoke is offline: it validates the deterministic
+core (pairing, re-basing, the engine ladder, verbalization, effect
+filtergraph building, captions, clip args, and the approval gate) with no
+network, package install, ffmpeg, or TTS. Run `doctor` to report whether
+ffmpeg, fonts, and the venv packages are present before a real render.
 
 ## Detection Notes
 

@@ -218,6 +218,33 @@
         "windows": ["rocm-smi.exe", "rocm-smi"]
       },
       "capabilities": ["gpu-detection"]
+    },
+    "ffmpeg-system-tool": {
+      "description": "FFmpeg/ffprobe for video encoding, audio normalization, and duration probing.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["ffmpeg"],
+        "windows": ["ffmpeg.exe", "ffmpeg"]
+      },
+      "capabilities": ["video-encode", "audio-normalize", "duration-probe"]
+    },
+    "espeak-ng-system-tool": {
+      "description": "eSpeak NG phonemizer used by offline TTS engines (Kokoro/Piper).",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["espeak-ng"],
+        "windows": ["espeak-ng.exe", "espeak-ng"]
+      },
+      "capabilities": ["phonemize"]
+    },
+    "libreoffice-system-tool": {
+      "description": "LibreOffice (soffice) headless for rendering PPTX decks to PDF.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["soffice", "libreoffice"],
+        "windows": ["soffice.exe", "soffice"]
+      },
+      "capabilities": ["pptx-render"]
     }
   },
   "python_candidate_sets": {
@@ -393,6 +420,16 @@
     "github-cli": {"type": "tool", "logical_tool": "github-cli"},
     "ripgrep-cli": {"type": "tool", "logical_tool": "ripgrep-cli"},
     "nvidia-smi-tool": {"type": "tool", "logical_tool": "nvidia-smi-tool"},
-    "rocm-smi-tool": {"type": "tool", "logical_tool": "rocm-smi-tool"}
+    "rocm-smi-tool": {"type": "tool", "logical_tool": "rocm-smi-tool"},
+    "edge-tts-python-package": {"type": "python", "module": "edge_tts"},
+    "kokoro-python-package": {"type": "python", "module": "kokoro"},
+    "piper-tts-python-package": {"type": "python", "module": "piper"},
+    "python-pptx-python-package": {"type": "python", "module": "pptx"},
+    "pdf2image-python-package": {"type": "python", "module": "pdf2image"},
+    "pillow-python-package": {"type": "python", "module": "PIL"},
+    "soundfile-python-package": {"type": "python", "module": "soundfile"},
+    "ffmpeg-system-tool": {"type": "tool", "logical_tool": "ffmpeg-system-tool"},
+    "espeak-ng-system-tool": {"type": "tool", "logical_tool": "espeak-ng-system-tool"},
+    "libreoffice-system-tool": {"type": "tool", "logical_tool": "libreoffice-system-tool"}
   }
 }

@@ -1,0 +1,12 @@
+# slides-to-video dedicated venv (~/.local/share/slides-to-video-venv).
+# All free / permissively licensed. ffmpeg + espeak-ng are SYSTEM deps (not here).
+# Installed by: run_slides_to_video.sh setup
+edge-tts>=7,<8
+kokoro>=0.9.4
+soundfile>=0.12
+numpy>=1.26
+piper-tts>=1.2
+python-pptx>=1.0
+PyMuPDF>=1.24
+pdf2image>=1.17
+Pillow>=10.2

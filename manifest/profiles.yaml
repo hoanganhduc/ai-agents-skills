@@ -153,8 +153,13 @@
         "decision-doubt-loop",
         "source-grounded-decisions",
         "adversarial-boundary-gate",
-        "behavior-preserving-cleanup"
+        "behavior-preserving-cleanup",
+        "slides-to-video"
       ]
+    },
+    "media": {
+      "description": "Narrated, captioned presentation and lecture videos from prepared slides.",
+      "skills": ["slides-to-video"]
     }
   },
   "default_profile": "research-core"

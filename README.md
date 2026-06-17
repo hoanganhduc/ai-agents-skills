@@ -265,6 +265,13 @@ mapping. Runtime inventory intentionally rejects live config, databases,
 caches, downloaded documents, bytecode, archives, symlinks, sensitive material,
 and persistent execution markers.
 
+`slides-to-video` is a runtime-backed skill that turns prepared slides
+(PNG/PDF/PPTX) into a narrated, captioned MP4 in a chosen language and presenter
+role using only free tools (edge-tts/Kokoro/Piper plus ffmpeg). It runs a
+three-phase, human-in-the-loop flow and blocks rendering until the transcript is
+explicitly approved. English and Vietnamese are first-class; other languages are
+supported generically. See `docs/skills.md` and the skill references.
+
 Docling is the main document/OCR runtime-backed skill. Its managed wrapper is
 local-only by default: sources must be local files and remote service fields
 are rejected from config. Use `scan-heavy` when you want stronger local OCR
@@ -323,9 +330,10 @@ make install ARGS="--profile research-core --dry-run"
 | `figure` | Structural figure generation and checking. | `tikz-draw` |
 | `formal-research` | Optional Lean formalization lane with local checks and declaration-search setup. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate` |
 | `formal-research-remote` | Optional remote formal lane setup for LeanExplore and AXLE MCP plus local formal-lane skills; install is inert and does not start remote services. | `formal-skeleton-helper`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate`, `axiom-axle-mcp` |
-| `full-research` | All research-related skills. | `autonomous-research-loop`, `autonomous-research-loop-runtime`, `deep-research-workflow`, `source-research`, `research-briefing`, `research-report-reviewer`, `research-verification-gate`, `draft-writing`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `submission-venue-selector`, `database-lookup`, `docling`, `get-available-resources`, `formal-skeleton-helper`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate`, `axiom-axle-mcp`, `model-router`, `workspace-rearranger`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `sagemath`, `graph-verifier`, `agent-group-discuss`, `prose`, `cross-agent-delegation`, `modal-research-compute`, `paper-review`, `annotated-review`, `vnthuquan`, `self-improving-agent`, `session-logs`, `intent-interview`, `decision-doubt-loop`, `source-grounded-decisions`, `adversarial-boundary-gate`, `behavior-preserving-cleanup` |
+| `full-research` | All research-related skills. | `autonomous-research-loop`, `autonomous-research-loop-runtime`, `deep-research-workflow`, `source-research`, `research-briefing`, `research-report-reviewer`, `research-verification-gate`, `draft-writing`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `submission-venue-selector`, `database-lookup`, `docling`, `get-available-resources`, `formal-skeleton-helper`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate`, `axiom-axle-mcp`, `model-router`, `workspace-rearranger`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `sagemath`, `graph-verifier`, `agent-group-discuss`, `prose`, `cross-agent-delegation`, `modal-research-compute`, `paper-review`, `annotated-review`, `vnthuquan`, `self-improving-agent`, `session-logs`, `intent-interview`, `decision-doubt-loop`, `source-grounded-decisions`, `adversarial-boundary-gate`, `behavior-preserving-cleanup`, `slides-to-video` |
 | `library` | Paper and ebook library workflows. | `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup` |
 | `math` | Math and graph verification workflows. | `sagemath`, `graph-verifier`, `formal-skeleton-helper` |
+| `media` | Narrated, captioned presentation and lecture videos from prepared slides. | `slides-to-video` |
 | `multi-agent` | Multi-agent and structured workflow orchestration. | `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation`, `autonomous-research-loop`, `autonomous-research-loop-runtime`, `decision-doubt-loop` |
 | `research-core` | Default research planning, source gathering, report review, and delivery verification. | `research-briefing`, `autonomous-research-loop`, `autonomous-research-loop-runtime`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate`, `intent-interview` |
 | `serious-research` | Source-preserving research workflow with local libraries, document parsing, validation, multi-agent orchestration, and Lean skeleton support only; use formal-research for Lean verification. | `research-briefing`, `autonomous-research-loop`, `autonomous-research-loop-runtime`, `deep-research-workflow`, `source-research`, `research-report-reviewer`, `research-verification-gate`, `zotero`, `calibre`, `getscipapers-requester`, `paper-lookup`, `submission-venue-selector`, `docling`, `database-lookup`, `paper-review`, `agent-group-discuss`, `prose`, `model-router`, `cross-agent-delegation`, `get-available-resources`, `formal-skeleton-helper`, `workspace-rearranger`, `intent-interview`, `decision-doubt-loop`, `source-grounded-decisions`, `adversarial-boundary-gate`, `behavior-preserving-cleanup` |
@@ -415,6 +423,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `sagemath` | Sage-backed math, graph theory, algebra, and verification. | `math`, `full-research` |
 | `self-improving-agent` | Log durable learnings and propose canonical repo integration plans across install targets. | `full-research` |
 | `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
+| `slides-to-video` | Turn prepared slides (PNG/PDF/PPTX) into a narrated, captioned video in a chosen language and presenter role using only free tools; three-phase human-in-the-loop with an approval gate before rendering. | `media`, `full-research` |
 | `source-grounded-decisions` | Ground version- and spec-sensitive decisions in cited authoritative sources; flag when unverified. | `serious-research`, `full-research` |
 | `source-research` | General web and source-gathering research workflow for current-information synthesis. | `research-core`, `serious-research`, `full-research` |
 | `submission-venue-selector` | Evidence-gated journal and conference venue selection for scholarly drafts; deliverable rankings require comparator-paper evidence. | `serious-research`, `full-research` |
