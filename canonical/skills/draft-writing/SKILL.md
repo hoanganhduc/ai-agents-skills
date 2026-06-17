@@ -29,21 +29,26 @@ user is asking to rewrite or prepare draft text.
 ## Core Workflow
 
 1. Define the writing scope and audience.
-2. Extract atomic claims from the current draft, outline, or notes.
-3. Classify each claim as contribution, evidence, assumption, caveat,
+2. Inspect the local context needed to write in the requested form: current
+   draft, outline, notes, source material, prior posts, templates, house style,
+   venue instructions, and supplied examples. If expected context is absent,
+   say so and state the style/content assumption before drafting.
+3. Extract atomic claims from the current draft, outline, notes, or source
+   material.
+4. Classify each claim as contribution, evidence, assumption, caveat,
    comparison, recommendation, definition, result, limitation, or transition.
-4. Map each substantive claim to support: source, experiment, theorem, data,
+5. Map each substantive claim to support: source, experiment, theorem, data,
    author note, prior section, or `missing`.
-5. Freeze the intended claim ledger before substantial rewriting.
-6. Rewrite for structure, clarity, and style without adding unsupported claims.
-7. Audit the revision delta:
+6. Freeze the intended claim ledger before substantial rewriting.
+7. Rewrite for structure, clarity, and style without adding unsupported claims.
+8. Audit the revision delta:
    - added claim
    - removed claim
    - strengthened claim
    - weakened claim
    - changed caveat
    - unsupported claim introduced
-8. Report remaining gaps before presenting the draft as ready.
+9. Report remaining gaps before presenting the draft as ready.
 
 Use the installed templates when available:
 
@@ -65,6 +70,9 @@ long proofs begin with a clear proof idea.
 - Label unsupported or newly introduced claims instead of smoothing them into
   polished prose.
 - Preserve caveats unless the user explicitly asks to remove or revise them.
+- Do not generate a blog post, article, report, or other format-matched draft
+  before inspecting available prior examples/templates/style artifacts. If the
+  repository or workspace has no such artifacts, say that explicitly.
 - When making a rewrite, include a short claim-change note if the change is
   substantive.
 - If material evidence remains unchecked, say `incomplete analysis` before any

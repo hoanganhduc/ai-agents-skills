@@ -26,7 +26,10 @@ Open these only when relevant:
 
 - Generic paper, article, preprint, DOI, ISBN, and book retrieval or sharing requests route to `zotero` first.
 - Explicit Calibre-library ebook operations route to `calibre`.
-- External paper or book retrieval routes to `getscipapers-requester` only if Zotero does not satisfy the request or the user explicitly wants a download from outside the library.
+- External paper or book retrieval routes to `getscipapers-requester` only
+  after the relevant local-library workflow does not satisfy the request, or
+  after the user explicitly says not to check/use the library. The word
+  "download" alone is not an outside-library opt-out.
 - Multi-agent discussion/review/research routes to `agent-group-discuss` by default and `prose` for more structured workflows.
 - Annotated paper review routes to `annotated-review` only when the user explicitly asks for both annotation and review.
 - Review-only paper tasks route to `paper-review`.
@@ -62,6 +65,10 @@ Open these only when relevant:
 - For explicit Calibre ebook-library workflows, prefer `calibre` over improvised filesystem search.
 - For mathematical verification, prefer local Python for small checks and route to `sagemath` when the computation needs SageMath-native capabilities.
 - Never use `curl`, `wget`, ad hoc browser fetches, or direct publisher-site HTTP requests as a substitute for the library tools on paper/book retrieval tasks.
+- When a lookup returns multiple plausible paper/book matches, show a numbered
+  list with title, authors, and year when available, then wait for the user's
+  chosen index before `--best`, `--index`, add, attach, send, review, or external
+  retrieval.
 
 ## Parallelism
 
@@ -73,6 +80,9 @@ Good candidates:
 - multiple independent subtopics
 
 Do not spawn agents for the immediate blocking step if local work is faster.
+Ask for explicit confirmation before spawning subagents unless the user already
+requested multi-agent work, approved a workflow that includes subagents, or gave
+an explicit budget/depth instruction that makes parallel delegation expected.
 
 ## Focused specialist delegation
 
@@ -96,7 +106,11 @@ Good matches:
 - Use `deep-research-workflow` for single-agent phased deep research that needs explicit source handoff across search, analysis, and final writing.
 - Use `tikz-draw` for explicit TikZ figure generation, refactoring, extraction, compile, or review work, especially when the output should follow a structure-first brief -> spec -> render flow.
 - Use `calibre` for explicit Calibre library operations: ebook search/get by ID, sending Calibre-managed books, add/update, tags, shelves, sync, remove, convert, export, doctor, and clean.
-- Use `getscipapers-requester` only for external retrieval or DOI/ISBN resolution after Zotero does not satisfy the request, or when the user explicitly wants an outside download rather than a library copy. For review tasks that need a document, check `calibre` after `zotero` and before this fallback.
+- Use `getscipapers-requester` only for external retrieval or DOI/ISBN
+  resolution after Zotero does not satisfy the request, or when the user
+  explicitly says not to check/use the library and wants outside retrieval. For
+  review tasks that need a document, check `calibre` after `zotero` and before
+  this fallback.
 - If an externally retrieved book file should be added to the ebook library, hand off to `calibre` for the final add/update step.
 - Use `annotated-review` only for annotate+review paper flows.
 - Use `paper-review` for single-agent review-only paper flows such as review, critique, hard review, or issue-finding requests.

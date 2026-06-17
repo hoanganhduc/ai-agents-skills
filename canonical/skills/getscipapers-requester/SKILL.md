@@ -1,6 +1,6 @@
 ---
 name: getscipapers-requester
-description: Use for external DOI/ISBN/title resolution, manifest creation from pasted text, and paper retrieval when Zotero is not the right path or the user explicitly wants an external download.
+description: Use for external DOI/ISBN/title resolution, manifest creation from pasted text, and paper retrieval after the local library-first workflow does not satisfy the request or the user explicitly opts out of library use.
 metadata:
   short-description: External paper retrieval fallback
 ---
@@ -19,13 +19,19 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Pat
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
 
-This is the external retrieval fallback. Do not use it before `zotero` for normal paper/library requests, and for review tasks that need a paper/book do not use it before both `zotero` and `calibre` have been checked.
+This is the external retrieval fallback. Do not use it before `zotero` for
+normal paper/library requests, and for review tasks that need a paper/book do
+not use it before both `zotero` and `calibre` have been checked. "Download" by
+itself does not bypass the library-first workflow; bypass only when the user
+explicitly says not to check/use the library or confirms outside retrieval after
+the local miss/ambiguity is shown.
 
 ## When to use
 
 - The paper is not in Zotero
 - and, for review tasks, it is also not in Calibre
-- The user explicitly says "download"
+- The user explicitly says not to check/use the library, or confirms external
+  retrieval after the library-first result is reported
 - The task is DOI/ISBN/title resolution from external sources
 - The user pasted many identifiers and wants batch retrieval
 
@@ -62,6 +68,11 @@ bash ~/.codex/runtime/run_skill.sh skills/getscipapers_requester/run_gsp_helper.
 
 1. If DOI/ISBN is available, use it directly.
 2. Otherwise resolve from title or text.
-3. For many papers, create a manifest first.
-4. For large batches, prefer dry-run style validation first.
-5. If retrieval fails, report the failure precisely instead of hand-waving.
+3. When title/text resolution returns multiple plausible matches, show the
+   numbered candidates with title, authors, and year when available, then wait
+   for the user's selected index before using `--best`, retrieval, attachment,
+   send, or review steps. Exact DOI/ISBN requests do not need this
+   disambiguation.
+4. For many papers, create a manifest first.
+5. For large batches, prefer dry-run style validation first.
+6. If retrieval fails, report the failure precisely instead of hand-waving.

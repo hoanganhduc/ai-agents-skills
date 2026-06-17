@@ -14,6 +14,8 @@ Rules:
 
 - distinguish sourced facts from inference
 - keep citations attached to major claims
+- for format-matched writing, note which prior posts, templates, style guides,
+  or supplied examples shaped the draft; if none existed, state that assumption
 - for v2 finalizable delivery, include checked report evidence, current
   `model_freshness.json`, and non-blocking `EvidenceGuard`/`VerifyGuard` refs
 - if figures are included, list `F*` ids with artifact paths and supporting `S*` ids

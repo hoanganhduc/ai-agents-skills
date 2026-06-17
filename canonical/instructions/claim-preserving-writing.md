@@ -5,8 +5,15 @@ change the argument.
 
 ## Claim Layer
 
-Before rewriting, extract the draft into atomic claims. Prefer small claims that
-can be supported, weakened, or removed independently.
+Before rewriting or drafting, inspect the relevant local context: current draft,
+outline, notes, source material, prior posts, templates, house style, venue
+instructions, and supplied examples. For blog posts, articles, reports, and
+other format-matched prose, do this before generating the first draft. If the
+expected context is absent, state that gap and the style/content assumption
+before proceeding.
+
+Then extract the draft, outline, notes, or source material into atomic claims.
+Prefer small claims that can be supported, weakened, or removed independently.
 
 Recommended claim types:
 

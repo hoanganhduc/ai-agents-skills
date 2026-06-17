@@ -37,11 +37,15 @@ This uses the vendored Codex runtime copy of the Calibre workflow.
 ## Routing boundary
 
 - Prefer this skill for explicit Calibre library operations and ebook workflows.
-- Do not use this in place of `zotero` for generic "find/get/share/download a paper, DOI, ISBN, or book" requests; the Claude/OpenClaw top-level router handles those with Zotero first.
+- Do not use this in place of `zotero` for generic "find/get/share/download a paper, DOI, ISBN, or book" requests; the top-level routing rule handles those with Zotero first.
 - For review tasks that require locating a paper or book and the user did not
   supply the file/path, use Calibre immediately after Zotero and before any
   online retrieval.
-- If Zotero does not satisfy a generic retrieval request and the user wants an outside download, use `getscipapers-requester` first, then return to `calibre` if the resulting file should be added to the ebook library.
+- If Zotero does not satisfy a generic retrieval request, use
+  `getscipapers-requester` only after the user explicitly says not to check/use
+  the library or confirms outside retrieval after the library-first result is
+  reported. Return to `calibre` only if the resulting file should be added to
+  the ebook library.
 
 ## Base path
 
@@ -157,7 +161,14 @@ bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh clean
 ## Important behaviors
 
 - If `get` returns multiple matches, show candidates and ask the user to pick instead of guessing.
+- Use `--index` only after showing candidates and receiving the user's selected
+  index.
 - Prefer dry-run before destructive operations like `remove`.
+- For library-mutating or outward-facing actions (`add`, `update`, `add-tag`,
+  `remove-tag`, `remove`, `convert`, `sync`, `clean`, `get --send`, or share),
+  run the relevant dry-run/preview/search first when available, state the exact
+  book/library/tag/channel to be affected, and get explicit confirmation unless
+  the user's latest request already approved that exact action.
 - Do not assume Calibre host dependencies such as `ebook-convert` are present; use `doctor` when conversion health matters.
 - Sending books uses the OpenClaw file-sending path from the library workflow.
 - `--send` uses `channel:target` syntax such as `telegram:CHAT_ID`, `zulip:Stream:topic`, `googlechat:SPACE`, or `whatsapp:PHONE`.

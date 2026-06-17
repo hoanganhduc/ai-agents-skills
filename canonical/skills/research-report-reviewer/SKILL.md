@@ -11,11 +11,17 @@ Use this after a draft exists and before presenting research as final.
 
 ## What to inspect
 
+- the stated scope, question, exclusions, and any requested output format
+- available structured artifacts such as `sources.jsonl`, `claims.jsonl`,
+  `guards.jsonl`, `delivery.json`, source ledgers, analysis matrices, and report
+  evidence mappings
 - unsupported or weakly supported claims
 - missing dates or stale-time ambiguity
 - scope drift relative to the original question
 - places where observation and inference are blended together
 - overconfident language that should be hedged or marked `incomplete analysis`
+- whether prior posts, templates, style guides, or supplied examples were
+  inspected before a format-matched draft
 
 ## Output contract
 

@@ -30,6 +30,9 @@ Keep it brief and include:
 - `Goal` — what question the work must answer
 - `Scope` — what is in and out
 - `Constraints` — time, tools, source class, or formatting limits
+- `Context/style artifacts` — prior posts, templates, house style, examples,
+  source ledgers, or supplied materials to inspect before drafting or matching a
+  publication format
 - `Evidence plan` — primary source types and verification expectations
 - `Workflow` — which downstream research skill or path to use
 - `Risks` — likely ambiguity, missing evidence, or live-data concerns
@@ -40,5 +43,8 @@ Use the compact template in `references/brief-template.md` when helpful.
 
 - keep the brief short enough to read in a few seconds
 - state assumptions explicitly instead of hiding them in later research
+- for writing or publication-format tasks, inspect old posts, templates, house
+  style, and supplied examples before drafting; if they are absent, say so and
+  state the style assumption before writing
 - if the task is simple, say so and skip heavyweight planning
 - if the user already provided a plan, validate and tighten it rather than replacing it

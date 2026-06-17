@@ -232,6 +232,11 @@ cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.loc
   malformed SQLite results as degraded.
 - For link sharing, use the Zotero workflow rather than ad hoc file browsing.
 - Use `--index` only after showing the user the numbered candidate list.
+- For library-mutating or outward-facing actions (`add`, `update`, attachment
+  changes, trash/delete/remove, sync-affecting operations, `send`, or share),
+  run the relevant dry-run/preview/search first when available, state the exact
+  item/library/collection/channel to be affected, and get explicit confirmation
+  unless the user's latest request already approved that exact action.
 
 ## Add-paper rules imported from the bot
 
@@ -263,5 +268,6 @@ Only route to `getscipapers-requester` if:
 - the paper is not in Zotero
 - the Calibre library also does not satisfy the request when the task is a review
   that needs the document
-- the user explicitly wants an external download
+- the user explicitly says not to check/use the library, or confirms external
+  retrieval after the library-first result is reported
 - or the Zotero workflow clearly cannot satisfy the request

@@ -45,6 +45,7 @@
       "artifacts": [
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:operating-discipline",
+        "instruction-doc:risk-gated-confirmation",
         "instruction-doc:delivery-verification-gate",
         "instruction-doc:failure-recovery-discipline",
         "instruction-doc:context-discipline",
@@ -134,6 +135,7 @@
         "template:deep-research-report",
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:operating-discipline",
+        "instruction-doc:risk-gated-confirmation",
         "instruction-doc:delivery-verification-gate",
         "instruction-doc:failure-recovery-discipline",
         "instruction-doc:context-discipline",
@@ -280,6 +282,11 @@
       "operating-discipline": {
         "description": "Always-on cross-task behaviors (surface assumptions, manage confusion, push back, scope discipline, verify) plus an index of which gate to invoke when.",
         "source": "operating-discipline.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
+      "risk-gated-confirmation": {
+        "description": "Risk classification thresholds and explicit confirmation contract before large, destructive, outward-facing, or unclear work.",
+        "source": "risk-gated-confirmation.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "delivery-verification-gate": {
