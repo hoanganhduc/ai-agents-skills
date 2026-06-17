@@ -351,6 +351,13 @@ mapping. Runtime inventory intentionally rejects live config, databases,
 caches, downloaded documents, bytecode, archives, symlinks, sensitive material,
 and persistent execution markers.
 
+`slides-to-video` is a runtime-backed skill that turns prepared slides
+(PNG/PDF/PPTX) into a narrated, captioned MP4 in a chosen language and presenter
+role using only free tools (edge-tts/Kokoro/Piper plus ffmpeg). It runs a
+three-phase, human-in-the-loop flow and blocks rendering until the transcript is
+explicitly approved. English and Vietnamese are first-class; other languages are
+supported generically. See `docs/skills.md` and the skill references.
+
 Docling is the main document/OCR runtime-backed skill. Its managed wrapper is
 local-only by default: sources must be local files and remote service fields
 are rejected from config. Use `scan-heavy` when you want stronger local OCR
@@ -604,6 +611,7 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
             lines.append(f"| `{name}` | `{spec.get('type')}` | {detail} |")
     lines.extend(current_config_dependency_sections(manifests))
     lines.extend(docling_runtime_notes())
+    lines.extend(slides_to_video_runtime_notes())
     lines.extend(
         [
             "",
@@ -670,6 +678,51 @@ def docling_runtime_notes() -> list[str]:
         "`ocrspace-smoke --allow-remote-ocr` only when a real OCR.space key is",
         "configured and a live remote request is acceptable. The command",
         "generates and uploads a synthetic one-page PDF rather than user data.",
+    ]
+
+
+def slides_to_video_runtime_notes() -> list[str]:
+    return [
+        "",
+        "## Slides-To-Video Runtime Notes",
+        "",
+        "`slides-to-video` turns prepared slides (PNG/PDF/PPTX) into a narrated,",
+        "captioned MP4 using only free tools. `ffmpeg` is the one required system",
+        "tool (use an LGPL build); `espeak-ng` is needed for offline TTS and",
+        "LibreOffice only for PPTX input. Python packages install into a dedicated",
+        "venv at `~/.local/share/slides-to-video-venv` via the `setup` subcommand;",
+        "the wrappers auto-select that venv (or `S2V_PYTHON` / `AAS_RUNTIME_PYTHON`).",
+        "",
+        "Install the system tools first, then run `setup`, then `doctor`:",
+        "Debian/Ubuntu `sudo apt-get install ffmpeg espeak-ng libreoffice`,",
+        "Fedora `sudo dnf install ffmpeg espeak-ng libreoffice`, macOS",
+        "`brew install ffmpeg espeak-ng` (LibreOffice via cask), Windows",
+        "`winget install Gyan.FFmpeg eSpeak-NG.eSpeak-NG`. LibreOffice is only",
+        "needed for PPTX input and `espeak-ng` only for offline TTS.",
+        "",
+        "It runs a three-phase, human-in-the-loop flow: `analyze` (ingest slides),",
+        "`draft` then `verbalize` (per-slide spoken transcript, math read aloud),",
+        "and `render` -- which is blocked until `approve` pins the transcript SHA,",
+        "and re-blocks automatically if the transcript changes afterward.",
+        "",
+        "Timing is duration-driven: each slide's narration is synthesized,",
+        "normalized to WAV, measured with `ffprobe`, and its clip is set to exactly",
+        "that length, then clips concatenate losslessly. Captions (SRT + VTT) are",
+        "engine-agnostic and re-based on the same measured durations.",
+        "",
+        "TTS uses a language-aware ladder: edge-tts (online, best) then offline",
+        "Kokoro/Piper, dropping engines without a voice for the language -- e.g.",
+        "Vietnamese routes to edge-tts `vi-VN` then Piper `vi_VN`, never Kokoro.",
+        "English and Vietnamese ship tuned lexicons (voices + spoken math); other",
+        "languages are supported generically via live edge-tts voice enumeration.",
+        "Tier-1 effects (Ken Burns, highlight, spotlight, laser, reveal) run as",
+        "ffmpeg filters on the slide pixels and need no slide source.",
+        "",
+        "The default `selftest` smoke is offline: it validates the deterministic",
+        "core (pairing, re-basing, the engine ladder, verbalization, effect",
+        "filtergraph building, captions, clip args, and the approval gate) with no",
+        "network, package install, ffmpeg, or TTS. Run `doctor` to report whether",
+        "ffmpeg, fonts, and the venv packages are present before a real render.",
     ]
 
 

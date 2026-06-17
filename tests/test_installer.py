@@ -90,6 +90,31 @@ class ManifestTests(unittest.TestCase):
                 if profile_name in explicit_profiles:
                     self.assertIn(skill, explicit_profiles[profile_name])
 
+    def test_slides_to_video_skill_and_runtime_registered(self) -> None:
+        manifests = load_manifests()
+        skills = manifests["skills"]["skills"]
+        self.assertIn("slides-to-video", skills)
+        skill = skills["slides-to-video"]
+        self.assertEqual(set(skill["profiles"]), {"media", "full-research"})
+        for agent in ("codex", "claude", "deepseek", "opencode", "antigravity"):
+            self.assertIn(agent, skill["supported_agents"])
+        self.assertIn("ffmpeg-system-tool", skill["required_dependencies"])
+        self.assertIn("edge-tts-python-package", skill["optional_dependencies"])
+        self.assertIn("offline-smoke", skill["verification"])
+
+        runtime_skill = manifests["runtime"]["skills"]["slides-to-video"]
+        self.assertEqual(runtime_skill["smoke_coverage"]["status"], "offline-smoke")
+        self.assertEqual(runtime_skill["smoke"]["args"][0], "selftest")
+        targets = {entry["target"] for entry in runtime_skill["files"]}
+        self.assertIn("workspace/skills/slides-to-video/slides_to_video_runtime.py", targets)
+        self.assertIn("workspace/skills/slides-to-video/s2v/languages/vi.json", targets)
+
+        args = Args()
+        args.profile = "media"
+        self.assertIn("slides-to-video", resolve_skills(args, manifests))
+        args.profile = "research-core"
+        self.assertNotIn("slides-to-video", resolve_skills(args, manifests))
+
     def test_default_profile_resolves_research_core(self) -> None:
         manifests = load_manifests()
         args = Args()

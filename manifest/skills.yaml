@@ -455,6 +455,36 @@
       "optional_dependencies": [],
       "optional_capabilities": ["local-history-search"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "slides-to-video": {
+      "description": "Turn prepared slides (PNG/PDF/PPTX) into a narrated, captioned video in a chosen language and presenter role using only free tools; three-phase human-in-the-loop with an approval gate before rendering.",
+      "profiles": ["media", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "required_dependencies": ["python-runtime", "ffmpeg-system-tool"],
+      "optional_dependencies": [
+        "edge-tts-python-package",
+        "kokoro-python-package",
+        "piper-tts-python-package",
+        "python-pptx-python-package",
+        "pdf2image-python-package",
+        "pillow-python-package",
+        "pymupdf-python-package",
+        "soundfile-python-package",
+        "numpy-python-package",
+        "espeak-ng-system-tool",
+        "libreoffice-system-tool"
+      ],
+      "optional_capabilities": [
+        "tier1-effects",
+        "language-aware-tts",
+        "english-tuned",
+        "vietnamese-tuned",
+        "offline-tts",
+        "captions-srt-vtt",
+        "human-approval-gate",
+        "offline-smoke"
+      ],
+      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
     }
   },
   "legacy_aliases": {

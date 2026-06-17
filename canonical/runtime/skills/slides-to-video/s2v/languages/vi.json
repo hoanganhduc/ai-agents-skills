@@ -1,0 +1,63 @@
+{
+  "language": "vi",
+  "tier": "tuned",
+  "font_hint": "Noto Sans",
+  "note": "Kokoro has no Vietnamese voice; the auto ladder is edge (online) -> piper (offline).",
+  "voices": {
+    "edge": {
+      "default": "vi-VN-HoaiMyNeural",
+      "female": "vi-VN-HoaiMyNeural",
+      "male": "vi-VN-NamMinhNeural"
+    },
+    "piper": {"default": "vi_VN-vais1000-medium"}
+  },
+  "roles": {
+    "presenter": {"rate": "+5%", "pitch": "+0Hz", "volume": "+0%"},
+    "teacher": {"rate": "-8%", "pitch": "+0Hz", "volume": "+0%"},
+    "lecturer": {"rate": "+0%", "pitch": "+0Hz", "volume": "+0%"},
+    "narrator": {"rate": "-5%", "pitch": "-2Hz", "volume": "+0%"},
+    "pitch": {"rate": "+12%", "pitch": "+3Hz", "volume": "+6%"}
+  },
+  "math": {
+    "patterns": [
+      {"re": "\\\\frac\\{([^{}]+)\\}\\{([^{}]+)\\}", "repl": "\\1 phần \\2"},
+      {"re": "\\\\sqrt\\{([^{}]+)\\}", "repl": "căn bậc hai của \\1"},
+      {"re": "\\^\\s*2\\b", "repl": " bình phương"},
+      {"re": "\\^\\s*3\\b", "repl": " lập phương"},
+      {"re": "\\^\\s*\\{?([0-9a-zA-Z]+)\\}?", "repl": " mũ \\1"}
+    ],
+    "symbols": {
+      "≤": " nhỏ hơn hoặc bằng ",
+      "≥": " lớn hơn hoặc bằng ",
+      "≠": " khác ",
+      "≈": " xấp xỉ ",
+      "±": " cộng trừ ",
+      "×": " nhân ",
+      "·": " nhân ",
+      "÷": " chia ",
+      "→": " suy ra ",
+      "∞": " vô cùng ",
+      "∑": " tổng ",
+      "∏": " tích ",
+      "∫": " tích phân ",
+      "√": " căn bậc hai của ",
+      "π": " pi ",
+      "θ": " tê-ta ",
+      "α": " an-pha ",
+      "β": " bê-ta ",
+      "λ": " lam-đa ",
+      "∈": " thuộc ",
+      "∉": " không thuộc ",
+      "∀": " với mọi ",
+      "∃": " tồn tại ",
+      "∪": " hợp ",
+      "∩": " giao ",
+      "⊂": " là tập con của ",
+      "∅": " tập rỗng ",
+      "−": " trừ ",
+      "+": " cộng ",
+      "=": " bằng ",
+      "%": " phần trăm "
+    }
+  }
+}

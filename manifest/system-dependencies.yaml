@@ -164,6 +164,27 @@
       "linux": "make invokes installer commands.",
       "windows": "make.bat invokes installer commands without requiring GNU Make.",
       "used_by": ["installation"]
+    },
+    "ffmpeg": {
+      "display_name": "FFmpeg",
+      "requirement": "required for slides-to-video rendering (video encode, audio normalize, duration probe)",
+      "linux": "FFmpeg + ffprobe on PATH (LGPL build with libx264), e.g. apt-get install ffmpeg.",
+      "windows": "ffmpeg.exe + ffprobe.exe on PATH (LGPL build), via winget/choco or a static build.",
+      "used_by": ["slides-to-video"]
+    },
+    "espeak-ng": {
+      "display_name": "eSpeak NG",
+      "requirement": "optional, for offline TTS (Kokoro/Piper phonemization)",
+      "linux": "espeak-ng on PATH, e.g. apt-get install espeak-ng.",
+      "windows": "espeak-ng on PATH from the espeak-ng releases.",
+      "used_by": ["slides-to-video offline TTS"]
+    },
+    "libreoffice": {
+      "display_name": "LibreOffice (soffice)",
+      "requirement": "optional, required only for PPTX input rendering",
+      "linux": "soffice/libreoffice on PATH, e.g. apt-get install libreoffice.",
+      "windows": "soffice.exe on PATH from a LibreOffice install.",
+      "used_by": ["slides-to-video PPTX input"]
     }
   },
   "python_packages": {
@@ -355,6 +376,55 @@
       "platforms": ["windows"],
       "used_by": ["zotero metadata fallback"],
       "source": "Windows Zotero metadata fallback import; exact package name is excluded because it embeds maintainer identity."
+    },
+    "edge-tts": {
+      "requirement": "edge-tts>=7,<8",
+      "import_name": "edge_tts",
+      "platforms": ["linux", "windows"],
+      "used_by": ["slides-to-video"],
+      "source": "Online TTS (default voice tier) for slides-to-video."
+    },
+    "kokoro": {
+      "requirement": "kokoro>=0.9.4",
+      "import_name": "kokoro",
+      "platforms": ["linux", "windows"],
+      "used_by": ["slides-to-video"],
+      "source": "Offline Apache-2.0 TTS fallback for slides-to-video (English et al.; no Vietnamese)."
+    },
+    "piper-tts": {
+      "requirement": "piper-tts>=1.2",
+      "import_name": "piper",
+      "platforms": ["linux", "windows"],
+      "used_by": ["slides-to-video"],
+      "source": "Offline TTS fallback incl. Vietnamese (vi_VN voices) for slides-to-video."
+    },
+    "python-pptx": {
+      "requirement": "python-pptx>=1.0",
+      "import_name": "pptx",
+      "platforms": ["linux", "windows"],
+      "used_by": ["slides-to-video"],
+      "source": "PPTX on-slide text and speaker-notes extraction for slides-to-video."
+    },
+    "pdf2image": {
+      "requirement": "pdf2image>=1.17",
+      "import_name": "pdf2image",
+      "platforms": ["linux", "windows"],
+      "used_by": ["slides-to-video"],
+      "source": "Alternate PDF-to-PNG renderer (poppler) for slides-to-video."
+    },
+    "Pillow": {
+      "requirement": "Pillow>=10.2",
+      "import_name": "PIL",
+      "platforms": ["linux", "windows"],
+      "used_by": ["slides-to-video"],
+      "source": "PNG validation/normalization of slide frames for slides-to-video."
+    },
+    "soundfile": {
+      "requirement": "soundfile>=0.12",
+      "import_name": "soundfile",
+      "platforms": ["linux", "windows"],
+      "used_by": ["slides-to-video"],
+      "source": "WAV writing for Kokoro output in slides-to-video."
     }
   },
   "node_packages": {
