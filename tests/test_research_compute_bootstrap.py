@@ -70,6 +70,38 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
             self.assertFalse(again["config"]["generated"])
             self.assertIn("left unchanged", again["config"].get("reason", ""))
 
+    def test_gh_probe_failure_does_not_crash_bootstrap(self) -> None:
+        """A `gh` probe that times out/errors (seen intermittently on Windows
+        runners) must not take the whole bootstrap down: config generation and
+        the other sections must still succeed."""
+        sys.path.insert(0, str(WORKSPACE))
+        try:
+            import research_compute.cli as cli
+        finally:
+            sys.path.remove(str(WORKSPACE))
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._make_workspace(Path(tmp))
+            real_run = cli.subprocess.run
+
+            def fake_run(cmd, *args, **kwargs):
+                if list(cmd[:2]) == ["gh", "auth"]:
+                    raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 20))
+                return real_run(cmd, *args, **kwargs)
+
+            cli.subprocess.run = fake_run
+            try:
+                summary = cli.command_bootstrap(
+                    config_path=ws / "config" / "research-compute.toml",
+                    root=ws,
+                    install_deps=False,
+                    auth=True,
+                )
+            finally:
+                cli.subprocess.run = real_run
+
+        self.assertTrue(summary["config"]["generated"])
+        self.assertIn("probe_error", summary["gh"])
+
 
 if __name__ == "__main__":
     unittest.main()

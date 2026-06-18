@@ -526,7 +526,13 @@ def _parse_gh_scopes(text: str) -> set[str]:
 def _bootstrap_gh(*, auth: bool) -> dict[str, Any]:
     if shutil.which("gh") is None:
         return {"installed": False, "hint": "install the GitHub CLI: https://cli.github.com"}
-    status = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=20)
+    try:
+        status = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=20)
+    except (subprocess.SubprocessError, OSError) as exc:
+        # A `gh` hiccup (e.g. a slow/hung probe on a loaded Windows runner that
+        # trips the timeout) must never crash bootstrap: report it as data so
+        # config/deps/doctor still succeed.
+        return {"installed": True, "probe_error": str(exc), "action": "skipped (gh probe failed)"}
     authenticated = status.returncode == 0
     combined = (status.stdout or "") + (status.stderr or "")
     has_user_scope = "user" in _parse_gh_scopes(combined)
