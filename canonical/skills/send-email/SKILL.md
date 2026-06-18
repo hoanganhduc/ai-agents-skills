@@ -92,6 +92,19 @@ pass `--no-reply-to-self` / `--no-bcc-self`, to disable. An explicit `reply_to`
 (or `--reply-to`) overrides the self-default; `--cc`/`--bcc` add to the standing
 lists.
 
+Multiple accounts: instead of (or alongside) a single `smtp` block, define an
+`accounts` map of named profiles and an optional `default_account`; each profile
+holds the same keys (connection + identity). Select one with `--account NAME` (or
+`SMTP_ACCOUNT`); `accounts` lists the names.
+
+```json
+{ "default_account": "work",
+  "accounts": {
+    "work": {"host": "smtp.work.example", "user": "<u>", "password": "<p>", "from": "<work-from-address>", "from_name": "You (Work)"},
+    "lab":  {"host": "smtp.gmail.com", "port": 587, "user": "<u>", "password": "<p>", "from": "<lab-from-address>"}
+  } }
+```
+
 If `--port`/`--security` are omitted, port 465 implies `ssl`, port 25 implies
 `plain`, and the default is `starttls` on port 587. Common hosts: `smtp.gmail.com`
 and `smtp.office365.com` (use an app password, not the account password).
@@ -118,10 +131,17 @@ bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/send-email/run_
   or sending.
 - `verify` -- connect and authenticate to the server, then disconnect; sends no
   message. Use it to test credentials.
-- `show-config` -- print the resolved host/port/security/user/from/timeout and
-  whether a password is set; the password itself is never printed.
+- `show-config` -- print the resolved account/host/port/security/user/from/identity
+  and whether a password is set; the password itself is never printed.
+- `accounts` -- list configured named SMTP accounts (names only, no secrets).
+- `contacts` -- the address book: lists saved contacts by default; `--add ADDR
+  [--name N]`, `--remove ADDR`, `--search QUERY`.
 - `selftest` -- offline smoke (no network): builds, serializes, and re-parses
   messages in memory to validate message construction.
+
+Account and identity selection: `--account NAME` (or `SMTP_ACCOUNT`) picks a named
+account; otherwise `default_account`, otherwise the single `smtp` block. Per-send
+CLI flags override the chosen account.
 
 Examples:
 
@@ -143,12 +163,27 @@ Every command prints a single JSON object. On success it includes `"ok": true`;
 on failure it includes `"ok": false` with an `error_code` and a redacted message,
 and the process exits non-zero.
 
+## Address book (save recipients for reuse)
+
+`send` reports `new_recipients` -- the addresses in this message that are not yet
+in the address book. **After a successful send, if `new_recipients` is non-empty,
+ask the user whether to save those addresses for later; if they agree, run
+`contacts --add <address> [--name <name>]` for each** (or send with
+`--save-recipients` to save them automatically). The book is a JSON file at
+`<runtime_workspace>/.address-book.json` (override with `SEND_EMAIL_ADDRESS_BOOK`);
+it is personal state and should be backed up alongside the secrets file. Use
+`contacts --search` to look up a saved address before composing.
+
 ## Natural-language routing
 
 - "email this file to <recipient>": run `send` with `--attach`; preview with
-  `--dry-run` first if the recipient or content is unconfirmed.
-- "does my SMTP setup work?": run `verify`.
-- "what mail settings are configured?": run `show-config`.
+  `--dry-run` first if the recipient or content is unconfirmed. After sending,
+  offer to save any `new_recipients` to the address book.
+- "send from my work account": run `send --account work` (see `accounts`).
+- "who do I have saved?" / "look up <name>'s email": run `contacts` /
+  `contacts --search <query>`.
+- "does my SMTP setup work?": run `verify` (add `--account` to test a specific one).
+- "what mail settings are configured?": run `show-config` / `accounts`.
 
 ## Security notes
 
