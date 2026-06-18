@@ -52,3 +52,10 @@ source, or an explicit `UNVERIFIED — assumed` flag.
 - ask for the version rather than guess when it is ambiguous
 - one authoritative source beats three blog posts
 - never present an unverified version-sensitive choice as established — flag it
+
+## Recommended templates
+
+When this skill is involved, consider these workflow templates (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `reversible-decision-memo` -- Evidence-grounded decision record with named alternatives, source-cited rationale, reversibility class and trip-wires, and a fresh-context adversarial confirmation before the decision stands.

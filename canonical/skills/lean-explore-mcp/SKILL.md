@@ -54,3 +54,10 @@ The emitted local stdio snippet uses command `lean-explore` and args `["mcp", "s
 ## Research Evidence Policy
 
 LeanExplore output is Lean declaration retrieval evidence. Record it as `lean_declaration_search`, never as `formal_check`. It cannot set local `lean_check_status`, satisfy placeholder or trust-base scans, replace statement-equivalence review, or promote formal support without local Lean/project evidence.
+
+## Recommended templates
+
+When this skill is involved, consider these workflow templates (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `informal-to-lean-formalization-runbook` -- Local-first intake mapping an informal proof to Lean declarations with a scanner-first verification gate separating typecheck status from claim support.

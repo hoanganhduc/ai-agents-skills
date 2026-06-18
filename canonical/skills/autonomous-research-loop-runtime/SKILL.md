@@ -99,3 +99,10 @@ Use the canonical `autonomous-research-loop` skill for orchestration policy and
 this helper only for local ledger mechanics. This helper validates that an
 early proof stop points to a passed machine-checkable proof artifact record; it
 does not independently validate the semantic truth of the proof.
+
+## Recommended templates
+
+When this skill is involved, consider these workflow templates (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute offload.

@@ -97,3 +97,10 @@ For each issue:
 - review-only -> this skill
 - annotate + review -> `annotated-review`
 - multi-agent review -> `agent-group-discuss`
+
+## Recommended templates
+
+When this skill is involved, consider these workflow templates (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `cross-agent-adversarial-review` -- Producer-never-confirmer adversarial review of a paper, proof, or code artifact across agent families with a fresh-agent confirmation gate.

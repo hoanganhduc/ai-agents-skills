@@ -63,3 +63,10 @@ step. See `references/intent-interview-template.md` for the exact shapes.
 - never treat a non-answer as approval
 - stop interviewing once you can predict the answers — do not over-question
 - if no user can answer, state assumptions explicitly and proceed under them
+
+## Recommended templates
+
+When this skill is involved, consider these workflow templates (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `reversible-decision-memo` -- Evidence-grounded decision record with named alternatives, source-cited rationale, reversibility class and trip-wires, and a fresh-context adversarial confirmation before the decision stands.

@@ -78,3 +78,10 @@ The runtime emits JSON with:
 - `limitations`
 
 The result can be copied into a v2 `evidence.jsonl` row or attached as a run artifact, but it does not itself prove the research claim.
+
+## Recommended templates
+
+When this skill is involved, consider these workflow templates (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `informal-to-lean-formalization-runbook` -- Local-first intake mapping an informal proof to Lean declarations with a scanner-first verification gate separating typecheck status from claim support.
