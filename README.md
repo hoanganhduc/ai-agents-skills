@@ -427,6 +427,7 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `rss-news-digest` | Run and manage RSS digest workflows. | `digest`, `full-research` |
 | `sagemath` | Sage-backed math, graph theory, algebra, and verification. | `math`, `full-research` |
 | `self-improving-agent` | Log durable learnings and propose canonical repo integration plans across install targets. | `full-research` |
+| `send-email` | Send email over SMTP using only the Python standard library: plain-text and HTML bodies, attachments, cc/bcc, reply-to, dry-run preview, connection verification, and redacted config inspection. |  |
 | `session-logs` | Search prior local agent session logs when explicitly requested. | `full-research` |
 | `slides-to-video` | Turn prepared slides (PNG/PDF/PPTX) into a narrated, captioned video in a chosen language and presenter role using only free tools; three-phase human-in-the-loop with an approval gate before rendering. | `media`, `full-research` |
 | `source-grounded-decisions` | Ground version- and spec-sensitive decisions in cited authoritative sources; flag when unverified. | `serious-research`, `full-research` |
