@@ -8,6 +8,7 @@
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": ["bounded-research-loop", "evidence-gates", "panel-loop-handoff", "recovery-ledger"],
+      "recommended_templates": ["autonomous-research-loop-runbook"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "autonomous-research-loop-runtime": {
@@ -17,6 +18,7 @@
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
       "optional_capabilities": ["offline-runtime-smoke", "loop-ledger-validation", "local-recovery-state"],
+      "recommended_templates": ["autonomous-research-loop-runbook"],
       "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
     },
     "deep-research-workflow": {
@@ -80,6 +82,7 @@
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
+      "recommended_templates": ["reversible-decision-memo"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "adversarial-boundary-gate": {
@@ -98,6 +101,7 @@
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
+      "recommended_templates": ["engineering-delivery-loop-runbook"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "research-report-reviewer": {
@@ -257,6 +261,7 @@
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["lean-cli", "lake-cli", "mathlib-cache"],
       "optional_capabilities": ["formal-lane-intake", "lean-tool-detection"],
+      "recommended_templates": ["informal-to-lean-formalization-runbook"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "lean-explore-mcp": {
@@ -275,6 +280,7 @@
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": ["lean-cli", "lake-cli", "mathlib-cache"],
       "optional_capabilities": ["lean-safety-scan", "optional-local-typecheck"],
+      "recommended_templates": ["informal-to-lean-formalization-runbook"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "axiom-axle-mcp": {
@@ -351,6 +357,7 @@
         "numpy-python-package"
       ],
       "optional_capabilities": ["sage-backed-graph-mode"],
+      "recommended_templates": ["tikz-figure-verification-runbook"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "sagemath": {
@@ -414,6 +421,7 @@
       "required_dependencies": [],
       "optional_dependencies": ["zotero-credentials"],
       "optional_capabilities": ["library-document-routing"],
+      "recommended_templates": ["cross-agent-adversarial-review"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "annotated-review": {
@@ -427,6 +435,7 @@
       ],
       "optional_dependencies": ["zotero-credentials", "tex-runtime"],
       "optional_capabilities": ["pdf-annotation"],
+      "recommended_templates": ["cross-agent-adversarial-review"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
     "vnthuquan": {

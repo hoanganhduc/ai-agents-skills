@@ -12,7 +12,7 @@ from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
 from installer.ai_agents_skills.agents import target_for
-from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main
+from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main, resolve_install_selection
 from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS
 from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
 from installer.ai_agents_skills.discovery import current_platform
@@ -152,6 +152,43 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("Modal credit", body)
         self.assertIn("fresh", body.lower())
         self.assertIn("backtrack", body.lower())
+
+    def test_skill_recommended_templates_coupling(self) -> None:
+        manifests = load_manifests()
+        skills = manifests["skills"]["skills"]
+        templates = manifests["artifacts"]["artifacts"]["template"]
+        # Curated mapping is present and every recommended template actually exists.
+        self.assertEqual(skills["tikz-draw"]["recommended_templates"],
+                         ["tikz-figure-verification-runbook"])
+        self.assertEqual(skills["autonomous-research-loop"]["recommended_templates"],
+                         ["autonomous-research-loop-runbook"])
+        for name, spec in skills.items():
+            for slug in spec.get("recommended_templates", []):
+                self.assertIn(slug, templates, f"{name} recommends missing template {slug}")
+
+        # The opt-in flag pulls the recommended template into the install selection.
+        args = Args()
+        args.skill = "tikz-draw"
+        args.with_recommended_templates = True
+        _, artifacts = resolve_install_selection(args, manifests)
+        self.assertIn(("template", "tikz-figure-verification-runbook"), artifacts)
+
+        # Default (no flag) does NOT pull the template.
+        args2 = Args()
+        args2.skill = "tikz-draw"
+        _, artifacts2 = resolve_install_selection(args2, manifests)
+        self.assertNotIn(("template", "tikz-figure-verification-runbook"), artifacts2)
+
+    def test_recommended_templates_must_reference_declared_templates(self) -> None:
+        import copy
+        from installer.ai_agents_skills.manifest import ManifestError, validate_manifests
+        manifests = load_manifests()
+        skills = copy.deepcopy(manifests["skills"])
+        skills["skills"]["tikz-draw"]["recommended_templates"] = ["nope-not-a-template"]
+        with self.assertRaises(ManifestError):
+            validate_manifests(skills, manifests["profiles"], manifests["dependencies"],
+                               manifests["artifacts"], manifests["system_dependencies"],
+                               manifests["runtime"], manifests["delegation"])
 
     def test_default_profile_resolves_research_core(self) -> None:
         manifests = load_manifests()

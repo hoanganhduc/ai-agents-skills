@@ -12,7 +12,7 @@ Core rules:
 - Do not fork or paste target-specific helper code into this canonical skill.
 - Do not print credentials, tokens, chat ids, or secret setup instructions.
 - Use both modules by default: `den` for incoming and `di` for outgoing.
-- Ignore eOffice read/unread state. The user may also read posts manually in a browser, so selection and monitoring must rely on fetched document ids and keyword/category filters.
+- Ignore eOffice read/unread state. The user may also read posts manually in a browser, so selection and monitoring must rely on fetched document ids.
 - Fetch multiple pages by default. Use `--pages N` when the user asks for a deeper or shallower scan.
 - Only download and send document files when the user explicitly asks for files or asks to download/send results.
 - After sending files, delete local copies unless the user explicitly asks to keep them.
@@ -28,7 +28,7 @@ Execution surface:
 
 Common commands:
 - `python3 -m vnu_eoffice test-login`
-- `python3 -m vnu_eoffice monitor --no-notify --limit 60 --pages 2 --min-level MEDIUM`
+- `python3 -m vnu_eoffice monitor --no-notify --limit 60 --pages 2`
 - `python3 -m vnu_eoffice list --limit 10 --pages 2 --modules den,di`
 - `python3 -m vnu_eoffice search "<keywords>" --limit 10 --pages 2 --modules den,di`
 - `python3 -m vnu_eoffice search "<keywords>" --limit 5 --pages 2 --has-attach`

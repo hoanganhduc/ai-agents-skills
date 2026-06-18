@@ -423,7 +423,11 @@ make plan ARGS="--no-skills --artifact-profile repo-management"
 ```
 
 Use `--with-deps` when selected artifacts should also bring in the backing
-skills they depend on.
+skills they depend on. Use `--with-recommended-templates` for the reverse: when
+installing skills, also install each skill's curated recommended template(s)
+(e.g. `tikz-draw` -> `tikz-figure-verification-runbook`, `autonomous-research-loop`
+-> `autonomous-research-loop-runbook`). It is opt-in, so default installs are
+unchanged.
 
 {artifact_profiles_table}
 

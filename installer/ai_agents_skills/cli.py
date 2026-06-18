@@ -53,6 +53,7 @@ from .selectors import (
     canonical_skill_name,
     resolve_artifacts,
     resolve_skills,
+    skill_recommended_templates,
     split_csv,
 )
 from .state import load_state, preflight_state_path, write_text_atomic
@@ -374,6 +375,7 @@ def add_selection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--artifact-profile", help="comma-separated artifact profiles")
     parser.add_argument("--exclude-artifact", help="comma-separated artifacts to exclude")
     parser.add_argument("--with-deps", action="store_true", help="include skills required by selected artifacts")
+    parser.add_argument("--with-recommended-templates", action="store_true", dest="with_recommended_templates", help="also install each selected skill's recommended template artifacts")
     parser.add_argument(
         "--runtime-profile",
         choices=["auto", "full", "none"],
@@ -1179,6 +1181,10 @@ def resolve_install_selection(
     selected_skills = set(resolve_skills(args, manifests))
     if getattr(args, "with_deps", False):
         selected_skills.update(artifact_dependency_skills(selected_artifacts, manifests))
+    if getattr(args, "with_recommended_templates", False):
+        selected_artifacts = sorted(
+            set(selected_artifacts) | skill_recommended_templates(selected_skills, manifests)
+        )
     return sorted(selected_skills), selected_artifacts
 
 
