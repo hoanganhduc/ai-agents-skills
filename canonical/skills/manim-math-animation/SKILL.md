@@ -68,8 +68,9 @@ A scene spec is JSON, e.g.:
 ```
 
 - `gen --spec spec.json --output scene.py` -- generate the Manim script (no render).
-- `render --spec spec.json --output clip.mp4 [--quality -qh]` -- render + normalize to a
-  silent, splice-ready clip.
+- `render --spec spec.json --output clip.mp4 [--quality=-qh]` -- render + normalize to a
+  silent, splice-ready clip. Pass the quality with `=` (e.g. `--quality=-ql` for a fast
+  draft) because the value starts with a dash; omit it to use the default `-qh`.
 - `doctor` / `selftest` -- environment check / offline smoke.
 
 Equations are LaTeX (math is language-neutral). Use the `title` (Pango `Text`) for
