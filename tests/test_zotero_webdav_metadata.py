@@ -175,7 +175,26 @@ class ZoteroWebDAVMetadataTests(unittest.TestCase):
         finally:
             os.remove(path)
 
-    def test_upload_uses_basename_inside_webdav_zip(self) -> None:
+    def test_file_sync_properties_xml_matches_zotero_webdav_sidecar(self) -> None:
+        webdav = load_webdav_module()
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"zotero attachment bytes")
+            path = f.name
+        try:
+            os.utime(path, (1700000000.125, 1700000000.125))
+            self.assertEqual(
+                webdav.file_sync_properties_xml(path),
+                (
+                    b'<properties version="1">'
+                    b'<mtime>1700000000125</mtime>'
+                    b'<hash>40c15acff47969ba6efd1f4ea12afd01</hash>'
+                    b'</properties>'
+                ),
+            )
+        finally:
+            os.remove(path)
+
+    def test_upload_uses_basename_inside_webdav_zip_and_uploads_prop(self) -> None:
         webdav = load_webdav_module()
         uploads = []
 
@@ -187,6 +206,7 @@ class ZoteroWebDAVMetadataTests(unittest.TestCase):
                 "method": method,
                 "url": url,
                 "data": kwargs.get("data"),
+                "headers": kwargs.get("headers"),
             })
             return FakeResponse()
 
@@ -206,8 +226,40 @@ class ZoteroWebDAVMetadataTests(unittest.TestCase):
             self.assertEqual(uploads[0]["url"], "https://dav.example/zotero/ABC123.zip")
             with zipfile.ZipFile(io.BytesIO(uploads[0]["data"])) as zf:
                 self.assertEqual(zf.namelist(), ["Expected_Name.pdf"])
+            self.assertEqual(uploads[1]["method"], "PUT")
+            self.assertEqual(uploads[1]["url"], "https://dav.example/zotero/ABC123.prop")
+            self.assertEqual(uploads[1]["headers"], {"Content-Type": "application/octet-stream"})
+            self.assertIn(b"<mtime>", uploads[1]["data"])
+            self.assertIn(b"<hash>", uploads[1]["data"])
         finally:
             os.remove(path)
+
+    def test_delete_removes_zip_and_prop(self) -> None:
+        webdav = load_webdav_module()
+        deletes = []
+
+        class FakeResponse:
+            status_code = 204
+
+        def fake_request(method, url, auth=None, **kwargs):
+            deletes.append((method, url))
+            return FakeResponse()
+
+        webdav.requests.request = fake_request
+        client = webdav.WebDAVClient({
+            "webdav_url": "https://dav.example",
+            "webdav_user": "user",
+            "WEBDAV_PASSWORD": "password",
+        })
+
+        self.assertTrue(client.delete("ABC123"))
+        self.assertEqual(
+            deletes,
+            [
+                ("DELETE", "https://dav.example/zotero/ABC123.zip"),
+                ("DELETE", "https://dav.example/zotero/ABC123.prop"),
+            ],
+        )
 
 
 if __name__ == "__main__":
