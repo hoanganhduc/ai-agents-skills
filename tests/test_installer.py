@@ -100,6 +100,8 @@ class ManifestTests(unittest.TestCase):
             self.assertIn(agent, skill["supported_agents"])
         self.assertIn("ffmpeg-system-tool", skill["required_dependencies"])
         self.assertIn("edge-tts-python-package", skill["optional_dependencies"])
+        self.assertIn("pptx-render-system-tool", skill["optional_dependencies"])
+        self.assertNotIn("libreoffice-system-tool", skill["optional_dependencies"])
         self.assertIn("offline-smoke", skill["verification"])
 
         runtime_skill = manifests["runtime"]["skills"]["slides-to-video"]

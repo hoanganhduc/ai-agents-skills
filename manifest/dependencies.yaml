@@ -233,7 +233,12 @@
       "version_constraint": "any",
       "candidates": {
         "linux": ["espeak-ng"],
-        "windows": ["espeak-ng.exe", "espeak-ng"]
+        "windows": [
+          "%PROGRAMFILES%\\eSpeak NG\\espeak-ng.exe",
+          "%PROGRAMFILES(X86)%\\eSpeak NG\\espeak-ng.exe",
+          "espeak-ng.exe",
+          "espeak-ng"
+        ]
       },
       "capabilities": ["phonemize"]
     },
@@ -243,6 +248,25 @@
       "candidates": {
         "linux": ["soffice", "libreoffice"],
         "windows": ["soffice.exe", "soffice"]
+      },
+      "capabilities": ["pptx-render"]
+    },
+    "pptx-render-system-tool": {
+      "description": "PPTX renderer: Microsoft PowerPoint on Windows or LibreOffice elsewhere.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["soffice", "libreoffice"],
+        "macos": ["soffice", "/Applications/LibreOffice.app/Contents/MacOS/soffice"],
+        "windows": [
+          "%PROGRAMFILES%\\Microsoft Office\\root\\Office*\\POWERPNT.EXE",
+          "%PROGRAMFILES(X86)%\\Microsoft Office\\root\\Office*\\POWERPNT.EXE",
+          "%PROGRAMFILES%\\Microsoft Office\\Office*\\POWERPNT.EXE",
+          "%PROGRAMFILES(X86)%\\Microsoft Office\\Office*\\POWERPNT.EXE",
+          "POWERPNT.EXE",
+          "POWERPNT",
+          "soffice.exe",
+          "soffice"
+        ]
       },
       "capabilities": ["pptx-render"]
     },
@@ -440,6 +464,7 @@
     "ffmpeg-system-tool": {"type": "tool", "logical_tool": "ffmpeg-system-tool"},
     "espeak-ng-system-tool": {"type": "tool", "logical_tool": "espeak-ng-system-tool"},
     "libreoffice-system-tool": {"type": "tool", "logical_tool": "libreoffice-system-tool"},
+    "pptx-render-system-tool": {"type": "tool", "logical_tool": "pptx-render-system-tool"},
     "manim-python-package": {"type": "python", "module": "manim"},
     "manim-tex-runtime": {"type": "tool", "logical_tool": "manim-tex-runtime"}
   }

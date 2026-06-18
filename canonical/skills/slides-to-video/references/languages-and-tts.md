@@ -54,6 +54,9 @@ lexicon pass through unchanged; the user edits the spoken text directly.
 ## Captions and fonts
 
 Captions are NFC-normalized and emitted as SRT + VTT. For burned-in captions
-(`burn_captions`), libass is forced to a Vietnamese-covering font
-(`font_hint`, default Noto Sans). Verify fonts with `doctor` (Noto/DejaVu are
-detected on the host).
+(`burn_captions`), libass is forced to a Vietnamese-covering font. The language
+lexicon's `font_hint` is preferred, then the runtime falls back to installed
+Vietnamese-capable fonts such as Be Vietnam Pro, Arial, Calibri, Segoe UI,
+Tahoma, Times New Roman, or DejaVu Sans. Verify fonts with `doctor`; on Windows
+it inspects the font registry and font directories even when `fc-list` is not
+available.

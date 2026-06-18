@@ -54,7 +54,10 @@ Manim extension. This skill consumes pre-made slides.
 
 Step 1 - install the SYSTEM tools with your OS package manager. `ffmpeg`/`ffprobe`
 is the only hard requirement; `espeak-ng` is needed only for offline TTS
-(Kokoro/Piper); LibreOffice is needed only for PPTX input.
+(Kokoro/Piper); a PPTX renderer is needed only for PPTX input. On Windows,
+Microsoft PowerPoint from Microsoft Office is supported through COM automation,
+so LibreOffice is not needed when Office is installed. On Linux/macOS, use
+LibreOffice for PPTX input.
 
 ```bash
 # Debian/Ubuntu
@@ -65,7 +68,7 @@ sudo dnf install -y ffmpeg espeak-ng libreoffice
 sudo pacman -S ffmpeg espeak-ng libreoffice
 # macOS (Homebrew)
 brew install ffmpeg espeak-ng && brew install --cask libreoffice
-# Windows (winget); or drop a static ffmpeg build on PATH
+# Windows (winget); Microsoft Office satisfies PPTX input if installed
 winget install Gyan.FFmpeg eSpeak-NG.eSpeak-NG
 ```
 
@@ -86,7 +89,8 @@ bash canonical/runtime/skills/slides-to-video/run_slides_to_video.sh doctor
 
 `setup` creates `~/.local/share/slides-to-video-venv` and installs requirements.
 `doctor` prints a JSON report of exactly what is present or missing and never
-installs anything.
+installs anything. On Windows, `doctor` reports `system_tools.powerpoint` when
+Microsoft PowerPoint is available for PPTX rendering.
 
 ## The three-phase, human-in-the-loop flow
 
@@ -144,7 +148,10 @@ with any effects, then losslessly concatenate. Outputs `video.mp4`,
 ## Languages
 
 The core is language-agnostic. English and Vietnamese are tuned (math lexicon,
-voices, fonts). Any other language the engines cover is supported generically:
+voices, fonts). Caption font selection prefers the lexicon's font hint, then
+falls back to installed Vietnamese-capable fonts such as Be Vietnam Pro, Arial,
+Calibri, Segoe UI, Tahoma, Times New Roman, or DejaVu Sans. Any other language
+the engines cover is supported generically:
 edge-tts serves ~70 locales online; Piper covers 30+ offline; Kokoro covers 9.
 The ladder is language-aware -- e.g. Vietnamese never routes into Kokoro (which
 has no Vietnamese voice); offline Vietnamese uses Piper `vi_VN-vais1000-medium`,

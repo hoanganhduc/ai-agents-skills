@@ -8,17 +8,18 @@ imported lazily so this module loads under base Python.
          transcript is seeded by the agent's vision read (no embedded text).
   PDF  : PyMuPDF renders pages at a DPI chosen to hit the target height, and
          extracts page text as a seed.
-  PPTX : python-pptx reads on-slide text + speaker notes (best seed); LibreOffice
-         renders the deck to PDF, then the PDF path rasterizes the frames.
+  PPTX : python-pptx reads on-slide text + speaker notes (best seed); Microsoft
+         PowerPoint on Windows or LibreOffice renders the deck to PDF, then the
+         PDF path rasterizes the frames.
 """
 
 from __future__ import annotations
 
 import re
 import shutil
-import subprocess
 from pathlib import Path
 
+from . import pptx_render
 from .model import Deck, SlideRecord
 
 _NUM_RE = re.compile(r"(\d+)")
@@ -123,7 +124,7 @@ def _ingest_pptx(source: Path, slides_dir: Path, work_dir: Path, resolution: str
             notes = slide.notes_slide.notes_text_frame.text.strip()
         seeds.append((notes + "\n\n" + "\n".join(parts)).strip())
 
-    pdf_path = _libreoffice_to_pdf(source, Path(work_dir))
+    pdf_path = pptx_render.pptx_to_pdf(source, Path(work_dir))
     deck = _ingest_pdf(pdf_path, slides_dir, resolution)
     for rec, seed in zip(deck.slides, seeds):  # prefer the richer PPTX text/notes seed
         if seed:
@@ -132,20 +133,3 @@ def _ingest_pptx(source: Path, slides_dir: Path, work_dir: Path, resolution: str
         rec.source = "pptx"
     deck.source_format = "pptx"
     return deck
-
-
-def _libreoffice_to_pdf(source: Path, work_dir: Path) -> Path:
-    soffice = shutil.which("soffice") or shutil.which("libreoffice")
-    if not soffice:
-        raise RuntimeError(
-            "PPTX rendering needs LibreOffice (soffice) on PATH. "
-            "Install libreoffice, or export the deck to PDF/PNG first."
-        )
-    out_dir = Path(work_dir) / "pptx_pdf"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run([soffice, "--headless", "--convert-to", "pdf", "--outdir",
-                    str(out_dir), str(source)], check=True, capture_output=True, text=True)
-    pdf = out_dir / (Path(source).stem + ".pdf")
-    if not pdf.exists():
-        raise RuntimeError("LibreOffice did not produce a PDF from the PPTX")
-    return pdf

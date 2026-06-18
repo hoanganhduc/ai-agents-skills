@@ -57,7 +57,13 @@ def is_tuned(locale: str) -> bool:
 
 
 def font_hint(locale: str) -> str:
-    return load_lexicon(locale).get("font_hint", "Noto Sans")
+    preferred = load_lexicon(locale).get("font_hint", "Noto Sans")
+    try:
+        from .fonts import best_caption_font
+
+        return best_caption_font(preferred)
+    except Exception:
+        return preferred
 
 
 def engines_with_voice(locale: str) -> set[str]:

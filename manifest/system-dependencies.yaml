@@ -176,14 +176,21 @@
       "display_name": "eSpeak NG",
       "requirement": "optional, for offline TTS (Kokoro/Piper phonemization)",
       "linux": "espeak-ng on PATH, e.g. apt-get install espeak-ng.",
-      "windows": "espeak-ng on PATH from the espeak-ng releases.",
+      "windows": "espeak-ng on PATH or at the default winget path C:\\Program Files\\eSpeak NG\\espeak-ng.exe.",
       "used_by": ["slides-to-video offline TTS"]
     },
     "libreoffice": {
       "display_name": "LibreOffice (soffice)",
-      "requirement": "optional, required only for PPTX input rendering",
+      "requirement": "optional PPTX renderer; not needed on Windows when Microsoft PowerPoint is installed",
       "linux": "soffice/libreoffice on PATH, e.g. apt-get install libreoffice.",
       "windows": "soffice.exe on PATH from a LibreOffice install.",
+      "used_by": ["slides-to-video PPTX input"]
+    },
+    "pptx-renderer": {
+      "display_name": "PPTX renderer (PowerPoint or LibreOffice)",
+      "requirement": "optional, required only for PPTX input rendering",
+      "linux": "LibreOffice soffice/libreoffice on PATH, e.g. apt-get install libreoffice.",
+      "windows": "Microsoft PowerPoint from Microsoft Office via COM automation, or LibreOffice soffice.exe on PATH.",
       "used_by": ["slides-to-video PPTX input"]
     },
     "manim-tex-runtime": {
@@ -434,7 +441,7 @@
       "source": "WAV writing for Kokoro output in slides-to-video."
     },
     "manim": {
-      "requirement": "manim==0.20.1",
+      "requirement": "manim==0.20.1 on Python >=3.11; manim==0.19.1 on Python 3.10",
       "import_name": "manim",
       "platforms": ["linux", "windows"],
       "used_by": ["manim-math-animation"],

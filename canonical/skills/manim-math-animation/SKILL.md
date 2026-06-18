@@ -45,7 +45,9 @@ Manim needs a LaTeX distro (with `dvisvgm` + the `standalone`/`preview` packages
 sudo apt-get install -y ffmpeg dvisvgm texlive texlive-latex-extra texlive-fonts-extra libcairo2-dev libpango1.0-dev build-essential
 ```
 
-Then create the dedicated venv (installs Manim CE):
+Then create the dedicated venv (installs Manim CE). Python 3.11+ receives
+Manim 0.20.1; Python 3.10 receives Manim 0.19.1, the latest compatible line
+for that interpreter.
 
 ```bash
 bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/manim-math-animation/run_manim_math_animation.sh setup
