@@ -312,7 +312,11 @@ Vietnamese routes to edge-tts `vi-VN` then Piper `vi_VN`, never Kokoro.
 English and Vietnamese ship tuned lexicons (voices + spoken math); other
 languages are supported generically via live edge-tts voice enumeration.
 Tier-1 effects (Ken Burns, highlight, spotlight, laser, reveal) run as
-ffmpeg filters on the slide pixels and need no slide source.
+ffmpeg filters on the slide pixels and need no slide source. A slide's
+visual can also be a pre-rendered video clip (set `clip_path`, or insert
+one with `add-interlude`) -- this is how a manim-math-animation clip is
+mixed into a narrated deck: the segment runs to max(clip, narration),
+narration stays in this skill's TTS ladder, and the concat stays drift-free.
 
 The default `selftest` smoke is offline: it validates the deterministic
 core (pairing, re-basing, the engine ladder, verbalization, effect

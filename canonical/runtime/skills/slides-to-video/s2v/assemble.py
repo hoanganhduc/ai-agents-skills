@@ -33,6 +33,31 @@ def build_clip_args(image: str, audio: str, duration: float, width: int, height:
     ]
 
 
+def build_clip_segment_args(clip: str, audio: str, duration: float, width: int, height: int,
+                            fps: int, out: str, ffmpeg: str = "ffmpeg") -> list[str]:
+    """Argv to normalize a pre-rendered (e.g. Manim) video clip into one segment.
+
+    The clip is scaled/padded to the canonical frame and its last frame is frozen
+    (``tpad``) so the segment runs to exactly ``duration`` = max(clip, narration);
+    the narration audio (already padded to ``duration``) is muxed in. Output uses
+    the same codec/profile as image segments so the final concat stays a stream copy.
+    """
+    vf = (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps={fps},"
+        f"format=yuv420p,tpad=stop_mode=clone:stop_duration=3600"
+    )
+    return [
+        ffmpeg, "-y", "-i", clip, "-i", audio,
+        "-filter_complex", f"[0:v]{vf}[v]",
+        "-map", "[v]", "-map", "1:a",
+        "-c:v", "libx264", "-preset", "slow", "-crf", "18",
+        "-pix_fmt", "yuv420p", "-r", str(fps),
+        "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
+        "-t", f"{duration:.3f}", "-movflags", "+faststart", out,
+    ]
+
+
 def build_concat_args(list_file: str, out: str, ffmpeg: str = "ffmpeg") -> list[str]:
     """Argv for the lossless concat-demuxer join (all clips share one profile)."""
     return [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", list_file,
@@ -59,6 +84,13 @@ def write_concat_list(clips: list[str], list_file: Path) -> Path:
 def render_clip(image: str, audio: str, duration: float, width: int, height: int,
                 fps: int, effs: list[EffectSpec], out: str) -> Path:
     argv = build_clip_args(image, audio, duration, width, height, fps, effs, out, ffmpeg_bin())
+    subprocess.run(argv, check=True, capture_output=True, text=True)
+    return Path(out)
+
+
+def render_clip_segment(clip: str, audio: str, duration: float, width: int, height: int,
+                        fps: int, out: str) -> Path:
+    argv = build_clip_segment_args(clip, audio, duration, width, height, fps, out, ffmpeg_bin())
     subprocess.run(argv, check=True, capture_output=True, text=True)
     return Path(out)
 

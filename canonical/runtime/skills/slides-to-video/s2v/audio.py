@@ -75,3 +75,16 @@ def pad_wav(src: Path, dst: Path, lead: float, tail: float, rate: int = 48000, c
         "-ar", str(rate), "-ac", str(channels), "-t", f"{total:.3f}", str(dst),
     ])
     return dst
+
+
+def extend_to(src: Path, dst: Path, duration: float, rate: int = 48000, channels: int = 2) -> Path:
+    """Pad audio with trailing silence to exactly ``duration`` seconds.
+
+    Used for clip-backed (e.g. Manim) slides where the segment runs to
+    max(clip_duration, narration_duration) and the narration must fill the gap.
+    """
+    _run([
+        ffmpeg_bin(), "-y", "-i", str(src), "-af", "apad",
+        "-ar", str(rate), "-ac", str(channels), "-t", f"{duration:.3f}", str(dst),
+    ])
+    return dst

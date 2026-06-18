@@ -114,6 +114,35 @@ def _check_assemble(c: _Checks) -> None:
     c.ok("clip_pixfmt", "yuv420p" in args)
     cat = assemble.build_concat_args("list.txt", "final.mp4")
     c.ok("concat_copy", "concat" in cat and "copy" in cat)
+    seg = assemble.build_clip_segment_args("clip.mp4", "a.wav", 5.0, 1920, 1080, 30, "out.mp4")
+    c.ok("clip_segment_codec", "libx264" in seg)
+    c.ok("clip_segment_tpad_freeze", any("tpad=stop_mode=clone" in a for a in seg))
+    c.ok("clip_segment_duration", "-t" in seg and "5.000" in seg)
+    c.ok("clip_segment_maps_audio", "1:a" in seg and any("[0:v]" in a for a in seg))
+
+
+def _check_clip_integration(c: _Checks, work: Path) -> None:
+    rec = SlideRecord(0, "", clip_path="anim.mp4")
+    c.ok("sliderecord_clip_roundtrip", SlideRecord.from_dict(rec.to_dict()).clip_path == "anim.mp4")
+    plan = SlidePlan(0, "", clip_path="anim.mp4")
+    c.ok("slideplan_clip_roundtrip", SlidePlan.from_dict(plan.to_dict()).clip_path == "anim.mp4")
+
+    deck = Deck("png", [SlideRecord(0, "s0.png", "zero"), SlideRecord(1, "s1.png", "one")])
+    write_json(orchestrator.deck_path(work), deck.to_dict())
+    orchestrator.save_config(work, Config(language="en-US"))
+    orchestrator.draft(work)
+    orchestrator.approve(work)
+    res = orchestrator.add_interlude(work, "anim.mp4", after_index=0, transcript="interlude narration")
+    c.ok("interlude_count", res["slides"] == 3 and res["interlude_at"] == 1)
+    deck2 = Deck.from_dict(orchestrator.read_json(orchestrator.deck_path(work)))
+    plans2 = orchestrator.load_plans(work)
+    c.ok("interlude_pairing", len(deck2.slides) == len(plans2) == 3)
+    c.ok("interlude_reindexed",
+         [s.index for s in deck2.slides] == [0, 1, 2] and [p.index for p in plans2] == [0, 1, 2])
+    c.ok("interlude_clip_set", deck2.slides[1].clip_path == "anim.mp4" and plans2[1].clip_path == "anim.mp4")
+    c.ok("interlude_keeps_others",
+         deck2.slides[0].image_path == "s0.png" and deck2.slides[2].image_path == "s1.png")
+    c.ok("interlude_invalidates_approval", orchestrator.status(work).get("approved") is False)
 
 
 def _check_approval_gate(c: _Checks, work: Path) -> None:
@@ -155,6 +184,9 @@ def main(argv: list[str]) -> int:
     _check_captions(c)
     _check_assemble(c)
     _check_approval_gate(c, work)
+    interlude_dir = work / "interlude_check"
+    interlude_dir.mkdir(parents=True, exist_ok=True)
+    _check_clip_integration(c, interlude_dir)
 
     report = {
         "ok": c.passed,

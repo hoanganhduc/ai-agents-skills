@@ -159,6 +159,27 @@ Tier-1 effects operate on the rendered slide pixels (no authoring): `ken_burns`,
 `transcript.json` under each slide's `effects` list. See
 `references/effects.md`.
 
+## Animated math interludes (Manim)
+
+A slide's visual can be a pre-rendered video clip instead of a static image:
+set `clip_path` on a slide in `transcript.json`, or insert one with `add-interlude`.
+This is how a `manim-math-animation` clip is mixed into a narrated deck.
+
+```bash
+# 1) render a silent Manim clip with the manim-math-animation skill, then:
+... run_slides_to_video.sh add-interlude --work-dir "/path/to/deck_work" \
+  --clip "/path/to/manim_clip.mp4" --after 0 \
+  --transcript "Completing the square gives a perfect square."
+```
+
+The clip becomes a new slide (inserted after the given index; slides are
+reindexed and the deck/transcript stay 1:1). Narration is still synthesized by
+the TTS ladder, so the Manim clip stays silent (one timing owner). The segment
+runs to `max(clip_duration, narration_duration)`: a shorter clip freezes its last
+frame, shorter narration is padded with silence -- so the lossless concat stays
+drift-free. `add-interlude` invalidates any prior approval, so re-`approve`
+before `render`. See `references/pipeline-and-sync.md`.
+
 ## References
 
 - `references/pipeline-and-sync.md` - duration-driven sync, the 1:1 pairing

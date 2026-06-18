@@ -482,6 +482,7 @@
         "offline-tts",
         "captions-srt-vtt",
         "human-approval-gate",
+        "manim-interlude",
         "offline-smoke"
       ],
       "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
