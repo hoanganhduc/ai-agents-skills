@@ -209,7 +209,10 @@ def build_message(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
     if reply_to:
         msg["Reply-To"] = reply_to
     msg["Date"] = formatdate(localtime=True)
-    msg["Message-ID"] = make_msgid(domain=_sender_domain(sender))
+    # Always pass an explicit domain: make_msgid() with domain=None falls back to
+    # socket.getfqdn(), which leaks the local hostname and can block on slow
+    # reverse-DNS (it also breaks the offline contract). Use the sender's domain.
+    msg["Message-ID"] = make_msgid(domain=_sender_domain(sender) or "localhost")
 
     text = _read_body(args.body, args.body_file)
     html = _read_body(args.html, args.html_file)
