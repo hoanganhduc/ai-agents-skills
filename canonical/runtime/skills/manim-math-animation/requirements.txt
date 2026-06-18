@@ -2,5 +2,7 @@
 # Manim CE is MIT. System tools (NOT here): a LaTeX distro with dvisvgm +
 # standalone/preview + cm-super, cairo/pango dev libs, and ffmpeg.
 # Installed by: run_manim_math_animation.sh setup
-manim==0.20.1
+# Manim 0.20.x requires Python >=3.11; keep Python 3.10 installs working.
+manim==0.20.1; python_version >= "3.11"
+manim==0.19.1; python_version < "3.11"
 numpy>=1.26

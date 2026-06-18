@@ -21,6 +21,22 @@ POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windo
 
 This uses the vendored Codex runtime copy of the SageMath workflow.
 
+If `sage` is not on the non-interactive WSL `PATH`, set the executable path
+explicitly before running the wrapper. Bash aliases in `~/.bashrc` are not
+visible to the Windows runtime wrapper.
+
+```powershell
+$env:AAS_SAGE_WSL_DISTRO = "Ubuntu-24.04"
+$env:AAS_SAGE_BIN = "/home/<wsl-user>/sage-10.4/sage"
+& "$runtime\run_skill.bat" "skills/sagemath/run_sage.bat" "print(2+2)"
+```
+
+Alternatively, make `sage` a real executable in WSL:
+
+```powershell
+wsl.exe -d Ubuntu-24.04 -e bash -lc 'sudo ln -sfn "$HOME/sage-10.4/sage" /usr/local/bin/sage && sage --version'
+```
+
 ## When to use
 
 - chromatic polynomial or chromatic number computations on nontrivial graph families

@@ -55,6 +55,7 @@ Status vocabulary used by `precheck`:
 | `nvidia-smi-tool` | NVIDIA GPU inspection tool used by resource preflight when available. |
 | `ocr-runtime` | OCR command line runtime, normally Tesseract. |
 | `powershell-runtime` | PowerShell runtime for Windows bootstrap and argument forwarding. |
+| `pptx-render-system-tool` | PPTX renderer: Microsoft PowerPoint on Windows or LibreOffice elsewhere. |
 | `python-runtime` | Python runtime with venv, pip, and ssl support. |
 | `ripgrep-cli` | ripgrep command line search used by local research and session-inspection workflows. |
 | `rocm-smi-tool` | AMD ROCm GPU inspection tool used by resource preflight when available. |
@@ -98,6 +99,7 @@ Status vocabulary used by `precheck`:
 | `pdfplumber-python-package` | `python` | pdfplumber |
 | `pillow-python-package` | `python` | PIL |
 | `piper-tts-python-package` | `python` | piper |
+| `pptx-render-system-tool` | `tool` | pptx-render-system-tool |
 | `psutil-python-package` | `python` | psutil |
 | `pylatexenc-python-package` | `python` | pylatexenc |
 | `pymupdf-python-package` | `python` | fitz |
@@ -148,14 +150,14 @@ Evidence inspected:
 | `bash-or-posix-shell` | required on Linux and inside WSL-backed Windows flows | Used by shared runtime runner and shell skill wrappers. | Used through WSL for SageMath and other Linux-substrate commands. | `runtime wrappers`, `sagemath`, `make` |
 | `calibre-cli` | optional for richer ebook library operations | calibredb and ebook-convert on PATH. | calibredb.exe and ebook-convert.exe on PATH. | `calibre`, `vnthuquan` |
 | `docling-cli` | optional CLI layer for docling workflows | Current Claude docs use <LINUX_HOME>/.local/share/docling-venv/bin/docling. | Current Claude docs use <WINDOWS_HOME>/.venv-docling/Scripts/docling.exe. | `docling` |
-| `espeak-ng` | optional, for offline TTS (Kokoro/Piper phonemization) | espeak-ng on PATH, e.g. apt-get install espeak-ng. | espeak-ng on PATH from the espeak-ng releases. | `slides-to-video offline TTS` |
+| `espeak-ng` | optional, for offline TTS (Kokoro/Piper phonemization) | espeak-ng on PATH, e.g. apt-get install espeak-ng. | espeak-ng on PATH or at the default winget path C:\Program Files\eSpeak NG\espeak-ng.exe. | `slides-to-video offline TTS` |
 | `ffmpeg` | required for slides-to-video rendering (video encode, audio normalize, duration probe) | FFmpeg + ffprobe on PATH (LGPL build with libx264), e.g. apt-get install ffmpeg. | ffmpeg.exe + ffprobe.exe on PATH (LGPL build), via winget/choco or a static build. | `slides-to-video` |
 | `git-cli` | required for repository workflows and publishing | git on PATH. | git.exe or git on PATH. | `GitHub workflows`, `repo install/update examples` |
 | `github-cli` | optional for GitHub workflows that need local gh commands | gh on PATH with auth configured when needed. | gh.exe or gh on PATH with auth configured when needed. | `github`, `gh-fix-ci`, `yeet` |
 | `gpu-inspection-tools` | optional resource preflight enhancement | nvidia-smi for NVIDIA or rocm-smi for AMD when present. | nvidia-smi.exe or rocm-smi.exe when present; WSL GPU visibility depends on host driver support. | `get-available-resources` |
 | `lake-cli` | optional for local Lean project checks; never installed by wrappers | Lake executable on PATH, via AAS_LAKE, or via an existing elan install. | Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate` |
-| `libreoffice` | optional, required only for PPTX input rendering | soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | soffice.exe on PATH from a LibreOffice install. | `slides-to-video PPTX input` |
+| `libreoffice` | optional PPTX renderer; not needed on Windows when Microsoft PowerPoint is installed | soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | soffice.exe on PATH from a LibreOffice install. | `slides-to-video PPTX input` |
 | `make-or-command-wrapper` | optional convenience entrypoint | make invokes installer commands. | make.bat invokes installer commands without requiring GNU Make. | `installation` |
 | `manim-tex-runtime` | required for manim-math-animation rendering (heavier than plain tex-runtime) | LaTeX (texlive + texlive-latex-extra + cm-super) with dvisvgm and the standalone/preview packages, plus libcairo2-dev and libpango1.0-dev; e.g. apt-get install dvisvgm texlive texlive-latex-extra libcairo2-dev libpango1.0-dev. | MiKTeX/TeX Live providing latex + dvisvgm + standalone/preview; cairo/pango ship in the Manim Windows wheels. | `manim-math-animation` |
 | `mathlib-cache` | optional manually prepared Lean dependency cache | Existing project-local mathlib cache or manually prepared Lake cache. | Existing project-local mathlib cache or manually prepared Lake cache. | `lean-strict-verification-gate`, `lean-formalization-intake` |
@@ -163,6 +165,7 @@ Evidence inspected:
 | `node-runtime` | required for Node-backed MCP servers and optional Zotero translation-server workflows | Node.js 18+ with npm. | Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server. | `Codex MCP`, `zotero translation server` |
 | `ocr-runtime` | optional for scanned-document OCR | Tesseract with tessdata available; current Claude docling docs use TESSDATA_PREFIX=/usr/share/tessdata/. | Current Windows docling flow prefers rapidocr Python extras; Tesseract may be used through WSL if needed. | `docling` |
 | `powershell-runtime` | required for Windows bootstrap and Windows wrapper execution | not required | PowerShell 5.1+ or PowerShell 7+. | `make.bat`, `installer bootstrap`, `Windows runtime wrappers` |
+| `pptx-renderer` | optional, required only for PPTX input rendering | LibreOffice soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | Microsoft PowerPoint from Microsoft Office via COM automation, or LibreOffice soffice.exe on PATH. | `slides-to-video PPTX input` |
 | `python-runtime` | required for runtime-backed skills and the installer | Native Python 3.10+ detected from environment override, repo venv, python3, or python. | Native Python 3.10+ detected from environment override, repo venv, C:\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python. | `installer`, `zotero`, `calibre`, `docling`, `get-available-resources`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `graph-verifier`, `submission-venue-selector`, `annotated-review`, `modal-research-compute`, `session-logs`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate` |
 | `ripgrep-cli` | optional but expected by local search/session workflows | rg on PATH. | rg.exe or rg on PATH. | `session-logs`, `research workflows`, `repo inspection` |
 | `sagemath` | required for the sagemath skill and optional Sage-backed graph/TikZ workflows | Native executable via `AAS_SAGE`, `sage` on `PATH`, a local Sage install, or a Docker-backed wrapper that behaves like `sage` for `--version` and `-c` probes. | WSL-backed SageMath inside Ubuntu 24.04, detected through wsl.exe when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when available, or an ext4.vhdx presence warning when the distro image is not inspectable. | `sagemath`, `tikz-draw`, `openclaw/source research math verification` |
@@ -187,7 +190,7 @@ Evidence inspected:
 | `kokoro` | `kokoro` | kokoro>=0.9.4 | `linux`, `windows` | `slides-to-video` |
 | `lean-explore` | `lean_explore` | lean-explore | `linux`, `windows` | `lean-explore-mcp` |
 | `local-getscipapers-helper` | `redacted` | optional local helper package with a maintainer-specific import name | `windows` | `zotero metadata fallback` |
-| `manim` | `manim` | manim==0.20.1 | `linux`, `windows` | `manim-math-animation` |
+| `manim` | `manim` | manim==0.20.1 on Python >=3.11; manim==0.19.1 on Python 3.10 | `linux`, `windows` | `manim-math-animation` |
 | `modal` | `modal` | modal | `linux`, `windows` | `modal-research-compute` |
 | `networkx` | `networkx` | networkx | `linux`, `windows`, `remote-modal` | `graph-verifier`, `modal-research-compute` |
 | `numpy` | `numpy` | numpy==1.26.4 for TikZ semantic verifier; numpy in Modal CPU image | `linux`, `windows`, `remote-modal` | `tikz-draw`, `modal-research-compute` |
@@ -285,16 +288,19 @@ generates and uploads a synthetic one-page PDF rather than user data.
 `slides-to-video` turns prepared slides (PNG/PDF/PPTX) into a narrated,
 captioned MP4 using only free tools. `ffmpeg` is the one required system
 tool (use an LGPL build); `espeak-ng` is needed for offline TTS and
-LibreOffice only for PPTX input. Python packages install into a dedicated
+Microsoft PowerPoint on Windows or LibreOffice elsewhere is needed only
+for PPTX input. Python packages install into a dedicated
 venv at `~/.local/share/slides-to-video-venv` via the `setup` subcommand;
-the wrappers auto-select that venv (or `S2V_PYTHON` / `AAS_RUNTIME_PYTHON`).
+the wrappers use `S2V_PYTHON` first, then auto-select that venv, then
+fall back to `AAS_RUNTIME_PYTHON`.
 
 Install the system tools first, then run `setup`, then `doctor`:
 Debian/Ubuntu `sudo apt-get install ffmpeg espeak-ng libreoffice`,
 Fedora `sudo dnf install ffmpeg espeak-ng libreoffice`, macOS
 `brew install ffmpeg espeak-ng` (LibreOffice via cask), Windows
-`winget install Gyan.FFmpeg eSpeak-NG.eSpeak-NG`. LibreOffice is only
-needed for PPTX input and `espeak-ng` only for offline TTS.
+`winget install Gyan.FFmpeg eSpeak-NG.eSpeak-NG`. Microsoft Office
+PowerPoint satisfies PPTX input on Windows; `espeak-ng` is only for
+offline TTS.
 
 It runs a three-phase, human-in-the-loop flow: `analyze` (ingest slides),
 `draft` then `verbalize` (per-slide spoken transcript, math read aloud),

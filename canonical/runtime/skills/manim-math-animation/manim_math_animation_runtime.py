@@ -38,15 +38,19 @@ def _venv_dir() -> Path:
     return Path(os.path.expanduser("~")) / ".local" / "share" / "manim-math-animation-venv"
 
 
+def _venv_python(venv: Path) -> Path:
+    return venv / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+
+
 def cmd_setup(_args: argparse.Namespace) -> int:
     venv = _venv_dir()
     req = HERE / "requirements.txt"
     print(f"[setup] creating venv at {venv}", file=sys.stderr)
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-    pip = venv / ("Scripts" if os.name == "nt" else "bin") / ("pip.exe" if os.name == "nt" else "pip")
-    subprocess.run([str(pip), "install", "--upgrade", "pip"], check=True)
-    subprocess.run([str(pip), "install", "-r", str(req)], check=True)
-    py = venv / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+    py = _venv_python(venv)
+    subprocess.run([str(py), "-m", "ensurepip", "--upgrade"], check=True)
+    subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
+    subprocess.run([str(py), "-m", "pip", "install", "-r", str(req)], check=True)
     _emit({"venv": str(venv), "python": str(py),
            "note": "Manim also needs LaTeX (with dvisvgm + standalone/preview), cairo/pango, and ffmpeg as system tools."})
     return 0

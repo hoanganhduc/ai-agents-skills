@@ -12,7 +12,9 @@ actual synthesis needs the venv packages.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
+import sys
 from typing import Optional
 
 from . import languages
@@ -21,6 +23,12 @@ from .audio import to_wav
 
 class TTSUnavailable(RuntimeError):
     pass
+
+
+def _venv_script(name: str) -> str | None:
+    suffix = ".exe" if os.name == "nt" else ""
+    candidate = Path(sys.executable).resolve().parent / f"{name}{suffix}"
+    return str(candidate) if candidate.exists() else None
 
 
 @dataclass
@@ -86,9 +94,9 @@ def _synth_piper(text: str, voice: Optional[str], out_wav: Path) -> str:
     chosen = voice or ""
     if not chosen:
         raise TTSUnavailable("Piper requires a voice id for this language")
-    piper = shutil.which("piper")
+    piper = shutil.which("piper") or _venv_script("piper")
     if not piper:
-        raise TTSUnavailable("piper CLI not found on PATH")
+        raise TTSUnavailable("piper CLI not found on PATH or in the active runtime venv")
     subprocess.run([piper, "-m", chosen, "-f", str(out_wav)],
                    input=text, text=True, check=True, capture_output=True)
     return chosen

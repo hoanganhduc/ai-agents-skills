@@ -490,7 +490,7 @@
         "soundfile-python-package",
         "numpy-python-package",
         "espeak-ng-system-tool",
-        "libreoffice-system-tool"
+        "pptx-render-system-tool"
       ],
       "optional_capabilities": [
         "tier1-effects",
