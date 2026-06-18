@@ -48,11 +48,15 @@ Windows command target above on native Windows.
 Settings resolve in increasing precedence: secrets file, then environment
 variables, then explicit command-line flags.
 
-- Environment variables: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`,
-  `SMTP_FROM`, `SMTP_SECURITY` (`ssl` | `starttls` | `plain`), `SMTP_TIMEOUT`.
+- Connection environment variables: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+  `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_SECURITY` (`ssl` | `starttls` | `plain`),
+  `SMTP_TIMEOUT`.
+- Pre-defined sender identity (all optional): `SMTP_FROM_NAME`, `SMTP_REPLY_TO`,
+  `SMTP_CC`, `SMTP_BCC` (comma-separated), `SMTP_SIGNATURE`, `SMTP_SIGNATURE_HTML`,
+  `SMTP_REPLY_TO_SELF`, `SMTP_BCC_SELF`.
 - Secrets file: the managed runner sets `AAS_SECRETS_FILE` to
   `workspace/.secrets.json`. Put an `smtp` object there (or top-level `SMTP_*`
-  keys):
+  keys) holding both the connection settings and the identity defaults:
 
 ```json
 {
@@ -62,10 +66,31 @@ variables, then explicit command-line flags.
     "security": "starttls",
     "user": "<smtp-username>",
     "password": "<app-password>",
-    "from": "<sender-address>"
+    "from": "<sender-address>",
+    "from_name": "Your Name",
+    "reply_to": "<reply-address>",
+    "cc": ["<standing-cc>"],
+    "bcc": ["<standing-bcc>"],
+    "signature": "--\nYour Name\nYour Lab",
+    "signature_html": "<p>Your Name<br>Your Lab</p>",
+    "reply_to_self": true,
+    "bcc_self": true
   }
 }
 ```
+
+The identity fields are optional and not secret, but they live in the same
+`smtp` object for one-file configuration; only `user`/`password` are sensitive.
+`from_name` is combined with `from` to send as `Your Name <addr>` (or embed the
+name directly in `from`). The `signature` (and optional `signature_html`) is
+appended after the standard `-- ` delimiter; if only a text signature is set it is
+also wrapped into the HTML alternative.
+
+By default **Reply-To and Bcc are set to the sender address** (so replies come
+back to you and you keep a copy). Set `reply_to_self`/`bcc_self` to `false`, or
+pass `--no-reply-to-self` / `--no-bcc-self`, to disable. An explicit `reply_to`
+(or `--reply-to`) overrides the self-default; `--cc`/`--bcc` add to the standing
+lists.
 
 If `--port`/`--security` are omitted, port 465 implies `ssl`, port 25 implies
 `plain`, and the default is `starttls` on port 587. Common hosts: `smtp.gmail.com`
@@ -85,9 +110,12 @@ bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/send-email/run_
 - `send` -- compose and send. Recipients (`--to`, `--cc`, `--bcc`) are repeatable
   and may be comma-separated. Body is `--body`/`--body-file` and/or
   `--html`/`--html-file` (both present become a multipart/alternative). Attach
-  files with repeated `--attach`. Add `--reply-to` for a reply address.
-- `--dry-run` -- with `send`, compose and report the message (sender, recipients,
-  subject, html flag, attachments, byte size) without connecting or sending.
+  files with repeated `--attach`. Identity overrides: `--from-name`, `--reply-to`,
+  `--signature`/`--signature-file`/`--signature-html-file`, `--no-signature`,
+  `--no-reply-to-self`, `--no-bcc-self`.
+- `--dry-run` -- with `send`, compose and report the message (from, reply-to,
+  recipients, cc, subject, html flag, attachments, byte size) without connecting
+  or sending.
 - `verify` -- connect and authenticate to the server, then disconnect; sends no
   message. Use it to test credentials.
 - `show-config` -- print the resolved host/port/security/user/from/timeout and

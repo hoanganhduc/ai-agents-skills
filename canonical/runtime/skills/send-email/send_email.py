@@ -9,9 +9,15 @@ Subcommands:
 
 Configuration is resolved in increasing precedence from (1) a JSON secrets file
 named by AAS_SECRETS_FILE (its "smtp" object, or top-level SMTP_* keys),
-(2) environment variables (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
-SMTP_FROM, SMTP_SECURITY, SMTP_TIMEOUT), then (3) explicit command-line flags.
-Credentials are never printed and are redacted out of error messages.
+(2) environment variables, then (3) explicit command-line flags. Connection
+settings: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM,
+SMTP_SECURITY, SMTP_TIMEOUT. Pre-defined sender identity (all optional):
+SMTP_FROM_NAME, SMTP_REPLY_TO, SMTP_CC, SMTP_BCC, SMTP_SIGNATURE,
+SMTP_SIGNATURE_HTML, SMTP_REPLY_TO_SELF, SMTP_BCC_SELF, or the matching keys
+(from_name, reply_to, cc, bcc, signature, signature_html, reply_to_self,
+bcc_self) in the secrets file's "smtp" object. By default Reply-To and Bcc are
+set to the sender address; disable with --no-reply-to-self / --no-bcc-self.
+Credentials are never printed and are redacted from error messages.
 
 Invoke via the managed runner, e.g.:
   bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh \
@@ -28,14 +34,16 @@ import smtplib
 import ssl
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email import message_from_bytes
 from email.message import EmailMessage
-from email.utils import formatdate, getaddresses, make_msgid, parseaddr
+from email.utils import formataddr, formatdate, getaddresses, make_msgid, parseaddr
+from html import escape as _html_escape
 from pathlib import Path
 
 DEFAULT_TIMEOUT = 30
 VALID_SECURITY = ("ssl", "starttls", "plain")
+SIGNATURE_DELIMITER = "-- "  # RFC 3676 signature separator (trailing space is intentional)
 
 
 def _emit(obj: dict) -> None:
@@ -49,7 +57,7 @@ def _fail(command: str, error_code: str, message: str) -> int:
 
 @dataclass
 class SmtpConfig:
-    """Resolved SMTP connection settings; port/security default from one another."""
+    """Resolved SMTP connection settings plus pre-defined sender identity."""
 
     host: str | None = None
     port: int | None = None
@@ -59,6 +67,14 @@ class SmtpConfig:
     security: str | None = None
     timeout: int = DEFAULT_TIMEOUT
     allow_insecure_auth: bool = False
+    from_name: str | None = None
+    reply_to: str | None = None
+    signature: str | None = None
+    signature_html: str | None = None
+    cc: list[str] = field(default_factory=list)
+    bcc: list[str] = field(default_factory=list)
+    reply_to_self: bool = True
+    bcc_self: bool = True
 
     def resolved_security(self) -> str:
         if self.security:
@@ -84,6 +100,23 @@ def _coerce_int(value: object, default: int | None = None) -> int | None:
         return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _as_list(value: object) -> list[str]:
+    """Normalize a list, or a comma/newline-separated string, into a clean list."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [part.strip() for part in str(value).replace("\n", ",").split(",") if part.strip()]
 
 
 def _secrets_path() -> str | None:
@@ -137,6 +170,17 @@ def load_config(args: argparse.Namespace) -> SmtpConfig:
     sender = pick(getattr(args, "sender", None), "SMTP_FROM", "from", "sender")
     security = pick(getattr(args, "security", None), "SMTP_SECURITY", "security")
     timeout = pick(getattr(args, "timeout", None), "SMTP_TIMEOUT", "timeout")
+    from_name = pick(getattr(args, "from_name", None), "SMTP_FROM_NAME", "from_name")
+    reply_to = pick(getattr(args, "reply_to", None), "SMTP_REPLY_TO", "reply_to")
+    signature = pick(None, "SMTP_SIGNATURE", "signature")
+    signature_html = pick(None, "SMTP_SIGNATURE_HTML", "signature_html")
+
+    reply_to_self = _coerce_bool(pick(None, "SMTP_REPLY_TO_SELF", "reply_to_self"), True)
+    if getattr(args, "no_reply_to_self", False):
+        reply_to_self = False
+    bcc_self = _coerce_bool(pick(None, "SMTP_BCC_SELF", "bcc_self"), True)
+    if getattr(args, "no_bcc_self", False):
+        bcc_self = False
 
     return SmtpConfig(
         host=str(host) if host is not None else None,
@@ -147,13 +191,21 @@ def load_config(args: argparse.Namespace) -> SmtpConfig:
         security=str(security) if security is not None else None,
         timeout=_coerce_int(timeout, DEFAULT_TIMEOUT) or DEFAULT_TIMEOUT,
         allow_insecure_auth=bool(getattr(args, "allow_insecure_auth", False)),
+        from_name=str(from_name) if from_name is not None else None,
+        reply_to=str(reply_to) if reply_to is not None else None,
+        signature=str(signature) if signature is not None else None,
+        signature_html=str(signature_html) if signature_html is not None else None,
+        cc=_as_list(os.environ.get("SMTP_CC")) or _as_list(secrets.get("cc")),
+        bcc=_as_list(os.environ.get("SMTP_BCC")) or _as_list(secrets.get("bcc")),
+        reply_to_self=reply_to_self,
+        bcc_self=bcc_self,
     )
 
 
-def _no_newline(value: str | None, field: str) -> str | None:
+def _no_newline(value: str | None, field_name: str) -> str | None:
     """Reject header values containing CR/LF to block header injection."""
     if value and ("\n" in value or "\r" in value):
-        raise ValueError(f"illegal newline in {field}")
+        raise ValueError(f"illegal newline in {field_name}")
     return value
 
 
@@ -166,6 +218,16 @@ def _split_addresses(values: list[str] | None) -> list[str]:
             addr = addr.strip()
             if addr:
                 out.append(addr)
+    return out
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
     return out
 
 
@@ -188,16 +250,44 @@ def _attach_file(msg: EmailMessage, path_str: str) -> None:
     msg.add_attachment(path.read_bytes(), maintype=maintype, subtype=subtype, filename=path.name)
 
 
+def _apply_from_name(sender: str, from_name: str | None) -> str:
+    """Format the From header as 'Name <addr>', unless the sender already names itself."""
+    name, addr = parseaddr(sender)
+    if name or not from_name or not addr:
+        return sender
+    return formataddr((from_name, addr))
+
+
+def _resolved_signature(args: argparse.Namespace, cfg: SmtpConfig) -> str | None:
+    if getattr(args, "no_signature", False):
+        return None
+    if getattr(args, "signature_file", None):
+        return Path(args.signature_file).read_text(encoding="utf-8")
+    if getattr(args, "signature", None):
+        return args.signature
+    return cfg.signature
+
+
+def _resolved_signature_html(args: argparse.Namespace, cfg: SmtpConfig) -> str | None:
+    if getattr(args, "no_signature", False):
+        return None
+    if getattr(args, "signature_html_file", None):
+        return Path(args.signature_html_file).read_text(encoding="utf-8")
+    return cfg.signature_html
+
+
 def build_message(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
-    """Compose an EmailMessage from CLI args; text+html becomes multipart/alternative."""
-    sender = _no_newline(args.sender or cfg.sender, "from")
-    if not sender:
+    """Compose an EmailMessage from CLI args and pre-defined identity defaults."""
+    base_sender = _no_newline(args.sender or cfg.sender, "from")
+    if not base_sender:
         raise ValueError("no sender address: set --from or SMTP_FROM")
+    sender = _no_newline(_apply_from_name(base_sender, cfg.from_name), "from")
+    sender_addr = parseaddr(base_sender)[1]
 
     msg = EmailMessage()
     msg["From"] = sender
     to_list = args.to or []
-    cc_list = args.cc or []
+    cc_list = list(cfg.cc) + (args.cc or [])
     for value in to_list + cc_list:
         _no_newline(value, "recipient")
     if to_list:
@@ -205,19 +295,35 @@ def build_message(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
     if cc_list:
         msg["Cc"] = ", ".join(cc_list)
     msg["Subject"] = _no_newline(args.subject or "", "subject")
-    reply_to = _no_newline(getattr(args, "reply_to", None), "reply-to")
+
+    reply_to = _no_newline(cfg.reply_to, "reply-to")
+    if not reply_to and cfg.reply_to_self:
+        reply_to = sender_addr
     if reply_to:
         msg["Reply-To"] = reply_to
+
     msg["Date"] = formatdate(localtime=True)
     # Always pass an explicit domain: make_msgid() with domain=None falls back to
     # socket.getfqdn(), which leaks the local hostname and can block on slow
     # reverse-DNS (it also breaks the offline contract). Use the sender's domain.
-    msg["Message-ID"] = make_msgid(domain=_sender_domain(sender) or "localhost")
+    msg["Message-ID"] = make_msgid(domain=_sender_domain(base_sender) or "localhost")
 
     text = _read_body(args.body, args.body_file)
     html = _read_body(args.html, args.html_file)
     if text is None and html is None:
         text = ""
+
+    signature = _resolved_signature(args, cfg)
+    signature_html = _resolved_signature_html(args, cfg)
+    if signature and text is not None:
+        text = f"{text}\n\n{SIGNATURE_DELIMITER}\n{signature}"
+    if html is not None:
+        sig_html = signature_html
+        if not sig_html and signature:
+            sig_html = "<pre>" + _html_escape(signature) + "</pre>"
+        if sig_html:
+            html = f"{html}<br><br>{SIGNATURE_DELIMITER}<br>{sig_html}"
+
     if text is not None:
         msg.set_content(text)
     if html is not None:
@@ -230,8 +336,15 @@ def build_message(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
     return msg
 
 
-def _envelope_recipients(args: argparse.Namespace) -> list[str]:
-    return _split_addresses((args.to or []) + (args.cc or []) + (getattr(args, "bcc", None) or []))
+def _envelope_recipients(args: argparse.Namespace, cfg: SmtpConfig) -> list[str]:
+    to = args.to or []
+    cc = list(cfg.cc) + (args.cc or [])
+    bcc = list(cfg.bcc) + (getattr(args, "bcc", None) or [])
+    if cfg.bcc_self:
+        sender_addr = parseaddr(args.sender or cfg.sender or "")[1]
+        if sender_addr:
+            bcc.append(sender_addr)
+    return _dedupe(_split_addresses(to + cc + bcc))
 
 
 def _redact(text: str, cfg: SmtpConfig) -> str:
@@ -278,8 +391,10 @@ def _connect(cfg: SmtpConfig) -> smtplib.SMTP:
 
 def _message_summary(msg: EmailMessage, recipients: list[str]) -> dict:
     return {
-        "from": parseaddr(msg["From"])[1],
+        "from": msg["From"],
+        "reply_to": msg["Reply-To"],
         "recipients": recipients,
+        "cc": msg["Cc"],
         "subject": msg["Subject"],
         "has_html": any(part.get_content_type() == "text/html" for part in msg.walk()),
         "attachments": [att.get_filename() for att in msg.iter_attachments()],
@@ -291,10 +406,9 @@ def cmd_send(args: argparse.Namespace) -> int:
     cfg = load_config(args)
     try:
         msg = build_message(args, cfg)
+        recipients = _envelope_recipients(args, cfg)
     except (ValueError, OSError) as exc:
         return _fail("send", "build_failed", str(exc))
-
-    recipients = _envelope_recipients(args)
     if not recipients:
         return _fail("send", "no_recipients", "no recipients: pass --to, --cc, or --bcc")
 
@@ -369,6 +483,14 @@ def cmd_show_config(args: argparse.Namespace) -> int:
         "security": cfg.resolved_security() if cfg.host else cfg.security,
         "user": cfg.user,
         "from": cfg.sender,
+        "from_name": cfg.from_name,
+        "reply_to": cfg.reply_to,
+        "reply_to_self": cfg.reply_to_self,
+        "bcc_self": cfg.bcc_self,
+        "default_cc": cfg.cc,
+        "default_bcc": cfg.bcc,
+        "signature_set": bool(cfg.signature),
+        "signature_html_set": bool(cfg.signature_html),
         "timeout": cfg.timeout,
         "password_set": bool(cfg.password),
         "secrets_file": path,
@@ -383,6 +505,9 @@ def _selftest_namespace(**overrides: object) -> argparse.Namespace:
         "timeout": None, "sender": "<sender-address>", "to": ["<recipient>"], "cc": [],
         "bcc": [], "subject": "Self test", "body": None, "body_file": None, "html": None,
         "html_file": None, "attach": [], "reply_to": None, "dry_run": True,
+        "from_name": None, "signature": None, "signature_file": None,
+        "signature_html_file": None, "no_signature": False, "no_reply_to_self": False,
+        "no_bcc_self": False, "allow_insecure_auth": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -417,8 +542,8 @@ def cmd_selftest(args: argparse.Namespace) -> int:
 
     # 4. cc/bcc expand the envelope but bcc never appears in the headers.
     routed = _selftest_namespace(to=["<a>"], cc=["<b>"], bcc=["<c>"])
-    msg = build_message(routed, cfg)
-    recipients = _envelope_recipients(routed)
+    msg = build_message(routed, SmtpConfig(bcc_self=False))
+    recipients = _envelope_recipients(routed, SmtpConfig(bcc_self=False))
     record("envelope_cc_bcc", set(recipients) == {"a", "b", "c"} and msg["Bcc"] is None,
            ",".join(sorted(recipients)))
 
@@ -451,6 +576,26 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     record("message_id_uses_sender_domain",
            _sender_domain(sample_addr) == "list.example" and _sender_domain("nodomain") is None)
 
+    # 10. A pre-defined from_name produces a 'Name <addr>' From header.
+    named = build_message(_selftest_namespace(), SmtpConfig(from_name="Test Sender"))
+    record("from_name_applied", named["From"] == "Test Sender <sender-address>", named["From"])
+
+    # 11. A pre-defined signature is appended after the standard delimiter.
+    signed = build_message(_selftest_namespace(body="Body."), SmtpConfig(signature="Jane\nLab"))
+    body_text = signed.get_body(preferencelist=("plain",)).get_content()
+    record("signature_appended", body_text.rstrip().endswith("-- \nJane\nLab"), repr(body_text[-24:]))
+
+    # 12. Reply-To and Bcc default to the sender address (and can be disabled).
+    on = _selftest_namespace()
+    on_msg = build_message(on, SmtpConfig())
+    on_env = _envelope_recipients(on, SmtpConfig())
+    off = _selftest_namespace(no_reply_to_self=True, no_bcc_self=True)
+    off_msg = build_message(off, SmtpConfig(reply_to_self=False, bcc_self=False))
+    record("reply_to_and_bcc_self_default",
+           on_msg["Reply-To"] == "sender-address" and "sender-address" in on_env
+           and off_msg["Reply-To"] is None and "sender-address" not in
+           _envelope_recipients(off, SmtpConfig(reply_to_self=False, bcc_self=False)))
+
     if args.work_dir:
         work = Path(args.work_dir)
         work.mkdir(parents=True, exist_ok=True)
@@ -476,6 +621,8 @@ def _add_connection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--security", choices=VALID_SECURITY, help="ssl, starttls, or plain")
     parser.add_argument("--timeout", type=int, help="connection timeout in seconds")
     parser.add_argument("--from", dest="sender", help="sender address (or set SMTP_FROM)")
+    parser.add_argument("--from-name", dest="from_name",
+                        help="sender display name combined with the address (or set SMTP_FROM_NAME)")
     parser.add_argument("--allow-insecure-auth", dest="allow_insecure_auth", action="store_true",
                         help="permit SMTP AUTH over an unencrypted (plain) connection")
 
@@ -487,15 +634,25 @@ def build_parser() -> argparse.ArgumentParser:
     send = sub.add_parser("send", help="compose and send a message")
     _add_connection_args(send)
     send.add_argument("--to", action="append", help="recipient (repeatable; comma-separated allowed)")
-    send.add_argument("--cc", action="append", help="cc recipient (repeatable)")
-    send.add_argument("--bcc", action="append", help="bcc recipient (repeatable)")
+    send.add_argument("--cc", action="append", help="cc recipient (repeatable; adds to defaults)")
+    send.add_argument("--bcc", action="append", help="bcc recipient (repeatable; adds to defaults)")
     send.add_argument("--subject", help="message subject")
     send.add_argument("--body", help="plain-text body")
     send.add_argument("--body-file", dest="body_file", help="read the plain-text body from a file")
     send.add_argument("--html", help="HTML body")
     send.add_argument("--html-file", dest="html_file", help="read the HTML body from a file")
     send.add_argument("--attach", action="append", help="file to attach (repeatable)")
-    send.add_argument("--reply-to", dest="reply_to", help="Reply-To address")
+    send.add_argument("--reply-to", dest="reply_to", help="Reply-To address (overrides the default)")
+    send.add_argument("--signature", help="plain-text signature (overrides the configured one)")
+    send.add_argument("--signature-file", dest="signature_file", help="read the plain-text signature from a file")
+    send.add_argument("--signature-html-file", dest="signature_html_file",
+                      help="read the HTML signature from a file")
+    send.add_argument("--no-signature", dest="no_signature", action="store_true",
+                      help="do not append any signature")
+    send.add_argument("--no-reply-to-self", dest="no_reply_to_self", action="store_true",
+                      help="do not default Reply-To to the sender address")
+    send.add_argument("--no-bcc-self", dest="no_bcc_self", action="store_true",
+                      help="do not bcc the sender address")
     send.add_argument("--dry-run", action="store_true", help="compose and report without sending")
     send.set_defaults(func=cmd_send)
 
