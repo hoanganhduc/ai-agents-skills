@@ -64,6 +64,60 @@ bash ~/.codex/runtime/run_skill.sh skills/getscipapers_requester/run_gsp_helper.
 bash ~/.codex/runtime/run_skill.sh skills/getscipapers_requester/run_gsp_helper.sh doctor
 ```
 
+## Z-Library and DJVU fallback
+
+Use the zlib backend only as an external fallback for books or papers after the
+library-first route has not satisfied the request, or when the user explicitly
+asks for zlib/external retrieval. For review tasks, check `zotero` and then
+`calibre` first unless the user explicitly opts out.
+
+Before relying on the backend, check the local command help:
+
+```bash
+getscipapers zlib --help
+```
+
+Search before downloading:
+
+```bash
+getscipapers zlib --no-proxy --search "<title-or-isbn>" --search-limit 10
+```
+
+Download only after an exact match is established or the user selects a
+numbered candidate. Do not print zlib configuration values or credentials; when
+diagnosing configuration, report only file existence and key names. If the
+downloaded file is DJVU, do not attach it to Zotero automatically unless the
+user explicitly asks for that attachment. For "send it to me" requests, verify
+the file first and send the verified file directly through the requested
+channel.
+
+For DJVU verification and reading, prefer DjVuLibre tools:
+
+```bash
+sudo apt-get install -y djvulibre-bin
+djvused -e n book.djvu
+djvudump book.djvu | sed -n '1,80p'
+djvutxt book.djvu book.txt
+djvutxt -page=<page> book.djvu page.txt
+ddjvu -format=tiff -page=<page> book.djvu page.tiff
+```
+
+Use `djvudump` for structure, `djvused -e n` for page count, `djvutxt` or
+`djvused -e 'print-pure-txt'` for hidden text, and `ddjvu` for rendering or
+conversion. If Calibre is useful for conversion or metadata, use it as a
+fallback rather than the first verifier; on hosts with user-site Python package
+conflicts, run it with:
+
+```bash
+PYTHONNOUSERSITE=1 ebook-convert book.djvu book.txt
+```
+
+If the DJVU has no usable hidden text layer, render pages with `ddjvu` and then
+run OCR with `tesseract` or `ocrmypdf` when available. Avoid treating `mutool`,
+PIL, or generic ImageMagick probing as primary DJVU verification paths; they may
+fail or hang depending on local delegates. ImageMagick is still useful after a
+page has been rendered to TIFF/PNG.
+
 ## Workflow
 
 1. If DOI/ISBN is available, use it directly.

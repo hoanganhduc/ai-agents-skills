@@ -29,7 +29,13 @@ if [[ ! -f "$FILE_PATH" ]]; then
   exit 1
 fi
 
-FILE_SIZE=$(stat -c %s "$FILE_PATH" 2>/dev/null || stat -f %z "$FILE_PATH" 2>/dev/null || echo 0)
+FILE_SIZE=$(python3 - "$FILE_PATH" <<'PYEOF'
+import os
+import sys
+
+print(os.path.getsize(sys.argv[1]))
+PYEOF
+)
 
 # ---------------------------------------------------------------------------
 # Telegram
