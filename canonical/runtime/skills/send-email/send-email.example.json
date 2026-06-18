@@ -1,0 +1,52 @@
+{
+  "_README": [
+    "Sample configuration for the send-email skill.",
+    "Copy the keys below into your runtime secrets file -- the path in AAS_SECRETS_FILE,",
+    "normally <runtime_root>/workspace/.secrets.json -- and replace every <placeholder>.",
+    "Use the single 'smtp' block for one account, OR the 'accounts' map for several",
+    "(select at send time with --account NAME). If both are present, an account wins:",
+    "resolution is --account / SMTP_ACCOUNT > default_account > the 'smtp' block.",
+    "Only 'user' and 'password' are sensitive; prefer a provider app password, not your",
+    "login password. Every identity field (from_name, reply_to, cc, bcc, signature,",
+    "signature_html, reply_to_self, bcc_self) is optional. This file is a template and",
+    "is never read by the skill; the '_README' key is ignored if you copy it across.",
+    "Each field can also be set per send on the CLI or via env vars (SMTP_HOST, etc.)."
+  ],
+  "smtp": {
+    "host": "smtp.example.com",
+    "port": 587,
+    "security": "starttls",
+    "user": "<smtp-username>",
+    "password": "<app-password>",
+    "from": "<sender-address>",
+    "from_name": "Your Name",
+    "reply_to": "<reply-address>",
+    "cc": [],
+    "bcc": [],
+    "signature": "--\nYour Name\nYour Lab",
+    "signature_html": "<p>Your Name<br>Your Lab</p>",
+    "reply_to_self": true,
+    "bcc_self": true
+  },
+  "default_account": "personal",
+  "accounts": {
+    "personal": {
+      "host": "smtp.gmail.com",
+      "port": 587,
+      "security": "starttls",
+      "user": "<gmail-username>",
+      "password": "<gmail-app-password>",
+      "from": "<personal-sender-address>",
+      "from_name": "Your Name"
+    },
+    "work": {
+      "host": "smtp.office365.com",
+      "port": 587,
+      "security": "starttls",
+      "user": "<work-username>",
+      "password": "<work-app-password>",
+      "from": "<work-sender-address>",
+      "from_name": "Your Name (Work)"
+    }
+  }
+}
