@@ -134,6 +134,25 @@ class ManifestTests(unittest.TestCase):
         args.profile = "media"
         self.assertIn("manim-math-animation", resolve_skills(args, manifests))
 
+    def test_autonomous_research_loop_runbook_template_registered(self) -> None:
+        manifests = load_manifests()
+        templates = manifests["artifacts"]["artifacts"]["template"]
+        self.assertIn("autonomous-research-loop-runbook", templates)
+        spec = templates["autonomous-research-loop-runbook"]
+        for skill in ("autonomous-research-loop", "cross-agent-delegation",
+                      "modal-research-compute", "research-verification-gate"):
+            self.assertIn(skill, spec["depends_on_skills"])
+        profiles = manifests["artifacts"]["artifact_profiles"]
+        for prof in ("workflow-templates", "workflow-artifacts", "serious-research"):
+            self.assertIn("template:autonomous-research-loop-runbook", profiles[prof]["artifacts"])
+        body = render_artifact_content("template", "autonomous-research-loop-runbook", spec, "claude")
+        # Fidelity: the load-bearing user requirements must survive rendering.
+        self.assertIn("do NOT explore multiple parallel strategies", body)
+        self.assertIn("ASK", body)
+        self.assertIn("Modal credit", body)
+        self.assertIn("fresh", body.lower())
+        self.assertIn("backtrack", body.lower())
+
     def test_default_profile_resolves_research_core(self) -> None:
         manifests = load_manifests()
         args = Args()

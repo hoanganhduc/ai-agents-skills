@@ -20,7 +20,8 @@
         "template:evidence-synthesis-critique",
         "template:deep-research-sources",
         "template:deep-research-analysis",
-        "template:deep-research-report"
+        "template:deep-research-report",
+        "template:autonomous-research-loop-runbook"
       ]
     },
     "serious-research": {
@@ -34,6 +35,7 @@
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report",
+        "template:autonomous-research-loop-runbook",
         "template:cross-provider-research-panel",
         "template:manager-worker-research-review",
         "instruction-doc:research-quick-actions",
@@ -135,6 +137,7 @@
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report",
+        "template:autonomous-research-loop-runbook",
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:operating-discipline",
         "instruction-doc:risk-gated-confirmation",
@@ -275,6 +278,12 @@
         "source": "deep-research-report.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["deep-research-workflow"]
+      },
+      "autonomous-research-loop-runbook": {
+        "description": "Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute offload.",
+        "source": "autonomous-research-loop-runbook.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "modal-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
       }
     },
     "instruction-doc": {
