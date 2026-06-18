@@ -74,11 +74,17 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
         """A `gh` probe that times out/errors (seen intermittently on Windows
         runners) must not take the whole bootstrap down: config generation and
         the other sections must still succeed."""
+        # Importing from canonical/runtime/ in-process must not write __pycache__
+        # there (it would break the runtime-inventory "only candidate sources"
+        # invariant); other tests sidestep this by running in a subprocess.
+        prev_dont_write = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
         sys.path.insert(0, str(WORKSPACE))
         try:
             import research_compute.cli as cli
         finally:
             sys.path.remove(str(WORKSPACE))
+            sys.dont_write_bytecode = prev_dont_write
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._make_workspace(Path(tmp))
             real_run = cli.subprocess.run
