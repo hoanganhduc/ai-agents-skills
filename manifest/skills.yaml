@@ -471,7 +471,7 @@
       "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
-      "optional_capabilities": ["smtp-send", "html-and-attachments", "cc-bcc-reply-to", "sender-identity-and-signature", "dry-run-preview", "connection-verify", "offline-smoke"],
+      "optional_capabilities": ["smtp-send", "html-and-attachments", "cc-bcc-reply-to", "sender-identity-and-signature", "named-accounts", "address-book", "dry-run-preview", "connection-verify", "offline-smoke"],
       "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
     },
     "slides-to-video": {

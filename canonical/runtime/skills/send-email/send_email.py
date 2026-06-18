@@ -35,6 +35,7 @@ import ssl
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from email import message_from_bytes
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, getaddresses, make_msgid, parseaddr
@@ -75,6 +76,8 @@ class SmtpConfig:
     bcc: list[str] = field(default_factory=list)
     reply_to_self: bool = True
     bcc_self: bool = True
+    account: str | None = None
+    account_error: str | None = None
 
     def resolved_security(self) -> str:
         if self.security:
@@ -123,8 +126,8 @@ def _secrets_path() -> str | None:
     return os.environ.get("AAS_SECRETS_FILE") or os.environ.get("OPENCLAW_SECRETS_FILE")
 
 
-def _load_secrets() -> dict:
-    """Return SMTP settings from the secrets file, normalized to bare lowercase keys."""
+def _read_secrets_file() -> dict:
+    """Return the raw parsed secrets-file object, or {} if absent/unreadable."""
     path = _secrets_path()
     if not path:
         return {}
@@ -135,10 +138,11 @@ def _load_secrets() -> dict:
         data = json.loads(file.read_text(encoding="utf-8"))
     except (ValueError, OSError):
         return {}
-    if not isinstance(data, dict):
-        return {}
-    smtp = data.get("smtp")
-    raw = smtp if isinstance(smtp, dict) else data
+    return data if isinstance(data, dict) else {}
+
+
+def _normalize(raw: dict) -> dict:
+    """Lowercase keys and drop the optional smtp_ prefix (so SMTP_HOST == host)."""
     out: dict = {}
     for key, value in raw.items():
         norm = str(key).lower()
@@ -148,8 +152,103 @@ def _load_secrets() -> dict:
     return out
 
 
+def _account_names(file_data: dict) -> list[str]:
+    accounts = file_data.get("accounts")
+    return sorted(accounts) if isinstance(accounts, dict) else []
+
+
+def _select_account(args: argparse.Namespace, file_data: dict) -> tuple[dict, str | None, str | None]:
+    """Pick the active account: --account / SMTP_ACCOUNT > default_account > smtp{} block.
+
+    Returns (normalized settings, selected account name, error). An explicitly
+    requested account that does not exist is an error; a missing default falls
+    back to the single smtp block.
+    """
+    accounts = file_data.get("accounts")
+    accounts = accounts if isinstance(accounts, dict) else {}
+    requested = getattr(args, "account", None) or os.environ.get("SMTP_ACCOUNT")
+    if requested and requested not in accounts:
+        return {}, requested, f"unknown account: {requested}"
+    name = requested or file_data.get("default_account")
+    if name and name in accounts and isinstance(accounts[name], dict):
+        return _normalize(accounts[name]), name, None
+    smtp = file_data.get("smtp")
+    base = smtp if isinstance(smtp, dict) else file_data
+    return _normalize(base), None, None
+
+
+def _address_book_path() -> Path:
+    """Locate the address book: SEND_EMAIL_ADDRESS_BOOK, else beside the secrets file."""
+    override = os.environ.get("SEND_EMAIL_ADDRESS_BOOK")
+    if override:
+        return Path(override)
+    workspace = os.environ.get("AAS_RUNTIME_WORKSPACE")
+    if workspace:
+        return Path(workspace) / ".address-book.json"
+    secrets = _secrets_path()
+    if secrets:
+        return Path(secrets).parent / ".address-book.json"
+    return Path(os.path.expanduser("~")) / ".send-email-address-book.json"
+
+
+def _load_address_book() -> dict:
+    """Return {address_lower: {address, name, last_used, times_used}}; robust to absence."""
+    path = _address_book_path()
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return {}
+    contacts = data.get("contacts") if isinstance(data, dict) else None
+    return contacts if isinstance(contacts, dict) else {}
+
+
+def _save_address_book(contacts: dict) -> Path:
+    path = _address_book_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"contacts": contacts}, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def _saveable_recipients(args: argparse.Namespace) -> list[tuple[str, str]]:
+    """Addresses the user explicitly sent to (To/Cc/Bcc), with display names if given."""
+    raw = (args.to or []) + (args.cc or []) + (getattr(args, "bcc", None) or [])
+    out: list[tuple[str, str]] = []
+    for item in raw:
+        for name, addr in getaddresses([item]):
+            addr = addr.strip()
+            if addr:
+                out.append((addr, name.strip()))
+    return out
+
+
+def _add_to_book(contacts: dict, entries: list[tuple[str, str]]) -> list[str]:
+    """Insert/update contacts; return the addresses that were newly added."""
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    added: list[str] = []
+    for addr, name in entries:
+        key = addr.lower()
+        existing = contacts.get(key)
+        if existing is None:
+            contacts[key] = {"address": addr, "name": name, "last_used": now, "times_used": 1}
+            added.append(addr)
+        else:
+            existing["last_used"] = now
+            existing["times_used"] = int(existing.get("times_used", 0)) + 1
+            if name and not existing.get("name"):
+                existing["name"] = name
+    return added
+
+
 def load_config(args: argparse.Namespace) -> SmtpConfig:
-    secrets = _load_secrets()
+    file_data = _read_secrets_file()
+    secrets, account_name, account_error = _select_account(args, file_data)
 
     def pick(cli_value: object, env_key: str, *secret_keys: str) -> object:
         if cli_value is not None:
@@ -199,6 +298,8 @@ def load_config(args: argparse.Namespace) -> SmtpConfig:
         bcc=_as_list(os.environ.get("SMTP_BCC")) or _as_list(secrets.get("bcc")),
         reply_to_self=reply_to_self,
         bcc_self=bcc_self,
+        account=account_name,
+        account_error=account_error,
     )
 
 
@@ -404,6 +505,8 @@ def _message_summary(msg: EmailMessage, recipients: list[str]) -> dict:
 
 def cmd_send(args: argparse.Namespace) -> int:
     cfg = load_config(args)
+    if cfg.account_error:
+        return _fail("send", "unknown_account", cfg.account_error)
     try:
         msg = build_message(args, cfg)
         recipients = _envelope_recipients(args, cfg)
@@ -412,7 +515,12 @@ def cmd_send(args: argparse.Namespace) -> int:
     if not recipients:
         return _fail("send", "no_recipients", "no recipients: pass --to, --cc, or --bcc")
 
+    saveable = _saveable_recipients(args)
+    book = _load_address_book()
+    new_recipients = _dedupe([addr for addr, _ in saveable if addr.lower() not in book])
+
     summary = {"ok": True, "command": "send", **_message_summary(msg, recipients)}
+    summary["new_recipients"] = new_recipients
     if args.dry_run:
         summary["dry_run"] = True
         summary["bytes"] = len(bytes(msg))
@@ -437,12 +545,21 @@ def cmd_send(args: argparse.Namespace) -> int:
             server.quit()
         except (smtplib.SMTPException, OSError):
             pass
+    if getattr(args, "save_recipients", False) and saveable:
+        try:
+            _add_to_book(book, saveable)
+            _save_address_book(book)
+            summary["saved_to_address_book"] = [addr for addr, _ in saveable]
+        except OSError as exc:
+            summary["address_book_error"] = str(exc)
     _emit(summary)
     return 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
     cfg = load_config(args)
+    if cfg.account_error:
+        return _fail("verify", "unknown_account", cfg.account_error)
     if not cfg.host:
         return _fail("verify", "no_host", "no SMTP host: set --host or SMTP_HOST")
     guard = _auth_guard(cfg)
@@ -474,10 +591,13 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def cmd_show_config(args: argparse.Namespace) -> int:
     cfg = load_config(args)
+    if cfg.account_error:
+        return _fail("show-config", "unknown_account", cfg.account_error)
     path = _secrets_path()
     _emit({
         "ok": True,
         "command": "show-config",
+        "account": cfg.account,
         "host": cfg.host,
         "port": cfg.resolved_port() if cfg.host else cfg.port,
         "security": cfg.resolved_security() if cfg.host else cfg.security,
@@ -499,6 +619,61 @@ def cmd_show_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_accounts(_args: argparse.Namespace) -> int:
+    file_data = _read_secrets_file()
+    names = _account_names(file_data)
+    default = file_data.get("default_account")
+    _emit({
+        "ok": True,
+        "command": "accounts",
+        "accounts": names,
+        "default_account": default if default in names else None,
+        "single_smtp_fallback": isinstance(file_data.get("smtp"), dict),
+    })
+    return 0
+
+
+def _contact_rows(contacts: dict) -> list[dict]:
+    rows = [
+        {"address": v.get("address", k), "name": v.get("name", ""),
+         "times_used": v.get("times_used", 0), "last_used": v.get("last_used")}
+        for k, v in contacts.items()
+    ]
+    return sorted(rows, key=lambda r: r["address"].lower())
+
+
+def cmd_contacts(args: argparse.Namespace) -> int:
+    contacts = _load_address_book()
+    if args.add:
+        try:
+            added = _add_to_book(contacts, [(args.add.strip(), (args.name or "").strip())])
+            _save_address_book(contacts)
+        except OSError as exc:
+            return _fail("contacts", "address_book_error", str(exc))
+        _emit({"ok": True, "command": "contacts", "action": "add", "address": args.add,
+               "added": bool(added)})
+        return 0
+    if args.remove:
+        key = args.remove.strip().lower()
+        removed = contacts.pop(key, None) is not None
+        if removed:
+            try:
+                _save_address_book(contacts)
+            except OSError as exc:
+                return _fail("contacts", "address_book_error", str(exc))
+        _emit({"ok": True, "command": "contacts", "action": "remove",
+               "address": args.remove, "removed": removed})
+        return 0
+    rows = _contact_rows(contacts)
+    if args.search:
+        query = args.search.lower()
+        rows = [r for r in rows if query in r["address"].lower() or query in (r["name"] or "").lower()]
+    _emit({"ok": True, "command": "contacts", "action": "list",
+           "count": len(rows), "contacts": rows,
+           "path": str(_address_book_path())})
+    return 0
+
+
 def _selftest_namespace(**overrides: object) -> argparse.Namespace:
     base = {
         "host": None, "port": None, "user": None, "password": None, "security": None,
@@ -507,7 +682,8 @@ def _selftest_namespace(**overrides: object) -> argparse.Namespace:
         "html_file": None, "attach": [], "reply_to": None, "dry_run": True,
         "from_name": None, "signature": None, "signature_file": None,
         "signature_html_file": None, "no_signature": False, "no_reply_to_self": False,
-        "no_bcc_self": False, "allow_insecure_auth": False,
+        "no_bcc_self": False, "allow_insecure_auth": False, "account": None,
+        "save_recipients": False,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -596,6 +772,43 @@ def cmd_selftest(args: argparse.Namespace) -> int:
            and off_msg["Reply-To"] is None and "sender-address" not in
            _envelope_recipients(off, SmtpConfig(reply_to_self=False, bcc_self=False)))
 
+    # 13. Named-account selection: explicit > default; unknown is an error.
+    fd = {"accounts": {"work": {"host": "h1"}, "lab": {"host": "h2"}}, "default_account": "work"}
+    sel_lab, name_lab, err_lab = _select_account(argparse.Namespace(account="lab"), fd)
+    _, name_bad, err_bad = _select_account(argparse.Namespace(account="nope"), fd)
+    saved_env = os.environ.pop("SMTP_ACCOUNT", None)
+    try:
+        sel_def, name_def, err_def = _select_account(argparse.Namespace(account=None), fd)
+    finally:
+        if saved_env is not None:
+            os.environ["SMTP_ACCOUNT"] = saved_env
+    record("account_selection",
+           name_lab == "lab" and sel_lab.get("host") == "h2" and err_lab is None
+           and name_def == "work" and sel_def.get("host") == "h1"
+           and name_bad == "nope" and err_bad is not None)
+
+    # 14. Address book: add, dedupe, and reload via the on-disk file.
+    with tempfile.TemporaryDirectory() as tmp:
+        saved_book = os.environ.get("SEND_EMAIL_ADDRESS_BOOK")
+        os.environ["SEND_EMAIL_ADDRESS_BOOK"] = str(Path(tmp) / "ab.json")
+        try:
+            addr = "a" + "@" + "x.example"
+            addr_caps = "A" + "@" + "X.example"  # same address, different case
+            book = _load_address_book()
+            first = _add_to_book(book, [(addr, "A")])
+            again = _add_to_book(book, [(addr_caps, "")])
+            _save_address_book(book)
+            reloaded = _load_address_book()
+            key = addr.lower()
+            ab_ok = (first == [addr] and again == []
+                     and key in reloaded and reloaded[key]["times_used"] == 2)
+        finally:
+            if saved_book is None:
+                os.environ.pop("SEND_EMAIL_ADDRESS_BOOK", None)
+            else:
+                os.environ["SEND_EMAIL_ADDRESS_BOOK"] = saved_book
+    record("address_book_add_dedupe_reload", ab_ok)
+
     if args.work_dir:
         work = Path(args.work_dir)
         work.mkdir(parents=True, exist_ok=True)
@@ -614,6 +827,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
 
 
 def _add_connection_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--account", help="named SMTP account from the secrets file (or set SMTP_ACCOUNT)")
     parser.add_argument("--host", help="SMTP server host (or set SMTP_HOST)")
     parser.add_argument("--port", type=int, help="SMTP server port (default 587, or 465 for ssl)")
     parser.add_argument("--user", help="SMTP username (or set SMTP_USER)")
@@ -653,6 +867,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="do not default Reply-To to the sender address")
     send.add_argument("--no-bcc-self", dest="no_bcc_self", action="store_true",
                       help="do not bcc the sender address")
+    send.add_argument("--save-recipients", dest="save_recipients", action="store_true",
+                      help="after a successful send, save the recipients to the address book")
     send.add_argument("--dry-run", action="store_true", help="compose and report without sending")
     send.set_defaults(func=cmd_send)
 
@@ -663,6 +879,16 @@ def build_parser() -> argparse.ArgumentParser:
     show = sub.add_parser("show-config", help="print the resolved config with the password redacted")
     _add_connection_args(show)
     show.set_defaults(func=cmd_show_config)
+
+    accounts = sub.add_parser("accounts", help="list named SMTP accounts (names only, no secrets)")
+    accounts.set_defaults(func=cmd_accounts)
+
+    contacts = sub.add_parser("contacts", help="address book: list (default), --add, --remove, --search")
+    contacts.add_argument("--add", help="address to add/update (use with --name)")
+    contacts.add_argument("--name", help="display name for --add")
+    contacts.add_argument("--remove", help="address to remove")
+    contacts.add_argument("--search", help="filter the listing by address or name")
+    contacts.set_defaults(func=cmd_contacts)
 
     selftest = sub.add_parser("selftest", help="offline smoke (no network)")
     selftest.add_argument("--work-dir", dest="work_dir", default=None,
