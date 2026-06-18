@@ -27,7 +27,7 @@ visible to the Windows runtime wrapper.
 
 ```powershell
 $env:AAS_SAGE_WSL_DISTRO = "Ubuntu-24.04"
-$env:AAS_SAGE_BIN = "/home/<wsl-user>/sage-10.4/sage"
+$env:AAS_SAGE_BIN = "/home/.../sage-10.4/sage"
 & "$runtime\run_skill.bat" "skills/sagemath/run_sage.bat" "print(2+2)"
 ```
 
