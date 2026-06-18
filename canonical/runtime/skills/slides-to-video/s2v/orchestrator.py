@@ -27,6 +27,7 @@ from .model import (
     Deck,
     SegmentTiming,
     SlidePlan,
+    SlideRecord,
     assert_pairing,
     read_json,
     rebase_segments,
@@ -100,7 +101,8 @@ def draft(work_dir: Path) -> dict:
     """Scaffold transcript.json/.md from the deck. The agent fills in narration."""
     deck = Deck.from_dict(read_json(deck_path(work_dir)))
     plans = [
-        SlidePlan(index=s.index, image_path=s.image_path, transcript=s.seed_text.strip())
+        SlidePlan(index=s.index, image_path=s.image_path, transcript=s.seed_text.strip(),
+                  clip_path=s.clip_path)
         for s in deck.slides
     ]
     save_plans(work_dir, plans)
@@ -143,6 +145,30 @@ def verbalize_transcripts(work_dir: Path) -> dict:
     render_md(work_dir)
     _invalidate_approval(work_dir)
     return {"slides": len(plans)}
+
+
+def add_interlude(work_dir: Path, clip_path: str, after_index: int,
+                  transcript: str = "", language: Optional[str] = None) -> dict:
+    """Insert a pre-rendered video clip (e.g. a Manim math animation) as a new
+    slide after ``after_index``. The clip becomes that slide's visual; narration
+    is synthesized by the normal TTS ladder. Reindexes slides, keeps the deck and
+    transcript 1:1, and invalidates any prior approval.
+    """
+    deck = Deck.from_dict(read_json(deck_path(work_dir)))
+    plans = load_plans(work_dir)
+    assert_pairing(deck.slides, plans)
+    pos = max(-1, min(after_index, len(deck.slides) - 1)) + 1
+    deck.slides.insert(pos, SlideRecord(index=pos, image_path="", source="clip", clip_path=clip_path))
+    plans.insert(pos, SlidePlan(index=pos, image_path="", transcript=transcript,
+                                language=language, clip_path=clip_path))
+    for i, (slide, plan) in enumerate(zip(deck.slides, plans)):
+        slide.index = i
+        plan.index = i
+    write_json(deck_path(work_dir), deck.to_dict())
+    save_plans(work_dir, plans)
+    render_md(work_dir)
+    _invalidate_approval(work_dir)
+    return {"slides": len(plans), "interlude_at": pos, "clip": clip_path}
 
 
 # -- Approval gate ---------------------------------------------------------
@@ -215,29 +241,40 @@ def render(work_dir: Path) -> dict:
 
     wavs: list[Path] = []
     used_engines: list[str] = []
+    durations: list[float] = []
     for plan in plans:
         locale = plan.language or config.language
         text = plan.transcript.strip()
+        clip_dur = audio.probe_duration(plan.clip_path) if plan.clip_path else 0.0
         if text:
             result = tts.synth(text, locale, config.role, config.engine_policy,
                                audio_dir, plan.index, plan.voice)
-            padded = audio.pad_wav(result.wav_path, audio_dir / f"slide_{plan.index:04d}_pad.wav",
-                                   config.lead_pad, config.tail_pad)
+            wav = audio.pad_wav(result.wav_path, audio_dir / f"slide_{plan.index:04d}_pad.wav",
+                                config.lead_pad, config.tail_pad)
             used_engines.append(result.engine)
-            wavs.append(padded)
-        else:  # placeholder silence keeps the 1:1 contract
-            silence = audio.make_silence(audio_dir / f"slide_{plan.index:04d}.wav", 2.0)
+        else:  # placeholder silence keeps the 1:1 contract (sized to the clip if any)
+            wav = audio.make_silence(audio_dir / f"slide_{plan.index:04d}.wav",
+                                     clip_dur if clip_dur > 0 else 2.0)
             used_engines.append("silence")
-            wavs.append(silence)
+        audio_dur = audio.probe_duration(wav)
+        # A clip-backed slide runs to max(clip, narration); pad narration to fill.
+        seg = max(clip_dur, audio_dur)
+        if seg > audio_dur + 1e-3:
+            wav = audio.extend_to(wav, audio_dir / f"slide_{plan.index:04d}_seg.wav", seg)
+        wavs.append(wav)
+        durations.append(seg)
 
-    durations = [audio.probe_duration(w) for w in wavs]
     timeline = rebase_segments(durations)
 
     clips: list[str] = []
     for plan, slide, wav, seg in zip(plans, deck.slides, wavs, timeline):
         out = clips_dir / f"clip_{plan.index:04d}.mp4"
-        assemble.render_clip(slide.image_path, str(wav), seg.duration,
-                             width, height, config.fps, plan.effects, str(out))
+        if plan.clip_path:
+            assemble.render_clip_segment(plan.clip_path, str(wav), seg.duration,
+                                         width, height, config.fps, str(out))
+        else:
+            assemble.render_clip(slide.image_path, str(wav), seg.duration,
+                                 width, height, config.fps, plan.effects, str(out))
         clips.append(str(out))
 
     final = work_dir / "video.mp4"

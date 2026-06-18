@@ -100,6 +100,14 @@ def cmd_approve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_add_interlude(args: argparse.Namespace) -> int:
+    from s2v import orchestrator
+
+    _emit(orchestrator.add_interlude(Path(args.work_dir), args.clip, args.after,
+                                     transcript=args.transcript or "", language=args.language))
+    return 0
+
+
 def cmd_render(args: argparse.Namespace) -> int:
     from s2v import orchestrator
 
@@ -146,6 +154,14 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name)
         p.add_argument("--work-dir", required=True)
         p.set_defaults(func=func)
+
+    ai = sub.add_parser("add-interlude", help="insert a pre-rendered (e.g. Manim) clip as a slide")
+    ai.add_argument("--work-dir", required=True)
+    ai.add_argument("--clip", required=True, help="path to the rendered video clip")
+    ai.add_argument("--after", type=int, required=True, help="insert after this slide index (-1 = front)")
+    ai.add_argument("--transcript", default=None, help="narration for the interlude (optional)")
+    ai.add_argument("--language", default=None)
+    ai.set_defaults(func=cmd_add_interlude)
 
     st = sub.add_parser("selftest")
     st.add_argument("--work-dir", default=None)

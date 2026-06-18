@@ -63,6 +63,7 @@ class SlideRecord:
     width: int = 0
     height: int = 0
     flags: dict[str, Any] = field(default_factory=dict)
+    clip_path: Optional[str] = None  # if set, this slide's visual is a pre-rendered video clip
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,18 +74,20 @@ class SlideRecord:
             "width": self.width,
             "height": self.height,
             "flags": self.flags,
+            "clip_path": self.clip_path,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "SlideRecord":
         return cls(
             index=int(d["index"]),
-            image_path=d["image_path"],
+            image_path=d.get("image_path", ""),
             seed_text=d.get("seed_text", ""),
             source=d.get("source", ""),
             width=int(d.get("width", 0)),
             height=int(d.get("height", 0)),
             flags=dict(d.get("flags", {})),
+            clip_path=d.get("clip_path"),
         )
 
 
@@ -181,6 +184,7 @@ class SlidePlan:
     language: Optional[str] = None  # per-segment override (bilingual decks)
     voice: Optional[str] = None
     effects: list[EffectSpec] = field(default_factory=list)
+    clip_path: Optional[str] = None  # pre-rendered video (e.g. Manim) used as this slide's visual
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -190,17 +194,19 @@ class SlidePlan:
             "language": self.language,
             "voice": self.voice,
             "effects": [e.to_dict() for e in self.effects],
+            "clip_path": self.clip_path,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "SlidePlan":
         return cls(
             index=int(d["index"]),
-            image_path=d["image_path"],
+            image_path=d.get("image_path", ""),
             transcript=d.get("transcript", ""),
             language=d.get("language"),
             voice=d.get("voice"),
             effects=[EffectSpec.from_dict(e) for e in d.get("effects", [])],
+            clip_path=d.get("clip_path"),
         )
 
 

@@ -16,10 +16,16 @@ audio and drift. So for the integrated path:
 ## Recommended flow (interlude clip)
 
 1. `render --spec spec.json --output interlude.mp4` (this skill).
-2. In slides-to-video, treat the rendered clip's frame(s) as that slide's visual,
-   or extend slides-to-video to accept a pre-rendered clip for a slide. The parent
-   measures the clip duration with `ffprobe` and concatenates by measured
-   duration, synthesizing the segment's narration via its TTS ladder.
+2. In slides-to-video, insert the clip as a slide with `add-interlude` (or set
+   `clip_path` on a slide in `transcript.json`). The parent measures the clip
+   duration with `ffprobe`, runs the segment to `max(clip, narration)` (freezing
+   the clip's last frame / padding narration as needed), and concatenates by
+   measured duration, synthesizing the segment's narration via its TTS ladder:
+
+   ```bash
+   ... run_slides_to_video.sh add-interlude --work-dir <deck_work> \
+     --clip <this_clip>.mp4 --after <index> --transcript "..."
+   ```
 
 Because the clip is already on the canonical profile, the parent's lossless
 concat stays drift-free. If you change the canonical resolution/fps in
