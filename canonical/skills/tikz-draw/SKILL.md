@@ -225,3 +225,10 @@ Read these when the task needs tighter guardrails:
 - Keep the workflow narrow and structural in phase 1.
 - Preserve `figure_id` and `source_ids` when the request came from deep research.
 - Direct-use bootstrap may emit an empty `source_ids` list; research-driven briefs should keep real `S*` ids.
+
+## Recommended templates
+
+When this skill is involved, consider this workflow template (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `tikz-figure-verification-runbook` -- Bounded draw-compile-verify-redraw loop for a TikZ figure that guarantees it is free of overlap, wrong meaning, and bad layout, with Sage-assisted graph realization and fresh-agent visual confirmation before the strict approval gate.

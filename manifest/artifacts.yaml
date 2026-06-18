@@ -25,7 +25,8 @@
         "template:engineering-delivery-loop-runbook",
         "template:reversible-decision-memo",
         "template:informal-to-lean-formalization-runbook",
-        "template:cross-agent-adversarial-review"
+        "template:cross-agent-adversarial-review",
+        "template:tikz-figure-verification-runbook"
       ]
     },
     "serious-research": {
@@ -151,6 +152,7 @@
         "template:reversible-decision-memo",
         "template:informal-to-lean-formalization-runbook",
         "template:cross-agent-adversarial-review",
+        "template:tikz-figure-verification-runbook",
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:operating-discipline",
         "instruction-doc:risk-gated-confirmation",
@@ -321,6 +323,12 @@
         "source": "cross-agent-adversarial-review.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation", "paper-review", "annotated-review", "decision-doubt-loop", "research-verification-gate", "model-router"]
+      },
+      "tikz-figure-verification-runbook": {
+        "description": "Bounded draw-compile-verify-redraw loop for a TikZ figure that guarantees it is free of overlap, wrong meaning, and bad layout, with Sage-assisted graph realization and fresh-agent visual confirmation before the strict approval gate.",
+        "source": "tikz-figure-verification-runbook.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["tikz-draw", "sagemath", "graph-verifier", "cross-agent-delegation", "decision-doubt-loop", "agent-group-discuss", "model-router"]
       }
     },
     "instruction-doc": {

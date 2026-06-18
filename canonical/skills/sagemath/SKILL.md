@@ -89,3 +89,10 @@ Common templates in `skills/sagemath/templates/`:
 - Results are returned as JSON.
 - Prefer this skill when correctness depends on SageMath-native graph or algebra routines rather than lightweight heuristics.
 - Treat this `SKILL.md` and `sage_reference.md` as the primary quick reference for the wrapper; the wrapper’s default interface is execution-oriented rather than documentation-oriented.
+
+## Recommended templates
+
+When this skill is involved, consider this workflow template (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `tikz-figure-verification-runbook` -- Bounded draw-compile-verify-redraw loop for a TikZ figure that guarantees it is free of overlap, wrong meaning, and bad layout, with Sage-assisted graph realization and fresh-agent visual confirmation before the strict approval gate.
