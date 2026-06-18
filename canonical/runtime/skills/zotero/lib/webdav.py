@@ -2,6 +2,7 @@
 
 Zotero WebDAV format:
   - Files stored as <attachment_key>.zip in the zotero/ subdirectory
+  - Each file has a <attachment_key>.prop sidecar with mtime/hash metadata
   - Each zip contains a single PDF with its renamed filename
   - Compression: deflate (zipfile.ZIP_DEFLATED)
 """
@@ -31,6 +32,17 @@ def populate_imported_file_attachment(template, file_path):
     """Populate md5/mtime fields Zotero Desktop expects for file sync."""
     template.update(file_sync_metadata(file_path))
     return template
+
+
+def file_sync_properties_xml(file_path):
+    """Return Zotero WebDAV .prop XML for a local file."""
+    metadata = file_sync_metadata(file_path)
+    return (
+        '<properties version="1">'
+        f'<mtime>{metadata["mtime"]}</mtime>'
+        f'<hash>{metadata["md5"]}</hash>'
+        '</properties>'
+    ).encode("utf-8")
 
 
 class WebDAVClient:
@@ -75,14 +87,27 @@ class WebDAVClient:
             zf.write(pdf_path, pdf_filename)
         buf.seek(0)
 
-        # Upload
-        url = f"{self.zotero_url}/{attachment_key}.zip"
-        r = self._request("PUT", url, data=buf.getvalue(),
+        # Upload zip and its Zotero file-sync property sidecar. Zotero Desktop
+        # expects both files when syncing imported attachments from WebDAV.
+        zip_url = f"{self.zotero_url}/{attachment_key}.zip"
+        r = self._request("PUT", zip_url, data=buf.getvalue(),
                           headers={"Content-Type": "application/zip"},
                           timeout=self.upload_timeout)
 
         if r.status_code not in (200, 201, 204):
-            raise RuntimeError(f"WebDAV upload failed: HTTP {r.status_code} for {url}")
+            raise RuntimeError(f"WebDAV upload failed: HTTP {r.status_code} for {zip_url}")
+
+        prop_url = f"{self.zotero_url}/{attachment_key}.prop"
+        r = self._request("PUT", prop_url, data=file_sync_properties_xml(pdf_path),
+                          headers={"Content-Type": "application/octet-stream"},
+                          timeout=self.upload_timeout)
+
+        if r.status_code not in (200, 201, 204):
+            try:
+                self._request("DELETE", zip_url)
+            except Exception:
+                pass
+            raise RuntimeError(f"WebDAV property upload failed: HTTP {r.status_code} for {prop_url}")
 
         return True
 
@@ -117,10 +142,13 @@ class WebDAVClient:
         return extracted_path
 
     def delete(self, attachment_key):
-        """Delete a zip from WebDAV."""
-        url = f"{self.zotero_url}/{attachment_key}.zip"
-        r = self._request("DELETE", url)
-        return r.status_code in (200, 204, 404)
+        """Delete attachment zip and property sidecar from WebDAV."""
+        ok = True
+        for suffix in ("zip", "prop"):
+            url = f"{self.zotero_url}/{attachment_key}.{suffix}"
+            r = self._request("DELETE", url)
+            ok = ok and r.status_code in (200, 204, 404)
+        return ok
 
     def exists(self, attachment_key):
         """Check if a zip exists on WebDAV."""
