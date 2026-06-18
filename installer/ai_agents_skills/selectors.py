@@ -106,6 +106,23 @@ def artifact_dependency_skills(artifacts: list[tuple[str, str]], manifests: dict
     return dependencies
 
 
+def skill_recommended_templates(skills: Any, manifests: dict[str, Any]) -> set[tuple[str, str]]:
+    """Reverse of artifact_dependency_skills: template artifacts a skill recommends.
+
+    Reads each selected skill's ``recommended_templates`` (curated primary
+    runbooks) from skills.yaml and returns them as ``("template", slug)`` tuples,
+    skipping any slug not declared as a template artifact.
+    """
+    skill_specs = manifests["skills"]["skills"]
+    declared = manifests.get("artifacts", {}).get("artifacts", {}).get("template", {})
+    out: set[tuple[str, str]] = set()
+    for skill in skills:
+        for slug in skill_specs.get(skill, {}).get("recommended_templates", []):
+            if slug in declared:
+                out.add(("template", slug))
+    return out
+
+
 def split_csv(value: str | None) -> list[str]:
     if not value:
         return []

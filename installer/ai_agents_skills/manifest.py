@@ -95,6 +95,10 @@ def validate_manifests(
             for dependency in spec.get(field, []):
                 if dependency not in declared_dependencies:
                     raise ManifestError(f"skill {name} references unknown dependency {dependency}")
+        declared_templates = artifacts.get("artifacts", {}).get("template", {})
+        for template_slug in spec.get("recommended_templates", []):
+            if template_slug not in declared_templates:
+                raise ManifestError(f"skill {name} recommends unknown template {template_slug}")
 
     for profile_name, spec in profiles["profiles"].items():
         if not isinstance(spec, dict):
