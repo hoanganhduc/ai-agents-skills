@@ -48,3 +48,10 @@ claimed complete proof.
 When a Lean environment is available and the user wants a checked artifact, run
 the project-local Lean command or ask for the project build command. Otherwise
 return the skeleton with explicit unchecked status.
+
+## Recommended templates
+
+When this skill is involved, consider these workflow templates (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `informal-to-lean-formalization-runbook` -- Local-first intake mapping an informal proof to Lean declarations with a scanner-first verification gate separating typecheck status from claim support.
