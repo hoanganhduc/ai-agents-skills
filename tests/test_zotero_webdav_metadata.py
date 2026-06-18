@@ -14,6 +14,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 METADATA_PATH = REPO_ROOT / "canonical" / "runtime" / "skills" / "zotero" / "lib" / "metadata.py"
 WEBDAV_PATH = REPO_ROOT / "canonical" / "runtime" / "skills" / "zotero" / "lib" / "webdav.py"
+ZOT_PATH = REPO_ROOT / "canonical" / "runtime" / "skills" / "zotero" / "zot.py"
 _MISSING = object()
 
 
@@ -84,6 +85,40 @@ def load_metadata_module():
         spec.loader.exec_module(module)
     finally:
         sys.dont_write_bytecode = previous
+    return module
+
+
+def load_zot_module():
+    spec = importlib.util.spec_from_file_location("canonical_zotero_cli", ZOT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+
+    fake_lib = types.ModuleType("lib")
+    fake_lib.__path__ = []
+    fake_config = types.ModuleType("lib.config")
+    fake_config.load_config = lambda: {}
+    fake_config.default_workspace = lambda: str(REPO_ROOT)
+    fake_zotero_client = types.ModuleType("lib.zotero_client")
+
+    class FakeZoteroClient:
+        pass
+
+    fake_zotero_client.ZoteroClient = FakeZoteroClient
+    previous_modules = {
+        "lib": sys.modules.get("lib", _MISSING),
+        "lib.config": sys.modules.get("lib.config", _MISSING),
+        "lib.zotero_client": sys.modules.get("lib.zotero_client", _MISSING),
+    }
+    sys.modules["lib"] = fake_lib
+    sys.modules["lib.config"] = fake_config
+    sys.modules["lib.zotero_client"] = fake_zotero_client
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = previous
+        _restore_modules(previous_modules)
     return module
 
 
@@ -260,6 +295,33 @@ class ZoteroWebDAVMetadataTests(unittest.TestCase):
                 ("DELETE", "https://dav.example/zotero/ABC123.prop"),
             ],
         )
+
+
+class ZoteroCliStagingTests(unittest.TestCase):
+    def test_copy_to_path_unless_same_file_skips_existing_staging_file(self) -> None:
+        zot = load_zot_module()
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            f.write(b"already staged")
+            path = f.name
+        try:
+            self.assertEqual(zot._copy_to_path_unless_same_file(path, path), os.path.abspath(path))
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(), b"already staged")
+        finally:
+            os.remove(path)
+
+    def test_copy_to_path_unless_same_file_copies_distinct_file(self) -> None:
+        zot = load_zot_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "source.pdf")
+            target = os.path.join(tmp, "staging", "renamed.pdf")
+            os.makedirs(os.path.dirname(target))
+            with open(source, "wb") as f:
+                f.write(b"copy me")
+
+            self.assertEqual(zot._copy_to_path_unless_same_file(source, target), os.path.abspath(target))
+            with open(target, "rb") as f:
+                self.assertEqual(f.read(), b"copy me")
 
 
 if __name__ == "__main__":
