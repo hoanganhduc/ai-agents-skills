@@ -219,6 +219,7 @@
       },
       "files": [
         {"source": "skills/send-email/send_email.py", "target": "workspace/skills/send-email/send_email.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
+        {"source": "skills/send-email/send-email.example.json", "target": "workspace/skills/send-email/send-email.example.json", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/send-email/run_send_email.sh", "target": "workspace/skills/send-email/run_send_email.sh", "platforms": ["linux", "macos", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
         {"source": "skills/send-email/run_send_email.bat", "target": "workspace/skills/send-email/run_send_email.bat", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
         {"source": "skills/send-email/run_send_email.ps1", "target": "workspace/skills/send-email/run_send_email.ps1", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"}

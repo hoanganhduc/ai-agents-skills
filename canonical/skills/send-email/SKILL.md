@@ -54,6 +54,11 @@ variables, then explicit command-line flags.
 - Pre-defined sender identity (all optional): `SMTP_FROM_NAME`, `SMTP_REPLY_TO`,
   `SMTP_CC`, `SMTP_BCC` (comma-separated), `SMTP_SIGNATURE`, `SMTP_SIGNATURE_HTML`,
   `SMTP_REPLY_TO_SELF`, `SMTP_BCC_SELF`.
+A ready-to-edit sample ships at `skills/send-email/send-email.example.json`
+(installed to `<runtime_root>/workspace/skills/send-email/send-email.example.json`).
+Copy its `smtp` (or `accounts`) block into your secrets file and replace the
+`<placeholders>`.
+
 - Secrets file: the managed runner sets `AAS_SECRETS_FILE` to
   `workspace/.secrets.json`. Put an `smtp` object there (or top-level `SMTP_*`
   keys) holding both the connection settings and the identity defaults:
@@ -108,6 +113,26 @@ holds the same keys (connection + identity). Select one with `--account NAME` (o
 If `--port`/`--security` are omitted, port 465 implies `ssl`, port 25 implies
 `plain`, and the default is `starttls` on port 587. Common hosts: `smtp.gmail.com`
 and `smtp.office365.com` (use an app password, not the account password).
+
+### Where to put the config across install targets
+
+Each install target reads its own `<runtime_root>/workspace/.secrets.json`, and
+the runtime root differs per target:
+
+- Codex: `~/.codex/runtime/workspace/.secrets.json` (Windows: `%USERPROFILE%\.codex\runtime\workspace\.secrets.json`)
+- multi-agent installs (claude/deepseek/opencode/antigravity): `~/.local/share/ai-agents-skills/runtime/workspace/.secrets.json` (Windows: `%LOCALAPPDATA%\ai-agents-skills\runtime\workspace\.secrets.json`)
+
+To make one configuration serve **all** targets, use either approach (both work
+on every OS, and CLI flags still override):
+
+1. One shared secrets file: set `AAS_ALLOW_EXTERNAL_SECRETS_FILE=1` and
+   `AAS_SECRETS_FILE=<one path>` (e.g. `~/.config/send-email/secrets.json`) in
+   your shell profile; every target's runner then reads that single file.
+2. Environment variables: put `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`,
+   `SMTP_FROM`, `SMTP_FROM_NAME`, `SMTP_ACCOUNT`, etc. in a shared profile (e.g.
+   `~/.secrets.env`); the skill reads env before the secrets file, so all targets
+   pick them up. Otherwise, drop the same `.secrets.json` into each target's
+   `workspace/` directory listed above.
 
 Never write a real address, password, or token into a tracked file; pass them via
 the environment or the secrets file. Use `show-config` to confirm what resolved.
