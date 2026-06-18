@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 from urllib.parse import quote
@@ -80,6 +81,20 @@ def _dedupe_paths(paths, existing_only=True):
         seen.add(key)
         result.append(expanded)
     return result
+
+
+def _copy_to_path_unless_same_file(source_path, target_path):
+    """Copy source_path to target_path unless both names already refer to the same file."""
+    source_path = os.path.abspath(source_path)
+    target_path = os.path.abspath(target_path)
+    if os.path.exists(source_path) and os.path.exists(target_path):
+        try:
+            if os.path.samefile(source_path, target_path):
+                return target_path
+        except OSError:
+            pass
+    shutil.copy2(source_path, target_path)
+    return target_path
 
 
 def _candidate_zotero_db_paths(config, existing_only=True):
@@ -552,6 +567,8 @@ def cmd_add(args):
     version = "metadata_only"
     verified = False
     pdf_source = None
+    attachment_error = None
+    attachment_error_code = None
 
     if not args.no_pdf:
         from lib.downloader import download as download_pdf
@@ -606,6 +623,8 @@ def cmd_add(args):
                             pass
                     except Exception as e:
                         # Rollback: delete attachment item
+                        attachment_error = str(e)
+                        attachment_error_code = "WEBDAV_UPLOAD_FAILED"
                         _progress(f"WebDAV upload failed: {e} — rolling back attachment")
                         try:
                             full_att = client.get_item(att_key)
@@ -615,6 +634,8 @@ def cmd_add(args):
                             _log_orphan(config, att_key, str(e))
                             _progress(f"Rollback also failed: {re} — logged orphan {att_key}")
                 else:
+                    attachment_error = "Failed to create attachment item"
+                    attachment_error_code = "ATTACHMENT_CREATE_FAILED"
                     _progress("Failed to create attachment item — PDF not uploaded")
             else:
                 _progress("5/5 PDF ready (WebDAV not configured)")
@@ -633,6 +654,13 @@ def cmd_add(args):
 
     if pdf_source:
         output["source"] = pdf_source
+    if attachment_error:
+        output.update({
+            "status": "partial",
+            "code": attachment_error_code,
+            "attachment_error": attachment_error,
+            "message": "Item created, but the PDF attachment was not uploaded",
+        })
 
     # Append to local cache
     try:
@@ -645,6 +673,8 @@ def cmd_add(args):
 
     _output(output)
     _trigger_ingest({**metadata, "key": item_key})
+    if attachment_error:
+        sys.exit(1)
 
 
 def _cmd_add_batch(args, config, client):
@@ -894,7 +924,9 @@ def cmd_add_file(args):
     staging = config["staging_dir"]
     os.makedirs(staging, exist_ok=True)
     staged_path = os.path.join(staging, new_name)
-    shutil.copy2(file_path, staged_path)
+    _copy_to_path_unless_same_file(file_path, staged_path)
+    attachment_error = None
+    attachment_error_code = None
 
     # WebDAV upload
     if config.get("webdav_url") and config.get("WEBDAV_PASSWORD"):
@@ -924,6 +956,8 @@ def cmd_add_file(args):
                 except OSError:
                     pass
             except Exception as e:
+                attachment_error = str(e)
+                attachment_error_code = "WEBDAV_UPLOAD_FAILED"
                 _progress(f"WebDAV upload failed: {e} — rolling back attachment")
                 try:
                     full_att = client.get_item(att_key)
@@ -932,13 +966,15 @@ def cmd_add_file(args):
                     _log_orphan(config, att_key, str(e))
                     _progress(f"Rollback also failed: {re} — logged orphan {att_key}")
         else:
+            attachment_error = "Failed to create attachment item"
+            attachment_error_code = "ATTACHMENT_CREATE_FAILED"
             _progress("Failed to create attachment item — file not uploaded")
     else:
         _progress("5/5 File staged (WebDAV not configured)")
 
     coll_names = [_resolve_key_to_name(k, client) for k in collection_keys] if collection_keys else []
 
-    _output({
+    output = {
         "status": "ok", "action": "add-file", "title": title, "key": item_key,
         "content_type": content_type,
         "verified": verify_result["status"] == "accept",
@@ -947,9 +983,20 @@ def cmd_add_file(args):
         "filename": new_name,
         "doi_source": doi_source,
         "message": f"Item created from local file ({content_type})",
-    })
+    }
+    if attachment_error:
+        output.update({
+            "status": "partial",
+            "code": attachment_error_code,
+            "attachment_error": attachment_error,
+            "message": "Item created, but the file attachment was not uploaded",
+        })
+
+    _output(output)
 
     _trigger_ingest({**metadata, "key": item_key})
+    if attachment_error:
+        sys.exit(1)
 
 
 # Keep add-pdf as an alias for backwards compatibility
@@ -1400,6 +1447,8 @@ def cmd_update(args):
     if attach_any:
         from lib.renamer import rename as rename_meta, rename_non_pdf
         from lib.filetype import detect_content_type, is_pdf
+        attachment_error = None
+        attachment_error_code = None
 
         if local_file:
             # Local file path — detect type from the actual file
@@ -1422,7 +1471,6 @@ def cmd_update(args):
 
         if local_file:
             # Use local file
-            import shutil
             if not os.path.exists(local_file):
                 _output({"status": "error", "action": "update", "key": args.key,
                           "message": f"File not found: {local_file}", "code": "FILE_NOT_FOUND"})
@@ -1457,7 +1505,7 @@ def cmd_update(args):
             staging = config["staging_dir"]
             os.makedirs(staging, exist_ok=True)
             new_path = os.path.join(staging, new_name)
-            shutil.copy2(local_file, new_path)
+            _copy_to_path_unless_same_file(local_file, new_path)
 
             version = "local"
             verified = True
@@ -1533,12 +1581,24 @@ def cmd_update(args):
                     except OSError:
                         pass
                 except Exception as e:
+                    attachment_error = str(e)
+                    attachment_error_code = "WEBDAV_UPLOAD_FAILED"
                     _progress(f"WebDAV upload failed: {e} — rolling back")
                     try:
                         full_att = client.get_item(att_key)
                         client.delete_item(full_att)
                     except Exception:
                         _log_orphan(config, att_key, str(e))
+            else:
+                attachment_error = "Failed to create attachment item"
+                attachment_error_code = "ATTACHMENT_CREATE_FAILED"
+
+        if attachment_error:
+            _output({"status": "error", "action": "update", "key": args.key, "title": title,
+                      "version": version, "verified": verified, "content_type": content_type,
+                      "code": attachment_error_code, "attachment_error": attachment_error,
+                      "message": "File attachment failed; attachment item was rolled back"})
+            sys.exit(1)
 
         _output({"status": "ok", "action": "update", "key": args.key, "title": title,
                   "version": version, "verified": verified, "content_type": content_type,
