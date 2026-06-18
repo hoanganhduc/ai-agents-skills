@@ -222,6 +222,11 @@ cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.loc
 ## Most important behaviors imported from OpenClaw
 
 - Always search Zotero first before trying other retrieval paths.
+- For chapters, `@incollection` entries, proceedings articles, and older
+  no-DOI sources, search at both levels before reporting an absence: the
+  chapter title/author and the parent container title/editor/ISBN. Clearly
+  distinguish "standalone chapter item not found" from "parent book or
+  proceedings item found."
 - For review tasks that need a paper/book, if Zotero does not have it, route next to
   `calibre` before any online retrieval.
 - If `get` returns multiple results, show the numbered candidates and ask the user to pick.
@@ -265,7 +270,9 @@ If the user asks to add a paper and does not specify a collection:
 
 Only route to `getscipapers-requester` if:
 
-- the paper is not in Zotero
+- the paper is not in Zotero; for chapters and `@incollection` entries, this
+  means both the chapter-level query and the parent book/proceedings query
+  failed or cannot provide the needed text
 - the Calibre library also does not satisfy the request when the task is a review
   that needs the document
 - the user explicitly says not to check/use the library, or confirms external
