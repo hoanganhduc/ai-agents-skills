@@ -56,3 +56,10 @@ Supported shapes include `graph_data`, `edges`, `adjacency`, and optional `expec
 runtime_root="${AAS_RUNTIME_ROOT:-$HOME/.codex/runtime}"
 bash "$runtime_root/run_skill.sh" skills/graph-verifier/run_graph_verifier.sh --input /tmp/graph_input.json
 ```
+
+## Recommended templates
+
+When this skill is involved, consider this workflow template (install via
+the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
+
+- `tikz-figure-verification-runbook` -- Bounded draw-compile-verify-redraw loop for a TikZ figure that guarantees it is free of overlap, wrong meaning, and bad layout, with Sage-assisted graph realization and fresh-agent visual confirmation before the strict approval gate.
