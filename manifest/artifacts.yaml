@@ -21,7 +21,11 @@
         "template:deep-research-sources",
         "template:deep-research-analysis",
         "template:deep-research-report",
-        "template:autonomous-research-loop-runbook"
+        "template:autonomous-research-loop-runbook",
+        "template:engineering-delivery-loop-runbook",
+        "template:reversible-decision-memo",
+        "template:informal-to-lean-formalization-runbook",
+        "template:cross-agent-adversarial-review"
       ]
     },
     "serious-research": {
@@ -38,6 +42,8 @@
         "template:autonomous-research-loop-runbook",
         "template:cross-provider-research-panel",
         "template:manager-worker-research-review",
+        "template:informal-to-lean-formalization-runbook",
+        "template:cross-agent-adversarial-review",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation"
       ]
@@ -106,7 +112,10 @@
         "template:cross-provider-research-panel",
         "template:manager-worker-research-review",
         "template:repo-comparison-research",
-        "template:evidence-synthesis-critique"
+        "template:evidence-synthesis-critique",
+        "template:engineering-delivery-loop-runbook",
+        "template:reversible-decision-memo",
+        "template:cross-agent-adversarial-review"
       ]
     },
     "writing-workflow": {
@@ -138,6 +147,10 @@
         "template:deep-research-analysis",
         "template:deep-research-report",
         "template:autonomous-research-loop-runbook",
+        "template:engineering-delivery-loop-runbook",
+        "template:reversible-decision-memo",
+        "template:informal-to-lean-formalization-runbook",
+        "template:cross-agent-adversarial-review",
         "instruction-doc:engineering-lifecycle",
         "instruction-doc:operating-discipline",
         "instruction-doc:risk-gated-confirmation",
@@ -284,6 +297,30 @@
         "source": "autonomous-research-loop-runbook.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "modal-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
+      },
+      "engineering-delivery-loop-runbook": {
+        "description": "Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and credit-gated heavy-compute offload.",
+        "source": "engineering-delivery-loop-runbook.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["cross-agent-delegation", "behavior-preserving-cleanup", "decision-doubt-loop", "get-available-resources", "modal-research-compute", "agent-group-discuss", "model-router"]
+      },
+      "reversible-decision-memo": {
+        "description": "Evidence-grounded decision record with named alternatives, source-cited rationale, reversibility class and trip-wires, and a fresh-context adversarial confirmation before the decision stands.",
+        "source": "reversible-decision-memo.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["decision-doubt-loop", "source-grounded-decisions", "intent-interview", "cross-agent-delegation", "model-router"]
+      },
+      "informal-to-lean-formalization-runbook": {
+        "description": "Local-first intake mapping an informal proof to Lean declarations with a scanner-first verification gate separating typecheck status from claim support.",
+        "source": "informal-to-lean-formalization-runbook.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["lean-formalization-intake", "formal-skeleton-helper", "lean-explore-mcp", "lean-strict-verification-gate", "decision-doubt-loop", "cross-agent-delegation"]
+      },
+      "cross-agent-adversarial-review": {
+        "description": "Producer-never-confirmer adversarial review of a paper, proof, or code artifact across agent families with a fresh-agent confirmation gate.",
+        "source": "cross-agent-adversarial-review.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation", "paper-review", "annotated-review", "decision-doubt-loop", "research-verification-gate", "model-router"]
       }
     },
     "instruction-doc": {
