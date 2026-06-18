@@ -1237,13 +1237,23 @@ def cmd_get(args):
     # Search for the paper
     items = client.search(args.query, limit=25)
     if not items:
-        _output({"status": "error", "action": "get", "message": "No results found", "code": "PDF_NOT_FOUND"})
+        _output({
+            "status": "error",
+            "action": "get",
+            "message": "No Zotero item found for query",
+            "code": "ITEM_NOT_FOUND",
+        })
         return
 
     # Filter to items with potential attachments (not notes, not attachments themselves)
     parent_items = [i for i in items if i["data"].get("itemType") not in ("note", "attachment")]
     if not parent_items:
-        _output({"status": "error", "action": "get", "message": "No matching items found", "code": "PDF_NOT_FOUND"})
+        _output({
+            "status": "error",
+            "action": "get",
+            "message": "No parent Zotero items found for query",
+            "code": "ITEM_NOT_FOUND",
+        })
         return
 
     # Multiple results → show list (unless --index given)
