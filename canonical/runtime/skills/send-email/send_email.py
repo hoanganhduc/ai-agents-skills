@@ -27,16 +27,21 @@ Invoke via the managed runner, e.g.:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import mimetypes
 import os
+import shutil
 import smtplib
 import ssl
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email import message_from_bytes
+from email import policy as email_policy
+from email.generator import BytesGenerator
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, getaddresses, make_msgid, parseaddr
 from html import escape as _html_escape
@@ -45,6 +50,8 @@ from pathlib import Path
 DEFAULT_TIMEOUT = 30
 VALID_SECURITY = ("ssl", "starttls", "plain")
 SIGNATURE_DELIMITER = "-- "  # RFC 3676 signature separator (trailing space is intentional)
+PGP_DIGEST = "SHA256"
+PGP_MICALG = "pgp-sha256"  # must match PGP_DIGEST per RFC 3156
 
 
 def _emit(obj: dict) -> None:
@@ -76,6 +83,10 @@ class SmtpConfig:
     bcc: list[str] = field(default_factory=list)
     reply_to_self: bool = True
     bcc_self: bool = True
+    pgp_sign: bool = False
+    pgp_key: str | None = None
+    pgp_passphrase: str | None = None
+    gnupg_home: str | None = None
     account: str | None = None
     account_error: str | None = None
 
@@ -281,6 +292,11 @@ def load_config(args: argparse.Namespace) -> SmtpConfig:
     if getattr(args, "no_bcc_self", False):
         bcc_self = False
 
+    pgp_sign = _coerce_bool(pick(None, "SMTP_PGP_SIGN", "pgp_sign"), False)
+    pgp_key = pick(getattr(args, "pgp_key", None), "SMTP_PGP_KEY", "pgp_key")
+    pgp_passphrase = pick(None, "SMTP_PGP_PASSPHRASE", "pgp_passphrase")
+    gnupg_home = pick(getattr(args, "gnupg_home", None), "SMTP_GNUPG_HOME", "gnupg_home")
+
     return SmtpConfig(
         host=str(host) if host is not None else None,
         port=_coerce_int(port),
@@ -298,6 +314,10 @@ def load_config(args: argparse.Namespace) -> SmtpConfig:
         bcc=_as_list(os.environ.get("SMTP_BCC")) or _as_list(secrets.get("bcc")),
         reply_to_self=reply_to_self,
         bcc_self=bcc_self,
+        pgp_sign=pgp_sign,
+        pgp_key=str(pgp_key) if pgp_key is not None else None,
+        pgp_passphrase=str(pgp_passphrase) if pgp_passphrase is not None else None,
+        gnupg_home=str(gnupg_home) if gnupg_home is not None else None,
         account=account_name,
         account_error=account_error,
     )
@@ -377,15 +397,14 @@ def _resolved_signature_html(args: argparse.Namespace, cfg: SmtpConfig) -> str |
     return cfg.signature_html
 
 
-def build_message(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
-    """Compose an EmailMessage from CLI args and pre-defined identity defaults."""
+def _apply_headers(msg: EmailMessage, args: argparse.Namespace, cfg: SmtpConfig) -> None:
+    """Set the addressing/identity headers on a message (the outer entity)."""
     base_sender = _no_newline(args.sender or cfg.sender, "from")
     if not base_sender:
         raise ValueError("no sender address: set --from or SMTP_FROM")
     sender = _no_newline(_apply_from_name(base_sender, cfg.from_name), "from")
     sender_addr = parseaddr(base_sender)[1]
 
-    msg = EmailMessage()
     msg["From"] = sender
     to_list = args.to or []
     cc_list = list(cfg.cc) + (args.cc or [])
@@ -409,6 +428,13 @@ def build_message(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
     # reverse-DNS (it also breaks the offline contract). Use the sender's domain.
     msg["Message-ID"] = make_msgid(domain=_sender_domain(base_sender) or "localhost")
 
+
+def _build_content(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
+    """Build just the content entity (body/html/attachments) with no addressing headers.
+
+    Kept separate so it can be signed as-is for PGP/MIME (the signature covers this
+    part exactly, and the addressing headers live on the outer multipart/signed)."""
+    msg = EmailMessage()
     text = _read_body(args.body, args.body_file)
     html = _read_body(args.html, args.html_file)
     if text is None and html is None:
@@ -437,6 +463,111 @@ def build_message(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
     return msg
 
 
+def build_message(args: argparse.Namespace, cfg: SmtpConfig) -> EmailMessage:
+    """Compose an unsigned EmailMessage (content + addressing headers)."""
+    msg = _build_content(args, cfg)
+    _apply_headers(msg, args, cfg)
+    return msg
+
+
+def _flatten_crlf(part: EmailMessage) -> bytes:
+    """Serialize a message/part with CRLF line endings (RFC 5322 / SMTP canonical)."""
+    buf = io.BytesIO()
+    BytesGenerator(buf, policy=email_policy.SMTP).flatten(part)
+    return buf.getvalue()
+
+
+def _should_sign(args: argparse.Namespace, cfg: SmtpConfig) -> bool:
+    if getattr(args, "no_sign", False):
+        return False
+    return bool(getattr(args, "sign", False) or cfg.pgp_sign)
+
+
+def _gpg_detach_sign(data: bytes, *, key: str | None, gnupg_home: str | None,
+                     passphrase: str | None) -> str:
+    """Return an ASCII-armored detached signature over data via the gpg CLI."""
+    if shutil.which("gpg") is None:
+        raise ValueError("gpg not found on PATH; install GnuPG to sign with --sign")
+    cmd = ["gpg", "--batch", "--no-tty", "--yes", "--armor", "--digest-algo", PGP_DIGEST]
+    if gnupg_home:
+        cmd += ["--homedir", gnupg_home]
+    if key:
+        cmd += ["--local-user", key]
+    if passphrase is not None:
+        cmd += ["--pinentry-mode", "loopback", "--passphrase-fd", "0"]
+    with tempfile.NamedTemporaryFile(delete=False) as handle:
+        handle.write(data)
+        tmp = handle.name
+    try:
+        cmd += ["--detach-sign", "--output", "-", tmp]
+        proc = subprocess.run(
+            cmd,
+            input=(passphrase.encode() + b"\n") if passphrase is not None else None,
+            capture_output=True,
+            timeout=30,
+        )
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    if proc.returncode != 0:
+        err = proc.stderr.decode("utf-8", "replace").strip()
+        detail = err.splitlines()[-1] if err else "gpg signing failed"
+        raise ValueError(f"gpg signing failed: {detail}")
+    return proc.stdout.decode("ascii")
+
+
+def _make_boundary(*blobs: bytes) -> str:
+    """A multipart boundary guaranteed not to appear in the signed parts."""
+    while True:
+        boundary = "=_pgpmime_" + os.urandom(18).hex()
+        marker = ("--" + boundary).encode()
+        if not any(marker in blob for blob in blobs):
+            return boundary
+
+
+def build_signed_message(args: argparse.Namespace, cfg: SmtpConfig) -> tuple[EmailMessage, EmailMessage]:
+    """Build an RFC 3156 PGP/MIME signed message. Returns (outer, content_part).
+
+    The signature must cover the first part exactly as transmitted, so we assemble
+    the multipart first, extract the canonical content bytes the verifier will read
+    (excluding the CRLF that belongs to the boundary), and sign those.
+    """
+    content = _build_content(args, cfg)
+    del content["MIME-Version"]  # belongs on the outer entity, not the signed part
+
+    base_sender = parseaddr(_no_newline(args.sender or cfg.sender, "from") or "")[1]
+    key = getattr(args, "pgp_key", None) or cfg.pgp_key or base_sender or None
+    gnupg_home = getattr(args, "gnupg_home", None) or cfg.gnupg_home
+
+    sig_part = EmailMessage(policy=email_policy.SMTP)
+    sig_part["Content-Type"] = 'application/pgp-signature; name="signature.asc"'
+    sig_part["Content-Description"] = "OpenPGP digital signature"
+    sig_part["Content-Disposition"] = 'attachment; filename="signature.asc"'
+    sig_part.set_payload("")  # placeholder until the content bytes are known
+
+    boundary = _make_boundary(_flatten_crlf(content))
+    outer = EmailMessage(policy=email_policy.SMTP)
+    _apply_headers(outer, args, cfg)
+    outer["MIME-Version"] = "1.0"
+    outer.set_payload([content, sig_part])
+    outer["Content-Type"] = (
+        f'multipart/signed; micalg="{PGP_MICALG}"; '
+        f'protocol="application/pgp-signature"; boundary="{boundary}"'
+    )
+
+    raw = _flatten_crlf(outer)
+    marker = b"--" + boundary.encode() + b"\r\n"
+    delim = b"\r\n--" + boundary.encode()
+    start = raw.index(marker) + len(marker)
+    content_bytes = raw[start:raw.index(delim, start)]
+    sig = _gpg_detach_sign(content_bytes, key=key, gnupg_home=gnupg_home,
+                           passphrase=cfg.pgp_passphrase)
+    sig_part.set_payload(sig)
+    return outer, content
+
+
 def _envelope_recipients(args: argparse.Namespace, cfg: SmtpConfig) -> list[str]:
     to = args.to or []
     cc = list(cfg.cc) + (args.cc or [])
@@ -449,8 +580,9 @@ def _envelope_recipients(args: argparse.Namespace, cfg: SmtpConfig) -> list[str]
 
 
 def _redact(text: str, cfg: SmtpConfig) -> str:
-    if cfg.password:
-        text = text.replace(cfg.password, "***")
+    for secret in (cfg.password, cfg.pgp_passphrase):
+        if secret:
+            text = text.replace(secret, "***")
     return text
 
 
@@ -490,16 +622,23 @@ def _connect(cfg: SmtpConfig) -> smtplib.SMTP:
     return server
 
 
-def _message_summary(msg: EmailMessage, recipients: list[str]) -> dict:
+def _message_summary(headers_msg: EmailMessage, content_msg: EmailMessage,
+                     recipients: list[str], signed: bool) -> dict:
+    attachments = [
+        att.get_filename()
+        for att in content_msg.iter_attachments()
+        if att.get_content_type() != "application/pgp-signature"
+    ]
     return {
-        "from": msg["From"],
-        "reply_to": msg["Reply-To"],
+        "from": headers_msg["From"],
+        "reply_to": headers_msg["Reply-To"],
         "recipients": recipients,
-        "cc": msg["Cc"],
-        "subject": msg["Subject"],
-        "has_html": any(part.get_content_type() == "text/html" for part in msg.walk()),
-        "attachments": [att.get_filename() for att in msg.iter_attachments()],
-        "message_id": msg["Message-ID"],
+        "cc": headers_msg["Cc"],
+        "subject": headers_msg["Subject"],
+        "has_html": any(part.get_content_type() == "text/html" for part in content_msg.walk()),
+        "attachments": attachments,
+        "message_id": headers_msg["Message-ID"],
+        "signed": signed,
     }
 
 
@@ -507,11 +646,17 @@ def cmd_send(args: argparse.Namespace) -> int:
     cfg = load_config(args)
     if cfg.account_error:
         return _fail("send", "unknown_account", cfg.account_error)
+    signed = _should_sign(args, cfg)
     try:
-        msg = build_message(args, cfg)
+        if signed:
+            send_msg, content_msg = build_signed_message(args, cfg)
+            headers_msg = send_msg
+        else:
+            send_msg = build_message(args, cfg)
+            headers_msg = content_msg = send_msg
         recipients = _envelope_recipients(args, cfg)
     except (ValueError, OSError) as exc:
-        return _fail("send", "build_failed", str(exc))
+        return _fail("send", "build_failed", _redact(str(exc), cfg))
     if not recipients:
         return _fail("send", "no_recipients", "no recipients: pass --to, --cc, or --bcc")
 
@@ -519,11 +664,12 @@ def cmd_send(args: argparse.Namespace) -> int:
     book = _load_address_book()
     new_recipients = _dedupe([addr for addr, _ in saveable if addr.lower() not in book])
 
-    summary = {"ok": True, "command": "send", **_message_summary(msg, recipients)}
+    summary = {"ok": True, "command": "send",
+               **_message_summary(headers_msg, content_msg, recipients, signed)}
     summary["new_recipients"] = new_recipients
     if args.dry_run:
         summary["dry_run"] = True
-        summary["bytes"] = len(bytes(msg))
+        summary["bytes"] = len(_flatten_crlf(send_msg))
         _emit(summary)
         return 0
 
@@ -537,7 +683,13 @@ def cmd_send(args: argparse.Namespace) -> int:
     except (smtplib.SMTPException, ssl.SSLError, OSError) as exc:
         return _fail("send", "connect_failed", _redact(str(exc), cfg))
     try:
-        server.send_message(msg, from_addr=parseaddr(msg["From"])[1], to_addrs=recipients)
+        from_addr = parseaddr(headers_msg["From"])[1]
+        if signed:
+            # Send the exact signed bytes so the transmitted content matches what
+            # was signed (send_message would re-serialize and could break the sig).
+            server.sendmail(from_addr, recipients, _flatten_crlf(send_msg))
+        else:
+            server.send_message(send_msg, from_addr=from_addr, to_addrs=recipients)
     except (smtplib.SMTPException, ssl.SSLError, OSError) as exc:
         return _fail("send", "send_failed", _redact(str(exc), cfg))
     finally:
@@ -683,7 +835,8 @@ def _selftest_namespace(**overrides: object) -> argparse.Namespace:
         "from_name": None, "signature": None, "signature_file": None,
         "signature_html_file": None, "no_signature": False, "no_reply_to_self": False,
         "no_bcc_self": False, "allow_insecure_auth": False, "account": None,
-        "save_recipients": False,
+        "save_recipients": False, "sign": False, "no_sign": False, "pgp_key": None,
+        "gnupg_home": None,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -809,6 +962,19 @@ def cmd_selftest(args: argparse.Namespace) -> int:
                 os.environ["SEND_EMAIL_ADDRESS_BOOK"] = saved_book
     record("address_book_add_dedupe_reload", ab_ok)
 
+    # 15. Signing control logic + content/headers split (offline; does not call gpg).
+    sign_logic = (
+        _should_sign(_selftest_namespace(sign=True), SmtpConfig())
+        and not _should_sign(_selftest_namespace(sign=True, no_sign=True), SmtpConfig())
+        and _should_sign(_selftest_namespace(), SmtpConfig(pgp_sign=True))
+        and not _should_sign(_selftest_namespace(), SmtpConfig())
+    )
+    content_only = _build_content(_selftest_namespace(body="hi"), SmtpConfig())
+    full = build_message(_selftest_namespace(body="hi"), SmtpConfig())
+    split_ok = (content_only["From"] is None and content_only["Subject"] is None
+                and full["From"] is not None and full["Subject"] is not None)
+    record("sign_logic_and_content_split", sign_logic and split_ok)
+
     if args.work_dir:
         work = Path(args.work_dir)
         work.mkdir(parents=True, exist_ok=True)
@@ -869,6 +1035,13 @@ def build_parser() -> argparse.ArgumentParser:
                       help="do not bcc the sender address")
     send.add_argument("--save-recipients", dest="save_recipients", action="store_true",
                       help="after a successful send, save the recipients to the address book")
+    send.add_argument("--sign", action="store_true",
+                      help="PGP/MIME sign the message with gpg (or set pgp_sign in config)")
+    send.add_argument("--no-sign", dest="no_sign", action="store_true",
+                      help="do not sign even if the account has pgp_sign enabled")
+    send.add_argument("--pgp-key", dest="pgp_key",
+                      help="gpg signing key (key id/fingerprint/email); defaults to the sender address")
+    send.add_argument("--gnupg-home", dest="gnupg_home", help="GnuPG home dir for the signing key")
     send.add_argument("--dry-run", action="store_true", help="compose and report without sending")
     send.set_defaults(func=cmd_send)
 

@@ -199,11 +199,34 @@ ask the user whether to save those addresses for later; if they agree, run
 it is personal state and should be backed up alongside the secrets file. Use
 `contacts --search` to look up a saved address before composing.
 
+## PGP signing (optional)
+
+Messages can be PGP/MIME signed (RFC 3156: `multipart/signed` with a detached
+signature, which works with HTML and attachments). This needs **GnuPG (`gpg`)** on
+PATH with your secret key in the keyring; it adds no Python dependency, and
+unsigned sending still works if `gpg` is absent.
+
+- Enable per send with `--sign`, or per account with `"pgp_sign": true`.
+- The signing key defaults to the sender address; override with `--pgp-key <id>`
+  or `"pgp_key"`. Use `--gnupg-home`/`"gnupg_home"` for a non-default keyring, and
+  `"pgp_passphrase"` in the secrets file only if the key needs a passphrase and no
+  `gpg-agent` is available (otherwise rely on the agent). `--no-sign` overrides a
+  per-account default.
+- `send` reports `"signed": true/false`. Example:
+
+```bash
+… run_send_email.sh send --account work --to <recipient> --subject Hi --body Hi --sign
+```
+
+The passphrase is passed to gpg over a pipe (never on the command line) and is
+never printed.
+
 ## Natural-language routing
 
 - "email this file to <recipient>": run `send` with `--attach`; preview with
   `--dry-run` first if the recipient or content is unconfirmed. After sending,
   offer to save any `new_recipients` to the address book.
+- "sign this email" / "send signed": add `--sign` (needs gpg + your key).
 - "send from my work account": run `send --account work` (see `accounts`).
 - "who do I have saved?" / "look up <name>'s email": run `contacts` /
   `contacts --search <query>`.
