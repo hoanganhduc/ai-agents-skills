@@ -228,6 +228,15 @@
       },
       "capabilities": ["video-encode", "audio-normalize", "duration-probe"]
     },
+    "gnupg-system-tool": {
+      "description": "GnuPG (gpg) for optional PGP/MIME signing of outgoing email in send-email.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["gpg", "gpg2"],
+        "windows": ["gpg.exe", "gpg"]
+      },
+      "capabilities": ["pgp-mime-signing"]
+    },
     "espeak-ng-system-tool": {
       "description": "eSpeak NG phonemizer used by offline TTS engines (Kokoro/Piper).",
       "version_constraint": "any",
@@ -462,6 +471,7 @@
     "pillow-python-package": {"type": "python", "module": "PIL"},
     "soundfile-python-package": {"type": "python", "module": "soundfile"},
     "ffmpeg-system-tool": {"type": "tool", "logical_tool": "ffmpeg-system-tool"},
+    "gnupg-system-tool": {"type": "tool", "logical_tool": "gnupg-system-tool"},
     "espeak-ng-system-tool": {"type": "tool", "logical_tool": "espeak-ng-system-tool"},
     "libreoffice-system-tool": {"type": "tool", "logical_tool": "libreoffice-system-tool"},
     "pptx-render-system-tool": {"type": "tool", "logical_tool": "pptx-render-system-tool"},

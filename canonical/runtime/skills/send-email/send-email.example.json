@@ -10,7 +10,9 @@
     "login password. Every identity field (from_name, reply_to, cc, bcc, signature,",
     "signature_html, reply_to_self, bcc_self) is optional. This file is a template and",
     "is never read by the skill; the '_README' key is ignored if you copy it across.",
-    "Each field can also be set per send on the CLI or via env vars (SMTP_HOST, etc.)."
+    "Each field can also be set per send on the CLI or via env vars (SMTP_HOST, etc.).",
+    "Optional PGP/MIME signing: set 'pgp_sign': true and (optionally) 'pgp_key' on an",
+    "account; needs gpg on PATH with your secret key. Sign one message with --sign."
   ],
   "smtp": {
     "host": "smtp.example.com",
@@ -46,7 +48,9 @@
       "user": "<work-username>",
       "password": "<work-app-password>",
       "from": "<work-sender-address>",
-      "from_name": "Your Name (Work)"
+      "from_name": "Your Name (Work)",
+      "pgp_sign": false,
+      "pgp_key": "<your-gpg-key-id-or-email>"
     }
   }
 }

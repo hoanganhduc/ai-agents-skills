@@ -46,6 +46,7 @@ Status vocabulary used by `precheck`:
 | `ffmpeg-system-tool` | FFmpeg/ffprobe for video encoding, audio normalization, and duration probing. |
 | `git-cli` | Git command line client for repository-backed workflows and GitHub publishing. |
 | `github-cli` | GitHub CLI for workflows that need local Actions, PR, issue, or authentication commands. |
+| `gnupg-system-tool` | GnuPG (gpg) for optional PGP/MIME signing of outgoing email in send-email. |
 | `lake-cli` | Lake command line executable for optional Lean project checks. |
 | `lean-cli` | Lean command line executable for optional local formal typechecking. |
 | `libreoffice-system-tool` | LibreOffice (soffice) headless for rendering PPTX decks to PDF. |
@@ -80,6 +81,7 @@ Status vocabulary used by `precheck`:
 | `ffmpeg-system-tool` | `tool` | ffmpeg-system-tool |
 | `git-cli` | `tool` | git-cli |
 | `github-cli` | `tool` | github-cli |
+| `gnupg-system-tool` | `tool` | gnupg-system-tool |
 | `google-api-python-client-package` | `python` | googleapiclient |
 | `google-auth-python-package` | `python` | google.oauth2 |
 | `kokoro-python-package` | `python` | kokoro |
@@ -154,6 +156,7 @@ Evidence inspected:
 | `ffmpeg` | required for slides-to-video rendering (video encode, audio normalize, duration probe) | FFmpeg + ffprobe on PATH (LGPL build with libx264), e.g. apt-get install ffmpeg. | ffmpeg.exe + ffprobe.exe on PATH (LGPL build), via winget/choco or a static build. | `slides-to-video` |
 | `git-cli` | required for repository workflows and publishing | git on PATH. | git.exe or git on PATH. | `GitHub workflows`, `repo install/update examples` |
 | `github-cli` | optional for GitHub workflows that need local gh commands | gh on PATH with auth configured when needed. | gh.exe or gh on PATH with auth configured when needed. | `github`, `gh-fix-ci`, `yeet` |
+| `gnupg` | optional; only needed for PGP/MIME email signing (send-email --sign) | gpg on PATH with your secret key in the keyring, e.g. apt-get install gnupg. | gpg.exe on PATH (Gpg4win), with your secret key imported. | `send-email` |
 | `gpu-inspection-tools` | optional resource preflight enhancement | nvidia-smi for NVIDIA or rocm-smi for AMD when present. | nvidia-smi.exe or rocm-smi.exe when present; WSL GPU visibility depends on host driver support. | `get-available-resources` |
 | `lake-cli` | optional for local Lean project checks; never installed by wrappers | Lake executable on PATH, via AAS_LAKE, or via an existing elan install. | Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate` |

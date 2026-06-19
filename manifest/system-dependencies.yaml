@@ -172,6 +172,13 @@
       "windows": "ffmpeg.exe + ffprobe.exe on PATH (LGPL build), via winget/choco or a static build.",
       "used_by": ["slides-to-video"]
     },
+    "gnupg": {
+      "display_name": "GnuPG (gpg)",
+      "requirement": "optional; only needed for PGP/MIME email signing (send-email --sign)",
+      "linux": "gpg on PATH with your secret key in the keyring, e.g. apt-get install gnupg.",
+      "windows": "gpg.exe on PATH (Gpg4win), with your secret key imported.",
+      "used_by": ["send-email"]
+    },
     "espeak-ng": {
       "display_name": "eSpeak NG",
       "requirement": "optional, for offline TTS (Kokoro/Piper phonemization)",
