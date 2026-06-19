@@ -221,6 +221,17 @@ unsigned sending still works if `gpg` is absent.
 The passphrase is passed to gpg over a pipe (never on the command line) and is
 never printed.
 
+For a passphrase-protected key, prefer `"pgp_passphrase"` in the secrets file for
+**non-interactive/automated** signing: the skill then uses gpg loopback and needs
+no agent or terminal, so it works headlessly (this is the reliable path for an
+agent sending mail). Relying on a cached `gpg-agent` instead is fragile here: a
+non-interactive run has no TTY, so on a cache miss gpg fails with
+`Inappropriate ioctl for device` (it cannot show a pinentry prompt). The agent
+cache also only populates from an interactive terminal that has `export
+GPG_TTY=$(tty)` set, and it expires after gpg-agent's cache TTL (default ~10
+minutes) — so treat gpg-agent as a convenience for your own terminal, not for
+unattended signing.
+
 ## Natural-language routing
 
 - "email this file to <recipient>": run `send` with `--attach`; preview with
