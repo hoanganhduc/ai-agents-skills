@@ -11,8 +11,11 @@
     "signature_html, reply_to_self, bcc_self) is optional. This file is a template and",
     "is never read by the skill; the '_README' key is ignored if you copy it across.",
     "Each field can also be set per send on the CLI or via env vars (SMTP_HOST, etc.).",
-    "Optional PGP/MIME signing: set 'pgp_sign': true and (optionally) 'pgp_key' on an",
-    "account; needs gpg on PATH with your secret key. Sign one message with --sign."
+    "Optional PGP/MIME signing (needs gpg on PATH with your secret key): set",
+    "'pgp_sign': true to always sign that account, or pass --sign per message.",
+    "'pgp_key' selects the signing key (key id/fingerprint/email; defaults to the From",
+    "address). Set 'pgp_passphrase' only if the key is passphrase-protected and no",
+    "gpg-agent is available; 'gnupg_home' overrides the keyring location."
   ],
   "smtp": {
     "host": "smtp.example.com",
@@ -28,7 +31,9 @@
     "signature": "--\nYour Name\nYour Lab",
     "signature_html": "<p>Your Name<br>Your Lab</p>",
     "reply_to_self": true,
-    "bcc_self": true
+    "bcc_self": true,
+    "pgp_sign": false,
+    "pgp_key": "<gpg-key-id-or-email>"
   },
   "default_account": "personal",
   "accounts": {
@@ -39,7 +44,9 @@
       "user": "<gmail-username>",
       "password": "<gmail-app-password>",
       "from": "<personal-sender-address>",
-      "from_name": "Your Name"
+      "from_name": "Your Name",
+      "pgp_sign": false,
+      "pgp_key": "<gpg-key-id-or-email>"
     },
     "work": {
       "host": "smtp.office365.com",
@@ -50,7 +57,8 @@
       "from": "<work-sender-address>",
       "from_name": "Your Name (Work)",
       "pgp_sign": false,
-      "pgp_key": "<your-gpg-key-id-or-email>"
+      "pgp_key": "<gpg-key-id-or-email>",
+      "pgp_passphrase": "<key-passphrase-only-if-no-gpg-agent>"
     }
   }
 }

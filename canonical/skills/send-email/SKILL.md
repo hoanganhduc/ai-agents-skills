@@ -105,7 +105,7 @@ holds the same keys (connection + identity). Select one with `--account NAME` (o
 ```json
 { "default_account": "work",
   "accounts": {
-    "work": {"host": "smtp.work.example", "user": "<u>", "password": "<p>", "from": "<work-from-address>", "from_name": "You (Work)"},
+    "work": {"host": "smtp.work.example", "user": "<u>", "password": "<p>", "from": "<work-from-address>", "from_name": "You (Work)", "pgp_sign": true, "pgp_key": "<gpg-key-id-or-email>"},
     "lab":  {"host": "smtp.gmail.com", "port": 587, "user": "<u>", "password": "<p>", "from": "<lab-from-address>"}
   } }
 ```
