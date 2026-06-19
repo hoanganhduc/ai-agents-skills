@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -62,6 +63,23 @@ from .verify import verify as verify_state
 
 
 INSTALL_CONFIRMATION_PHRASE = "I understand the installation and uninstall process"
+INSTALL_CONFIRMATION_ENV = "AAS_INSTALL_CONFIRM"
+
+
+def verify_install_confirmation(operation: str) -> None:
+    """Validate the install/uninstall confirmation phrase.
+
+    Prefer the non-interactive ``AAS_INSTALL_CONFIRM`` environment variable so
+    the confirmation works when stdin is not an interactive terminal (for
+    example a backgrounded ``--apply`` run, where reading from stdin would hang
+    or read EOF). When the variable is unset, read one line from stdin as before.
+    """
+    override = os.environ.get(INSTALL_CONFIRMATION_ENV)
+    answer = override if override is not None else sys.stdin.readline()
+    if not answer:
+        raise ValueError(f"{operation} confirmation required before applying changes")
+    if answer.strip() != INSTALL_CONFIRMATION_PHRASE:
+        raise ValueError(f"{operation} aborted: confirmation phrase did not match")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1626,13 +1644,12 @@ To confirm that you understand the installation and uninstall process, type
 exactly:
 {INSTALL_CONFIRMATION_PHRASE}
 
+For non-interactive use (for example a backgrounded apply), set the
+{INSTALL_CONFIRMATION_ENV} environment variable to this exact phrase instead.
+
 Confirmation: """
     print(message, file=sys.stderr, end="")
-    answer = sys.stdin.readline()
-    if not answer:
-        raise ValueError("install confirmation required before applying changes")
-    if answer.strip() != INSTALL_CONFIRMATION_PHRASE:
-        raise ValueError("install aborted: confirmation phrase did not match")
+    verify_install_confirmation("install")
 
 
 def confirm_lifecycle_process_understood(
@@ -1667,13 +1684,12 @@ To confirm that you understand the installation and uninstall process, type
 exactly:
 {INSTALL_CONFIRMATION_PHRASE}
 
+For non-interactive use (for example a backgrounded apply), set the
+{INSTALL_CONFIRMATION_ENV} environment variable to this exact phrase instead.
+
 Confirmation: """
     print(message, file=sys.stderr, end="")
-    answer = sys.stdin.readline()
-    if not answer:
-        raise ValueError(f"{operation} confirmation required before applying changes")
-    if answer.strip() != INSTALL_CONFIRMATION_PHRASE:
-        raise ValueError(f"{operation} aborted: confirmation phrase did not match")
+    verify_install_confirmation(operation)
 
 
 def confirm_uninstall_process_understood(args: argparse.Namespace, preview: dict[str, Any]) -> None:
@@ -1717,13 +1733,12 @@ To confirm that you understand the installation and uninstall process, type
 exactly:
 {INSTALL_CONFIRMATION_PHRASE}
 
+For non-interactive use (for example a backgrounded apply), set the
+{INSTALL_CONFIRMATION_ENV} environment variable to this exact phrase instead.
+
 Confirmation: """
     print(message, file=sys.stderr, end="")
-    answer = sys.stdin.readline()
-    if not answer:
-        raise ValueError("uninstall confirmation required before applying changes")
-    if answer.strip() != INSTALL_CONFIRMATION_PHRASE:
-        raise ValueError("uninstall aborted: confirmation phrase did not match")
+    verify_install_confirmation("uninstall")
 
 
 def uninstall_counts(preview: dict[str, Any]) -> dict[str, Any]:

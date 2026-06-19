@@ -2825,6 +2825,53 @@ class DocsAndLauncherTests(unittest.TestCase):
                 ])
             self.assertEqual(code, 0)
 
+    def test_cli_install_apply_confirms_via_env_without_stdin(self) -> None:
+        # A backgrounded apply has no interactive stdin; the confirmation
+        # environment variable must satisfy the gate even when stdin is empty.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            with (
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO("")),
+                patch.dict(os.environ, {"AAS_INSTALL_CONFIRM": INSTALL_CONFIRMATION_PHRASE}),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(code, 0)
+
+    def test_cli_install_apply_rejects_wrong_env_confirmation(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with (
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+                patch.dict(os.environ, {"AAS_INSTALL_CONFIRM": "nope"}),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--apply",
+                ])
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertIn("confirmation phrase did not match", payload["error"])
+            self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
+
     def test_cli_rollback_apply_requires_process_confirmation(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
