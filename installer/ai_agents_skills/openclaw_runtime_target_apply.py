@@ -16,10 +16,23 @@ from typing import Any
 from .manifest import load_manifests
 from .openclaw_runtime_broker import AgentToken, BrokerState
 from .openclaw_runtime_target_evidence import now_utc
-from .openclaw_runtime_target_manifest import build_openclaw_runtime_target_manifest
-from .openclaw_target_paths import validate_openclaw_target_home
+from .openclaw_runtime_target_manifest import (
+    build_openclaw_runtime_target_manifest,
+    load_runtime_target_manifest,
+    validate_runtime_target_manifest,
+)
+from .openclaw_target_paths import (
+    OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE,
+    openclaw_home,
+    validate_openclaw_target_home,
+)
 from .render import render_skill_md
-from .runtime import RUNTIME_SOURCE_ROOT, runtime_expected_sha256
+from .runtime import (
+    RUNTIME_SOURCE_ROOT,
+    replace_with_runtime_file,
+    runtime_expected_sha256,
+    runtime_source_content_hash,
+)
 
 
 def gather_runtime_files(skill: str, manifests: dict[str, Any]) -> list[dict[str, Any]]:
@@ -91,3 +104,74 @@ def broker_state_from_manifest(
         tokens={token: AgentToken(agent=agent, allowed=allowed)},
         commands=commands,
     )
+
+
+def apply_runtime_target_manifest_file(
+    manifest_path: Path,
+    root: Path,
+    *,
+    runtime_root: Path,
+    dry_run: bool = True,
+    real_system: bool = False,
+    confirm_phrase: str | None = None,
+) -> dict[str, Any]:
+    """Apply an approved runtime/support manifest. Writes inert S3 files under
+    .openclaw/skills/<skill>/ and runtime (S4) files under the neutral root, each via
+    a verify-before-write gate (live source must match the approved source_sha256).
+    The live broker registration/serve is host-gated and only PLANNED here."""
+    manifest = load_runtime_target_manifest(Path(manifest_path))
+    validate_runtime_target_manifest(manifest, require_approved=True)
+    if not dry_run:
+        if not real_system:
+            raise ValueError("OpenClaw runtime real writes require --real-system")
+        if confirm_phrase != OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE:
+            raise ValueError(f"apply aborted: confirmation phrase must be exactly: {OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE}")
+
+    skill = manifest["skill"]
+    manifests = load_manifests()
+    source_by_target = {f["target"]: f for f in manifests["runtime"]["skills"][skill]["files"]}
+    rroot = Path(runtime_root).expanduser()
+    actions: list[dict[str, Any]] = []
+    broker_commands: list[dict[str, str]] = []
+
+    for record in manifest["files"]:
+        rel = record["relative_path"]
+        route = manifest["routing"].get(rel, "skip")
+        if route == "skip":
+            actions.append({"relative_path": rel, "route": "skip", "operation": "skip"})
+            continue
+        entry = source_by_target.get(rel)
+        if entry is None:
+            raise ValueError(f"runtime manifest file has no source mapping: {rel}")
+        source = RUNTIME_SOURCE_ROOT / entry["source"]
+        action_meta = {"file_type": entry.get("type", "text"), "newline_policy": entry.get("newline"),
+                       "mode": str(entry.get("mode", "0644"))}
+        live = runtime_source_content_hash(source, action_meta)
+        if live != record.get("source_sha256"):
+            raise ValueError(f"runtime source content changed vs approved manifest: {rel}")
+        if route == "s3":
+            dest = openclaw_home(root) / "skills" / skill / Path(rel).name
+        else:  # s4 -> neutral runtime root
+            dest = rroot / rel
+            broker_commands.append({"command": Path(rel).stem, "target_rel": rel, "expected_sha256": record["source_sha256"]})
+        entry_action = {"relative_path": rel, "route": route, "dest": str(dest),
+                        "operation": "create" if not dest.exists() else "overwrite"}
+        if not dry_run:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            replace_with_runtime_file(source, dest, action_meta)
+            entry_action["applied"] = True
+        actions.append(entry_action)
+
+    return {
+        "status": "dry-run" if dry_run else "applied",
+        "skill": skill,
+        "action_class": manifest["action_class"],
+        "content_id": manifest["content_id"],
+        "actions": actions,
+        # S4 runtime files are delivered host-side; the broker exposes them as commands.
+        "broker_registration": {
+            "runtime_root": str(rroot),
+            "commands": broker_commands,
+            "note": "register with the host broker (openclaw-broker) — live serve is host-gated",
+        },
+    }
