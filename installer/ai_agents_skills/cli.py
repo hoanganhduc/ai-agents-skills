@@ -37,7 +37,11 @@ from .openclaw_target_apply import (
     uninstall_target_manifest,
 )
 from .openclaw_target_evidence import load_target_evidence
-from .openclaw_runtime_target_apply import build_runtime_dry_run_manifest
+from .openclaw_runtime_target_apply import (
+    apply_runtime_target_manifest_file,
+    broker_state_from_manifest,
+    build_runtime_dry_run_manifest,
+)
 from .openclaw_runtime_target_manifest import (
     approve_runtime_target_manifest,
     load_runtime_target_manifest,
@@ -301,6 +305,25 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_runtime_approve.add_argument("--manifest", type=Path, required=True)
     openclaw_runtime_approve.add_argument("--reviewer", required=True)
     openclaw_runtime_approve.add_argument("--reviewed-at")
+
+    openclaw_runtime_apply = sub.add_parser("openclaw-runtime-apply-manifest")
+    openclaw_runtime_apply.add_argument("--manifest", type=Path, required=True)
+    openclaw_runtime_apply.add_argument("--runtime-root", type=Path, required=True)
+    openclaw_runtime_apply.add_argument("--apply", action="store_true")
+    openclaw_runtime_apply.add_argument("--real-system", action="store_true")
+    openclaw_runtime_apply.add_argument(
+        "--confirm-openclaw-real-write",
+        help=f"exact confirmation phrase: {OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE}",
+    )
+
+    openclaw_broker = sub.add_parser("openclaw-broker")
+    openclaw_broker.add_argument("--manifest", type=Path, required=True, help="approved runtime manifest")
+    openclaw_broker.add_argument("--runtime-root", type=Path, required=True)
+    openclaw_broker.add_argument("--agent", default="main")
+    openclaw_broker.add_argument("--token-file", type=Path, help="per-machine bearer token file (not synced)")
+    openclaw_broker.add_argument("--serve", action="store_true", help="bind + serve (host-gated)")
+    openclaw_broker.add_argument("--host", default="127.0.0.1")
+    openclaw_broker.add_argument("--port", type=int, default=18799)
 
     doctor = sub.add_parser("doctor")
     add_selection_args(doctor)
@@ -648,6 +671,41 @@ def run(args: argparse.Namespace) -> int:
                 reviewer=args.reviewer,
                 reviewed_at=args.reviewed_at,
             ),
+            args,
+        )
+    if args.command == "openclaw-runtime-apply-manifest":
+        return output(
+            apply_runtime_target_manifest_file(
+                args.manifest,
+                args.root,
+                runtime_root=args.runtime_root,
+                dry_run=not args.apply,
+                real_system=args.real_system,
+                confirm_phrase=args.confirm_openclaw_real_write,
+            ),
+            args,
+        )
+    if args.command == "openclaw-broker":
+        token = args.token_file.read_text(encoding="utf-8").strip() if args.token_file else "broker-token-unset"
+        state = broker_state_from_manifest(
+            load_runtime_target_manifest(args.manifest),
+            runtime_root=args.runtime_root,
+            agent=args.agent,
+            token=token,
+        )
+        if args.serve:  # pragma: no cover - live host only
+            from .openclaw_runtime_broker import serve
+
+            serve(state, host=args.host, port=args.port, parent_env=dict(os.environ), run=True)
+        return output(
+            {
+                "status": "ready",
+                "runtime_root": str(args.runtime_root),
+                "agent": args.agent,
+                "endpoint": f"{args.host}:{args.port}",
+                "commands": sorted(f"{s}:{c}" for (s, c) in state.commands),
+                "note": "run with --serve to bind (host-gated; bind docker0-gateway + add the managed firewall rule)",
+            },
             args,
         )
     if args.command == "doctor":
