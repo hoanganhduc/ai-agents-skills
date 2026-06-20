@@ -13,7 +13,19 @@ from typing import Any
 
 from .capabilities import normalized_path_within, resolved_path_within
 
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
+# v1 state files (no provenance) still load; only writes upgrade to v2.
+SUPPORTED_STATE_SCHEMA_VERSIONS = (1, 2)
+PROVENANCE_FIELDS = {
+    "provenance_version",
+    "source_commit",
+    "content_id",
+    "installer_version",
+    "installed_at",
+    "host_id",
+    "provenance_status",
+}
+PROVENANCE_STATUSES = ("complete", "legacy-incomplete")
 RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
@@ -114,14 +126,64 @@ def validate_state(data: Any, *, path: Path | None = None) -> dict[str, Any]:
     label = str(path) if path is not None else "state"
     if not isinstance(data, dict):
         raise ValueError(f"installer state must be a JSON object: {label}")
-    if data.get("schema_version") != STATE_SCHEMA_VERSION:
+    if data.get("schema_version") not in SUPPORTED_STATE_SCHEMA_VERSIONS:
         raise ValueError(
             f"installer state has unsupported schema_version {data.get('schema_version')!r}: {label}"
         )
     for key in ("artifacts", "runs", "uninstall_records"):
         if key in data and not isinstance(data[key], list):
             raise ValueError(f"installer state field must be a list: {key} in {label}")
+    if "provenance" in data:
+        validate_state_provenance(data["provenance"], label=label)
     return data
+
+
+def validate_state_provenance(provenance: Any, *, label: str = "state") -> None:
+    """Strictly validate the optional top-level provenance record (D6/F6).
+
+    Closes the prior 'extra top-level keys pass silently' gap for provenance:
+    unknown keys, non-dict values, and bad provenance_status are rejected.
+    Non-derivable provenance (e.g. pre-existing installs) is represented honestly
+    via provenance_status='legacy-incomplete' rather than fabricated fields.
+    """
+    if not isinstance(provenance, dict):
+        raise ValueError(f"installer state provenance must be an object: {label}")
+    unknown = sorted(set(provenance) - PROVENANCE_FIELDS)
+    if unknown:
+        raise ValueError(f"installer state provenance has unknown fields {unknown}: {label}")
+    status = provenance.get("provenance_status")
+    if status is not None and status not in PROVENANCE_STATUSES:
+        raise ValueError(f"installer state provenance_status is invalid: {status!r} in {label}")
+    if "content_id" in provenance and not isinstance(provenance["content_id"], str):
+        raise ValueError(f"installer state provenance content_id must be a string: {label}")
+
+
+def build_state_provenance(
+    *,
+    source_commit: str,
+    content_id: str,
+    installer_version: str,
+    installed_at: str,
+    host_id: str,
+) -> dict[str, Any]:
+    """A complete, recomputed-not-fabricated provenance record for a new install."""
+    provenance = {
+        "provenance_version": 1,
+        "source_commit": source_commit,
+        "content_id": content_id,
+        "installer_version": installer_version,
+        "installed_at": installed_at,
+        "host_id": host_id,
+        "provenance_status": "complete",
+    }
+    validate_state_provenance(provenance)
+    return provenance
+
+
+def legacy_incomplete_provenance() -> dict[str, Any]:
+    """Provenance marker for pre-existing records whose source_commit/content_id
+    cannot be recomputed — flagged honestly rather than fabricated."""
+    return {"provenance_version": 1, "provenance_status": "legacy-incomplete"}
 
 
 def load_state(root: Path) -> dict[str, Any]:
