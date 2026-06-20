@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -10,11 +11,62 @@ from .manifest import REPO_ROOT
 
 MANAGED_MARKER = "Managed by ai-agents-skills"
 
+# Codex/runtime path tokens -> portable, machine-neutral forms for OpenClaw render
+# (issue 5). Order matters: prefixed forms first, bare ".codex/runtime" last.
+_OPENCLAW_RUNTIME_SUBSTITUTIONS = (
+    (re.compile(r"~/\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
+    (re.compile(r"\$\{HOME\}/\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
+    (re.compile(r"\$HOME/\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
+    (re.compile(r"\$CODEX_HOME/runtime", re.I), "$AAS_RUNTIME_ROOT"),
+    (re.compile(r"\$codex_home", re.I), "$AAS_RUNTIME_ROOT"),
+    (re.compile(r"%LOCALAPPDATA%\\ai-agents-skills\\runtime", re.I), "%AAS_RUNTIME_ROOT%"),
+    (re.compile(r"%USERPROFILE%\\\.?codex(?:\\runtime)?", re.I), "%AAS_RUNTIME_ROOT%"),
+    (re.compile(r"\$env:USERPROFILE\\\.?codex\\runtime", re.I), "$env:AAS_RUNTIME_ROOT"),
+    (re.compile(r"\$env:LOCALAPPDATA\\ai-agents-skills\\runtime", re.I), "$env:AAS_RUNTIME_ROOT"),
+    (re.compile(r"\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
+)
+
+_OPENCLAW_RUNTIME_NOTE = (
+    "\n\n<!-- Managed by ai-agents-skills. OpenClaw runtime note. -->\n"
+    "> On OpenClaw, this skill's runtime is provided by the ai-agents-skills host\n"
+    "> broker. Invoke it through the broker endpoint in `$AAS_BROKER_ENDPOINT`;\n"
+    "> `$AAS_RUNTIME_ROOT` references are resolved host-side by the broker, not from\n"
+    "> inside the sandbox.\n"
+)
+
+
+def render_openclaw_runtime_neutral(content: str) -> str:
+    """Make SKILL.md content machine-neutral for OpenClaw (issue 5).
+
+    Substitutes Codex/runtime path tokens with portable forms and, when runtime
+    references were present, appends the host-broker note. Always gated by
+    ``path_leak_scan``: any residual machine-specific path raises (fail closed),
+    so content that cannot be neutralized never reaches the synced OpenClaw tree.
+    Content with no runtime references is returned byte-identical.
+    """
+    from .openclaw_target_paths import path_leak_scan
+
+    neutral = content
+    changed = False
+    for pattern, repl in _OPENCLAW_RUNTIME_SUBSTITUTIONS:
+        new = pattern.sub(repl, neutral)
+        if new != neutral:
+            neutral = new
+            changed = True
+    if changed:
+        neutral = neutral + _OPENCLAW_RUNTIME_NOTE
+    leaks = path_leak_scan(neutral)
+    if leaks:
+        raise ValueError(f"OpenClaw runtime-neutral render still leaks machine paths: {leaks}")
+    return neutral
+
 
 def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
     canonical = load_canonical_skill(skill)
     if canonical is not None:
         content = add_managed_header(canonical, agent)
+        if agent == "openclaw":
+            return render_openclaw_runtime_neutral(content)
         if agent == "opencode":
             return add_opencode_skill_note(content)
         if agent == "antigravity":
@@ -102,6 +154,8 @@ def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, sour
         {safety_note}
         """
     )
+    if agent == "openclaw":
+        return render_openclaw_runtime_neutral(content)
     if agent == "antigravity":
         return add_antigravity_skill_note(content)
     return content
