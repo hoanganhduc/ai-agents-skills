@@ -41,6 +41,7 @@ from .openclaw_runtime_target_apply import (
     apply_runtime_target_manifest_file,
     broker_state_from_manifest,
     build_runtime_dry_run_manifest,
+    build_runtime_probe_evidence,
 )
 from .openclaw_runtime_target_manifest import (
     approve_runtime_target_manifest,
@@ -315,6 +316,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirm-openclaw-real-write",
         help=f"exact confirmation phrase: {OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE}",
     )
+
+    openclaw_runtime_probe = sub.add_parser("openclaw-runtime-probe")
+    openclaw_runtime_probe.add_argument("--skill", required=True)
+    openclaw_runtime_probe.add_argument("--runtime-root", type=Path, required=True)
+    openclaw_runtime_probe.add_argument("--platform", default="linux")
+    openclaw_runtime_probe.add_argument("--path-style", default="posix")
+    openclaw_runtime_probe.add_argument("--no-live", action="store_true", help="skip live native-loader/quiescence probes")
+    openclaw_runtime_probe.add_argument("--out-dir", type=Path, help="write each evidence record to this dir")
 
     openclaw_broker = sub.add_parser("openclaw-broker")
     openclaw_broker.add_argument("--manifest", type=Path, required=True, help="approved runtime manifest")
@@ -673,6 +682,24 @@ def run(args: argparse.Namespace) -> int:
             ),
             args,
         )
+    if args.command == "openclaw-runtime-probe":
+        result = build_runtime_probe_evidence(
+            root=args.root,
+            skill=args.skill,
+            runtime_root=args.runtime_root,
+            platform=args.platform,
+            path_style=args.path_style,
+            live=not args.no_live,
+        )
+        if args.out_dir:
+            args.out_dir.mkdir(parents=True, exist_ok=True)
+            written = []
+            for ev in result["evidence"]:
+                p = args.out_dir / f"evidence-{ev['evidence_type']}.json"
+                p.write_text(json.dumps(ev, indent=2), encoding="utf-8")
+                written.append(str(p))
+            result["written"] = written
+        return output(result, args)
     if args.command == "openclaw-runtime-apply-manifest":
         return output(
             apply_runtime_target_manifest_file(

@@ -12,7 +12,10 @@ import unittest
 from pathlib import Path
 
 from installer.ai_agents_skills.cli import main
-from installer.ai_agents_skills.openclaw_runtime_target_evidence import build_runtime_target_evidence
+from installer.ai_agents_skills.openclaw_runtime_target_evidence import (
+    build_runtime_target_evidence,
+    validate_runtime_target_evidence,
+)
 from installer.ai_agents_skills.openclaw_target_paths import (
     OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE,
     validate_openclaw_target_home,
@@ -153,6 +156,27 @@ class RuntimeCliTest(unittest.TestCase):
             res = _run(["--json", "--root", str(root), "openclaw-runtime-apply-manifest",
                         "--manifest", str(apath), "--runtime-root", str(rroot), "--apply", "--real-system"])
             self.assertNotEqual(res["code"], 0)
+
+    def test_probe_offline_emits_derivable_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            out = tmp / "ev"
+            res = _run(["--json", "--root", str(root), "openclaw-runtime-probe",
+                        "--skill", RUNTIME_SKILL, "--runtime-root", str(rroot), "--no-live", "--out-dir", str(out)])
+            self.assertEqual(res["code"], 0, res["out"])
+            result = json.loads(res["out"])
+            self.assertEqual(result["status"], "incomplete")  # native-loader/quiescence need a live host
+            types = {e["evidence_type"] for e in result["evidence"]}
+            self.assertTrue(
+                {"runtime-pre-state", "support-file-pre-state", "compatibility-tuple-match", "helper-invocation"} <= types,
+                types)
+            self.assertTrue(any("no-live" in l or "native-loader" in l for l in result["limitations"]))
+            # written evidence files are valid v3 records
+            self.assertTrue(result["written"])
+            for p in result["written"]:
+                validate_runtime_target_evidence(json.loads(Path(p).read_text(encoding="utf-8")))
 
     def test_dry_run_without_evidence_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
