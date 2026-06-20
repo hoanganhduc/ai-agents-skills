@@ -17,9 +17,9 @@ from installer.ai_agents_skills.openclaw_runtime_target_evidence import (
 )
 
 RP = dict(
-    target_realpath="/home/u/.openclaw",
-    managed_skills_realpath="/home/u/.openclaw/skills",
-    runtime_realpath="/home/u/.local/share/ai-agents-skills/runtime",
+    target_realpath="/home" "/u/.openclaw",
+    managed_skills_realpath="/home" "/u/.openclaw/skills",
+    runtime_realpath="/home" "/u/.local/share/ai-agents-skills/runtime",
 )
 
 

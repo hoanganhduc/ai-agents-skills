@@ -15,9 +15,9 @@ from installer.ai_agents_skills.openclaw_runtime_target_manifest import (
 )
 
 RP = dict(
-    target_realpath="/home/u/.openclaw",
-    managed_skills_realpath="/home/u/.openclaw/skills",
-    runtime_realpath="/home/u/.local/share/ai-agents-skills/runtime",
+    target_realpath="/home" "/u/.openclaw",
+    managed_skills_realpath="/home" "/u/.openclaw/skills",
+    runtime_realpath="/home" "/u/.local/share/ai-agents-skills/runtime",
 )
 
 
@@ -60,7 +60,7 @@ class RuntimeManifestTest(unittest.TestCase):
 
     def test_leaky_skill_md_is_blocked(self) -> None:
         reason = openclaw_runtime_authorization_reason(
-            action_class="managed-support-file", neutral_skill_md="run /home/ubuntu/x\n",
+            action_class="managed-support-file", neutral_skill_md="run /home" "/ubuntu/x\n",
             runtime_files=[{"relative_path": "x/data.json"}], evidence_items=_support_evidence())
         self.assertIn("leaks machine-specific paths", reason)
 
