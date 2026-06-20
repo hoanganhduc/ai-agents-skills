@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import load_manifests
-from .openclaw_runtime_broker import AgentToken, BrokerState
-from .openclaw_runtime_target_evidence import now_utc
+from .openclaw_runtime_broker import ENV_ALLOW_EXACT, ENV_ALLOW_PREFIX, AgentToken, BrokerState
+from .openclaw_runtime_target_evidence import build_runtime_target_evidence, now_utc
+from .openclaw_runtime_target_paths import neutral_runtime_root_block_reason
 from .openclaw_runtime_target_manifest import (
     build_openclaw_runtime_target_manifest,
     load_runtime_target_manifest,
@@ -104,6 +105,97 @@ def broker_state_from_manifest(
         tokens={token: AgentToken(agent=agent, allowed=allowed)},
         commands=commands,
     )
+
+
+def build_runtime_probe_evidence(
+    *,
+    root: Path,
+    skill: str,
+    runtime_root: Path,
+    platform: str = "linux",
+    path_style: str = "posix",
+    live: bool = True,
+    openclaw_bin: str = "openclaw",
+) -> dict[str, Any]:
+    """Gather v3 evidence for a runtime skill on this host.
+
+    Offline-derivable records (neutral-runtime-root, runtime/support-pre-state,
+    compatibility-tuple-match, helper-invocation derived from the runner contract)
+    are always emitted. native-loader + quiescence-lock require the LIVE openclaw
+    binary on a quiescent host; with ``live`` they are attempted and any failure is
+    recorded as a limitation (fail-open on the probe, fail-closed on authorization)."""
+    paths = validate_openclaw_target_home(root)
+    rroot = Path(runtime_root).expanduser().resolve(strict=False)
+    rp = dict(
+        target_realpath=paths["home_realpath"],
+        managed_skills_realpath=paths["managed_skills_realpath"],
+        runtime_realpath=str(rroot),
+    )
+    manifests = load_manifests()
+    if skill not in manifests["runtime"]["skills"]:
+        raise ValueError(f"{skill!r} is not a runtime-backed skill")
+    files = gather_runtime_files(skill, manifests)
+    file_hashes = sorted((f["relative_path"], f["source_sha256"] or "") for f in files)
+    has_exec = any(
+        f["relative_path"].endswith((".py", ".sh", ".bat", ".ps1")) or str(f.get("mode")) == "0755" for f in files
+    )
+    evidence: list[dict[str, Any]] = []
+    limitations: list[str] = []
+
+    def _ev(etype: str, behavior: str, checks: dict[str, Any]) -> None:
+        evidence.append(
+            build_runtime_target_evidence(
+                evidence_type=etype, platform=platform, path_style=path_style,
+                observed_behavior=behavior, checks=checks, **rp))
+
+    root_reason = neutral_runtime_root_block_reason(rroot)
+    if root_reason is None:
+        _ev("neutral-runtime-root", "validated neutral runtime root", {"runtime_root_realpath": str(rroot), "validator": "passed"})
+    else:
+        limitations.append(f"neutral-runtime-root rejected: {root_reason}")
+    _ev("runtime-pre-state", "hashed runtime source files", {"files": file_hashes})
+    _ev("support-file-pre-state", "hashed support source files", {"files": file_hashes})
+    _ev("compatibility-tuple-match", "host compatibility tuple", {"platform": platform, "path_style": path_style})
+    # helper-invocation derived from the runner contract (static host inspection).
+    _ev("helper-invocation", "derived from runner contract inspection (static, not execution-recorded)", {
+        "argv_template": "run_skill.sh <command_rel> -- <args>",
+        "shell_family": "powershell" if platform == "windows" else "bash",
+        "exec_mode": "exec-list-no-shell",
+        "env_allowlist": sorted(set(ENV_ALLOW_EXACT)) + [p + "*" for p in ENV_ALLOW_PREFIX],
+        "line_ending_policy": "crlf" if platform == "windows" else "lf",
+        "has_executable": has_exec,
+    })
+    if has_exec:
+        limitations.append("helper-invocation is static-derived; execution-recorded evidence needs an on-host run")
+
+    if live:
+        from .openclaw_target_apply import quiescence_checks, run_text
+
+        try:
+            version = run_text([openclaw_bin, "--version"], cwd=root.expanduser())
+            _ev("native-loader", "openclaw native loader available", {"openclaw_version": version})
+        except Exception as exc:  # noqa: BLE001 - probe degrades to a limitation
+            limitations.append(f"native-loader probe needs a live openclaw binary: {exc}")
+        try:
+            quiescence = quiescence_checks(root.expanduser(), openclaw_bin=openclaw_bin)
+            if quiescence.get("quiescent"):
+                _ev("quiescence-lock", "openclaw target quiescent", {"quiescent": True})
+            else:
+                limitations.append("not quiescent: an active OpenClaw process or lock is present")
+        except Exception as exc:  # noqa: BLE001
+            limitations.append(f"quiescence probe failed: {exc}")
+    else:
+        limitations.append("native-loader + quiescence-lock skipped (--no-live)")
+
+    types = {e["evidence_type"] for e in evidence}
+    complete = {"native-loader", "quiescence-lock"} <= types
+    return {
+        "status": "ok" if complete else "incomplete",
+        "skill": skill,
+        "runtime_root": str(rroot),
+        "evidence": evidence,
+        "limitations": limitations,
+    }
 
 
 def apply_runtime_target_manifest_file(
