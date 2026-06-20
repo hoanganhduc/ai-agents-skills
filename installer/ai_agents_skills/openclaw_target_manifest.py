@@ -19,6 +19,7 @@ from .openclaw_target_paths import (
     openclaw_home,
     openclaw_managed_skills_dir,
     openclaw_target_path,
+    path_leak_block_reason,
     skill_file_relative_path,
     validate_openclaw_target_home,
 )
@@ -418,15 +419,9 @@ def validate_target_manifest_action_v2(action: dict[str, Any], manifest: dict[st
     content = action["content"]
     if "Managed by ai-agents-skills" not in content or "Generated target: openclaw" not in content:
         raise ValueError("OpenClaw target manifest action content must be managed OpenClaw skill content")
-    lowered = content.lower()
-    denied_markers = (
-        ".codex/runtime",
-        "$codex_home",
-        "%userprofile%\\.codex\\runtime",
-        "%localappdata%\\ai-agents-skills\\runtime",
-    )
-    if any(marker in lowered for marker in denied_markers):
-        raise ValueError("OpenClaw target manifest action content references Codex/runtime-specific paths")
+    leak = path_leak_block_reason(content)
+    if leak is not None:
+        raise ValueError(f"OpenClaw target manifest action content leaks machine-specific paths: {leak}")
     if sha256_text(action["content"]) != action["expected_hash"]:
         raise ValueError("OpenClaw target manifest action content hash does not match expected_hash")
     if not isinstance(action["pre_state"], dict):

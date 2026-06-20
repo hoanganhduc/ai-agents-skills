@@ -9,6 +9,7 @@ from .capabilities import effective_install_mode_with_evidence
 from .discovery import current_platform
 from .manifest import REPO_ROOT
 from .openclaw_target_gate import openclaw_target_block_reason
+from .openclaw_target_paths import path_leak_block_reason
 from .render import (
     MANAGED_MARKER,
     add_managed_support_header,
@@ -380,16 +381,9 @@ def openclaw_skill_content_block_reason(skill: str) -> str | None:
         content = source.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return "OpenClaw skill content must be UTF-8"
-    lowered = content.lower()
-    denied_markers = (
-        ".codex/runtime",
-        "$codex_home",
-        "%userprofile%\\.codex\\runtime",
-        "%localappdata%\\ai-agents-skills\\runtime",
-    )
-    if any(marker in lowered for marker in denied_markers):
-        return "OpenClaw skill content references Codex/runtime-specific paths"
-    return None
+    # Shared machine-specific path-leak scan (strict superset of the four legacy
+    # Codex markers; portable $HOME/~/$AAS_RUNTIME_ROOT refs are allowed).
+    return path_leak_block_reason(content)
 
 
 def openclaw_skill_support_block_reason(skill: str) -> str | None:
