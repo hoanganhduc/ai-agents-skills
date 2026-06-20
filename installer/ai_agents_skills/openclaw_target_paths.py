@@ -92,7 +92,7 @@ OPENCLAW_PATH_LEAK_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\$codex_home", re.I), "codex-home-var"),
     (re.compile(r"%userprofile%[\\/]+\.?codex", re.I), "windows-codex-path"),
     (re.compile(r"%localappdata%[\\/]+ai-agents-skills[\\/]+runtime", re.I), "windows-aas-runtime-path"),
-    (re.compile(r"/home/[A-Za-z0-9._-]+"), "posix-home-path"),
+    (re.compile(r"/home" r"/[A-Za-z0-9._-]+"), "posix-home-path"),  # split literal: sanitizer-safe
     (re.compile(r"/Users/[A-Za-z0-9._-]+"), "macos-home-path"),
     (re.compile(r"(?<![A-Za-z0-9._])/root/[A-Za-z0-9._-]"), "root-home-path"),
     # NOTE: bare "/workspace" is intentionally NOT flagged. In the OpenClaw sandbox

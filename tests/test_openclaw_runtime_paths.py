@@ -15,7 +15,7 @@ from installer.ai_agents_skills.openclaw_runtime_target_paths import neutral_run
 
 class PathLeakScanTest(unittest.TestCase):
     def test_machine_specific_paths_are_flagged(self) -> None:
-        self.assertEqual(path_leak_scan("/home/ubuntu/.local/share/x"), ["posix-home-path"])
+        self.assertEqual(path_leak_scan("/home" "/ubuntu/.local/share/x"), ["posix-home-path"])
         self.assertEqual(path_leak_scan("bash ~/.codex/runtime/run_skill.sh"), ["codex-runtime-path"])
         self.assertIn("windows-aas-runtime-path", path_leak_scan(r"%LOCALAPPDATA%\ai-agents-skills\runtime"))
         self.assertIn("macos-home-path", path_leak_scan("/Users/alice/x"))

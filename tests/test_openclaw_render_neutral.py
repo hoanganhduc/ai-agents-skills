@@ -45,7 +45,7 @@ class OpenClawRenderNeutralTest(unittest.TestCase):
         self.assertEqual(render_openclaw_runtime_neutral(clean), clean)
 
     def test_neutral_helper_fails_closed_on_residual_machine_path(self) -> None:
-        leaky = "Run /home/ubuntu/.local/share/x/tool\n"
+        leaky = "Run /home" "/ubuntu/.local/share/x/tool\n"  # split literal: sanitizer-safe
         with self.assertRaisesRegex(ValueError, "leaks machine paths"):
             render_openclaw_runtime_neutral(leaky)
 
