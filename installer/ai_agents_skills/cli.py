@@ -37,6 +37,11 @@ from .openclaw_target_apply import (
     uninstall_target_manifest,
 )
 from .openclaw_target_evidence import load_target_evidence
+from .openclaw_runtime_target_apply import build_runtime_dry_run_manifest
+from .openclaw_runtime_target_manifest import (
+    approve_runtime_target_manifest,
+    load_runtime_target_manifest,
+)
 from .openclaw_target_manifest import (
     approve_target_manifest,
     build_skill_file_target_manifest,
@@ -278,6 +283,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--confirm-openclaw-real-write",
         help=f"exact confirmation phrase: {OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE}",
     )
+
+    openclaw_runtime_manifest = sub.add_parser("openclaw-runtime-dry-run-manifest")
+    openclaw_runtime_manifest.add_argument("--skill", required=True)
+    openclaw_runtime_manifest.add_argument(
+        "--evidence", type=Path, action="append", required=True,
+        help="OpenClaw runtime target evidence JSON file; repeat for each record",
+    )
+    openclaw_runtime_manifest.add_argument(
+        "--action-class", choices=["managed-support-file", "shared-runtime-file"], default="shared-runtime-file",
+    )
+    openclaw_runtime_manifest.add_argument("--runtime-root", type=Path, required=True)
+    openclaw_runtime_manifest.add_argument("--source-commit", required=True)
+    openclaw_runtime_manifest.add_argument("--created-at")
+
+    openclaw_runtime_approve = sub.add_parser("openclaw-runtime-approve-manifest")
+    openclaw_runtime_approve.add_argument("--manifest", type=Path, required=True)
+    openclaw_runtime_approve.add_argument("--reviewer", required=True)
+    openclaw_runtime_approve.add_argument("--reviewed-at")
 
     doctor = sub.add_parser("doctor")
     add_selection_args(doctor)
@@ -602,6 +625,28 @@ def run(args: argparse.Namespace) -> int:
                 dry_run=not args.apply,
                 real_system=args.real_system,
                 confirm_phrase=args.confirm_openclaw_real_write,
+            ),
+            args,
+        )
+    if args.command == "openclaw-runtime-dry-run-manifest":
+        return output(
+            build_runtime_dry_run_manifest(
+                root=args.root,
+                skill=args.skill,
+                action_class=args.action_class,
+                evidence_paths=args.evidence,
+                runtime_root=args.runtime_root,
+                source_commit=args.source_commit,
+                created_at=args.created_at,
+            ),
+            args,
+        )
+    if args.command == "openclaw-runtime-approve-manifest":
+        return output(
+            approve_runtime_target_manifest(
+                load_runtime_target_manifest(args.manifest),
+                reviewer=args.reviewer,
+                reviewed_at=args.reviewed_at,
             ),
             args,
         )
