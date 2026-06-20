@@ -340,8 +340,39 @@ def runtime_denied_patterns() -> tuple[str, ...]:
     return tuple(patterns)
 
 
+# Secret-class files are denied even when named as .example/.sample templates
+# (closes the secrets.example / .env.example bypass). Provider/config example
+# templates are intentionally NOT secret-class and remain carve-out-eligible.
+RUNTIME_SECRET_CLASS_PATTERNS = (
+    "secrets.*", "**/secrets.*", ".secrets*", "**/.secrets*",
+    ".env", "**/.env", "*.env", "**/*.env",
+    "*.pem", "**/*.pem", "id_rsa*", "**/id_rsa*", "id_ed25519*", "**/id_ed25519*",
+    ".netrc", "**/.netrc",
+)
+
+
+def _strip_example_markers(name: str) -> str:
+    for marker in (".example", ".sample"):
+        name = name.replace(marker, "")
+    return name
+
+
+def runtime_secret_class_denied(relative: str) -> bool:
+    normalized = relative.replace("\\", "/")
+    base = normalized.rsplit("/", 1)[-1]
+    prefix = normalized[: len(normalized) - len(base)]
+    deexampled = prefix + _strip_example_markers(base)
+    for candidate in {normalized, deexampled}:
+        if any(fnmatch.fnmatch(candidate, pattern) for pattern in RUNTIME_SECRET_CLASS_PATTERNS):
+            return True
+    return False
+
+
 def runtime_path_denied(relative: str) -> bool:
     normalized = relative.replace("\\", "/")
+    # Deny secret-class files BEFORE the .example/.sample carve-out (deny-before-carve-out).
+    if runtime_secret_class_denied(normalized):
+        return True
     if runtime_example_config(normalized):
         return False
     return any(fnmatch.fnmatch(normalized, pattern) for pattern in runtime_denied_patterns())
@@ -375,6 +406,15 @@ def apply_runtime_file_action(root: Path, run_id: str, action: dict[str, Any], b
         return result
     if action.get("operation") != "create" and action.get("operation") != "backup-replace":
         raise ValueError(f"unsupported runtime file operation: {action.get('operation')}")
+    expected_source = action.get("source_sha256")
+    if expected_source is not None:
+        actual_source = runtime_source_content_hash(source, action)
+        if actual_source != expected_source:
+            raise ValueError(
+                "runtime source content changed before write: "
+                f"{action.get('source_relpath') or source} "
+                f"(approved {expected_source}, found {actual_source})"
+            )
     from .state import backup_file
 
     backup = backup_file(root, run_id, target)
@@ -430,6 +470,29 @@ def runtime_expected_sha256(source: Path, entry: dict[str, Any]) -> str | None:
         except UnicodeDecodeError:
             return None
         newline = "\r\n" if entry.get("newline") == "crlf" else "\n"
+        data = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", newline).encode("utf-8")
+    else:
+        data = source.read_bytes()
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def runtime_source_content_hash(source: Path, action: dict[str, Any]) -> str | None:
+    """Recompute the normalized sha256 of a runtime source at apply time.
+
+    Uses the same normalization as ``runtime_expected_sha256`` but keyed on the
+    fields recorded in an already-built action (``file_type``/``newline_policy``),
+    so apply can verify the live source still matches the approved ``source_sha256``
+    before writing. Returns ``None`` if the source is unreadable, which the apply
+    gate treats as a mismatch (fail closed).
+    """
+    if not source.is_file():
+        return None
+    if action.get("file_type", "text") == "text":
+        try:
+            text = source.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return None
+        newline = "\r\n" if action.get("newline_policy") == "crlf" else "\n"
         data = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", newline).encode("utf-8")
     else:
         data = source.read_bytes()
