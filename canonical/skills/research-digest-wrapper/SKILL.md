@@ -79,3 +79,12 @@ Read and summarize:
 Tracked topics live at:
 
 - `~/.codex/runtime/workspace/data/research/alerts/topics.tsv`
+
+## Writing Style Gate
+
+For any user-facing digest summary, load `writing-style-settings.md` before
+writing. If the digest item or synthesis is mathematical, TCS, graph-theoretic,
+Lean-related, or LaTeX manuscript prose, also load `math-manuscript-style.md`.
+Stored digest summaries should record `style_profile_ref`, `active_overlays`,
+`active_requirement_ids`, and `style_applied`; do not accept a bare
+`style_applied: true` assertion as sufficient evidence.

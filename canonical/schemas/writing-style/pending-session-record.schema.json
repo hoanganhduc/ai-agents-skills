@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Pending writing style session record",
+  "type": "object",
+  "required": ["id", "timestamp", "source_phrase", "normalized_rule", "scope", "dedupe_key", "conflicts", "target_doc", "status", "approval_state"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^WSP-[0-9]{4}$"},
+    "timestamp": {"type": "string"},
+    "source_phrase": {"type": "string"},
+    "normalized_rule": {"type": "string"},
+    "scope": {"type": "string"},
+    "dedupe_key": {"type": "string"},
+    "conflicts": {"type": "array", "items": {"type": "object"}},
+    "target_doc": {"type": "string"},
+    "status": {"enum": ["captured", "in-review", "approved", "rejected", "promoted", "blocked"]},
+    "approval_state": {"enum": ["unreviewed", "approved-for-current-task", "approved-for-reuse", "approved-for-promotion", "rejected"]}
+  }
+}

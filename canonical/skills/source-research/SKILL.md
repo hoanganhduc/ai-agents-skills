@@ -36,6 +36,9 @@ Open these only when relevant:
 - Topic/news digests route to `research-digest-wrapper` or `rss-news-digest`.
 - Digest-to-paper extraction routes to `digest-bridge`.
 - Explicit phased deep research with structured source handoff routes to `deep-research-workflow`.
+- Writing, report, review, digest, or final-answer workflows must load
+  `writing-style-settings.md`; math or LaTeX writing must also load
+  `math-manuscript-style.md`.
 - Explicit TikZ drawing, refactoring, extraction, compile, or diagram-review requests route to `tikz-draw`.
 - Small graph-theoretic verification routes to `graph-verifier`.
 - Mathematical research tasks that need heavy graph-theoretic, combinatorial, algebraic, or spectral computation route to `sagemath`.
@@ -48,6 +51,9 @@ Open these only when relevant:
 4. Extract only the parts needed for the answer.
 5. Synthesize after evidence collection, not before.
 6. Cite concrete sources and dates whenever the answer depends on live or specific facts.
+7. For writing-producing outputs, record or surface `style_profile_ref`,
+   `active_overlays`, `active_requirement_ids`, and `style_applied`; do not
+   treat a bare `style_applied: true` assertion as sufficient evidence.
 
 ## Research heuristics
 

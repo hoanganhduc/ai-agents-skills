@@ -40,15 +40,22 @@ user is asking to rewrite or prepare draft text.
 5. Map each substantive claim to support: source, experiment, theorem, data,
    author note, prior section, or `missing`.
 6. Freeze the intended claim ledger before substantial rewriting.
-7. Rewrite for structure, clarity, and style without adding unsupported claims.
-8. Audit the revision delta:
+7. Identify the active writing-style settings before rewriting:
+   - always load `writing-style-settings.md`
+   - load `math-manuscript-style.md` for mathematical, TCS, graph-theoretic,
+     formal-proof, Lean-synchronized, or LaTeX manuscript prose
+   - record `style_profile_ref`, `active_overlays`, `active_requirement_ids`,
+     `session_local_additions`, and `style_applied` in the draft ledger or
+     revision map
+8. Rewrite for structure, clarity, and style without adding unsupported claims.
+9. Audit the revision delta:
    - added claim
    - removed claim
    - strengthened claim
    - weakened claim
    - changed caveat
    - unsupported claim introduced
-9. Report remaining gaps before presenting the draft as ready.
+10. Report remaining gaps before presenting the draft as ready.
 
 Use the installed templates when available:
 
@@ -59,10 +66,13 @@ Use the instruction doc `claim-preserving-writing.md` for detailed guidance
 when the task involves multiple sections, citation-sensitive prose, or repeated
 revision rounds.
 
-For mathematical or LaTeX manuscripts, also apply `language-style-rules.md`.
-In particular, check that concepts are defined before use, unnecessary local
-terminology is removed, result introductions explain each statement's role, and
-long proofs begin with a clear proof idea.
+Always apply the installed instruction doc `writing-style-settings.md`. For
+mathematical or LaTeX manuscripts, also apply `math-manuscript-style.md` through
+the compatibility router `language-style-rules.md` if older installed targets
+still refer to it. In particular, check that concepts are defined before use,
+notation is not defined inside statements, unnecessary local terminology is
+removed, result introductions explain each statement's role, and long proofs
+begin with a clear proof idea.
 
 ## Output Rules
 
@@ -75,6 +85,10 @@ long proofs begin with a clear proof idea.
   repository or workspace has no such artifacts, say that explicitly.
 - When making a rewrite, include a short claim-change note if the change is
   substantive.
+- For finalizable draft work, record a style block or style record with
+  `style_profile_ref`, `policy_hash`, `active_overlays`,
+  `active_requirement_ids`, and `style_applied: true`. A bare assertion of
+  `style_applied` is not enough when the workflow did not load the policy.
 - If material evidence remains unchecked, say `incomplete analysis` before any
   final readiness claim.
 

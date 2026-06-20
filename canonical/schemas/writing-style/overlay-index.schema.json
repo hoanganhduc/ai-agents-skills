@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style overlay index",
+  "type": "object",
+  "required": ["schema_version", "overlay_version", "overlay_ref", "base_policy_ref", "content_hash", "requirements"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.overlay-index.v1"},
+    "overlay_version": {"type": "string"},
+    "overlay_ref": {"type": "string"},
+    "base_policy_ref": {"type": "string"},
+    "content_hash": {"type": "string"},
+    "requirements": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/requirement"},
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "requirement": {
+      "type": "object",
+      "required": ["id", "title", "scope", "severity", "relationship_to_general", "markdown_anchor", "source_ledger_ids", "test_ids"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^WS-[A-Z]+-[0-9]{4}$"},
+        "title": {"type": "string"},
+        "scope": {"type": "string"},
+        "severity": {"enum": ["hard", "soft", "heuristic"]},
+        "relationship_to_general": {"enum": ["additive", "specializes", "overrides"]},
+        "markdown_anchor": {"type": "string"},
+        "source_ledger_ids": {"type": "array", "items": {"type": "string"}},
+        "test_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

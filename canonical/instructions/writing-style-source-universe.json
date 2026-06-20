@@ -1,0 +1,53 @@
+{
+  "schema_version": "writing-style.source-universe.v1",
+  "generated_for_release": "2026-06-20",
+  "roots": [
+    "canonical/instructions/",
+    "canonical/skills/",
+    "canonical/templates/",
+    "canonical/runtime/skills/",
+    "manifest/"
+  ],
+  "target_surfaces_to_verify": [
+    "codex",
+    "claude",
+    "deepseek",
+    "opencode",
+    "antigravity",
+    "copilot",
+    "openclaw"
+  ],
+  "search_terms": [
+    "style",
+    "writing",
+    "prose",
+    "draft",
+    "rewrite",
+    "revise",
+    "claim",
+    "evidence",
+    "tone",
+    "audience",
+    "manuscript",
+    "proof",
+    "notation",
+    "review",
+    "report",
+    "summary",
+    "final"
+  ],
+  "exclusions": [
+    {
+      "path": "vendored dependencies",
+      "reason": "not source of canonical policy"
+    },
+    {
+      "path": "generated build artifacts",
+      "reason": "derived from canonical sources"
+    },
+    {
+      "path": "binary files and caches",
+      "reason": "not inspectable writing-policy sources"
+    }
+  ]
+}

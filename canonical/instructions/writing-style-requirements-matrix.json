@@ -1,0 +1,207 @@
+{
+  "schema_version": "writing-style.requirements-matrix.v1",
+  "generated_for_release": "2026-06-20",
+  "requirements": [
+    {
+      "id": "WS-GEN-0001",
+      "source_location": "canonical/instructions/claim-preserving-writing.md",
+      "scope": "all writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-briefing", "research-report-reviewer", "research-verification-gate", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0001"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GEN-0002",
+      "source_location": "canonical/instructions/claim-preserving-writing.md",
+      "scope": "all writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "research-verification-gate", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0002"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GEN-0003",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "scope": "all writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0003"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GEN-0004",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "scope": "all writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "research-verification-gate", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0004"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GEN-0005",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "scope": "all writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0005"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-GEN-0006",
+      "source_location": "plan_v10",
+      "scope": "finalizable writing-producing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-verification-gate", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0006"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-GEN-0007",
+      "source_location": "plan_v10",
+      "scope": "all writing-producing sessions",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "source-research", "agent-group-discuss", "prose", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0007"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0001",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0101"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0002",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0102"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0003",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0103"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0004",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0104"],
+      "mechanical_status": "deterministic"
+    },
+    {
+      "id": "WS-MATH-0005",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0105"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0006",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0106"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0007",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0107"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
+      "id": "WS-MATH-0008",
+      "source_location": "user-requirement",
+      "scope": "math manuscripts",
+      "canonical_destination": "canonical/instructions/math-manuscript-style.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "paper-review", "annotated-review", "submission-venue-selector"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0108"],
+      "mechanical_status": "reviewed-non-mechanical"
+    }
+  ],
+  "non_mechanical_rationales": [
+    {
+      "id": "WSR-0001",
+      "requirement_id": "WS-GEN-0003",
+      "reason": "Common terminology and sentence precision are partly judgment-based; tests cover activation and fixtures, while review applies the prose judgment.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-06-20"
+    },
+    {
+      "id": "WSR-0002",
+      "requirement_id": "WS-GEN-0005",
+      "reason": "Inline versus display formatting depends on readability and importance; tests cover policy activation and reviewers decide borderline cases.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-06-20"
+    },
+    {
+      "id": "WSR-0003",
+      "requirement_id": "WS-MATH-0003",
+      "reason": "Common graph-theoretic and TCS terminology is discipline-specific and sometimes context-sensitive; review applies the policy after mechanical activation checks.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-06-20"
+    },
+    {
+      "id": "WSR-0004",
+      "requirement_id": "WS-MATH-0005",
+      "reason": "The amount of informal lead-in before a result depends on the result's role and local context.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-06-20"
+    },
+    {
+      "id": "WSR-0005",
+      "requirement_id": "WS-MATH-0006",
+      "reason": "Section outlines are prose-level checks; deterministic tests verify the requirement is active, and review assesses the paragraph quality.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-06-20"
+    },
+    {
+      "id": "WSR-0006",
+      "requirement_id": "WS-MATH-0007",
+      "reason": "Whether a proof is long or important enough for an opening paragraph is a mathematical writing judgment.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-06-20"
+    },
+    {
+      "id": "WSR-0007",
+      "requirement_id": "WS-MATH-0008",
+      "reason": "Equation display decisions depend on length, alignment, and importance; mechanical checks can only flag candidates for review.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-06-20"
+    }
+  ]
+}

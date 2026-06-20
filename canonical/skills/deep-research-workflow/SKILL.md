@@ -33,6 +33,13 @@ This skill provides a Codex-native phased research workflow:
 
 Use it when the user wants a deeper research pass than a normal quick synthesis and when source preservation matters.
 
+For any writing-producing output, load `writing-style-settings.md` before the
+write phase. For mathematical manuscripts, TCS reports, graph-theoretic drafts,
+formal-proof prose, or LaTeX output, also load `math-manuscript-style.md`.
+Finalizable reports must record `style_profile_ref`, `policy_hash`,
+`active_overlays`, `active_requirement_ids`, and `style_applied` in the run
+ledger or final artifact metadata.
+
 ## Minimal runtime helper
 
 Initialize a deep-research scaffold with:
@@ -294,6 +301,8 @@ Inputs:
 - preserved source ids and uncertainty notes
 - prior posts, templates, style guides, venue instructions, source ledgers, or
   supplied examples when the deliverable must match an existing format or voice
+- the active writing-style profile and overlays selected from
+  `writing-style-settings.md` and any domain overlay
 
 - produce a structured output
 - include only citations that survive from earlier phases
@@ -308,6 +317,8 @@ Outputs:
 - a final report
 - a scoped source list
 - optional `delivery.json` decision record
+- optional `writing_style.json` or embedded `writing_style_record` with
+  `style_profile_ref` and `style_applied`
 - optional `F*` figure references with artifact paths
 - explicit follow-up items when needed
 
@@ -364,6 +375,10 @@ Output structure guidance:
 - [ ] Missing coverage is disclosed explicitly
 - [ ] Prior posts, templates, style guides, or supplied examples were inspected
       before format-matched writing, or their absence was disclosed
+- [ ] `writing-style-settings.md` was loaded before final writing
+- [ ] Mathematical or LaTeX output loaded `math-manuscript-style.md`
+- [ ] Finalizable writing records `style_profile_ref`, `active_overlays`,
+      `active_requirement_ids`, and `style_applied`
 - [ ] Dropped or excluded sources are explained
 - [ ] Nontrivial runs include guard outputs with `guard_output_id`
 - [ ] Supported `pass` or `warn` guard outputs cite source or evidence IDs

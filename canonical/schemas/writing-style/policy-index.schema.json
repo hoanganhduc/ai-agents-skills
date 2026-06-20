@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style policy index",
+  "type": "object",
+  "required": ["schema_version", "policy_version", "policy_ref", "content_hash", "requirements"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.policy-index.v1"},
+    "policy_version": {"type": "string"},
+    "policy_ref": {"type": "string"},
+    "content_hash": {"type": "string"},
+    "requirements": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/requirement"},
+      "minItems": 1
+    }
+  },
+  "$defs": {
+    "requirement": {
+      "type": "object",
+      "required": ["id", "title", "scope", "severity", "tags", "markdown_anchor", "source_ledger_ids", "test_ids", "overlays", "target_adapters"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^WS-[A-Z]+-[0-9]{4}$"},
+        "title": {"type": "string"},
+        "scope": {"type": "string"},
+        "severity": {"enum": ["hard", "soft", "heuristic"]},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "markdown_anchor": {"type": "string"},
+        "source_ledger_ids": {"type": "array", "items": {"type": "string"}},
+        "test_ids": {"type": "array", "items": {"type": "string"}},
+        "overlays": {"type": "array", "items": {"type": "string"}},
+        "target_adapters": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

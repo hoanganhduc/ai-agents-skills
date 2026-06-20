@@ -46,7 +46,9 @@
         "template:informal-to-lean-formalization-runbook",
         "template:cross-agent-adversarial-review",
         "instruction-doc:research-quick-actions",
-        "instruction-doc:cross-provider-delegation"
+        "instruction-doc:cross-provider-delegation",
+        "instruction-doc:writing-style-settings",
+        "instruction-doc:math-manuscript-style"
       ]
     },
     "workflow-instructions": {
@@ -58,6 +60,8 @@
         "instruction-doc:delivery-verification-gate",
         "instruction-doc:failure-recovery-discipline",
         "instruction-doc:context-discipline",
+        "instruction-doc:writing-style-settings",
+        "instruction-doc:math-manuscript-style",
         "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
@@ -65,7 +69,8 @@
         "instruction-doc:modal-offload-routing",
         "instruction-doc:github-actions-offload-routing",
         "instruction-doc:scrapling-integration",
-        "instruction-doc:language-style-rules"
+        "instruction-doc:language-style-rules",
+        "instruction-doc:autonomous-loop-enforcement"
       ]
     },
     "review-personas": {
@@ -122,6 +127,8 @@
     "writing-workflow": {
       "description": "Claim-preserving writing workflow instructions and templates.",
       "artifacts": [
+        "instruction-doc:writing-style-settings",
+        "instruction-doc:math-manuscript-style",
         "instruction-doc:claim-preserving-writing",
         "template:draft-claim-ledger",
         "template:draft-revision-map"
@@ -159,6 +166,8 @@
         "instruction-doc:delivery-verification-gate",
         "instruction-doc:failure-recovery-discipline",
         "instruction-doc:context-discipline",
+        "instruction-doc:writing-style-settings",
+        "instruction-doc:math-manuscript-style",
         "instruction-doc:claim-preserving-writing",
         "instruction-doc:research-quick-actions",
         "instruction-doc:cross-provider-delegation",
@@ -167,6 +176,7 @@
         "instruction-doc:github-actions-offload-routing",
         "instruction-doc:scrapling-integration",
         "instruction-doc:language-style-rules",
+        "instruction-doc:autonomous-loop-enforcement",
         "agent-persona:literature-scout",
         "agent-persona:math-explorer",
         "agent-persona:proof-checker",
@@ -368,6 +378,16 @@
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["draft-writing"]
       },
+      "writing-style-settings": {
+        "description": "Canonical general writing-style policy for writing-producing workflows.",
+        "source": "writing-style-settings.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
+      "math-manuscript-style": {
+        "description": "Mathematical manuscript, TCS, graph-theoretic, and Lean-synchronized prose style overlay.",
+        "source": "math-manuscript-style.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
       "research-quick-actions": {
         "description": "Short command and routing references for common research actions.",
         "source": "research-quick-actions.md",
@@ -405,6 +425,12 @@
         "description": "Portable language and file-type style notes adapted from local agent rules.",
         "source": "language-style-rules.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
+      "autonomous-loop-enforcement": {
+        "description": "Stop policy for autonomous loops: user requirements override everything; otherwise stop only on loops-reached, credit-out, goal-resolved, or a user stop message. Enforcement is fail-open and always escapable.",
+        "source": "autonomous-loop-enforcement.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["autonomous-research-loop"]
       }
     },
     "agent-persona": {

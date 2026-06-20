@@ -325,6 +325,30 @@
           "mode": "0644"
         },
         {
+          "source": "skills/autonomous-research-loop-runtime/autoloop_stop_hook.sh",
+          "target": "workspace/skills/autonomous-research-loop-runtime/autoloop_stop_hook.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/autoloop_driver.sh",
+          "target": "workspace/skills/autonomous-research-loop-runtime/autoloop_driver.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
           "source": "skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
           "target": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
           "platforms": [

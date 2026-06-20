@@ -19,6 +19,11 @@ Use this as the last gate before claiming a research output is ready.
 - time-sensitive facts include concrete dates when needed
 - requested format/style context was inspected for blog, article, report, or
   other format-matched writing
+- the active writing-style profile from `writing-style-settings.md` was loaded
+  and recorded for finalizable writing, including `style_profile_ref`,
+  `active_overlays`, `active_requirement_ids`, and `style_applied`
+- mathematical, TCS, graph-theoretic, formal-proof, or LaTeX writing loaded
+  `math-manuscript-style.md`
 - remaining gaps are disclosed
 - `incomplete analysis` is used when material scope is still unchecked
 
@@ -32,6 +37,8 @@ Include:
 - `Confirmed` — the key checks that passed
 - `Gaps` — anything still blocking delivery
 - `Next step` — deliver now or fix specific gaps first
+- `Style` — `style_profile_ref`, active overlays, `active_requirement_ids`, and
+  whether `style_applied` is supported
 
 Use the checklist in `references/checklist.md`.
 

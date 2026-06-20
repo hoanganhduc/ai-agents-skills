@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style ID registry",
+  "type": "object",
+  "required": ["schema_version", "generated_for_release", "namespaces"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.id-registry.v1"},
+    "generated_for_release": {"type": "string"},
+    "namespaces": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["prefix", "purpose", "allocated_ids"],
+        "additionalProperties": false,
+        "properties": {
+          "prefix": {"type": "string"},
+          "purpose": {"type": "string"},
+          "allocated_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

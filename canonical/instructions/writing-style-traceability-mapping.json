@@ -1,0 +1,42 @@
+{
+  "schema_version": "writing-style.traceability-mapping.v1",
+  "generated_for_release": "2026-06-20",
+  "rows": [
+    {
+      "subject_type": "policy",
+      "subject_id": "writing-style-settings",
+      "evidence_ref": "canonical/instructions/writing-style-settings.md",
+      "release_disposition": "satisfied"
+    },
+    {
+      "subject_type": "overlay",
+      "subject_id": "math-manuscript-style",
+      "evidence_ref": "canonical/instructions/math-manuscript-style.md",
+      "release_disposition": "satisfied"
+    },
+    {
+      "subject_type": "migration-ledger",
+      "subject_id": "writing-style-migration-ledger",
+      "evidence_ref": "canonical/instructions/writing-style-migration-ledger.json",
+      "release_disposition": "satisfied"
+    },
+    {
+      "subject_type": "artifact-profile",
+      "subject_id": "writing-workflow",
+      "evidence_ref": "manifest/artifacts.yaml",
+      "release_disposition": "satisfied"
+    },
+    {
+      "subject_type": "artifact-profile",
+      "subject_id": "workflow-instructions",
+      "evidence_ref": "manifest/artifacts.yaml",
+      "release_disposition": "satisfied"
+    },
+    {
+      "subject_type": "schema",
+      "subject_id": "style-record.schema.json",
+      "evidence_ref": "canonical/schemas/writing-style/style-record.schema.json",
+      "release_disposition": "satisfied"
+    }
+  ]
+}

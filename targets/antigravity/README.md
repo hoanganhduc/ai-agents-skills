@@ -48,3 +48,12 @@ and app-data directories and checks:
 
 Native Windows execution still requires a host-side smoke pass before claiming
 real Windows loader/runtime verification.
+
+## Autonomous loop enforcement
+
+The managed Antigravity `hooks.json` is a no-op plugin-scoped scaffold and is
+not wired for autonomous-loop stop enforcement (it is not the JSON `hooks.Stop`
+map used for Claude). Headless loops can use the shared `autoloop_driver.sh`
+where a headless run is available; otherwise loop stop-conditions remain
+policy-based via the installed `autonomous-loop-enforcement` rule. See the repo
+[Architecture](../../docs/architecture.md) for the full per-target matrix.

@@ -2671,6 +2671,7 @@ Artifact classes:
 | `mcp-config` | Antigravity receives a no-op plugin-scoped `mcp_config.json` scaffold with an empty `mcpServers` map. |
 | `hook-config` | Antigravity receives a no-op plugin-scoped `hooks.json` scaffold. |
 | `settings-file` | Antigravity receives a sparse no-op `settings.json` scaffold in its global CLI home. |
+| `settings-hook-merge` | When the autonomous-research-loop runtime is installed for Claude, one managed `hooks.Stop` entry (tagged `_managedBy`/`_id`) is idempotently merged into `~/.claude/settings.json` and removed on uninstall; user-authored hooks are preserved. |
 | `runtime-file` | Root-scoped copied runtime runners and skill helper files. Runtime files are never installed as per-agent skills and are verified by transformed source hash, newline policy, mode, and secret scan. |
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
@@ -2718,6 +2719,34 @@ set runtime-specific environment variables such as `AAS_RUNTIME_ROOT`,
 other non-Codex targets use the neutral shared `ai-agents-skills` runtime root
 unless a runtime root is supplied explicitly. Absolute paths and `..` traversal
 are rejected by the runtime wrappers.
+
+Autonomous loop enforcement:
+
+When an autonomous loop runs, stop-condition enforcement is built in rather than
+hand-wired per project. One stop policy governs it: user requirements override
+everything; otherwise the loop stops only when the required iteration count is
+reached, credit or a spend cap is exhausted, the stated goal is resolved by a
+machine-checkable success check, or the user asks to stop. Nothing else is a
+valid stop. The policy ships as the `autonomous-loop-enforcement` instruction
+rule, and a single runtime arbiter (`done`) derives the verdict both enforcement
+paths consult.
+
+- Interactive (Claude): a managed `hooks.Stop` entry is merged into
+  `~/.claude/settings.json` (the `settings-hook-merge` surface). Its wrapper is
+  fail-open: any error, timeout, missing runtime, re-entrancy, or kill switch
+  (`AUTOLOOP_DISABLE`, removing the registry entry, or a `STOP_REQUESTED`
+  sentinel) allows turn-end. It blocks turn-end only when the arbiter reports an
+  active, unfinished loop for the session's project root.
+- Headless (driver): `autoloop_driver.sh` runs one agent iteration per loop,
+  exports `AUTOLOOP_DRIVER=1` so the interactive hook stands down, enforces a
+  per-iteration timeout, and stops on the arbiter's verdict or after repeated
+  iteration failures. It fails safe: if it cannot determine state, it stops
+  rather than running unbounded.
+
+Per-target enforcement is honest, not uniform: Claude supports both the Stop
+hook and the driver; Codex and OpenCode are driver-only because they use TOML
+configuration rather than a JSON `hooks` map; targets without a headless agent
+run are documented as unsupported for built-in enforcement.
 
 Safety boundary:
 

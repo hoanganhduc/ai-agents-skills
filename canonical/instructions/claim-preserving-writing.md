@@ -3,6 +3,10 @@
 Use this guidance when revising or drafting prose where wording changes could
 change the argument.
 
+Use it together with `writing-style-settings.md`. For mathematical manuscripts,
+TCS notes, graph-theoretic drafts, formal-proof prose, Lean-synchronized papers,
+or LaTeX manuscripts, also use `math-manuscript-style.md`.
+
 ## Claim Layer
 
 Before rewriting or drafting, inspect the relevant local context: current draft,
@@ -68,6 +72,9 @@ A draft is ready only when:
 - unsupported additions from rewrites are removed or explicitly accepted
 - caveats and limitations still match the intended argument
 - the user can see what changed at the claim level
+- the active writing-style profile is recorded for finalizable writing,
+  including `style_profile_ref`, `active_overlays`, `active_requirement_ids`,
+  and `style_applied`
 
 If material checks remain undone, mark the result `incomplete analysis` and list
 what remains unchecked.

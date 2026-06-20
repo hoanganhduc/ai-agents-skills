@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style migration ledger",
+  "type": "object",
+  "required": ["schema_version", "generated_for_release", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.migration-ledger.v1"},
+    "generated_for_release": {"type": "string"},
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["edge_id", "source_location", "old_rule_text", "normalized_rule_text", "classification_tags", "normative_requirement_ids", "destination_docs", "disposition", "reviewer_status"],
+        "additionalProperties": false,
+        "properties": {
+          "edge_id": {"type": "string", "pattern": "^ML-[0-9]{4}$"},
+          "source_location": {"type": "string"},
+          "old_rule_text": {"type": "string"},
+          "normalized_rule_text": {"type": "string"},
+          "classification_tags": {"type": "array", "items": {"type": "string"}},
+          "normative_requirement_ids": {"type": "array", "items": {"type": "string"}},
+          "destination_docs": {"type": "array", "items": {"type": "string"}},
+          "disposition": {"enum": ["migrate", "split", "merge", "supersede", "deprecate", "target-adapter-only"]},
+          "reviewer_status": {"enum": ["pending", "needs-info", "approved", "rejected", "blocked", "superseded", "expired", "revoked"]}
+        }
+      }
+    }
+  }
+}

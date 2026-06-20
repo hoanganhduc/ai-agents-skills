@@ -310,6 +310,8 @@ class ManifestTests(unittest.TestCase):
             artifacts,
             [
                 ("instruction-doc", "claim-preserving-writing"),
+                ("instruction-doc", "math-manuscript-style"),
+                ("instruction-doc", "writing-style-settings"),
                 ("template", "draft-claim-ledger"),
                 ("template", "draft-revision-map"),
             ],
@@ -332,11 +334,27 @@ class ManifestTests(unittest.TestCase):
             artifact_specs["instruction-doc"]["claim-preserving-writing"],
             "codex",
         )
+        style_instruction = render_artifact_content(
+            "instruction-doc",
+            "writing-style-settings",
+            artifact_specs["instruction-doc"]["writing-style-settings"],
+            "codex",
+        )
+        math_style_instruction = render_artifact_content(
+            "instruction-doc",
+            "math-manuscript-style",
+            artifact_specs["instruction-doc"]["math-manuscript-style"],
+            "codex",
+        )
 
         self.assertIn("# Draft Claim Ledger", ledger)
         self.assertIn("# Claim-Preserving Writing", instruction)
+        self.assertIn("# Writing Style Settings", style_instruction)
+        self.assertIn("# Math Manuscript Style", math_style_instruction)
         self.assertIn("Managed by ai-agents-skills", ledger)
         self.assertIn("Managed by ai-agents-skills", instruction)
+        self.assertIn("Managed by ai-agents-skills", style_instruction)
+        self.assertIn("Managed by ai-agents-skills", math_style_instruction)
         self.assertIn("Generated target: codex", ledger)
 
     def test_risk_gated_confirmation_artifact_renders_for_workflow_profiles(self) -> None:
@@ -410,18 +428,31 @@ class ManifestTests(unittest.TestCase):
                 "claims.jsonl",
                 "guards.jsonl",
                 "delivery.json",
+                "active_requirement_ids",
             ],
             "canonical/skills/research-verification-gate/SKILL.md": [
                 "sources.jsonl",
                 "requested format/style context",
+                "active_requirement_ids",
             ],
             "canonical/skills/draft-writing/SKILL.md": [
                 "prior posts, templates, house style",
                 "before drafting",
+                "writing-style-settings.md",
             ],
             "canonical/instructions/claim-preserving-writing.md": [
                 "prior posts, templates, house style",
                 "before generating the first draft",
+            ],
+            "canonical/instructions/writing-style-settings.md": [
+                "canonical, general writing-style policy",
+                "style_profile_ref",
+                "Session Updates",
+            ],
+            "canonical/instructions/math-manuscript-style.md": [
+                "Define every concept and notation before first use",
+                "Do not define notation inside a theorem",
+                "short outline paragraph",
             ],
         }
 
@@ -2241,6 +2272,9 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue((root / ".codex" / "skills" / "draft-writing" / "SKILL.md").exists())
             self.assertTrue((root / ".codex" / "templates" / "draft-claim-ledger.md").exists())
             self.assertTrue((root / ".claude" / "templates" / "draft-revision-map.md").exists())
+            self.assertTrue((root / ".codex" / "instructions" / "writing-style-settings.md").exists())
+            self.assertTrue((root / ".claude" / "instructions" / "math-manuscript-style.md").exists())
+            self.assertTrue((root / ".deepseek" / "instructions" / "writing-style-settings.md").exists())
             self.assertTrue((root / ".deepseek" / "instructions" / "claim-preserving-writing.md").exists())
             self.assertEqual(verify(root)["status"], "ok")
 

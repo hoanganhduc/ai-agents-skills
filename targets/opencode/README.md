@@ -33,3 +33,10 @@ and checks:
 
 Native Windows execution still requires a host-side smoke pass before claiming
 real Windows loader/runtime verification.
+
+## Autonomous loop enforcement
+
+OpenCode has no interactive Stop-hook merge for autonomous loops: its config is
+`opencode.json`/`opencode.jsonc`, not a JSON `hooks` map. Headless loops are
+enforced by the shared `autoloop_driver.sh`. See the repo
+[Architecture](../../docs/architecture.md) for the full per-target matrix.

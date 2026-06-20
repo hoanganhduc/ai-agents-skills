@@ -1,0 +1,89 @@
+{
+  "schema_version": "writing-style.overlay-index.v1",
+  "overlay_version": "2026-06-20",
+  "overlay_ref": "canonical/instructions/math-manuscript-style.md",
+  "base_policy_ref": "canonical/instructions/writing-style-settings.md",
+  "content_hash": "pending-computed-by-gate",
+  "requirements": [
+    {
+      "id": "WS-MATH-0001",
+      "title": "Define mathematical concepts and notation before first use",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "definitions-and-notation",
+      "source_ledger_ids": ["ML-0008"],
+      "test_ids": ["WS-T-0101"]
+    },
+    {
+      "id": "WS-MATH-0002",
+      "title": "Do not define notation inside mathematical statements",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "definitions-and-notation",
+      "source_ledger_ids": ["ML-0009"],
+      "test_ids": ["WS-T-0102"]
+    },
+    {
+      "id": "WS-MATH-0003",
+      "title": "Use common graph-theoretic and TCS terminology",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "common-terminology",
+      "source_ledger_ids": ["ML-0010"],
+      "test_ids": ["WS-T-0103"]
+    },
+    {
+      "id": "WS-MATH-0004",
+      "title": "Keep mathematical statements self-contained",
+      "scope": "math manuscripts",
+      "severity": "hard",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "statements",
+      "source_ledger_ids": ["ML-0011"],
+      "test_ids": ["WS-T-0104"]
+    },
+    {
+      "id": "WS-MATH-0005",
+      "title": "Introduce important statements with their role",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "statements",
+      "source_ledger_ids": ["ML-0012"],
+      "test_ids": ["WS-T-0105"]
+    },
+    {
+      "id": "WS-MATH-0006",
+      "title": "Begin sections with outline paragraphs",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "sections-and-preliminaries",
+      "source_ledger_ids": ["ML-0013"],
+      "test_ids": ["WS-T-0106"]
+    },
+    {
+      "id": "WS-MATH-0007",
+      "title": "Open long proofs with proof ideas",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "additive",
+      "markdown_anchor": "proofs",
+      "source_ledger_ids": ["ML-0014"],
+      "test_ids": ["WS-T-0107"]
+    },
+    {
+      "id": "WS-MATH-0008",
+      "title": "Prefer inline equations unless display is needed",
+      "scope": "math manuscripts",
+      "severity": "soft",
+      "relationship_to_general": "specializes",
+      "markdown_anchor": "equations",
+      "source_ledger_ids": ["ML-0015"],
+      "test_ids": ["WS-T-0108"]
+    }
+  ]
+}

@@ -16,3 +16,10 @@ registration semantics.
 Zotero and Calibre adapters should remain thin. They must not hardcode local
 database or library paths, and they should route through the shared
 profile-aware runtime commands used by the other agents.
+
+## Autonomous loop enforcement
+
+DeepSeek has no built-in autonomous-loop enforcement: skills are adapters with
+no managed settings/hook surface or headless runner here. Loop stop-conditions
+remain policy-based via the installed `autonomous-loop-enforcement` rule. See the
+repo [Architecture](../../docs/architecture.md) for the full per-target matrix.

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style old-rule source universe",
+  "type": "object",
+  "required": ["schema_version", "generated_for_release", "roots", "target_surfaces_to_verify", "search_terms", "exclusions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.source-universe.v1"},
+    "generated_for_release": {"type": "string"},
+    "roots": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "target_surfaces_to_verify": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "search_terms": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "exclusions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style requirements matrix",
+  "type": "object",
+  "required": ["schema_version", "generated_for_release", "requirements", "non_mechanical_rationales"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.requirements-matrix.v1"},
+    "generated_for_release": {"type": "string"},
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "source_location", "scope", "canonical_destination", "workflows", "targets", "test_ids", "mechanical_status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string"},
+          "source_location": {"type": "string"},
+          "scope": {"type": "string"},
+          "canonical_destination": {"type": "string"},
+          "workflows": {"type": "array", "items": {"type": "string"}},
+          "targets": {"type": "array", "items": {"type": "string"}},
+          "test_ids": {"type": "array", "items": {"type": "string"}},
+          "mechanical_status": {"enum": ["deterministic", "heuristic", "reviewed-non-mechanical"]}
+        }
+      }
+    },
+    "non_mechanical_rationales": {"type": "array", "items": {"type": "object"}}
+  }
+}

@@ -13,6 +13,19 @@ silently change the claim layer.
 | Revision goal |  |
 | Date |  |
 
+## Writing Style Record
+
+| Field | Value |
+|---|---|
+| style_profile_ref | `canonical/instructions/writing-style-settings.md` |
+| policy_hash |  |
+| active_overlays |  |
+| active_requirement_ids |  |
+| session_local_additions |  |
+| conflicts |  |
+| style_applied | `false` |
+| review_status | `pending` |
+
 ## Claim Delta
 
 | Claim ID | Original claim | Revised claim | Delta type | Accept? | Notes |
