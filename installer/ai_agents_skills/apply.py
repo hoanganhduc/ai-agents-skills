@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from .capabilities import (
     normalized_path_within,
     resolved_path_within,
 )
+from .json_merge import load_json_object, merge_hook_entry
 from .openclaw_target_gate import real_openclaw_path_block_reason
 from .render import replace_or_append_block
 from .runtime import apply_runtime_file_action, preflight_runtime_action
@@ -84,6 +86,8 @@ def apply_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, A
         return apply_legacy_dir_action(root, run_id, action)
     if action["kind"] == "managed-file-remove":
         return apply_managed_file_remove_action(root, run_id, action)
+    if action["kind"] == "json-merge":
+        return apply_json_merge_action(root, run_id, action)
     raise ValueError(f"unknown action kind: {action['kind']}")
 
 
@@ -107,9 +111,11 @@ def preflight_action(root: Path, action: dict[str, Any]) -> None:
             raise ValueError(f"refusing to apply through symlinked parent: {parent}")
         if not parent.is_dir():
             raise ValueError(f"refusing to apply through non-directory parent: {parent}")
-    if action["kind"] in {"file", "managed-block", "managed-file-remove"}:
+    if action["kind"] in {"file", "managed-block", "managed-file-remove", "json-merge"}:
         if path.exists() and path.is_dir() and not path.is_symlink():
             raise ValueError(f"refusing to write managed file over directory: {path}")
+    if action["kind"] == "json-merge" and path.is_symlink():
+        raise ValueError(f"refusing to merge into symlinked settings file: {path}")
     if action["kind"] == "managed-block" and path.is_symlink():
         raise ValueError(f"refusing to read or replace symlinked instruction file: {path}")
     if action["kind"] == "legacy-dir":
@@ -176,6 +182,39 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
     result["installed_signature"] = artifact_signature(path)
     if created_parent_dirs:
         result["created_parent_dirs"] = [item.as_posix() for item in created_parent_dirs]
+    return result
+
+
+def apply_json_merge_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
+    path = Path(action["path"])
+    result = base_result(run_id, action)
+    result["created_file"] = not path.exists()
+    result["previous_signature"] = artifact_signature(path)
+    if action.get("operation") in {"skip", "noop"}:
+        result["managed"] = action.get("operation") == "noop"
+        result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
+        if action.get("reason"):
+            result["reason"] = action["reason"]
+        return result
+    before, _existed = load_json_object(path)
+    merged, changed, created = merge_hook_entry(
+        before, action["event"], action["entry"], action["managed_id"]
+    )
+    result["managed"] = True
+    result["event"] = action["event"]
+    result["managed_id"] = action["managed_id"]
+    result["created_containers"] = created
+    if not changed:
+        result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
+        return result
+    backup = backup_file(root, run_id, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(path, json.dumps(merged, indent=2, sort_keys=True) + "\n")
+    result["applied"] = True
+    result["backup"] = str(backup) if backup else None
+    result["installed_signature"] = artifact_signature(path)
     return result
 
 
@@ -388,6 +427,15 @@ def uninstall_origin(
         and result.get("backup")
     ):
         return previous_origin
+    if result.get("artifact_type") == "settings-hook-merge" and result.get("applied"):
+        return {
+            "action": "merge-remove",
+            "event": result.get("event"),
+            "managed_id": result.get("managed_id"),
+            "created_containers": result.get("created_containers"),
+            "created_file": result.get("created_file"),
+            "backup": result.get("backup"),
+        }
     if result.get("state_operation") == "remove":
         if previous_origin and previous_origin.get("action") == "delete-created":
             return {"action": "forget-missing"}

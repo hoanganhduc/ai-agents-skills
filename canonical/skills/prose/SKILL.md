@@ -28,6 +28,11 @@ This is a Codex adaptation of OpenClaw OpenProse, not the OpenProse VM itself.
 3. Spawn agents only for bounded, non-overlapping subtasks.
 4. Ask each spawned agent for concrete output, not vague exploration.
 5. Integrate results locally into the final answer or file.
+6. Before final writing, load `writing-style-settings.md`, select any relevant
+   overlay such as `math-manuscript-style.md`, and record the active style
+   profile in the workflow manifest or final synthesis artifact. Final writing
+   records should include `style_profile_ref`, `active_overlays`,
+   `active_requirement_ids`, and `style_applied`.
 
 ## Good patterns
 
@@ -41,6 +46,11 @@ This is a Codex adaptation of OpenClaw OpenProse, not the OpenProse VM itself.
 - Do not spawn agents just to duplicate your own immediate next step.
 - Reuse or wait on sub-agents only when their result is actually needed.
 - Keep ownership clear if multiple agents may write files.
+- Do not present writing as final when the active style profile was not loaded
+  or recorded for a writing-producing deliverable.
+- Do not treat a bare `style_applied: true` assertion as sufficient evidence
+  unless the workflow also records the loaded policy and selected requirement
+  IDs.
 
 ## User expectation
 

@@ -13,6 +13,19 @@ source of truth for the draft.
 | Source material |  |
 | Date |  |
 
+## Writing Style Record
+
+| Field | Value |
+|---|---|
+| style_profile_ref | `canonical/instructions/writing-style-settings.md` |
+| policy_hash |  |
+| active_overlays |  |
+| active_requirement_ids |  |
+| session_local_additions |  |
+| conflicts |  |
+| style_applied | `false` |
+| review_status | `pending` |
+
 ## Claim Ledger
 
 | Claim ID | Claim | Type | Support | Support status | Keep / revise / remove | Notes |

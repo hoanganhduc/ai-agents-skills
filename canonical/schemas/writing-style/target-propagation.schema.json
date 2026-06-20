@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style target propagation report",
+  "type": "object",
+  "required": ["schema_version", "generated_for_release", "policy_ref", "overlay_refs", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.target-propagation.v1"},
+    "generated_for_release": {"type": "string"},
+    "policy_ref": {"type": "string"},
+    "overlay_refs": {"type": "array", "items": {"type": "string"}},
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target", "target_status", "destination", "artifact_profile", "release_disposition"],
+        "additionalProperties": false,
+        "properties": {
+          "target": {"enum": ["codex", "claude", "deepseek", "opencode", "antigravity", "copilot", "openclaw"]},
+          "target_status": {"enum": ["installed", "absent", "unsupported", "fallback-only", "blocked", "unverified"]},
+          "destination": {"type": "string"},
+          "artifact_profile": {"type": "string"},
+          "release_disposition": {"enum": ["satisfied", "blocks-phase", "blocks-release", "accepted-follow-up", "approved-absence", "approved-unsupported", "approved-exemption", "warns-only", "informational", "not-applicable"]}
+        }
+      }
+    }
+  }
+}

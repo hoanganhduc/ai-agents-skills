@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -308,6 +309,37 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             self.assertEqual(status["state_status"], "stopped")
             self.assertEqual(status["remaining_iterations"], 2)
 
+    def test_runtime_helper_rejects_early_blocked_bailout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=3)
+
+            # An agent must not be able to end the loop early by self-marking it
+            # blocked: under the enforcement policy a recorded blocker continues
+            # the loop, it does not stop it.
+            rejected = append_iteration(
+                run_dir,
+                "blocked",
+                objective="give up midway",
+                check=False,
+            )
+
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn("early blocked", rejected.stdout)
+            self.assertEqual((run_dir / "iterations.jsonl").read_text(encoding="utf-8"), "")
+
+    def test_runtime_helper_allows_blocked_only_at_final_iteration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            init_loop(run_dir, max_iterations=1)
+
+            # blocked is reserved for the final allowed iteration (budget
+            # exhausted without success).
+            append_iteration(run_dir, "blocked", objective="budget exhausted without success")
+
+            status = json.loads(run_helper("status", "--dir", str(run_dir)).stdout)
+            self.assertEqual(status["state_status"], "blocked")
+
     def test_runtime_helper_rejects_unsafe_proof_evidence_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "loop"
@@ -601,3 +633,287 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             ["selftest"],
         )
         self.assertTrue(all(check["ok"] for check in checks), checks)
+
+
+class AutonomousLoopEnforcementTests(unittest.TestCase):
+    """Force-management: arm/disarm/active/done/hook-check with a fail-open Stop hook."""
+
+    def _run(self, *args: str, registry: Path, env_extra: dict[str, str] | None = None):
+        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+        if env_extra:
+            env.update(env_extra)
+        return subprocess.run(
+            [sys.executable, str(HELPER), *args],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=env,
+            check=False,
+        )
+
+    def _init(self, run_dir: Path, registry: Path, *extra: str) -> None:
+        self._run(
+            "init",
+            "--dir",
+            str(run_dir),
+            "--goal",
+            "g",
+            "--success-criteria",
+            "sc",
+            "--max-iterations",
+            "3",
+            *extra,
+            registry=registry,
+        )
+
+    def test_arm_hook_block_then_kill_switches_allow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop, proj = base / "reg", base / "loop", base / "proj"
+            proj.mkdir()
+            self._init(loop, reg)
+            self.assertEqual(
+                self._run("arm", "--dir", str(loop), "--root", str(proj), registry=reg).returncode, 0
+            )
+            done = json.loads(self._run("done", "--dir", str(loop), registry=reg).stdout)
+            self.assertFalse(done["done"])
+            # active + not done -> hook blocks turn-end (exit 2)
+            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 2)
+            # kill switch 1: AUTOLOOP_DISABLE env
+            self.assertEqual(
+                self._run(
+                    "hook-check", "--root", str(proj), registry=reg, env_extra={"AUTOLOOP_DISABLE": "1"}
+                ).returncode,
+                0,
+            )
+            # kill switch 2: STOP_REQUESTED sentinel -> done + hook allows
+            (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
+            done2 = json.loads(self._run("done", "--dir", str(loop), registry=reg).stdout)
+            self.assertTrue(done2["done"])
+            self.assertEqual(done2["reason"], "user_stop_requested")
+            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
+            (loop / "STOP_REQUESTED").unlink()
+            # kill switch 3: disarm
+            self._run("disarm", "--dir", str(loop), registry=reg)
+            self.assertEqual(json.loads(self._run("active", registry=reg).stdout)["count"], 0)
+            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
+
+    def test_hook_check_allows_unrelated_root_and_missing_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop, proj = base / "reg", base / "loop", base / "proj"
+            proj.mkdir()
+            self._init(loop, reg)
+            self._run("arm", "--dir", str(loop), "--root", str(proj), registry=reg)
+            self.assertEqual(self._run("hook-check", "--root", str(base / "other"), registry=reg).returncode, 0)
+            self.assertEqual(
+                self._run("hook-check", "--root", str(proj), registry=base / "nope").returncode, 0
+            )
+
+    def test_hook_check_fails_open_on_corrupt_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop, proj = base / "reg", base / "loop", base / "proj"
+            proj.mkdir()
+            self._init(loop, reg)
+            self._run("arm", "--dir", str(loop), "--root", str(proj), registry=reg)
+            (loop / "loop_state.json").write_text("{ this is not json", encoding="utf-8")
+            # corrupt state must NOT trap the session: the hook fails open (exit 0)
+            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
+
+    def test_require_user_stop_only_overrides_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg, "--require-user-stop-only")
+            done = json.loads(self._run("done", "--dir", str(loop), registry=reg).stdout)
+            self.assertFalse(done["done"])
+            self.assertEqual(done["reason"], "awaiting_user_stop")
+
+    def test_require_user_stop_only_ignores_self_marked_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg, "--require-user-stop-only")
+            # The policed agent writes a terminal status straight into the
+            # ledger, bypassing append-iteration's guards. Under
+            # require-user-stop-only this must NOT release the session.
+            state_path = loop / "loop_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "stopped"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            done = json.loads(self._run("done", "--dir", str(loop), registry=reg).stdout)
+            self.assertFalse(done["done"])
+            self.assertEqual(done["reason"], "awaiting_user_stop")
+
+    def test_self_marked_terminal_releases_without_require_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg)
+            state_path = loop / "loop_state.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "stopped"
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            done = json.loads(self._run("done", "--dir", str(loop), registry=reg).stdout)
+            self.assertTrue(done["done"])
+            self.assertEqual(done["reason"], "terminal_status:stopped")
+
+    def test_pause_sentinel_allows_turn_end(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop, proj = base / "reg", base / "loop", base / "proj"
+            proj.mkdir()
+            self._init(loop, reg)
+            self._run("arm", "--dir", str(loop), "--root", str(proj), registry=reg)
+            (loop / "PAUSE").write_text("", encoding="utf-8")
+            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
+
+
+class AutoloopStopHookWrapperTests(unittest.TestCase):
+    """The shipped fail-open Stop-hook wrapper, exercised against the real runtime."""
+
+    STOP_HOOK = HELPER.parent / "autoloop_stop_hook.sh"
+
+    def _hook(self, *, registry: Path, root: Path, payload: str = "", env_extra: dict[str, str] | None = None):
+        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry), CLAUDE_PROJECT_DIR=str(root))
+        env.pop("AUTOLOOP_DISABLE", None)
+        env.pop("AUTOLOOP_DRIVER", None)
+        if env_extra:
+            env.update(env_extra)
+        return subprocess.run(
+            ["bash", str(self.STOP_HOOK)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+            check=False,
+        )
+
+    def _init(self, run_dir: Path, registry: Path, *extra: str) -> None:
+        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+        subprocess.run(
+            [sys.executable, str(HELPER), "init", "--dir", str(run_dir), "--goal", "g",
+             "--success-criteria", "sc", "--max-iterations", "3", *extra],
+            capture_output=True, text=True, timeout=20, env=env, check=False,
+        )
+
+    def _arm(self, run_dir: Path, registry: Path, root: Path) -> None:
+        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+        subprocess.run(
+            [sys.executable, str(HELPER), "arm", "--dir", str(run_dir), "--root", str(root)],
+            capture_output=True, text=True, timeout=20, env=env, check=False,
+        )
+
+    def _armed(self, base: Path):
+        reg, loop, proj = base / "reg", base / "loop", base / "proj"
+        proj.mkdir()
+        self._init(loop, reg)
+        self._arm(loop, reg, proj)
+        return reg, loop, proj
+
+    def test_allows_when_no_active_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self.assertEqual(self._hook(registry=base / "reg", root=base / "proj").returncode, 0)
+
+    def test_blocks_when_active_loop_not_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reg, _loop, proj = self._armed(Path(tmp))
+            self.assertEqual(self._hook(registry=reg, root=proj).returncode, 2)
+
+    def test_kill_switch_env_allows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reg, _loop, proj = self._armed(Path(tmp))
+            self.assertEqual(self._hook(registry=reg, root=proj, env_extra={"AUTOLOOP_DISABLE": "1"}).returncode, 0)
+
+    def test_driver_env_allows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reg, _loop, proj = self._armed(Path(tmp))
+            self.assertEqual(self._hook(registry=reg, root=proj, env_extra={"AUTOLOOP_DRIVER": "1"}).returncode, 0)
+
+    def test_reentrancy_payload_allows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reg, _loop, proj = self._armed(Path(tmp))
+            res = self._hook(registry=reg, root=proj, payload='{"stop_hook_active": true}')
+            self.assertEqual(res.returncode, 0)
+
+    def test_stop_requested_sentinel_allows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reg, loop, proj = self._armed(Path(tmp))
+            (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
+            self.assertEqual(self._hook(registry=reg, root=proj).returncode, 0)
+
+
+class AutoloopDriverTests(unittest.TestCase):
+    """The generic headless driver: derives done from the runtime, fails safe."""
+
+    DRIVER = HELPER.parent / "autoloop_driver.sh"
+
+    def _init(self, run_dir: Path, registry: Path, *extra: str) -> None:
+        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+        subprocess.run(
+            [sys.executable, str(HELPER), "init", "--dir", str(run_dir), "--goal", "g",
+             "--success-criteria", "sc", "--max-iterations", "5", *extra],
+            capture_output=True, text=True, timeout=20, env=env, check=False,
+        )
+
+    def _drive(self, run_dir: Path, registry: Path, cmd: str, *extra: str, timeout: int = 40):
+        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+        return subprocess.run(
+            ["bash", str(self.DRIVER), "--dir", str(run_dir), "--root", str(run_dir), "--cmd", cmd, *extra],
+            capture_output=True, text=True, timeout=timeout, env=env, check=False,
+        )
+
+    def test_stops_immediately_when_already_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg)
+            (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
+            res = self._drive(loop, reg, ': > "$AUTOLOOP_DIR/ran"')
+            self.assertEqual(res.returncode, 0)
+            self.assertFalse((loop / "ran").exists())  # iteration command never ran
+
+    def test_runs_iterations_until_user_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg)
+            cmd = (
+                'c=$(cat "$AUTOLOOP_DIR/c" 2>/dev/null || echo 0); c=$((c+1)); '
+                'printf "%s" "$c" > "$AUTOLOOP_DIR/c"; '
+                '[ "$c" -ge 3 ] && : > "$AUTOLOOP_DIR/STOP_REQUESTED"; true'
+            )
+            res = self._drive(loop, reg, cmd)
+            self.assertEqual(res.returncode, 0)
+            self.assertEqual((loop / "c").read_text(), "3")
+
+    def test_stops_after_max_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg)
+            cmd = (
+                'c=$(cat "$AUTOLOOP_DIR/c" 2>/dev/null || echo 0); c=$((c+1)); '
+                'printf "%s" "$c" > "$AUTOLOOP_DIR/c"; exit 1'
+            )
+            res = self._drive(loop, reg, cmd, "--max-failures", "3")
+            self.assertEqual(res.returncode, 3)
+            self.assertEqual((loop / "c").read_text(), "3")
+
+    def test_exports_driver_env_so_hook_stands_down(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg)
+            cmd = 'printf "%s" "$AUTOLOOP_DRIVER" > "$AUTOLOOP_DIR/env"; : > "$AUTOLOOP_DIR/STOP_REQUESTED"'
+            res = self._drive(loop, reg, cmd)
+            self.assertEqual(res.returncode, 0)
+            self.assertEqual((loop / "env").read_text(), "1")
+
+    def test_pause_blocks_iterations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg)
+            (loop / "PAUSE").write_text("", encoding="utf-8")
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self._drive(loop, reg, ': > "$AUTOLOOP_DIR/ran"', "--poll", "5", timeout=3)
+            self.assertFalse((loop / "ran").exists())  # paused -> no iteration ran

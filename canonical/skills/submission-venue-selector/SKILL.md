@@ -23,6 +23,9 @@ evidence is unavailable, output `incomplete analysis`, keep delivery status
 The final report must still list every candidate journal with an estimated
 acceptance-chance interval, confidence, calculation class, modifier breakdown,
 and caveats. These estimates are heuristics, not predictions or guarantees.
+Before writing a deliverable report, load `writing-style-settings.md` and record
+the active style profile. For mathematical, TCS, graph-theoretic, Lean, or
+LaTeX manuscripts, also load `math-manuscript-style.md`.
 
 ## Routing Boundary
 
@@ -96,6 +99,10 @@ Useful commands:
   placeholder-only output as `incomplete analysis`.
 - Acceptance-chance estimates are required in reports, but bare percentages and
   predictive acceptance claims are invalid.
+- Final report artifacts should record `style_profile_ref`, `active_overlays`,
+  `active_requirement_ids`, and `style_applied`. A bare `style_applied: true`
+  value is not enough unless the artifact or workflow ledger also records the
+  loaded policy and selected requirements.
 
 ## Workflow
 

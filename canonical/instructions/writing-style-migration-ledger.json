@@ -1,0 +1,171 @@
+{
+  "schema_version": "writing-style.migration-ledger.v1",
+  "generated_for_release": "2026-06-20",
+  "rows": [
+    {
+      "edge_id": "ML-0001",
+      "source_location": "canonical/instructions/claim-preserving-writing.md",
+      "old_rule_text": "Inspect draft, outline, notes, source material, prior posts, templates, house style, venue instructions, and supplied examples before drafting.",
+      "normalized_rule_text": "Inspect available writing context before drafting or revising.",
+      "classification_tags": ["general", "context"],
+      "normative_requirement_ids": ["WS-GEN-0001"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0002",
+      "source_location": "canonical/instructions/claim-preserving-writing.md",
+      "old_rule_text": "Preserve the claim ledger; keep caveats visible; flag unsupported claims.",
+      "normalized_rule_text": "Separate claims, evidence, assumptions, caveats, and gaps.",
+      "classification_tags": ["general", "claim-evidence"],
+      "normative_requirement_ids": ["WS-GEN-0002"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/instructions/claim-preserving-writing.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0003",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "old_rule_text": "Use short, precise sentences. Replace vague phrases, unexplained metaphors, and overloaded local names.",
+      "normalized_rule_text": "Use short precise sentences and common terminology.",
+      "classification_tags": ["general", "clarity"],
+      "normative_requirement_ids": ["WS-GEN-0003"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0004",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "old_rule_text": "Define every concept before its first use.",
+      "normalized_rule_text": "Define non-common concepts before first use.",
+      "classification_tags": ["general", "math"],
+      "normative_requirement_ids": ["WS-GEN-0004", "WS-MATH-0001"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/instructions/math-manuscript-style.md"],
+      "disposition": "split",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0005",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "old_rule_text": "Prefer inline equations unless display equations are important.",
+      "normalized_rule_text": "Prefer inline equations unless display is needed.",
+      "classification_tags": ["general", "math", "formatting"],
+      "normative_requirement_ids": ["WS-GEN-0005", "WS-MATH-0008"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/instructions/math-manuscript-style.md"],
+      "disposition": "split",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0006",
+      "source_location": "plan_v10",
+      "old_rule_text": "Finalizable writing workflows must record style_profile_ref and style_applied.",
+      "normalized_rule_text": "Record active style profile for finalizable writing.",
+      "classification_tags": ["general", "force-use"],
+      "normative_requirement_ids": ["WS-GEN-0006"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0007",
+      "source_location": "plan_v10",
+      "old_rule_text": "Capture new durable user writing requirements and do not promote them without approval.",
+      "normalized_rule_text": "Capture new durable user style requirements without silent promotion.",
+      "classification_tags": ["general", "session-capture"],
+      "normative_requirement_ids": ["WS-GEN-0007"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0008",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "old_rule_text": "Put concepts and notation used several times in preliminaries; define one-use concepts locally.",
+      "normalized_rule_text": "Define mathematical concepts and notation before first use.",
+      "classification_tags": ["math"],
+      "normative_requirement_ids": ["WS-MATH-0001"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0009",
+      "source_location": "user-requirement",
+      "old_rule_text": "Never mix statements and definitions. Do not define anything inside a statement.",
+      "normalized_rule_text": "Do not define notation inside mathematical statements.",
+      "classification_tags": ["math"],
+      "normative_requirement_ids": ["WS-MATH-0002"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0010",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "old_rule_text": "Prefer standard graph-theoretic and TCS terminology over private vocabulary.",
+      "normalized_rule_text": "Use common graph-theoretic and TCS terminology.",
+      "classification_tags": ["math"],
+      "normative_requirement_ids": ["WS-MATH-0003"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0011",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "old_rule_text": "Restate hypotheses in major results when doing so makes the result self-contained.",
+      "normalized_rule_text": "Keep mathematical statements self-contained.",
+      "classification_tags": ["math"],
+      "normative_requirement_ids": ["WS-MATH-0004"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0012",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "old_rule_text": "Add one to three sentences before the statement explaining what the result says and why it is needed.",
+      "normalized_rule_text": "Introduce important statements with their role.",
+      "classification_tags": ["math"],
+      "normative_requirement_ids": ["WS-MATH-0005"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0013",
+      "source_location": "user-requirement",
+      "old_rule_text": "Each section except Introduction and Concluding remarks should contain a short outline paragraph.",
+      "normalized_rule_text": "Begin sections with outline paragraphs.",
+      "classification_tags": ["math"],
+      "normative_requirement_ids": ["WS-MATH-0006"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0014",
+      "source_location": "canonical/instructions/language-style-rules.md",
+      "old_rule_text": "Start every long or technical proof with a short paragraph giving the proof idea.",
+      "normalized_rule_text": "Open long proofs with proof ideas.",
+      "classification_tags": ["math"],
+      "normative_requirement_ids": ["WS-MATH-0007"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0015",
+      "source_location": "user-requirement",
+      "old_rule_text": "For equations, except those which are important, prefer inline equations.",
+      "normalized_rule_text": "Prefer inline equations unless display is needed.",
+      "classification_tags": ["math", "formatting"],
+      "normative_requirement_ids": ["WS-MATH-0008"],
+      "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
+      "disposition": "merge",
+      "reviewer_status": "approved"
+    }
+  ]
+}

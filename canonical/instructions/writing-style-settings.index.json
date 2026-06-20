@@ -1,0 +1,92 @@
+{
+  "schema_version": "writing-style.policy-index.v1",
+  "policy_version": "2026-06-20",
+  "policy_ref": "canonical/instructions/writing-style-settings.md",
+  "content_hash": "pending-computed-by-gate",
+  "requirements": [
+    {
+      "id": "WS-GEN-0001",
+      "title": "Inspect writing context before drafting",
+      "scope": "all writing-producing workflows",
+      "severity": "hard",
+      "tags": ["context", "drafting", "format"],
+      "markdown_anchor": "context-to-inspect",
+      "source_ledger_ids": ["ML-0001"],
+      "test_ids": ["WS-T-0001"],
+      "overlays": [],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0002",
+      "title": "Separate claims, evidence, assumptions, caveats, and gaps",
+      "scope": "all writing-producing workflows",
+      "severity": "hard",
+      "tags": ["claims", "evidence", "gaps"],
+      "markdown_anchor": "claim-and-evidence-discipline",
+      "source_ledger_ids": ["ML-0002"],
+      "test_ids": ["WS-T-0002"],
+      "overlays": [],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0003",
+      "title": "Use short precise sentences and common terminology",
+      "scope": "all writing-producing workflows",
+      "severity": "soft",
+      "tags": ["clarity", "terminology"],
+      "markdown_anchor": "sentence-level-defaults",
+      "source_ledger_ids": ["ML-0003"],
+      "test_ids": ["WS-T-0003"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0004",
+      "title": "Define non-common concepts before first use",
+      "scope": "all writing-producing workflows",
+      "severity": "hard",
+      "tags": ["definitions", "notation"],
+      "markdown_anchor": "sentence-level-defaults",
+      "source_ledger_ids": ["ML-0004"],
+      "test_ids": ["WS-T-0004"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0005",
+      "title": "Prefer inline formatting unless display formatting is needed",
+      "scope": "all writing-producing workflows",
+      "severity": "soft",
+      "tags": ["formatting", "equations"],
+      "markdown_anchor": "formatting-defaults",
+      "source_ledger_ids": ["ML-0005"],
+      "test_ids": ["WS-T-0005"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0006",
+      "title": "Record active style profile for finalizable writing",
+      "scope": "finalizable writing-producing workflows",
+      "severity": "hard",
+      "tags": ["force-use", "metadata", "style-record"],
+      "markdown_anchor": "activation",
+      "source_ledger_ids": ["ML-0006"],
+      "test_ids": ["WS-T-0006"],
+      "overlays": [],
+      "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0007",
+      "title": "Capture new durable user style requirements without silent promotion",
+      "scope": "all sessions",
+      "severity": "hard",
+      "tags": ["session-capture", "approval"],
+      "markdown_anchor": "session-updates",
+      "source_ledger_ids": ["ML-0007"],
+      "test_ids": ["WS-T-0007"],
+      "overlays": [],
+      "target_adapters": []
+    }
+  ]
+}

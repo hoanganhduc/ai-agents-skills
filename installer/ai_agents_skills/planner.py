@@ -152,6 +152,11 @@ def build_plan(
             )
     actions.extend(antigravity_native_scaffold_actions(agents, actions, adopt, backup_replace))
     actions.extend(
+        autoloop_stop_hook_actions(
+            root, manifests, skills, agents, runtime_profile, runtime_root, platform, adopt, backup_replace
+        )
+    )
+    actions.extend(
         build_runtime_actions(
             root=root,
             manifests=manifests,
@@ -264,6 +269,73 @@ def antigravity_native_scaffold_actions(
         action["artifact_name"] = artifact_name
         scaffold_actions.append(action)
     return scaffold_actions
+
+
+AUTOLOOP_HOOK_MANAGED_ID = "autoloop-stop"
+AUTOLOOP_HOOK_EVENT = "Stop"
+
+
+def autoloop_stop_hook_actions(
+    root: Path,
+    manifests: dict[str, Any],
+    skills: list[str],
+    agents: list[AgentTarget],
+    runtime_profile: str,
+    runtime_root: Path | None,
+    platform: str | None,
+    adopt: bool,
+    backup_replace: bool,
+) -> list[dict[str, Any]]:
+    # The Stop-hook surface is meaningful only where the runtime is installed and
+    # the target uses a JSON settings file with a hooks.Stop array. Today that is
+    # claude; codex/opencode use TOML config and are governed by the driver.
+    from .json_merge import load_json_object, merge_hook_entry
+    from .runtime import default_runtime_root, resolve_runtime_skills
+    from .state import artifact_signature
+
+    runtime_manifest = manifests.get("runtime", {})
+    runtime_skills = resolve_runtime_skills(skills, runtime_manifest, runtime_profile)
+    if "autonomous-research-loop-runtime" not in runtime_skills:
+        return []
+    target_root = (runtime_root or default_runtime_root(root, agents, platform)).expanduser()
+    wrapper = (
+        target_root
+        / "workspace"
+        / "skills"
+        / "autonomous-research-loop-runtime"
+        / "autoloop_stop_hook.sh"
+    )
+    entry = {"hooks": [{"type": "command", "command": f'bash "{wrapper}"'}]}
+    actions: list[dict[str, Any]] = []
+    for agent in agents:
+        if agent.name != "claude":
+            continue
+        settings = agent.home / "settings.json"
+        action: dict[str, Any] = {
+            "kind": "json-merge",
+            "agent": agent.name,
+            "skill": "autonomous-research-loop",
+            "path": str(settings),
+            "artifact_type": "settings-hook-merge",
+            "artifact_id": f"settings-hook:{AUTOLOOP_HOOK_MANAGED_ID}",
+            "event": AUTOLOOP_HOOK_EVENT,
+            "managed_id": AUTOLOOP_HOOK_MANAGED_ID,
+            "entry": entry,
+            "classification": "managed",
+            "current_signature": artifact_signature(settings),
+        }
+        try:
+            before, _existed = load_json_object(settings)
+        except ValueError:
+            action["operation"] = "skip"
+            action["classification"] = "conflict"
+            action["reason"] = "existing settings file is not valid JSON"
+            actions.append(action)
+            continue
+        _, changed, _ = merge_hook_entry(before, AUTOLOOP_HOOK_EVENT, entry, AUTOLOOP_HOOK_MANAGED_ID)
+        action["operation"] = "merge" if changed else "noop"
+        actions.append(action)
+    return actions
 
 
 def target_skill_block_reason(

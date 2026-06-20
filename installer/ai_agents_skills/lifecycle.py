@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .capabilities import normalized_path_within, resolved_path_within
+from .json_merge import extract_hook_entry, load_json_object, remove_hook_entry
 from .openclaw_target_gate import real_openclaw_path_block_reason
 from .state import (
     artifact_signature,
@@ -269,6 +270,20 @@ def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dic
             action["operation"] = "delete-created"
         else:
             action["operation"] = "skip-conflict"
+    elif origin_action == "merge-remove":
+        if not path.exists():
+            action["operation"] = "forget-missing"
+        else:
+            try:
+                current, _ = load_json_object(path)
+            except ValueError:
+                action["operation"] = "skip-conflict"
+                action["reason"] = "settings file is not valid JSON"
+                return action
+            if extract_hook_entry(current, origin.get("event"), origin.get("managed_id")) is None:
+                action["operation"] = "forget-missing"
+            else:
+                action["operation"] = "merge-remove"
     elif origin_action == "forget-missing":
         action["operation"] = "forget-missing"
     else:
@@ -357,6 +372,10 @@ def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> 
         restore_backup(Path(backup), Path(action["artifact"]))
         result["completed"] = True
         return result
+    if operation == "merge-remove":
+        _apply_merge_remove(action)
+        result["completed"] = True
+        return result
     raise ValueError(f"unknown uninstall operation: {operation}")
 
 
@@ -393,6 +412,26 @@ def remove_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     }:
         remove_file(path)
         cleanup_recorded_parent_dirs(root, item)
+
+
+def _apply_merge_remove(action: dict[str, Any]) -> None:
+    path = Path(action["artifact"])
+    origin = action.get("uninstall", {})
+    if not path.exists():
+        return
+    current, _ = load_json_object(path)
+    merged, changed = remove_hook_entry(
+        current,
+        origin.get("event"),
+        origin.get("managed_id"),
+        origin.get("created_containers"),
+    )
+    if not changed:
+        return
+    if merged == {} and origin.get("created_file"):
+        remove_file(path)
+        return
+    write_text_atomic(path, json.dumps(merged, indent=2, sort_keys=True) + "\n")
 
 
 def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) -> None:

@@ -19,6 +19,7 @@ MECHANISMS = {
     "fake-root-copy",
     "runtime-copy",
     "instruction-block",
+    "json-merge",
     "unsupported",
 }
 CLAIM_BASES = {"policy", "renderer", "planner", "runtime-manifest", "fake-root-only", "official-docs"}
@@ -278,6 +279,15 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "plugin-scoped Antigravity hooks config",
         "official-docs",
         "A no-op hooks.json scaffold is installed inside the managed Antigravity plugin.",
+    ),
+    TargetSurface(
+        "claude",
+        "settings-json-merge",
+        "supported",
+        "json-merge",
+        "managed Stop-hook entry merged into ~/.claude/settings.json",
+        "planner",
+        "When the autonomous-research-loop runtime is installed, one managed hooks.Stop entry (tagged _managedBy/_id) is idempotently merged into the user's settings.json and removed on uninstall; user-authored hooks are preserved.",
     ),
 )
 

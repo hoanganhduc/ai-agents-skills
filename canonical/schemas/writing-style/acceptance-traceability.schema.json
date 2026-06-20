@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style acceptance traceability",
+  "type": "object",
+  "required": ["schema_version", "generated_for_release", "criteria"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.acceptance-traceability.v1"},
+    "generated_for_release": {"type": "string"},
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "subject_type", "subject_id", "criterion", "release_disposition"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^AC-[0-9]{4}$"},
+          "subject_type": {"type": "string"},
+          "subject_id": {"type": "string"},
+          "criterion": {"type": "string"},
+          "release_disposition": {"type": "string"}
+        }
+      }
+    }
+  }
+}

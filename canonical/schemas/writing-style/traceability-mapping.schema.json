@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Writing style traceability mapping",
+  "type": "object",
+  "required": ["schema_version", "generated_for_release", "rows"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "writing-style.traceability-mapping.v1"},
+    "generated_for_release": {"type": "string"},
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["subject_type", "subject_id", "evidence_ref", "release_disposition"],
+        "additionalProperties": false,
+        "properties": {
+          "subject_type": {"enum": ["requirement", "workflow", "target", "schema", "source-universe", "migration-ledger", "gate", "test", "fixture", "artifact-profile", "matrix", "session-capture", "id-registry", "policy", "overlay", "release"]},
+          "subject_id": {"type": "string"},
+          "evidence_ref": {"type": "string"},
+          "release_disposition": {"enum": ["satisfied", "blocks-phase", "blocks-release", "accepted-follow-up", "approved-absence", "approved-unsupported", "approved-exemption", "warns-only", "informational", "not-applicable"]}
+        }
+      }
+    }
+  }
+}

@@ -35,6 +35,7 @@ OpenClaw source/import evidence and OpenClaw install-target behavior are separat
 | `antigravity` | `settings-file` | `supported` | `settings-file` | sparse Antigravity settings JSON | `official-docs` | A no-op settings.json scaffold is managed under ~/.gemini/antigravity-cli/settings.json when Antigravity artifacts are installed. |
 | `antigravity` | `mcp-config` | `supported` | `mcp-config` | plugin-scoped Antigravity MCP config | `official-docs` | A no-op mcp_config.json scaffold with an empty mcpServers map is installed inside the managed Antigravity plugin. |
 | `antigravity` | `hook-config` | `supported` | `hook-config` | plugin-scoped Antigravity hooks config | `official-docs` | A no-op hooks.json scaffold is installed inside the managed Antigravity plugin. |
+| `claude` | `settings-json-merge` | `supported` | `json-merge` | managed Stop-hook entry merged into ~/.claude/settings.json | `planner` | When the autonomous-research-loop runtime is installed, one managed hooks.Stop entry (tagged _managedBy/_id) is idempotently merged into the user's settings.json and removed on uninstall; user-authored hooks are preserved. |
 
 Claim levels used here:
 

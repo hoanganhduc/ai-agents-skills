@@ -74,3 +74,12 @@ bash ~/.codex/runtime/run_skill.sh skills/rss-news-digest/run_rss_news_digest.sh
 ## After execution
 
 If a digest is produced, read the digest path reported by the command output and summarize the top items for the user.
+
+## Writing Style Gate
+
+For any user-facing RSS digest summary, load `writing-style-settings.md` before
+writing. If the digest item or synthesis is mathematical, TCS, graph-theoretic,
+Lean-related, or LaTeX manuscript prose, also load `math-manuscript-style.md`.
+Stored summaries should record `style_profile_ref`, `active_overlays`,
+`active_requirement_ids`, and `style_applied`; do not accept a bare
+`style_applied: true` assertion as sufficient evidence.

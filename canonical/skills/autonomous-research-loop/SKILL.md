@@ -82,13 +82,20 @@ Before starting an autonomous run:
    - maximum child workers
    - maximum source hops or search depth
    - maximum spend or token budget when applicable
-4. Define stop conditions:
-   - success criteria met
-   - budget exhausted
-   - evidence gap remains after the retry limit
-   - user intent changes
-   - tool, credential, or permission blocker prevents safe progress
-   - repeated plateau according to the declared plateau rule
+4. Define stop conditions. The enforcement policy in
+   `canonical/instructions/autonomous-loop-enforcement.md` governs them: user
+   requirements override everything, so capture them into
+   `loop_state.stop_conditions` at init. When the user gave no overriding
+   requirement, the loop stops only on:
+   - the required number of loops reached
+   - credit or quota exhausted, or a user-set spend cap hit
+   - the stated goal fully resolved, confirmed by a machine-checkable success
+     check
+   - a user message asking to stop, pause, or switch tasks
+   Plateau, evidence-gap, and repeated-blocker signals are not terminal under
+   these defaults; record them, then downgrade the iteration decision to
+   `revise` or `delegate` and continue. They end the loop only when the user set
+   them as an explicit stop condition.
 5. Initialize or validate the loop files.
 
 The maximum iteration budget is a hard cap, not a target to exceed while
@@ -97,7 +104,10 @@ hard stop condition occurs, but it must never append more than
 `max_iterations` records. A normal early `stop` before the final allowed
 iteration is valid only when the success criteria are met and the iteration
 cites a machine-checkable proof/success artifact. Otherwise continue, revise,
-delegate, or mark the loop `blocked` with the blocker recorded.
+or delegate; do not mark the loop `blocked` early. A self-marked blocker is not
+a stop under the enforcement policy: record it and continue. The decision
+`blocked` is reserved for the final allowed iteration, when the budget is
+exhausted without success.
 
 ## Iteration Protocol
 
@@ -119,7 +129,9 @@ next iteration has a concrete objective and remaining budget. The final allowed
 iteration must be terminal (`stop` or `blocked`); if success criteria have not
 been satisfied by then, stop as budget exhausted instead of leaving the loop
 `running`. Before the final allowed iteration, `stop` must mean success/proof
-found and must cite at least one evidence id that resolves to a proof artifact.
+found and must cite at least one evidence id that resolves to a proof artifact,
+and `blocked` is not accepted: record the blocker and continue with `revise` or
+`delegate`.
 
 ## Evidence Gates
 
@@ -127,6 +139,9 @@ Apply the relevant gates before accepting an iteration output:
 
 - Source claims require source IDs or file references.
 - Current facts require dated source checks.
+- User-facing writing requires `writing-style-settings.md` to be loaded before
+  final prose. Mathematical, TCS, graph-theoretic, Lean, or LaTeX writing also
+  requires `math-manuscript-style.md`.
 - Early proof/success stops require an evidence id backed by a local
   machine-checkable proof artifact, such as
   `proof_artifacts/<evidence_id>.json`, whose checker metadata reports a
@@ -174,15 +189,24 @@ On resume, read `loop_state.json`, `budget.json`, `iterations.jsonl`, and
 
 ## Stop Rules
 
+These rules are governed by the enforcement policy in
+`canonical/instructions/autonomous-loop-enforcement.md`. User requirements
+override everything; the conditions below are the defaults used only when the
+user set no overriding requirement.
+
 Stop immediately and report status when:
 
-- success criteria are satisfied
-- any hard budget is exhausted
-- the same blocker repeats for three consecutive iterations
-- evidence needed for the conclusion cannot be obtained
+- success criteria are satisfied, confirmed by a machine-checkable success check
+- any hard budget is exhausted, including credit, a spend cap, wall clock, or
+  the iteration count
 - the user asks to pause, stop, or switch tasks
-- the next action would mutate code, config, credentials, or external systems
-  beyond the approved scope
+
+A repeated blocker, an unresolved evidence gap, or a next action that would
+exceed the approved scope is not, by itself, a stop under these defaults. Record
+it, choose an in-scope action, and continue, downgrading the iteration decision
+to `revise` or `delegate`. Such a signal ends the loop only when no in-scope
+action remains and it also satisfies one of the conditions above, or when the
+user set it as an explicit stop condition.
 
 When stopping, report:
 
@@ -203,11 +227,16 @@ Evidence Checked: ...
 Iterations: ...
 Decision: ...
 Remaining Gaps: ...
+Style: ...
 Next Action: ...
 ```
 
 If material evidence remains unchecked, explicitly say `incomplete analysis`
 before the provisional recommendation.
+For finalizable prose artifacts created during the loop, record
+`style_profile_ref`, `active_overlays`, `active_requirement_ids`, and
+`style_applied` in the loop ledger or artifact-adjacent style record. Do not
+count a bare `style_applied: true` value as force-use evidence.
 
 ## Recommended templates
 

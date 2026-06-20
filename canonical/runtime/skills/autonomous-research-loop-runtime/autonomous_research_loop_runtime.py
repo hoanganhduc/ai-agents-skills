@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import tempfile
@@ -45,10 +46,23 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
+    # Write atomically (temp file + os.replace) so a crash mid-write cannot
+    # truncate the destination and lose loop state.
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="\n") as handle:
-        json.dump(data, handle, indent=2, sort_keys=True)
-        handle.write("\n")
+    payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def read_iterations(path: Path) -> list[dict[str, Any]]:
@@ -200,6 +214,11 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
             "stop_on_scope_change": args.stop_on_scope_change,
         },
         "plateau_rule": args.plateau_rule,
+        "stop_conditions": {
+            "require_user_stop_only": args.require_user_stop_only,
+            "user_overrides": parse_many(args.stop_condition),
+        },
+        "success_check": args.success_check,
         "created_at": now,
         "updated_at": now,
         "last_iteration": 0,
@@ -279,6 +298,11 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
     remaining_after_append = max_iterations - number
     if remaining_after_append == 0 and args.decision not in TERMINAL_DECISIONS:
         raise ValueError("final allowed iteration must use decision stop or blocked, not a continuing decision")
+    if args.decision == "blocked" and remaining_after_append > 0:
+        raise ValueError(
+            "early blocked before max_iterations is not a valid stop under the enforcement policy: "
+            "record the blocker and continue with decision revise or delegate"
+        )
     claim_ids = parse_many(args.claim_id)
     evidence_ids = parse_many(args.evidence_id)
     if args.decision == "stop" and remaining_after_append > 0:
@@ -511,6 +535,9 @@ def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
             stop_on_missing_evidence=True,
             stop_on_scope_change=True,
             plateau_rule=DEFAULT_PLATEAU_RULE,
+            success_check="",
+            require_user_stop_only=False,
+            stop_condition=[],
             budget_owner="selftest",
             max_iterations=2,
             max_wall_time_seconds=60,
@@ -575,6 +602,237 @@ def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
         }
 
 
+# --- Autoloop enforcement: arm/disarm/active/done/hook-check ------------------
+# Force-management for autonomous loops: a registry of armed loops plus a
+# fail-open stop check the Stop hook can call on every turn. The runtime never
+# executes the success_check command (the driver/agent runs it and records a
+# terminal stop); `done`/`hook-check` are read-only/derived and safe to call
+# repeatedly. Stop policy (priority): explicit user stop > terminal status >
+# recorded blocker > [user override: stop-only-on-user] > credit/budget caps >
+# loops reached.
+
+SENTINEL_STOP = "STOP_REQUESTED"
+SENTINEL_BLOCKED = "BLOCKED"
+SENTINEL_PAUSE = "PAUSE"
+HEARTBEAT_TTL_SECONDS = 1800
+
+
+def registry_dir(args: argparse.Namespace) -> Path:
+    raw = getattr(args, "registry_dir", None) or os.environ.get("AAS_AUTOLOOP_REGISTRY")
+    base = Path(raw).expanduser() if raw else Path.home() / ".local" / "share" / "ai-agents-skills" / "autoloop"
+    return base / "active.d"
+
+
+def pid_alive(pid: object) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def parse_iso(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def entry_is_live(entry: dict[str, Any]) -> bool:
+    pid = entry.get("pid")
+    if isinstance(pid, int) and pid > 0 and not pid_alive(pid):
+        return False
+    stamp = parse_iso(entry.get("heartbeat") or entry.get("created_at"))
+    if stamp is None:
+        return True
+    return (datetime.now(timezone.utc) - stamp).total_seconds() <= HEARTBEAT_TTL_SECONDS
+
+
+def list_registry_entries(reg: Path) -> list[tuple[Path, dict[str, Any]]]:
+    out: list[tuple[Path, dict[str, Any]]] = []
+    if not reg.exists():
+        return out
+    for path in sorted(reg.glob("*.json")):
+        try:
+            out.append((path, read_json(path)))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    return out
+
+
+def gc_registry(reg: Path) -> int:
+    removed = 0
+    for path, entry in list_registry_entries(reg):
+        if not entry_is_live(entry):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+def arm_loop(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    state = read_json(loop_paths(run_dir)["state"])
+    run_id = state.get("run_id") or str(uuid.uuid4())
+    root = Path(args.root).expanduser().resolve() if args.root else run_dir
+    reg = registry_dir(args)
+    reg.mkdir(parents=True, exist_ok=True)
+    gc_registry(reg)
+    if not args.force:
+        for _, entry in list_registry_entries(reg):
+            if (
+                entry.get("project_root") == str(root)
+                and entry.get("run_id") != run_id
+                and entry_is_live(entry)
+            ):
+                raise ValueError(f"a live autoloop is already armed for {root}; pass --force to override")
+    now = utc_now()
+    entry = {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": run_id,
+        "loop_dir": str(run_dir),
+        "project_root": str(root),
+        "pid": int(args.pid) if args.pid else 0,
+        "heartbeat": now,
+        "created_at": now,
+    }
+    write_json(reg / f"{run_id}.json", entry)
+    return {"status": "ok", "action": "arm", "run_id": run_id, "registry": str(reg), "project_root": str(root)}
+
+
+def disarm_loop(args: argparse.Namespace) -> dict[str, Any]:
+    reg = registry_dir(args)
+    run_id = getattr(args, "run_id", None)
+    loop_dir: str | None = None
+    if getattr(args, "dir", None):
+        loop_dir = str(Path(args.dir).expanduser().resolve())
+        if not run_id:
+            try:
+                run_id = read_json(loop_paths(Path(loop_dir))["state"]).get("run_id")
+            except (OSError, ValueError, json.JSONDecodeError):
+                run_id = None
+    removed: list[str] = []
+    for path, entry in list_registry_entries(reg):
+        if (run_id and entry.get("run_id") == run_id) or (loop_dir and entry.get("loop_dir") == loop_dir):
+            try:
+                path.unlink()
+                removed.append(str(entry.get("run_id")))
+            except OSError:
+                pass
+    return {"status": "ok", "action": "disarm", "removed": removed, "registry": str(reg)}
+
+
+def active_command(args: argparse.Namespace) -> dict[str, Any]:
+    reg = registry_dir(args)
+    gc_registry(reg)
+    loops = [entry for _, entry in list_registry_entries(reg) if entry_is_live(entry)]
+    return {"status": "ok", "action": "active", "registry": str(reg), "count": len(loops), "loops": loops}
+
+
+def compute_done(run_dir: Path) -> dict[str, Any]:
+    paths = loop_paths(run_dir)
+    state = read_json(paths["state"]) if paths["state"].exists() else {}
+    budget = read_json(paths["budget"]) if paths["budget"].exists() else {}
+    stop_conditions = state.get("stop_conditions") or {}
+    paused = (run_dir / SENTINEL_PAUSE).exists()
+    require_user = bool(stop_conditions.get("require_user_stop_only"))
+    max_usd = budget.get("max_usd") or 0
+    max_tokens = budget.get("max_tokens") or 0
+    max_wall = budget.get("max_wall_time_seconds") or 0
+    max_iter = budget.get("max_iterations")
+    started = parse_iso(state.get("created_at"))
+    done = False
+    reason: str | None = None
+    if (run_dir / SENTINEL_STOP).exists():
+        # user-owned stop sentinel: always terminal (stop condition 4).
+        done, reason = True, "user_stop_requested"
+    elif (run_dir / SENTINEL_BLOCKED).exists():
+        # operator-owned stop file: always terminal.
+        done, reason = True, "operator_blocked"
+    elif max_usd and float(budget.get("spent_usd", 0)) >= float(max_usd):
+        done, reason = True, "credit_exhausted:usd"
+    elif max_tokens and int(budget.get("spent_tokens", 0)) >= int(max_tokens):
+        done, reason = True, "credit_exhausted:tokens"
+    elif max_wall and started and (datetime.now(timezone.utc) - started).total_seconds() >= float(max_wall):
+        done, reason = True, "credit_exhausted:wall_time"
+    elif isinstance(max_iter, int) and max_iter > 0 and int(budget.get("spent_iterations", 0)) >= max_iter:
+        # the iteration cap is physical (append refuses beyond it): always terminal.
+        done, reason = True, "loops_reached"
+    elif require_user:
+        # Strongest user policy: beyond a user/operator stop or a physical budget
+        # cap (handled above), only the user may end the loop. An agent-written
+        # terminal status must NOT release the session.
+        done, reason = False, "awaiting_user_stop"
+    elif state.get("status") in TERMINAL_STATUSES:
+        done, reason = True, f"terminal_status:{state.get('status')}"
+    return {"done": done, "paused": paused, "reason": reason}
+
+
+def done_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    return {"status": "ok", "action": "done", "dir": str(run_dir), **compute_done(run_dir)}
+
+
+def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        if os.environ.get("AUTOLOOP_DISABLE"):
+            return {"status": "ok", "action": "hook-check", "block": False, "reason": "disabled_env"}
+        reg = registry_dir(args)
+        gc_registry(reg)
+        root = Path(args.root).expanduser().resolve() if args.root else Path.cwd().resolve()
+        match: dict[str, Any] | None = None
+        for _, entry in list_registry_entries(reg):
+            if not entry_is_live(entry):
+                continue
+            entry_root = entry.get("project_root")
+            if not entry_root:
+                continue
+            # Re-resolve the stored root at match time so a planted or stale
+            # entry cannot capture an unrelated session via a symlink or a
+            # non-canonical path.
+            entry_root = str(Path(str(entry_root)).expanduser().resolve())
+            if str(root) == entry_root or str(root).startswith(entry_root + os.sep):
+                match = entry
+                break
+        if match is None:
+            return {"status": "ok", "action": "hook-check", "block": False, "reason": "no_active_loop"}
+        loop_dir = Path(str(match.get("loop_dir", ""))).expanduser()
+        if not loop_dir.exists():
+            return {"status": "ok", "action": "hook-check", "block": False, "reason": "loop_dir_missing"}
+        verdict = compute_done(loop_dir)
+        if verdict.get("done") or verdict.get("paused"):
+            return {
+                "status": "ok",
+                "action": "hook-check",
+                "block": False,
+                "reason": verdict.get("reason") or ("paused" if verdict.get("paused") else "done"),
+            }
+        return {
+            "status": "ok",
+            "action": "hook-check",
+            "block": True,
+            "reason": "active_not_done",
+            "loop_dir": str(loop_dir),
+            "message": (
+                "Autoloop is active and not finished: do the next iteration now. Do NOT stop, "
+                "pause, or ask to continue. Kill switch: set AUTOLOOP_DISABLE=1, remove the "
+                f"registry entry for run {match.get('run_id')}, or run `touch {loop_dir}/{SENTINEL_STOP}`."
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001 - the Stop hook must fail open.
+        return {"status": "ok", "action": "hook-check", "block": False, "reason": f"error_fail_open:{exc}"}
+
+
 def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 0:
@@ -611,6 +869,19 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--stop-on-guard-fail", action=argparse.BooleanOptionalAction, default=True)
     init.add_argument("--stop-on-missing-evidence", action=argparse.BooleanOptionalAction, default=True)
     init.add_argument("--stop-on-scope-change", action=argparse.BooleanOptionalAction, default=True)
+    init.add_argument(
+        "--success-check",
+        default="",
+        help="machine-checkable shell command that exits 0 when the loop goal is resolved "
+        "(run by the driver/agent, never by the Stop hook)",
+    )
+    init.add_argument(
+        "--require-user-stop-only",
+        action="store_true",
+        help="user override (priority 0): stop ONLY on explicit user stop; ignore the "
+        "loop-count/credit/goal defaults",
+    )
+    init.add_argument("--stop-condition", action="append", help="free-text user stop requirement (priority 0)")
     init.set_defaults(func=init_loop)
 
     append = subparsers.add_parser("append-iteration", help="append one iteration record")
@@ -642,18 +913,66 @@ def build_parser() -> argparse.ArgumentParser:
 
     selftest = subparsers.add_parser("selftest", help="run offline smoke test")
     selftest.set_defaults(func=selftest_command)
+
+    def add_registry_args(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument(
+            "--registry-dir",
+            default=None,
+            help="autoloop registry root (default: $AAS_AUTOLOOP_REGISTRY or "
+            "~/.local/share/ai-agents-skills/autoloop)",
+        )
+
+    arm = subparsers.add_parser("arm", help="register a loop as active (force-management)")
+    arm.add_argument("--dir", required=True)
+    arm.add_argument("--root", default=None, help="project root this loop governs (default: loop dir)")
+    arm.add_argument("--pid", type=int, default=0, help="long-lived loop/driver pid for liveness (0 = heartbeat-only)")
+    arm.add_argument("--force", action="store_true")
+    add_registry_args(arm)
+    arm.set_defaults(func=arm_loop)
+
+    disarm = subparsers.add_parser("disarm", help="deregister an active loop (kill switch)")
+    disarm.add_argument("--dir", default=None)
+    disarm.add_argument("--run-id", default=None)
+    add_registry_args(disarm)
+    disarm.set_defaults(func=disarm_loop)
+
+    active = subparsers.add_parser("active", help="list live active loops")
+    add_registry_args(active)
+    active.set_defaults(func=active_command)
+
+    done = subparsers.add_parser("done", help="report whether a loop dir has met its stop condition")
+    done.add_argument("--dir", required=True)
+    done.set_defaults(func=done_command)
+
+    hook = subparsers.add_parser(
+        "hook-check",
+        help="fail-open Stop-hook check; exit 2 only when an active loop for --root is not done",
+    )
+    hook.add_argument("--root", default=None, help="current session project root (default: cwd)")
+    add_registry_args(hook)
+    hook.set_defaults(func=hook_check_command)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    command = getattr(args, "command", None)
     try:
         result = args.func(args)
     except Exception as exc:  # noqa: BLE001 - CLI should return structured failure.
         result = {"status": "failed", "error": str(exc)}
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stdout)
-        return 1
+        # The Stop hook must fail open: never block turn-end on an internal error.
+        return 0 if command == "hook-check" else 1
+    if command == "hook-check":
+        if result.get("block"):
+            sys.stderr.write(
+                (result.get("message") or "Autoloop active and not finished: continue the next iteration now.")
+                + "\n"
+            )
+            return 2
+        return 0
     print(json.dumps(result, indent=2, sort_keys=True), file=sys.stdout)
     return 0 if result.get("status") == "ok" else 1
 

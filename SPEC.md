@@ -1,50 +1,83 @@
-# Spec: Repo-Only Workflow Gates
+# Spec: Force-Managed Autonomous Loop Enforcement
 
 ## Objective
 
-- Strengthen shared agent behavior rules so supported targets plan and investigate before acting.
-- Add a concrete risk-gated confirmation policy for important or large modifications.
-- Tighten research, retrieval, and writing workflows so agents do what was asked, avoid unasked work, ask when unclear, and inspect prior context before drafting or modifying.
-- Keep this implementation repo-only. Do not write to live agent homes during this phase.
+- Make autonomous-loop stop-condition enforcement a built-in, reusable, and
+  automatically-activated behavior, instead of a hand-crafted per-project hook.
+- Encode one authoritative stop policy: user requirements override everything;
+  otherwise stop only on loops-reached, credit-out, goal-resolved, or a user
+  stop message. Nothing else is a valid stop.
+- Provide a single derived arbiter (`done`) that both an interactive Stop hook
+  and a headless driver consult, so the same policy governs both paths.
+- Guarantee the enforcer is fail-open and always escapable, so a broken or stuck
+  enforcer can never trap a session.
+- Keep this implementation repo-only. Do not write to live agent homes during
+  this phase.
 
 ## Assumptions
 
-1. `~/ai-agents-skills` remains the source of truth for reusable skills, instruction docs, generated docs, manifests, and tests.
-2. Live agent homes such as `~/.codex`, `~/.claude`, `~/.copilot`, `~/.config/opencode`, `~/.gemini`, `~/.deepseek`, and `~/.openclaw` are installation targets only and are not modified in this phase.
-3. Some behavior can be enforced by installer/tests, but live agent compliance remains partly policy-based until provider-native loader and transcript tests are added.
-4. Existing installer conflict protections remain in force: unmanaged files are skipped by default, managed blocks are scoped, and real-system apply requires explicit confirmation.
-5. The new gates should reduce accidental scope expansion without blocking trivial one-line tasks.
+1. `~/ai-agents-skills` remains the source of truth for reusable skills,
+   runtime, instruction docs, generated docs, manifests, templates, and tests.
+2. Live agent homes such as `~/.claude`, `~/.codex`, and `~/.config/opencode`
+   are installation targets only and are not modified in this phase.
+3. The runtime helper already manages `loop_state.json`, `budget.json`,
+   `iterations.jsonl`, and `recovery.md`, and already enforces `max_iterations`,
+   terminal statuses, and machine-checkable proof artifacts on append.
+4. Targets differ in headless and hook capability; the support matrix must state
+   each target honestly rather than claim uniform built-in enforcement.
+5. The installer has no JSON-merge-into-settings surface yet; merging a managed
+   Stop hook into a populated `settings.json` is net-new work, not a reuse of the
+   Markdown managed-block primitive.
 
 ## Scope
 
-- Canonical instruction docs under `canonical/instructions/`.
-- Research, retrieval, review, and writing skill docs under `canonical/skills/`.
-- Manifest entries for portable instruction artifacts.
-- Generated docs and tests that verify the new policy text is propagated.
+- Runtime arm/disarm/active/done commands plus `stop_conditions`,
+  `success_check`, spend/wall enforcement, liveness, and a read-only `done`
+  arbiter with strict precedence.
+- A canonical instruction rule that installs the stop policy as agent behavior.
+- A JSON-merge installer surface that idempotently upserts one tagged managed
+  Stop-hook entry and round-trips on uninstall.
+- A fail-open Stop-hook template and a generic headless driver with launchers.
+- Per-target artifact dirs, manifest artifact kind, generated docs, and target
+  READMEs reflecting the honest support matrix.
 - Lifecycle artifacts in `SPEC.md`, `tasks/plan.md`, and `tasks/todo.md`.
 
 ## Out Of Scope
 
-- Applying changes to live agent homes.
-- Running provider CLIs or proving native loader behavior.
-- Rewriting runtime helper implementations.
+- Applying changes to live agent homes in this phase.
+- Proving provider-native Stop-hook reload behavior on real systems.
+- Reimplementing the existing iteration/budget/proof-artifact machinery.
 - Auditing secrets, local libraries, sessions, logs, caches, or databases.
-- Changing OpenClaw real-system target gates beyond clearer documentation.
 
 ## Acceptance Criteria
 
-- [x] A unified intent gate exists and names scope, out-of-scope work, evidence to inspect, change risk, and verification.
-- [x] A risk-gated confirmation policy exists with concrete thresholds and approval wording.
-- [x] Engineering lifecycle requires read-only investigation before modification plans.
-- [x] Research and retrieval docs require local-library-first routing unless the user explicitly opts out.
-- [x] Library mutations and outward actions require preview/dry-run and explicit confirmation unless already precisely approved.
-- [x] Writing workflows require prior examples/templates/style/context inspection before generating new prose such as blog posts.
-- [x] Research delivery gates inspect structured artifacts when those artifacts exist.
-- [x] Manifest artifacts include the new confirmation policy for portable workflow-instruction installs.
-- [x] Tests cover the canonical policy text and target artifact rendering.
+- [x] Runtime exposes `arm`, `disarm`, `active`, `done`, and `hook-check`, with
+      `done` read-only/derived and strict precedence (user stop > credit/spend >
+      wall > count > success).
+- [x] Hook path is fail-open on every error, missing-state, and re-entrant case,
+      and honors `AUTOLOOP_DISABLE`, registry removal, `STOP_REQUESTED`, and
+      `PAUSE`.
+- [x] Enforcement tests cover arm/block, kill switch, unrelated root, corrupt
+      state fail-open, user-stop override, and pause.
+- [x] A canonical instruction rule encodes the stop policy as installed behavior.
+- [ ] Shipped plateau/blocker/evidence-gap stops are subordinated under the
+      policy so they do not fire by default, with a negative test.
+- [ ] A `settings-json-merge` installer surface upserts one tagged managed Stop
+      hook and round-trips on a populated `settings.json`.
+- [ ] Hook-capable targets gain settings/hook artifact dirs, a manifest JSON-hook
+      artifact kind, and renderer support.
+- [ ] A fail-open Stop-hook template and a generic driver with `.sh/.ps1/.bat`
+      launchers exist, with an `AUTOLOOP_DRIVER` exemption and least-privilege
+      headless flags.
+- [ ] Docs and all target READMEs state the honest per-target support matrix;
+      Sphinx is rebuilt.
 
 ## Verification
 
-- Targeted tests: `python3 -m unittest tests.test_installer.ManifestTests tests.test_installer.PlanInstallVerifyTests`
-- Generated docs: `make docs-check`
-- Broader verification as time allows: `make test`, `make runtime-smoke`, `make lifecycle-test ARGS="--matrix default --platform-shape all"`
+- Enforcement unit tests: `python3 -m pytest -q tests/test_autonomous_research_loop.py`
+- Installer manifest/render tests: `python3 -m unittest tests.test_installer`
+- Round-trip: apply + uninstall the managed hook on a populated fake
+  `settings.json`; `plan` and `audit-system` show the exact diff.
+- Generated docs: `make docs-check`.
+- Repo-only dry run: installer `plan` and `audit-system`; show the `plan` diff
+  before any `apply`.

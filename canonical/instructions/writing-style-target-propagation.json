@@ -1,0 +1,57 @@
+{
+  "schema_version": "writing-style.target-propagation.v1",
+  "generated_for_release": "2026-06-20",
+  "policy_ref": "canonical/instructions/writing-style-settings.md",
+  "overlay_refs": ["canonical/instructions/math-manuscript-style.md"],
+  "rows": [
+    {
+      "target": "codex",
+      "target_status": "installed",
+      "destination": ".codex/instructions/",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
+      "target": "claude",
+      "target_status": "installed",
+      "destination": ".claude/instructions/",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
+      "target": "deepseek",
+      "target_status": "installed",
+      "destination": ".deepseek/instructions/",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
+      "target": "opencode",
+      "target_status": "installed",
+      "destination": "opencode instruction-doc surface",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
+      "target": "antigravity",
+      "target_status": "installed",
+      "destination": "antigravity plugin rules surface",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "satisfied"
+    },
+    {
+      "target": "copilot",
+      "target_status": "unsupported",
+      "destination": "no supported instruction-doc surface in current installer",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "approved-unsupported"
+    },
+    {
+      "target": "openclaw",
+      "target_status": "unsupported",
+      "destination": "blocked runtime-file surface in current installer",
+      "artifact_profile": "workflow-instructions",
+      "release_disposition": "approved-unsupported"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shared writing style record",
+  "type": "object",
+  "required": ["schema_version", "workflow", "style_profile_ref", "policy_hash", "active_overlays", "active_requirement_ids", "style_applied", "style_checks"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {"const": "writing-style.record.v1"},
+    "workflow": {"type": "string"},
+    "artifact_id": {"type": "string"},
+    "style_profile_ref": {"type": "string"},
+    "policy_version": {"type": "string"},
+    "policy_hash": {"type": "string"},
+    "active_overlays": {"type": "array", "items": {"type": "string"}},
+    "active_requirement_ids": {"type": "array", "items": {"type": "string"}},
+    "session_local_additions": {"type": "array", "items": {"type": "object"}},
+    "conflicts": {"type": "array", "items": {"type": "object"}},
+    "style_applied": {"type": "boolean"},
+    "style_checks": {"type": "array", "items": {"type": "object"}},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "blocking_failures": {"type": "array", "items": {"type": "string"}},
+    "exemptions": {"type": "array", "items": {"type": "object"}}
+  }
+}

@@ -22,6 +22,12 @@ Use this after a draft exists and before presenting research as final.
 - overconfident language that should be hedged or marked `incomplete analysis`
 - whether prior posts, templates, style guides, or supplied examples were
   inspected before a format-matched draft
+- whether the draft or workflow records an active writing-style profile from
+  `writing-style-settings.md`, plus `math-manuscript-style.md` when applicable,
+  including `style_profile_ref`, `active_overlays`, and
+  `active_requirement_ids`
+- whether `style_applied: true` is supported by workflow evidence rather than a
+  bare self-assertion
 
 ## Output contract
 
@@ -32,6 +38,8 @@ Then give:
 - `Verdict` — `BLOCK`, `FLAG`, or `PASS`
 - `Findings` — the highest-signal issues first
 - `Repairs` — the minimum changes needed before delivery
+- `Style` — missing or inconsistent `style_profile_ref`, `active_overlays`,
+  `active_requirement_ids`, or `style_applied` records when relevant
 
 If there are no issues, say so explicitly and keep the pass short.
 

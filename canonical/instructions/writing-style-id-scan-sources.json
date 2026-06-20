@@ -1,0 +1,36 @@
+{
+  "schema_version": "writing-style.id-scan-sources.v1",
+  "generated_for_release": "2026-06-20",
+  "sources": [
+    {
+      "artifact_class": "policy-index",
+      "path": "canonical/instructions/writing-style-settings.index.json",
+      "id_fields": ["requirements[].id", "requirements[].source_ledger_ids[]", "requirements[].test_ids[]"]
+    },
+    {
+      "artifact_class": "overlay-index",
+      "path": "canonical/instructions/math-manuscript-style.index.json",
+      "id_fields": ["requirements[].id", "requirements[].source_ledger_ids[]", "requirements[].test_ids[]"]
+    },
+    {
+      "artifact_class": "migration-ledger",
+      "path": "canonical/instructions/writing-style-migration-ledger.json",
+      "id_fields": ["rows[].edge_id", "rows[].normative_requirement_ids[]"]
+    },
+    {
+      "artifact_class": "requirements-matrix",
+      "path": "canonical/instructions/writing-style-requirements-matrix.json",
+      "id_fields": ["requirements[].id", "requirements[].test_ids[]", "non_mechanical_rationales[].id", "non_mechanical_rationales[].requirement_id"]
+    },
+    {
+      "artifact_class": "acceptance-traceability",
+      "path": "canonical/instructions/writing-style-acceptance-traceability.json",
+      "id_fields": ["criteria[].id"]
+    },
+    {
+      "artifact_class": "id-registry",
+      "path": "canonical/instructions/writing-style-id-registry.json",
+      "id_fields": ["namespaces[].allocated_ids[]"]
+    }
+  ]
+}

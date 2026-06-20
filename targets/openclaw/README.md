@@ -21,3 +21,10 @@ Runtime-backed skills are blocked unless neutral runtime evidence exists, and
 instruction blocks remain disabled. Use the OpenClaw inventory, manifest, and
 evidence commands for source/import work, and the OpenClaw target commands for
 reviewed real-system skill-file installs.
+
+## Autonomous loop enforcement
+
+OpenClaw is fake-root-only for normal flows and has no built-in autonomous-loop
+enforcement surface here. Loop stop-conditions remain policy-based via the
+installed `autonomous-loop-enforcement` rule. See the repo
+[Architecture](../../docs/architecture.md) for the full per-target matrix.
