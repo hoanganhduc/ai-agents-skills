@@ -1312,6 +1312,40 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(json.loads(completed.stdout), args)
 
+    @unittest.skipUnless(os.name == "nt", "Windows batch/PowerShell wrapper test")
+    def test_docling_windows_wrapper_uses_aas_runtime_python(self) -> None:
+        # Windows counterpart to test_posix_wrapper_uses_aas_runtime_python: the
+        # .bat -> .ps1 wrapper must launch the interpreter named by AAS_RUNTIME_PYTHON,
+        # so the behavior is asserted on Windows rather than only on POSIX.
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp) / "runtime"
+            docling_dir = runtime_root / "workspace" / "skills" / "docling"
+            docling_dir.mkdir(parents=True)
+            source_dir = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills" / "docling"
+            shutil.copy2(source_dir / "run_docling.bat", docling_dir / "run_docling.bat")
+            shutil.copy2(source_dir / "run_docling.ps1", docling_dir / "run_docling.ps1")
+            (docling_dir / "doctor.py").write_text(
+                "import json, sys\nprint(json.dumps({'executable': sys.executable, 'args': sys.argv[1:]}))\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["AAS_RUNTIME_PYTHON"] = sys.executable
+            env.pop("DOCLING_PYTHON", None)
+
+            completed = subprocess.run(
+                [str(docling_dir / "run_docling.bat"), "doctor", "arg1", "arg2"],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(completed.stdout)
+            self.assertEqual(Path(payload["executable"]).resolve(), Path(sys.executable).resolve())
+            self.assertEqual(payload["args"], ["arg1", "arg2"])
+
     def test_cli_plan_shows_runtime_actions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
