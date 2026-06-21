@@ -43,6 +43,7 @@
     {"id": "AC-0039", "subject_type": "session-capture", "subject_id": "pending-record-schema", "criterion": "Pending session record schema exists.", "release_disposition": "satisfied"},
     {"id": "AC-0040", "subject_type": "target", "subject_id": "fallback-parity", "criterion": "Fallback targets must reference canonical policy and overlay.", "release_disposition": "satisfied"},
     {"id": "AC-0041", "subject_type": "schema", "subject_id": "traceability-mapping.schema.json", "criterion": "Traceability mapping schema exists.", "release_disposition": "satisfied"},
-    {"id": "AC-0042", "subject_type": "release", "subject_id": "planning-readiness", "criterion": "Implementation can proceed from phase-local gates.", "release_disposition": "satisfied"}
+    {"id": "AC-0042", "subject_type": "release", "subject_id": "planning-readiness", "criterion": "Implementation can proceed from phase-local gates.", "release_disposition": "satisfied"},
+    {"id": "AC-0043", "subject_type": "policy", "subject_id": "research-paper-sentence-openings", "criterion": "Research-paper sentence-opening requirements and standard mathematical exceptions are represented in the general policy.", "release_disposition": "satisfied"}
   ]
 }

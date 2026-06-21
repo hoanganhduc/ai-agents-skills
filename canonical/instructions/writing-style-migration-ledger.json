@@ -166,6 +166,17 @@
       "destination_docs": ["canonical/instructions/math-manuscript-style.md"],
       "disposition": "merge",
       "reviewer_status": "approved"
+    },
+    {
+      "edge_id": "ML-0016",
+      "source_location": "user-requirement",
+      "old_rule_text": "Never begin a sentence with a verb. Use full sentences always. Prefer short, clear sentences rather than long complicated ambiguous ones. Let ... be ..., Suppose ..., Assume ..., and Recall ... are acceptable.",
+      "normalized_rule_text": "Use full research-paper sentences and avoid command-style openings, while keeping standard mathematical setup and reminder openings when they are clearest.",
+      "classification_tags": ["general", "research-paper", "sentence-openings"],
+      "normative_requirement_ids": ["WS-GEN-0008"],
+      "destination_docs": ["canonical/instructions/writing-style-settings.md", "canonical/instructions/math-manuscript-style.md"],
+      "disposition": "migrate",
+      "reviewer_status": "approved"
     }
   ]
 }

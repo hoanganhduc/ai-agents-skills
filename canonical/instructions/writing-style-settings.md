@@ -63,6 +63,16 @@ Use short, precise sentences. Prefer common terminology over private names. When
 a non-common concept is necessary, define it before first use and explain its
 role briefly.
 
+## Research-Paper Sentence Openings
+
+For research papers, research notes, reports, and reviews, write full
+grammatical sentences. Avoid command-style sentence openings such as "Set",
+"Put", "Define", "Choose", "Write", "Consider", "Apply", "Observe", "Denote",
+"Take", "Fix", "Say", "Project", "Work", or "Relabel" when a declarative
+sentence gives the same meaning. Standard discipline-specific setup or reminder
+openings, such as "Let ... be ...", "Suppose ...", "Assume ...", and
+"Recall ...", are allowed when they are the clearest form.
+
 ## Formatting Defaults
 
 Use formatting only when it helps scan or verify the content. Keep lists

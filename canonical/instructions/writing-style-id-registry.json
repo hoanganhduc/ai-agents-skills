@@ -5,7 +5,7 @@
     {
       "prefix": "WS-GEN",
       "purpose": "General writing-style normative requirements.",
-      "allocated_ids": ["WS-GEN-0001", "WS-GEN-0002", "WS-GEN-0003", "WS-GEN-0004", "WS-GEN-0005", "WS-GEN-0006", "WS-GEN-0007"]
+      "allocated_ids": ["WS-GEN-0001", "WS-GEN-0002", "WS-GEN-0003", "WS-GEN-0004", "WS-GEN-0005", "WS-GEN-0006", "WS-GEN-0007", "WS-GEN-0008"]
     },
     {
       "prefix": "WS-MATH",
@@ -15,17 +15,17 @@
     {
       "prefix": "ML",
       "purpose": "Writing-style migration ledger edges.",
-      "allocated_ids": ["ML-0001", "ML-0002", "ML-0003", "ML-0004", "ML-0005", "ML-0006", "ML-0007", "ML-0008", "ML-0009", "ML-0010", "ML-0011", "ML-0012", "ML-0013", "ML-0014", "ML-0015"]
+      "allocated_ids": ["ML-0001", "ML-0002", "ML-0003", "ML-0004", "ML-0005", "ML-0006", "ML-0007", "ML-0008", "ML-0009", "ML-0010", "ML-0011", "ML-0012", "ML-0013", "ML-0014", "ML-0015", "ML-0016"]
     },
     {
       "prefix": "AC",
       "purpose": "Writing-style acceptance criteria.",
-      "allocated_ids": ["AC-0001", "AC-0002", "AC-0003", "AC-0004", "AC-0005", "AC-0006", "AC-0007", "AC-0008", "AC-0009", "AC-0010", "AC-0011", "AC-0012", "AC-0013", "AC-0014", "AC-0015", "AC-0016", "AC-0017", "AC-0018", "AC-0019", "AC-0020", "AC-0021", "AC-0022", "AC-0023", "AC-0024", "AC-0025", "AC-0026", "AC-0027", "AC-0028", "AC-0029", "AC-0030", "AC-0031", "AC-0032", "AC-0033", "AC-0034", "AC-0035", "AC-0036", "AC-0037", "AC-0038", "AC-0039", "AC-0040", "AC-0041", "AC-0042"]
+      "allocated_ids": ["AC-0001", "AC-0002", "AC-0003", "AC-0004", "AC-0005", "AC-0006", "AC-0007", "AC-0008", "AC-0009", "AC-0010", "AC-0011", "AC-0012", "AC-0013", "AC-0014", "AC-0015", "AC-0016", "AC-0017", "AC-0018", "AC-0019", "AC-0020", "AC-0021", "AC-0022", "AC-0023", "AC-0024", "AC-0025", "AC-0026", "AC-0027", "AC-0028", "AC-0029", "AC-0030", "AC-0031", "AC-0032", "AC-0033", "AC-0034", "AC-0035", "AC-0036", "AC-0037", "AC-0038", "AC-0039", "AC-0040", "AC-0041", "AC-0042", "AC-0043"]
     },
     {
       "prefix": "WSR",
       "purpose": "Reviewed non-mechanical writing-style rationales.",
-      "allocated_ids": ["WSR-0001", "WSR-0002", "WSR-0003", "WSR-0004", "WSR-0005", "WSR-0006", "WSR-0007"]
+      "allocated_ids": ["WSR-0001", "WSR-0002", "WSR-0003", "WSR-0004", "WSR-0005", "WSR-0006", "WSR-0007", "WSR-0008"]
     }
   ]
 }
