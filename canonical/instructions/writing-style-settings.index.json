@@ -87,6 +87,18 @@
       "test_ids": ["WS-T-0007"],
       "overlays": [],
       "target_adapters": []
+    },
+    {
+      "id": "WS-GEN-0008",
+      "title": "Use full research-paper sentences and avoid command-style openings",
+      "scope": "research-paper and research-note writing workflows",
+      "severity": "hard",
+      "tags": ["clarity", "sentence-openings", "research-paper"],
+      "markdown_anchor": "research-paper-sentence-openings",
+      "source_ledger_ids": ["ML-0016"],
+      "test_ids": ["WS-T-0008"],
+      "overlays": ["math-manuscript-style"],
+      "target_adapters": []
     }
   ]
 }

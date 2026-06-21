@@ -45,7 +45,7 @@ class WritingStyleSystemTests(unittest.TestCase):
 
         policy_ids = {row["id"] for row in policy["requirements"]}
         overlay_ids = {row["id"] for row in overlay["requirements"]}
-        self.assertEqual(policy_ids, {f"WS-GEN-{idx:04d}" for idx in range(1, 8)})
+        self.assertEqual(policy_ids, {f"WS-GEN-{idx:04d}" for idx in range(1, 9)})
         self.assertEqual(overlay_ids, {f"WS-MATH-{idx:04d}" for idx in range(1, 9)})
 
         for row in policy["requirements"]:
@@ -77,7 +77,7 @@ class WritingStyleSystemTests(unittest.TestCase):
         rationale_ids = {row["id"] for row in matrix["non_mechanical_rationales"]}
 
         self.assertEqual(matrix_ids, active_ids)
-        self.assertEqual(acceptance_ids, {f"AC-{idx:04d}" for idx in range(1, 43)})
+        self.assertEqual(acceptance_ids, {f"AC-{idx:04d}" for idx in range(1, 44)})
 
         for row in policy["requirements"] + overlay["requirements"]:
             with self.subTest(requirement=row["id"]):
@@ -222,6 +222,47 @@ class WritingStyleSystemTests(unittest.TestCase):
         self.assertIn("pending record", policy)
         self.assertIn("Do not promote", policy)
         self.assertIn("approval_state", pending_schema["properties"])
+
+    def test_research_paper_sentence_opening_rule_is_canonical_policy(self) -> None:
+        policy = (REPO_ROOT / "canonical/instructions/writing-style-settings.md").read_text(encoding="utf-8")
+        overlay = (REPO_ROOT / "canonical/instructions/math-manuscript-style.md").read_text(encoding="utf-8")
+        policy_index = load_json("canonical/instructions/writing-style-settings.index.json")
+        ledger = load_json("canonical/instructions/writing-style-migration-ledger.json")
+        matrix = load_json("canonical/instructions/writing-style-requirements-matrix.json")
+
+        requirement = next(row for row in policy_index["requirements"] if row["id"] == "WS-GEN-0008")
+        self.assertEqual(requirement["markdown_anchor"], "research-paper-sentence-openings")
+        self.assertIn("ML-0016", requirement["source_ledger_ids"])
+        self.assertIn("WS-T-0008", requirement["test_ids"])
+        self.assertIn("math-manuscript-style", requirement["overlays"])
+
+        ledger_row = next(row for row in ledger["rows"] if row["edge_id"] == "ML-0016")
+        self.assertEqual(ledger_row["normative_requirement_ids"], ["WS-GEN-0008"])
+        self.assertIn("user-requirement", ledger_row["source_location"])
+
+        matrix_row = next(row for row in matrix["requirements"] if row["id"] == "WS-GEN-0008")
+        self.assertEqual(matrix_row["mechanical_status"], "reviewed-non-mechanical")
+        self.assertIn("draft-writing", matrix_row["workflows"])
+        self.assertIn("paper-review", matrix_row["workflows"])
+
+        normalized_policy = re.sub(r"\s+", " ", policy)
+        normalized_overlay = re.sub(r"\s+", " ", overlay)
+
+        for needle in (
+            "Research-Paper Sentence Openings",
+            "full grammatical sentences",
+            "command-style sentence openings",
+            "Let ... be ...",
+            "Suppose ...",
+            "Assume ...",
+            "Recall ...",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, normalized_policy)
+
+        self.assertIn("Sentence Openings", overlay)
+        self.assertIn("Let ... be ...", normalized_overlay)
+        self.assertIn("command-style openings", normalized_overlay)
 
 
 if __name__ == "__main__":

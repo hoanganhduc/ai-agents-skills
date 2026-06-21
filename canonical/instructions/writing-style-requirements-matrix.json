@@ -73,6 +73,16 @@
       "mechanical_status": "deterministic"
     },
     {
+      "id": "WS-GEN-0008",
+      "source_location": "user-requirement",
+      "scope": "research-paper and research-note writing workflows",
+      "canonical_destination": "canonical/instructions/writing-style-settings.md",
+      "workflows": ["draft-writing", "deep-research-workflow", "research-report-reviewer", "source-research", "agent-group-discuss", "prose", "paper-review", "annotated-review", "research-digest-wrapper", "rss-news-digest", "submission-venue-selector", "autonomous-research-loop"],
+      "targets": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "test_ids": ["WS-T-0008"],
+      "mechanical_status": "reviewed-non-mechanical"
+    },
+    {
       "id": "WS-MATH-0001",
       "source_location": "canonical/instructions/language-style-rules.md",
       "scope": "math manuscripts",
@@ -202,6 +212,13 @@
       "reason": "Equation display decisions depend on length, alignment, and importance; mechanical checks can only flag candidates for review.",
       "reviewer": "writing-style-policy",
       "date": "2026-06-20"
+    },
+    {
+      "id": "WSR-0008",
+      "requirement_id": "WS-GEN-0008",
+      "reason": "Command-style sentence openings can be partly scanned mechanically, but deciding whether a standard disciplinary opening is clearer requires prose review.",
+      "reviewer": "writing-style-policy",
+      "date": "2026-06-21"
     }
   ]
 }

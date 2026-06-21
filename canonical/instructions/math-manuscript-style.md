@@ -24,6 +24,15 @@ Prefer standard graph-theoretic and TCS terminology over private names. If a
 nonstandard term is necessary, define it, explain why it is useful, and use it
 only after the reader has the underlying object in view.
 
+## Sentence Openings
+
+Use the general research-paper sentence-opening rule from
+`writing-style-settings.md`. In mathematical prose, standard openings such as
+"Let ... be ...", "Suppose ...", "Assume ...", and "Recall ..." are normal and
+should be kept when they give the shortest precise setup. Avoid command-style
+openings such as "Set", "Put", "Choose", "Apply", or "Consider" when a full
+declarative sentence or a standard setup sentence is clearer.
+
 ## Statements
 
 Mathematical statements must be self-contained. All hypotheses, graph classes,
