@@ -7,8 +7,10 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -783,13 +785,60 @@ def done_command(args: argparse.Namespace) -> dict[str, Any]:
     return {"status": "ok", "action": "done", "dir": str(run_dir), **compute_done(run_dir)}
 
 
+def read_hook_payload() -> str:
+    """Best-effort read of the Stop-hook JSON on stdin that never blocks the
+    fail-open hook. On POSIX a zero-timeout select guards against an inherited idle
+    pipe; on Windows (or where select is unavailable) the runtime reads directly,
+    matching how Claude Code and the tests pipe the payload and then close stdin."""
+    stdin = sys.stdin
+    try:
+        if stdin is None or stdin.isatty():
+            return ""
+    except (ValueError, OSError):
+        return ""
+    if os.name == "posix":
+        try:
+            import select
+
+            ready, _, _ = select.select([stdin], [], [], 0)
+        except (OSError, ValueError):
+            return ""
+        if not ready:
+            return ""
+    try:
+        return stdin.read() or ""
+    except (OSError, ValueError):
+        return ""
+
+
+def hook_payload_is_reentrant(payload: str) -> bool:
+    """True when Claude reports the Stop hook is already active, so a block can never
+    build an infinite loop."""
+    if not payload:
+        return False
+    try:
+        data = json.loads(payload)
+    except (ValueError, TypeError):
+        # Substring fallback for non-JSON or partial input (matches the old shell wrapper).
+        return '"stop_hook_active": true' in payload or '"stop_hook_active":true' in payload
+    return bool(isinstance(data, dict) and data.get("stop_hook_active"))
+
+
 def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
     try:
         if os.environ.get("AUTOLOOP_DISABLE"):
             return {"status": "ok", "action": "hook-check", "block": False, "reason": "disabled_env"}
+        # Headless driver runs enforce the policy themselves; the interactive hook
+        # stands down so it never double-governs a driver iteration.
+        if os.environ.get("AUTOLOOP_DRIVER"):
+            return {"status": "ok", "action": "hook-check", "block": False, "reason": "driver_active"}
+        # Re-entrancy: allow turn-end when Claude reports the Stop hook is already active.
+        if hook_payload_is_reentrant(read_hook_payload()):
+            return {"status": "ok", "action": "hook-check", "block": False, "reason": "stop_hook_active"}
         reg = registry_dir(args)
         gc_registry(reg)
-        root = Path(args.root).expanduser().resolve() if args.root else Path.cwd().resolve()
+        raw_root = args.root or os.environ.get("CLAUDE_PROJECT_DIR")
+        root = Path(raw_root).expanduser().resolve() if raw_root else Path.cwd().resolve()
         match: dict[str, Any] | None = None
         for _, entry in list_registry_entries(reg):
             if not entry_is_live(entry):
@@ -831,6 +880,93 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001 - the Stop hook must fail open.
         return {"status": "ok", "action": "hook-check", "block": False, "reason": f"error_fail_open:{exc}"}
+
+
+DRIVE_EXIT_CODES = {"max_failures": 3, "runtime_error": 4}
+
+
+def drive_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Cross-platform headless driver: run one iteration command per loop until the
+    runtime reports the loop is done (loops reached, credit/budget exhausted, goal
+    resolved, or user stop), or until the iteration command fails too many times in
+    a row, or the runtime state cannot be read. The driver is the sole enforcer in
+    headless mode: it exports AUTOLOOP_DRIVER=1 so the interactive Stop hook stands
+    down, and it derives "done" only from the runtime, never from the agent's own
+    say-so. On any inability to determine state it fails safe (stops). This is the
+    platform-neutral replacement for the bash driver; the .sh shim delegates here."""
+    run_dir = Path(args.dir).expanduser().resolve()
+    root = Path(args.root).expanduser().resolve() if args.root else run_dir
+    iter_timeout = args.iteration_timeout if args.iteration_timeout and args.iteration_timeout > 0 else None
+    max_failures = max(1, int(args.max_failures))
+    poll = max(0.0, float(args.poll))
+
+    # Arm (best-effort) so a concurrent interactive Stop hook for this root stands
+    # down; the driver itself enforces "done" regardless of the registry.
+    arm_ns = argparse.Namespace(
+        dir=str(run_dir),
+        root=str(root),
+        force=False,
+        pid=os.getpid(),
+        registry_dir=getattr(args, "registry_dir", None),
+    )
+    try:
+        arm_loop(arm_ns)
+    except Exception:  # noqa: BLE001 - arming is best-effort.
+        pass
+
+    failures = 0
+    reason = "unknown"
+    try:
+        while True:
+            try:
+                verdict = compute_done(run_dir)
+            except Exception:  # noqa: BLE001 - unreadable state -> fail safe (stop).
+                reason = "runtime_error"
+                break
+            if verdict.get("done"):
+                reason = "done"
+                break
+            if verdict.get("paused"):
+                time.sleep(poll)
+                continue
+            child_env = dict(
+                os.environ,
+                AUTOLOOP_DRIVER="1",
+                AUTOLOOP_DIR=str(run_dir),
+                AUTOLOOP_ROOT=str(root),
+            )
+            try:
+                completed = subprocess.run(args.cmd, shell=True, env=child_env, timeout=iter_timeout)
+                rc = completed.returncode
+            except subprocess.TimeoutExpired:
+                rc = 124
+            if rc != 0:
+                failures += 1
+                sys.stderr.write(
+                    f"autoloop-driver: iteration command failed (rc={rc}, {failures}/{max_failures})\n"
+                )
+                if failures >= max_failures:
+                    reason = "max_failures"
+                    break
+            else:
+                failures = 0
+    finally:
+        disarm_ns = argparse.Namespace(
+            dir=str(run_dir), run_id=None, registry_dir=getattr(args, "registry_dir", None)
+        )
+        try:
+            disarm_loop(disarm_ns)
+        except Exception:  # noqa: BLE001 - disarm is best-effort cleanup.
+            pass
+
+    exit_code = DRIVE_EXIT_CODES.get(reason, 0)
+    return {
+        "status": "failed" if exit_code else "ok",
+        "action": "drive",
+        "dir": str(run_dir),
+        "reason": reason,
+        "exit_code": exit_code,
+    }
 
 
 def positive_int(value: str) -> int:
@@ -948,9 +1084,26 @@ def build_parser() -> argparse.ArgumentParser:
         "hook-check",
         help="fail-open Stop-hook check; exit 2 only when an active loop for --root is not done",
     )
-    hook.add_argument("--root", default=None, help="current session project root (default: cwd)")
+    hook.add_argument(
+        "--root",
+        default=None,
+        help="current session project root (default: $CLAUDE_PROJECT_DIR or cwd)",
+    )
     add_registry_args(hook)
     hook.set_defaults(func=hook_check_command)
+
+    drive = subparsers.add_parser(
+        "drive",
+        help="cross-platform headless driver: run the iteration command per loop until done",
+    )
+    drive.add_argument("--dir", required=True)
+    drive.add_argument("--root", default=None, help="project root this loop governs (default: loop dir)")
+    drive.add_argument("--cmd", required=True, help="iteration shell command run once per loop")
+    drive.add_argument("--iteration-timeout", type=positive_int, default=1800)
+    drive.add_argument("--max-failures", type=positive_int, default=3)
+    drive.add_argument("--poll", type=nonnegative_float, default=5.0)
+    add_registry_args(drive)
+    drive.set_defaults(func=drive_command)
     return parser
 
 
@@ -973,6 +1126,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         return 0
+    if command == "drive":
+        print(json.dumps(result, indent=2, sort_keys=True), file=sys.stdout)
+        return int(result.get("exit_code", 0))
     print(json.dumps(result, indent=2, sort_keys=True), file=sys.stdout)
     return 0 if result.get("status") == "ok" else 1
 

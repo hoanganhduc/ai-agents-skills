@@ -123,8 +123,16 @@ class StopHookPlannerTests(unittest.TestCase):
             self.assertEqual(a["artifact_type"], "settings-hook-merge")
             self.assertEqual(a["managed_id"], "autoloop-stop")
             self.assertEqual(a["operation"], "merge")
-            self.assertTrue(a["path"].endswith("/.claude/settings.json"))
-            self.assertIn("autoloop_stop_hook.sh", a["entry"]["hooks"][0]["command"])
+            # Separator-agnostic so the assertion holds on POSIX and Windows alike.
+            settings_path = Path(a["path"])
+            self.assertEqual(settings_path.name, "settings.json")
+            self.assertEqual(settings_path.parent.name, ".claude")
+            # The Stop hook invokes the runtime's cross-platform hook-check directly
+            # (no shell wrapper); platform="linux" here -> the python3 interpreter.
+            command = a["entry"]["hooks"][0]["command"]
+            self.assertIn("hook-check", command)
+            self.assertIn("autonomous_research_loop_runtime.py", command)
+            self.assertIn("python3", command)
 
     def test_skips_when_runtime_not_selected(self) -> None:
         from installer.ai_agents_skills.manifest import load_manifests

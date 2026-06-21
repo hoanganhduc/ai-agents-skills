@@ -299,14 +299,19 @@ def autoloop_stop_hook_actions(
     if "autonomous-research-loop-runtime" not in runtime_skills:
         return []
     target_root = (runtime_root or default_runtime_root(root, agents, platform)).expanduser()
-    wrapper = (
+    runtime_py = (
         target_root
         / "workspace"
         / "skills"
         / "autonomous-research-loop-runtime"
-        / "autoloop_stop_hook.sh"
+        / "autonomous_research_loop_runtime.py"
     )
-    entry = {"hooks": [{"type": "command", "command": f'bash "{wrapper}"'}]}
+    # Invoke the runtime's cross-platform hook-check directly (no shell wrapper) so the
+    # Stop hook behaves identically on every OS: the runtime reads the hook JSON on
+    # stdin, honors the kill switches and the re-entrancy payload, and resolves the
+    # project root from CLAUDE_PROJECT_DIR.
+    interpreter = "python" if platform == "windows" else "python3"
+    entry = {"hooks": [{"type": "command", "command": f'{interpreter} "{runtime_py}" hook-check'}]}
     actions: list[dict[str, Any]] = []
     for agent in agents:
         if agent.name != "claude":
