@@ -770,10 +770,37 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
 
 
-class AutoloopStopHookWrapperTests(unittest.TestCase):
-    """The shipped fail-open Stop-hook wrapper, exercised against the real runtime."""
+def _arm_loop(run_dir: Path, registry: Path, root: Path) -> None:
+    env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+    subprocess.run(
+        [sys.executable, str(HELPER), "arm", "--dir", str(run_dir), "--root", str(root)],
+        capture_output=True, text=True, timeout=20, env=env, check=False,
+    )
 
-    STOP_HOOK = HELPER.parent / "autoloop_stop_hook.sh"
+
+def _init_loop(run_dir: Path, registry: Path, *extra: str, max_iterations: int = 3) -> None:
+    env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+    subprocess.run(
+        [sys.executable, str(HELPER), "init", "--dir", str(run_dir), "--goal", "g",
+         "--success-criteria", "sc", "--max-iterations", str(max_iterations), *extra],
+        capture_output=True, text=True, timeout=20, env=env, check=False,
+    )
+
+
+def _py_iteration(script: str) -> str:
+    """A cross-platform iteration command: a python one-liner run through the platform
+    shell. The script must use single quotes only, so the ``"<python>" -c "<script>"``
+    string parses identically under /bin/sh and cmd.exe."""
+    return f'"{sys.executable}" -c "{script}"'
+
+
+class RuntimeHookCheckTests(unittest.TestCase):
+    """The runtime's fail-open Stop-hook check, invoked directly (cross-platform).
+
+    The installer wires this as ``python <runtime.py> hook-check``: the runtime reads
+    the hook JSON on stdin, honors the kill switches and the stop_hook_active
+    re-entrancy payload, and resolves the project root from CLAUDE_PROJECT_DIR, so
+    there is no shell wrapper and the behavior is identical on every OS."""
 
     def _hook(self, *, registry: Path, root: Path, payload: str = "", env_extra: dict[str, str] | None = None):
         env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry), CLAUDE_PROJECT_DIR=str(root))
@@ -782,7 +809,7 @@ class AutoloopStopHookWrapperTests(unittest.TestCase):
         if env_extra:
             env.update(env_extra)
         return subprocess.run(
-            ["bash", str(self.STOP_HOOK)],
+            [sys.executable, str(HELPER), "hook-check"],
             input=payload,
             capture_output=True,
             text=True,
@@ -791,26 +818,11 @@ class AutoloopStopHookWrapperTests(unittest.TestCase):
             check=False,
         )
 
-    def _init(self, run_dir: Path, registry: Path, *extra: str) -> None:
-        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
-        subprocess.run(
-            [sys.executable, str(HELPER), "init", "--dir", str(run_dir), "--goal", "g",
-             "--success-criteria", "sc", "--max-iterations", "3", *extra],
-            capture_output=True, text=True, timeout=20, env=env, check=False,
-        )
-
-    def _arm(self, run_dir: Path, registry: Path, root: Path) -> None:
-        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
-        subprocess.run(
-            [sys.executable, str(HELPER), "arm", "--dir", str(run_dir), "--root", str(root)],
-            capture_output=True, text=True, timeout=20, env=env, check=False,
-        )
-
     def _armed(self, base: Path):
         reg, loop, proj = base / "reg", base / "loop", base / "proj"
         proj.mkdir()
-        self._init(loop, reg)
-        self._arm(loop, reg, proj)
+        _init_loop(loop, reg)
+        _arm_loop(loop, reg, proj)
         return reg, loop, proj
 
     def test_allows_when_no_active_loop(self) -> None:
@@ -846,43 +858,71 @@ class AutoloopStopHookWrapperTests(unittest.TestCase):
             self.assertEqual(self._hook(registry=reg, root=proj).returncode, 0)
 
 
-class AutoloopDriverTests(unittest.TestCase):
-    """The generic headless driver: derives done from the runtime, fails safe."""
+@unittest.skipUnless(os.name == "posix", "the .sh shim is shipped for POSIX manual use only")
+class AutoloopStopHookShimTests(unittest.TestCase):
+    """Smoke: the POSIX .sh convenience shim delegates to the runtime hook-check."""
 
-    DRIVER = HELPER.parent / "autoloop_driver.sh"
+    STOP_HOOK = HELPER.parent / "autoloop_stop_hook.sh"
 
-    def _init(self, run_dir: Path, registry: Path, *extra: str) -> None:
-        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
-        subprocess.run(
-            [sys.executable, str(HELPER), "init", "--dir", str(run_dir), "--goal", "g",
-             "--success-criteria", "sc", "--max-iterations", "5", *extra],
-            capture_output=True, text=True, timeout=20, env=env, check=False,
+    def _shim(self, *, registry: Path, root: Path, payload: str = ""):
+        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry), CLAUDE_PROJECT_DIR=str(root))
+        env.pop("AUTOLOOP_DISABLE", None)
+        env.pop("AUTOLOOP_DRIVER", None)
+        return subprocess.run(
+            ["bash", str(self.STOP_HOOK)],
+            input=payload, capture_output=True, text=True, timeout=30, env=env, check=False,
         )
+
+    def _armed(self, base: Path):
+        reg, loop, proj = base / "reg", base / "loop", base / "proj"
+        proj.mkdir()
+        _init_loop(loop, reg)
+        _arm_loop(loop, reg, proj)
+        return reg, loop, proj
+
+    def test_shim_allows_when_no_active_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            self.assertEqual(self._shim(registry=base / "reg", root=base / "proj").returncode, 0)
+
+    def test_shim_blocks_when_active_loop_not_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            reg, _loop, proj = self._armed(Path(tmp))
+            self.assertEqual(self._shim(registry=reg, root=proj).returncode, 2)
+
+
+class RuntimeDriveTests(unittest.TestCase):
+    """The cross-platform headless driver subcommand: derives done from the runtime,
+    fails safe. Replaces the bash driver; the POSIX .sh shim delegates here."""
 
     def _drive(self, run_dir: Path, registry: Path, cmd: str, *extra: str, timeout: int = 40):
         env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
         return subprocess.run(
-            ["bash", str(self.DRIVER), "--dir", str(run_dir), "--root", str(run_dir), "--cmd", cmd, *extra],
+            [sys.executable, str(HELPER), "drive", "--dir", str(run_dir), "--root", str(run_dir),
+             "--cmd", cmd, *extra],
             capture_output=True, text=True, timeout=timeout, env=env, check=False,
         )
 
     def test_stops_immediately_when_already_done(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
-            self._init(loop, reg)
+            _init_loop(loop, reg, max_iterations=5)
             (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
-            res = self._drive(loop, reg, ': > "$AUTOLOOP_DIR/ran"')
+            cmd = _py_iteration(
+                "import os,pathlib; pathlib.Path(os.environ['AUTOLOOP_DIR'],'ran').write_text('x')"
+            )
+            res = self._drive(loop, reg, cmd)
             self.assertEqual(res.returncode, 0)
             self.assertFalse((loop / "ran").exists())  # iteration command never ran
 
     def test_runs_iterations_until_user_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
-            self._init(loop, reg)
-            cmd = (
-                'c=$(cat "$AUTOLOOP_DIR/c" 2>/dev/null || echo 0); c=$((c+1)); '
-                'printf "%s" "$c" > "$AUTOLOOP_DIR/c"; '
-                '[ "$c" -ge 3 ] && : > "$AUTOLOOP_DIR/STOP_REQUESTED"; true'
+            _init_loop(loop, reg, max_iterations=5)
+            cmd = _py_iteration(
+                "import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); p=d/'c'; "
+                "c=(int(p.read_text()) if p.exists() else 0)+1; p.write_text(str(c)); "
+                "(c>=3 and (d/'STOP_REQUESTED').write_text('x'))"
             )
             res = self._drive(loop, reg, cmd)
             self.assertEqual(res.returncode, 0)
@@ -891,10 +931,10 @@ class AutoloopDriverTests(unittest.TestCase):
     def test_stops_after_max_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
-            self._init(loop, reg)
-            cmd = (
-                'c=$(cat "$AUTOLOOP_DIR/c" 2>/dev/null || echo 0); c=$((c+1)); '
-                'printf "%s" "$c" > "$AUTOLOOP_DIR/c"; exit 1'
+            _init_loop(loop, reg, max_iterations=5)
+            cmd = _py_iteration(
+                "import os,pathlib,sys; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); p=d/'c'; "
+                "c=(int(p.read_text()) if p.exists() else 0)+1; p.write_text(str(c)); sys.exit(1)"
             )
             res = self._drive(loop, reg, cmd, "--max-failures", "3")
             self.assertEqual(res.returncode, 3)
@@ -903,8 +943,12 @@ class AutoloopDriverTests(unittest.TestCase):
     def test_exports_driver_env_so_hook_stands_down(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
-            self._init(loop, reg)
-            cmd = 'printf "%s" "$AUTOLOOP_DRIVER" > "$AUTOLOOP_DIR/env"; : > "$AUTOLOOP_DIR/STOP_REQUESTED"'
+            _init_loop(loop, reg, max_iterations=5)
+            cmd = _py_iteration(
+                "import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); "
+                "(d/'env').write_text(os.environ.get('AUTOLOOP_DRIVER','')); "
+                "(d/'STOP_REQUESTED').write_text('x')"
+            )
             res = self._drive(loop, reg, cmd)
             self.assertEqual(res.returncode, 0)
             self.assertEqual((loop / "env").read_text(), "1")
@@ -912,8 +956,32 @@ class AutoloopDriverTests(unittest.TestCase):
     def test_pause_blocks_iterations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
-            self._init(loop, reg)
+            _init_loop(loop, reg, max_iterations=5)
             (loop / "PAUSE").write_text("", encoding="utf-8")
+            cmd = _py_iteration(
+                "import os,pathlib; pathlib.Path(os.environ['AUTOLOOP_DIR'],'ran').write_text('x')"
+            )
             with self.assertRaises(subprocess.TimeoutExpired):
-                self._drive(loop, reg, ': > "$AUTOLOOP_DIR/ran"', "--poll", "5", timeout=3)
+                self._drive(loop, reg, cmd, "--poll", "5", timeout=3)
             self.assertFalse((loop / "ran").exists())  # paused -> no iteration ran
+
+
+@unittest.skipUnless(os.name == "posix", "the .sh shim is shipped for POSIX manual use only")
+class AutoloopDriverShimTests(unittest.TestCase):
+    """Smoke: the POSIX .sh convenience shim delegates to the runtime drive subcommand."""
+
+    DRIVER = HELPER.parent / "autoloop_driver.sh"
+
+    def test_shim_stops_immediately_when_already_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            _init_loop(loop, reg, max_iterations=5)
+            (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
+            env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(reg))
+            res = subprocess.run(
+                ["bash", str(self.DRIVER), "--dir", str(loop), "--root", str(loop),
+                 "--cmd", ': > "$AUTOLOOP_DIR/ran"'],
+                capture_output=True, text=True, timeout=40, env=env, check=False,
+            )
+            self.assertEqual(res.returncode, 0)
+            self.assertFalse((loop / "ran").exists())  # iteration command never ran
