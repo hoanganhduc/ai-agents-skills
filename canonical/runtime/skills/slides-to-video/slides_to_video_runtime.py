@@ -13,7 +13,7 @@ Subcommands:
   selftest   offline smoke (no network/ffmpeg/venv)
 
 Invoke via the managed runner, e.g.:
-  bash ~/.codex/runtime/run_skill.sh skills/slides-to-video/run_slides_to_video.sh doctor
+  bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/slides-to-video/run_slides_to_video.sh doctor
 """
 
 from __future__ import annotations

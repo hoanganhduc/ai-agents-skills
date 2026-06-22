@@ -10,10 +10,10 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/deep-research-workflow/run_deep_research_workflow.bat" <args>
 ```
 
@@ -45,14 +45,14 @@ ledger or final artifact metadata.
 Initialize a deep-research scaffold with:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh init --dir /path/to/workspace
 ```
 
 For machine-checkable research runs, initialize structured ledgers too:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh init --structured --dir /path/to/workspace
 ```
 
@@ -60,35 +60,35 @@ For research where formal verification may help, initialize the optional v2
 formal lane:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh init --structured --schema-version 2 --formal --dir /path/to/workspace
 ```
 
 Validate the structured ledgers before delivery with:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh validate --dir /path/to/workspace/research
 ```
 
 Validate a v2/formal workspace with:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh validate --schema-version 2 --dir /path/to/workspace/research
 ```
 
 Verify the helper setup with:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh doctor
 ```
 
 Run the offline strict workflow smoke with:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh selftest
 ```
 
@@ -144,7 +144,7 @@ Outputs:
 
 Use these templates when helpful:
 
-- `~/.codex/templates/deep-research-sources.md`
+- installed template `deep-research-sources`
 
 ### Zotero cross-check
 
@@ -192,7 +192,7 @@ Outputs:
 Detailed handoff structure:
 
 - `references/source-handoff.md`
-- `~/.codex/templates/deep-research-analysis.md`
+- installed template `deep-research-analysis`
 
 ### Research quality guards
 
@@ -255,12 +255,12 @@ formal support on its own.
 Use the local helpers as optional gates:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh assess --claim-id C1 --claim "..."
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh verify --input formal/artifacts/C1.lean --artifact-stage final_candidate --typecheck
 ```
 
@@ -326,7 +326,7 @@ Output structure guidance:
 
 - `references/output-structure.md`
 - `references/research-quality-guards.md`
-- `~/.codex/templates/deep-research-report.md`
+- installed template `deep-research-report`
 
 ## Skill handoffs
 

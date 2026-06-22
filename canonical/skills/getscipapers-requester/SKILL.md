@@ -10,10 +10,10 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/getscipapers_requester/run_gsp_helper.bat" <args>
 ```
 
@@ -37,31 +37,31 @@ the local miss/ambiguity is shown.
 
 ## Base path
 
-- `~/.codex/runtime/workspace/skills/getscipapers_requester/`
+- `$AAS_RUNTIME_WORKSPACE/skills/getscipapers_requester/`
 
-Use the Codex runtime runner rather than invoking `run_gsp_helper.sh` directly. The runner
+Use the managed runtime runner rather than invoking `run_gsp_helper.sh` directly. The runner
 sets `OPENCLAW_WORKSPACE`, `PYTHONPATH`, secrets, and workspace-local binaries.
 
 Shared runner:
 
-- `bash ~/.codex/runtime/run_skill.sh`
+- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
 
 ## Core commands
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/getscipapers_requester/run_gsp_helper.sh run-getscipapers --timeout 180 -- getpapers --doi <DOI>
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh run-getscipapers --timeout 180 -- getpapers --doi <DOI>
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/getscipapers_requester/run_gsp_helper.sh resolve auto "<title>" --best
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh resolve auto "<title>" --best
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/getscipapers_requester/run_gsp_helper.sh make-manifest auto "<text-or-file>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh make-manifest auto "<text-or-file>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/getscipapers_requester/run_gsp_helper.sh doctor
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh doctor
 ```
 
 ## Z-Library and DJVU fallback

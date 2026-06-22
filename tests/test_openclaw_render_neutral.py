@@ -12,6 +12,7 @@ from installer.ai_agents_skills.render import (
     add_managed_header,
     load_canonical_skill,
     render_openclaw_runtime_neutral,
+    render_runtime_path_neutral,
     render_skill_md,
 )
 
@@ -56,6 +57,27 @@ class OpenClawRenderNeutralTest(unittest.TestCase):
         self.assertIn("$AAS_RUNTIME_ROOT/run_skill.sh", out)
         self.assertIn("$AAS_BROKER_ENDPOINT", out)
         self.assertEqual(path_leak_scan(out), [])
+
+    def test_copied_non_codex_runtime_skill_renders_neutral_runtime_commands(self) -> None:
+        forbidden = (
+            "~/.codex/runtime",
+            "$HOME/.codex/runtime",
+            "${HOME}/.codex/runtime",
+            "%USERPROFILE%\\.codex\\runtime",
+            ".codex/runtime",
+        )
+        for agent in ("opencode", "antigravity"):
+            for skill in _M["runtime"]["skills"]:
+                with self.subTest(agent=agent, skill=skill):
+                    out = render_skill_md(skill, _spec(skill), agent)
+                    for token in forbidden:
+                        self.assertNotIn(token, out)
+
+    def test_copied_non_codex_render_preserves_shared_runtime_root_examples(self) -> None:
+        content = "Run `%LOCALAPPDATA%\\ai-agents-skills\\runtime\\run_skill.bat` on Windows.\n"
+        out, changed = render_runtime_path_neutral(content)
+        self.assertFalse(changed)
+        self.assertEqual(out, content)
 
 
 if __name__ == "__main__":

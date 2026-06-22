@@ -10,10 +10,10 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/vnthuquan/run_vnthuquan.bat" <args>
 & "$runtime\run_skill.bat" "skills/vnthuquan/run_vnthuquan.ps1" <args>
 ```
@@ -42,19 +42,19 @@ Use this skill only for Vietnam Thu Quan site-specific ebook work:
 
 ## Runtime
 
-Use the Codex runtime runner rather than invoking the wrapper directly:
+Use the managed runtime runner rather than invoking the wrapper directly:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh diagnose --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh diagnose --json
 ```
 
 Runtime wrapper:
 
-- `~/.codex/runtime/workspace/skills/vnthuquan/run_vnthuquan.sh`
+- `$AAS_RUNTIME_WORKSPACE/skills/vnthuquan/run_vnthuquan.sh`
 
 Detailed workflows live in:
 
-- `~/.codex/skills/vnthuquan/references/workflows.md`
+- `references/workflows.md`
 
 ## Current Phase
 
@@ -90,35 +90,35 @@ includes:
 ## Examples
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh search "Kim Dung" --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh search "Kim Dung" --json
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh categories list --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh categories list --json
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh show --title "Mưa Đỏ" --links --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh show --title "Mưa Đỏ" --links --json
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh mirrors check --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh mirrors check --json
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh download --title "Mưa Đỏ" --format epub --dry-run --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh download --title "Mưa Đỏ" --format epub --dry-run --json
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh queue --query "Kim Dung" --limit 5 --format epub --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh queue --query "Kim Dung" --limit 5 --format epub --json
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --dry-run --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --dry-run --json
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --execute --yes --duplicates-reviewed --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --execute --yes --duplicates-reviewed --json
 ```
 
 ## Safety Rules

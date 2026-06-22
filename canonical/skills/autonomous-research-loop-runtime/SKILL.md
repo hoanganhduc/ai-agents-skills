@@ -13,28 +13,28 @@ support runtime skill helpers. It is not an OpenClaw skill-file target.
 
 ## Commands
 
-From a configured Codex runtime, prefer:
+From a configured ai-agents-skills runtime, prefer:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh selftest
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh selftest
 ```
 
 Common commands:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh init --dir research/run --goal "..." --success-criteria "..."
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh init --dir research/run --goal "..." --success-criteria "..."
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh append-iteration --dir research/run --mode bounded-research --objective "Check evidence gaps" --decision continue
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh append-iteration --dir research/run --mode bounded-research --objective "Check evidence gaps" --decision continue
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh validate --dir research/run
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh validate --dir research/run
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh status --dir research/run
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh status --dir research/run
 ```
 
 The helper is authoritative for local ledger and iteration-budget invariants.
@@ -76,11 +76,11 @@ itself.
 On Windows, use the installed runtime runner with the native launcher target:
 
 ```bat
-%USERPROFILE%\.codex\runtime\run_skill.bat skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat selftest
+%AAS_RUNTIME_ROOT%\run_skill.bat skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat selftest
 ```
 
 ```powershell
-& "$env:USERPROFILE\.codex\runtime\run_skill.ps1" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1 selftest
+& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1 selftest
 ```
 
 ## Guarantees

@@ -201,7 +201,7 @@ Each `codex_spawned` participant gets a `model` and `reasoning_effort` through
 `spawn_agent`.
 Refer to `MODEL_TIERS.md` for the runtime freshness check and role-to-model
 routing policy, and `EXECUTION.md` for per-template execution defaults. The
-active Codex runtime/tool definitions are the source of truth for available
+active host runtime/tool definitions are the source of truth for available
 models; update stale checked-in defaults before launching a run from this repo.
 External CLI participants use probed capability profiles and adapter guidance
 from `references/external-cli-agents.md`; do not route them through
