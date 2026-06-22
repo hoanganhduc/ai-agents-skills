@@ -10,16 +10,16 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/zotero/run_zot.bat" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
 
-This uses the vendored Codex runtime copy of the Zotero workflow.
+This uses the managed ai-agents-skills runtime copy of the Zotero workflow.
 
 ## Routing rule
 
@@ -42,15 +42,15 @@ Prefer this over `getscipapers-requester` whenever the request involves the user
 
 All live commands come from:
 
-- `~/.codex/runtime/workspace/skills/zotero/`
+- `$AAS_RUNTIME_WORKSPACE/skills/zotero/`
 
-Use the shared Codex runtime runner rather than invoking `run_zot.sh` directly. The runner sets
+Use the managed runtime runner rather than invoking `run_zot.sh` directly. The runner sets
 the vendored workspace path, `PYTHONPATH`, secrets, and workspace-local binaries for the migrated
 workflow.
 
 Shared runner:
 
-- `bash ~/.codex/runtime/run_skill.sh`
+- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
 
 ## Local Library Profile Gate
 
@@ -143,7 +143,7 @@ curl -s -X POST -H 'Content-Type: text/plain' --data 'https://doi.org/10.1038/np
 When starting or repairing the local server, prefer the runtime helper:
 
 ```bash
-bash ~/.codex/runtime/workspace/skills/zotero/scripts/start-translation-server.sh
+bash $AAS_RUNTIME_WORKSPACE/skills/zotero/scripts/start-translation-server.sh
 ```
 
 Then run `doctor` before metadata-dependent add/update workflows. A reachable
@@ -154,7 +154,7 @@ Treat other failed `doctor` checks as blockers unless the user explicitly asks
 for a degraded diagnostic path:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh doctor
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh doctor
 ```
 
 ## Core commands
@@ -164,59 +164,59 @@ Use `functions.exec_command`.
 Common patterns:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh --json get "<query>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh --json get --link "<query>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh --json get --link "<query>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh --json get "<query>" --index 0
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --index 0
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh add "<DOI or arXiv or URL>" --collection "<name>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh add "<DOI or arXiv or URL>" --collection "<name>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh add "/path/to/file.ext" --collection "<name>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh add "/path/to/file.ext" --collection "<name>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh update <key> --item-type manuscript
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh update <key> --item-type manuscript
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh update <key> --attach-file "/path/to/file.pdf"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh update <key> --attach-file "/path/to/file.pdf"
 ```
 
 ```bash
-cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.local:$PYTHONPATH" python3 skills/zotero/zot.py search "<query>" --json
+cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHONPATH:-}" python3 skills/zotero/zot.py search "<query>" --json
 ```
 
 ```bash
-cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.local:$PYTHONPATH" python3 skills/zotero/zot.py search --local-db "<query>" --json
+cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHONPATH:-}" python3 skills/zotero/zot.py search --local-db "<query>" --json
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/zotero/run_zot.sh --json get "<query>" --no-local-storage
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --no-local-storage
 ```
 
 ```bash
-cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.local:$PYTHONPATH" python3 skills/zotero/zot.py list-collections --tree --json
+cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHONPATH:-}" python3 skills/zotero/zot.py list-collections --tree --json
 ```
 
 ```bash
-cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.local:$PYTHONPATH" python3 skills/zotero/zot.py notes <key>
+cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHONPATH:-}" python3 skills/zotero/zot.py notes <key>
 ```
 
 ```bash
-cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.local:$PYTHONPATH" python3 skills/zotero/zot.py doctor
+cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHONPATH:-}" python3 skills/zotero/zot.py doctor
 ```
 
 ```bash
-cd ~/.codex/runtime/workspace && PYTHONPATH="$HOME/.codex/runtime/workspace/.local:$PYTHONPATH" python3 skills/zotero/zot.py sync-cache
+cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHONPATH:-}" python3 skills/zotero/zot.py sync-cache
 ```
 
 ## Most important behaviors imported from OpenClaw

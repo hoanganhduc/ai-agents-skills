@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKSPACE="${OPENCLAW_WORKSPACE:-$HOME/.codex/runtime/workspace}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+DEFAULT_WORKSPACE="$(cd -- "$SCRIPT_DIR/../.." && pwd -P)"
+WORKSPACE="${AAS_RUNTIME_WORKSPACE:-${OPENCLAW_WORKSPACE:-$DEFAULT_WORKSPACE}}"
 BASE="$WORKSPACE/skills/rss-news-digest"
 DIGEST_DIR="$WORKSPACE/data/research/rss/digests"
 SUMMARY="$DIGEST_DIR/last-summary.md"

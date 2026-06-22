@@ -19,6 +19,39 @@ class StaticCheckTests(unittest.TestCase):
         self.assertIn("[System.Management.Automation.Language.Parser]::ParseFile($path", script)
         self.assertIn(str(path.resolve()).replace("'", "''"), script)
 
+    def test_runtime_skill_sources_do_not_document_codex_runtime_runner(self) -> None:
+        forbidden = (
+            "bash ~/.codex/runtime/run_skill.sh",
+            "~/.codex/runtime/workspace",
+            "$HOME/.codex/runtime/workspace",
+            "%USERPROFILE%\\.codex\\runtime",
+        )
+        root = Path("canonical/runtime/skills")
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".md", ".py", ".sh", ".txt"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for token in forbidden:
+                with self.subTest(path=str(path), token=token):
+                    self.assertNotIn(token, text)
+
+    def test_canonical_skill_runtime_guidance_avoids_codex_runtime_paths(self) -> None:
+        forbidden = (
+            "bash ~/.codex/runtime/run_skill.sh",
+            "~/.codex/runtime/workspace",
+            "$HOME/.codex/runtime",
+            "$env:USERPROFILE\\.codex\\runtime",
+            "%USERPROFILE%\\.codex\\runtime",
+            "Codex-only installs the runtime",
+            "Codex runtime runner",
+            "vendored Codex runtime",
+        )
+        for path in Path("canonical/skills").glob("*/SKILL.md"):
+            text = path.read_text(encoding="utf-8")
+            for token in forbidden:
+                with self.subTest(path=str(path), token=token):
+                    self.assertNotIn(token, text)
+
 
 if __name__ == "__main__":
     unittest.main()

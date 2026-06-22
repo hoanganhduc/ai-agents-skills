@@ -19,7 +19,7 @@ the animation timing and is rendered silent.
 ## Windows Runtime Commands
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/manim-math-animation/run_manim_math_animation.bat" <args>
 & "$runtime\run_skill.bat" "skills/manim-math-animation/run_manim_math_animation.ps1" <args>
 ```

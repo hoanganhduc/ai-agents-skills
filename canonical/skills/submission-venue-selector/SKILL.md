@@ -48,7 +48,7 @@ Do not use this skill for:
 POSIX:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/submission-venue-selector/run_submission_venue_selector.sh \
   run --dir /path/to/venue-run --draft /path/to/draft.tex --offline
 ```
@@ -59,14 +59,14 @@ recommendation unless trusted fixture/cache comparator evidence is provided.
 Windows PowerShell:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.ps1" "skills/submission-venue-selector/run_submission_venue_selector.ps1" run --dir "$env:USERPROFILE\venue-run" --draft "$env:USERPROFILE\drafts\paper.tex" --offline
 ```
 
 Windows CMD:
 
 ```bat
-"%USERPROFILE%\.codex\runtime\run_skill.bat" skills/submission-venue-selector/run_submission_venue_selector.bat run --dir "%USERPROFILE%\venue-run" --draft "%USERPROFILE%\drafts\paper.tex" --offline
+"%AAS_RUNTIME_ROOT%\run_skill.bat" skills/submission-venue-selector/run_submission_venue_selector.bat run --dir "%USERPROFILE%\venue-run" --draft "%USERPROFILE%\drafts\paper.tex" --offline
 ```
 
 Useful commands:

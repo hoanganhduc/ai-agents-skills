@@ -11,19 +11,24 @@ from .manifest import REPO_ROOT
 
 MANAGED_MARKER = "Managed by ai-agents-skills"
 
-# Codex/runtime path tokens -> portable, machine-neutral forms for OpenClaw render
-# (issue 5). Order matters: prefixed forms first, bare ".codex/runtime" last.
-_OPENCLAW_RUNTIME_SUBSTITUTIONS = (
+# Codex/runtime path tokens -> portable forms for copied non-Codex skill renders.
+# Order matters: prefixed forms first, bare ".codex/runtime" last.
+_RUNTIME_PATH_SUBSTITUTIONS = (
     (re.compile(r"~/\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
     (re.compile(r"\$\{HOME\}/\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
     (re.compile(r"\$HOME/\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
     (re.compile(r"\$CODEX_HOME/runtime", re.I), "$AAS_RUNTIME_ROOT"),
     (re.compile(r"\$codex_home", re.I), "$AAS_RUNTIME_ROOT"),
-    (re.compile(r"%LOCALAPPDATA%\\ai-agents-skills\\runtime", re.I), "%AAS_RUNTIME_ROOT%"),
     (re.compile(r"%USERPROFILE%\\\.?codex(?:\\runtime)?", re.I), "%AAS_RUNTIME_ROOT%"),
     (re.compile(r"\$env:USERPROFILE\\\.?codex\\runtime", re.I), "$env:AAS_RUNTIME_ROOT"),
-    (re.compile(r"\$env:LOCALAPPDATA\\ai-agents-skills\\runtime", re.I), "$env:AAS_RUNTIME_ROOT"),
     (re.compile(r"\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
+)
+
+# OpenClaw also cannot consume host-side shared runtime roots from inside the
+# sandbox, so its stricter neutralizer rewrites those to broker-resolved env vars.
+_OPENCLAW_RUNTIME_SUBSTITUTIONS = _RUNTIME_PATH_SUBSTITUTIONS + (
+    (re.compile(r"%LOCALAPPDATA%\\ai-agents-skills\\runtime", re.I), "%AAS_RUNTIME_ROOT%"),
+    (re.compile(r"\$env:LOCALAPPDATA\\ai-agents-skills\\runtime", re.I), "$env:AAS_RUNTIME_ROOT"),
 )
 
 _OPENCLAW_RUNTIME_NOTE = (
@@ -46,19 +51,28 @@ def render_openclaw_runtime_neutral(content: str) -> str:
     """
     from .openclaw_target_paths import path_leak_scan
 
-    neutral = content
-    changed = False
-    for pattern, repl in _OPENCLAW_RUNTIME_SUBSTITUTIONS:
-        new = pattern.sub(repl, neutral)
-        if new != neutral:
-            neutral = new
-            changed = True
+    neutral, changed = render_runtime_path_neutral(content, substitutions=_OPENCLAW_RUNTIME_SUBSTITUTIONS)
     if changed:
         neutral = neutral + _OPENCLAW_RUNTIME_NOTE
     leaks = path_leak_scan(neutral)
     if leaks:
         raise ValueError(f"OpenClaw runtime-neutral render still leaks machine paths: {leaks}")
     return neutral
+
+
+def render_runtime_path_neutral(
+    content: str,
+    *,
+    substitutions: tuple[tuple[re.Pattern[str], str], ...] = _RUNTIME_PATH_SUBSTITUTIONS,
+) -> tuple[str, bool]:
+    neutral = content
+    changed = False
+    for pattern, repl in substitutions:
+        new = pattern.sub(repl, neutral)
+        if new != neutral:
+            neutral = new
+            changed = True
+    return neutral, changed
 
 
 def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
@@ -68,8 +82,10 @@ def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
         if agent == "openclaw":
             return render_openclaw_runtime_neutral(content)
         if agent == "opencode":
+            content, _ = render_runtime_path_neutral(content)
             return add_opencode_skill_note(content)
         if agent == "antigravity":
+            content, _ = render_runtime_path_neutral(content)
             return add_antigravity_skill_note(content)
         return content
     description = str(spec["description"])

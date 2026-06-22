@@ -7,10 +7,10 @@ description: Use when deciding whether a research claim should enter the optiona
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/lean-formalization-intake/run_lean_formalization_intake.bat" doctor
 ```
 
@@ -36,7 +36,7 @@ Use this skill before spending effort on Lean formalization. It decides whether 
 Check the local tool status:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh doctor
 ```
 
@@ -44,14 +44,14 @@ Run non-installing version/toolchain probes when you need reproducibility
 metadata:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh doctor --probe
 ```
 
 Assess a claim:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh assess \
   --claim "Every finite tree has a leaf" \
   --claim-id C1 \

@@ -5,16 +5,16 @@
 Windows:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 $env:AAS_SAGE_WSL_DISTRO = "Ubuntu-24.04"
-$env:AAS_SAGE_BIN = "/home/.../sage-10.4/sage"  # use this when sage is not on the non-interactive WSL PATH
+$env:AAS_SAGE_BIN = "/path/to/sage-10.4/sage"  # use this when sage is not on the non-interactive WSL PATH
 & "$runtime\run_skill.bat" "skills/sagemath/run_sage.bat" "print(2+2)"
 ```
 
 Linux/WSL:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/sagemath/run_sage.sh "print(2+2)"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh "print(2+2)"
 ```
 
 If WSL has only a Bash alias such as `alias sage=...`, create a real executable

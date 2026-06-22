@@ -10,10 +10,10 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/graph-verifier/run_graph_verifier.bat" <args>
 ```
 
@@ -35,12 +35,12 @@ For heavier graph-theoretic or algebraic computations, route to `sagemath` inste
 - `$AAS_RUNTIME_ROOT/workspace/skills/graph-verifier/`
 
 Use the managed runtime runner rather than invoking `run_graph_verifier.sh` directly.
-If `AAS_RUNTIME_ROOT` is not already set, the default Codex-only install root is
-`$HOME/.codex/runtime`.
+Set `AAS_RUNTIME_ROOT` to the installed runtime root before using the shared
+runner directly.
 
 Shared runner:
 
-- `runtime_root="${AAS_RUNTIME_ROOT:-$HOME/.codex/runtime}"; bash "$runtime_root/run_skill.sh"`
+- `runtime_root="${AAS_RUNTIME_ROOT:?Set AAS_RUNTIME_ROOT to the installed runtime root}"; bash "$runtime_root/run_skill.sh"`
 
 ## Workflow
 
@@ -53,7 +53,7 @@ Supported shapes include `graph_data`, `edges`, `adjacency`, and optional `expec
 ## Core command
 
 ```bash
-runtime_root="${AAS_RUNTIME_ROOT:-$HOME/.codex/runtime}"
+runtime_root="${AAS_RUNTIME_ROOT:?Set AAS_RUNTIME_ROOT to the installed runtime root}"
 bash "$runtime_root/run_skill.sh" skills/graph-verifier/run_graph_verifier.sh --input /tmp/graph_input.json
 ```
 

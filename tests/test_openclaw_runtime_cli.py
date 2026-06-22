@@ -61,6 +61,23 @@ def _run(argv: list[str]) -> dict:
     return {"code": code, "out": stream.getvalue()}
 
 
+def _approved_manifest_file(tmp: Path, root: Path, rroot: Path) -> Path:
+    ev_paths = _write_evidence(tmp, root, rroot, SHARED_RUNTIME_EVIDENCE)
+    argv = ["--json", "--root", str(root), "openclaw-runtime-dry-run-manifest",
+            "--skill", RUNTIME_SKILL, "--action-class", "shared-runtime-file",
+            "--runtime-root", str(rroot), "--source-commit", "abc123"]
+    for p in ev_paths:
+        argv += ["--evidence", p]
+    manifest = json.loads(_run(argv)["out"])
+    mpath = tmp / "manifest.json"
+    mpath.write_text(json.dumps(manifest), encoding="utf-8")
+    approved = json.loads(_run(
+        ["--json", "openclaw-runtime-approve-manifest", "--manifest", str(mpath), "--reviewer", "me"])["out"])
+    apath = tmp / "approved.json"
+    apath.write_text(json.dumps(approved), encoding="utf-8")
+    return apath
+
+
 class RuntimeCliTest(unittest.TestCase):
     def test_dry_run_then_approve(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -133,6 +150,41 @@ class RuntimeCliTest(unittest.TestCase):
                                       "--runtime-root", str(rroot), "--agent", "main"])["out"])
             self.assertEqual(broker["status"], "ready")
             self.assertTrue(broker["commands"])  # s4 executable files exposed as commands
+
+    def test_apply_rejects_manifest_runtime_root_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            apath = _approved_manifest_file(tmp, root, rroot)
+
+            res = _run(["--json", "--root", str(root), "openclaw-runtime-apply-manifest",
+                        "--manifest", str(apath), "--runtime-root", str(tmp / "other-runtime")])
+            self.assertNotEqual(res["code"], 0)
+
+    def test_apply_rejects_manifest_target_root_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            other_root = tmp / "other-home"
+            (other_root / ".openclaw" / "skills").mkdir(parents=True)
+            rroot = tmp / "neutral-runtime"
+            apath = _approved_manifest_file(tmp, root, rroot)
+
+            res = _run(["--json", "--root", str(other_root), "openclaw-runtime-apply-manifest",
+                        "--manifest", str(apath), "--runtime-root", str(rroot)])
+            self.assertNotEqual(res["code"], 0)
+
+    def test_broker_rejects_manifest_runtime_root_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            apath = _approved_manifest_file(tmp, root, rroot)
+
+            res = _run(["--json", "openclaw-broker", "--manifest", str(apath),
+                        "--runtime-root", str(tmp / "other-runtime"), "--agent", "main"])
+            self.assertNotEqual(res["code"], 0)
 
     def test_apply_requires_confirmation_for_real_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

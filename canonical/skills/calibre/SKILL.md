@@ -1,8 +1,8 @@
 ---
 name: calibre
-description: Use when the user wants to search, retrieve, send, add, update, sync, export, convert, or clean books from the vendored Codex Calibre library runtime.
+description: Use when the user wants to search, retrieve, send, add, update, sync, export, convert, or clean books from the managed Calibre library runtime.
 metadata:
-  short-description: Calibre library management via Codex runtime
+  short-description: Calibre library management via managed runtime
 ---
 
 # Calibre
@@ -10,16 +10,16 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/calibre/run_cal.bat" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
 
-This uses the vendored Codex runtime copy of the Calibre workflow.
+This uses the managed ai-agents-skills runtime copy of the Calibre workflow.
 
 ## When to use
 
@@ -49,13 +49,13 @@ This uses the vendored Codex runtime copy of the Calibre workflow.
 
 ## Base path
 
-- `~/.codex/runtime/workspace/skills/calibre/`
+- `$AAS_RUNTIME_WORKSPACE/skills/calibre/`
 
-Use the Codex runtime runner rather than invoking `run_cal.sh` directly.
+Use the managed runtime runner rather than invoking `run_cal.sh` directly.
 
 Shared runner:
 
-- `bash ~/.codex/runtime/run_skill.sh`
+- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
 
 ## Local Library Profile Gate
 
@@ -95,67 +95,67 @@ explicitly opts in after dry-run review.
 Use `functions.exec_command`.
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh search "<query>" [--format epub] [--tag fiction] [--limit 50] [--series "Series Name"]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh search "<query>" [--format epub] [--tag fiction] [--limit 50] [--series "Series Name"]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh get "<query>" [--format pdf] [--send "telegram:CHAT_ID"]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh get "<query>" [--format pdf] [--send "telegram:CHAT_ID"]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh get --id 42 [--send "zulip:Research:books"]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh get --id 42 [--send "zulip:Research:books"]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh get "ring" --index 0 [--send "telegram:CHAT_ID"]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh get "ring" --index 0 [--send "telegram:CHAT_ID"]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh add /path/book.epub [--isbn 9780140449136] [--title "X" --author "Y"] [--dry-run]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh add /path/book.epub [--isbn 9780140449136] [--title "X" --author "Y"] [--dry-run]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh update --id 42 --title "X" --author "Y" --tags "a,b" --year 1965 --publisher "P" [--series "S" --series-index 1 --isbn 9780441013593]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh update --id 42 --title "X" --author "Y" --tags "a,b" --year 1965 --publisher "P" [--series "S" --series-index 1 --isbn 9780441013593]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh add-tag --id 42 --tag "to-read"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh add-tag --id 42 --tag "to-read"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh remove-tag --id 42 --tag "to-read"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh remove-tag --id 42 --tag "to-read"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh list-shelves [--tags|--series|--publishers]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh list-shelves [--tags|--series|--publishers]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh sync [--force] [--progress]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh sync [--force] [--progress]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh remove "query" [--dry-run]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh remove "query" [--dry-run]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh remove --id 42 [--dry-run]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh remove --id 42 [--dry-run]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh convert --id 42 --to epub [--from pdf]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh convert --id 42 --to epub [--from pdf]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh export --id 42 [--format bibtex]
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh export --id 42 [--format bibtex]
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh doctor
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh doctor
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/calibre/run_cal.sh clean
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh clean
 ```
 
 ## Important behaviors

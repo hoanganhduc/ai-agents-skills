@@ -7,10 +7,10 @@ description: Use when preparing optional LeanExplore MCP setup for Lean declarat
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/lean-explore-mcp/run_lean_explore_mcp.bat" doctor
 ```
 
@@ -29,14 +29,14 @@ Use this skill only for explicit optional LeanExplore MCP setup. It never instal
 Check local readiness without running `lean-explore`:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-explore-mcp/run_lean_explore_mcp.sh doctor
 ```
 
 Emit a manual MCP config snippet:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-explore-mcp/run_lean_explore_mcp.sh config-snippet --backend api
 ```
 
@@ -45,7 +45,7 @@ Use `--backend local` only after local data has been prepared outside this repo 
 Run offline smoke:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-explore-mcp/run_lean_explore_mcp.sh smoke
 ```
 

@@ -89,6 +89,9 @@ def broker_state_from_manifest(
 ) -> BrokerState:
     """Build a BrokerState exposing an approved manifest's runtime files as
     per-(skill,command) entries to one agent token (the live broker consumes this)."""
+    rroot = Path(runtime_root).expanduser().resolve(strict=False)
+    if str(rroot) != str(manifest["runtime_realpath"]):
+        raise ValueError("OpenClaw runtime target manifest runtime root does not match selected runtime root")
     commands: dict[tuple[str, str], dict[str, str]] = {}
     skill = manifest["skill"]
     for record, route in ((r, manifest["routing"].get(r["relative_path"])) for r in manifest["files"]):
@@ -101,10 +104,28 @@ def broker_state_from_manifest(
         }
     allowed = set(commands.keys())
     return BrokerState(
-        runtime_root=Path(runtime_root).expanduser(),
+        runtime_root=rroot,
         tokens={token: AgentToken(agent=agent, allowed=allowed)},
         commands=commands,
     )
+
+
+def validate_runtime_target_apply_paths(
+    manifest: dict[str, Any], *, root: Path, runtime_root: Path
+) -> tuple[Path, Path]:
+    expanded_root = Path(root).expanduser()
+    paths = validate_openclaw_target_home(expanded_root)
+    if str(paths["home_realpath"]) != str(manifest["target_realpath"]):
+        raise ValueError("OpenClaw runtime target manifest does not match selected root")
+    if str(paths["managed_skills_realpath"]) != str(manifest["managed_skills_realpath"]):
+        raise ValueError("OpenClaw runtime target manifest managed skills root does not match selected root")
+    rroot = Path(runtime_root).expanduser().resolve(strict=False)
+    if str(rroot) != str(manifest["runtime_realpath"]):
+        raise ValueError("OpenClaw runtime target manifest runtime root does not match selected runtime root")
+    root_reason = neutral_runtime_root_block_reason(rroot)
+    if root_reason is not None:
+        raise ValueError(f"OpenClaw runtime target selected runtime root is not neutral: {root_reason}")
+    return expanded_root, rroot
 
 
 def build_runtime_probe_evidence(
@@ -213,6 +234,7 @@ def apply_runtime_target_manifest_file(
     The live broker registration/serve is host-gated and only PLANNED here."""
     manifest = load_runtime_target_manifest(Path(manifest_path))
     validate_runtime_target_manifest(manifest, require_approved=True)
+    root, rroot = validate_runtime_target_apply_paths(manifest, root=root, runtime_root=runtime_root)
     if not dry_run:
         if not real_system:
             raise ValueError("OpenClaw runtime real writes require --real-system")
@@ -222,7 +244,6 @@ def apply_runtime_target_manifest_file(
     skill = manifest["skill"]
     manifests = load_manifests()
     source_by_target = {f["target"]: f for f in manifests["runtime"]["skills"][skill]["files"]}
-    rroot = Path(runtime_root).expanduser()
     actions: list[dict[str, Any]] = []
     broker_commands: list[dict[str, str]] = []
 

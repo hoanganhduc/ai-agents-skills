@@ -8,7 +8,9 @@ set -euo pipefail
 
 SAGE_BIN="${AAS_SAGE_BIN:-sage}"
 SAGE_WSL_DISTRO="${AAS_SAGE_WSL_DISTRO:-Ubuntu-24.04}"
-WS="${AAS_RUNTIME_WORKSPACE:-${OPENCLAW_WORKSPACE:-$HOME/.codex/runtime/workspace}}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+DEFAULT_WORKSPACE="$(cd -- "$SCRIPT_DIR/../.." && pwd -P)"
+WS="${AAS_RUNTIME_WORKSPACE:-${OPENCLAW_WORKSPACE:-$DEFAULT_WORKSPACE}}"
 SAGE_DIR="$WS/data/research/sagemath"
 SESSION_DIR="$SAGE_DIR/sessions"
 TIMEOUT=300

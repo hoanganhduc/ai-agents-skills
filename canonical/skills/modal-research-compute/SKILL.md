@@ -10,10 +10,10 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/modal-research-compute/run_modal_research_compute.bat" <args>
 ```
 
@@ -49,13 +49,7 @@ This skill is the integration layer for the local `research_compute` broker.
 Linux (resolve the installed runtime root for the current agent, then call `run_skill.sh`):
 
 ```bash
-# codex -> ~/.codex/runtime ; claude and other agents -> ~/.local/share/ai-agents-skills/runtime
-runtime="${AAS_RUNTIME_ROOT:-}"
-if [ -z "$runtime" ]; then
-  for candidate in "$HOME/.local/share/ai-agents-skills/runtime" "$HOME/.codex/runtime"; do
-    [ -d "$candidate" ] && runtime="$candidate" && break
-  done
-fi
+runtime="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"
 run() { bash "$runtime/run_skill.sh" skills/modal-research-compute/run_modal_research_compute.sh "$@"; }
 ```
 
@@ -68,17 +62,18 @@ run wait   <job_id>
 run fetch  <job_id> --dest /path/to/output
 ```
 
-On the Claude target the documented wrapper forwards to the same runtime, so this is equivalent:
+On targets that install a local skill wrapper, that wrapper should forward to
+the same runtime command target.
 
 ```bash
-bash ~/.claude/skills/_run.sh \
-  skills/modal-research-compute/run_modal_research_compute.sh doctor
+skills/modal-research-compute/run_modal_research_compute.sh doctor
 ```
 
 Windows:
 
 ```powershell
-& "$env:USERPROFILE\.codex\runtime\run_skill.bat" `
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.bat" `
   "skills\modal-research-compute\run_modal_research_compute.bat" `
   doctor
 ```
@@ -90,7 +85,7 @@ Windows:
 - GPU use should be explicit in the manifest or clearly justified by the workload.
 - `doctor` and `plan` work without a deployed Modal app. `submit`, `wait`, `fetch`, and `deploy` need the host to be Modal-ready.
 - Linux hosts become Modal-ready after `python3 -m pip install --user --upgrade modal` and `modal token set` or `modal token new`.
-- Windows hosts should install `modal` into `%USERPROFILE%\.codex\.venv`; the wrapper adds `%USERPROFILE%\.codex\.venv\Scripts` to `PATH` so broker deploy can find `modal.exe`.
+- Windows hosts should install `modal` into the selected Python environment and ensure `modal.exe` is on `PATH` so broker deploy can find it.
 - Broker state persists under the runtime memories tree, while fetched outputs materialize under the caller workspace by default.
 - One-time per machine, run `bootstrap`: it generates `research-compute.toml` from the example if absent (never overwriting an existing one), authenticates `gh`, checks deps, and runs `doctor`. Use this to set up a host that does not have the full system installer.
 - GitHub Actions ToS compliance: the broker's `gha` lane runs only inside a private research repo, executes that repo's own committed experiment code (parameters are data, never executed), is budget-gated, and is the last automatic backend after local and Modal — never a general compute pool. Configure it under `[gha]` in `research-compute.toml`.

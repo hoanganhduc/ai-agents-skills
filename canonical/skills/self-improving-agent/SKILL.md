@@ -43,8 +43,8 @@ Canonical integration targets:
   landing pages
 - `tests/` for focused regression coverage
 
-Agent-home targets such as `~/.codex`, `~/.claude`, `~/.deepseek`, and
-`~/.copilot` are runtime install targets, not the primary place for reusable
+Codex, Claude, DeepSeek, Copilot, and other agent homes are runtime install
+targets, not the primary place for reusable
 fixes. Update them through the installer after the canonical repo change is
 planned, reviewed, and verified.
 
@@ -129,7 +129,7 @@ install mode intentionally does not copy support files.
 POSIX example:
 
 ```bash
-runtime="${AAS_RUNTIME_ROOT:-$HOME/.codex/runtime}"
+runtime="${AAS_RUNTIME_ROOT:?Set AAS_RUNTIME_ROOT to the installed runtime root}"
 bash "$runtime/run_skill.sh" \
   skills/self-improving-agent/run_self_improving_agent.sh review-pending
 ```
@@ -137,14 +137,14 @@ bash "$runtime/run_skill.sh" \
 Windows PowerShell example:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.ps1" "skills/self-improving-agent/run_self_improving_agent.ps1" review-pending
 ```
 
 Windows CMD example:
 
 ```bat
-"%USERPROFILE%\.codex\runtime\run_skill.bat" skills/self-improving-agent/run_self_improving_agent.bat review-pending
+"%AAS_RUNTIME_ROOT%\run_skill.bat" skills/self-improving-agent/run_self_improving_agent.bat review-pending
 ```
 
 Common helper commands:

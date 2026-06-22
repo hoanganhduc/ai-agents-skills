@@ -29,13 +29,11 @@ environment variables or a JSON secrets file, and redacted out of any error.
 ## Windows Runtime Commands
 
 On native Windows, use the managed Windows runner and the native runtime command
-target. For Codex-only installs the runtime is usually
-`%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually
-`%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime
-root, then run:
+target. Set `$runtime` to the installed runtime root. Multi-agent installs
+usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/send-email/run_send_email.bat" <args>
 & "$runtime\run_skill.bat" "skills/send-email/run_send_email.ps1" <args>
 ```
@@ -119,7 +117,7 @@ and `smtp.office365.com` (use an app password, not the account password).
 Each install target reads its own `<runtime_root>/workspace/.secrets.json`, and
 the runtime root differs per target:
 
-- Codex: `~/.codex/runtime/workspace/.secrets.json` (Windows: `%USERPROFILE%\.codex\runtime\workspace\.secrets.json`)
+- Codex: `$AAS_RUNTIME_WORKSPACE/.secrets.json` (Windows: `%AAS_RUNTIME_WORKSPACE%\.secrets.json`)
 - multi-agent installs (claude/deepseek/opencode/antigravity): `~/.local/share/ai-agents-skills/runtime/workspace/.secrets.json` (Windows: `%LOCALAPPDATA%\ai-agents-skills\runtime\workspace\.secrets.json`)
 
 To make one configuration serve **all** targets, use either approach (both work

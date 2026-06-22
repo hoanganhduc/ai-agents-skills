@@ -15,11 +15,10 @@ language-aware TTS ladder; English and Vietnamese are first-class.
 ## Windows Runtime Commands
 
 On native Windows, use the managed Windows runner and the native runtime command
-target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`;
-for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`.
+target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`.
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/slides-to-video/run_slides_to_video.bat" <args>
 & "$runtime\run_skill.bat" "skills/slides-to-video/run_slides_to_video.ps1" <args>
 ```
@@ -76,8 +75,8 @@ Step 2 - create the dedicated venv and check readiness. Once the skill is
 installed into an agent home, use the managed runner:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/slides-to-video/run_slides_to_video.sh setup
-bash ~/.codex/runtime/run_skill.sh skills/slides-to-video/run_slides_to_video.sh doctor
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/slides-to-video/run_slides_to_video.sh setup
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/slides-to-video/run_slides_to_video.sh doctor
 ```
 
 To try it straight from the repo before installing, call the script directly:

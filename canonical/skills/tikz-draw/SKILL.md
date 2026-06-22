@@ -10,10 +10,10 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/tikz-draw/run_tikz_draw.bat" <args>
 ```
 
@@ -50,19 +50,20 @@ The runtime helper exposes one stable verb set:
 Run it through the shared runtime wrapper:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh doctor
 ```
 
 On Windows, use:
 
 ```powershell
-& "$env:USERPROFILE\.codex\runtime\run_skill.bat" `
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.bat" `
   "skills\tikz-draw\run_tikz_draw.bat" doctor
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh render \
   --brief /abs/path/to/figure-brief.json
 ```
@@ -70,22 +71,22 @@ bash ~/.codex/runtime/run_skill.sh \
 Direct bootstrap without prewriting a brief:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh render \
   --request "Draw a validation pipeline for statement X"
 ```
 
 If `--out-dir` is omitted in direct mode, the helper allocates:
 
-- Codex: `~/.codex/runs/tikz-draw/<run_id>/`
-- other installed targets:
-  `${AAS_RUNS_ROOT:-~/.local/share/ai-agents-skills/runs}/tikz-draw/<run_id>/`
+- a target-specific run directory for direct Codex installs
+- `${AAS_RUNS_ROOT:-~/.local/share/ai-agents-skills/runs}/tikz-draw/<run_id>/`
+  for shared runtime installs
 
 For research or mathematical figures, first let the runtime write the intent
 contract or provide one explicitly:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh contract \
   --out /abs/path/to/F1.figure-contract.json \
   --request "Draw a graph hardness reduction where an edge is replaced by a gadget"
@@ -124,7 +125,7 @@ vertices and graph edges; a box-only flowchart is a contract violation.
 Strict approval command:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh approve \
   --artifacts /abs/path/to/F1.artifacts.json \
   --work-dir /abs/path/to/work-dir
@@ -196,7 +197,7 @@ For implementation-level verification, use the persistent regression suite inste
 of ad hoc `/tmp` smokes:
 
 ```bash
-python3 ~/.codex/runtime/workspace/skills/tikz-draw/semantic_regression_runner.py --platform both --strict-approval
+python3 $AAS_RUNTIME_WORKSPACE/skills/tikz-draw/semantic_regression_runner.py --platform both --strict-approval
 ```
 
 The current suite covers supported good cases for `flowchart`, `dag`, `tree`,
@@ -206,18 +207,18 @@ cases that guard against graph-hardness requests becoming flowcharts.
 On Windows, use:
 
 ```powershell
-& "$env:USERPROFILE\.codex\.venv\Scripts\python.exe" `
-  "$env:USERPROFILE\.codex\runtime\workspace\skills\tikz-draw\semantic_regression_runner.py" --platform codex
+& "$env:AAS_RUNTIME_ROOT\run_python.bat" `
+  "skills/tikz-draw/semantic_regression_runner.py" --platform codex
 ```
 
 ## References
 
 Read these when the task needs tighter guardrails:
 
-- [backend-routing.md](<HOME>/.codex/skills/tikz-draw/references/backend-routing.md)
-- [quality-gates.md](<HOME>/.codex/skills/tikz-draw/references/quality-gates.md)
-- [tikz-prevention.md](<HOME>/.codex/skills/tikz-draw/references/tikz-prevention.md)
-- [tikz-measurement.md](<HOME>/.codex/skills/tikz-draw/references/tikz-measurement.md)
+- [backend-routing.md](references/backend-routing.md)
+- [quality-gates.md](references/quality-gates.md)
+- [tikz-prevention.md](references/tikz-prevention.md)
+- [tikz-measurement.md](references/tikz-measurement.md)
 
 ## Boundaries
 

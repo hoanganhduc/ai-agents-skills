@@ -2,7 +2,7 @@
 name: sagemath
 description: Use when the user needs SageMath for graph theory, combinatorics, algebra, spectral computations, or mathematical verification beyond what local Python tools can do.
 metadata:
-  short-description: SageMath execution via Codex runtime
+  short-description: SageMath execution via managed runtime
 ---
 
 # SageMath
@@ -10,16 +10,16 @@ metadata:
 
 ## Windows Runtime Commands
 
-On native Windows, use the managed Windows runner and the native runtime command target. For Codex-only installs the runtime is usually `%USERPROFILE%\.codex\runtime`; for multi-agent installs it is usually `%LOCALAPPDATA%\ai-agents-skills\runtime`. Set `$runtime` to the installed runtime root, then run:
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } elseif (Test-Path "$env:USERPROFILE\.codex\runtime") { "$env:USERPROFILE\.codex\runtime" } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/sagemath/run_sage.bat" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
 
-This uses the vendored Codex runtime copy of the SageMath workflow.
+This uses the managed ai-agents-skills runtime copy of the SageMath workflow.
 
 If `sage` is not on the non-interactive WSL `PATH`, set the executable path
 explicitly before running the wrapper. Bash aliases in `~/.bashrc` are not
@@ -27,7 +27,7 @@ visible to the Windows runtime wrapper.
 
 ```powershell
 $env:AAS_SAGE_WSL_DISTRO = "Ubuntu-24.04"
-$env:AAS_SAGE_BIN = "/home/.../sage-10.4/sage"
+$env:AAS_SAGE_BIN = "/path/to/sage-10.4/sage"
 & "$runtime\run_skill.bat" "skills/sagemath/run_sage.bat" "print(2+2)"
 ```
 
@@ -50,44 +50,44 @@ For simple checks such as connectivity, bipartiteness, or small ad hoc scripts, 
 
 ## Base path
 
-- `~/.codex/runtime/workspace/skills/sagemath/`
+- `$AAS_RUNTIME_WORKSPACE/skills/sagemath/`
 
-Use the Codex runtime runner rather than invoking `run_sage.sh` directly.
+Use the managed runtime runner rather than invoking `run_sage.sh` directly.
 
 Shared runner:
 
-- `bash ~/.codex/runtime/run_skill.sh`
+- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
 
 ## Core commands
 
 Use `functions.exec_command`.
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/sagemath/run_sage.sh "<sage_code>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh "<sage_code>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/sagemath/run_sage.sh --timeout 1800 "<sage_code>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --timeout 1800 "<sage_code>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/sagemath/run_sage.sh --file skills/sagemath/templates/<template>.sage
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --file skills/sagemath/templates/<template>.sage
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/sagemath/run_sage.sh --file skills/sagemath/templates/reconfiguration_check.sage
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --file skills/sagemath/templates/reconfiguration_check.sage
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/sagemath/run_sage.sh --plot "<sage_code>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --plot "<sage_code>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/sagemath/run_sage.sh --session "<name>" "<sage_code>"
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --session "<name>" "<sage_code>"
 ```
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/sagemath/run_sage.sh --cancel <job_id>
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --cancel <job_id>
 ```
 
 ## Templates
