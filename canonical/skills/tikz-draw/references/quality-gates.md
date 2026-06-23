@@ -24,10 +24,26 @@ Strict approval gate:
 
 - Only `approve` may provide final figure approval.
 - `approve` passes only when static preflight, compile, artifact freshness/provenance, rendered overlap checks, semantic verification, and the declared symmetry contract pass.
-- `render`, `extract`, `compile`, `check`, `review --tex`, `review-visual`, and `verify-semantic` are preflight or artifact commands, not final approval.
+- `render` automatically runs the forced structural overlap/symmetry loop after
+  writing generated artifacts.
+- `force-check` reruns the same forced structural loop for existing artifacts.
+- `render`, `force-check`, `extract`, `compile`, `check`, `review --tex`,
+  `review-visual`, and `verify-semantic` are structural/preflight or artifact
+  commands, not final approval.
 - `verify-design` is a component gate for visual-semantic design. It is required
   for scoped manuscript-facing semantic figures but does not replace `approve`.
 - After every generated, extracted, refactored, or manually edited figure, rerun `approve`; fix failures until it passes or report the blocked state.
+
+Forced structural-loop stop conditions:
+
+- `issue_free_no_overlap_and_no_symmetry_failures`
+- `credit_budget_exhausted`
+- `user_stop_requested`
+
+No finite iteration cap is a successful stop. The loop records each check and
+repair in `force_loop.ledger`; each deterministic repair consumes one repair
+credit. Missing checking resources or inputs are reported under the credit
+terminal condition because the loop cannot verify or repair further.
 
 Review dimensions:
 

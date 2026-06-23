@@ -38,6 +38,7 @@ The runtime helper exposes one stable verb set:
 - `design`
 - `spec`
 - `render`
+- `force-check`
 - `check`
 - `compile`
 - `review-visual`
@@ -75,6 +76,12 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh render \
   --request "Draw a validation pipeline for statement X"
 ```
+
+`render` is structurally guarded: after writing the brief/spec/Tex/manifest it
+automatically runs the forced overlap/symmetry loop. The command returns success
+only when there are no rendered-overlap findings and the declared
+`symmetry_contract` passes. If issues remain, it repairs layout-only geometry and
+reruns the check until one of the forced-loop stop conditions fires.
 
 If `--out-dir` is omitted in direct mode, the helper allocates:
 
@@ -120,7 +127,36 @@ vertices and graph edges; a box-only flowchart is a contract violation.
    explicitly says that a schematic is intended.
 5. Keep document-facing output inside the `adjustbox` environment with `max width=\textwidth`.
 6. For standalone compile targets, use plain `\documentclass[border=...]{standalone}` rather than `standalone[tikz]`.
-7. After creating, extracting, refactoring, or modifying any TikZ figure, run the strict approval gate before saying the figure is done, fixed, ready, passed, verified, or approved.
+7. After creating, extracting, refactoring, or modifying any TikZ figure, run the
+   forced structural loop (`render` does this automatically for generated
+   figures; use `force-check` for existing artifacts). Then run the strict
+   approval gate before saying the figure is done, fixed, ready, passed,
+   verified, or approved.
+
+Forced structural loop:
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/tikz-draw/run_tikz_draw.sh force-check \
+  --artifacts /abs/path/to/F1.artifacts.json \
+  --work-dir /abs/path/to/work-dir
+```
+
+The loop is not optional for generated figures. It may stop only when one of
+these conditions is true:
+
+- `issue_free_no_overlap_and_no_symmetry_failures`: rendered overlap findings
+  are gone and `symmetry_status=PASS`.
+- `credit_budget_exhausted`: the repair/checking credit budget is exhausted or
+  the required checking resources are unavailable.
+- `user_stop_requested`: the user explicitly asks to stop, represented locally
+  by `TIKZ_DRAW_FORCE_STOP`, `tikz-draw-force-stop`, or `STOP_TIKZ_DRAW` in the
+  work directory, or by the `TIKZ_DRAW_FORCE_STOP` environment variable.
+
+The loop repairs layout-only geometry: spacing, node dimensions, label anchoring,
+and absolute-position symmetry alignment. It must not change node labels, edge
+endpoints, graph meaning, captions, or semantic contracts to make a broken
+figure appear correct.
 
 Strict approval command:
 
@@ -140,7 +176,11 @@ The only final approval is `approve` exiting `0` with:
 - `design_status=PASS` for scoped semantic figures, or `design_status=SKIPPED` when the design gate is out of scope
 - `symmetry_status=PASS`
 
-`render`, `extract`, `compile`, `check`, `review --tex`, `review-visual`, and `verify-semantic` are preflight or artifact commands. Never cite them as final approval. Source inspection, compile success, screenshot review, PDF preview, or human visual inspection alone never constitute final approval.
+`render`, `force-check`, `extract`, `compile`, `check`, `review --tex`,
+`review-visual`, and `verify-semantic` are structural/preflight or artifact
+commands. Never cite them as final approval. Source inspection, compile success,
+screenshot review, PDF preview, or human visual inspection alone never
+constitute final approval.
 
 If `approve` fails, fix the reported issue and rerun `approve`. Repeat until it passes, or report the exact blocked state such as `BLOCKED_INPUT`, `BLOCKED_ENVIRONMENT`, or `UNSUPPORTED_FAMILY`. Do not use approval-style wording for blocked or unsupported states.
 
@@ -162,6 +202,8 @@ If `approve` fails, fix the reported issue and rerun `approve`. Repeat until it 
 - `approve` is the authoritative final gate for supported render-generated figures.
 - `review --semantic` delegates to the strict approval path for compatibility.
 - `review --tex` remains source-only preflight and must not be treated as approval.
+- `render` runs the forced structural loop by default before returning.
+- `force-check` reruns the same forced structural loop for existing artifacts.
 - `review-visual` runs through the rendered-artifact extractor and refreshes `render-semantics.json` from the compiled PDF, but remains a component gate.
 - `verify-design` checks the visual-semantic design layer for scoped figures:
   mark roles, graph-object vs metadata separation, region/fill semantics,

@@ -78,6 +78,7 @@ CLI_VERBS = (
     "design",
     "spec",
     "render",
+    "force-check",
     "check",
     "compile",
     "review-visual",
@@ -137,6 +138,14 @@ SYMMETRY_MODES = (
 )
 DEFAULT_SYMMETRY_TOLERANCE_PT = 3.0
 OVERLAP_EPSILON_PT = 0.25
+FORCE_LOOP_VERSION = "force-structural-loop.v1"
+DEFAULT_FORCE_REPAIR_CREDITS = 8
+FORCE_STOP_SENTINELS = (
+    "TIKZ_DRAW_FORCE_STOP",
+    "tikz-draw-force-stop",
+    "STOP_TIKZ_DRAW",
+)
+FORCE_LAYOUT_CONSTRAINT_PREFIX = "tikz-draw-force:"
 
 MANIFEST_FRESHNESS_FIELDS = (
     "source_hash",
@@ -1728,6 +1737,46 @@ def load_style_assets() -> tuple[str, str]:
     )
 
 
+def force_layout_value(spec: dict[str, Any], key: str, default: float = 1.0) -> float:
+    prefix = f"{FORCE_LAYOUT_CONSTRAINT_PREFIX}{key}="
+    for constraint in spec.get("layout_constraints", []):
+        text = str(constraint).strip()
+        if not text.startswith(prefix):
+            continue
+        try:
+            return float(text[len(prefix) :])
+        except ValueError:
+            return default
+    return default
+
+
+def set_force_layout_value(spec: dict[str, Any], key: str, value: float) -> None:
+    prefix = f"{FORCE_LAYOUT_CONSTRAINT_PREFIX}{key}="
+    constraints = [str(item) for item in spec.get("layout_constraints", []) if not str(item).strip().startswith(prefix)]
+    constraints.append(f"{prefix}{value:.4g}")
+    spec["layout_constraints"] = constraints
+
+
+def scaled_mm(value: float) -> str:
+    text = f"{value:.1f}".rstrip("0").rstrip(".")
+    return f"{text}mm"
+
+
+def parse_mm(value: Any) -> float | None:
+    match = re.fullmatch(r"\s*([0-9]+(?:\.[0-9]+)?)\s*mm\s*", str(value or ""))
+    return float(match.group(1)) if match else None
+
+
+def scale_mm_field(node: dict[str, Any], field: str, *, default_mm: float, factor: float) -> bool:
+    current = parse_mm(node.get(field))
+    if current is None:
+        node[field] = scaled_mm(default_mm)
+        return True
+    new_value = max(current * factor, current + 1.0)
+    node[field] = scaled_mm(new_value)
+    return abs(new_value - current) > 1e-6
+
+
 def node_options(node: dict[str, Any]) -> list[str]:
     options = [node.get("style", "box")]
     if width := node.get("width"):
@@ -1777,7 +1826,11 @@ def comment_block_for_spec(spec: dict[str, Any]) -> list[str]:
 
 def render_flowchart(spec: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
     palette, styles = load_style_assets()
-    lines = [*comment_block_for_spec(spec), r"\begin{tikzpicture}[node distance=10mm and 14mm]"]
+    spacing = max(1.0, force_layout_value(spec, "spacing_multiplier", 1.0))
+    lines = [
+        *comment_block_for_spec(spec),
+        rf"\begin{{tikzpicture}}[node distance={scaled_mm(10.0 * spacing)} and {scaled_mm(14.0 * spacing)}]",
+    ]
     nodes = spec["nodes"]
     for index, node in enumerate(nodes):
         options = ", ".join(node_options(node))
@@ -1817,6 +1870,8 @@ def render_flowchart(spec: dict[str, Any]) -> tuple[str, list[str], list[str], s
 
 def render_tree(spec: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
     palette, _ = load_style_assets()
+    spacing = max(1.0, force_layout_value(spec, "spacing_multiplier", 1.0))
+    padding = max(1.0, force_layout_value(spec, "node_padding_multiplier", 1.0))
     node_labels = {node["id"]: tex_escape(node["label"]) for node in spec["nodes"]}
     children: dict[str, list[str]] = {}
     roots = {node["id"] for node in spec["nodes"]}
@@ -1840,10 +1895,10 @@ def render_tree(spec: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
             r"  rounded corners=2pt,",
             r"  align=center,",
             r"  edge={->, very thick, draw=tikzdrawNeutral},",
-            r"  minimum height=8mm,",
-            r"  inner sep=2mm,",
-            r"  s sep=10mm,",
-            r"  l sep=12mm",
+            rf"  minimum height={scaled_mm(8.0 * padding)},",
+            rf"  inner sep={scaled_mm(2.0 * padding)},",
+            rf"  s sep={scaled_mm(10.0 * spacing)},",
+            rf"  l sep={scaled_mm(12.0 * spacing)}",
             r"}",
             build(root),
             r"\end{forest}",
@@ -1856,6 +1911,8 @@ def render_tree(spec: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
 
 
 def render_commutative(spec: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
+    spacing = max(1.0, force_layout_value(spec, "spacing_multiplier", 1.0))
+    sep = "large" if abs(spacing - 1.0) < 1e-9 else scaled_mm(18.0 * spacing)
     node_labels = {node["id"]: strip_outer_math_delimiters(tex_escape(node["label"])) for node in spec["nodes"]}
     cell_positions = {
         "a": (1, 1),
@@ -1891,7 +1948,7 @@ def render_commutative(spec: dict[str, Any]) -> tuple[str, list[str], list[str],
     body = "\n".join(
         [
             *comment_block_for_spec(spec),
-            r"\begin{tikzcd}[column sep=large, row sep=large]",
+            rf"\begin{{tikzcd}}[column sep={sep}, row sep={sep}]",
             f"{node_labels.get('a', 'A')} & {node_labels.get('b', 'B')} \\\\",
             f"{node_labels.get('c', 'C')} & {node_labels.get('d', 'D')}",
             *[arrow_command(edge) for edge in spec["edges"]],
@@ -1906,7 +1963,8 @@ def render_commutative(spec: dict[str, Any]) -> tuple[str, list[str], list[str],
 
 def render_graph(spec: dict[str, Any]) -> tuple[str, list[str], list[str], str]:
     palette, styles = load_style_assets()
-    lines = [*comment_block_for_spec(spec), r"\begin{tikzpicture}[x=12mm, y=12mm]"]
+    spacing = max(1.0, force_layout_value(spec, "spacing_multiplier", 1.0))
+    lines = [*comment_block_for_spec(spec), rf"\begin{{tikzpicture}}[x={scaled_mm(12.0 * spacing)}, y={scaled_mm(12.0 * spacing)}]"]
     coord_ids: dict[str, str] = {}
     for node in spec["nodes"]:
         placement = node.get("placement") or {}
@@ -3651,6 +3709,393 @@ def run_approve_report(manifest_path: Path, work_dir: Path) -> tuple[dict[str, A
     return finalized, 1
 
 
+def force_stop_requested(work_dir: Path) -> dict[str, str] | None:
+    if os.environ.get("TIKZ_DRAW_FORCE_STOP"):
+        return {"kind": "environment", "name": "TIKZ_DRAW_FORCE_STOP"}
+    for sentinel in FORCE_STOP_SENTINELS:
+        path = work_dir / sentinel
+        if path.exists():
+            return {"kind": "sentinel", "path": str(path)}
+    return None
+
+
+def structural_issue_counts(report: dict[str, Any]) -> tuple[int, int]:
+    visual_findings = list((report.get("visual_review") or {}).get("findings") or [])
+    symmetry_findings = list((report.get("symmetry_review") or {}).get("findings") or [])
+    overlap_count = len(visual_findings) if report.get("overlap_status") != "PASS" else 0
+    symmetry_count = len(symmetry_findings) if report.get("symmetry_status") != "PASS" else 0
+    return overlap_count, symmetry_count
+
+
+def structural_issue_free(report: dict[str, Any]) -> bool:
+    return report.get("overlap_status") == "PASS" and report.get("symmetry_status") == "PASS"
+
+
+def run_force_structural_report(manifest_path: Path, work_dir: Path) -> tuple[dict[str, Any], int]:
+    manifest = load_manifest(manifest_path)
+    report = base_semantic_report(manifest)
+    report["force_loop_version"] = FORCE_LOOP_VERSION
+    report["approval_command"] = "force-check"
+
+    standalone_tex = abs_path(manifest.get("standalone_tex"))
+    if standalone_tex is None or not standalone_tex.is_file():
+        report["review_status"] = "BLOCKED_INPUT"
+        report["static_status"] = "BLOCKED"
+        report["compile_status"] = "BLOCKED"
+        report["overlap_status"] = "BLOCKED"
+        report["symmetry_status"] = "BLOCKED"
+        report["final_verdict"] = "BLOCKED"
+        report["warnings"].append("standalone_tex is required for forced structural checking")
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 3
+
+    static_result = check_file(standalone_tex)
+    report["static_status"] = "PASS" if static_preflight_pass(static_result) else "FAIL"
+    report["rule_hits"].extend(static_result["rule_hits"])
+    if report["static_status"] == "FAIL":
+        report["review_status"] = "COMPLETE"
+        report["final_verdict"] = "NEEDS_REVISION"
+        report["warnings"].append("forced structural check stopped after static preflight failure")
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 1
+
+    compile_result = compile_tex(standalone_tex, svg=False)
+    report["compile"] = {
+        "status": compile_result["status"],
+        "exit_code": compile_result["exit_code"],
+        "pdf": compile_result.get("pdf"),
+    }
+    if compile_result["status"] == "BLOCKED_ENVIRONMENT":
+        report["review_status"] = "BLOCKED_ENVIRONMENT"
+        report["compile_status"] = "BLOCKED"
+        report["overlap_status"] = "BLOCKED"
+        report["symmetry_status"] = "BLOCKED"
+        report["final_verdict"] = "BLOCKED"
+        report["warnings"].append(str(compile_result.get("message", "compile dependency unavailable")))
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 5
+    if compile_result["exit_code"] != 0:
+        report["review_status"] = "COMPLETE"
+        report["compile_status"] = "FAIL"
+        report["overlap_status"] = "BLOCKED"
+        report["symmetry_status"] = "BLOCKED"
+        report["final_verdict"] = "NEEDS_REVISION"
+        report["warnings"].append("latex compilation failed during forced structural checking")
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 1
+    report["compile_status"] = "PASS"
+
+    refresh_manifest_artifact_hashes(manifest)
+    dump_json(manifest_path, manifest)
+
+    visual_report, visual_exit = run_review_visual_report(manifest_path, work_dir)
+    report["visual_status"] = visual_report.get("visual_status", "SKIPPED")
+    report["overlap_status"] = visual_report.get("overlap_status", report["visual_status"])
+    report["warnings"].extend(visual_report.get("warnings", []))
+    report["rule_hits"].extend(visual_report.get("rule_hits", []))
+    report["visual_review"] = visual_report.get("visual_review", report["visual_review"])
+    if visual_report.get("evidence", {}).get("render_semantics") is not None:
+        report["evidence"]["render_semantics"] = visual_report["evidence"]["render_semantics"]
+
+    render_semantics = None
+    render_path = abs_path(manifest.get("render_semantics"))
+    if render_path and render_path.is_file():
+        render_semantics = load_render_semantics(render_path)
+    spec = None
+    spec_path = abs_path(manifest.get("diagram_spec"))
+    if spec_path and spec_path.is_file():
+        spec = load_json(spec_path)
+    symmetry_review = evaluate_symmetry_contract(spec, render_semantics)
+    report["symmetry_review"] = symmetry_review
+    report["symmetry_status"] = symmetry_review.get("status", "BLOCKED")
+    if report["symmetry_status"] in {"FAIL", "BLOCKED"}:
+        report["rule_hits"].append(make_rule_hit("P8_SYMMETRY_CONTRACT", STATIC_RULES["P8_SYMMETRY_CONTRACT"]))
+
+    blocked_status = blocked_review_status(visual_report)
+    if blocked_status is not None:
+        report["review_status"] = blocked_status
+        report["final_verdict"] = "BLOCKED"
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, visual_exit
+    if report["symmetry_status"] == "BLOCKED":
+        report["review_status"] = "BLOCKED_INPUT"
+        report["final_verdict"] = "BLOCKED"
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 3
+
+    report["review_status"] = "COMPLETE"
+    if report["overlap_status"] == "PASS" and report["symmetry_status"] == "PASS":
+        report["final_verdict"] = "STRUCTURAL_PASS"
+        report["warnings"].append("forced structural check found no overlap or symmetry-contract failures")
+        finalized = finalize_report(report)
+        write_semantic_report(manifest, finalized)
+        return finalized, 0
+
+    report["final_verdict"] = "NEEDS_REVISION"
+    report["warnings"].append("forced structural check found overlap or symmetry-contract failures")
+    finalized = finalize_report(report)
+    write_semantic_report(manifest, finalized)
+    return finalized, 1
+
+
+def repair_absolute_symmetry_positions(spec: dict[str, Any]) -> list[str]:
+    try:
+        contract = normalize_symmetry_contract(spec.get("symmetry_contract"))
+    except SystemExit:
+        return []
+    if contract.get("status") != "required":
+        return []
+    pairs = symmetry_pair_entries(contract)
+    if not pairs:
+        return []
+    nodes_by_id = {str(node.get("id")): node for node in spec.get("nodes", [])}
+    mode = str(contract.get("mode") or "mirror_vertical_axis")
+    pair_positions: list[tuple[dict[str, Any], dict[str, Any], float, float, float, float]] = []
+    for left_id, right_id in pairs:
+        left = nodes_by_id.get(left_id)
+        right = nodes_by_id.get(right_id)
+        if left is None or right is None:
+            return []
+        left_place = left.get("placement") or {}
+        right_place = right.get("placement") or {}
+        if left_place.get("kind") != "absolute" or right_place.get("kind") != "absolute":
+            return []
+        try:
+            left_x = float(left_place.get("x", "0"))
+            left_y = float(left_place.get("y", "0"))
+            right_x = float(right_place.get("x", "0"))
+            right_y = float(right_place.get("y", "0"))
+        except ValueError:
+            return []
+        pair_positions.append((left, right, left_x, left_y, right_x, right_y))
+
+    changes: list[str] = []
+    if mode == "row_alignment":
+        for left, right, _left_x, left_y, _right_x, right_y in pair_positions:
+            y = (left_y + right_y) / 2.0
+            left["placement"]["y"] = f"{y:.4f}"
+            right["placement"]["y"] = f"{y:.4f}"
+        changes.append("aligned absolute symmetry pairs to common rows")
+    elif mode == "column_alignment":
+        for left, right, left_x, _left_y, right_x, _right_y in pair_positions:
+            x = (left_x + right_x) / 2.0
+            left["placement"]["x"] = f"{x:.4f}"
+            right["placement"]["x"] = f"{x:.4f}"
+        changes.append("aligned absolute symmetry pairs to common columns")
+    elif mode == "mirror_vertical_axis":
+        axis = sum((left_x + right_x) / 2.0 for _left, _right, left_x, _left_y, right_x, _right_y in pair_positions) / len(
+            pair_positions
+        )
+        for left, right, left_x, left_y, right_x, right_y in pair_positions:
+            half_gap = abs(right_x - left_x) / 2.0
+            y = (left_y + right_y) / 2.0
+            left["placement"]["x"] = f"{axis - half_gap:.4f}"
+            right["placement"]["x"] = f"{axis + half_gap:.4f}"
+            left["placement"]["y"] = f"{y:.4f}"
+            right["placement"]["y"] = f"{y:.4f}"
+        changes.append("mirrored absolute symmetry pairs across a common vertical axis")
+    elif mode == "mirror_horizontal_axis":
+        axis = sum((left_y + right_y) / 2.0 for _left, _right, _left_x, left_y, _right_x, right_y in pair_positions) / len(
+            pair_positions
+        )
+        for left, right, left_x, left_y, right_x, right_y in pair_positions:
+            half_gap = abs(right_y - left_y) / 2.0
+            x = (left_x + right_x) / 2.0
+            left["placement"]["y"] = f"{axis - half_gap:.4f}"
+            right["placement"]["y"] = f"{axis + half_gap:.4f}"
+            left["placement"]["x"] = f"{x:.4f}"
+            right["placement"]["x"] = f"{x:.4f}"
+        changes.append("mirrored absolute symmetry pairs across a common horizontal axis")
+    return changes
+
+
+def repair_spec_for_force_findings(spec: dict[str, Any], report: dict[str, Any], repair_index: int) -> tuple[dict[str, Any], list[str]]:
+    repaired = json.loads(json.dumps(spec))
+    changes: list[str] = []
+    overlap_count, symmetry_count = structural_issue_counts(report)
+    if overlap_count:
+        current_spacing = max(1.0, force_layout_value(repaired, "spacing_multiplier", 1.0))
+        next_spacing = current_spacing * 1.25
+        set_force_layout_value(repaired, "spacing_multiplier", next_spacing)
+        changes.append(f"increased structural spacing multiplier to {next_spacing:.3g}")
+        if repaired.get("diagram_family") in {"flowchart", "dag", "tree"}:
+            current_padding = max(1.0, force_layout_value(repaired, "node_padding_multiplier", 1.0))
+            next_padding = current_padding * 1.15
+            set_force_layout_value(repaired, "node_padding_multiplier", next_padding)
+            changes.append(f"increased node padding multiplier to {next_padding:.3g}")
+            for node in repaired.get("nodes", []):
+                if scale_mm_field(node, "height", default_mm=10.0, factor=1.08):
+                    changes.append(f"expanded node height for {node.get('id')}")
+                if repaired.get("diagram_family") in {"flowchart", "dag"} and scale_mm_field(
+                    node,
+                    "width",
+                    default_mm=22.0 if "?" in str(node.get("label", "")) else 32.0,
+                    factor=1.08,
+                ):
+                    changes.append(f"expanded node width for {node.get('id')}")
+        for index, edge in enumerate(repaired.get("edges", [])):
+            if edge.get("label") and not edge.get("label_pos"):
+                edge["label_pos"] = "above" if (repair_index + index) % 2 == 0 else "below"
+                changes.append(f"anchored edge label for {edge.get('from')}->{edge.get('to')}")
+    if symmetry_count:
+        changes.extend(repair_absolute_symmetry_positions(repaired))
+    return repaired, changes
+
+
+def rewrite_generated_artifacts_from_spec(manifest_path: Path, spec: dict[str, Any]) -> None:
+    manifest = load_manifest(manifest_path)
+    brief_path = abs_path(manifest.get("figure_brief"))
+    brief = load_json(brief_path) if brief_path and brief_path.is_file() else {}
+    figure_id = str(manifest["figure_id"])
+    caption = str(brief.get("caption") or spec.get("caption") or "")
+    standalone, snippet = build_outputs(spec, figure_id, caption)
+    standalone_path = abs_path(manifest.get("standalone_tex"))
+    snippet_path = abs_path(manifest.get("figure_tex"))
+    spec_path = abs_path(manifest.get("diagram_spec"))
+    if standalone_path is None or snippet_path is None or spec_path is None:
+        raise SystemExit("manifest is missing generated artifact paths")
+    write_text(standalone_path, standalone)
+    write_text(snippet_path, snippet)
+    dump_json(spec_path, spec)
+    refresh_manifest_artifact_hashes(manifest)
+    dump_json(manifest_path, manifest)
+
+
+def attach_force_loop(report: dict[str, Any], force_loop: dict[str, Any], *, terminal_reason: str, status: str) -> dict[str, Any]:
+    force_loop["terminal_reason"] = terminal_reason
+    force_loop["status"] = status
+    report["force_loop"] = force_loop
+    return report
+
+
+def run_force_structural_loop(
+    manifest_path: Path,
+    work_dir: Path,
+    *,
+    repair_credits: int = DEFAULT_FORCE_REPAIR_CREDITS,
+) -> tuple[dict[str, Any], int]:
+    credits_remaining = max(0, repair_credits)
+    force_loop: dict[str, Any] = {
+        "version": FORCE_LOOP_VERSION,
+        "repair_credits_initial": max(0, repair_credits),
+        "repair_credits_remaining": credits_remaining,
+        "ledger": [],
+        "stop_conditions": [
+            "credit_budget_exhausted",
+            "user_stop_requested",
+            "issue_free_no_overlap_and_no_symmetry_failures",
+        ],
+    }
+    check_index = 0
+    while True:
+        stop_signal = force_stop_requested(work_dir)
+        if stop_signal is not None:
+            manifest = load_manifest(manifest_path)
+            report = finalize_report(base_semantic_report(manifest))
+            report["review_status"] = "USER_STOPPED"
+            report["final_verdict"] = "BLOCKED"
+            report["warnings"].append("forced structural loop stopped because a user stop signal was present")
+            attach_force_loop(report, force_loop, terminal_reason="user_stop_requested", status="STOPPED")
+            report["force_loop"]["stop_signal"] = stop_signal
+            write_semantic_report(manifest, report)
+            return report, 130
+
+        check_index += 1
+        report, exit_code = run_force_structural_report(manifest_path, work_dir)
+        overlap_count, symmetry_count = structural_issue_counts(report)
+        force_loop["ledger"].append(
+            {
+                "check": check_index,
+                "overlap_status": report.get("overlap_status"),
+                "symmetry_status": report.get("symmetry_status"),
+                "overlap_findings": overlap_count,
+                "symmetry_findings": symmetry_count,
+                "decision": "pending",
+                "credits_remaining": credits_remaining,
+            }
+        )
+        if structural_issue_free(report):
+            force_loop["ledger"][-1]["decision"] = "issue_free"
+            attach_force_loop(
+                report,
+                force_loop,
+                terminal_reason="issue_free_no_overlap_and_no_symmetry_failures",
+                status="PASS",
+            )
+            manifest = load_manifest(manifest_path)
+            write_semantic_report(manifest, finalize_report(report))
+            return report, 0
+
+        if exit_code not in {1}:
+            credits_remaining = 0
+            force_loop["repair_credits_remaining"] = 0
+            force_loop["ledger"][-1]["decision"] = "credit_budget_exhausted"
+            force_loop["ledger"][-1]["credits_remaining"] = 0
+            force_loop["blocked_exit_code"] = exit_code
+            report["warnings"].append(
+                "forced structural loop cannot continue because required checking resources or inputs are unavailable"
+            )
+            attach_force_loop(report, force_loop, terminal_reason="credit_budget_exhausted", status="EXHAUSTED")
+            manifest = load_manifest(manifest_path)
+            write_semantic_report(manifest, finalize_report(report))
+            return report, exit_code
+
+        if overlap_count == 0 and symmetry_count == 0:
+            credits_remaining = 0
+            force_loop["repair_credits_remaining"] = 0
+            force_loop["ledger"][-1]["decision"] = "credit_budget_exhausted"
+            force_loop["ledger"][-1]["credits_remaining"] = 0
+            report["warnings"].append("no actionable overlap or symmetry finding was available for deterministic repair")
+            attach_force_loop(report, force_loop, terminal_reason="credit_budget_exhausted", status="EXHAUSTED")
+            manifest = load_manifest(manifest_path)
+            write_semantic_report(manifest, finalize_report(report))
+            return report, exit_code
+
+        if credits_remaining <= 0:
+            force_loop["ledger"][-1]["decision"] = "credit_budget_exhausted"
+            attach_force_loop(report, force_loop, terminal_reason="credit_budget_exhausted", status="EXHAUSTED")
+            manifest = load_manifest(manifest_path)
+            write_semantic_report(manifest, finalize_report(report))
+            return report, 1
+
+        spec_path = abs_path(load_manifest(manifest_path).get("diagram_spec"))
+        if spec_path is None or not spec_path.is_file():
+            credits_remaining = 0
+            force_loop["repair_credits_remaining"] = 0
+            force_loop["ledger"][-1]["decision"] = "credit_budget_exhausted"
+            force_loop["ledger"][-1]["credits_remaining"] = 0
+            report["warnings"].append("cannot spend repair credit because diagram_spec is missing")
+            attach_force_loop(report, force_loop, terminal_reason="credit_budget_exhausted", status="EXHAUSTED")
+            manifest = load_manifest(manifest_path)
+            write_semantic_report(manifest, finalize_report(report))
+            return report, 1
+
+        repaired_spec, changes = repair_spec_for_force_findings(load_json(spec_path), report, check_index)
+        if not changes:
+            credits_remaining = 0
+            force_loop["repair_credits_remaining"] = 0
+            force_loop["ledger"][-1]["decision"] = "credit_budget_exhausted"
+            force_loop["ledger"][-1]["credits_remaining"] = 0
+            report["warnings"].append("no deterministic repair was available for the remaining structural findings")
+            attach_force_loop(report, force_loop, terminal_reason="credit_budget_exhausted", status="EXHAUSTED")
+            manifest = load_manifest(manifest_path)
+            write_semantic_report(manifest, finalize_report(report))
+            return report, 1
+
+        credits_remaining -= 1
+        force_loop["repair_credits_remaining"] = credits_remaining
+        force_loop["ledger"][-1]["decision"] = "repair"
+        force_loop["ledger"][-1]["repair_changes"] = changes
+        force_loop["ledger"][-1]["credits_remaining"] = credits_remaining
+        rewrite_generated_artifacts_from_spec(manifest_path, repaired_spec)
+
+
 def command_doctor() -> int:
     required_files = [
         SCRIPT_DIR / "requirements-semantic-verifier.txt",
@@ -3953,7 +4398,27 @@ def command_render(args: argparse.Namespace) -> int:
     print(f"WROTE\t{snippet_path}")
     print(f"WROTE\t{spec_out_path}")
     print(f"WROTE\t{manifest_path}")
-    return 0
+    force_report, force_exit = run_force_structural_loop(
+        manifest_path,
+        out_dir,
+        repair_credits=getattr(args, "force_repair_credits", DEFAULT_FORCE_REPAIR_CREDITS),
+    )
+    print(json.dumps(force_report, indent=2))
+    return force_exit
+
+
+def command_force_check(args: argparse.Namespace) -> int:
+    manifest_path = abs_path(args.artifacts)
+    work_dir = abs_path(args.work_dir)
+    assert manifest_path is not None
+    assert work_dir is not None
+    report, exit_code = run_force_structural_loop(
+        manifest_path,
+        work_dir,
+        repair_credits=getattr(args, "repair_credits", DEFAULT_FORCE_REPAIR_CREDITS),
+    )
+    print(json.dumps(report, indent=2))
+    return exit_code
 
 
 def command_check(args: argparse.Namespace) -> int:
@@ -4186,6 +4651,28 @@ def build_parser() -> argparse.ArgumentParser:
     render_parser.add_argument("--spec")
     add_bootstrap_args(render_parser)
     render_parser.add_argument("--basename")
+    render_parser.add_argument(
+        "--force-repair-credits",
+        type=int,
+        default=DEFAULT_FORCE_REPAIR_CREDITS,
+        help=(
+            "Structural repair credits consumed by the forced post-render overlap/symmetry loop; "
+            "exhaustion is a terminal stop condition."
+        ),
+    )
+
+    force_parser = subparsers.add_parser("force-check")
+    force_parser.add_argument("--artifacts", required=True)
+    force_parser.add_argument("--work-dir", required=True)
+    force_parser.add_argument(
+        "--repair-credits",
+        type=int,
+        default=DEFAULT_FORCE_REPAIR_CREDITS,
+        help=(
+            "Structural repair credits consumed by the forced overlap/symmetry loop; "
+            "exhaustion is a terminal stop condition."
+        ),
+    )
 
     check_parser = subparsers.add_parser("check")
     check_parser.add_argument("--tex", required=True)
@@ -4239,6 +4726,8 @@ def main() -> int:
         return command_spec(args)
     if args.command == "render":
         return command_render(args)
+    if args.command == "force-check":
+        return command_force_check(args)
     if args.command == "check":
         return command_check(args)
     if args.command == "compile":
