@@ -1710,9 +1710,11 @@ Resolve install-mode policy by phase:
   roots. Managed non-canary skill writes also require a native managed canary
   evidence record.
 - Native loader evidence is necessary but not sufficient for broader real
-  writes. Support files, runtime-backed skills, symlinks, reference adapters,
-  instruction files, plugins, hooks, config, and runtime surfaces remain
-  blocked until separate evidence and approval gates exist.
+  writes. Runtime-backed skills, with their inert and executable runtime
+  files, install on real homes only through the approved real-system runtime
+  manifest gate and are fake-root-only by default. Symlinks, reference
+  adapters, instruction files, plugins, hooks, and config remain blocked
+  until separate evidence and approval gates exist.
 - Symlink mode stays blocked until separately proven.
 - Reference mode is not an active OpenClaw loader mode unless OpenClaw is
   proven to follow reference adapters.
@@ -1817,9 +1819,10 @@ Real-system write policy:
   `.openclaw` tree, including `.openclaw/skills`,
   `.openclaw/ai-agents-skills`, config, runtime, hooks, plugins, cache/state,
   or any descendant
-- the only implemented real-system exception is the explicit
+- one implemented real-system exception is the explicit
   `openclaw-target-apply-manifest` path for approved v2
-  `skills/<skill>/SKILL.md` copy actions
+  `skills/<skill>/SKILL.md` copy actions; the other is the runtime approval
+  gate described below
 - the v2 gate requires existing `.openclaw` and `.openclaw/skills`
   directories, target path shape `skills/<skill>/SKILL.md`, no symlinked
   target parents, managed OpenClaw skill content, no Codex runtime paths,
