@@ -1,7 +1,7 @@
 # TikZ Figure Verification Runbook
 
-Use this template to draw a TikZ/PGF figure and refine it across bounded
-iterations until it is provably free of issues: overlapping elements, wrong
+Use this template to draw a TikZ/PGF figure and refine it across forced
+check/repair iterations until it is provably free of issues: overlapping elements, wrong
 meaning (semantics that do not match the intent), bad layout, label/edge
 collisions, clipping, ambiguous arrows, or illegible text. Each iteration is
 draw -> compile to PDF -> verify -> (if any issue) backtrack and redraw.
@@ -32,26 +32,22 @@ meaning/layout confirmation.
 Status values: `planned`, `drawing`, `verifying`, `blocked`, `approved`,
 `abandoned`.
 
-## Stop Conditions
+## Forced Stop Conditions
 
-Run the draw/verify loop continuously until **any** of the conditions below
-fires. The loop is an OR over all of them; the moment one fires, stop and report.
+Run the draw/verify loop continuously until **one** of the conditions below
+fires. The loop is an OR over these conditions only; the moment one fires, stop
+and report. A finite iteration cap is not a valid stop condition unless it is
+represented as exhausted repair/checking credits.
 
 | # | Stop condition | Detection point | Terminal decision |
 |---|---|---|---|
-| (a) | The figure is **issue-free**: the `tikz-draw` strict approval gate passes (`overlap_status=PASS` and `design_status=PASS` or `SKIPPED`) **and** a fresh agent independently confirms the meaning and layout, with no open issues in the ledger | Strict approval gate + fresh-agent gate | `approved` |
-| (b) | A **finite number of redraw iterations specified by the user** is reached | Iteration counter vs cap | `stop` (iteration cap) |
-| (c) | **The user asks specifically to stop** | Explicit user signal | `stop` (user request) |
+| (a) | The figure is **structurally issue-free**: `tikz-draw force-check` / post-`render` loop reports `overlap_status=PASS`, `symmetry_status=PASS`, and `force_loop.terminal_reason=issue_free_no_overlap_and_no_symmetry_failures` | Forced structural loop | `structural-pass` |
+| (b) | **Repair/checking credits are exhausted or unavailable** | `force_loop.repair_credits_remaining=0`, missing checker resources, or nonrepairable structural state | `credit_budget_exhausted` |
+| (c) | **The user asks specifically to stop** | Explicit user signal; local runtime sentinel or environment stop signal | `user_stop_requested` |
 
-### Finite-N ASK gate (hard precondition before iteration 1)
-
-- If the user specified a finite number of redraw iterations `N`, record it as
-  the iteration cap.
-- **If the user does not mention it, ASK them** how many redraw iterations to
-  allow before starting iteration 1. Do not assume a silent default and do not
-  loop unbounded.
-- The cap is a hard ceiling, never a target: the loop ends earlier the moment the
-  figure is issue-free (condition (a)).
+After the structural loop passes, run the full strict approval gate. Strict
+approval remains the only final figure approval because it also checks semantic
+meaning and scoped design contracts.
 
 ## Issue Taxonomy (what "free of issues" means)
 
@@ -76,12 +72,12 @@ Apply every phase, in order, in each iteration.
 |---|---|
 | P1. Intent contract | Establish the semantic intent contract before raw TikZ (`tikz-draw contract` / semantic design contract for manuscript figures). For graph families, choose the graph mode. |
 | P2. Draw (single path) | Produce one spec following the single best layout approach (see Single-Path Drawing Discipline). For graph families beyond the baseline shorthand/layout surface, use Sage-assisted realization (`--graph-mode sage`). |
-| P3. Compile to PDF | `tikz-draw render` / `compile` against `tex-runtime`; produce the PDF and refresh `render-semantics.json` from the compiled PDF. A compile failure is an issue: fix before verifying. |
-| P4. Automated verify (preflight) | Run `verify-semantic` (overlap), `verify-design` (layout), `check`, `review-visual`, and `graph-verifier` for graph sanity. Record `overlap_status` and `design_status`. These are PREFLIGHT signals, never final approval. |
+| P3. Compile to PDF | `tikz-draw render` compiles/checks generated artifacts through the forced structural loop; `force-check` reruns that loop for existing artifacts. A compile/checking-resource failure terminates as exhausted checking credits, not as approval. |
+| P4. Automated verify (preflight) | Run `force-check` until `overlap_status=PASS` and `symmetry_status=PASS`, then run `verify-semantic`, `verify-design`, `check`, `review-visual`, and `graph-verifier` for graph sanity. Record structural and semantic statuses. These are PREFLIGHT signals, never final approval. |
 | P5. Fresh-agent verify | A fresh, independent agent inspects the compiled PDF for meaning and layout (producer never confirms). See Cross-Agent + Fresh-Agent Verification. |
 | P6. Issue handling / backtrack | If any issue is found in P4 or P5, state it, backtrack to the last valid spec node, and redraw that element via the second-best layout. Re-verify by a fresh agent. |
-| P7. Strict approval gate | When P4 and P5 are clean, run the `tikz-draw` strict approval gate (`approve`) and require `overlap_status=PASS` and `design_status=PASS` (or `SKIPPED` when out of scope), plus the fresh-agent sign-off. |
-| P8. Stop check | Evaluate the stop conditions; continue only if the figure is not yet issue-free and the iteration cap remains. |
+| P7. Strict approval gate | When P4 and P5 are clean, run the `tikz-draw` strict approval gate (`approve`) and require `overlap_status=PASS`, `symmetry_status=PASS`, and `design_status=PASS` (or `SKIPPED` when out of scope), plus the fresh-agent sign-off. |
+| P8. Stop check | Continue unless the structural loop is issue-free, repair/checking credits are exhausted, or the user explicitly requested a stop. |
 
 ## Single-Path Drawing Discipline
 
@@ -149,15 +145,13 @@ The agent that drew the figure is never the agent that confirms it is issue-free
 
 Append one row per iteration.
 
-| Iteration | Layout approach (single chosen) | Graph mode / backend | `overlap_status` | `design_status` | Issues found (by category) | Fresh-agent verdict | Backtrack target | Decision |
-|---|---|---|---|---|---|---|---|---|
-| 1 |  |  |  |  |  |  |  | `continue` |
+| Iteration | Layout approach (single chosen) | Graph mode / backend | `overlap_status` | `symmetry_status` | `design_status` | Issues found (by category) | Fresh-agent verdict | Backtrack target | Decision |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 |  |  |  |  |  |  |  |  | `continue` |
 
-Decision values: `continue` (issues remain and the cap allows another redraw),
+Decision values: `continue` (issues remain and repair/checking credits remain),
 `backtrack` (contradiction; return to the last valid node), `approved` (issue-free
-and gated), `blocked` (fresh-context unavailable, Sage required-but-missing for a
-graph that needs it, or an unresolved contradiction), `stop` (cap reached or user
-stop).
+and gated), `credit_budget_exhausted`, `user_stop_requested`.
 
 ## Issue-Free Evidence Gate (before claiming done)
 
@@ -166,7 +160,10 @@ preflight signals, compile success, a screenshot, or a PDF preview alone. The
 figure is issue-free only when ALL hold and are recorded:
 
 - `tikz-draw` strict approval gate passed: `overlap_status=PASS` and
-  `design_status=PASS` (or `SKIPPED` when the design gate is out of scope).
+  `symmetry_status=PASS`, with `design_status=PASS` (or `SKIPPED` when the design
+  gate is out of scope).
+- The forced structural loop ended with
+  `force_loop.terminal_reason=issue_free_no_overlap_and_no_symmetry_failures`.
 - A fresh agent independently confirmed the meaning and every issue-taxonomy
   category against the compiled PDF.
 - No open issues remain in the ledger; any earlier issue has a redraw that the
@@ -183,7 +180,7 @@ realizations. Any script utilizes the current hardware resources.
 
 | Failure mode | Detection | Recovery |
 |---|---|---|
-| Iteration count unspecified | Finite-N ASK gate | Ask the user for `N` before iteration 1. |
+| Forced loop stopped because a hidden iteration cap fired | Force-loop ledger | Treat as invalid; continue unless credits are exhausted, user stopped, or no overlap/symmetry failures remain. |
 | "Done" claimed on preflight/screenshot | Evidence gate | Run the strict approval gate + fresh-agent confirmation first. |
 | Drawer self-approved the figure | Fresh-agent gate | Re-verify with a fresh/different agent inspecting the PDF. |
 | Parallel layouts attempted | Single-path discipline | Collapse to the single highest-probability layout. |
@@ -195,7 +192,7 @@ realizations. Any script utilizes the current hardware resources.
 
 Approved figure (path / artifact):
 
-Strict approval report (`overlap_status`, `design_status`):
+Strict approval report (`overlap_status`, `symmetry_status`, `design_status`):
 
 Fresh-agent confirmation (who / what was checked):
 
