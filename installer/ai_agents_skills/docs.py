@@ -122,8 +122,10 @@ versions, or research tasks outside the assumptions documented here.
 This repo turns a multi-agent research setup into one maintainable skill source.
 Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI can
 each load local skills. OpenClaw participates as a default fake-root-only
-target for normal installer flows and has a separate reviewed v2 skill-file
-path for real-system target writes. This repository keeps the
+target for normal installer flows, with a separate reviewed v2 skill-file path
+for real-system skill writes and an evidence-gated runtime-install path (the
+`openclaw-runtime-*` commands plus the host `openclaw-broker`) for real-system
+runtime files. This repository keeps the
 shared research workflows, profiles, delegation settings, dependency metadata,
 and installer logic in one place.
 
@@ -364,8 +366,8 @@ are rejected from config. Use `scan-heavy` when you want stronger local OCR
 for image-backed papers:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \\
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh doctor
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \\
   --source "/path/to/paper.pdf" \\
   --to md \\
   --preset scan-heavy
@@ -374,7 +376,7 @@ bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \\
 OCR.space fallback is available only through explicit remote upload flags:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \\
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \\
   --source "/path/to/paper.pdf" \\
   --to md \\
   --preset scan-heavy \\
@@ -386,7 +388,7 @@ To test the live OCR.space adapter, run the explicit smoke command. It
 generates and uploads a synthetic one-page PDF, not a user document:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh ocrspace-smoke \\
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \\
   --allow-remote-ocr
 ```
 
@@ -1094,7 +1096,7 @@ Docling environment and heavier OCR/model packages that are not part of the
 default runtime-smoke harness:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh doctor
 ```
 
 `smoke` can also return `no-managed-artifacts` when no managed skill-file
@@ -1824,10 +1826,13 @@ Real-system write policy:
   native-loader evidence, native managed-skill-root evidence, target-pre-state
   evidence, quiescence evidence, and canary evidence for non-canary managed
   skill writes
-- OpenClaw-associated shared runtime-root writes are also fake-root-only until
-  a dedicated real-system runtime approval gate exists; those manifests must
-  bind target realpath, runtime realpath, source commit, artifact hashes,
-  evidence IDs, pre-state hashes, and action classes
+- OpenClaw-associated shared runtime-root writes are fake-root-only by default; a
+  dedicated real-system runtime approval gate is now implemented
+  (`openclaw-runtime-approve-manifest` then `openclaw-runtime-apply-manifest
+  --real-system` with verify-before-write, the runtime files exposed to the
+  sandbox by the `openclaw-broker`). Its manifests bind target realpath, runtime
+  realpath, source commit, artifact hashes, evidence IDs, pre-state hashes, and
+  action classes
 - v1 target-evidence and target-manifest records remain non-actionable
   diagnostics and cannot authorize real `.openclaw` write records
 - every write must have a manifest action, precondition, collision policy,
@@ -1967,7 +1972,12 @@ Recommended implementation issues:
 6. Fake-root OpenClaw skill layout planner and lifecycle tests.
 7. No-go path fixture expansion and path-safety preflight.
 8. Shared runtime-root contract, real-system runtime approval gate, and
-   compatibility-tuple-filtered runtime planning.
+   compatibility-tuple-filtered runtime planning. **(Implemented.)** The runtime
+   approval gate ships as the `openclaw-runtime-probe`,
+   `openclaw-runtime-dry-run-manifest`, `openclaw-runtime-approve-manifest`, and
+   `openclaw-runtime-apply-manifest` commands plus the `openclaw-broker` host
+   process; real-system runtime apply requires an approved content-addressed
+   manifest, `--real-system`, a confirmation phrase, and verify-before-write.
 9. Executable and binary support-file policy.
 10. Helper-invocation evidence gate for runtime-backed and executable-helper
    skills.
@@ -2125,8 +2135,10 @@ Docs contract:
 Real-system gate:
 
 - normal installer flows reject real home roots for OpenClaw writes
-- OpenClaw-associated shared runtime-root writes remain rejected before a
-  dedicated real-system runtime approval gate
+- OpenClaw-associated shared runtime-root writes are gated by the dedicated
+  real-system runtime approval gate (now implemented:
+  `openclaw-runtime-apply-manifest --real-system` with an approved manifest +
+  confirmation phrase + verify-before-write), not by normal installer flows
 - v2 real-system dry-run output may contain only `skills/<skill>/SKILL.md`
   actions with action class `canary-skill-file` or `managed-skill-file`
 - approved v2 real-system manifests must match the exact target realpath,
@@ -2732,16 +2744,21 @@ rule, and a single runtime arbiter (`done`) derives the verdict both enforcement
 paths consult.
 
 - Interactive (Claude): a managed `hooks.Stop` entry is merged into
-  `~/.claude/settings.json` (the `settings-hook-merge` surface). Its wrapper is
-  fail-open: any error, timeout, missing runtime, re-entrancy, or kill switch
-  (`AUTOLOOP_DISABLE`, removing the registry entry, or a `STOP_REQUESTED`
+  `~/.claude/settings.json` (the `settings-hook-merge` surface). The entry invokes
+  the runtime's cross-platform `hook-check` subcommand directly
+  (`python3|python "<runtime>" hook-check`; no shell wrapper), so it behaves
+  identically on Windows, macOS, and Linux. It reads the hook JSON on stdin and
+  resolves the project root from `CLAUDE_PROJECT_DIR`, and is fail-open: any error,
+  timeout, missing runtime, the `stop_hook_active` re-entrancy payload, or a kill
+  switch (`AUTOLOOP_DISABLE`, removing the registry entry, or a `STOP_REQUESTED`
   sentinel) allows turn-end. It blocks turn-end only when the arbiter reports an
-  active, unfinished loop for the session's project root.
-- Headless (driver): `autoloop_driver.sh` runs one agent iteration per loop,
-  exports `AUTOLOOP_DRIVER=1` so the interactive hook stands down, enforces a
-  per-iteration timeout, and stops on the arbiter's verdict or after repeated
-  iteration failures. It fails safe: if it cannot determine state, it stops
-  rather than running unbounded.
+  active, unfinished loop for that root.
+- Headless (driver): the runtime's cross-platform `drive` subcommand runs one
+  agent iteration per loop (the POSIX `autoloop_driver.sh` is now a thin shim that
+  delegates to it), exports `AUTOLOOP_DRIVER=1` so the interactive hook stands
+  down, enforces a per-iteration timeout, and stops on the arbiter's verdict or
+  after repeated iteration failures. It fails safe: if it cannot determine state,
+  it stops rather than running unbounded.
 
 Per-target enforcement is honest, not uniform: Claude supports both the Stop
 hook and the driver; Codex and OpenCode are driver-only because they use TOML
@@ -2805,6 +2822,21 @@ settings are available.
 OpenClaw
 prechecks report the current fake-root-only gate and evidence requirements
 without enabling real `.openclaw` writes.
+
+OpenClaw real-system runtime install (advanced, evidence-gated): runtime-backed
+skills can be installed to a real OpenClaw host through a separate fail-closed
+flow, distinct from the v2 skill-file path. The sequence is
+`openclaw-runtime-probe` (mint native-loader/quiescence/neutral-root evidence on
+a quiescent host), `openclaw-runtime-dry-run-manifest` (build a content-addressed
+runtime manifest), `openclaw-runtime-approve-manifest`, then
+`openclaw-runtime-apply-manifest --real-system` with the confirmation phrase and
+verify-before-write. Apply writes inert support files under
+`.openclaw/skills/<skill>/` and executable runtime files under a validated
+neutral runtime root outside `.openclaw`. Executable files are not run inside the
+OpenClaw sandbox; the host `openclaw-broker` (started with `--serve`, a per-agent
+capability token file, and a managed host firewall rule) exposes them to the
+sandboxed agent with per-agent tokens and verify-before-exec. This path is
+optional and host-gated; the default remains fake-root-only.
 OpenCode prechecks report the user-global `~/.config/opencode` target,
 OpenCode-native artifact directories, copy-mode default, and native smoke
 expectations without reading config contents or credentials.

@@ -43,6 +43,17 @@ final allowed iteration, rejects early `stop` records that lack a valid
 proof/success artifact, and validation fails ledgers whose spent iteration
 count, iteration records, terminal decisions, and running status disagree.
 
+The runtime also exposes force-management and enforcement subcommands used by the
+autoloop wiring (not part of the normal ledger flow): `arm` / `disarm` /
+`active` register, deregister, and list an active loop; `done` is the read-only
+stop-condition arbiter; `hook-check` is the cross-platform Stop-hook check that
+the installed Claude `hooks.Stop` entry invokes directly (it reads the hook JSON
+on stdin, honors `AUTOLOOP_DISABLE` / `AUTOLOOP_DRIVER` / the `stop_hook_active`
+re-entrancy payload, and exits 2 only when an active loop is unfinished, fail-open
+otherwise); and `drive` is the cross-platform headless driver that runs one
+iteration per loop until `done` (the POSIX `autoloop_driver.sh` is a thin shim
+that delegates to it).
+
 For an early proof/success stop, at least one `--evidence-id ID` must resolve to
 `proof_artifacts/ID.json` inside the loop directory. Early proof/success stop
 reasons are `success`, `success_criteria_met`, `proof`, `proof_found`,

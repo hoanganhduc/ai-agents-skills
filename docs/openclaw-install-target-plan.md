@@ -266,10 +266,13 @@ Real-system write policy:
   native-loader evidence, native managed-skill-root evidence, target-pre-state
   evidence, quiescence evidence, and canary evidence for non-canary managed
   skill writes
-- OpenClaw-associated shared runtime-root writes are also fake-root-only until
-  a dedicated real-system runtime approval gate exists; those manifests must
-  bind target realpath, runtime realpath, source commit, artifact hashes,
-  evidence IDs, pre-state hashes, and action classes
+- OpenClaw-associated shared runtime-root writes are fake-root-only by default; a
+  dedicated real-system runtime approval gate is now implemented
+  (`openclaw-runtime-approve-manifest` then `openclaw-runtime-apply-manifest
+  --real-system` with verify-before-write, the runtime files exposed to the
+  sandbox by the `openclaw-broker`). Its manifests bind target realpath, runtime
+  realpath, source commit, artifact hashes, evidence IDs, pre-state hashes, and
+  action classes
 - v1 target-evidence and target-manifest records remain non-actionable
   diagnostics and cannot authorize real `.openclaw` write records
 - every write must have a manifest action, precondition, collision policy,
@@ -409,7 +412,12 @@ Recommended implementation issues:
 6. Fake-root OpenClaw skill layout planner and lifecycle tests.
 7. No-go path fixture expansion and path-safety preflight.
 8. Shared runtime-root contract, real-system runtime approval gate, and
-   compatibility-tuple-filtered runtime planning.
+   compatibility-tuple-filtered runtime planning. **(Implemented.)** The runtime
+   approval gate ships as the `openclaw-runtime-probe`,
+   `openclaw-runtime-dry-run-manifest`, `openclaw-runtime-approve-manifest`, and
+   `openclaw-runtime-apply-manifest` commands plus the `openclaw-broker` host
+   process; real-system runtime apply requires an approved content-addressed
+   manifest, `--real-system`, a confirmation phrase, and verify-before-write.
 9. Executable and binary support-file policy.
 10. Helper-invocation evidence gate for runtime-backed and executable-helper
    skills.
@@ -567,8 +575,10 @@ Docs contract:
 Real-system gate:
 
 - normal installer flows reject real home roots for OpenClaw writes
-- OpenClaw-associated shared runtime-root writes remain rejected before a
-  dedicated real-system runtime approval gate
+- OpenClaw-associated shared runtime-root writes are gated by the dedicated
+  real-system runtime approval gate (now implemented:
+  `openclaw-runtime-apply-manifest --real-system` with an approved manifest +
+  confirmation phrase + verify-before-write), not by normal installer flows
 - v2 real-system dry-run output may contain only `skills/<skill>/SKILL.md`
   actions with action class `canary-skill-file` or `managed-skill-file`
 - approved v2 real-system manifests must match the exact target realpath,

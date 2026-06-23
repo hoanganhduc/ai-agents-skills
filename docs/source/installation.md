@@ -38,6 +38,21 @@ settings are available.
 OpenClaw
 prechecks report the current fake-root-only gate and evidence requirements
 without enabling real `.openclaw` writes.
+
+OpenClaw real-system runtime install (advanced, evidence-gated): runtime-backed
+skills can be installed to a real OpenClaw host through a separate fail-closed
+flow, distinct from the v2 skill-file path. The sequence is
+`openclaw-runtime-probe` (mint native-loader/quiescence/neutral-root evidence on
+a quiescent host), `openclaw-runtime-dry-run-manifest` (build a content-addressed
+runtime manifest), `openclaw-runtime-approve-manifest`, then
+`openclaw-runtime-apply-manifest --real-system` with the confirmation phrase and
+verify-before-write. Apply writes inert support files under
+`.openclaw/skills/<skill>/` and executable runtime files under a validated
+neutral runtime root outside `.openclaw`. Executable files are not run inside the
+OpenClaw sandbox; the host `openclaw-broker` (started with `--serve`, a per-agent
+capability token file, and a managed host firewall rule) exposes them to the
+sandboxed agent with per-agent tokens and verify-before-exec. This path is
+optional and host-gated; the default remains fake-root-only.
 OpenCode prechecks report the user-global `~/.config/opencode` target,
 OpenCode-native artifact directories, copy-mode default, and native smoke
 expectations without reading config contents or credentials.

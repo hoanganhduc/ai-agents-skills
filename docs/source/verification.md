@@ -220,7 +220,7 @@ Docling environment and heavier OCR/model packages that are not part of the
 default runtime-smoke harness:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh doctor
 ```
 
 `smoke` can also return `no-managed-artifacts` when no managed skill-file

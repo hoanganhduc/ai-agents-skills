@@ -121,16 +121,21 @@ rule, and a single runtime arbiter (`done`) derives the verdict both enforcement
 paths consult.
 
 - Interactive (Claude): a managed `hooks.Stop` entry is merged into
-  `~/.claude/settings.json` (the `settings-hook-merge` surface). Its wrapper is
-  fail-open: any error, timeout, missing runtime, re-entrancy, or kill switch
-  (`AUTOLOOP_DISABLE`, removing the registry entry, or a `STOP_REQUESTED`
+  `~/.claude/settings.json` (the `settings-hook-merge` surface). The entry invokes
+  the runtime's cross-platform `hook-check` subcommand directly
+  (`python3|python "<runtime>" hook-check`; no shell wrapper), so it behaves
+  identically on Windows, macOS, and Linux. It reads the hook JSON on stdin and
+  resolves the project root from `CLAUDE_PROJECT_DIR`, and is fail-open: any error,
+  timeout, missing runtime, the `stop_hook_active` re-entrancy payload, or a kill
+  switch (`AUTOLOOP_DISABLE`, removing the registry entry, or a `STOP_REQUESTED`
   sentinel) allows turn-end. It blocks turn-end only when the arbiter reports an
-  active, unfinished loop for the session's project root.
-- Headless (driver): `autoloop_driver.sh` runs one agent iteration per loop,
-  exports `AUTOLOOP_DRIVER=1` so the interactive hook stands down, enforces a
-  per-iteration timeout, and stops on the arbiter's verdict or after repeated
-  iteration failures. It fails safe: if it cannot determine state, it stops
-  rather than running unbounded.
+  active, unfinished loop for that root.
+- Headless (driver): the runtime's cross-platform `drive` subcommand runs one
+  agent iteration per loop (the POSIX `autoloop_driver.sh` is now a thin shim that
+  delegates to it), exports `AUTOLOOP_DRIVER=1` so the interactive hook stands
+  down, enforces a per-iteration timeout, and stops on the arbiter's verdict or
+  after repeated iteration failures. It fails safe: if it cannot determine state,
+  it stops rather than running unbounded.
 
 Per-target enforcement is honest, not uniform: Claude supports both the Stop
 hook and the driver; Codex and OpenCode are driver-only because they use TOML
