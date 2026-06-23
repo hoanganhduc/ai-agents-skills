@@ -36,8 +36,10 @@ versions, or research tasks outside the assumptions documented here.
 This repo turns a multi-agent research setup into one maintainable skill source.
 Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI can
 each load local skills. OpenClaw participates as a default fake-root-only
-target for normal installer flows and has a separate reviewed v2 skill-file
-path for real-system target writes. This repository keeps the
+target for normal installer flows, with a separate reviewed v2 skill-file path
+for real-system skill writes and an evidence-gated runtime-install path (the
+`openclaw-runtime-*` commands plus the host `openclaw-broker`) for real-system
+runtime files. This repository keeps the
 shared research workflows, profiles, delegation settings, dependency metadata,
 and installer logic in one place.
 
@@ -278,8 +280,8 @@ are rejected from config. Use `scan-heavy` when you want stronger local OCR
 for image-backed papers:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh doctor
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh doctor
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/paper.pdf" \
   --to md \
   --preset scan-heavy
@@ -288,7 +290,7 @@ bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \
 OCR.space fallback is available only through explicit remote upload flags:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh convert \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/paper.pdf" \
   --to md \
   --preset scan-heavy \
@@ -300,7 +302,7 @@ To test the live OCR.space adapter, run the explicit smoke command. It
 generates and uploads a synthetic one-page PDF, not a user document:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/docling/run_docling.sh ocrspace-smoke \
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
   --allow-remote-ocr
 ```
 

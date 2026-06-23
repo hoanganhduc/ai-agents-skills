@@ -220,11 +220,14 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
     TargetSurface(
         "openclaw",
         "runtime-file",
-        "blocked",
-        "unsupported",
-        "not installed",
-        "fake-root-only",
-        "OpenClaw-associated shared runtime writes are blocked until separate native evidence exists.",
+        "manual",
+        "runtime-copy",
+        "fake-root by default; real-system gated by an approved manifest + host broker",
+        "runtime-manifest",
+        "Real-system runtime files install via an approved content-addressed runtime manifest "
+        "(openclaw-runtime-apply-manifest --real-system + confirmation phrase, verify-before-write): "
+        "inert files under .openclaw/skills/<skill>/, executable files under the neutral runtime root, "
+        "exposed to the sandbox by the openclaw-broker. Fake-root-only by default.",
     ),
     TargetSurface(
         "antigravity",
