@@ -1,5 +1,6 @@
 .venv/
 .ai-agents-skills/
+.sessions/
 .learnings/
 .claude/
 .codex/

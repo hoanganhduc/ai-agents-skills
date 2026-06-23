@@ -476,7 +476,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(target_surface_for("antigravity", "plugin").mechanism, "plugin")
         self.assertEqual(target_surface_for("antigravity", "mcp-config").mechanism, "mcp-config")
         self.assertEqual(target_surface_for("antigravity", "hook-config").mechanism, "hook-config")
-        self.assertEqual(target_surface_for("openclaw", "runtime-file").support, "blocked")
+        self.assertEqual(target_surface_for("openclaw", "runtime-file").support, "manual")
 
     def test_canonical_import_admission_blocks_runtime_and_secret_files(self) -> None:
         accepted = [
@@ -2464,7 +2464,7 @@ class DocsAndLauncherTests(unittest.TestCase):
 
         self.assertIn("# Target Surface Support Matrix", text)
         self.assertIn("Support claims are intentionally separate from skill selection", text)
-        self.assertIn("| `openclaw` | `runtime-file` | `blocked` | `unsupported` |", text)
+        self.assertIn("| `openclaw` | `runtime-file` | `manual` | `runtime-copy` |", text)
         self.assertIn("Do not infer runtime support from `supported_agents` alone", text)
 
     def test_generated_root_and_sphinx_docs_do_not_drift(self) -> None:
