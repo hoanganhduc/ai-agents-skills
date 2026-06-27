@@ -48,6 +48,11 @@ out of band and reference only inert artifacts from task or result packets.
 - unsupported task classes: local tools, workspace reads, shell commands,
   provider probing, credential use, external posting
 - symbolic credential requirements: none in V1
+- endpoint requirement: a live CodeWhale/DeepSeek CLI reads its model endpoint
+  from `DEEPSEEK_BASE_URL` in headless `exec` (the config-file `base_url` is
+  honored only by the interactive TUI); the delegation dispatcher defaults it to
+  `https://api.deepseek.com` when unset, and the external-agent precheck reports
+  it under `endpoint`
 - confirmation requirements: parent-owned, outside packet content
 
 This packet profile is reference-only. A parent workflow such as

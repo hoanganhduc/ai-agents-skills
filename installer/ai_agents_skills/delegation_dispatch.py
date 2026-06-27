@@ -16,6 +16,20 @@ from .state import now_run_id, preflight_state_path, sha256_text, state_dir, wri
 
 
 EXTERNAL_PROVIDERS = {"claude", "deepseek", "copilot"}
+
+DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
+
+
+def provider_env_defaults(provider: str, env: dict[str, str]) -> dict[str, str]:
+    """Non-secret endpoint defaults injected into the child env at dispatch time.
+
+    The DeepSeek CLI (codewhale) reads its endpoint from DEEPSEEK_BASE_URL in its
+    headless exec path, so default it when unset and delegation works without the
+    caller exporting it. Never overrides a value the caller already provided.
+    """
+    if provider == "deepseek" and not env.get("DEEPSEEK_BASE_URL"):
+        return {"DEEPSEEK_BASE_URL": DEEPSEEK_DEFAULT_BASE_URL}
+    return {}
 RESULT_START = "AAS_RESULT_JSON_START"
 RESULT_END = "AAS_RESULT_JSON_END"
 MAX_TASK_CHARS = 200_000
@@ -338,8 +352,9 @@ def run_external_participant(
     profile = build_capability_profile(plan)
     write_json(root, run_dir / "profiles" / f"{participant_id}.json", profile)
 
+    cmd_env = {**env, **provider_env_defaults(plan["provider"], env)}
     smoke_marker = f"AAS_FINAL_MARKER_{participant_id}_SMOKE"
-    smoke = run_command(plan["command"], smoke_prompt(smoke_marker), timeout=timeout, env=env, final_marker=smoke_marker)
+    smoke = run_command(plan["command"], smoke_prompt(smoke_marker), timeout=timeout, env=cmd_env, final_marker=smoke_marker)
     write_probe(root, run_dir, participant_id, "smoke", smoke)
     smoke_validation = validate_command_output(smoke, smoke_marker)
     if smoke_validation["status"] != "ok":
@@ -355,7 +370,7 @@ def run_external_participant(
         final_marker=task_marker,
         model_profile=plan["research_model_policy"],
     )
-    completed = run_command(plan["command"], prompt, timeout=timeout, env=env, final_marker=task_marker)
+    completed = run_command(plan["command"], prompt, timeout=timeout, env=cmd_env, final_marker=task_marker)
     write_raw(root, run_dir, participant_id, completed, plan["command_shape"])
     parsed = parse_result_json(completed.stdout)
     write_json(root, run_dir / "parsed" / f"{participant_id}.json", parsed)

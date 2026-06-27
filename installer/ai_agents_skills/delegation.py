@@ -73,6 +73,16 @@ PROVIDER_AUTH_ENV_NAMES: dict[str, tuple[str, ...]] = {
     "copilot": ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"),
 }
 
+# Non-secret endpoint env vars some providers need at dispatch time. The DeepSeek
+# CLI (codewhale / codewhale-tui) reads its endpoint from DEEPSEEK_BASE_URL in its
+# headless ``exec`` path (the config-file ``base_url`` is honored only by the
+# interactive TUI), so a provider can hold a valid API key yet still have no
+# endpoint for the live call. The precheck reports it so doctor does not report
+# the provider ready on the API key alone.
+PROVIDER_ENDPOINT_ENV_NAMES: dict[str, tuple[str, ...]] = {
+    "deepseek": ("DEEPSEEK_BASE_URL",),
+}
+
 PROVIDER_CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "codex": (".codex",),
     "claude": (".claude",),
@@ -170,6 +180,7 @@ def build_provider_precheck(
             "cli": {"logical_name": f"{provider}-cli", "status": "not-probed"},
             "config": {"status": "not-probed", "paths": []},
             "auth": {"status": "not-probed", "credential_sources": [], "secret_values_read": False},
+            "endpoint": endpoint_summary(provider, env),
             "research_model_policy": {
                 "status": "blocked",
                 "policy": policy["research_model_policy"],
@@ -208,6 +219,7 @@ def build_provider_precheck(
         "cli": redacted_cli_result(cli),
         "config": config_summary(root, provider),
         "auth": auth_summary(provider, env),
+        "endpoint": endpoint_summary(provider, env),
         "research_model_policy": {
             "status": research_status,
             "policy": policy["research_model_policy"],
@@ -247,6 +259,7 @@ def build_codex_provider_precheck(
         "cli": {"logical_name": "codex-runtime", "status": "parent-runtime"},
         "config": config_summary(root, "codex"),
         "auth": {"status": "not-needed", "credential_sources": [], "secret_values_read": False},
+        "endpoint": {"status": "not-needed", "endpoint_sources": []},
         "research_model_policy": {
             "status": "runtime-probe-required",
             "policy": policy["research_model_policy"],
@@ -316,6 +329,25 @@ def auth_summary(provider: str, env: dict[str, str]) -> dict[str, Any]:
         "credential_sources": sources,
         "secret_values_read": False,
     }
+
+
+def endpoint_summary(provider: str, env: dict[str, str]) -> dict[str, Any]:
+    names = PROVIDER_ENDPOINT_ENV_NAMES.get(provider, ())
+    if not names:
+        return {"status": "not-needed", "endpoint_sources": []}
+    sources = [{"kind": "env", "name": name, "present": bool(env.get(name))} for name in names]
+    detected = any(source["present"] for source in sources)
+    summary: dict[str, Any] = {
+        "status": "env-present" if detected else "not-detected",
+        "endpoint_sources": sources,
+    }
+    if not detected:
+        summary["reason"] = (
+            f"{provider} dispatch CLI (codewhale) reads its endpoint from "
+            f"{names[0]} in headless exec; the dispatcher defaults it to "
+            "https://api.deepseek.com, but set it explicitly to use another endpoint"
+        )
+    return summary
 
 
 def config_summary(root: Path, provider: str) -> dict[str, Any]:
