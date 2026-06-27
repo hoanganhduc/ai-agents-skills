@@ -8,6 +8,17 @@ Installer and delegation internals keep the logical `deepseek` target key for
 compatibility, but CLI discovery should prefer `codewhale` / `codewhale-tui`
 commands and treat older `deepseek` command names as fallback aliases.
 
+CodeWhale reads its model endpoint from the `DEEPSEEK_BASE_URL` environment
+variable in its non-interactive `exec` path; the config-file `base_url` is
+honored only by the interactive TUI. So a valid API key is not sufficient on its
+own: without `DEEPSEEK_BASE_URL` the headless call has no endpoint and prints
+`DEBUG DEEPSEEK_BASE_URL not set` with no output. The delegation dispatcher
+defaults `DEEPSEEK_BASE_URL` to `https://api.deepseek.com` when it is unset, and
+the external-agent precheck reports it under `endpoint` so `doctor` flags a
+missing endpoint instead of reporting the provider ready on the API key alone.
+Set `DEEPSEEK_BASE_URL` explicitly to route through a different (e.g. proxy)
+endpoint.
+
 In auto mode, DeepSeek skill files remain reference adapters until native
 loader evidence proves another mode. DeepSeek personas and entrypoint aliases
 are reference prompts/docs, not claims that DeepSeek enforces Codex or Claude

@@ -13,8 +13,18 @@ from typing import Any
 from installer.ai_agents_skills.agents import detect_agents
 from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.cli import main
-from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS, build_external_agent_prechecks
-from installer.ai_agents_skills.delegation_dispatch import EXTERNAL_PROVIDERS, build_dispatch_plan, expand_auto_providers
+from installer.ai_agents_skills.delegation import (
+    PROVIDER_CLI_SPECS,
+    PROVIDER_ENDPOINT_ENV_NAMES,
+    build_external_agent_prechecks,
+    endpoint_summary,
+)
+from installer.ai_agents_skills.delegation_dispatch import (
+    EXTERNAL_PROVIDERS,
+    build_dispatch_plan,
+    expand_auto_providers,
+    provider_env_defaults,
+)
 from installer.ai_agents_skills.delegation_packets import RESULT_FIELDS, TASK_FIELDS, validate_result, validate_task
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
@@ -587,6 +597,42 @@ class CrossAgentDelegationInstallerTests(unittest.TestCase):
             self.assertNotIn("instruction-block", artifact_types)
             self.assertNotIn("runtime-file", artifact_types)
             self.assertFalse(any(action.get("artifact_type") == "target-support-file" for action in plan["actions"]))
+
+
+class DeepSeekEndpointDispatchTests(unittest.TestCase):
+    def test_endpoint_summary_flags_missing_deepseek_base_url(self):
+        self.assertEqual(PROVIDER_ENDPOINT_ENV_NAMES["deepseek"], ("DEEPSEEK_BASE_URL",))
+        missing = endpoint_summary("deepseek", {})
+        self.assertEqual(missing["status"], "not-detected")
+        self.assertEqual(missing["endpoint_sources"][0]["name"], "DEEPSEEK_BASE_URL")
+        self.assertIn("DEEPSEEK_BASE_URL", missing["reason"])
+        present = endpoint_summary("deepseek", {"DEEPSEEK_BASE_URL": "https://api.deepseek.com"})
+        self.assertEqual(present["status"], "env-present")
+
+    def test_endpoint_summary_not_needed_for_other_providers(self):
+        self.assertEqual(endpoint_summary("claude", {})["status"], "not-needed")
+        self.assertEqual(endpoint_summary("copilot", {})["status"], "not-needed")
+
+    def test_provider_env_defaults_supplies_deepseek_base_url(self):
+        self.assertEqual(
+            provider_env_defaults("deepseek", {}),
+            {"DEEPSEEK_BASE_URL": "https://api.deepseek.com"},
+        )
+        # Never override a caller-provided value.
+        self.assertEqual(
+            provider_env_defaults("deepseek", {"DEEPSEEK_BASE_URL": "https://proxy.example"}), {}
+        )
+        # Other providers get nothing.
+        self.assertEqual(provider_env_defaults("claude", {}), {})
+
+    def test_deepseek_precheck_reports_endpoint(self):
+        manifests = load_manifests()
+        prechecks = build_external_agent_prechecks(REPO_ROOT, "linux", manifests["delegation"], env={})
+        by_provider = {item["provider"]: item for item in prechecks["providers"]}
+        self.assertIn("deepseek", by_provider)
+        endpoint = by_provider["deepseek"]["endpoint"]
+        self.assertIn(endpoint["status"], {"not-detected", "env-present"})
+        self.assertEqual(endpoint["endpoint_sources"][0]["name"], "DEEPSEEK_BASE_URL")
 
 
 if __name__ == "__main__":
