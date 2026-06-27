@@ -3056,7 +3056,8 @@
         {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/consent.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/consent.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/blank.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/blank.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/slow.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/slow.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/tall.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/tall.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"}
+        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/tall.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/tall.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
+        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/ssrf.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/ssrf.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"}
       ],
       "smoke": {
         "schema": "runtime-smoke.v1",

@@ -105,19 +105,19 @@ jobs:
           mkdir -p "$OUT"
 
           # Golden page captures and verifies (file:// fixtures need --allow-file-urls).
-          python "$RUNTIME/url_to_screenshot_runtime.py" capture --allow-file-urls --engine cdp \
+          python "$RUNTIME/url_to_screenshot_runtime.py" capture --allow-file-urls --no-sandbox --engine cdp \
             --url "file://$PWD/$FIXTURES/plain.html" --out "$OUT/plain.png" --consent off
           python "$RUNTIME/url_to_screenshot_runtime.py" verify --png "$OUT/plain.png" | tee "$OUT/plain.verify.json"
           python -c "import json,sys; d=json.load(open('$OUT/plain.verify.json')); sys.exit(0 if d['final_verdict']=='VERIFIED' else 1)"
 
           # Consent removal does not blank the page (still VERIFIED after removal).
-          python "$RUNTIME/url_to_screenshot_runtime.py" capture --allow-file-urls --engine cdp \
+          python "$RUNTIME/url_to_screenshot_runtime.py" capture --allow-file-urls --no-sandbox --engine cdp \
             --url "file://$PWD/$FIXTURES/consent.html" --out "$OUT/consent.png" --consent on
           python "$RUNTIME/url_to_screenshot_runtime.py" verify --png "$OUT/consent.png" | tee "$OUT/consent.verify.json"
           python -c "import json,sys; d=json.load(open('$OUT/consent.verify.json')); sys.exit(0 if d['final_verdict']=='VERIFIED' else 1)"
 
           # Full-page (tall.html) height exceeds the 800px viewport.
-          python "$RUNTIME/url_to_screenshot_runtime.py" capture --allow-file-urls --engine cdp \
+          python "$RUNTIME/url_to_screenshot_runtime.py" capture --allow-file-urls --no-sandbox --engine cdp \
             --url "file://$PWD/$FIXTURES/tall.html" --out "$OUT/tall.png" --full-page --consent off
           python "$RUNTIME/url_to_screenshot_runtime.py" verify --png "$OUT/tall.png" | tee "$OUT/tall.verify.json"
           python -c "import json,sys; d=json.load(open('$OUT/tall.verify.json')); h=d['detail']['height']; print('full-page height',h); sys.exit(0 if d['final_verdict']=='VERIFIED' and h>800 else 1)"
@@ -127,7 +127,7 @@ jobs:
           TMP_BASE="${TMPDIR:-/tmp}"
           before_pids="$(pgrep -c -x chrome 2>/dev/null || true):$(pgrep -c -x chromium 2>/dev/null || true)"
           set +e
-          python "$RUNTIME/url_to_screenshot_runtime.py" capture --allow-file-urls --engine cdp \
+          python "$RUNTIME/url_to_screenshot_runtime.py" capture --allow-file-urls --no-sandbox --engine cdp \
             --url "file://$PWD/$FIXTURES/slow.html" --out "$OUT/slow.png" --timeout 1 --consent off | tee "$OUT/slow.json"
           rc=$?
           set -e

@@ -39,6 +39,7 @@ class CaptureRequest:
     allow_private: bool = False
     allow_file_urls: bool = False
     browser: str | None = None
+    no_sandbox: bool = False
 
 
 def choose_tier(request: CaptureRequest) -> str:
@@ -149,7 +150,10 @@ def run_capture(request: CaptureRequest) -> dict:
             "url": security.redact_url(request.url),
         }
 
-    no_sandbox, sandbox_reason = detect_sandbox_disable()
+    auto_no_sandbox, sandbox_reason = detect_sandbox_disable()
+    no_sandbox = request.no_sandbox or auto_no_sandbox
+    if request.no_sandbox and not auto_no_sandbox:
+        sandbox_reason = "explicit --no-sandbox flag"
     out_path = _allocate_out_path(request, admission)
     pin = resolver_pin(admission)
     tier = choose_tier(request)
