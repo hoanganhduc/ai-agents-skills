@@ -74,6 +74,9 @@ Do not touch Zotero beyond lookup/retrieval unless the user explicitly asks.
 - Summarize the main issues clearly, with evidence from the provided or retrieved document.
 - If the document cannot be found in Zotero or Calibre, report that before attempting online retrieval.
 - If you need a narrow internal checklist for proof auditing or single-reviewer critique, adapt `source-research/references/specialist-subagents.md` without turning the task into a multi-agent run unless the user asked for one.
+- For review-only requests, stop after the review. Do not annotate, store notes,
+  patch manuscripts, retrieve extra nonessential artifacts, or begin fixes
+  unless the user explicitly asks for those actions.
 
 ## Recommended output format
 

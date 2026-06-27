@@ -45,6 +45,10 @@ Use the compact template in `references/brief-template.md` when helpful.
 ## Guardrails
 
 - keep the brief short enough to read in a few seconds
+- if the user's request is only to scope, analyze, investigate, diagnose, or
+  report, stop after the brief or findings; do not continue into source
+  retrieval, drafting, artifact creation, or remediation unless the user
+  explicitly asks for that next action
 - state assumptions explicitly instead of hiding them in later research
 - for writing or publication-format tasks, inspect old posts, templates, house
   style, and supplied examples before drafting; if they are absent, say so and

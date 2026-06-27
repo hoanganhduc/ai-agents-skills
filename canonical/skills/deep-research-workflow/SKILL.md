@@ -119,6 +119,9 @@ Prefer this skill when:
 - simple factual lookups
 - casual current-events questions where a normal browse-and-answer flow is sufficient
 - local-paper retrieval tasks already covered by `zotero` or `calibre`
+- requests that only ask to investigate, diagnose, review, audit, verify, or
+  report, unless the user explicitly asks for a phased workflow or durable
+  research artifacts
 
 ## Workflow
 
