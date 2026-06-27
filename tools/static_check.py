@@ -133,15 +133,15 @@ def check_windows_path_hazards(files: list[Path]) -> list[str]:
 def check_newline_policy(files: list[Path]) -> list[str]:
     errors: list[str] = []
     for path in files:
-        if path.suffix.lower() not in {".sh", ".py", ".md", ".yaml", ".yml", ".json", ".toml", ".ps1", ".bat"}:
+        if path.suffix.lower() not in {".sh", ".py", ".md", ".yaml", ".yml", ".json", ".toml", ".ps1", ".bat", ".html"}:
             continue
         try:
             data = path.read_bytes()
         except OSError as exc:
             errors.append(f"newline:{path}:{exc}")
             continue
-        if path.suffix.lower() in {".sh", ".py"} and b"\r\n" in data:
-            errors.append(f"newline:{path}:expected LF for Python/POSIX shell")
+        if path.suffix.lower() in {".sh", ".py", ".html"} and b"\r\n" in data:
+            errors.append(f"newline:{path}:expected LF for Python/POSIX shell/HTML")
     return errors
 
 

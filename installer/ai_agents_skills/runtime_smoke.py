@@ -668,6 +668,25 @@ def validate_smoke_output(
         checks.append({"name": "run-dir-created", "ok": payload.get("run_dir_created") is True})
         checks.append({"name": "validation-ok", "ok": payload.get("validation_status") == "ok"})
         checks.append({"name": "canary-not-leaked", "ok": "AUTONOMOUS-RESEARCH-LOOP-CANARY" not in serialized})
+    elif skill == "url-to-screenshot-runtime":
+        payload = parse_json_stdout(completed.stdout)
+        serialized = json.dumps(payload, sort_keys=True)
+        checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
+        checks.append({"name": "status-ok", "ok": payload.get("status") == "ok"})
+        checks.append({"name": "no-failures", "ok": payload.get("failures") == []})
+        u2s_passed = payload.get("passed")
+        u2s_total = payload.get("total")
+        checks.append({
+            "name": "all-passed",
+            "ok": isinstance(u2s_passed, int) and isinstance(u2s_total, int) and u2s_passed == u2s_total,
+        })
+        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
+        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
+        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
+        checks.append({"name": "browser-not-launched", "ok": payload.get("browser_launched") is False})
+        checks.append({"name": "canary-not-leaked", "ok": "URL-TO-SCREENSHOT-SMOKE-CANARY" not in serialized})
     return checks
 
 

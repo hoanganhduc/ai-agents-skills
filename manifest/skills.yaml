@@ -513,6 +513,24 @@
       "optional_dependencies": ["manim-python-package", "numpy-python-package", "manim-tex-runtime"],
       "optional_capabilities": ["equation-write", "equation-morph", "emphasis-animation", "silent-interlude-clips", "offline-smoke"],
       "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+    },
+    "url-to-screenshot": {
+      "description": "Capture a URL to a clean PNG screenshot with browser detection, cookie-consent dismissal, viewport or full-page modes, timeouts, SSRF-safe URL admission, and blank-output verification across Linux, macOS, and Windows.",
+      "profiles": ["media", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["chromium-browser-system-tool", "imagemagick-system-tool", "pillow-python-package", "websocket-client-python-package"],
+      "optional_capabilities": ["cdp-capture", "consent-dismissal", "full-page-capture", "blank-output-detection", "ssrf-admission-gate"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+    },
+    "url-to-screenshot-runtime": {
+      "description": "Runtime engine for url-to-screenshot: headless-browser CDP capture, SSRF-safe URL admission, consent dismissal, blank-output detection, and an offline self-test of the deterministic core.",
+      "profiles": ["media", "full-research"],
+      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity"],
+      "required_dependencies": ["python-runtime"],
+      "optional_dependencies": ["chromium-browser-system-tool", "imagemagick-system-tool", "pillow-python-package", "websocket-client-python-package"],
+      "optional_capabilities": ["cdp-capture", "consent-dismissal", "full-page-capture", "blank-output-detection", "ssrf-admission-gate", "offline-smoke"],
+      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
     }
   },
   "legacy_aliases": {

@@ -165,7 +165,7 @@ Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
 macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
-`autonomous-research-loop-runtime`, `axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-strict-verification-gate`, `manim-math-animation`, `self-improving-agent`, `send-email`, `slides-to-video`, `submission-venue-selector`, forcing copy-mode runtime installation in a temporary
+`autonomous-research-loop-runtime`, `axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-strict-verification-gate`, `manim-math-animation`, `self-improving-agent`, `send-email`, `slides-to-video`, `submission-venue-selector`, `url-to-screenshot-runtime`, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
 `--skills` may only select skills that are supported by this runtime-smoke
@@ -199,6 +199,7 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 | `slides-to-video` | `offline-smoke` | yes | Selftest validates the deterministic core (1:1 pairing, duration re-basing, language-aware engine ladder, math verbalization, effect filtergraph building, caption formatting, clip args, and the SHA-pinned approval gate) with no network, package install, ffmpeg, or TTS. |
 | `submission-venue-selector` | `offline-smoke` | yes | Smoke validates schemas, privacy gates, and offline not-ready behavior without retrieval or secrets. |
 | `tikz-draw` | `manual-native` | no | TikZ workflows depend on TeX toolchains and user-provided figure specs. |
+| `url-to-screenshot-runtime` | `offline-smoke` | yes | Selftest validates the deterministic core (browser-detection candidate order for linux/macos/windows synthetic layouts, SSRF URL-admission gate, CDP command JSON with no --remote-allow-origins flag and a --host-resolver-rules MAP pin, consent-selector list, viewport/full-page arg builders, in-memory blank-output detector, the verify gate on synth golden+blank, and per-OS process-kill strategy selection) with no network, browser launch, or package install. |
 | `vnthuquan` | `manual-native` | no | Vietnam Thu Quan discovery/download flows are network and library-profile gated. |
 | `zotero` | `manual-native` | no | Zotero workflows depend on the user's local library, profile, and optional cloud credentials. |
 

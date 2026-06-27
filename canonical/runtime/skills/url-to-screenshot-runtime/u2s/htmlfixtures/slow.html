@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Deterministically delayed paint</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #ffffff; }
+  #late { width: 320px; height: 200px; background: #0a14c8; visibility: hidden; }
+</style>
+</head>
+<body>
+  <div id="late"></div>
+  <script>
+    // Hold the page busy so a tight --timeout reaps before paint completes.
+    var deadline = Date.now() + 60000;
+    while (Date.now() < deadline) { /* spin to exhaust a short nav timeout */ }
+    document.getElementById('late').style.visibility = 'visible';
+  </script>
+</body>
+</html>

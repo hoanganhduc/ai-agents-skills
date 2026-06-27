@@ -155,12 +155,14 @@
         "adversarial-boundary-gate",
         "behavior-preserving-cleanup",
         "slides-to-video",
-        "manim-math-animation"
+        "manim-math-animation",
+        "url-to-screenshot",
+        "url-to-screenshot-runtime"
       ]
     },
     "media": {
       "description": "Narrated, captioned presentation and lecture videos from prepared slides, with optional Manim math animation.",
-      "skills": ["slides-to-video", "manim-math-animation"]
+      "skills": ["slides-to-video", "manim-math-animation", "url-to-screenshot", "url-to-screenshot-runtime"]
     }
   },
   "default_profile": "research-core"
