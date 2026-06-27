@@ -102,7 +102,8 @@
         "entrypoint-alias:digest",
         "entrypoint-alias:getscipapers",
         "entrypoint-alias:slides-to-video",
-        "entrypoint-alias:manim-math-animation"
+        "entrypoint-alias:manim-math-animation",
+        "entrypoint-alias:url-to-screenshot"
       ]
     },
     "repo-management": {
@@ -199,6 +200,7 @@
         "entrypoint-alias:getscipapers",
         "entrypoint-alias:slides-to-video",
         "entrypoint-alias:manim-math-animation",
+        "entrypoint-alias:url-to-screenshot",
         "management-notice:repo-management"
       ]
     }
@@ -565,6 +567,12 @@
         "description": "Route math-animation (Write/morph equations) clip creation to the manim-math-animation skill.",
         "source": "manim-math-animation.md",
         "depends_on_skills": ["manim-math-animation"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
+      },
+      "url-to-screenshot": {
+        "description": "Route URL-to-PNG screenshot requests to the url-to-screenshot skill.",
+        "source": "url-to-screenshot.md",
+        "depends_on_skills": ["url-to-screenshot"],
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       }
     }

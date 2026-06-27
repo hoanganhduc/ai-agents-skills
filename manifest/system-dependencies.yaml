@@ -206,6 +206,13 @@
       "linux": "LaTeX (texlive + texlive-latex-extra + cm-super) with dvisvgm and the standalone/preview packages, plus libcairo2-dev and libpango1.0-dev; e.g. apt-get install dvisvgm texlive texlive-latex-extra libcairo2-dev libpango1.0-dev.",
       "windows": "MiKTeX/TeX Live providing latex + dvisvgm + standalone/preview; cairo/pango ship in the Manim Windows wheels.",
       "used_by": ["manim-math-animation"]
+    },
+    "chromium-browser": {
+      "display_name": "Chromium / Chrome / Edge (headless)",
+      "requirement": "optional for url-to-screenshot page capture (headless CDP screenshot); reported by the doctor verb, not an install gate",
+      "linux": "chromium or google-chrome on PATH, e.g. apt-get install chromium.",
+      "windows": "chrome.exe or msedge.exe at the default Program Files path or on PATH.",
+      "used_by": ["url-to-screenshot", "url-to-screenshot-runtime"]
     }
   },
   "python_packages": {

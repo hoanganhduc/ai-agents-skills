@@ -42,11 +42,13 @@ Status vocabulary used by `precheck`:
 | Logical Tool | Description |
 |---|---|
 | `calibre-cli` | Calibre command line tools for ebook metadata and conversion. |
+| `chromium-browser-system-tool` | Headless Chromium/Chrome/Edge for CDP-driven page screenshots. |
 | `espeak-ng-system-tool` | eSpeak NG phonemizer used by offline TTS engines (Kokoro/Piper). |
 | `ffmpeg-system-tool` | FFmpeg/ffprobe for video encoding, audio normalization, and duration probing. |
 | `git-cli` | Git command line client for repository-backed workflows and GitHub publishing. |
 | `github-cli` | GitHub CLI for workflows that need local Actions, PR, issue, or authentication commands. |
 | `gnupg-system-tool` | GnuPG (gpg) for optional PGP/MIME signing of outgoing email in send-email. |
+| `imagemagick-system-tool` | ImageMagick convert/magick for optional post-capture cropping. |
 | `lake-cli` | Lake command line executable for optional Lean project checks. |
 | `lean-cli` | Lean command line executable for optional local formal typechecking. |
 | `libreoffice-system-tool` | LibreOffice (soffice) headless for rendering PPTX decks to PDF. |
@@ -72,6 +74,7 @@ Status vocabulary used by `precheck`:
 | `axle-auth` | `remote-service` | remote-service |
 | `beautifulsoup4-python-package` | `python` | bs4 |
 | `calibre-cli` | `tool` | calibre-cli |
+| `chromium-browser-system-tool` | `tool` | chromium-browser-system-tool |
 | `docling-mcp-python-package` | `python` | docling_mcp; candidate set `docling` |
 | `docling-python-package` | `python` | docling; candidate set `docling` |
 | `ebooklib-python-package` | `python` | ebooklib |
@@ -84,6 +87,7 @@ Status vocabulary used by `precheck`:
 | `gnupg-system-tool` | `tool` | gnupg-system-tool |
 | `google-api-python-client-package` | `python` | googleapiclient |
 | `google-auth-python-package` | `python` | google.oauth2 |
+| `imagemagick-system-tool` | `tool` | imagemagick-system-tool |
 | `kokoro-python-package` | `python` | kokoro |
 | `lean-explore-local-cache` | `manual-data` | manual-data |
 | `lean-explore-python-package` | `python` | lean_explore; candidate set `agent` |
@@ -122,6 +126,7 @@ Status vocabulary used by `precheck`:
 | `torch-python-package` | `python` | torch; candidate set `docling` |
 | `torchvision-python-package` | `python` | torchvision; candidate set `docling` |
 | `vnu-eoffice-python-package` | `python` | vnu_eoffice; candidate set `agent` |
+| `websocket-client-python-package` | `python` | websocket |
 | `zotero-credentials` | `remote-service` | remote-service |
 
 ## Current Linux And Windows Config Inventory
@@ -151,6 +156,7 @@ Evidence inspected:
 |---|---|---|---|---|
 | `bash-or-posix-shell` | required on Linux and inside WSL-backed Windows flows | Used by shared runtime runner and shell skill wrappers. | Used through WSL for SageMath and other Linux-substrate commands. | `runtime wrappers`, `sagemath`, `make` |
 | `calibre-cli` | optional for richer ebook library operations | calibredb and ebook-convert on PATH. | calibredb.exe and ebook-convert.exe on PATH. | `calibre`, `vnthuquan` |
+| `chromium-browser` | optional for url-to-screenshot page capture (headless CDP screenshot); reported by the doctor verb, not an install gate | chromium or google-chrome on PATH, e.g. apt-get install chromium. | chrome.exe or msedge.exe at the default Program Files path or on PATH. | `url-to-screenshot`, `url-to-screenshot-runtime` |
 | `docling-cli` | optional CLI layer for docling workflows | Current Claude docs use <LINUX_HOME>/.local/share/docling-venv/bin/docling. | Current Claude docs use <WINDOWS_HOME>/.venv-docling/Scripts/docling.exe. | `docling` |
 | `espeak-ng` | optional, for offline TTS (Kokoro/Piper phonemization) | espeak-ng on PATH, e.g. apt-get install espeak-ng. | espeak-ng on PATH or at the default winget path C:\Program Files\eSpeak NG\espeak-ng.exe. | `slides-to-video offline TTS` |
 | `ffmpeg` | required for slides-to-video rendering (video encode, audio normalize, duration probe) | FFmpeg + ffprobe on PATH (LGPL build with libx264), e.g. apt-get install ffmpeg. | ffmpeg.exe + ffprobe.exe on PATH (LGPL build), via winget/choco or a static build. | `slides-to-video` |

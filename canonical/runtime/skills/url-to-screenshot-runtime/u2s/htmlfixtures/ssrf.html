@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SSRF interception fixture</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #ffffff; }
+  #banner { position: absolute; left: 40px; top: 40px; width: 600px; height: 120px;
+            background: #0a14c8; color: #ffffff; font: 22px sans-serif; padding: 20px; }
+  #meta { position: absolute; left: 40px; top: 220px; font: 18px monospace; color: #101010;
+          white-space: pre; }
+  #imgrow { position: absolute; left: 40px; top: 320px; }
+</style>
+</head>
+<body>
+  <div id="banner">SSRF interception fixture</div>
+  <div id="meta" data-state="pending">fetch: pending</div>
+  <div id="imgrow"><img id="imdsimg" alt="private-image" width="32" height="32"></div>
+<script>
+  // Probe the cloud-metadata endpoint. With Fetch interception, the browser
+  // never sends this request (it is failed before send), so the catch branch
+  // runs and the metadata body never reaches the DOM.
+  var meta = document.getElementById('meta');
+  fetch('http://169.254.169.254/latest/meta-data/iam/security-credentials/')
+    .then(function (r) { return r.text(); })
+    .then(function (body) {
+      // Reached ONLY if the metadata request actually succeeded (the bug).
+      meta.setAttribute('data-state', 'leaked');
+      meta.textContent = 'fetch: LEAKED metadata body=' + body.slice(0, 80);
+    })
+    .catch(function (err) {
+      // Reached when the request is blocked before send (the fix).
+      meta.setAttribute('data-state', 'blocked');
+      meta.textContent = 'fetch: blocked (' + err + ')';
+    });
+
+  // A sub-resource <img> to a private host; also intercepted before send.
+  var img = document.getElementById('imdsimg');
+  img.onerror = function () { img.setAttribute('data-img', 'blocked'); };
+  img.onload = function () { img.setAttribute('data-img', 'loaded'); };
+  img.src = 'http://10.0.0.5/private.png';
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# url-to-screenshot OPTIONAL dependencies only.
+# The engine and the offline selftest run with the Python standard library alone;
+# nothing here is required. A host browser (Chromium/Chrome/Edge) is a SYSTEM dep
+# detected by the doctor verb, not installed from here.
+#
+# websocket-client: optional richer CDP websocket client (stdlib handshake is the default).
+# Pillow: optional richer capture-tier image assertions (stdlib zlib decode is the default).
+websocket-client>=1.6
+Pillow>=10.2

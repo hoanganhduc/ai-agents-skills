@@ -287,6 +287,26 @@
         "windows": ["dvisvgm.exe", "dvisvgm"]
       },
       "capabilities": ["manim-latex"]
+    },
+    "chromium-browser-system-tool": {
+      "description": "Headless Chromium/Chrome/Edge for CDP-driven page screenshots.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome", "microsoft-edge", "microsoft-edge-stable"],
+        "macos": ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge", "chromium", "google-chrome"],
+        "windows": ["%PROGRAMFILES%\\Google\\Chrome\\Application\\chrome.exe", "%PROGRAMFILES(X86)%\\Google\\Chrome\\Application\\chrome.exe", "%PROGRAMFILES%\\Microsoft\\Edge\\Application\\msedge.exe", "%PROGRAMFILES(X86)%\\Microsoft\\Edge\\Application\\msedge.exe", "%LOCALAPPDATA%\\Chromium\\Application\\chrome.exe", "chrome.exe", "msedge.exe", "chromium.exe"]
+      },
+      "capabilities": ["headless-screenshot", "cdp"]
+    },
+    "imagemagick-system-tool": {
+      "description": "ImageMagick convert/magick for optional post-capture cropping.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["magick", "convert"],
+        "macos": ["magick", "convert"],
+        "windows": ["magick.exe", "magick"]
+      },
+      "capabilities": ["image-crop"]
     }
   },
   "python_candidate_sets": {
@@ -476,6 +496,9 @@
     "libreoffice-system-tool": {"type": "tool", "logical_tool": "libreoffice-system-tool"},
     "pptx-render-system-tool": {"type": "tool", "logical_tool": "pptx-render-system-tool"},
     "manim-python-package": {"type": "python", "module": "manim"},
-    "manim-tex-runtime": {"type": "tool", "logical_tool": "manim-tex-runtime"}
+    "manim-tex-runtime": {"type": "tool", "logical_tool": "manim-tex-runtime"},
+    "websocket-client-python-package": {"type": "python", "module": "websocket"},
+    "chromium-browser-system-tool": {"type": "tool", "logical_tool": "chromium-browser-system-tool"},
+    "imagemagick-system-tool": {"type": "tool", "logical_tool": "imagemagick-system-tool"}
   }
 }

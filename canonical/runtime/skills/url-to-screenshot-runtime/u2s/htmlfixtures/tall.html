@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tall page (taller than the viewport)</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #ffffff; }
+  .band { height: 400px; }
+  #top { background: #0a14c8; }
+  #mid { background: #c80a0a; }
+  #bottom { background: #0ac814; }
+  /* Total height ~3200px, well beyond an 800px viewport. */
+  #spacer { height: 2000px; background: #f0f0f0; }
+</style>
+</head>
+<body>
+  <div id="top" class="band">Top band</div>
+  <div id="mid" class="band">Middle band</div>
+  <div id="spacer"></div>
+  <div id="bottom" class="band">Bottom band</div>
+</body>
+</html>
