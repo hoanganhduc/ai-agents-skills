@@ -52,6 +52,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         allow_private=args.allow_private_targets,
         allow_file_urls=args.allow_file_urls,
         browser=args.browser,
+        no_sandbox=args.no_sandbox,
     )
     try:
         result = capture_mod.run_capture(request)
@@ -129,6 +130,13 @@ def build_parser() -> argparse.ArgumentParser:
         dest="allow_file_urls",
         help="allow file:// URLs for TRUSTED LOCAL FIXTURES/TESTING ONLY "
         "(enables local file reads; never use on attacker-influenceable input)",
+    )
+    cap.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        dest="no_sandbox",
+        help="force Chromium --no-sandbox (for root/container/CI hosts where the "
+        "sandbox cannot initialize); recorded as sandbox=disabled",
     )
     cap.set_defaults(func=cmd_capture)
 
