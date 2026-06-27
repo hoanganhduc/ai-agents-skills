@@ -39,6 +39,8 @@ Do not use it for:
 
 - Trivial one-shot lookups.
 - User requests that explicitly ask only for a plan or analysis.
+- User requests that ask only to investigate, diagnose, review, audit, verify,
+  or report, unless the user also explicitly asks for autonomous follow-on work.
 - Work that lacks a safe budget or stop condition.
 - Blind command execution without inspectable evidence.
 

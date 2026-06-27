@@ -85,6 +85,14 @@ Before any actual multi-agent run:
 Do not infer consent from silence.
 If the user already gave an explicit affirmative in the same request after seeing the plan, that counts.
 
+## Scope boundary
+
+For discussion, review, investigation, diagnosis, audit, or report-only
+requests, the orchestration ends with the requested discussion summary, review
+findings, or report. Do not continue into remediation, file edits, artifact
+patches, retrieval beyond what is necessary for the review, commits, or cleanup
+unless the user explicitly asks for those actions.
+
 ## Codex tool mapping
 
 OpenClaw concepts must be translated to Codex tools as follows:

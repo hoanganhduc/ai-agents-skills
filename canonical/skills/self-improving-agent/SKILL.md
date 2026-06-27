@@ -201,6 +201,10 @@ useful install-shape evidence, not native execution evidence.
 ## Rules
 
 - Keep entries short, concrete, and actionable.
+- Do not write durable learning entries during a report-only, diagnosis-only,
+  review-only, or investigation-only request unless the user explicitly asks
+  for persistence. Report the lesson or proposed integration plan first, then
+  wait for permission to modify files.
 - Prefer canonical repo changes over one-off edits in agent homes.
 - Separate inspected, inferred, and blocked target/OS coverage.
 - Do not depend on OpenClaw hooks, session-spawn tools, or local runtime state

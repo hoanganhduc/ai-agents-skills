@@ -51,3 +51,6 @@ Use `references/reviewer-prompt.md` as the detailed checklist.
 - focus on research quality, not copyediting
 - prefer the smallest repair that makes the draft defensible
 - if a gap cannot be closed, require explicit disclosure instead of pretending it is solved
+- do not apply repairs, patch the reviewed report, create follow-on artifacts,
+  or continue into remediation after a review-only request unless the user
+  explicitly asks for those actions
