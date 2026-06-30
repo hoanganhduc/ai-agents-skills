@@ -46,6 +46,22 @@ Shared runner:
 
 - `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
 
+## First-time setup
+
+Before the core commands work, provision the dedicated venv once. This creates
+`~/.getscipapers_venv` and installs the getscipapers fork from its default
+branch. The run scripts then export `GETSCIPAPERS_BIN` to the venv binary.
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_setup.sh setup
+```
+
+On native Windows, use the Windows runner and command target:
+
+```powershell
+& "$runtime\run_skill.bat" "skills/getscipapers_requester/run_gsp_setup.bat" setup
+```
+
 ## Core commands
 
 ```bash

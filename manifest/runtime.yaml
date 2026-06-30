@@ -1605,6 +1605,28 @@
           "mode": "0644"
         },
         {
+          "source": "skills/getscipapers-requester/run_gsp_setup.sh",
+          "target": "workspace/skills/getscipapers_requester/run_gsp_setup.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/getscipapers-requester/run_gsp_setup.bat",
+          "target": "workspace/skills/getscipapers_requester/run_gsp_setup.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/getscipapers-requester/requirements.txt",
           "target": "workspace/skills/getscipapers_requester/requirements.txt",
           "platforms": [

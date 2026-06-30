@@ -1,4 +1,6 @@
 # getscipapers-requester dedicated venv (~/.getscipapers_venv).
-# The getscipapers fork is installed from its main branch.
-# Installed by: run_gsp_setup.py setup
-getscipapers @ git+https://github.com/hoanganhduc/getscipapers.git@main
+# Tracks the fork's default branch (master). The distribution is named
+# getscipapers-hoanganhduc and provides the `getscipapers` console script, so we
+# install by URL (no PEP 508 name prefix) to avoid a name-mismatch error.
+# Installed by: run_skill.sh skills/getscipapers_requester/run_gsp_setup.sh setup
+git+https://github.com/hoanganhduc/getscipapers.git@master

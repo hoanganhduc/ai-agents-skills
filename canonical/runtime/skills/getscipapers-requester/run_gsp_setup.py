@@ -3,7 +3,7 @@
 
 Subcommands:
   setup    create the dedicated venv and install the getscipapers fork
-           (explicit, user-run; tracks the main branch of the fork)
+           (explicit, user-run; tracks the fork's default branch, master)
   doctor   report whether the getscipapers binary is resolvable; installs nothing
 
 The venv is owned by this skill's runtime, not the installer. It is created at
@@ -13,8 +13,9 @@ variable). The console script is then resolvable at
 ``<venv>\\Scripts\\getscipapers.exe`` on Windows, which the run scripts export
 as ``GETSCIPAPERS_BIN`` and ``gsp_openclaw_helper.find_getscipapers`` discovers.
 
-Invoke via the managed runner, e.g.:
-  bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_setup.py setup
+Invoke via the managed runner through the executable wrapper (run_skill.sh
+execs its target, so the 0644 .py is launched via the 0755 .sh/.bat wrapper):
+  bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_setup.sh setup
 """
 
 from __future__ import annotations
