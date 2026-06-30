@@ -77,7 +77,7 @@ class GetSciPapersSetupTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         # First action creates the venv with the launching interpreter.
         self.assertEqual(calls[0][1:3], ["-m", "venv"])
-        self.assertEqual(calls[0][3], "/tmp/gsp-venv")
+        self.assertEqual(calls[0][3], str(Path("/tmp/gsp-venv")))
         # Final action installs the fork from the skill's requirements.txt.
         install = calls[-1]
         self.assertEqual(install[1:4], ["-m", "pip", "install"])
@@ -99,21 +99,34 @@ class GetSciPapersResolverTests(unittest.TestCase):
 
     def test_windows_scripts_candidate_resolves_without_x_ok(self) -> None:
         helper = _load_module("gsp_helper_under_test", "gsp_openclaw_helper.py")
-        fake_home = Path("/fake/home")
 
-        # Match only the venv Scripts/*.exe candidate; the helper builds the
-        # candidate strings with the platform separator under the patched os.name.
-        def is_file(self) -> bool:
-            text = str(self)
-            return text.endswith("getscipapers.exe") and ".getscipapers_venv" in text
+        # Stub the module's Path so the resolver never instantiates a real
+        # WindowsPath while os.name is forced to "nt": pathlib refuses to build
+        # WindowsPath on a POSIX host, which would error this test on Linux/macOS.
+        class _FakePath:
+            def __init__(self, raw: object) -> None:
+                self._p = str(raw)
+
+            def __truediv__(self, other: object) -> "_FakePath":
+                return _FakePath(f"{self._p}/{other}")
+
+            def __str__(self) -> str:
+                return self._p
+
+            def is_file(self) -> bool:
+                # Only the venv Scripts/*.exe candidate "exists".
+                return self._p.endswith("getscipapers.exe") and ".getscipapers_venv" in self._p
+
+            @classmethod
+            def home(cls) -> "_FakePath":
+                return _FakePath("/fake/home")
 
         env = {k: v for k, v in os.environ.items() if k != "GETSCIPAPERS_BIN"}
         with (
             mock.patch.dict(os.environ, env, clear=True),
+            mock.patch.object(helper, "Path", _FakePath),
             mock.patch.object(helper.os, "name", "nt"),
-            mock.patch.object(helper.Path, "home", classmethod(lambda cls: fake_home)),
             mock.patch.object(helper.shutil, "which", return_value=None),
-            mock.patch.object(helper.Path, "is_file", new=is_file),
             # X_OK must be skipped on Windows; force it False to prove it is not consulted.
             mock.patch.object(helper.os, "access", return_value=False),
         ):
