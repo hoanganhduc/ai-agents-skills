@@ -1590,6 +1590,32 @@
           "type": "text",
           "newline": "lf",
           "mode": "0755"
+        },
+        {
+          "source": "skills/getscipapers-requester/run_gsp_setup.py",
+          "target": "workspace/skills/getscipapers_requester/run_gsp_setup.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/getscipapers-requester/requirements.txt",
+          "target": "workspace/skills/getscipapers_requester/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
         }
       ]
     },
