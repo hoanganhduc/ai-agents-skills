@@ -30,12 +30,16 @@ def _load_module(name: str, filename: str):
 
 
 class GetSciPapersSetupTests(unittest.TestCase):
-    def test_requirements_pins_fork_main_branch(self) -> None:
+    def test_requirements_pins_fork_master_branch_by_url(self) -> None:
         text = (GSP_ROOT / "requirements.txt").read_text(encoding="utf-8")
+        # The fork's default branch is master, and the distribution is named
+        # getscipapers-hoanganhduc, so a PEP 508 ``getscipapers @`` name prefix
+        # triggers a pip name-mismatch error. Install by URL only.
         self.assertIn(
-            "getscipapers @ git+https://github.com/hoanganhduc/getscipapers.git@main",
+            "git+https://github.com/hoanganhduc/getscipapers.git@master",
             text,
         )
+        self.assertNotIn("getscipapers @ git+", text)
 
     def test_venv_python_branches_on_os(self) -> None:
         setup = _load_module("gsp_setup_under_test", "run_gsp_setup.py")

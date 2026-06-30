@@ -157,14 +157,24 @@ class ManifestTests(unittest.TestCase):
         self.assertIn(".getscipapers_venv\\Scripts\\getscipapers.exe", tool["candidates"]["windows"])
 
         runtime_skill = manifests["runtime"]["skills"]["getscipapers-requester"]
-        targets = {entry["target"] for entry in runtime_skill["files"]}
+        files = {entry["target"]: entry for entry in runtime_skill["files"]}
+        targets = set(files)
         self.assertIn("workspace/skills/getscipapers_requester/run_gsp_setup.py", targets)
+        self.assertIn("workspace/skills/getscipapers_requester/run_gsp_setup.sh", targets)
+        self.assertIn("workspace/skills/getscipapers_requester/run_gsp_setup.bat", targets)
         self.assertIn("workspace/skills/getscipapers_requester/requirements.txt", targets)
-        setup_entry = next(
-            entry for entry in runtime_skill["files"]
-            if entry["target"].endswith("run_gsp_setup.py")
+        self.assertEqual(
+            set(files["workspace/skills/getscipapers_requester/run_gsp_setup.py"]["platforms"]),
+            {"linux", "macos", "windows", "wsl"},
         )
-        self.assertEqual(set(setup_entry["platforms"]), {"linux", "macos", "windows", "wsl"})
+        # run_skill.sh execs its target, so the .py is launched via the executable
+        # 0755 .sh wrapper; the .bat wrapper drives the Windows run_python.bat chain.
+        sh_entry = files["workspace/skills/getscipapers_requester/run_gsp_setup.sh"]
+        self.assertEqual(set(sh_entry["platforms"]), {"linux", "macos", "wsl"})
+        self.assertEqual(sh_entry["mode"], "0755")
+        bat_entry = files["workspace/skills/getscipapers_requester/run_gsp_setup.bat"]
+        self.assertEqual(set(bat_entry["platforms"]), {"windows"})
+        self.assertEqual(bat_entry["newline"], "crlf")
 
     def test_autonomous_research_loop_runbook_template_registered(self) -> None:
         manifests = load_manifests()

@@ -1610,7 +1610,7 @@ def install_hint(name: str, result: dict[str, Any]) -> str:
         "git-cli": "install Git",
         "github-cli": "install GitHub CLI and authenticate it if needed",
         "ripgrep-cli": "install ripgrep",
-        "getscipapers": "provision the getscipapers venv via the getscipapers-requester skill: run_gsp_setup.py setup (installs git+https://github.com/hoanganhduc/getscipapers.git@main)",
+        "getscipapers": "provision the getscipapers venv via the getscipapers-requester skill: run_skill.sh skills/getscipapers_requester/run_gsp_setup.sh setup (installs git+https://github.com/hoanganhduc/getscipapers.git@master)",
         "nvidia-smi-tool": "install NVIDIA drivers/tools if NVIDIA GPU detection is needed",
         "rocm-smi-tool": "install ROCm tools if AMD GPU detection is needed",
         "docling-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install docling",
