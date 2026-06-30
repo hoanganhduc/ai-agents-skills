@@ -136,6 +136,36 @@ class ManifestTests(unittest.TestCase):
         args.profile = "media"
         self.assertIn("manim-math-animation", resolve_skills(args, manifests))
 
+    def test_getscipapers_requester_capability_and_runtime_registered(self) -> None:
+        manifests = load_manifests()
+        skills = manifests["skills"]["skills"]
+        self.assertIn("getscipapers-requester", skills)
+        skill = skills["getscipapers-requester"]
+        # The portable agents gate adapter inheritance; all 7 targets are covered.
+        for agent in ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"):
+            self.assertIn(agent, skill["supported_agents"])
+        self.assertIn("getscipapers", skill["optional_dependencies"])
+
+        # The capability is a logical tool, not an importable python package, so a
+        # venv-isolated console script is detected by resolving the binary.
+        packages = manifests["dependencies"]["packages"]
+        self.assertEqual(packages["getscipapers"], {"type": "tool", "logical_tool": "getscipapers-cli"})
+        tool = manifests["dependencies"]["tools"]["getscipapers-cli"]
+        self.assertEqual(tool["candidates"]["linux"][0], "${GETSCIPAPERS_BIN}")
+        self.assertIn("~/.getscipapers_venv/bin/getscipapers", tool["candidates"]["linux"])
+        self.assertEqual(tool["candidates"]["windows"][0], "%GETSCIPAPERS_BIN%")
+        self.assertIn(".getscipapers_venv\\Scripts\\getscipapers.exe", tool["candidates"]["windows"])
+
+        runtime_skill = manifests["runtime"]["skills"]["getscipapers-requester"]
+        targets = {entry["target"] for entry in runtime_skill["files"]}
+        self.assertIn("workspace/skills/getscipapers_requester/run_gsp_setup.py", targets)
+        self.assertIn("workspace/skills/getscipapers_requester/requirements.txt", targets)
+        setup_entry = next(
+            entry for entry in runtime_skill["files"]
+            if entry["target"].endswith("run_gsp_setup.py")
+        )
+        self.assertEqual(set(setup_entry["platforms"]), {"linux", "macos", "windows", "wsl"})
+
     def test_autonomous_research_loop_runbook_template_registered(self) -> None:
         manifests = load_manifests()
         templates = manifests["artifacts"]["artifacts"]["template"]

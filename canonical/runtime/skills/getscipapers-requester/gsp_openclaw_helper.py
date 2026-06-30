@@ -374,10 +374,15 @@ def find_getscipapers() -> str | None:
         os.environ.get("GETSCIPAPERS_BIN"),
         str(Path.home() / ".local" / "bin" / "getscipapers"),
         str(Path.home() / ".getscipapers_venv" / "bin" / "getscipapers"),
+        str(Path.home() / ".getscipapers_venv" / "Scripts" / "getscipapers.exe"),
         shutil.which("getscipapers"),
     ]
     for candidate in candidates:
-        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+        if not candidate or not Path(candidate).is_file():
+            continue
+        # os.access(..., X_OK) is unreliable on Windows, where executability is
+        # determined by file extension rather than a POSIX permission bit.
+        if os.name == "nt" or os.access(candidate, os.X_OK):
             return candidate
     return None
 

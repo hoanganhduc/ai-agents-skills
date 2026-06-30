@@ -187,9 +187,9 @@
     "getscipapers-requester": {
       "description": "External paper retrieval fallback after local library checks.",
       "profiles": ["library", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"],
       "required_dependencies": ["python-runtime"],
-      "optional_dependencies": [],
+      "optional_dependencies": ["getscipapers"],
       "optional_capabilities": ["external-retrieval"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },

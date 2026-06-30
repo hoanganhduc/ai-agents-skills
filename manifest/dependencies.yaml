@@ -201,6 +201,20 @@
       },
       "capabilities": ["fast-search"]
     },
+    "getscipapers-cli": {
+      "description": "getscipapers console script from the maintainer fork, provisioned by the getscipapers-requester skill into a dedicated runtime-owned venv (~/.getscipapers_venv).",
+      "version_constraint": "manual",
+      "candidates": {
+        "linux": ["${GETSCIPAPERS_BIN}", "~/.getscipapers_venv/bin/getscipapers", "~/.local/bin/getscipapers", "getscipapers"],
+        "windows": [
+          "%GETSCIPAPERS_BIN%",
+          ".getscipapers_venv\\Scripts\\getscipapers.exe",
+          "getscipapers.exe",
+          "getscipapers"
+        ]
+      },
+      "capabilities": ["external-retrieval"]
+    },
     "nvidia-smi-tool": {
       "description": "NVIDIA GPU inspection tool used by resource preflight when available.",
       "version_constraint": "any",
@@ -481,6 +495,7 @@
     "git-cli": {"type": "tool", "logical_tool": "git-cli"},
     "github-cli": {"type": "tool", "logical_tool": "github-cli"},
     "ripgrep-cli": {"type": "tool", "logical_tool": "ripgrep-cli"},
+    "getscipapers": {"type": "tool", "logical_tool": "getscipapers-cli"},
     "nvidia-smi-tool": {"type": "tool", "logical_tool": "nvidia-smi-tool"},
     "rocm-smi-tool": {"type": "tool", "logical_tool": "rocm-smi-tool"},
     "edge-tts-python-package": {"type": "python", "module": "edge_tts"},

@@ -45,6 +45,7 @@ Status vocabulary used by `precheck`:
 | `chromium-browser-system-tool` | Headless Chromium/Chrome/Edge for CDP-driven page screenshots. |
 | `espeak-ng-system-tool` | eSpeak NG phonemizer used by offline TTS engines (Kokoro/Piper). |
 | `ffmpeg-system-tool` | FFmpeg/ffprobe for video encoding, audio normalization, and duration probing. |
+| `getscipapers-cli` | getscipapers console script from the maintainer fork, provisioned by the getscipapers-requester skill into a dedicated runtime-owned venv (~/.getscipapers_venv). |
 | `git-cli` | Git command line client for repository-backed workflows and GitHub publishing. |
 | `github-cli` | GitHub CLI for workflows that need local Actions, PR, issue, or authentication commands. |
 | `gnupg-system-tool` | GnuPG (gpg) for optional PGP/MIME signing of outgoing email in send-email. |
@@ -82,6 +83,7 @@ Status vocabulary used by `precheck`:
 | `espeak-ng-system-tool` | `tool` | espeak-ng-system-tool |
 | `feedparser-python-package` | `python` | feedparser |
 | `ffmpeg-system-tool` | `tool` | ffmpeg-system-tool |
+| `getscipapers` | `tool` | getscipapers-cli |
 | `git-cli` | `tool` | git-cli |
 | `github-cli` | `tool` | github-cli |
 | `gnupg-system-tool` | `tool` | gnupg-system-tool |
