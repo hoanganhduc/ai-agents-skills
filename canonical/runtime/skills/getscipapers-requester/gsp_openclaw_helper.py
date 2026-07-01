@@ -807,6 +807,22 @@ def cmd_introspect(args: argparse.Namespace, settings: Settings) -> None:
     json_print(introspect())
 
 
+def _apply_runner_proxy_default(module_argv: list[str]) -> list[str]:
+    """Default the getpapers module to ``--no-proxy``.
+
+    A stale or invalid getscipapers proxy configuration makes the getpapers
+    doi.org DOI-resolution step fail ("not a valid DOI"), even when direct
+    access works. The runner therefore defaults getpapers to ``--no-proxy``;
+    callers may still override with an explicit ``--proxy`` / ``--no-proxy`` /
+    ``--auto-proxy``.
+    """
+    if module_argv and module_argv[0] == "getpapers" and not (
+        {"--proxy", "--no-proxy", "--auto-proxy"} & set(module_argv)
+    ):
+        return module_argv + ["--no-proxy"]
+    return module_argv
+
+
 def cmd_run(args: argparse.Namespace, settings: Settings) -> None:
     exe = find_getscipapers()
     if not exe:
@@ -823,6 +839,7 @@ def cmd_run(args: argparse.Namespace, settings: Settings) -> None:
     if raw and (os.path.basename(raw[0]) == os.path.basename(exe) or raw[0] == "getscipapers"):
         raw = raw[1:]
 
+    raw = _apply_runner_proxy_default(raw)
     argv = [exe] + raw
     payload = {
         "argv": argv,

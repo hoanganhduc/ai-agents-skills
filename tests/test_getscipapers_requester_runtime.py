@@ -152,5 +152,25 @@ class GetSciPapersResolverTests(unittest.TestCase):
             self.assertIsNone(helper.find_getscipapers())
 
 
+class GetSciPapersRunnerTests(unittest.TestCase):
+    def test_getpapers_defaults_to_no_proxy(self) -> None:
+        helper = _load_module("gsp_helper_under_test", "gsp_openclaw_helper.py")
+        apply = helper._apply_runner_proxy_default
+        # getpapers gets --no-proxy appended (a stale proxy breaks doi.org resolution).
+        self.assertEqual(
+            apply(["getpapers", "--doi", "10.1/x"]),
+            ["getpapers", "--doi", "10.1/x", "--no-proxy"],
+        )
+        # An explicit proxy flag is respected, not overridden.
+        for flag in ("--proxy", "--no-proxy", "--auto-proxy"):
+            self.assertEqual(
+                apply(["getpapers", "--doi", "10.1/x", flag]),
+                ["getpapers", "--doi", "10.1/x", flag],
+            )
+        # Other modules and empty argv are untouched.
+        self.assertEqual(apply(["zlib", "--search", "x"]), ["zlib", "--search", "x"])
+        self.assertEqual(apply([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
