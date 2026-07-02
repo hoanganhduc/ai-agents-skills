@@ -7,6 +7,8 @@ import argparse
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -524,6 +526,141 @@ def status_command(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def selftest_init_args(run_dir: Path, max_iterations: int) -> argparse.Namespace:
+    return argparse.Namespace(
+        dir=str(run_dir),
+        goal="offline smoke test",
+        success_criteria="ledger validates after one iteration",
+        mode="bounded-research",
+        force=False,
+        stop_on_guard_fail=True,
+        stop_on_missing_evidence=True,
+        stop_on_scope_change=True,
+        plateau_rule=DEFAULT_PLATEAU_RULE,
+        success_check="",
+        require_user_stop_only=False,
+        stop_condition=[],
+        budget_owner="selftest",
+        max_iterations=max_iterations,
+        max_wall_time_seconds=300,
+        max_tokens=0,
+        max_usd=0.0,
+        max_depth=1,
+        max_hops=1,
+        max_child_workers=0,
+    )
+
+
+def selftest_drive_args(run_dir: Path, registry: Path, stub_cmd: str) -> argparse.Namespace:
+    return argparse.Namespace(
+        dir=str(run_dir),
+        root=str(run_dir),
+        cmd=stub_cmd,
+        provider=None,
+        iteration_timeout=60,
+        max_failures=1,
+        poll=0.0,
+        quota_backoff=0,
+        max_quota_waits=3,
+        log_dir=None,
+        registry_dir=str(registry),
+    )
+
+
+STUB_ITERATION_SNIPPET = (
+    "import json, os, sys\n"
+    "run_dir = os.environ['AUTOLOOP_DIR']\n"
+    "marker = os.path.join(run_dir, 'quota_marker')\n"
+    "if '--quota-first' in sys.argv and not os.path.exists(marker):\n"
+    "    open(marker, 'w').write('seen')\n"
+    "    print('provider error: HTTP 429 Too Many Requests')\n"
+    "    sys.exit(1)\n"
+    "budget_path = os.path.join(run_dir, 'budget.json')\n"
+    "budget = json.load(open(budget_path))\n"
+    "budget['spent_iterations'] = int(budget.get('spent_iterations', 0)) + 1\n"
+    "json.dump(budget, open(budget_path, 'w'))\n"
+    "print('stub iteration complete')\n"
+)
+
+
+def selftest_driver_checks() -> dict[str, Any]:
+    """Offline checks for the provider adapters and the headless driver. Uses
+    only stub commands (this Python interpreter); no provider CLI is invoked."""
+    errors: list[str] = []
+    providers_checked = 0
+    with tempfile.TemporaryDirectory(prefix="autoloop-driver-smoke-") as tmp:
+        base = Path(tmp)
+        # 1. Provider command construction: every provider builds an argv with
+        # the prompt substituted; a stubbed binary override must be honored and
+        # reported as not found without consulting PATH defaults.
+        for provider in sorted(PROVIDER_SPECS):
+            key = provider_env_key(provider)
+            environ = {f"AAS_AUTOLOOP_BIN_{key}": str(base / "missing-bin")}
+            spec = resolve_provider_command(provider, base / "loop", environ=environ)
+            providers_checked += 1
+            if spec["mode"] != "argv" or spec["binary_found"]:
+                errors.append(f"{provider}: expected argv mode with missing binary")
+                continue
+            joined = " ".join(spec["argv"])
+            if "{prompt}" in joined or "exactly ONE iteration" not in joined:
+                errors.append(f"{provider}: prompt placeholder not substituted")
+            if str(base / "loop") not in joined:
+                errors.append(f"{provider}: loop dir missing from command")
+        # Full-command override: {dir} substituted, mode shell.
+        override_env = {"AAS_AUTOLOOP_CMD_CLAUDE": "echo {dir}"}
+        spec = resolve_provider_command("claude", base / "loop", environ=override_env)
+        if spec["mode"] != "shell" or str(base / "loop") not in spec["shell"]:
+            errors.append("claude: AAS_AUTOLOOP_CMD override not honored")
+        # 2. Quota-signal detection.
+        for text in (
+            "HTTP 429 Too Many Requests",
+            "insufficient credit balance",
+            "usage limit reached, resets 5pm",
+            "You have run out of credits",
+            "rate limit exceeded",
+        ):
+            if not QUOTA_PATTERN.search(text):
+                errors.append(f"quota pattern missed: {text!r}")
+        if QUOTA_PATTERN.search("all checks passed cleanly"):
+            errors.append("quota pattern false-positive on benign text")
+        # 3. Drive to completion on a stub command (budget cap = 2 iterations).
+        loop_a = base / "loop-a"
+        init_loop(selftest_init_args(loop_a, max_iterations=2))
+        stub = base / "stub_iteration.py"
+        stub.write_text(STUB_ITERATION_SNIPPET, encoding="utf-8", newline="\n")
+        stub_cmd = f'"{sys.executable}" "{stub}"'
+        result = drive_command(selftest_drive_args(loop_a, base / "reg", stub_cmd))
+        budget_a = read_json(loop_a / "budget.json")
+        if (
+            result.get("reason") != "done"
+            or result.get("exit_code") != 0
+            or int(budget_a.get("spent_iterations", 0)) != 2
+            or result.get("iterations_run") != 2
+        ):
+            errors.append(f"drive stub run did not complete cleanly: {result}")
+        elif not list((loop_a / "driver_logs").glob("iter_*.log")):
+            errors.append("drive stub run left no iteration logs")
+        # 4. Quota pause-and-resume: first stub call fails with a 429 signal and
+        # must be waited out (not counted as a failure with max_failures=1),
+        # the second call succeeds and the budget cap ends the loop.
+        loop_b = base / "loop-b"
+        init_loop(selftest_init_args(loop_b, max_iterations=1))
+        quota_cmd = f'"{sys.executable}" "{stub}" --quota-first'
+        result_b = drive_command(selftest_drive_args(loop_b, base / "reg", quota_cmd))
+        if (
+            result_b.get("reason") != "done"
+            or result_b.get("quota_waits_total") != 1
+            or int(read_json(loop_b / "budget.json").get("spent_iterations", 0)) != 1
+        ):
+            errors.append(f"drive quota pause-and-resume misbehaved: {result_b}")
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "providers_checked": providers_checked,
+        "provider_cli_attempted": False,
+    }
+
+
 def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="autonomous-loop-smoke-") as tmp:
         run_dir = Path(tmp) / "loop"
@@ -588,8 +725,10 @@ def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
         )
         append_iteration(append_args)
         validation = validate_loop_dir(run_dir)
+        driver = selftest_driver_checks()
         return {
-            "status": "ok" if validation["status"] == "ok" else "failed",
+            "status": "ok" if validation["status"] == "ok" and driver["ok"] else "failed",
+            "driver": driver,
             "smoke_mode": "offline",
             "network_required": False,
             "live_api_attempted": False,
@@ -882,7 +1021,189 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
         return {"status": "ok", "action": "hook-check", "block": False, "reason": f"error_fail_open:{exc}"}
 
 
-DRIVE_EXIT_CODES = {"max_failures": 3, "runtime_error": 4}
+# --- Provider adapters: truly-autonomous headless driving per install target ---
+# Each spec builds the exact one-iteration headless invocation for one agent
+# CLI. `agent-cmd` only constructs and PATH-probes commands (offline); `drive
+# --provider` executes them. Operator overrides (highest first):
+#   AAS_AUTOLOOP_CMD_<PROVIDER>  full shell command template; {prompt} is
+#                                substituted shell-quoted, {dir} verbatim, and
+#                                the prompt is also exported as $AUTOLOOP_PROMPT
+#   AAS_AUTOLOOP_ARGS_<PROVIDER> replacement argument template (shlex-split;
+#                                {prompt}/{dir} placeholders substituted)
+#   AAS_AUTOLOOP_BIN_<PROVIDER>  replacement binary path
+# The default flag sets grant full tool autonomy, which unattended research
+# loops require; point the loop at a workspace you trust the agent to write.
+
+PROVIDER_SPECS: dict[str, dict[str, Any]] = {
+    "claude": {
+        "binaries": ["claude"],
+        "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
+        "consent_note": "--dangerously-skip-permissions grants full tool autonomy",
+    },
+    "codex": {
+        "binaries": ["codex"],
+        "args": ["exec", "--full-auto", "{prompt}"],
+        "consent_note": "--full-auto runs with the workspace-write sandbox",
+    },
+    "deepseek": {
+        "binaries": ["codewhale", "codewhale-tui", "deepseek"],
+        "args": ["exec", "--auto", "{prompt}"],
+        "consent_note": "--auto enables tool-backed agent mode with auto-approvals",
+    },
+    "opencode": {
+        "binaries": ["opencode"],
+        "args": ["run", "{prompt}"],
+        "consent_note": "runs with the opencode agent's configured permissions",
+    },
+    "copilot": {
+        "binaries": ["copilot"],
+        "args": ["-p", "{prompt}", "--allow-all-tools"],
+        "consent_note": "--allow-all-tools grants full tool autonomy",
+    },
+    "antigravity": {
+        "binaries": ["gemini"],
+        "args": ["--yolo", "-p", "{prompt}"],
+        "consent_note": "--yolo auto-approves all actions",
+    },
+}
+
+# Scanned only over the output of FAILED iteration commands: a match means
+# "provider credit/quota outage - pause and retry" instead of a hard failure.
+QUOTA_PATTERN = re.compile(
+    r"rate.?limit|quota|credit ?balance|insufficient[ _-]?(?:credit|funds|quota)|"
+    r"usage ?limit|out of credits?|credits? (?:has |have |is |are )?(?:been )?"
+    r"(?:run out|exhausted|depleted)|limit (?:reached|exceeded)|"
+    r"too many requests|\b429\b|overloaded|billing",
+    re.IGNORECASE,
+)
+
+
+def iteration_prompt(run_dir: Path) -> str:
+    """The standard one-iteration contract handed to a headless agent."""
+    return (
+        "You are one iteration of a bounded autonomous research loop governed by "
+        "the autonomous-research-loop skill and the autonomous-loop-enforcement "
+        f"policy. The loop directory is: {run_dir}. Do exactly ONE iteration now: "
+        "(1) read recovery.md, loop_state.json, budget.json, and the tail of "
+        "iterations.jsonl in that directory; (2) execute the single next action "
+        "they record, following the loop's single-path policy and evidence gates; "
+        "(3) verify the result independently as the loop protocol requires; "
+        "(4) append exactly one iteration record to iterations.jsonl (prefer the "
+        "autonomous-research-loop-runtime append-iteration helper) and update "
+        "loop_state.json, budget.json, and recovery.md so the next iteration can "
+        "resume from files alone; (5) exit. Do not run more than one iteration. "
+        "Do not stop the loop yourself: the headless driver owns the stop "
+        "conditions. If you hit a credit or quota error, exit nonzero with the "
+        "provider's error text visible in your output."
+    )
+
+
+def provider_env_key(provider: str) -> str:
+    return provider.upper().replace("-", "_")
+
+
+def resolve_provider_command(
+    provider: str, run_dir: Path, environ: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """Build the headless one-iteration command for a provider (no execution)."""
+    env = os.environ if environ is None else environ
+    if provider not in PROVIDER_SPECS:
+        raise ValueError(f"unknown provider: {provider}")
+    spec = PROVIDER_SPECS[provider]
+    key = provider_env_key(provider)
+    prompt = iteration_prompt(run_dir)
+    full = env.get(f"AAS_AUTOLOOP_CMD_{key}")
+    if full:
+        shell_cmd = full.replace("{prompt}", shlex.quote(prompt)).replace(
+            "{dir}", str(run_dir)
+        )
+        return {
+            "provider": provider,
+            "mode": "shell",
+            "shell": shell_cmd,
+            "binary": None,
+            "binary_found": True,
+            "prompt": prompt,
+            "consent_note": spec["consent_note"],
+        }
+    override = env.get(f"AAS_AUTOLOOP_BIN_{key}")
+    if override:
+        binary = override
+        binary_found = (
+            shutil.which(override) is not None
+            or Path(override).expanduser().exists()
+        )
+    else:
+        located = next((b for b in spec["binaries"] if shutil.which(b)), None)
+        binary = located or spec["binaries"][0]
+        binary_found = located is not None
+    args_raw = env.get(f"AAS_AUTOLOOP_ARGS_{key}")
+    template = shlex.split(args_raw) if args_raw else list(spec["args"])
+    argv = [str(binary)] + [
+        arg.replace("{prompt}", prompt).replace("{dir}", str(run_dir))
+        for arg in template
+    ]
+    return {
+        "provider": provider,
+        "mode": "argv",
+        "argv": argv,
+        "binary": str(binary),
+        "binary_found": binary_found,
+        "prompt": prompt,
+        "consent_note": spec["consent_note"],
+    }
+
+
+def agent_cmd_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    providers = sorted(PROVIDER_SPECS) if args.provider == "all" else [args.provider]
+    entries: dict[str, Any] = {}
+    for provider in providers:
+        entry = resolve_provider_command(provider, run_dir)
+        if not args.print_prompt:
+            entry.pop("prompt", None)
+        entries[provider] = entry
+    result: dict[str, Any] = {
+        "status": "ok",
+        "action": "agent-cmd",
+        "dir": str(run_dir),
+        "providers": entries,
+    }
+    if args.print_prompt:
+        result["iteration_prompt"] = iteration_prompt(run_dir)
+    return result
+
+
+def refresh_heartbeat(reg: Path, run_id: object) -> None:
+    if not isinstance(run_id, str) or not run_id:
+        return
+    path = reg / f"{run_id}.json"
+    try:
+        entry = read_json(path)
+        entry["heartbeat"] = utc_now()
+        write_json(path, entry)
+    except Exception:  # noqa: BLE001 - heartbeat refresh is best-effort.
+        pass
+
+
+def read_log_tail(path: Path, limit: int = 8192) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            return handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+DRIVE_EXIT_CODES = {
+    "max_failures": 3,
+    "runtime_error": 4,
+    "quota_wait_exhausted": 5,
+    "provider_unavailable": 6,
+    "bad_arguments": 2,
+}
 
 
 def drive_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -899,9 +1220,30 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     iter_timeout = args.iteration_timeout if args.iteration_timeout and args.iteration_timeout > 0 else None
     max_failures = max(1, int(args.max_failures))
     poll = max(0.0, float(args.poll))
+    provider = getattr(args, "provider", None)
+    cmd = getattr(args, "cmd", None)
+    if bool(provider) == bool(cmd):
+        return {
+            "status": "failed",
+            "action": "drive",
+            "dir": str(run_dir),
+            "reason": "bad_arguments",
+            "error": "exactly one of --cmd or --provider is required",
+            "exit_code": DRIVE_EXIT_CODES["bad_arguments"],
+        }
+    quota_backoff = max(0, int(getattr(args, "quota_backoff", 900)))
+    max_quota_waits = max(0, int(getattr(args, "max_quota_waits", 0)))
+    log_dir = (
+        Path(args.log_dir).expanduser()
+        if getattr(args, "log_dir", None)
+        else run_dir / "driver_logs"
+    )
+    log_dir.mkdir(parents=True, exist_ok=True)
 
     # Arm (best-effort) so a concurrent interactive Stop hook for this root stands
     # down; the driver itself enforces "done" regardless of the registry.
+    reg = registry_dir(args)
+    run_id: object = None
     arm_ns = argparse.Namespace(
         dir=str(run_dir),
         root=str(root),
@@ -910,11 +1252,14 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         registry_dir=getattr(args, "registry_dir", None),
     )
     try:
-        arm_loop(arm_ns)
+        run_id = arm_loop(arm_ns).get("run_id")
     except Exception:  # noqa: BLE001 - arming is best-effort.
         pass
 
     failures = 0
+    quota_waits = 0
+    quota_waits_total = 0
+    iterations_run = 0
     reason = "unknown"
     try:
         while True:
@@ -929,27 +1274,88 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             if verdict.get("paused"):
                 time.sleep(poll)
                 continue
+            refresh_heartbeat(reg, run_id)
+            if provider:
+                try:
+                    spec = resolve_provider_command(provider, run_dir)
+                except ValueError:
+                    reason = "bad_arguments"
+                    break
+                if spec["mode"] == "argv" and not spec["binary_found"]:
+                    sys.stderr.write(
+                        f"autoloop-driver: no {provider} binary found on PATH "
+                        f"(tried: {', '.join(PROVIDER_SPECS[provider]['binaries'])}); "
+                        f"set AAS_AUTOLOOP_BIN_{provider_env_key(provider)} or "
+                        f"AAS_AUTOLOOP_CMD_{provider_env_key(provider)}\n"
+                    )
+                    reason = "provider_unavailable"
+                    break
+                run_args: object = spec["argv"] if spec["mode"] == "argv" else spec["shell"]
+                use_shell = spec["mode"] == "shell"
+                prompt = spec["prompt"]
+            else:
+                run_args = cmd
+                use_shell = True
+                prompt = iteration_prompt(run_dir)
             child_env = dict(
                 os.environ,
                 AUTOLOOP_DRIVER="1",
                 AUTOLOOP_DIR=str(run_dir),
                 AUTOLOOP_ROOT=str(root),
+                AUTOLOOP_PROMPT=prompt,
             )
+            iterations_run += 1
+            stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+            log_path = log_dir / f"iter_{stamp}_{iterations_run:04d}.log"
             try:
-                completed = subprocess.run(args.cmd, shell=True, env=child_env, timeout=iter_timeout)
+                with log_path.open("w", encoding="utf-8", errors="replace") as log_fh:
+                    completed = subprocess.run(
+                        run_args,
+                        shell=use_shell,
+                        env=child_env,
+                        timeout=iter_timeout,
+                        stdout=log_fh,
+                        stderr=subprocess.STDOUT,
+                    )
                 rc = completed.returncode
             except subprocess.TimeoutExpired:
                 rc = 124
+            except OSError as exc:
+                with log_path.open("a", encoding="utf-8", errors="replace") as log_fh:
+                    log_fh.write(f"autoloop-driver: spawn failed: {exc}\n")
+                rc = 127
             if rc != 0:
+                tail = read_log_tail(log_path)
+                if QUOTA_PATTERN.search(tail):
+                    # Credit/quota outage: honor the pause-and-wait policy instead
+                    # of counting a failure. `done` re-checks budget caps and the
+                    # STOP_REQUESTED sentinel on every cycle, so a paused run
+                    # still stops the moment a real stop condition fires.
+                    quota_waits += 1
+                    quota_waits_total += 1
+                    if max_quota_waits and quota_waits > max_quota_waits:
+                        reason = "quota_wait_exhausted"
+                        break
+                    sys.stderr.write(
+                        f"autoloop-driver: provider credit/quota signal (rc={rc}); "
+                        f"waiting {quota_backoff}s before retry "
+                        f"(consecutive waits: {quota_waits}"
+                        + (f"/{max_quota_waits}" if max_quota_waits else "")
+                        + f", log: {log_path})\n"
+                    )
+                    time.sleep(quota_backoff)
+                    continue
                 failures += 1
                 sys.stderr.write(
-                    f"autoloop-driver: iteration command failed (rc={rc}, {failures}/{max_failures})\n"
+                    f"autoloop-driver: iteration command failed "
+                    f"(rc={rc}, {failures}/{max_failures}, log: {log_path})\n"
                 )
                 if failures >= max_failures:
                     reason = "max_failures"
                     break
             else:
                 failures = 0
+                quota_waits = 0
     finally:
         disarm_ns = argparse.Namespace(
             dir=str(run_dir), run_id=None, registry_dir=getattr(args, "registry_dir", None)
@@ -964,7 +1370,11 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         "status": "failed" if exit_code else "ok",
         "action": "drive",
         "dir": str(run_dir),
+        "provider": provider,
         "reason": reason,
+        "iterations_run": iterations_run,
+        "quota_waits_total": quota_waits_total,
+        "log_dir": str(log_dir),
         "exit_code": exit_code,
     }
 
@@ -1092,16 +1502,61 @@ def build_parser() -> argparse.ArgumentParser:
     add_registry_args(hook)
     hook.set_defaults(func=hook_check_command)
 
+    agent_cmd = subparsers.add_parser(
+        "agent-cmd",
+        help="print the per-provider headless one-iteration command (offline; PATH probe only)",
+    )
+    agent_cmd.add_argument(
+        "--provider",
+        required=True,
+        choices=sorted(PROVIDER_SPECS) + ["all"],
+        help="install target whose iteration command to build, or `all` for the matrix",
+    )
+    agent_cmd.add_argument("--dir", required=True, help="loop directory the prompt references")
+    agent_cmd.add_argument(
+        "--print-prompt",
+        action="store_true",
+        help="include the standard one-iteration prompt in the output",
+    )
+    agent_cmd.set_defaults(func=agent_cmd_command)
+
     drive = subparsers.add_parser(
         "drive",
         help="cross-platform headless driver: run the iteration command per loop until done",
     )
     drive.add_argument("--dir", required=True)
     drive.add_argument("--root", default=None, help="project root this loop governs (default: loop dir)")
-    drive.add_argument("--cmd", required=True, help="iteration shell command run once per loop")
+    drive.add_argument(
+        "--cmd",
+        default=None,
+        help="iteration shell command run once per loop (mutually exclusive with --provider)",
+    )
+    drive.add_argument(
+        "--provider",
+        default=None,
+        choices=sorted(PROVIDER_SPECS),
+        help="build and run the standard headless iteration command for this install target",
+    )
     drive.add_argument("--iteration-timeout", type=positive_int, default=1800)
     drive.add_argument("--max-failures", type=positive_int, default=3)
     drive.add_argument("--poll", type=nonnegative_float, default=5.0)
+    drive.add_argument(
+        "--quota-backoff",
+        type=positive_int,
+        default=900,
+        help="seconds to wait after a detected credit/quota outage before retrying",
+    )
+    drive.add_argument(
+        "--max-quota-waits",
+        type=positive_int,
+        default=0,
+        help="max consecutive quota waits before giving up (0 = wait indefinitely, honoring pause-and-resume on credit exhaustion)",
+    )
+    drive.add_argument(
+        "--log-dir",
+        default=None,
+        help="directory for per-iteration output logs (default: <dir>/driver_logs)",
+    )
     add_registry_args(drive)
     drive.set_defaults(func=drive_command)
     return parser

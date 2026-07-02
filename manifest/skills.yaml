@@ -7,7 +7,7 @@
       "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["bounded-research-loop", "evidence-gates", "panel-loop-handoff", "recovery-ledger"],
+      "optional_capabilities": ["bounded-research-loop", "evidence-gates", "panel-loop-handoff", "recovery-ledger", "headless-driver-handoff"],
       "recommended_templates": ["autonomous-research-loop-runbook"],
       "verification": ["file-exists", "metadata-valid", "agent-visible"]
     },
@@ -17,7 +17,7 @@
       "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity"],
       "required_dependencies": ["python-runtime"],
       "optional_dependencies": [],
-      "optional_capabilities": ["offline-runtime-smoke", "loop-ledger-validation", "local-recovery-state"],
+      "optional_capabilities": ["offline-runtime-smoke", "loop-ledger-validation", "local-recovery-state", "headless-provider-driver", "quota-pause-resume"],
       "recommended_templates": ["autonomous-research-loop-runbook"],
       "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
     },

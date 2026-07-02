@@ -189,6 +189,28 @@ After every material iteration, update `recovery.md` with:
 On resume, read `loop_state.json`, `budget.json`, `iterations.jsonl`, and
 `recovery.md` before acting. Validate state before continuing.
 
+## Truly Autonomous Execution
+
+A chat session cannot carry a long loop by itself: context windows and turn
+boundaries end it. For unattended multi-day runs, hand the loop to the
+`autonomous-research-loop-runtime` headless driver, which respawns a fresh
+headless agent session per iteration against the on-disk loop files and owns
+the stop conditions:
+
+```bash
+... run_autonomous_research_loop.sh drive --dir <loop_dir> --provider <claude|codex|deepseek|opencode|copilot|antigravity>
+```
+
+`agent-cmd --provider all --dir <loop_dir>` prints the per-target iteration
+commands and probes binary availability. The driver captures per-iteration
+logs, re-checks the stop conditions every cycle, and treats detected
+credit/quota outages as pause-and-wait (not failure), resuming when credits
+return. Interactive sessions on Claude are additionally governed by the
+installed `hooks.Stop` entry while a loop is armed (`arm --dir <loop_dir>
+--root <project_root>`): the hook blocks turn-end until a real stop condition
+fires. Kill switches in both modes: `touch <loop_dir>/STOP_REQUESTED`,
+`touch <loop_dir>/PAUSE`, `AUTOLOOP_DISABLE=1`, or `disarm`.
+
 ## Stop Rules
 
 These rules are governed by the enforcement policy in
