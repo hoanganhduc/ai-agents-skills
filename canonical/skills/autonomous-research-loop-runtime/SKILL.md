@@ -50,9 +50,70 @@ stop-condition arbiter; `hook-check` is the cross-platform Stop-hook check that
 the installed Claude `hooks.Stop` entry invokes directly (it reads the hook JSON
 on stdin, honors `AUTOLOOP_DISABLE` / `AUTOLOOP_DRIVER` / the `stop_hook_active`
 re-entrancy payload, and exits 2 only when an active loop is unfinished, fail-open
-otherwise); and `drive` is the cross-platform headless driver that runs one
-iteration per loop until `done` (the POSIX `autoloop_driver.sh` is a thin shim
-that delegates to it).
+otherwise); `agent-cmd` prints the per-provider headless one-iteration command
+(offline PATH probe, no execution); and `drive` is the cross-platform headless
+driver that runs one iteration per loop until `done` (the POSIX
+`autoloop_driver.sh` is a thin shim that delegates to it).
+
+## Truly autonomous execution on every install target
+
+A chat session cannot run hundreds of loop iterations: context windows and turn
+boundaries end it. Unattended execution therefore uses `drive`, which respawns a
+FRESH headless agent session per iteration against the on-disk loop files and
+owns the stop conditions itself. Exactly one of `--cmd` or `--provider` selects
+the iteration command; with `--provider` the runtime builds the standard
+one-iteration invocation for that install target:
+
+| Provider (target) | Iteration command built by `agent-cmd` / `drive --provider` |
+|---|---|
+| `claude` | `claude -p "<prompt>" --dangerously-skip-permissions` |
+| `codex` | `codex exec --full-auto "<prompt>"` |
+| `deepseek` | `codewhale exec --auto "<prompt>"` (falls back to `codewhale-tui`, `deepseek`) |
+| `opencode` | `opencode run "<prompt>"` |
+| `copilot` | `copilot -p "<prompt>" --allow-all-tools` |
+| `antigravity` | `gemini --yolo -p "<prompt>"` |
+
+`<prompt>` is the standard one-iteration contract: read `recovery.md` and the
+ledger, execute the single recorded next action under the loop policy, verify
+independently, append exactly one iteration record, refresh the recovery files,
+exit. Inspect it with `agent-cmd --provider <p> --dir <loop> --print-prompt`.
+OpenClaw is not a driver target (no local agent CLI); drive its loops from a
+supported provider instead.
+
+Start an unattended run (POSIX):
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh drive --dir research/run --provider claude
+```
+
+On Windows use `%AAS_RUNTIME_ROOT%\run_skill.bat ... run_autonomous_research_loop.bat drive --dir research\run --provider codex`.
+Wrap with `nohup`, `systemd-run`, or Task Scheduler for multi-day runs.
+
+Driver behavior:
+
+- Each iteration's output is captured under `<loop>/driver_logs/`.
+- Credit/quota outages (rate limit, 429, out of credits, usage limit, billing)
+  detected in a FAILED iteration's output do not count as failures: the driver
+  pauses `--quota-backoff` seconds (default 900) and retries, honoring the
+  pause-and-wait-for-credits policy. `--max-quota-waits N` caps consecutive
+  waits (default 0 = wait indefinitely).
+- Genuine failures stop the run after `--max-failures` consecutive occurrences.
+- Stop conditions are re-checked every cycle by the `done` arbiter: iteration
+  cap, wall/token/USD budgets, terminal ledger status, `STOP_REQUESTED` and
+  `PAUSE` sentinels, and `require_user_stop_only`.
+- Exit codes: 0 stopped cleanly (`done`), 3 max failures, 4 runtime error,
+  5 quota waits exhausted, 6 provider binary unavailable.
+- Overrides: `AAS_AUTOLOOP_BIN_<PROVIDER>` (binary), `AAS_AUTOLOOP_ARGS_<PROVIDER>`
+  (argument template; `{prompt}`/`{dir}` placeholders), `AAS_AUTOLOOP_CMD_<PROVIDER>`
+  (full shell template; `{prompt}` is inserted shell-quoted and also exported as
+  `AUTOLOOP_PROMPT`).
+
+The default flag sets grant the agent full tool autonomy, which unattended
+research requires; run loops only in workspaces you trust the agent to modify,
+and prefer a dedicated project root. Interactive forcing is separate: on Claude
+the installed `hooks.Stop` entry blocks turn-end while an ARMED loop (`arm
+--dir <loop> --root <project>`) is unfinished; the other targets have no Stop
+hook and are governed by the driver alone.
 
 For an early proof/success stop, at least one `--evidence-id ID` must resolve to
 `proof_artifacts/ID.json` inside the loop directory. Early proof/success stop
@@ -99,12 +160,16 @@ On Windows, use the installed runtime runner with the native launcher target:
 The helper:
 
 - uses only the Python standard library
-- does not require network access
+- does not require network access for ledger, arbiter, probe, or selftest work
 - does not install packages
 - does not start servers
-- does not write configuration outside the selected loop directory
-- does not call Codex, Claude, Copilot, DeepSeek, or other provider CLIs
-- does not spawn subagents
+- does not write configuration outside the selected loop directory (the driver
+  additionally writes iteration logs under the loop's `driver_logs/`)
+- ledger subcommands, `done`, `hook-check`, `agent-cmd`, and `selftest` never
+  call Codex, Claude, Copilot, DeepSeek, or other provider CLIs; only `drive`
+  executes the iteration command the operator selected (via `--cmd` or
+  `--provider`), which is the entire point of the headless driver
+- does not spawn subagents itself (agents launched by `drive` may)
 
 Use the canonical `autonomous-research-loop` skill for orchestration policy and
 this helper only for local ledger mechanics. This helper validates that an
