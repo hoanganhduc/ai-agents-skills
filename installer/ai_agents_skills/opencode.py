@@ -89,7 +89,7 @@ def run_opencode_native_smoke(
         for item in opencode_artifacts
         if item.get("artifact_type") == "agent-persona"
     )
-    checks.extend(validate_skill_listing(checks[1], expected_skills))
+    checks.extend(validate_skill_listing(checks[1], expected_skills, target.home))
     checks.extend(validate_agent_listing(checks[2], expected_agents))
     checks = [public_check(check) for check in checks]
     status = "ok" if all(check["ok"] for check in checks) else "degraded"
@@ -149,13 +149,37 @@ def run_opencode_command(
     }
 
 
-def validate_skill_listing(check: dict[str, Any], expected_skills: list[str]) -> list[dict[str, Any]]:
-    if not expected_skills or not check.get("ok"):
+def skill_files_present(home: Path, expected_skills: list[str]) -> list[dict[str, Any]]:
+    """Filesystem fallback: newer OpenCode CLIs dropped `--pure debug skill`,
+    so verify the managed SKILL.md files directly instead of failing the smoke
+    on a removed debug command."""
+    missing = [
+        skill
+        for skill in expected_skills
+        if not (home / "skills" / skill / "SKILL.md").is_file()
+    ]
+    return [
+        {
+            "name": "opencode-skill-list-json",
+            "ok": not missing,
+            "status": "ok" if not missing else "failed",
+            "mode": "filesystem-fallback",
+            "missing": missing[:10],
+        }
+    ]
+
+
+def validate_skill_listing(
+    check: dict[str, Any], expected_skills: list[str], home: Path
+) -> list[dict[str, Any]]:
+    if not expected_skills:
         return []
+    if not check.get("ok"):
+        return skill_files_present(home, expected_skills)
     try:
         listed = json.loads(str(check.get("stdout", "")))
     except json.JSONDecodeError:
-        return [{"name": "opencode-skill-list-json", "ok": False, "status": "failed"}]
+        return skill_files_present(home, expected_skills)
     names = {
         item.get("name")
         for item in listed
