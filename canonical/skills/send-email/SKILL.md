@@ -44,7 +44,10 @@ Windows command target above on native Windows.
 ## Configuration
 
 Settings resolve in increasing precedence: secrets file, then environment
-variables, then explicit command-line flags.
+variables, then explicit command-line flags. The secrets file is selected in
+this order: `--secrets-file PATH`, `SEND_EMAIL_SECRETS_FILE`, send-email's
+documented default locations, then a legacy shared runtime secrets file if it
+contains send-email settings.
 
 - Connection environment variables: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
   `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_SECURITY` (`ssl` | `starttls` | `plain`),
@@ -57,9 +60,9 @@ A ready-to-edit sample ships at `skills/send-email/send-email.example.json`
 Copy its `smtp` (or `accounts`) block into your secrets file and replace the
 `<placeholders>`.
 
-- Secrets file: the managed runner sets `AAS_SECRETS_FILE` to
-  `workspace/.secrets.json`. Put an `smtp` object there (or top-level `SMTP_*`
-  keys) holding both the connection settings and the identity defaults:
+- Secrets file: put an `smtp` object (or top-level `SMTP_*` keys) in a
+  send-email-specific JSON file holding both the connection settings and the
+  identity defaults:
 
 ```json
 {
@@ -114,26 +117,39 @@ and `smtp.office365.com` (use an app password, not the account password).
 
 ### Where to put the config across install targets
 
-Each install target reads its own `<runtime_root>/workspace/.secrets.json`, and
-the runtime root differs per target:
+Use a send-email-specific secrets file when one SMTP configuration should serve
+all install targets. Recommended defaults:
 
-- Codex: `$AAS_RUNTIME_WORKSPACE/.secrets.json` (Windows: `%AAS_RUNTIME_WORKSPACE%\.secrets.json`)
-- multi-agent installs (claude/deepseek/opencode/antigravity): `~/.local/share/ai-agents-skills/runtime/workspace/.secrets.json` (Windows: `%LOCALAPPDATA%\ai-agents-skills\runtime\workspace\.secrets.json`)
+- Linux / WSL: `${XDG_CONFIG_HOME:-~/.config}/send-email/secrets.json`
+- macOS: `$XDG_CONFIG_HOME/send-email/secrets.json`, then
+  `~/Library/Application Support/send-email/secrets.json`, then
+  `~/.config/send-email/secrets.json`
+- Windows: `%APPDATA%\send-email\secrets.json`, then
+  `%LOCALAPPDATA%\send-email\secrets.json`
 
-To make one configuration serve **all** targets, use either approach (both work
-on every OS, and CLI flags still override):
+For a custom location, pass `--secrets-file PATH` for one command or set
+`SEND_EMAIL_SECRETS_FILE=PATH` in the environment used for send-email. These are
+send-email-specific and do not redirect other runtime-backed skills.
 
-1. One shared secrets file: set `AAS_ALLOW_EXTERNAL_SECRETS_FILE=1` and
-   `AAS_SECRETS_FILE=<one path>` (e.g. `~/.config/send-email/secrets.json`) in
-   your shell profile; every target's runner then reads that single file.
-2. Environment variables: put `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`,
-   `SMTP_FROM`, `SMTP_FROM_NAME`, `SMTP_ACCOUNT`, etc. in a shared profile (e.g.
-   `~/.secrets.env`); the skill reads env before the secrets file, so all targets
-   pick them up. Otherwise, drop the same `.secrets.json` into each target's
-   `workspace/` directory listed above.
+The managed runner still provides a legacy shared runtime secrets file at
+`$AAS_RUNTIME_WORKSPACE/.secrets.json` (Windows:
+`%AAS_RUNTIME_WORKSPACE%\.secrets.json`). Send-email will use it only when it
+contains send-email-shaped data such as `smtp`, `accounts`, or top-level
+`SMTP_*` keys, preserving older setups without making that file the preferred
+configuration path.
+
+Do not put a send-email-only path in global `AAS_SECRETS_FILE` or permanent
+`AAS_ALLOW_EXTERNAL_SECRETS_FILE` settings. `AAS_SECRETS_FILE` is shared runtime
+state; setting it globally can redirect Zotero, Calibre, RSS, or other runtime
+skills away from their own expected workspace secrets. Prefer
+`SEND_EMAIL_SECRETS_FILE`, `--secrets-file`, or environment variables such as
+`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_FROM_NAME`, and
+`SMTP_ACCOUNT`.
 
 Never write a real address, password, or token into a tracked file; pass them via
-the environment or the secrets file. Use `show-config` to confirm what resolved.
+the environment or the secrets file. Use `show-config` to confirm what resolved;
+it redacts credentials but still shows diagnostic metadata such as sender,
+default cc/bcc, and the selected config path.
 
 ## Commands
 
@@ -154,8 +170,9 @@ bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/send-email/run_
   or sending.
 - `verify` -- connect and authenticate to the server, then disconnect; sends no
   message. Use it to test credentials.
-- `show-config` -- print the resolved account/host/port/security/user/from/identity
-  and whether a password is set; the password itself is never printed.
+- `show-config` -- print the resolved account/host/port/security/user/from/identity,
+  selected secrets file/source, and whether a password is set; the password
+  itself is never printed.
 - `accounts` -- list configured named SMTP accounts (names only, no secrets).
 - `contacts` -- the address book: lists saved contacts by default; `--add ADDR
   [--name N]`, `--remove ADDR`, `--search QUERY`.
@@ -164,7 +181,9 @@ bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/send-email/run_
 
 Account and identity selection: `--account NAME` (or `SMTP_ACCOUNT`) picks a named
 account; otherwise `default_account`, otherwise the single `smtp` block. Per-send
-CLI flags override the chosen account.
+CLI flags override the chosen account. `--secrets-file PATH` overrides the
+configured/default secrets file for `send`, `verify`, `show-config`, and
+`accounts`.
 
 Examples:
 

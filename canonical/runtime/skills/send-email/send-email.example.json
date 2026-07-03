@@ -1,8 +1,11 @@
 {
   "_README": [
     "Sample configuration for the send-email skill.",
-    "Copy the keys below into your runtime secrets file -- the path in AAS_SECRETS_FILE,",
-    "normally <runtime_root>/workspace/.secrets.json -- and replace every <placeholder>.",
+    "Copy the keys below into a send-email secrets file, for example",
+    "~/.config/send-email/secrets.json on Linux/WSL,",
+    "~/Library/Application Support/send-email/secrets.json on macOS,",
+    "%APPDATA%\\send-email\\secrets.json on Windows, or a file passed with",
+    "--secrets-file / SEND_EMAIL_SECRETS_FILE. Replace every <placeholder>.",
     "Use the single 'smtp' block for one account, OR the 'accounts' map for several",
     "(select at send time with --account NAME). If both are present, an account wins:",
     "resolution is --account / SMTP_ACCOUNT > default_account > the 'smtp' block.",
