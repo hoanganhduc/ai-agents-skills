@@ -1122,7 +1122,11 @@ def iteration_prompt(run_dir: Path) -> str:
         "(4) append exactly one iteration record to iterations.jsonl (prefer the "
         "autonomous-research-loop-runtime append-iteration helper) and update "
         "loop_state.json, budget.json, and recovery.md so the next iteration can "
-        "resume from files alone; (5) exit. Do not run more than one iteration. "
+        "resume from files alone; (5) append a 3-6 sentence human-readable entry "
+        "to PROGRESS_REPORT.md in the loop directory (create it with a short "
+        "header if absent): what this iteration did, what it concluded, whether "
+        "it was independently verified, and what comes next — written for the "
+        "project owner, not for the next agent; (6) exit. Do not run more than one iteration. "
         "Do not stop the loop yourself: the headless driver owns the stop "
         "conditions. If you hit a credit or quota error, exit nonzero with the "
         "provider's error text visible in your output."
@@ -1203,6 +1207,104 @@ def agent_cmd_command(args: argparse.Namespace) -> dict[str, Any]:
     if args.print_prompt:
         result["iteration_prompt"] = iteration_prompt(run_dir)
     return result
+
+
+def last_ledger_record(run_dir: Path) -> dict[str, Any] | None:
+    path = loop_paths(run_dir)["iterations"]
+    try:
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        return json.loads(lines[-1]) if lines else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def loop_driver_entry(reg: Path, run_dir: Path) -> dict[str, Any] | None:
+    for _, entry in list_registry_entries(reg):
+        if str(entry.get("loop_dir", "")) == str(run_dir):
+            return entry
+    return None
+
+
+def watch_notify(cmd: str | None, payload: dict[str, str]) -> None:
+    if not cmd:
+        print(json.dumps(payload), flush=True)
+        return
+    env = dict(os.environ)
+    env.update(payload)
+    try:
+        subprocess.run(cmd, shell=True, env=env, timeout=60, check=False)
+    except Exception:  # noqa: BLE001 - notification is best-effort.
+        pass
+
+
+def watch_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Progress reporter for a driven loop.
+
+    Emits one event per newly appended iteration, one on terminal state, and
+    one when the registry says a driver owns the loop but its pid is dead.
+    Read-only alongside `drive`; safe to start or stop at any time. Without
+    --notify-cmd, events print as JSON lines; with it, the command runs via
+    the shell with AUTOLOOP_EVENT/_DIR/_ITERATION/_DECISION/_TEXT in env.
+    """
+    run_dir = Path(args.dir).expanduser().resolve()
+    reg = registry_dir(args)
+    start_record = last_ledger_record(run_dir)
+    start_iter = int(start_record.get("iteration", 0)) if start_record else 0
+    seen = args.from_iteration if args.from_iteration >= 0 else start_iter
+    driver_dead_alerted = False
+    events = 0
+    while True:
+        verdict = compute_done(run_dir)
+        record = last_ledger_record(run_dir)
+        current = int(record.get("iteration", 0)) if record else 0
+        if record and current > seen:
+            decision = str(record.get("decision", "?"))
+            text = (
+                f"autoloop {run_dir.name}: iteration {current} ({decision}) — "
+                f"{str(record.get('objective', ''))[:160]} | {str(record.get('output', ''))[:240]}"
+            )
+            watch_notify(args.notify_cmd, {
+                "AUTOLOOP_EVENT": "iteration",
+                "AUTOLOOP_DIR": str(run_dir),
+                "AUTOLOOP_ITERATION": str(current),
+                "AUTOLOOP_DECISION": decision,
+                "AUTOLOOP_TEXT": text,
+            })
+            events += 1
+            seen = current
+        if verdict.get("done"):
+            reason = str(verdict.get("reason") or "done")
+            watch_notify(args.notify_cmd, {
+                "AUTOLOOP_EVENT": "terminal",
+                "AUTOLOOP_DIR": str(run_dir),
+                "AUTOLOOP_ITERATION": str(current),
+                "AUTOLOOP_DECISION": reason,
+                "AUTOLOOP_TEXT": f"autoloop {run_dir.name}: FINISHED — {reason} (last iteration {current})",
+            })
+            events += 1
+            return {"status": "ok", "action": "watch", "events": events, "reason": reason}
+        if not verdict.get("paused"):
+            entry = loop_driver_entry(reg, run_dir)
+            pid = entry.get("pid") if entry else None
+            alive = isinstance(pid, int) and pid > 0 and pid_alive(pid)
+            if entry is not None and not alive and not driver_dead_alerted:
+                driver_dead_alerted = True
+                watch_notify(args.notify_cmd, {
+                    "AUTOLOOP_EVENT": "driver_dead",
+                    "AUTOLOOP_DIR": str(run_dir),
+                    "AUTOLOOP_ITERATION": str(current),
+                    "AUTOLOOP_DECISION": "driver_dead",
+                    "AUTOLOOP_TEXT": (
+                        f"autoloop {run_dir.name}: DRIVER NOT RUNNING at iteration {current}, "
+                        "loop not done — relaunch drive or investigate"
+                    ),
+                })
+                events += 1
+            elif alive:
+                driver_dead_alerted = False
+        if args.once:
+            return {"status": "ok", "action": "watch", "events": events, "reason": "once"}
+        time.sleep(max(5, int(args.poll)))
 
 
 def refresh_heartbeat(reg: Path, run_id: object) -> None:
@@ -1499,6 +1601,21 @@ def build_parser() -> argparse.ArgumentParser:
             help="autoloop registry root (default: $AAS_AUTOLOOP_REGISTRY or "
             "~/.local/share/ai-agents-skills/autoloop)",
         )
+
+    watch = subparsers.add_parser(
+        "watch", help="report loop progress: per-iteration, terminal, and driver-death events"
+    )
+    watch.add_argument("--dir", required=True)
+    watch.add_argument(
+        "--notify-cmd", default=None,
+        help="shell command run per event with AUTOLOOP_EVENT/_DIR/_ITERATION/_DECISION/_TEXT in env (default: print JSON lines)",
+    )
+    watch.add_argument("--poll", type=int, default=60)
+    watch.add_argument("--from-iteration", type=int, default=-1,
+                       help="baseline iteration; report anything newer (default: current ledger tip)")
+    watch.add_argument("--once", action="store_true", help="single poll cycle, then exit")
+    add_registry_args(watch)
+    watch.set_defaults(func=watch_command)
 
     arm = subparsers.add_parser("arm", help="register a loop as active (force-management)")
     arm.add_argument("--dir", required=True)
