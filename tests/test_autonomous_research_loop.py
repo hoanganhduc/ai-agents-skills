@@ -698,6 +698,27 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             self.assertEqual(json.loads(self._run("active", registry=reg).stdout)["count"], 0)
             self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
 
+    def test_hook_check_stands_down_for_live_driver_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop, proj = base / "reg", base / "loop", base / "proj"
+            proj.mkdir()
+            self._init(loop, reg)
+            # arm as the headless driver does: driver flag + a live pid
+            self._run(
+                "arm", "--dir", str(loop), "--root", str(proj),
+                "--pid", str(os.getpid()), "--driver", registry=reg,
+            )
+            self.assertFalse(json.loads(self._run("done", "--dir", str(loop), registry=reg).stdout)["done"])
+            # not done, but a live driver owns the loop -> interactive hook stands down
+            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
+            # same live pid without the driver flag is not driver proof -> hook blocks
+            self._run(
+                "arm", "--dir", str(loop), "--root", str(proj),
+                "--pid", str(os.getpid()), "--force", registry=reg,
+            )
+            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 2)
+
     def test_hook_check_allows_unrelated_root_and_missing_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

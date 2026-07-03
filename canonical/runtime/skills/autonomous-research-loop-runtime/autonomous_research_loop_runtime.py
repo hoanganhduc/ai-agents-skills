@@ -797,6 +797,28 @@ def entry_is_live(entry: dict[str, Any]) -> bool:
     return (datetime.now(timezone.utc) - stamp).total_seconds() <= HEARTBEAT_TTL_SECONDS
 
 
+def entry_owned_by_live_driver(entry: dict[str, Any]) -> bool:
+    """True when a live headless-driver process owns this registry entry.
+
+    The interactive Stop-hook must stand down while a driver governs the loop;
+    otherwise a hooked session would run an iteration concurrently with the
+    driver's own iteration session against the same single-path ledger.
+    Entries written by `drive` carry driver=true plus the driver pid; entries
+    from before that flag are recognized via /proc cmdline proof only, so a
+    merely-alive non-driver pid never suppresses the hook.
+    """
+    pid = entry.get("pid")
+    if not isinstance(pid, int) or pid <= 0 or not pid_alive(pid):
+        return False
+    if entry.get("driver") is True:
+        return True
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    return b"drive" in argv and any(b"autonomous_research_loop_runtime" in part for part in argv)
+
+
 def list_registry_entries(reg: Path) -> list[tuple[Path, dict[str, Any]]]:
     out: list[tuple[Path, dict[str, Any]]] = []
     if not reg.exists():
@@ -844,6 +866,7 @@ def arm_loop(args: argparse.Namespace) -> dict[str, Any]:
         "loop_dir": str(run_dir),
         "project_root": str(root),
         "pid": int(args.pid) if args.pid else 0,
+        "driver": bool(getattr(args, "driver", False)),
         "heartbeat": now,
         "created_at": now,
     }
@@ -994,6 +1017,14 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
                 break
         if match is None:
             return {"status": "ok", "action": "hook-check", "block": False, "reason": "no_active_loop"}
+        if entry_owned_by_live_driver(match):
+            return {
+                "status": "ok",
+                "action": "hook-check",
+                "block": False,
+                "reason": "headless_driver_active",
+                "run_id": match.get("run_id"),
+            }
         loop_dir = Path(str(match.get("loop_dir", ""))).expanduser()
         if not loop_dir.exists():
             return {"status": "ok", "action": "hook-check", "block": False, "reason": "loop_dir_missing"}
@@ -1249,6 +1280,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         root=str(root),
         force=False,
         pid=os.getpid(),
+        driver=True,
         registry_dir=getattr(args, "registry_dir", None),
     )
     try:
@@ -1472,6 +1504,8 @@ def build_parser() -> argparse.ArgumentParser:
     arm.add_argument("--dir", required=True)
     arm.add_argument("--root", default=None, help="project root this loop governs (default: loop dir)")
     arm.add_argument("--pid", type=int, default=0, help="long-lived loop/driver pid for liveness (0 = heartbeat-only)")
+    arm.add_argument("--driver", action="store_true",
+                     help="mark the entry as owned by a headless driver; the interactive Stop-hook stands down while that pid is alive")
     arm.add_argument("--force", action="store_true")
     add_registry_args(arm)
     arm.set_defaults(func=arm_loop)
