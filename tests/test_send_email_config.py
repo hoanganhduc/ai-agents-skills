@@ -79,6 +79,7 @@ class SendEmailConfigTests(unittest.TestCase):
         self.assertEqual(cfg.host, "skill.example")
         self.assertEqual(cfg.secrets_source, "runtime_skill_default")
 
+    @unittest.skipIf(os.name == "nt", "XDG platform-default resolution is a POSIX code path")
     def test_platform_default_file_is_used(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -170,6 +171,7 @@ class SendEmailConfigTests(unittest.TestCase):
                 path = self.se._address_book_path()
         self.assertEqual(path, workspace / ".address-book.json")
 
+    @unittest.skipIf(os.name == "nt", "simulates darwin/win32 via sys.platform; native Windows keeps os.name == 'nt' and WindowsPath rendering")
     def test_documented_platform_default_candidates(self) -> None:
         with mock.patch.object(self.se.sys, "platform", "darwin"):
             with mock.patch.dict(os.environ, {"HOME": "/Users/u", "XDG_CONFIG_HOME": "/tmp/xdg"},
