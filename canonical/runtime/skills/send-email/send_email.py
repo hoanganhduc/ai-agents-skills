@@ -8,7 +8,8 @@ Subcommands:
   selftest     offline smoke (no network): build, serialize, and re-parse messages in memory
 
 Configuration is resolved in increasing precedence from (1) a JSON secrets file
-named by AAS_SECRETS_FILE (its "smtp" object, or top-level SMTP_* keys),
+selected by --secrets-file, SEND_EMAIL_SECRETS_FILE, send-email defaults, or a
+legacy runtime secrets file (its "smtp" object, or top-level SMTP_* keys),
 (2) environment variables, then (3) explicit command-line flags. Connection
 settings: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM,
 SMTP_SECURITY, SMTP_TIMEOUT. Pre-defined sender identity (all optional):
@@ -89,6 +90,9 @@ class SmtpConfig:
     gnupg_home: str | None = None
     account: str | None = None
     account_error: str | None = None
+    secrets_file: str | None = None
+    secrets_source: str = "none"
+    secrets_file_present: bool = False
 
     def resolved_security(self) -> str:
         if self.security:
@@ -133,23 +137,141 @@ def _as_list(value: object) -> list[str]:
     return [part.strip() for part in str(value).replace("\n", ",").split(",") if part.strip()]
 
 
-def _secrets_path() -> str | None:
-    return os.environ.get("AAS_SECRETS_FILE") or os.environ.get("OPENCLAW_SECRETS_FILE")
+class ConfigError(Exception):
+    """Configuration file errors that should be reported as structured JSON."""
 
 
-def _read_secrets_file() -> dict:
-    """Return the raw parsed secrets-file object, or {} if absent/unreadable."""
-    path = _secrets_path()
-    if not path:
-        return {}
-    file = Path(path)
-    if not file.is_file():
-        return {}
+@dataclass(frozen=True)
+class _SecretsCandidate:
+    path: Path
+    source: str
+    missing_is_error: bool = False
+    invalid_is_error: bool = False
+    require_send_email_shape: bool = False
+
+
+@dataclass(frozen=True)
+class _SecretsSelection:
+    path: Path | None = None
+    source: str = "none"
+    present: bool = False
+
+
+_SEND_EMAIL_SECRET_KEYS = {
+    "host", "port", "user", "username", "password", "pass", "from", "sender",
+    "security", "timeout", "from_name", "reply_to", "cc", "bcc", "signature",
+    "signature_html", "reply_to_self", "bcc_self", "pgp_sign", "pgp_key",
+    "pgp_passphrase", "gnupg_home",
+}
+
+
+def _path_from_string(value: str) -> Path:
+    return Path(os.path.expandvars(os.path.expanduser(value)))
+
+
+def _platform_default_secret_paths() -> list[Path]:
+    """Documented user config defaults; do not search arbitrary home paths."""
+    if os.name == "nt" or sys.platform.startswith("win"):
+        paths: list[Path] = []
+        appdata = os.environ.get("APPDATA")
+        localappdata = os.environ.get("LOCALAPPDATA")
+        if appdata:
+            paths.append(Path(appdata) / "send-email" / "secrets.json")
+        if localappdata:
+            candidate = Path(localappdata) / "send-email" / "secrets.json"
+            if candidate not in paths:
+                paths.append(candidate)
+        return paths
+
+    home_config = Path(os.path.expanduser("~")) / ".config" / "send-email" / "secrets.json"
+    paths = []
+    xdg_config = os.environ.get("XDG_CONFIG_HOME")
+    if xdg_config:
+        paths.append(Path(xdg_config) / "send-email" / "secrets.json")
+    elif sys.platform != "darwin":
+        paths.append(home_config)
+
+    if sys.platform == "darwin":
+        paths.append(Path(os.path.expanduser("~")) / "Library" / "Application Support"
+                     / "send-email" / "secrets.json")
+        if home_config not in paths:
+            paths.append(home_config)
+    return paths
+
+
+def _secret_candidates(args: argparse.Namespace | None = None) -> list[_SecretsCandidate]:
+    cli_path = getattr(args, "secrets_file", None) if args is not None else None
+    if cli_path:
+        return [_SecretsCandidate(_path_from_string(str(cli_path)), "cli",
+                                  missing_is_error=True, invalid_is_error=True)]
+
+    env_path = os.environ.get("SEND_EMAIL_SECRETS_FILE")
+    if env_path:
+        return [_SecretsCandidate(_path_from_string(env_path), "SEND_EMAIL_SECRETS_FILE",
+                                  missing_is_error=True, invalid_is_error=True)]
+
+    candidates = [
+        _SecretsCandidate(Path(__file__).resolve().parent / "secrets.json",
+                          "runtime_skill_default", invalid_is_error=True)
+    ]
+    candidates.extend(
+        _SecretsCandidate(path, "platform_default", invalid_is_error=True)
+        for path in _platform_default_secret_paths()
+    )
+    for source in ("AAS_SECRETS_FILE", "OPENCLAW_SECRETS_FILE"):
+        value = os.environ.get(source)
+        if value:
+            candidates.append(_SecretsCandidate(
+                _path_from_string(value), source, require_send_email_shape=True
+            ))
+    return candidates
+
+
+def _is_send_email_config(data: dict) -> bool:
+    if isinstance(data.get("smtp"), dict) or isinstance(data.get("accounts"), dict):
+        return True
+    return bool(_SEND_EMAIL_SECRET_KEYS.intersection(_normalize(data)))
+
+
+def _config_error(path: Path, detail: str) -> ConfigError:
+    return ConfigError(f"{detail}: {path}")
+
+
+def _read_json_candidate(candidate: _SecretsCandidate) -> tuple[dict | None, _SecretsSelection | None]:
+    if not candidate.path.is_file():
+        if candidate.missing_is_error:
+            raise _config_error(candidate.path, "secrets file not found")
+        return None, None
     try:
-        data = json.loads(file.read_text(encoding="utf-8"))
-    except (ValueError, OSError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        data = json.loads(candidate.path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        if candidate.invalid_is_error:
+            raise _config_error(candidate.path, f"cannot read secrets file ({exc})")
+        return None, None
+    if not isinstance(data, dict):
+        if candidate.invalid_is_error:
+            raise _config_error(candidate.path, "secrets file must contain a JSON object")
+        return None, None
+    if candidate.require_send_email_shape and not _is_send_email_config(data):
+        return None, None
+    return data, _SecretsSelection(candidate.path, candidate.source, True)
+
+
+def _read_secrets_file(args: argparse.Namespace | None = None) -> tuple[dict, _SecretsSelection]:
+    """Return parsed secrets plus the selected source metadata."""
+    for candidate in _secret_candidates(args):
+        data, selection = _read_json_candidate(candidate)
+        if data is not None and selection is not None:
+            return data, selection
+    return {}, _SecretsSelection()
+
+
+def _secrets_path(args: argparse.Namespace | None = None) -> str | None:
+    try:
+        _data, selection = _read_secrets_file(args)
+    except ConfigError:
+        return None
+    return str(selection.path) if selection.path else None
 
 
 def _normalize(raw: dict) -> dict:
@@ -258,7 +380,7 @@ def _add_to_book(contacts: dict, entries: list[tuple[str, str]]) -> list[str]:
 
 
 def load_config(args: argparse.Namespace) -> SmtpConfig:
-    file_data = _read_secrets_file()
+    file_data, selection = _read_secrets_file(args)
     secrets, account_name, account_error = _select_account(args, file_data)
 
     def pick(cli_value: object, env_key: str, *secret_keys: str) -> object:
@@ -320,6 +442,9 @@ def load_config(args: argparse.Namespace) -> SmtpConfig:
         gnupg_home=str(gnupg_home) if gnupg_home is not None else None,
         account=account_name,
         account_error=account_error,
+        secrets_file=str(selection.path) if selection.path else None,
+        secrets_source=selection.source,
+        secrets_file_present=selection.present,
     )
 
 
@@ -643,7 +768,10 @@ def _message_summary(headers_msg: EmailMessage, content_msg: EmailMessage,
 
 
 def cmd_send(args: argparse.Namespace) -> int:
-    cfg = load_config(args)
+    try:
+        cfg = load_config(args)
+    except ConfigError as exc:
+        return _fail("send", "config_error", str(exc))
     if cfg.account_error:
         return _fail("send", "unknown_account", cfg.account_error)
     signed = _should_sign(args, cfg)
@@ -709,7 +837,10 @@ def cmd_send(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    cfg = load_config(args)
+    try:
+        cfg = load_config(args)
+    except ConfigError as exc:
+        return _fail("verify", "config_error", str(exc))
     if cfg.account_error:
         return _fail("verify", "unknown_account", cfg.account_error)
     if not cfg.host:
@@ -742,10 +873,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_show_config(args: argparse.Namespace) -> int:
-    cfg = load_config(args)
+    try:
+        cfg = load_config(args)
+    except ConfigError as exc:
+        return _fail("show-config", "config_error", str(exc))
     if cfg.account_error:
         return _fail("show-config", "unknown_account", cfg.account_error)
-    path = _secrets_path()
     _emit({
         "ok": True,
         "command": "show-config",
@@ -765,14 +898,18 @@ def cmd_show_config(args: argparse.Namespace) -> int:
         "signature_html_set": bool(cfg.signature_html),
         "timeout": cfg.timeout,
         "password_set": bool(cfg.password),
-        "secrets_file": path,
-        "secrets_file_present": bool(path and Path(path).is_file()),
+        "secrets_file": cfg.secrets_file,
+        "secrets_source": cfg.secrets_source,
+        "secrets_file_present": cfg.secrets_file_present,
     })
     return 0
 
 
-def cmd_accounts(_args: argparse.Namespace) -> int:
-    file_data = _read_secrets_file()
+def cmd_accounts(args: argparse.Namespace) -> int:
+    try:
+        file_data, _selection = _read_secrets_file(args)
+    except ConfigError as exc:
+        return _fail("accounts", "config_error", str(exc))
     names = _account_names(file_data)
     default = file_data.get("default_account")
     _emit({
@@ -837,6 +974,7 @@ def _selftest_namespace(**overrides: object) -> argparse.Namespace:
         "no_bcc_self": False, "allow_insecure_auth": False, "account": None,
         "save_recipients": False, "sign": False, "no_sign": False, "pgp_key": None,
         "gnupg_home": None,
+        "secrets_file": None,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -993,6 +1131,8 @@ def cmd_selftest(args: argparse.Namespace) -> int:
 
 
 def _add_connection_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--secrets-file", dest="secrets_file",
+                        help="send-email secrets JSON file (or set SEND_EMAIL_SECRETS_FILE)")
     parser.add_argument("--account", help="named SMTP account from the secrets file (or set SMTP_ACCOUNT)")
     parser.add_argument("--host", help="SMTP server host (or set SMTP_HOST)")
     parser.add_argument("--port", type=int, help="SMTP server port (default 587, or 465 for ssl)")
@@ -1054,6 +1194,8 @@ def build_parser() -> argparse.ArgumentParser:
     show.set_defaults(func=cmd_show_config)
 
     accounts = sub.add_parser("accounts", help="list named SMTP accounts (names only, no secrets)")
+    accounts.add_argument("--secrets-file", dest="secrets_file",
+                          help="send-email secrets JSON file (or set SEND_EMAIL_SECRETS_FILE)")
     accounts.set_defaults(func=cmd_accounts)
 
     contacts = sub.add_parser("contacts", help="address book: list (default), --add, --remove, --search")
