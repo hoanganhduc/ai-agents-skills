@@ -719,6 +719,38 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             )
             self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 2)
 
+    def test_watch_reports_iteration_terminal_and_driver_death(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg)
+            self._run(
+                "append-iteration", "--dir", str(loop), "--mode", "bounded-research",
+                "--objective", "o1", "--evidence-id", "e1", "--action-taken", "a1",
+                "--output", "out1", "--decision", "continue", registry=reg,
+            )
+            # baseline 0 -> the appended iteration is reported once
+            res = self._run("watch", "--dir", str(loop), "--once", "--from-iteration", "0", registry=reg)
+            events = [json.loads(ln) for ln in res.stdout.splitlines() if '"AUTOLOOP_EVENT"' in ln]
+            self.assertEqual([e["AUTOLOOP_EVENT"] for e in events], ["iteration"])
+            self.assertEqual(events[0]["AUTOLOOP_ITERATION"], "1")
+            # baseline current -> nothing new to report
+            res = self._run("watch", "--dir", str(loop), "--once", registry=reg)
+            self.assertNotIn('"AUTOLOOP_EVENT"', res.stdout)
+            # a driver-owned entry with a dead pid -> driver_dead alert
+            self._run(
+                "arm", "--dir", str(loop), "--root", str(loop),
+                "--pid", "3999999", "--driver", registry=reg,
+            )
+            res = self._run("watch", "--dir", str(loop), "--once", registry=reg)
+            events = [json.loads(ln) for ln in res.stdout.splitlines() if '"AUTOLOOP_EVENT"' in ln]
+            self.assertEqual([e["AUTOLOOP_EVENT"] for e in events], ["driver_dead"])
+            # STOP_REQUESTED -> terminal event and watch exits on its own
+            (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
+            res = self._run("watch", "--dir", str(loop), "--once", registry=reg)
+            events = [json.loads(ln) for ln in res.stdout.splitlines() if '"AUTOLOOP_EVENT"' in ln]
+            self.assertEqual([e["AUTOLOOP_EVENT"] for e in events], ["terminal"])
+
     def test_hook_check_allows_unrelated_root_and_missing_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
