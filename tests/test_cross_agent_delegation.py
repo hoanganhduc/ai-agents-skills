@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -22,6 +23,7 @@ from installer.ai_agents_skills.delegation import (
 from installer.ai_agents_skills.delegation_dispatch import (
     EXTERNAL_PROVIDERS,
     build_dispatch_plan,
+    default_dispatch_command,
     expand_auto_providers,
     provider_env_defaults,
 )
@@ -141,6 +143,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             "claude-like-research-reviewer",
             "deepseek-like-model-reviewer",
             "copilot-like-code-reviewer",
+            "antigravity-like-code-reviewer",
             "model-only-api-reviewer",
             "openclaw-host-reference",
         ):
@@ -157,8 +160,8 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
         axle_skill = manifests["skills"]["skills"]["axiom-axle-mcp"]
         lean_explore_skill = manifests["skills"]["skills"]["lean-explore-mcp"]
 
-        self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot"})
-        self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot"})
+        self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot", "antigravity"})
+        self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot", "antigravity"})
         self.assertFalse(active.intersection({"axiom-axle-mcp", "axle", "lean-explore-mcp", "lean-explore", "mcp", "openclaw"}))
         self.assertEqual(reference_only, {"openclaw"})
         self.assertEqual(set(axle_skill["profiles"]), {"formal-research-remote", "full-research"})
@@ -170,7 +173,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             root = Path(tmp)
             prechecks = build_external_agent_prechecks(root, "linux", delegation, env={})
             auto_providers = expand_auto_providers(["auto"], prechecks, max_providers=10)
-            self.assertEqual(auto_providers, ["claude", "deepseek", "copilot"])
+            self.assertEqual(auto_providers, ["claude", "deepseek", "copilot", "antigravity"])
 
             explicit_plan = build_dispatch_plan(
                 root,
@@ -612,6 +615,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
     def test_endpoint_summary_not_needed_for_other_providers(self):
         self.assertEqual(endpoint_summary("claude", {})["status"], "not-needed")
         self.assertEqual(endpoint_summary("copilot", {})["status"], "not-needed")
+        self.assertEqual(endpoint_summary("antigravity", {})["status"], "not-needed")
 
     def test_provider_env_defaults_supplies_deepseek_base_url(self):
         self.assertEqual(
@@ -624,6 +628,52 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
         )
         # Other providers get nothing.
         self.assertEqual(provider_env_defaults("claude", {}), {})
+        self.assertEqual(provider_env_defaults("antigravity", {}), {})
+
+    def test_antigravity_dispatch_uses_agy_print_without_ls_address(self):
+        self.assertEqual(default_dispatch_command("antigravity", "agy"), "agy --print")
+
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            agy = bin_dir / "agy"
+            agy.write_text("#!/bin/sh\nprintf 'agy test cli\\n'\n", encoding="utf-8")
+            agy.chmod(0o755)
+
+            old_path = os.environ.get("PATH", "")
+            old_ls = os.environ.pop("ANTIGRAVITY_LS_ADDRESS", None)
+            os.environ["PATH"] = str(bin_dir)
+            try:
+                prechecks = build_external_agent_prechecks(root, "linux", manifests["delegation"], env={})
+                by_provider = {item["provider"]: item for item in prechecks["providers"]}
+                self.assertIn("antigravity", by_provider)
+                self.assertIn(
+                    by_provider["antigravity"]["status"],
+                    {"runtime-probe-required", "degraded-runtime-probe-required"},
+                )
+                plan = build_dispatch_plan(
+                    root,
+                    "linux",
+                    manifests["delegation"],
+                    prechecks,
+                    ["antigravity"],
+                    max_providers=1,
+                    research=False,
+                    resolved_model=None,
+                    resolved_thinking=None,
+                    env={},
+                )
+            finally:
+                os.environ["PATH"] = old_path
+                if old_ls is not None:
+                    os.environ["ANTIGRAVITY_LS_ADDRESS"] = old_ls
+
+            self.assertEqual(plan[0]["status"], "ready")
+            self.assertEqual(plan[0]["provider"], "antigravity")
+            self.assertIn("--print", plan[0]["command"])
+            self.assertNotIn("ANTIGRAVITY_LS_ADDRESS", json.dumps(plan[0]))
 
     def test_deepseek_precheck_reports_endpoint(self):
         manifests = load_manifests()
