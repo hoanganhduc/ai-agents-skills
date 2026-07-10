@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .antigravity import ANTIGRAVITY_CLI_TOOL_SPEC
 from .capabilities import existing_parents, normalized_path_within, resolved_path_within
 from .copilot import COPILOT_CLI_TOOL_SPEC
 from .discovery import discover_tool, render_command, split_command
@@ -65,6 +66,7 @@ PROVIDER_CLI_SPECS: dict[str, dict[str, Any]] = {
         }
     },
     "copilot": COPILOT_CLI_TOOL_SPEC,
+    "antigravity": ANTIGRAVITY_CLI_TOOL_SPEC,
 }
 
 PROVIDER_AUTH_ENV_NAMES: dict[str, tuple[str, ...]] = {
@@ -88,6 +90,7 @@ PROVIDER_CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "claude": (".claude",),
     "deepseek": (".deepseek",),
     "copilot": (".copilot",),
+    "antigravity": (".gemini/antigravity-cli",),
 }
 
 

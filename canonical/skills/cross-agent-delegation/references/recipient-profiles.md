@@ -76,6 +76,29 @@ This packet profile does not claim Copilot runtime availability. A parent
 workflow must verify CLI, auth/config status, model selection, output contract,
 and file-read fidelity before using a live Copilot-like participant.
 
+### antigravity-like-code-reviewer
+
+- intended recipient family: Antigravity CLI code, repository, or research
+  workflow reviewer
+- supported packet versions: `cross-agent-delegation.task.v1`,
+  `cross-agent-delegation.result.v1`
+- accepted inputs: inert repository, file, diff, issue, excerpt, claim, and
+  source-summary refs
+- expected outputs: evidence-grounded result packet with findings, limitations,
+  warnings, and blocked checks
+- unsupported task classes: direct repo mutation, command execution, credential
+  use, external posting, provider probing, approval handling, or direct language
+  server attachment
+- symbolic credential requirements: none in V1
+- endpoint requirement: none; live dispatch is CLI-based through `agy --print`
+  and does not require `ANTIGRAVITY_LS_ADDRESS`
+- confirmation requirements: parent-owned, outside packet content
+
+This packet profile does not claim Antigravity runtime availability. A parent
+workflow must verify `agy` CLI availability, auth/config status, model
+selection, output contract, and file-read fidelity before using a live
+Antigravity-like participant.
+
 ### model-only-api-reviewer
 
 - intended recipient family: generic model-only reviewer

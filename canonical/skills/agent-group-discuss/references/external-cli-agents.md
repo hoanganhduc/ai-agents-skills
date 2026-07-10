@@ -41,7 +41,7 @@ Required profile fields:
 ```json
 {
   "profile_id": "provider-or-cli-profile-slug",
-  "provider": "claude | deepseek | copilot | other",
+  "provider": "claude | deepseek | copilot | antigravity | other",
   "cli_name": "string",
   "cli_version": "string or unknown",
   "profile_source": "probe artifact ref",
@@ -116,6 +116,18 @@ export AAS_CLAUDE_DISPATCH_COMMAND='claude --print --model {model}'
 export AAS_CLAUDE_LATEST_MODEL='<current-latest-model>'
 export AAS_CLAUDE_HIGHEST_THINKING='xhigh'
 ```
+
+For Antigravity, the managed fallback dispatch shape is `agy --print`.
+Research runs should still configure the command explicitly, for example:
+
+```bash
+export AAS_ANTIGRAVITY_DISPATCH_COMMAND='agy --print --model {model}'
+export AAS_ANTIGRAVITY_LATEST_MODEL='<current-latest-model>'
+export AAS_ANTIGRAVITY_HIGHEST_THINKING='high'
+```
+
+The dispatcher does not use `ANTIGRAVITY_LS_ADDRESS`; that variable belongs to
+language-server integrations outside this CLI subprocess adapter.
 
 Do not hardcode provider model names into shared templates unless a specific
 target system has just probed and recorded that model as current.

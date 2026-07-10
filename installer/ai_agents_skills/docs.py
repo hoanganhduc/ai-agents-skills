@@ -2294,7 +2294,7 @@ round protocol for manual or sequential execution.
 
 True cross-provider delegation is parent-owned by `agent-group-discuss`.
 `manifest/delegation.yaml` sets the default policy: include Codex as the parent
-and spawned-subagent provider; prefer Claude, DeepSeek, and Copilot when fresh
+and spawned-subagent provider; prefer Claude, DeepSeek, Copilot, and Antigravity when fresh
 probes pass; keep OpenClaw reference-only; fall back to Codex-only when
 configured; and require latest-model plus highest-thinking for research roles.
 This policy is general across supported target-agent installs. External CLI
@@ -2311,7 +2311,9 @@ make delegate-agent ARGS="--provider auto --task-file ./task.md --research --dry
 Actual launch requires `--allow-external-cli`. Research launch also requires a
 provider dispatch command plus resolved latest-model and highest-thinking
 settings, for example `AAS_CLAUDE_DISPATCH_COMMAND`,
-`AAS_CLAUDE_LATEST_MODEL`, and `AAS_CLAUDE_HIGHEST_THINKING`.
+`AAS_CLAUDE_LATEST_MODEL`, and `AAS_CLAUDE_HIGHEST_THINKING`. Antigravity
+dispatch is CLI-based through `agy --print`; it does not require
+`ANTIGRAVITY_LS_ADDRESS`.
 
 ## Orchestration Lifecycle
 
@@ -2808,7 +2810,7 @@ optional skill, artifact-directory, install-mode, and read-policy metadata; the
 values remain paths inspected from the current host/root. Target prechecks do
 not read target file contents; known auth-token sources are reported by
 presence only rather than value. `external_agent_prechecks` reports sanitized
-Claude, DeepSeek, Copilot, and reference-only OpenClaw delegation readiness,
+Claude, DeepSeek, Copilot, Antigravity, and reference-only OpenClaw delegation readiness,
 including latest-model/highest-thinking probe requirements and nested-worker
 capability status. Copilot extends the base precheck with CLI
 detection, the `.copilot` directory shape, redacted auth-source presence,

@@ -21,7 +21,7 @@ optional skill, artifact-directory, install-mode, and read-policy metadata; the
 values remain paths inspected from the current host/root. Target prechecks do
 not read target file contents; known auth-token sources are reported by
 presence only rather than value. `external_agent_prechecks` reports sanitized
-Claude, DeepSeek, Copilot, and reference-only OpenClaw delegation readiness,
+Claude, DeepSeek, Copilot, Antigravity, and reference-only OpenClaw delegation readiness,
 including latest-model/highest-thinking probe requirements and nested-worker
 capability status. Copilot extends the base precheck with CLI
 detection, the `.copilot` directory shape, redacted auth-source presence,

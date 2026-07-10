@@ -285,7 +285,10 @@ class ManifestTests(unittest.TestCase):
         delegation = load_manifests()["delegation"]
         self.assertEqual(delegation["policy"]["mode"], "prefer")
         self.assertEqual(delegation["policy"]["research_model_policy"], "latest_model_highest_reasoning_required")
-        self.assertEqual(delegation["policy"]["active_providers"], ["codex", "claude", "deepseek", "copilot"])
+        self.assertEqual(
+            delegation["policy"]["active_providers"],
+            ["codex", "claude", "deepseek", "copilot", "antigravity"],
+        )
         self.assertEqual(delegation["policy"]["reference_only_providers"], ["openclaw"])
         self.assertEqual(delegation["providers"]["codex"]["recipient_profile"], "codex-like-coding-reviewer")
         self.assertTrue(delegation["nested_delegation"]["enabled"])
