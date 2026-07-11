@@ -6,7 +6,10 @@ import json
 import os
 import sys
 import tempfile
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11 has no stdlib tomllib
+    tomllib = None
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -4345,7 +4348,8 @@ class GrokTargetTests(unittest.TestCase):
             # [compat.claude] table is appended, so the TOML stays parseable.
             self.assertEqual(config_path.read_text(encoding="utf-8"), user_config)
             self.assertEqual(config_path.read_text(encoding="utf-8").count("[compat.claude]"), 1)
-            tomllib.loads(config_path.read_text(encoding="utf-8"))
+            if tomllib is not None:  # parse-validate the merged TOML on Python 3.11+
+                tomllib.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_grok_installs_personas_entrypoints_and_rules(self) -> None:
