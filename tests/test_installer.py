@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -287,7 +288,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(delegation["policy"]["research_model_policy"], "latest_model_highest_reasoning_required")
         self.assertEqual(
             delegation["policy"]["active_providers"],
-            ["codex", "claude", "deepseek", "copilot", "antigravity"],
+            ["codex", "claude", "deepseek", "copilot", "antigravity", "grok"],
         )
         self.assertEqual(delegation["policy"]["reference_only_providers"], ["openclaw"])
         self.assertEqual(delegation["providers"]["codex"]["recipient_profile"], "codex-like-coding-reviewer")
@@ -519,6 +520,11 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(target_surface_for("antigravity", "plugin").mechanism, "plugin")
         self.assertEqual(target_surface_for("antigravity", "mcp-config").mechanism, "mcp-config")
         self.assertEqual(target_surface_for("antigravity", "hook-config").mechanism, "hook-config")
+        self.assertEqual(target_surface_for("grok", "skill-file").mechanism, "copy")
+        self.assertEqual(target_surface_for("grok", "entrypoint-alias").mechanism, "native-command")
+        self.assertEqual(target_surface_for("grok", "instruction-doc").claim_basis, "installer-convention")
+        self.assertEqual(target_surface_for("grok", "native-hook-file").support, "supported")
+        self.assertEqual(target_surface_for("grok", "config-compat").mechanism, "toml-merge")
         self.assertEqual(target_surface_for("openclaw", "runtime-file").support, "manual")
 
     def test_canonical_import_admission_blocks_runtime_and_secret_files(self) -> None:
@@ -593,7 +599,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, [])
             self.assertEqual(plan["actions"], [])
-            self.assertEqual(len(plan["skipped_agents"]), 7)
+            self.assertEqual(len(plan["skipped_agents"]), 8)
 
     def test_symlinked_agent_home_is_skipped_without_writing_target(self) -> None:
         manifests = load_manifests()
@@ -1382,7 +1388,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
-            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw")
+            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "openclaw")
             from installer.ai_agents_skills.agents import detect_agents
 
             args = Args()
@@ -1404,6 +1410,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     "copilot": "reference",
                     "opencode": "copy",
                     "antigravity": "copy",
+                    "grok": "copy",
                     "openclaw": "copy",
                 },
             )
@@ -3271,7 +3278,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             )
 
     def test_cli_precheck_reports_all_targets_for_all_platform_overrides(self) -> None:
-        target_names = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"]
+        target_names = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "openclaw"]
         expected_path_styles = {
             "linux": "posix",
             "macos": "posix",
@@ -3316,6 +3323,12 @@ class DocsAndLauncherTests(unittest.TestCase):
                     self.assertEqual(by_target["antigravity"]["capabilities"]["default_install_mode"], "copy")
                     self.assertIn(
                         by_target["antigravity"]["antigravity_status"],
+                        {"cli-missing", "supported", "offline-unverified"},
+                    )
+                    self.assertEqual(by_target["grok"]["status"], "ready")
+                    self.assertEqual(by_target["grok"]["capabilities"]["default_install_mode"], "copy")
+                    self.assertIn(
+                        by_target["grok"]["grok_status"],
                         {"cli-missing", "supported", "offline-unverified"},
                     )
                     self.assertEqual(by_target["openclaw"]["status"], "fake-root-only")
@@ -4222,12 +4235,276 @@ class AntigravityTargetTests(unittest.TestCase):
             self.assertIn("antigravity-plugin-visible:ai-agents-skills", check_names)
 
 
+class GrokTargetTests(unittest.TestCase):
+    def test_grok_is_known_and_detected_by_default(self) -> None:
+        from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+
+            self.assertIn("grok", all_agent_names())
+            self.assertIn("grok", known_agent_names())
+            self.assertEqual([agent.name for agent in detect_agents(root)], ["grok"])
+            self.assertEqual([agent.name for agent in detect_agents(root, ["grok"])], ["grok"])
+
+    def test_project_local_agents_dir_does_not_activate_grok_global_target(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            (root / ".agents" / "skills").mkdir(parents=True)
+
+            self.assertEqual(detect_agents(root, ["grok"]), [])
+
+    def test_grok_full_install_writes_native_surfaces(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["grok"]),
+                runtime_profile="none",
+                requested_agents=["grok"],
+            )
+            skill_action = next(
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            )
+            self.assertEqual(skill_action["install_mode"], "copy")
+            self.assertEqual(Path(skill_action["path"]), root / ".grok" / "skills" / "zotero" / "SKILL.md")
+            compat_action = next(
+                action for action in plan["actions"]
+                if action["artifact_type"] == "settings-compat-merge"
+            )
+            self.assertEqual(compat_action["kind"], "toml-merge")
+            self.assertEqual(Path(compat_action["path"]), root / ".grok" / "config.toml")
+
+            apply_plan(root, plan, dry_run=False)
+            home = root / ".grok"
+            self.assertTrue((home / "skills" / "zotero" / "SKILL.md").is_file())
+            self.assertTrue((home / "AGENTS.md").is_file())
+            config_text = (home / "config.toml").read_text(encoding="utf-8")
+            self.assertIn("[compat.claude]", config_text)
+            self.assertIn("skills = false", config_text)
+            self.assertIn("ai-agents-skills:zotero", (home / "AGENTS.md").read_text(encoding="utf-8"))
+            # Grok never reads ~/.grok/settings.json for hooks, so it is not written.
+            self.assertFalse((home / "settings.json").exists())
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_grok_skips_compat_merge_when_user_authored_table_exists(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            config_path = root / ".grok" / "config.toml"
+            user_config = "\n".join(
+                [
+                    "[compat.claude]",
+                    "skills = true",
+                    "",
+                    "[compat.cursor]",
+                    "rules = true",
+                    "",
+                ]
+            )
+            config_path.write_text(user_config, encoding="utf-8")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["grok"]),
+                runtime_profile="none",
+                requested_agents=["grok"],
+            )
+            compat_action = next(
+                action for action in plan["actions"]
+                if action["artifact_type"] == "settings-compat-merge"
+            )
+            self.assertEqual(compat_action["operation"], "skip")
+            self.assertEqual(compat_action["classification"], "conflict")
+            self.assertIn("[compat.claude]", compat_action["reason"])
+
+            apply_plan(root, plan, dry_run=False)
+            # The user's config is left byte-for-byte untouched: no duplicate
+            # [compat.claude] table is appended, so the TOML stays parseable.
+            self.assertEqual(config_path.read_text(encoding="utf-8"), user_config)
+            self.assertEqual(config_path.read_text(encoding="utf-8").count("[compat.claude]"), 1)
+            tomllib.loads(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_grok_installs_personas_entrypoints_and_rules(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            plan = build_plan(
+                root,
+                manifests,
+                ["deep-research-workflow"],
+                detect_agents(root, ["grok"]),
+                artifacts=[
+                    ("agent-persona", "code-reviewer"),
+                    ("entrypoint-alias", "deep-research"),
+                    ("instruction-doc", "engineering-lifecycle"),
+                    ("template", "spec"),
+                ],
+                runtime_profile="none",
+                requested_agents=["grok"],
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            home = root / ".grok"
+            persona = home / "agents" / "code-reviewer.md"
+            alias = home / "commands" / "deep-research.md"
+            rule = home / "rules" / "engineering-lifecycle.md"
+            template = home / "templates" / "SPEC.md"
+            self.assertTrue(persona.is_file())
+            self.assertTrue(alias.is_file())
+            self.assertTrue(rule.is_file())
+            self.assertTrue(template.is_file())
+            self.assertTrue(persona.read_text(encoding="utf-8").lstrip().startswith("---"))
+            self.assertIn("Backing skill", alias.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_grok_autoloop_installs_native_hook_file_not_settings(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            plan = build_plan(
+                root,
+                manifests,
+                ["autonomous-research-loop-runtime"],
+                detect_agents(root, ["grok"]),
+                runtime_profile="auto",
+                platform="linux",
+                requested_agents=["grok"],
+            )
+            hook_action = next(
+                action for action in plan["actions"]
+                if action["artifact_type"] == "native-hook-file"
+            )
+            self.assertEqual(
+                Path(hook_action["path"]),
+                root / ".grok" / "hooks" / "ai-agents-skills-autoloop.json",
+            )
+
+            apply_plan(root, plan, dry_run=False)
+            hook_file = root / ".grok" / "hooks" / "ai-agents-skills-autoloop.json"
+            self.assertTrue(hook_file.is_file())
+            data = json.loads(hook_file.read_text(encoding="utf-8"))
+            self.assertIn("Stop", data["hooks"])
+            self.assertEqual(data["hooks"]["Stop"][0]["hooks"][0]["type"], "command")
+            self.assertFalse((root / ".grok" / "settings.json").exists())
+            self.assertEqual(verify(root)["status"], "ok")
+
+            uninstall(root, dry_run=False)
+            self.assertFalse(hook_file.exists())
+            self.assertFalse((root / ".grok" / "config.toml").exists())
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
+
+    def test_grok_native_smoke_uses_isolated_cli_discovery(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+        from installer.ai_agents_skills.grok import run_grok_native_smoke
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            fake_impl = root / "grok_fake.py"
+            fake_impl.write_text(
+                "\n".join([
+                    "#!/usr/bin/env python3",
+                    "import json, os, sys",
+                    "from pathlib import Path",
+                    "args = sys.argv[1:]",
+                    "if '--version' in args or '-v' in args:",
+                    "    print('grok 0.2.93')",
+                    "elif args[:1] == ['inspect']:",
+                    "    home = Path(os.environ.get('GROK_HOME', str(Path.home() / '.grok')))",
+                    "    skills_dir = home / 'skills'",
+                    "    agents_dir = home / 'agents'",
+                    "    skills = sorted(p.name for p in skills_dir.glob('*') if (p / 'SKILL.md').is_file()) if skills_dir.is_dir() else []",
+                    "    agents = sorted(p.stem for p in agents_dir.glob('*.md')) if agents_dir.is_dir() else []",
+                    "    print(json.dumps({",
+                    "        'skills': [{'name': s, 'source': 'user'} for s in skills],",
+                    "        'agents': [{'name': a} for a in agents],",
+                    "    }))",
+                    "else:",
+                    "    print('unexpected', args)",
+                    "    sys.exit(1)",
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            if sys.platform.startswith("win"):
+                fake_cli = root / "grok.cmd"
+                fake_cli.write_text(
+                    f'@echo off\r\n"{sys.executable}" "%~dp0grok_fake.py" %*\r\n',
+                    encoding="utf-8",
+                )
+            else:
+                fake_cli = root / "grok"
+                fake_cli.write_text(
+                    f"#!/bin/sh\nexec {sys.executable!r} {str(fake_impl)!r} \"$@\"\n",
+                    encoding="utf-8",
+                )
+                fake_cli.chmod(0o755)
+
+            plan = build_plan(
+                root,
+                manifests,
+                ["zotero"],
+                detect_agents(root, ["grok"]),
+                artifacts=[("agent-persona", "code-reviewer")],
+                runtime_profile="none",
+                requested_agents=["grok"],
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            with patch.dict(
+                os.environ,
+                {
+                    "AAS_GROK": str(fake_cli),
+                    "PATH": f"{root}{os.pathsep}{os.environ.get('PATH', '')}",
+                },
+            ):
+                result = run_grok_native_smoke(root, agents={"grok"}, platform=current_platform())
+
+            self.assertEqual(result["status"], "ok")
+            check_names = {check["name"] for check in result["checks"]}
+            self.assertIn("inspect", check_names)
+            self.assertIn("grok-skill-file:zotero", check_names)
+            self.assertIn("grok-skill-visible:zotero", check_names)
+            self.assertIn("grok-persona-visible:code-reviewer", check_names)
+
+
 class CopilotTargetTests(unittest.TestCase):
     def test_adapter_target_readmes_capture_install_boundaries(self) -> None:
         copilot = (REPO_ROOT / "targets" / "copilot" / "README.md").read_text(encoding="utf-8")
         openclaw = (REPO_ROOT / "targets" / "openclaw" / "README.md").read_text(encoding="utf-8")
         opencode = (REPO_ROOT / "targets" / "opencode" / "README.md").read_text(encoding="utf-8")
         antigravity = (REPO_ROOT / "targets" / "antigravity" / "README.md").read_text(encoding="utf-8")
+        grok = (REPO_ROOT / "targets" / "grok" / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("adapter-only", copilot)
         self.assertIn("does not receive Codex or\nClaude instruction blocks", copilot)
@@ -4239,6 +4516,10 @@ class CopilotTargetTests(unittest.TestCase):
         self.assertIn("~/.config/opencode", opencode)
         self.assertIn("full install target", antigravity)
         self.assertIn("~/.gemini/antigravity-cli", antigravity)
+        self.assertIn("full install target", grok)
+        self.assertIn("~/.grok", grok)
+        self.assertIn("GROK_HOME", grok)
+        self.assertIn("[compat.claude]", grok)
 
     def test_copilot_is_known_and_detected_by_default(self) -> None:
         from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names

@@ -18,7 +18,7 @@ from pathlib import Path
 from .manifest import REPO_ROOT
 
 # Agent-home dot-directories a runtime root must never resolve under.
-AGENT_HOME_DIRS = (".openclaw", ".codex", ".claude", ".deepseek", ".copilot", ".gemini")
+AGENT_HOME_DIRS = (".openclaw", ".codex", ".claude", ".deepseek", ".copilot", ".gemini", ".grok")
 # Loader / config / state component names that are never valid inside a runtime root.
 LOADER_STATE_NAMES = ("hooks", "plugins", "bin", "commands", "config", "qmd", ".ai-agents-skills")
 # Markers identifying a Syncthing-synced folder (R3) or a git repo (R4) ancestor.

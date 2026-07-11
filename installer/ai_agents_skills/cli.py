@@ -196,7 +196,7 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_manifest.add_argument(
         "--target-agents",
         default=",".join(TARGET_AGENTS),
-        help="comma-separated target agents; defaults to codex,claude,deepseek,copilot,opencode,antigravity",
+        help="comma-separated target agents; defaults to codex,claude,deepseek,copilot,opencode,antigravity,grok",
     )
     openclaw_manifest.add_argument("--path-style", choices=PATH_STYLES, default="posix")
     openclaw_manifest.add_argument(

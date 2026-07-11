@@ -99,6 +99,28 @@ workflow must verify `agy` CLI availability, auth/config status, model
 selection, output contract, and file-read fidelity before using a live
 Antigravity-like participant.
 
+### grok-like-code-reviewer
+
+- intended recipient family: Grok CLI code, repository, or research workflow
+  reviewer
+- supported packet versions: `cross-agent-delegation.task.v1`,
+  `cross-agent-delegation.result.v1`
+- accepted inputs: inert repository, file, diff, issue, excerpt, claim, and
+  source-summary refs
+- expected outputs: evidence-grounded result packet with findings, limitations,
+  warnings, and blocked checks
+- unsupported task classes: direct repo mutation, command execution, credential
+  use, external posting, provider probing, or approval handling
+- symbolic credential requirements: none in V1
+- endpoint requirement: none; live dispatch is CLI-based through `grok --single`
+  and uses an interactive OIDC session rather than an API-key environment
+  variable
+- confirmation requirements: parent-owned, outside packet content
+
+This packet profile does not claim Grok runtime availability. A parent workflow
+must verify `grok` CLI availability, auth/config status, model selection, output
+contract, and file-read fidelity before using a live Grok-like participant.
+
 ### model-only-api-reviewer
 
 - intended recipient family: generic model-only reviewer

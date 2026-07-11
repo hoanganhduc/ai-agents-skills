@@ -157,6 +157,7 @@ def build_plan(
             root, manifests, skills, agents, runtime_profile, runtime_root, platform, adopt, backup_replace
         )
     )
+    actions.extend(grok_native_config_actions(agents, actions, adopt, backup_replace))
     actions.extend(
         build_runtime_actions(
             root=root,
@@ -275,6 +276,84 @@ def antigravity_native_scaffold_actions(
 AUTOLOOP_HOOK_MANAGED_ID = "autoloop-stop"
 AUTOLOOP_HOOK_EVENT = "Stop"
 
+GROK_COMPAT_MANAGED_ID = "compat-claude"
+GROK_COMPAT_CLAUDE_BODY = "\n".join(
+    [
+        "[compat.claude]",
+        "skills = false",
+        "agents = false",
+        "rules = false",
+        "hooks = false",
+    ]
+)
+
+
+def grok_native_config_actions(
+    agents: list[AgentTarget],
+    actions: list[dict[str, Any]],
+    adopt: bool,
+    backup_replace: bool,
+) -> list[dict[str, Any]]:
+    # Grok's ``[compat.claude]`` ride-along is default-on, so when both claude
+    # and grok are installed grok double-loads every managed surface from both
+    # homes. Merging a managed ``[compat.claude]`` block (skills/agents/rules/
+    # hooks = false) into ~/.grok/config.toml gives the native install a single
+    # self-contained view. The block is written only when grok has an active
+    # managed surface, is idempotent, and is removed on uninstall.
+    from .toml_merge import (
+        has_unmanaged_table,
+        load_toml_text,
+        managed_block_issue,
+        merge_managed_block,
+    )
+
+    grok_agents = [agent for agent in agents if agent.name == "grok"]
+    if not grok_agents:
+        return []
+    active_grok_actions = [
+        action for action in actions
+        if action.get("agent") == "grok" and skill_action_is_active(action)
+    ]
+    if not active_grok_actions:
+        return []
+    config_actions: list[dict[str, Any]] = []
+    for agent in grok_agents:
+        config_path = agent.home / "config.toml"
+        action: dict[str, Any] = {
+            "kind": "toml-merge",
+            "agent": agent.name,
+            "skill": "repo-management",
+            "path": str(config_path),
+            "artifact_type": "settings-compat-merge",
+            "artifact_id": f"settings-compat:{GROK_COMPAT_MANAGED_ID}",
+            "artifact_name": GROK_COMPAT_MANAGED_ID,
+            "managed_id": GROK_COMPAT_MANAGED_ID,
+            "body": GROK_COMPAT_CLAUDE_BODY,
+            "classification": "managed",
+            "current_signature": artifact_signature(config_path),
+        }
+        existing_text, _existed = load_toml_text(config_path)
+        if managed_block_issue(existing_text, GROK_COMPAT_MANAGED_ID) == "malformed-or-duplicated":
+            action["operation"] = "skip"
+            action["classification"] = "conflict"
+            action["reason"] = "existing managed compat block is malformed or duplicated"
+            config_actions.append(action)
+            continue
+        if has_unmanaged_table(existing_text, GROK_COMPAT_MANAGED_ID, "compat.claude"):
+            # A user-authored [compat.claude] table already exists (the documented
+            # harness-compat mechanism). Appending the managed block would declare
+            # the table twice, which Grok's strict TOML parser rejects and would
+            # corrupt the entire config. Skip rather than clobber the user's table.
+            action["operation"] = "skip"
+            action["classification"] = "conflict"
+            action["reason"] = "existing user-authored [compat.claude] table"
+            config_actions.append(action)
+            continue
+        _, changed = merge_managed_block(existing_text, GROK_COMPAT_MANAGED_ID, GROK_COMPAT_CLAUDE_BODY)
+        action["operation"] = "merge" if changed else "noop"
+        config_actions.append(action)
+    return config_actions
+
 
 def autoloop_stop_hook_actions(
     root: Path,
@@ -341,6 +420,27 @@ def autoloop_stop_hook_actions(
         _, changed, _ = merge_hook_entry(before, AUTOLOOP_HOOK_EVENT, entry, AUTOLOOP_HOOK_MANAGED_ID)
         action["operation"] = "merge" if changed else "noop"
         actions.append(action)
+    # Grok never reads ~/.grok/settings.json for hooks; its home-scope hook sink
+    # is ~/.grok/hooks/*.json. The autoloop Stop hook therefore installs as a
+    # discrete, fully-owned native hook file so uninstall can delete/restore it
+    # outright rather than editing a shared settings file.
+    for agent in agents:
+        if agent.name != "grok":
+            continue
+        hook_path = agent.target_dir_for("native-hook-file") / "ai-agents-skills-autoloop.json"
+        grok_hook = {"hooks": {AUTOLOOP_HOOK_EVENT: [entry]}}
+        grok_action = classify_file_action(
+            agent=agent.name,
+            skill="autonomous-research-loop",
+            path=hook_path,
+            content=json.dumps(grok_hook, indent=2, sort_keys=True) + "\n",
+            artifact_type="native-hook-file",
+            adopt=adopt,
+            backup_replace=backup_replace,
+        )
+        grok_action["artifact_id"] = f"native-hook-file:{AUTOLOOP_HOOK_MANAGED_ID}"
+        grok_action["artifact_name"] = AUTOLOOP_HOOK_MANAGED_ID
+        actions.append(grok_action)
     return actions
 
 

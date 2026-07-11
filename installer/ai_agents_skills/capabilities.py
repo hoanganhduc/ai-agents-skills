@@ -35,6 +35,11 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "default_mode": "copy",
         "reason": "Antigravity CLI global skills are flat Markdown files; auto mode copies the full canonical skill body into the official skills directory so triggered skills work without reaching outside the workspace sandbox.",
     },
+    "grok": {
+        "symlink_skill_file": False,
+        "default_mode": "copy",
+        "reason": "Grok native ~/.grok/skills SKILL.md files; copy keeps the install self-contained and toggle-independent; symlink loading is unverified and Windows-privilege-gated.",
+    },
     "openclaw": {
         "symlink_skill_file": False,
         "default_mode": "copy",

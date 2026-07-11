@@ -88,6 +88,8 @@ def apply_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, A
         return apply_managed_file_remove_action(root, run_id, action)
     if action["kind"] == "json-merge":
         return apply_json_merge_action(root, run_id, action)
+    if action["kind"] == "toml-merge":
+        return apply_toml_merge_action(root, run_id, action)
     raise ValueError(f"unknown action kind: {action['kind']}")
 
 
@@ -111,11 +113,13 @@ def preflight_action(root: Path, action: dict[str, Any]) -> None:
             raise ValueError(f"refusing to apply through symlinked parent: {parent}")
         if not parent.is_dir():
             raise ValueError(f"refusing to apply through non-directory parent: {parent}")
-    if action["kind"] in {"file", "managed-block", "managed-file-remove", "json-merge"}:
+    if action["kind"] in {"file", "managed-block", "managed-file-remove", "json-merge", "toml-merge"}:
         if path.exists() and path.is_dir() and not path.is_symlink():
             raise ValueError(f"refusing to write managed file over directory: {path}")
     if action["kind"] == "json-merge" and path.is_symlink():
         raise ValueError(f"refusing to merge into symlinked settings file: {path}")
+    if action["kind"] == "toml-merge" and path.is_symlink():
+        raise ValueError(f"refusing to merge into symlinked config file: {path}")
     if action["kind"] == "managed-block" and path.is_symlink():
         raise ValueError(f"refusing to read or replace symlinked instruction file: {path}")
     if action["kind"] == "legacy-dir":
@@ -212,6 +216,37 @@ def apply_json_merge_action(root: Path, run_id: str, action: dict[str, Any]) -> 
     backup = backup_file(root, run_id, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(path, json.dumps(merged, indent=2, sort_keys=True) + "\n")
+    result["applied"] = True
+    result["backup"] = str(backup) if backup else None
+    result["installed_signature"] = artifact_signature(path)
+    return result
+
+
+def apply_toml_merge_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
+    from .toml_merge import load_toml_text, merge_managed_block
+
+    path = Path(action["path"])
+    result = base_result(run_id, action)
+    result["created_file"] = not path.exists()
+    result["previous_signature"] = artifact_signature(path)
+    if action.get("operation") in {"skip", "noop"}:
+        result["managed"] = action.get("operation") == "noop"
+        result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
+        if action.get("reason"):
+            result["reason"] = action["reason"]
+        return result
+    before, _existed = load_toml_text(path)
+    merged, changed = merge_managed_block(before, action["managed_id"], action["body"])
+    result["managed"] = True
+    result["managed_id"] = action["managed_id"]
+    if not changed:
+        result["applied"] = False
+        result["installed_signature"] = artifact_signature(path)
+        return result
+    backup = backup_file(root, run_id, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_text_atomic(path, merged)
     result["applied"] = True
     result["backup"] = str(backup) if backup else None
     result["installed_signature"] = artifact_signature(path)
@@ -433,6 +468,13 @@ def uninstall_origin(
             "event": result.get("event"),
             "managed_id": result.get("managed_id"),
             "created_containers": result.get("created_containers"),
+            "created_file": result.get("created_file"),
+            "backup": result.get("backup"),
+        }
+    if result.get("artifact_type") == "settings-compat-merge" and result.get("applied"):
+        return {
+            "action": "toml-block-remove",
+            "managed_id": result.get("managed_id"),
             "created_file": result.get("created_file"),
             "backup": result.get("backup"),
         }

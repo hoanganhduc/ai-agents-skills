@@ -3,7 +3,7 @@
   "policy": {
     "mode": "prefer",
     "min_distinct_providers": 2,
-    "active_providers": ["codex", "claude", "deepseek", "copilot", "antigravity"],
+    "active_providers": ["codex", "claude", "deepseek", "copilot", "antigravity", "grok"],
     "reference_only_providers": ["openclaw"],
     "fallback_to_codex_only": true,
     "require_parent_confirmation_for_external_cli": true,
@@ -42,6 +42,11 @@
       "status": "active",
       "recipient_profile": "antigravity-like-code-reviewer",
       "default_role_family": "Antigravity CLI code and research workflow review"
+    },
+    "grok": {
+      "status": "active",
+      "recipient_profile": "grok-like-code-reviewer",
+      "default_role_family": "Grok CLI code and research workflow review"
     },
     "openclaw": {
       "status": "reference_only",
