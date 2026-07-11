@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .antigravity import run_antigravity_native_smoke
+from .grok import run_grok_native_smoke
 from .opencode import run_opencode_native_smoke
 from .capabilities import smoke_artifact
 from .runtime_smoke import run_installed_runtime_smoke
@@ -84,11 +85,21 @@ def run_post_install_smoke(
                 timeout=timeout,
             ),
         )
+        result["grok_smoke"] = guarded_check(
+            "grok-smoke",
+            lambda: run_grok_native_smoke(
+                root,
+                agents=agents,
+                platform=platform,
+                timeout=timeout,
+            ),
+        )
     else:
         result["skill_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["runtime_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["opencode_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
         result["antigravity_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
+        result["grok_smoke"] = {"status": "skipped", "reason": "mode verify runs only installer integrity checks"}
 
     result["status"] = aggregate_status(
         result["verify"],
@@ -96,6 +107,7 @@ def run_post_install_smoke(
         result["runtime_smoke"],
         result["opencode_smoke"],
         result["antigravity_smoke"],
+        result["grok_smoke"],
     )
     write_report_and_state_summary(root, run_id, result)
     return result
@@ -173,5 +185,6 @@ def compact_summary(result: dict[str, Any]) -> dict[str, Any]:
         "runtime_smoke_status": result.get("runtime_smoke", {}).get("status"),
         "opencode_smoke_status": result.get("opencode_smoke", {}).get("status"),
         "antigravity_smoke_status": result.get("antigravity_smoke", {}).get("status"),
+        "grok_smoke_status": result.get("grok_smoke", {}).get("status"),
         "report_path": result.get("report_path"),
     }

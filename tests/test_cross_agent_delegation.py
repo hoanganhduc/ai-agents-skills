@@ -144,6 +144,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             "deepseek-like-model-reviewer",
             "copilot-like-code-reviewer",
             "antigravity-like-code-reviewer",
+            "grok-like-code-reviewer",
             "model-only-api-reviewer",
             "openclaw-host-reference",
         ):
@@ -160,8 +161,8 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
         axle_skill = manifests["skills"]["skills"]["axiom-axle-mcp"]
         lean_explore_skill = manifests["skills"]["skills"]["lean-explore-mcp"]
 
-        self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot", "antigravity"})
-        self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot", "antigravity"})
+        self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot", "antigravity", "grok"})
+        self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot", "antigravity", "grok"})
         self.assertFalse(active.intersection({"axiom-axle-mcp", "axle", "lean-explore-mcp", "lean-explore", "mcp", "openclaw"}))
         self.assertEqual(reference_only, {"openclaw"})
         self.assertEqual(set(axle_skill["profiles"]), {"formal-research-remote", "full-research"})
@@ -173,7 +174,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             root = Path(tmp)
             prechecks = build_external_agent_prechecks(root, "linux", delegation, env={})
             auto_providers = expand_auto_providers(["auto"], prechecks, max_providers=10)
-            self.assertEqual(auto_providers, ["claude", "deepseek", "copilot", "antigravity"])
+            self.assertEqual(auto_providers, ["claude", "deepseek", "copilot", "antigravity", "grok"])
 
             explicit_plan = build_dispatch_plan(
                 root,
@@ -616,6 +617,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
         self.assertEqual(endpoint_summary("claude", {})["status"], "not-needed")
         self.assertEqual(endpoint_summary("copilot", {})["status"], "not-needed")
         self.assertEqual(endpoint_summary("antigravity", {})["status"], "not-needed")
+        self.assertEqual(endpoint_summary("grok", {})["status"], "not-needed")
 
     def test_provider_env_defaults_supplies_deepseek_base_url(self):
         self.assertEqual(
@@ -629,6 +631,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
         # Other providers get nothing.
         self.assertEqual(provider_env_defaults("claude", {}), {})
         self.assertEqual(provider_env_defaults("antigravity", {}), {})
+        self.assertEqual(provider_env_defaults("grok", {}), {})
 
     def test_antigravity_dispatch_uses_agy_print_without_ls_address(self):
         self.assertEqual(default_dispatch_command("antigravity", "agy"), "agy --print")
@@ -674,6 +677,52 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(plan[0]["provider"], "antigravity")
             self.assertIn("--print", plan[0]["command"])
             self.assertNotIn("ANTIGRAVITY_LS_ADDRESS", json.dumps(plan[0]))
+
+    def test_grok_dispatch_uses_single_flag_and_oidc_session(self):
+        self.assertEqual(default_dispatch_command("grok", "grok"), "grok --single")
+
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            grok = bin_dir / "grok"
+            grok.write_text("#!/bin/sh\nprintf 'grok test cli\\n'\n", encoding="utf-8")
+            grok.chmod(0o755)
+
+            old_path = os.environ.get("PATH", "")
+            old_aas = os.environ.pop("AAS_GROK", None)
+            os.environ["PATH"] = str(bin_dir)
+            try:
+                prechecks = build_external_agent_prechecks(root, "linux", manifests["delegation"], env={})
+                by_provider = {item["provider"]: item for item in prechecks["providers"]}
+                self.assertIn("grok", by_provider)
+                self.assertIn(
+                    by_provider["grok"]["status"],
+                    {"runtime-probe-required", "degraded-runtime-probe-required"},
+                )
+                # Grok uses an interactive OIDC session, not an API-key env var.
+                self.assertEqual(by_provider["grok"]["auth"]["status"], "not-detected")
+                plan = build_dispatch_plan(
+                    root,
+                    "linux",
+                    manifests["delegation"],
+                    prechecks,
+                    ["grok"],
+                    max_providers=1,
+                    research=False,
+                    resolved_model=None,
+                    resolved_thinking=None,
+                    env={},
+                )
+            finally:
+                os.environ["PATH"] = old_path
+                if old_aas is not None:
+                    os.environ["AAS_GROK"] = old_aas
+
+            self.assertEqual(plan[0]["status"], "ready")
+            self.assertEqual(plan[0]["provider"], "grok")
+            self.assertIn("--single", plan[0]["command"])
 
     def test_deepseek_precheck_reports_endpoint(self):
         manifests = load_manifests()

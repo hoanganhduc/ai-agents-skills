@@ -15,7 +15,7 @@ from .discovery import current_platform, discover_tool
 from .state import now_run_id, preflight_state_path, sha256_text, state_dir, write_text_atomic
 
 
-EXTERNAL_PROVIDERS = {"claude", "deepseek", "copilot", "antigravity"}
+EXTERNAL_PROVIDERS = {"claude", "deepseek", "copilot", "antigravity", "grok"}
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
 
@@ -311,6 +311,8 @@ def dispatch_command(provider: str, root: Path, platform: str, env: dict[str, st
 def default_dispatch_command(provider: str, command: str) -> str:
     if provider == "antigravity":
         return f"{command} --print"
+    if provider == "grok":
+        return f"{command} --single"
     return command
 
 

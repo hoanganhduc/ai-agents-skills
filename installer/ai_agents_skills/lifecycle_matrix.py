@@ -155,6 +155,11 @@ STRESS_EXTRA_SCENARIOS: tuple[LifecycleScenario, ...] = (
         agent_subset=("antigravity",),
     ),
     LifecycleScenario(
+        name="grok-only-auto",
+        description="clean auto-mode install for Grok only",
+        agent_subset=("grok",),
+    ),
+    LifecycleScenario(
         name="special-path-clean-auto",
         description="clean auto-mode install under a path with spaces and punctuation",
         path_variant="spaces",

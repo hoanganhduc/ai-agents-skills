@@ -9,10 +9,10 @@ from .capabilities import looks_like_real_system_root, resolved_path_within
 from .openclaw_target_gate import openclaw_target_capabilities, openclaw_target_decision
 
 
-DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"]
+DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "openclaw"]
 KNOWN_AGENT_NAMES = list(DEFAULT_AGENT_NAMES)
 PORTABLE_MANIFEST_AGENT_NAMES = {"codex", "claude", "deepseek"}
-ADAPTER_AGENT_NAMES = {"copilot", "opencode", "antigravity", "openclaw"}
+ADAPTER_AGENT_NAMES = {"copilot", "opencode", "antigravity", "grok", "openclaw"}
 
 
 @dataclass(frozen=True)
@@ -143,6 +143,25 @@ def target_for(root: Path, agent: str) -> AgentTarget:
                 "plugin": plugin_home,
             },
             skill_file_layout="flat-md",
+        )
+    if agent == "grok":
+        return AgentTarget(
+            name="grok",
+            home=root / ".grok",
+            skills_dir=root / ".grok" / "skills",
+            instructions_file=root / ".grok" / "AGENTS.md",
+            optional_skills_dirs=(root / ".claude" / "skills", root / ".agents" / "skills"),
+            artifact_dirs={
+                "agent-persona": root / ".grok" / "agents",
+                "template": root / ".grok" / "templates",
+                "instruction-doc": root / ".grok" / "rules",
+                "entrypoint-alias": root / ".grok" / "commands",
+                "command": root / ".grok" / "commands",
+                "tool-shim": root / ".grok" / "tools",
+                "native-hook-file": root / ".grok" / "hooks",
+            },
+            skill_file_layout="directory",
+            instruction_blocks_enabled=True,
         )
     if agent == "openclaw":
         return AgentTarget(

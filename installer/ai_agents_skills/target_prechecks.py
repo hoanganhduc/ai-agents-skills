@@ -13,6 +13,7 @@ from .capabilities import (
 )
 from .copilot import COPILOT_CLI_TOOL_SPEC, build_copilot_precheck
 from .discovery import discover_tool
+from .grok import GROK_DIAGNOSTIC_CLI_TOOL_SPEC, build_grok_precheck
 from .openclaw_target_gate import openclaw_target_decision
 
 
@@ -55,6 +56,14 @@ def _build_target_precheck(root: Path, platform: str, target: AgentTarget) -> di
         antigravity["base"] = base
         antigravity["antigravity_status"] = antigravity_status
         return antigravity
+    if target.name == "grok":
+        cli_result = discover_tool("grok-cli", GROK_DIAGNOSTIC_CLI_TOOL_SPEC, platform, root)
+        grok = build_grok_precheck(root, platform, cli_result)
+        grok_status = grok["status"]
+        grok.update(base)
+        grok["base"] = base
+        grok["grok_status"] = grok_status
+        return grok
     if target.name != "copilot":
         return base
 
@@ -143,6 +152,14 @@ def target_notes(target: AgentTarget) -> list[str]:
             "Antigravity auto mode writes flat global Markdown skill adapters under ~/.gemini/antigravity-cli/skills/.",
             "Managed plugin payloads are placed under ~/.gemini/antigravity-cli/plugins/ai-agents-skills/.",
             "Native smoke uses isolated HOME and app-data directories when the agy CLI is available.",
+        ]
+    if target.name == "grok":
+        return [
+            "Grok participates in default detection when ~/.grok exists.",
+            "Grok auto mode copies canonical SKILL.md files under ~/.grok/skills/<skill>/ for a self-contained, toggle-independent install.",
+            "Instruction blocks use ~/.grok/AGENTS.md; the optional autoloop hook installs as ~/.grok/hooks/ai-agents-skills-autoloop.json, never ~/.grok/settings.json.",
+            "A managed [compat.claude] block is merged into ~/.grok/config.toml so the native install presents a single self-contained view.",
+            "Native smoke runs grok inspect --json in a GROK_HOME-pinned isolated env when the grok CLI is available.",
         ]
     if target.name == "codex":
         return [

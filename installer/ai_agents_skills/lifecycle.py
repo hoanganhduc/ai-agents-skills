@@ -284,6 +284,17 @@ def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dic
                 action["operation"] = "forget-missing"
             else:
                 action["operation"] = "merge-remove"
+    elif origin_action == "toml-block-remove":
+        from .toml_merge import load_toml_text, managed_block_span
+
+        if not path.exists():
+            action["operation"] = "forget-missing"
+        else:
+            current, _ = load_toml_text(path)
+            if managed_block_span(current, origin.get("managed_id")) is None:
+                action["operation"] = "forget-missing"
+            else:
+                action["operation"] = "toml-block-remove"
     elif origin_action == "forget-missing":
         action["operation"] = "forget-missing"
     else:
@@ -376,6 +387,10 @@ def apply_uninstall_action(action: dict[str, Any], root: Path | None = None) -> 
         _apply_merge_remove(action)
         result["completed"] = True
         return result
+    if operation == "toml-block-remove":
+        _apply_toml_block_remove(action)
+        result["completed"] = True
+        return result
     raise ValueError(f"unknown uninstall operation: {operation}")
 
 
@@ -408,6 +423,7 @@ def remove_artifact(item: dict[str, Any], root: Path | None = None) -> None:
         "mcp-config",
         "hook-config",
         "settings-file",
+        "native-hook-file",
         "legacy-skill-file",
     }:
         remove_file(path)
@@ -432,6 +448,23 @@ def _apply_merge_remove(action: dict[str, Any]) -> None:
         remove_file(path)
         return
     write_text_atomic(path, json.dumps(merged, indent=2, sort_keys=True) + "\n")
+
+
+def _apply_toml_block_remove(action: dict[str, Any]) -> None:
+    from .toml_merge import load_toml_text, remove_managed_block
+
+    path = Path(action["artifact"])
+    origin = action.get("uninstall", {})
+    if not path.exists():
+        return
+    current, _ = load_toml_text(path)
+    merged, changed = remove_managed_block(current, origin.get("managed_id"))
+    if not changed:
+        return
+    if not merged.strip() and origin.get("created_file"):
+        remove_file(path)
+        return
+    write_text_atomic(path, merged)
 
 
 def remove_managed_block(path: Path, skill: str, delete_if_empty: bool = False) -> None:

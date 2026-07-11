@@ -2294,7 +2294,7 @@ round protocol for manual or sequential execution.
 
 True cross-provider delegation is parent-owned by `agent-group-discuss`.
 `manifest/delegation.yaml` sets the default policy: include Codex as the parent
-and spawned-subagent provider; prefer Claude, DeepSeek, Copilot, and Antigravity when fresh
+and spawned-subagent provider; prefer Claude, DeepSeek, Copilot, Antigravity, and Grok when fresh
 probes pass; keep OpenClaw reference-only; fall back to Codex-only when
 configured; and require latest-model plus highest-thinking for research roles.
 This policy is general across supported target-agent installs. External CLI
@@ -2313,7 +2313,9 @@ provider dispatch command plus resolved latest-model and highest-thinking
 settings, for example `AAS_CLAUDE_DISPATCH_COMMAND`,
 `AAS_CLAUDE_LATEST_MODEL`, and `AAS_CLAUDE_HIGHEST_THINKING`. Antigravity
 dispatch is CLI-based through `agy --print`; it does not require
-`ANTIGRAVITY_LS_ADDRESS`.
+`ANTIGRAVITY_LS_ADDRESS`. Grok dispatch is CLI-based through `grok --single`,
+prefers the region-correct `grok-remote` proxy when present, and uses an
+interactive OIDC session rather than an API-key environment variable.
 
 ## Orchestration Lifecycle
 
@@ -2630,7 +2632,7 @@ def architecture_text() -> str:
 
 This page explains how the repository turns one canonical skill catalog into
 agent-specific files for Codex, Claude, DeepSeek, GitHub Copilot, OpenCode,
-and Antigravity CLI.
+Antigravity CLI, and Grok.
 
 The manifests are the source of truth:
 
@@ -2676,19 +2678,21 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode and Antigravity copy the full canonical skill body and support files by default; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode, Antigravity, and Grok copy the full canonical skill body and support files by default; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, and Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
-| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Grok receives Claude-style Markdown subagents (name/description overlay; Claude tool-restriction frontmatter is not enforced on Grok), Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
-| `entrypoint-alias` | Optional quick-action aliases. Claude and OpenCode receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents. |
+| `entrypoint-alias` | Optional quick-action aliases. Claude, OpenCode, and Grok receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents. |
 | `plugin` | Antigravity receives a managed `ai-agents-skills` plugin marker and payload directory when Antigravity artifacts are installed. |
 | `mcp-config` | Antigravity receives a no-op plugin-scoped `mcp_config.json` scaffold with an empty `mcpServers` map. |
 | `hook-config` | Antigravity receives a no-op plugin-scoped `hooks.json` scaffold. |
 | `settings-file` | Antigravity receives a sparse no-op `settings.json` scaffold in its global CLI home. |
 | `settings-hook-merge` | When the autonomous-research-loop runtime is installed for Claude, one managed `hooks.Stop` entry (tagged `_managedBy`/`_id`) is idempotently merged into `~/.claude/settings.json` and removed on uninstall; user-authored hooks are preserved. |
+| `native-hook-file` | When the autonomous-research-loop runtime is installed for Grok, the autoloop `Stop` hook installs as a discrete fully-owned `~/.grok/hooks/ai-agents-skills-autoloop.json`; `~/.grok/settings.json` is never written because Grok does not read it for hooks. |
+| `settings-compat-merge` | When a Grok surface is installed, a managed `[compat.claude]` block (skills/agents/rules/hooks = false) is idempotently merged into `~/.grok/config.toml` so the native install presents a single self-contained view; the block is removed on uninstall and user-authored TOML is preserved. |
 | `runtime-file` | Root-scoped copied runtime runners and skill helper files. Runtime files are never installed as per-agent skills and are verified by transformed source hash, newline policy, mode, and secret scan. |
 | `command` | Reserved optional target class for direct command wrappers. |
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
@@ -2696,11 +2700,12 @@ Artifact classes:
 Target rendering is intentionally adapter-heavy where native behavior has not
 been proven. Codex personas are TOML custom-agent files, Claude and OpenCode
 personas are Markdown subagents, Antigravity personas are plugin-scoped
-Markdown agent definitions, Copilot personas are `.agent.md` custom-agent
-profiles, and DeepSeek personas are reference prompts. Claude and OpenCode
-entrypoint aliases are command files, Antigravity entrypoint aliases are flat
-global Markdown skill aliases, and Codex and DeepSeek entrypoint aliases are
-reference documents under `instructions/entrypoints`.
+Markdown agent definitions, Grok personas are Claude-style Markdown subagents
+(name/description overlay only), Copilot personas are `.agent.md` custom-agent
+profiles, and DeepSeek personas are reference prompts. Claude, OpenCode, and
+Grok entrypoint aliases are command files, Antigravity entrypoint aliases are
+flat global Markdown skill aliases, and Codex and DeepSeek entrypoint aliases
+are reference documents under `instructions/entrypoints`.
 
 Copilot is included in default target detection when `~/.copilot` exists.
 Existing repository-level `.github/*` files do not activate the personal
@@ -2725,6 +2730,18 @@ under `~/.gemini/GEMINI.md`, and the managed `ai-agents-skills` plugin payload
 under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`. Project-local
 `.agents/` directories remain project/workspace-local and do not activate the
 global Antigravity target.
+
+Grok is included in default target detection when `~/.grok` exists. The
+installer copies directory-layout `SKILL.md` files under `~/.grok/skills/`,
+managed instruction blocks into `~/.grok/AGENTS.md` (there is no `GROK.md`),
+subagents into `~/.grok/agents/`, commands into `~/.grok/commands/`, and
+instruction docs into `~/.grok/rules/`. The optional autoloop hook installs as a
+discrete `~/.grok/hooks/ai-agents-skills-autoloop.json`, and a managed
+`[compat.claude]` block is merged into `~/.grok/config.toml` so the native
+install presents a single self-contained view. Because Grok's `[compat.claude]`
+ride-along is default-on, installing both Claude and Grok would otherwise
+double-load every managed surface from both homes. `GROK_HOME`-relocated
+installs are unsupported: unset `GROK_HOME` before installing.
 
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
@@ -2810,7 +2827,7 @@ optional skill, artifact-directory, install-mode, and read-policy metadata; the
 values remain paths inspected from the current host/root. Target prechecks do
 not read target file contents; known auth-token sources are reported by
 presence only rather than value. `external_agent_prechecks` reports sanitized
-Claude, DeepSeek, Copilot, Antigravity, and reference-only OpenClaw delegation readiness,
+Claude, DeepSeek, Copilot, Antigravity, Grok, and reference-only OpenClaw delegation readiness,
 including latest-model/highest-thinking probe requirements and nested-worker
 capability status. Copilot extends the base precheck with CLI
 detection, the `.copilot` directory shape, redacted auth-source presence,
@@ -2850,6 +2867,12 @@ Antigravity prechecks report the user-global
 payload, sparse settings file, plugin-scoped MCP config, plugin-scoped hooks
 config, `agy` CLI discovery status, and native smoke expectations without
 reading config contents or credentials.
+Grok prechecks report the user-global `~/.grok` target, its `skills/`,
+`agents/`, `commands/`, `rules/`, and `hooks/` children, `config.toml` and
+`AGENTS.md`, copy-mode default, bare `grok` CLI discovery status, and
+GROK_HOME-pinned native smoke expectations without reading config contents or
+credentials; `~/.grok/settings.json` is not reported because Grok does not read
+it for hooks.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
@@ -3288,6 +3311,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | Copilot | `~/.copilot` | `~/.copilot/skills/<skill>/` | not modified |
 | OpenCode | `~/.config/opencode` | `~/.config/opencode/skills/<skill>/` | `~/.config/opencode/AGENTS.md` |
 | Antigravity | `~/.gemini/antigravity-cli` | `~/.gemini/antigravity-cli/skills/<skill>.md` | `~/.gemini/GEMINI.md` |
+| Grok | `~/.grok` | `~/.grok/skills/<skill>/` | `~/.grok/AGENTS.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
 
 Optional or compatibility skill locations:
@@ -3299,6 +3323,7 @@ Optional or compatibility skill locations:
 | Copilot | `~/.agents/skills` | Compatibility location reported but not used as the primary target. |
 | OpenCode | `~/.claude/skills`, `~/.agents/skills` | Compatibility locations reported but not used as the primary write target. |
 | Antigravity | `.agents/skills`, `~/.gemini/skills` | Workspace and Gemini compatibility locations reported but not used as the global write target. |
+| Grok | `~/.claude/skills`, `~/.agents/skills` | Compatibility locations reported but not used as the primary write target. |
 
 Optional artifact-class target directories:
 
@@ -3310,16 +3335,17 @@ Optional artifact-class target directories:
 | Copilot | `~/.copilot/agents` | not supported | not supported | not supported |
 | OpenCode | `~/.config/opencode/agents` | `~/.config/opencode/templates` | `~/.config/opencode/commands` | `~/.config/opencode/tools` |
 | Antigravity | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/agents` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/templates` | `~/.gemini/antigravity-cli/skills/<alias>.md` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/tools` |
+| Grok | `~/.grok/agents` | `~/.grok/templates` | `~/.grok/commands` | `~/.grok/tools` |
 | OpenClaw | not supported | not supported | not supported | not supported |
 
 Rendered artifact behavior differs by agent:
 
-| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | OpenClaw |
-|---|---|---|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copied flat Markdown skill file in `~/.gemini/antigravity-cli/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
-| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Not supported. |
-| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Not supported. |
-| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Not supported; OpenClaw instruction files are not modified. |
+| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | Grok | OpenClaw |
+|---|---|---|---|---|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copied flat Markdown skill file in `~/.gemini/antigravity-cli/skills`. | Copied directory-layout `SKILL.md` plus support files in `~/.grok/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Markdown subagent file (name/description overlay). | Not supported. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Command file in `~/.grok/commands`. | Not supported. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Managed block in `~/.grok/AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. |
 
 Instruction docs target each agent's `instructions` or rules directory.
 Entrypoint aliases target Claude and OpenCode commands and Antigravity global
@@ -3352,6 +3378,16 @@ installer writes flat global Markdown skills, managed global context, and the
 managed `ai-agents-skills` plugin payload under
 `~/.gemini/antigravity-cli/plugins/ai-agents-skills`, including no-op MCP,
 hook, and settings scaffolds.
+
+Grok is included in default target detection when `~/.grok` exists. Project
+`.agents/` directories are workspace-local and do not activate the global Grok
+target. The installer copies directory-layout skills, subagents, commands, and
+`rules/` instruction docs under `~/.grok`, writes managed instruction blocks
+into `~/.grok/AGENTS.md`, and merges a managed `[compat.claude]` block into
+`~/.grok/config.toml`. The optional autoloop `Stop` hook installs as a discrete
+`~/.grok/hooks/ai-agents-skills-autoloop.json`; `~/.grok/settings.json` is never
+written. Templates and tool shims copy to `~/.grok/templates` and `~/.grok/tools`
+as inert support storage. `GROK_HOME`-relocated installs are unsupported.
 
 OpenClaw is included in default target detection when an eligible `.openclaw`
 fake-root home exists, and remains fake-root-only before native target

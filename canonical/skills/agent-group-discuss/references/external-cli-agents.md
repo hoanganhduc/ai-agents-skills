@@ -41,7 +41,7 @@ Required profile fields:
 ```json
 {
   "profile_id": "provider-or-cli-profile-slug",
-  "provider": "claude | deepseek | copilot | antigravity | other",
+  "provider": "claude | deepseek | copilot | antigravity | grok | other",
   "cli_name": "string",
   "cli_version": "string or unknown",
   "profile_source": "probe artifact ref",
@@ -128,6 +128,23 @@ export AAS_ANTIGRAVITY_HIGHEST_THINKING='high'
 
 The dispatcher does not use `ANTIGRAVITY_LS_ADDRESS`; that variable belongs to
 language-server integrations outside this CLI subprocess adapter.
+
+For Grok, the managed fallback dispatch shape is `grok --single`. On hosts with
+the region-correct `grok-remote` proxy it is preferred automatically
+(first-found discovery), and elsewhere resolution falls through to a bare
+`grok`. Research runs should still configure the command explicitly, for
+example:
+
+```bash
+export AAS_GROK_DISPATCH_COMMAND='grok --single --model {model}'
+export AAS_GROK_LATEST_MODEL='<current-latest-model>'
+export AAS_GROK_HIGHEST_THINKING='high'
+```
+
+Grok authenticates through an interactive OIDC session rather than an API-key
+environment variable, so the dispatcher does not read a Grok token from the
+environment. Local read-only diagnostics (`grok inspect`) resolve a bare `grok`
+so they never bring up the `grok-remote` tunnel.
 
 Do not hardcode provider model names into shared templates unless a specific
 target system has just probed and recorded that model as current.

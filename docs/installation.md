@@ -21,7 +21,7 @@ optional skill, artifact-directory, install-mode, and read-policy metadata; the
 values remain paths inspected from the current host/root. Target prechecks do
 not read target file contents; known auth-token sources are reported by
 presence only rather than value. `external_agent_prechecks` reports sanitized
-Claude, DeepSeek, Copilot, Antigravity, and reference-only OpenClaw delegation readiness,
+Claude, DeepSeek, Copilot, Antigravity, Grok, and reference-only OpenClaw delegation readiness,
 including latest-model/highest-thinking probe requirements and nested-worker
 capability status. Copilot extends the base precheck with CLI
 detection, the `.copilot` directory shape, redacted auth-source presence,
@@ -61,6 +61,12 @@ Antigravity prechecks report the user-global
 payload, sparse settings file, plugin-scoped MCP config, plugin-scoped hooks
 config, `agy` CLI discovery status, and native smoke expectations without
 reading config contents or credentials.
+Grok prechecks report the user-global `~/.grok` target, its `skills/`,
+`agents/`, `commands/`, `rules/`, and `hooks/` children, `config.toml` and
+`AGENTS.md`, copy-mode default, bare `grok` CLI discovery status, and
+GROK_HOME-pinned native smoke expectations without reading config contents or
+credentials; `~/.grok/settings.json` is not reported because Grok does not read
+it for hooks.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
