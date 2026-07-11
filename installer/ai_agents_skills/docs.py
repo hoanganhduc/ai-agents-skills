@@ -97,7 +97,7 @@ def readme_text(manifests: dict[str, Any]) -> str:
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
-![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity%20%7C%20OpenClaw-black)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity%20%7C%20Grok%20%7C%20OpenClaw-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
@@ -109,8 +109,8 @@ def readme_text(manifests: dict[str, Any]) -> str:
 > see the [introductory blog post](https://hoanganhduc.github.io/misc/coding-system-rebuild/).
 
 Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
-GitHub Copilot, OpenCode, Antigravity CLI, and restricted OpenClaw fake-root
-targets.
+GitHub Copilot, OpenCode, Antigravity CLI, Grok, and restricted OpenClaw
+fake-root targets.
 
 ## System Summary
 
@@ -120,8 +120,8 @@ product, and it may not behave as desired on other machines, other agent
 versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
-Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, and Antigravity CLI can
-each load local skills. OpenClaw participates as a default fake-root-only
+Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, and Grok
+can each load local skills. OpenClaw participates as a default fake-root-only
 target for normal installer flows, with a separate reviewed v2 skill-file path
 for real-system skill writes and an evidence-gated runtime-install path (the
 `openclaw-runtime-*` commands plus the host `openclaw-broker`) for real-system
@@ -131,7 +131,7 @@ and installer logic in one place.
 
 The research stack is organized as:
 
-- agent frontends and targets: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, and restricted OpenClaw
+- agent frontends and targets: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, and restricted OpenClaw
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers
@@ -439,9 +439,11 @@ Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
 targets follow auto mode: Claude links to `canonical/skills`, Codex and
-DeepSeek receive reference adapters, OpenCode receives copied native skill
-files plus support files, and Antigravity receives flat global Markdown
-adapters plus native plugin/config scaffolds unless native loader evidence
+DeepSeek receive reference adapters, OpenCode and Grok receive copied native
+skill files plus support files (Grok installs under `~/.grok` and disables its
+`[compat.claude]` ride-along for a self-contained view), and Antigravity
+receives flat global Markdown adapters plus native plugin/config scaffolds
+unless native loader evidence
 justifies a different policy. Explicit `symlink`, `reference`, and `copy`
 modes force the same strategy for every agent. Use `--skill` or `--skills` for
 narrow installs.
