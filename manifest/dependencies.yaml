@@ -472,6 +472,7 @@
     "beautifulsoup4-python-package": {"type": "python", "module": "bs4"},
     "feedparser-python-package": {"type": "python", "module": "feedparser"},
     "vnu-eoffice-python-package": {"type": "python", "module": "vnu_eoffice", "candidate_set": "agent"},
+    "course-hoanganhduc-python-package": {"type": "python", "module": "course_hoanganhduc", "candidate_set": "agent"},
     "pyzotero-python-package": {"type": "python", "module": "pyzotero"},
     "pypdf2-python-package": {"type": "python", "module": "PyPDF2"},
     "pdfplumber-python-package": {"type": "python", "module": "pdfplumber"},
