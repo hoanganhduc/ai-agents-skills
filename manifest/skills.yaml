@@ -3,138 +3,424 @@
   "skills": {
     "autonomous-research-loop": {
       "description": "Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs.",
-      "profiles": ["research-core", "serious-research", "workflow-tools", "multi-agent", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"],
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "workflow-tools",
+        "multi-agent",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity",
+        "openclaw"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["bounded-research-loop", "evidence-gates", "panel-loop-handoff", "recovery-ledger", "headless-driver-handoff"],
-      "recommended_templates": ["autonomous-research-loop-runbook"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "bounded-research-loop",
+        "evidence-gates",
+        "panel-loop-handoff",
+        "recovery-ledger",
+        "headless-driver-handoff"
+      ],
+      "recommended_templates": [
+        "autonomous-research-loop-runbook"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "autonomous-research-loop-runtime": {
       "description": "Offline runtime helper for autonomous research loop ledger initialization, iteration appends, validation, status, and selftest.",
-      "profiles": ["research-core", "serious-research", "workflow-tools", "multi-agent", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "workflow-tools",
+        "multi-agent",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
       "optional_dependencies": [],
-      "optional_capabilities": ["offline-runtime-smoke", "loop-ledger-validation", "local-recovery-state", "headless-provider-driver", "quota-pause-resume"],
-      "recommended_templates": ["autonomous-research-loop-runbook"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+      "optional_capabilities": [
+        "offline-runtime-smoke",
+        "loop-ledger-validation",
+        "local-recovery-state",
+        "headless-provider-driver",
+        "quota-pause-resume"
+      ],
+      "recommended_templates": [
+        "autonomous-research-loop-runbook"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
     },
     "deep-research-workflow": {
       "description": "Phased source-preserving research workflow: search, analyze, write, with citation handoff.",
-      "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["zotero-credentials", "requests-python-package"],
-      "optional_capabilities": ["zotero-cross-check", "figure-handoff"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "zotero-credentials",
+        "requests-python-package"
+      ],
+      "optional_capabilities": [
+        "zotero-cross-check",
+        "figure-handoff"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "source-research": {
       "description": "General web and source-gathering research workflow for current-information synthesis.",
-      "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["web-source-synthesis"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "web-source-synthesis"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "vnu-eoffice": {
       "description": "Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram.",
       "profiles": [],
-      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"],
-      "required_dependencies": ["python-runtime", "vnu-eoffice-python-package", "requests-python-package", "beautifulsoup4-python-package"],
-      "optional_dependencies": ["telegram-bot-config"],
-      "optional_capabilities": ["vnu-eoffice-monitoring", "telegram-document-delivery", "multi-page-fetch", "numbered-document-selection"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity",
+        "openclaw"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "vnu-eoffice-python-package",
+        "requests-python-package",
+        "beautifulsoup4-python-package"
+      ],
+      "optional_dependencies": [
+        "telegram-bot-config"
+      ],
+      "optional_capabilities": [
+        "vnu-eoffice-monitoring",
+        "telegram-document-delivery",
+        "multi-page-fetch",
+        "numbered-document-selection"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
+    },
+    "classroom50": {
+      "description": "Route Classroom50 (foundation50) instructor workflows through the course_hoanganhduc agent entrypoint: preflight, list classrooms/roster/assignments, roster sync into local DB, and C50 CSV export. Does not invoke raw gh teacher.",
+      "profiles": [
+        "course-management"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity",
+        "openclaw"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "github-cli",
+        "course-hoanganhduc-python-package"
+      ],
+      "optional_dependencies": [],
+      "optional_capabilities": [
+        "classroom50-roster-sync",
+        "classroom50-list",
+        "classroom50-export"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "research-briefing": {
       "description": "Scope nontrivial research before execution with evidence plan and workflow recommendation.",
-      "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "intent-interview": {
       "description": "Elicit and confirm real intent one question at a time before any brief, spec, or code.",
-      "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "decision-doubt-loop": {
       "description": "In-flight fresh-context adversarial review of a non-trivial decision before it stands.",
-      "profiles": ["serious-research", "full-research", "multi-agent"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "serious-research",
+        "full-research",
+        "multi-agent"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "source-grounded-decisions": {
       "description": "Ground version- and spec-sensitive decisions in cited authoritative sources; flag when unverified.",
-      "profiles": ["serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
-      "recommended_templates": ["reversible-decision-memo"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "recommended_templates": [
+        "reversible-decision-memo"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "adversarial-boundary-gate": {
       "description": "Pre-delivery threat-model of trust boundaries and an abuse-case/injection check, delegating to a fresh-context security reviewer.",
-      "profiles": ["serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "behavior-preserving-cleanup": {
       "description": "Clarity-only edit pass behind a comprehension gate with verify-after-each-change so behavior stays fixed.",
-      "profiles": ["serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
-      "recommended_templates": ["engineering-delivery-loop-runbook"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "recommended_templates": [
+        "engineering-delivery-loop-runbook"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "research-report-reviewer": {
       "description": "Review draft research reports for unsupported claims, ambiguity, and evidence gaps.",
-      "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "research-verification-gate": {
       "description": "Final evidence, date, and gap check before delivery.",
-      "profiles": ["research-core", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
       "optional_capabilities": [],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "draft-writing": {
       "description": "Claim-preserving draft writing workflow for controlled rewriting, polishing, and revision audits.",
-      "profiles": ["writing-workflow", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "writing-workflow",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["claim-ledger", "revision-delta-audit"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "claim-ledger",
+        "revision-delta-audit"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "zotero": {
       "description": "Zotero paper search, retrieval, ingest, and collection workflow.",
-      "profiles": ["library", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "library",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [
         "python-runtime",
         "pyzotero-python-package",
@@ -159,12 +445,27 @@
         "webdav-mutation-sync",
         "zotero-repair-mode"
       ],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "calibre": {
       "description": "Calibre ebook lookup and library helper workflows.",
-      "profiles": ["library", "ebook", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "library",
+        "ebook",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [
         "python-runtime",
         "requests-python-package",
@@ -182,49 +483,140 @@
         "profile-selected-calibre-library",
         "calibre-cli-write"
       ],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "getscipapers-requester": {
       "description": "External paper retrieval fallback after local library checks.",
-      "profiles": ["library", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "openclaw"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["getscipapers"],
-      "optional_capabilities": ["external-retrieval"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "profiles": [
+        "library",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity",
+        "openclaw"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "getscipapers"
+      ],
+      "optional_capabilities": [
+        "external-retrieval"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "paper-lookup": {
       "description": "External paper metadata and discovery fallback.",
-      "profiles": ["library", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "library",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["metadata-lookup"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "metadata-lookup"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "submission-venue-selector": {
       "description": "Evidence-gated journal and conference venue selection for scholarly drafts; deliverable rankings require comparator-paper evidence.",
-      "profiles": ["serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
+      "profiles": [
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
       "optional_dependencies": [],
-      "optional_capabilities": ["venue-selection", "comparator-paper-evidence", "evidence-backed-ranking", "offline-runtime-smoke"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "venue-selection",
+        "comparator-paper-evidence",
+        "evidence-backed-ranking",
+        "offline-runtime-smoke"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "database-lookup": {
       "description": "Structured public scientific, biomedical, regulatory, materials, and economic database lookups.",
-      "profiles": ["document", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "document",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["record-oriented-lookup"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "record-oriented-lookup"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "docling": {
       "description": "Parse, convert, OCR, chunk, and analyze documents.",
-      "profiles": ["document", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime", "docling-python-package"],
+      "profiles": [
+        "document",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "docling-python-package"
+      ],
       "optional_dependencies": [
         "ocr-runtime",
         "docling-mcp-python-package",
@@ -233,118 +625,357 @@
         "torch-python-package",
         "torchvision-python-package"
       ],
-      "optional_capabilities": ["ocr", "mcp-server", "remote-ocr-fallback"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "ocr",
+        "mcp-server",
+        "remote-ocr-fallback"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "get-available-resources": {
       "description": "Detect CPU, memory, disk, and optional accelerator availability before heavy local work.",
-      "profiles": ["workflow-tools", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime", "psutil-python-package"],
-      "optional_dependencies": ["nvidia-smi-tool", "rocm-smi-tool"],
-      "optional_capabilities": ["resource-planning"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "profiles": [
+        "workflow-tools",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "psutil-python-package"
+      ],
+      "optional_dependencies": [
+        "nvidia-smi-tool",
+        "rocm-smi-tool"
+      ],
+      "optional_capabilities": [
+        "resource-planning"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "formal-skeleton-helper": {
       "description": "Generate minimal Lean-style theorem skeletons, namespace wrappers, and formal statement stubs.",
-      "profiles": ["workflow-tools", "math", "formal-research", "formal-research-remote", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
+      "profiles": [
+        "workflow-tools",
+        "math",
+        "formal-research",
+        "formal-research-remote",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
       "optional_dependencies": [],
-      "optional_capabilities": ["lean-skeleton"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "lean-skeleton"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "lean-formalization-intake": {
       "description": "Optional local-first Lean formalization intake and suitability decision workflow.",
-      "profiles": ["formal-research", "formal-research-remote", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["lean-cli", "lake-cli", "mathlib-cache"],
-      "optional_capabilities": ["formal-lane-intake", "lean-tool-detection"],
-      "recommended_templates": ["informal-to-lean-formalization-runbook"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "profiles": [
+        "formal-research",
+        "formal-research-remote",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "lean-cli",
+        "lake-cli",
+        "mathlib-cache"
+      ],
+      "optional_capabilities": [
+        "formal-lane-intake",
+        "lean-tool-detection"
+      ],
+      "recommended_templates": [
+        "informal-to-lean-formalization-runbook"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "lean-explore-mcp": {
       "description": "Optional inert LeanExplore MCP setup helper for Lean declaration search.",
-      "profiles": ["formal-research", "formal-research-remote", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["lean-explore-python-package", "leanexplore-auth", "lean-explore-local-cache"],
-      "optional_capabilities": ["manual-lean-explore-mcp-setup", "lean-declaration-search-evidence"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+      "profiles": [
+        "formal-research",
+        "formal-research-remote",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "lean-explore-python-package",
+        "leanexplore-auth",
+        "lean-explore-local-cache"
+      ],
+      "optional_capabilities": [
+        "manual-lean-explore-mcp-setup",
+        "lean-declaration-search-evidence"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
     },
     "lean-strict-verification-gate": {
       "description": "Scanner-first Lean artifact verification gate that separates typecheck status from claim support.",
-      "profiles": ["formal-research", "formal-research-remote", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["lean-cli", "lake-cli", "mathlib-cache"],
-      "optional_capabilities": ["lean-safety-scan", "optional-local-typecheck"],
-      "recommended_templates": ["informal-to-lean-formalization-runbook"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "profiles": [
+        "formal-research",
+        "formal-research-remote",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "lean-cli",
+        "lake-cli",
+        "mathlib-cache"
+      ],
+      "optional_capabilities": [
+        "lean-safety-scan",
+        "optional-local-typecheck"
+      ],
+      "recommended_templates": [
+        "informal-to-lean-formalization-runbook"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "axiom-axle-mcp": {
       "description": "Optional inert setup helper for AxiomMath AXLE MCP formal-proof assistance.",
-      "profiles": ["formal-research-remote", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["uvx-cli", "axle-auth"],
-      "optional_capabilities": ["manual-axle-mcp-setup", "remote-formal-check-evidence"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+      "profiles": [
+        "formal-research-remote",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "uvx-cli",
+        "axle-auth"
+      ],
+      "optional_capabilities": [
+        "manual-axle-mcp-setup",
+        "remote-formal-check-evidence"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
     },
     "model-router": {
       "description": "Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work.",
-      "profiles": ["workflow-tools", "multi-agent", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "workflow-tools",
+        "multi-agent",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["subagent-routing"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "subagent-routing"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "workspace-rearranger": {
       "description": "Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion.",
-      "profiles": ["workflow-tools", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "workflow-tools",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["workspace-cleanup"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "workspace-cleanup"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "research-digest-wrapper": {
       "description": "Run tracked-topic research digests.",
-      "profiles": ["digest", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "digest",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [
         "python-runtime",
         "requests-python-package",
         "feedparser-python-package"
       ],
       "optional_dependencies": [],
-      "optional_capabilities": ["topic-management"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "topic-management"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "rss-news-digest": {
       "description": "Run and manage RSS digest workflows.",
-      "profiles": ["digest", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime", "feedparser-python-package"],
+      "profiles": [
+        "digest",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "feedparser-python-package"
+      ],
       "optional_dependencies": [],
-      "optional_capabilities": ["feed-management"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "feed-management"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "digest-bridge": {
       "description": "Convert digest output into paper retrieval manifests.",
-      "profiles": ["digest", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
+      "profiles": [
+        "digest",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
       "optional_dependencies": [],
-      "optional_capabilities": ["manifest-generation"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "manifest-generation"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "tikz-draw": {
       "description": "Structural TikZ figure generation, compile, review, and semantic checks.",
-      "profiles": ["figure", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "figure",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [
         "python-runtime",
         "tex-runtime",
@@ -356,129 +987,368 @@
         "svgelements-python-package",
         "numpy-python-package"
       ],
-      "optional_capabilities": ["sage-backed-graph-mode"],
-      "recommended_templates": ["tikz-figure-verification-runbook"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "sage-backed-graph-mode"
+      ],
+      "recommended_templates": [
+        "tikz-figure-verification-runbook"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "sagemath": {
       "description": "Sage-backed math, graph theory, algebra, and verification.",
-      "profiles": ["math", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["sage-runtime"],
+      "profiles": [
+        "math",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "sage-runtime"
+      ],
       "optional_dependencies": [],
-      "optional_capabilities": ["wsl-backed-sage"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "wsl-backed-sage"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "graph-verifier": {
       "description": "Lightweight graph sanity checks.",
-      "profiles": ["math", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime", "networkx-python-package"],
+      "profiles": [
+        "math",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "networkx-python-package"
+      ],
       "optional_dependencies": [],
-      "optional_capabilities": ["networkx-checks"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "networkx-checks"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "agent-group-discuss": {
       "description": "Multi-agent discussion, review, and research orchestration.",
-      "profiles": ["multi-agent", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "multi-agent",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["role-templates"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "role-templates"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "prose": {
       "description": "Structured reproducible research and workflow orchestration.",
-      "profiles": ["multi-agent", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "multi-agent",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["structured-workflow"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "structured-workflow"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "cross-agent-delegation": {
       "description": "Cross-agent delegation packet contract for bounded parent-controlled handoffs.",
-      "profiles": ["multi-agent", "serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "multi-agent",
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["packet-contract"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "packet-contract"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "modal-research-compute": {
       "description": "Route heavy compute jobs to Modal through a local broker.",
-      "profiles": ["full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["modal-python-package", "modal-auth"],
-      "optional_capabilities": ["remote-cpu", "remote-gpu"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "profiles": [
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "modal-python-package",
+        "modal-auth"
+      ],
+      "optional_capabilities": [
+        "remote-cpu",
+        "remote-gpu"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "paper-review": {
       "description": "Single-agent paper review workflow.",
-      "profiles": ["serious-research", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
-      "optional_dependencies": ["zotero-credentials"],
-      "optional_capabilities": ["library-document-routing"],
-      "recommended_templates": ["cross-agent-adversarial-review"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_dependencies": [
+        "zotero-credentials"
+      ],
+      "optional_capabilities": [
+        "library-document-routing"
+      ],
+      "recommended_templates": [
+        "cross-agent-adversarial-review"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "annotated-review": {
       "description": "Annotated paper review workflow when both annotation and review are requested.",
-      "profiles": ["full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [
         "python-runtime",
         "pymupdf-python-package",
         "pylatexenc-python-package"
       ],
-      "optional_dependencies": ["zotero-credentials", "tex-runtime"],
-      "optional_capabilities": ["pdf-annotation"],
-      "recommended_templates": ["cross-agent-adversarial-review"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_dependencies": [
+        "zotero-credentials",
+        "tex-runtime"
+      ],
+      "optional_capabilities": [
+        "pdf-annotation"
+      ],
+      "recommended_templates": [
+        "cross-agent-adversarial-review"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "vnthuquan": {
       "description": "Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff.",
-      "profiles": ["ebook", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["calibre-cli"],
-      "optional_capabilities": ["calibre-dry-run-handoff"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "profiles": [
+        "ebook",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "calibre-cli"
+      ],
+      "optional_capabilities": [
+        "calibre-dry-run-handoff"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "self-improving-agent": {
       "description": "Log durable learnings and propose canonical repo integration plans across install targets.",
-      "profiles": ["full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
+      "profiles": [
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
       "optional_dependencies": [],
-      "optional_capabilities": ["learning-log", "canonical-integration-plan", "portable-runtime-helper"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+      "optional_capabilities": [
+        "learning-log",
+        "canonical-integration-plan",
+        "portable-runtime-helper"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
     },
     "session-logs": {
       "description": "Search prior local agent session logs when explicitly requested.",
-      "profiles": ["full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+      "profiles": [
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
       "required_dependencies": [],
       "optional_dependencies": [],
-      "optional_capabilities": ["local-history-search"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "optional_capabilities": [
+        "local-history-search"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "send-email": {
       "description": "Send email over SMTP using only the Python standard library: plain-text and HTML bodies, attachments, cc/bcc, reply-to, dry-run preview, connection verification, and redacted config inspection.",
       "profiles": [],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["gnupg-system-tool"],
-      "optional_capabilities": ["smtp-send", "html-and-attachments", "cc-bcc-reply-to", "sender-identity-and-signature", "named-accounts", "address-book", "pgp-mime-signing", "dry-run-preview", "connection-verify", "offline-smoke"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "gnupg-system-tool"
+      ],
+      "optional_capabilities": [
+        "smtp-send",
+        "html-and-attachments",
+        "cc-bcc-reply-to",
+        "sender-identity-and-signature",
+        "named-accounts",
+        "address-book",
+        "pgp-mime-signing",
+        "dry-run-preview",
+        "connection-verify",
+        "offline-smoke"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
     },
     "slides-to-video": {
       "description": "Turn prepared slides (PNG/PDF/PPTX) into a narrated, captioned video in a chosen language and presenter role using only free tools; three-phase human-in-the-loop with an approval gate before rendering.",
-      "profiles": ["media", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime", "ffmpeg-system-tool"],
+      "profiles": [
+        "media",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "ffmpeg-system-tool"
+      ],
       "optional_dependencies": [
         "edge-tts-python-package",
         "kokoro-python-package",
@@ -503,48 +1373,250 @@
         "manim-interlude",
         "offline-smoke"
       ],
-      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
     },
     "manim-math-animation": {
       "description": "Render Manim math animations (handwritten-style equation Write, equation morphing, emphasis) to a silent clip normalized for splicing into slides-to-video or standalone use.",
-      "profiles": ["media", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime", "ffmpeg-system-tool"],
-      "optional_dependencies": ["manim-python-package", "numpy-python-package", "manim-tex-runtime"],
-      "optional_capabilities": ["equation-write", "equation-morph", "emphasis-animation", "silent-interlude-clips", "offline-smoke"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+      "profiles": [
+        "media",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "ffmpeg-system-tool"
+      ],
+      "optional_dependencies": [
+        "manim-python-package",
+        "numpy-python-package",
+        "manim-tex-runtime"
+      ],
+      "optional_capabilities": [
+        "equation-write",
+        "equation-morph",
+        "emphasis-animation",
+        "silent-interlude-clips",
+        "offline-smoke"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
     },
     "url-to-screenshot": {
       "description": "Capture a URL to a clean PNG screenshot with browser detection, cookie-consent dismissal, viewport or full-page modes, timeouts, SSRF-safe URL admission, and blank-output verification across Linux, macOS, and Windows.",
-      "profiles": ["media", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["chromium-browser-system-tool", "imagemagick-system-tool", "pillow-python-package", "websocket-client-python-package"],
-      "optional_capabilities": ["cdp-capture", "consent-dismissal", "full-page-capture", "blank-output-detection", "ssrf-admission-gate"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible"]
+      "profiles": [
+        "media",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "chromium-browser-system-tool",
+        "imagemagick-system-tool",
+        "pillow-python-package",
+        "websocket-client-python-package"
+      ],
+      "optional_capabilities": [
+        "cdp-capture",
+        "consent-dismissal",
+        "full-page-capture",
+        "blank-output-detection",
+        "ssrf-admission-gate"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     },
     "url-to-screenshot-runtime": {
       "description": "Runtime engine for url-to-screenshot: headless-browser CDP capture, SSRF-safe URL admission, consent dismissal, blank-output detection, and an offline self-test of the deterministic core.",
-      "profiles": ["media", "full-research"],
-      "supported_agents": ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity"],
-      "required_dependencies": ["python-runtime"],
-      "optional_dependencies": ["chromium-browser-system-tool", "imagemagick-system-tool", "pillow-python-package", "websocket-client-python-package"],
-      "optional_capabilities": ["cdp-capture", "consent-dismissal", "full-page-capture", "blank-output-detection", "ssrf-admission-gate", "offline-smoke"],
-      "verification": ["file-exists", "metadata-valid", "agent-visible", "offline-smoke"]
+      "profiles": [
+        "media",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "chromium-browser-system-tool",
+        "imagemagick-system-tool",
+        "pillow-python-package",
+        "websocket-client-python-package"
+      ],
+      "optional_capabilities": [
+        "cdp-capture",
+        "consent-dismissal",
+        "full-page-capture",
+        "blank-output-detection",
+        "ssrf-admission-gate",
+        "offline-smoke"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
+    },
+    "course-canvas": {
+      "description": "Route Canvas LMS course operations through the course_hoanganhduc canvas agent: preflight, list assignments/members, search users, and roster sync. Refuses unenroll, grade, invite, announce, messages, pages, and bulk download.",
+      "profiles": [
+        "course-management"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity",
+        "openclaw"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "course-hoanganhduc-python-package"
+      ],
+      "optional_dependencies": [],
+      "optional_capabilities": [
+        "canvas-list",
+        "canvas-roster-sync",
+        "canvas-search"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
+    },
+    "course-google-classroom": {
+      "description": "Route Google Classroom operations through the course_hoanganhduc gclass agent: preflight, list courses/students, and roster sync. Refuses unenroll, grade, and submission download.",
+      "profiles": [
+        "course-management"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity",
+        "openclaw"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "course-hoanganhduc-python-package"
+      ],
+      "optional_dependencies": [],
+      "optional_capabilities": [
+        "gclass-list",
+        "gclass-roster-sync"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
+    },
+    "course-db": {
+      "description": "Route local course student-database operations through the course_hoanganhduc db agent: search, details, domain/duplicate/missing-id lists, roster and email export. Refuses interactive modify, restore, and destructive import apply.",
+      "profiles": [
+        "course-management"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity",
+        "openclaw"
+      ],
+      "required_dependencies": [
+        "python-runtime",
+        "course-hoanganhduc-python-package"
+      ],
+      "optional_dependencies": [],
+      "optional_capabilities": [
+        "course-db-search",
+        "course-db-export"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
     }
   },
   "legacy_aliases": {
-    "deep-research-workflow": ["deep-research"],
-    "research-digest-wrapper": ["research_digest_wrapper"],
-    "rss-news-digest": ["rss_news_digest"],
-    "digest-bridge": ["digest_bridge"],
-    "getscipapers-requester": ["getscipapers_requester"],
-    "graph-verifier": ["graph_verifier"],
-    "agent-group-discuss": ["agent_group_discuss"],
-    "self-improving-agent": ["self_improving_agent", "self-improvement", "self_improvement"],
-    "formal-skeleton-helper": ["formal_skeleton_helper"],
-    "model-router": ["smart_model_router"],
-    "workspace-rearranger": ["workspace_rearranger"],
-    "source-research": ["openclaw-research"]
+    "deep-research-workflow": [
+      "deep-research"
+    ],
+    "research-digest-wrapper": [
+      "research_digest_wrapper"
+    ],
+    "rss-news-digest": [
+      "rss_news_digest"
+    ],
+    "digest-bridge": [
+      "digest_bridge"
+    ],
+    "getscipapers-requester": [
+      "getscipapers_requester"
+    ],
+    "graph-verifier": [
+      "graph_verifier"
+    ],
+    "agent-group-discuss": [
+      "agent_group_discuss"
+    ],
+    "self-improving-agent": [
+      "self_improving_agent",
+      "self-improvement",
+      "self_improvement"
+    ],
+    "formal-skeleton-helper": [
+      "formal_skeleton_helper"
+    ],
+    "model-router": [
+      "smart_model_router"
+    ],
+    "workspace-rearranger": [
+      "workspace_rearranger"
+    ],
+    "source-research": [
+      "openclaw-research"
+    ]
   }
 }

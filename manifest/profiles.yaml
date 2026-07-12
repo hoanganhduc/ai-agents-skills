@@ -48,23 +48,41 @@
     },
     "writing-workflow": {
       "description": "Claim-preserving draft writing, rewriting, and revision-audit workflow.",
-      "skills": ["draft-writing"]
+      "skills": [
+        "draft-writing"
+      ]
     },
     "library": {
       "description": "Paper and ebook library workflows.",
-      "skills": ["zotero", "calibre", "getscipapers-requester", "paper-lookup"]
+      "skills": [
+        "zotero",
+        "calibre",
+        "getscipapers-requester",
+        "paper-lookup"
+      ]
     },
     "document": {
       "description": "Document conversion and structured database lookup.",
-      "skills": ["docling", "database-lookup"]
+      "skills": [
+        "docling",
+        "database-lookup"
+      ]
     },
     "digest": {
       "description": "Tracked-topic and RSS digest workflows.",
-      "skills": ["research-digest-wrapper", "rss-news-digest", "digest-bridge"]
+      "skills": [
+        "research-digest-wrapper",
+        "rss-news-digest",
+        "digest-bridge"
+      ]
     },
     "math": {
       "description": "Math and graph verification workflows.",
-      "skills": ["sagemath", "graph-verifier", "formal-skeleton-helper"]
+      "skills": [
+        "sagemath",
+        "graph-verifier",
+        "formal-skeleton-helper"
+      ]
     },
     "formal-research": {
       "description": "Optional Lean formalization lane with local checks and declaration-search setup.",
@@ -87,11 +105,21 @@
     },
     "figure": {
       "description": "Structural figure generation and checking.",
-      "skills": ["tikz-draw"]
+      "skills": [
+        "tikz-draw"
+      ]
     },
     "multi-agent": {
       "description": "Multi-agent and structured workflow orchestration.",
-      "skills": ["agent-group-discuss", "prose", "model-router", "cross-agent-delegation", "autonomous-research-loop", "autonomous-research-loop-runtime", "decision-doubt-loop"]
+      "skills": [
+        "agent-group-discuss",
+        "prose",
+        "model-router",
+        "cross-agent-delegation",
+        "autonomous-research-loop",
+        "autonomous-research-loop-runtime",
+        "decision-doubt-loop"
+      ]
     },
     "workflow-tools": {
       "description": "Reusable planning helpers for resources, model routing, formal skeletons, and workspace organization.",
@@ -106,7 +134,10 @@
     },
     "ebook": {
       "description": "Ebook discovery and library handoff.",
-      "skills": ["calibre", "vnthuquan"]
+      "skills": [
+        "calibre",
+        "vnthuquan"
+      ]
     },
     "full-research": {
       "description": "All research-related skills.",
@@ -162,7 +193,21 @@
     },
     "media": {
       "description": "Narrated, captioned presentation and lecture videos from prepared slides, with optional Manim math animation.",
-      "skills": ["slides-to-video", "manim-math-animation", "url-to-screenshot", "url-to-screenshot-runtime"]
+      "skills": [
+        "slides-to-video",
+        "manim-math-animation",
+        "url-to-screenshot",
+        "url-to-screenshot-runtime"
+      ]
+    },
+    "course-management": {
+      "description": "Course management toolkit skills: Classroom50, Canvas, Google Classroom, and local student DB agents.",
+      "skills": [
+        "classroom50",
+        "course-canvas",
+        "course-google-classroom",
+        "course-db"
+      ]
     }
   },
   "default_profile": "research-core"
