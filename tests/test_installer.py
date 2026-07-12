@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import math
 import os
 import sys
 import tempfile
@@ -554,6 +555,43 @@ class ManifestTests(unittest.TestCase):
 
 
 class PlanInstallVerifyTests(unittest.TestCase):
+    def test_state_and_run_records_use_valid_compact_json(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            state_payload = {
+                "schema_version": 2,
+                "artifacts": [],
+                "runs": [],
+                "uninstall_records": [],
+            }
+            save_state(root, state_payload)
+            state_text = (root / ".ai-agents-skills" / "state.json").read_text(encoding="utf-8")
+            self.assertEqual(json.loads(state_text), state_payload)
+            self.assertTrue(state_text.endswith("\n"))
+            self.assertNotIn("\n  ", state_text)
+
+            actions = [{"operation": "noop", "label": "unicode-đ"}]
+            write_run_record(root, "compact-json", actions)
+            run_text = (root / ".ai-agents-skills" / "runs" / "compact-json.json").read_text(encoding="utf-8")
+            self.assertEqual(json.loads(run_text), {"run_id": "compact-json", "actions": actions})
+            self.assertTrue(run_text.endswith("\n"))
+            self.assertNotIn("\n  ", run_text)
+
+    def test_state_compact_json_preserves_stdlib_number_semantics(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            payload = {
+                "schema_version": 1,
+                "artifacts": [],
+                "runs": [],
+                "large_integer": 1 << 100,
+                "non_finite": float("nan"),
+            }
+            save_state(root, payload)
+            loaded = load_state(root)
+            self.assertEqual(loaded["large_integer"], payload["large_integer"])
+            self.assertTrue(math.isnan(loaded["non_finite"]))
+
     def test_reference_adapter_quotes_yaml_scalars_with_colons(self) -> None:
         content = render_reference_skill_md(
             "deep-research-workflow",
