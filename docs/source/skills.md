@@ -28,6 +28,10 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `axiom-axle-mcp` | Optional inert setup helper for AxiomMath AXLE MCP formal-proof assistance. | `formal-research-remote`, `full-research` |
 | `behavior-preserving-cleanup` | Clarity-only edit pass behind a comprehension gate with verify-after-each-change so behavior stays fixed. | `serious-research`, `full-research` |
 | `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `serious-research`, `full-research` |
+| `classroom50` | Route Classroom50 (foundation50) instructor workflows through the course_hoanganhduc agent entrypoint: preflight, list classrooms/roster/assignments, roster sync into local DB, and C50 CSV export. Does not invoke raw gh teacher. | `course-management` |
+| `course-canvas` | Route Canvas LMS course operations through the course_hoanganhduc canvas agent: preflight, list assignments/members, search users, and roster sync. Refuses unenroll, grade, invite, announce, messages, pages, and bulk download. | `course-management` |
+| `course-db` | Route local course student-database operations through the course_hoanganhduc db agent: search, details, domain/duplicate/missing-id lists, roster and email export. Refuses interactive modify, restore, and destructive import apply. | `course-management` |
+| `course-google-classroom` | Route Google Classroom operations through the course_hoanganhduc gclass agent: preflight, list courses/students, and roster sync. Refuses unenroll, grade, and submission download. | `course-management` |
 | `cross-agent-delegation` | Cross-agent delegation packet contract for bounded parent-controlled handoffs. | `multi-agent`, `serious-research`, `full-research` |
 | `database-lookup` | Structured public scientific, biomedical, regulatory, materials, and economic database lookups. | `document`, `serious-research`, `full-research` |
 | `decision-doubt-loop` | In-flight fresh-context adversarial review of a non-trivial decision before it stands. | `serious-research`, `full-research`, `multi-agent` |
