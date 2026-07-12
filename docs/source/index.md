@@ -41,6 +41,9 @@ Latest update: {sub-ref}`today`
 - Submission venue selector work: use the
   [Submission Venue Selector Plan](submission-venue-selector-plan.md) before
   implementing the automated venue-ranking skill.
+- Course teaching workflows (Canvas, Google Classroom, Classroom50, local
+  roster DB): use [Course Management Skills](course-management.md) and the
+  `course-management` install profile.
 
 ## Safety Model
 
@@ -61,8 +64,9 @@ and manifest data. Generated docs are `README.md`, each page emitted by
 `generated_doc_texts()` under `docs/`, and mirrored copies under `docs/source/`.
 Edit the generator or manifests, run `make docs`, then use `make docs-site`
 when you need to preview the Sphinx site. This `index.md` page, `overview.md`,
-and `submission-venue-selector-plan.md` are maintained manually as docs-site
-pages.
+`submission-venue-selector-plan.md`, and `course-management.md` are maintained
+manually as docs-site pages (keep `docs/course-management.md` in sync with
+`docs/source/course-management.md`).
 
 ```{toctree}
 :maxdepth: 2
@@ -72,6 +76,7 @@ overview
 workflow-overview
 multi-agent-examples
 submission-venue-selector-plan
+course-management
 installation
 skills
 artifacts

@@ -80,7 +80,9 @@ make verify ARGS="--root <fake-or-real-root>"
   migration flows.
 - [Skills](skills.md): canonical skill catalog.
 - [Profiles](profiles.md): workflow bundles such as `research-core`,
-  `library`, `math`, and `full-research`.
+  `library`, `math`, `full-research`, and `course-management`.
+- [Course Management Skills](course-management.md): Classroom50, Canvas,
+  Google Classroom, and local roster DB agent entrypoints.
 - [Optional Artifacts](artifacts.md): templates, personas, instruction docs,
   entrypoints, and management notices.
 - [Dependencies](dependencies.md): logical tools, Python packages, and
