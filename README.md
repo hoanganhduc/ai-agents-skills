@@ -108,8 +108,9 @@ lighter platform-specific guidance than Linux and Windows.
   docs, personas, and
   entrypoint aliases.
 - [docs/profiles.md](docs/profiles.md): selectable profiles such as
-  `research-core` and
-  `full-research`.
+  `research-core`, `full-research`, and `course-management`.
+- [docs/course-management.md](docs/course-management.md): Classroom50, Canvas,
+  Google Classroom, and local roster DB agent skills (manual page).
 - [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
   software, Python packages, Node packages, and manual integrations.
 - [docs/workflow-overview.md](docs/workflow-overview.md): how agents, skills, runtimes, and research
@@ -149,10 +150,11 @@ Most checked-in docs are generated. Edit `installer/ai_agents_skills/docs.py`
 and the manifests for generated pages, then run `make docs`; CI checks that
 generated docs are current. Generated docs are `README.md`, each page emitted
 by `generated_doc_texts()` under `docs/`, and the mirrored copies under
-`docs/source/`. `docs/source/index.md`, `docs/source/overview.md`, and
-`docs/source/submission-venue-selector-plan.md` are maintained manually;
-`docs/submission-venue-selector-plan.md` is the top-level manual copy of the
-same plan.
+`docs/source/`. `docs/source/index.md`, `docs/source/overview.md`,
+`docs/source/submission-venue-selector-plan.md`, and
+`docs/source/course-management.md` are maintained manually;
+`docs/submission-venue-selector-plan.md` and `docs/course-management.md`
+are the top-level manual copies of those pages.
 
 ## Acknowledgements
 
