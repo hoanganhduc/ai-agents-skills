@@ -15,6 +15,7 @@ make plan ARGS="--profile library --artifact-profile research-entrypoints --with
 
 | Profile | Description | Skills |
 |---|---|---|
+| `course-management` | Course management toolkit skills: Classroom50, Canvas, Google Classroom, and local student DB agents. | `classroom50`, `course-canvas`, `course-google-classroom`, `course-db` |
 | `digest` | Tracked-topic and RSS digest workflows. | `research-digest-wrapper`, `rss-news-digest`, `digest-bridge` |
 | `document` | Document conversion and structured database lookup. | `docling`, `database-lookup` |
 | `ebook` | Ebook discovery and library handoff. | `calibre`, `vnthuquan` |

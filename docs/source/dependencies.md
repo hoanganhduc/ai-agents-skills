@@ -76,6 +76,7 @@ Status vocabulary used by `precheck`:
 | `beautifulsoup4-python-package` | `python` | bs4 |
 | `calibre-cli` | `tool` | calibre-cli |
 | `chromium-browser-system-tool` | `tool` | chromium-browser-system-tool |
+| `course-hoanganhduc-python-package` | `python` | course_hoanganhduc; candidate set `agent` |
 | `docling-mcp-python-package` | `python` | docling_mcp; candidate set `docling` |
 | `docling-python-package` | `python` | docling; candidate set `docling` |
 | `ebooklib-python-package` | `python` | ebooklib |
