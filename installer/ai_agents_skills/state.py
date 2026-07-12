@@ -203,7 +203,7 @@ def save_state(root: Path, data: dict[str, Any]) -> None:
     path = state_file(root)
     preflight_state_path(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_text_atomic(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+    write_text_atomic(path, json_document_text(data))
 
 
 def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
@@ -254,7 +254,12 @@ def write_run_record(root: Path, run_id: str, actions: list[dict[str, Any]]) -> 
     path = run_record_path(root, run_id)
     preflight_state_path(root, path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_text_atomic(path, json.dumps({"run_id": run_id, "actions": actions}, indent=2, sort_keys=True) + "\n")
+    write_text_atomic(path, json_document_text({"run_id": run_id, "actions": actions}))
+
+
+def json_document_text(data: Any) -> str:
+    """Serialize large installer journals with a compact, fast encoder."""
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n"
 
 
 def preflight_state_dir(root: Path) -> None:
