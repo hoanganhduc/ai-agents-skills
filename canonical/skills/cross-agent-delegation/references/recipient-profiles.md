@@ -112,7 +112,7 @@ Antigravity-like participant.
 - unsupported task classes: direct repo mutation, command execution, credential
   use, external posting, provider probing, or approval handling
 - symbolic credential requirements: none in V1
-- endpoint requirement: none; live dispatch is CLI-based through `grok --single`
+- endpoint requirement: none; live dispatch is CLI-based through `grok --prompt-file /dev/stdin`
   and uses an interactive OIDC session rather than an API-key environment
   variable
 - confirmation requirements: parent-owned, outside packet content

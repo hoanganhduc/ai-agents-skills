@@ -129,14 +129,17 @@ export AAS_ANTIGRAVITY_HIGHEST_THINKING='high'
 The dispatcher does not use `ANTIGRAVITY_LS_ADDRESS`; that variable belongs to
 language-server integrations outside this CLI subprocess adapter.
 
-For Grok, the managed fallback dispatch shape is `grok --single`. On hosts with
-the region-correct `grok-remote` proxy it is preferred automatically
-(first-found discovery), and elsewhere resolution falls through to a bare
-`grok`. Research runs should still configure the command explicitly, for
+For Grok, the managed fallback dispatch shape is `grok --prompt-file /dev/stdin`.
+The dispatcher delivers the prompt on stdin, and grok's `-p`/`--single` requires
+the prompt as an argv value (it does not read stdin), so the prompt is passed as a
+file read from fd 0; a bare `grok --single` here exits 2 with the prompt never
+sent. On hosts with the region-correct `grok-remote` proxy it is preferred
+automatically (first-found discovery), and elsewhere resolution falls through to a
+bare `grok`. Research runs should still configure the command explicitly, for
 example:
 
 ```bash
-export AAS_GROK_DISPATCH_COMMAND='grok --single --model {model}'
+export AAS_GROK_DISPATCH_COMMAND='grok --prompt-file /dev/stdin --model {model}'
 export AAS_GROK_LATEST_MODEL='<current-latest-model>'
 export AAS_GROK_HIGHEST_THINKING='high'
 ```

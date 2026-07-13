@@ -312,7 +312,13 @@ def default_dispatch_command(provider: str, command: str) -> str:
     if provider == "antigravity":
         return f"{command} --print"
     if provider == "grok":
-        return f"{command} --single"
+        # grok's -p/--single takes the prompt as an argv VALUE and does NOT read stdin, but the
+        # dispatcher delivers the prompt on stdin (run_command uses input=prompt). `--prompt-file
+        # /dev/stdin` is grok's file-based one-shot mode reading fd 0, so the piped prompt actually
+        # reaches grok. A bare `grok --single` here exits 2 ("a value is required for '--single
+        # <PROMPT>'") with the prompt never sent. grok-remote forwards this shape unchanged, and its
+        # mid-flow `grok models` egress probes do not consume stdin, so the prompt survives to grok.
+        return f"{command} --prompt-file /dev/stdin"
     return command
 
 
