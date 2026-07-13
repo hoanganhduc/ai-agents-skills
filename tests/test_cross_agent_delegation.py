@@ -26,6 +26,7 @@ from installer.ai_agents_skills.delegation_dispatch import (
     default_dispatch_command,
     expand_auto_providers,
     provider_env_defaults,
+    run_command,
 )
 from installer.ai_agents_skills.delegation_packets import RESULT_FIELDS, TASK_FIELDS, validate_result, validate_task
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
@@ -678,8 +679,8 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertIn("--print", plan[0]["command"])
             self.assertNotIn("ANTIGRAVITY_LS_ADDRESS", json.dumps(plan[0]))
 
-    def test_grok_dispatch_uses_single_flag_and_oidc_session(self):
-        self.assertEqual(default_dispatch_command("grok", "grok"), "grok --single")
+    def test_grok_dispatch_uses_prompt_file_and_oidc_session(self):
+        self.assertEqual(default_dispatch_command("grok", "grok"), "grok --prompt-file /dev/stdin")
 
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -722,7 +723,42 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
 
             self.assertEqual(plan[0]["status"], "ready")
             self.assertEqual(plan[0]["provider"], "grok")
-            self.assertIn("--single", plan[0]["command"])
+            self.assertIn("--prompt-file", plan[0]["command"])
+
+    def test_grok_dispatch_delivers_prompt_end_to_end(self):
+        # Regression guard for the prompt-transport contract. run_command sends the prompt on STDIN
+        # (input=prompt); real grok's -p/--single takes the prompt as an argv VALUE and does not read
+        # stdin, so the default shape must use `--prompt-file /dev/stdin`. Execute the resolved command
+        # against a fake mimicking grok's arg contract and assert the prompt round-trips -- and that the
+        # old `--single` shape does NOT (that is the bug that shipped: it errored before the prompt sent).
+        fake_grok = (
+            "#!/bin/sh\n"
+            'if [ "$1" = "--prompt-file" ]; then\n'
+            '  [ -n "$2" ] || { echo "missing path" >&2; exit 2; }\n'
+            '  cat "$2"; echo\n'
+            'elif [ "$1" = "--single" ] || [ "$1" = "-p" ]; then\n'
+            '  [ -n "$2" ] || { echo "value required for --single" >&2; exit 2; }\n'
+            '  printf "%s\\n" "$2"\n'
+            "else\n"
+            '  echo "unexpected: $*" >&2; exit 2\n'
+            "fi\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            grok = Path(tmp) / "grok"
+            grok.write_text(fake_grok, encoding="utf-8")
+            grok.chmod(0o755)
+            env = dict(os.environ)
+
+            good = default_dispatch_command("grok", str(grok))
+            self.assertIn("--prompt-file /dev/stdin", good)
+            result = run_command(good, "PROMPT_ROUND_TRIP", timeout=30, env=env, final_marker="M")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("PROMPT_ROUND_TRIP", result.stdout)  # the stdin prompt reached grok
+
+            # The old `--single` shape drops the stdin prompt and errors at arg-parse.
+            broken = run_command(f"{grok} --single", "PROMPT_ROUND_TRIP", timeout=30, env=env, final_marker="M")
+            self.assertNotEqual(broken.returncode, 0)
+            self.assertNotIn("PROMPT_ROUND_TRIP", broken.stdout)
 
     def test_deepseek_precheck_reports_endpoint(self):
         manifests = load_manifests()

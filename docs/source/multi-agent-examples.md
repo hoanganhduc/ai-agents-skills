@@ -43,9 +43,11 @@ provider dispatch command plus resolved latest-model and highest-thinking
 settings, for example `AAS_CLAUDE_DISPATCH_COMMAND`,
 `AAS_CLAUDE_LATEST_MODEL`, and `AAS_CLAUDE_HIGHEST_THINKING`. Antigravity
 dispatch is CLI-based through `agy --print`; it does not require
-`ANTIGRAVITY_LS_ADDRESS`. Grok dispatch is CLI-based through `grok --single`,
-prefers the region-correct `grok-remote` proxy when present, and uses an
-interactive OIDC session rather than an API-key environment variable.
+`ANTIGRAVITY_LS_ADDRESS`. Grok dispatch is CLI-based through
+`grok --prompt-file /dev/stdin` (the prompt is delivered on stdin; grok's
+`--single` needs an argv value and does not read stdin), prefers the
+region-correct `grok-remote` proxy when present, and uses an interactive OIDC
+session rather than an API-key environment variable.
 
 ## Orchestration Lifecycle
 
