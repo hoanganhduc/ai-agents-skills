@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -108,6 +109,7 @@ class StopHookPlannerTests(unittest.TestCase):
         return target_for(root, "claude")
 
     def test_emits_for_claude_when_runtime_selected(self) -> None:
+        from installer.ai_agents_skills.discovery import current_platform
         from installer.ai_agents_skills.manifest import load_manifests
         from installer.ai_agents_skills.planner import autoloop_stop_hook_actions
 
@@ -115,7 +117,7 @@ class StopHookPlannerTests(unittest.TestCase):
             root = Path(tmp)
             actions = autoloop_stop_hook_actions(
                 root, load_manifests(), ["autonomous-research-loop"], [self._claude(root)],
-                "full", None, "linux", False, False,
+                "full", None, current_platform(), False, False,
             )
             self.assertEqual(len(actions), 1)
             a = actions[0]
@@ -127,12 +129,37 @@ class StopHookPlannerTests(unittest.TestCase):
             settings_path = Path(a["path"])
             self.assertEqual(settings_path.name, "settings.json")
             self.assertEqual(settings_path.parent.name, ".claude")
-            # The Stop hook invokes the runtime's cross-platform hook-check directly
-            # (no shell wrapper); platform="linux" here -> the python3 interpreter.
+            # Planning for the host platform: the hook embeds the absolute interpreter running
+            # this install (sys.executable), so it needs no PATH lookup and cannot hit the
+            # Windows Store-alias stub or a missing bare "python3".
             command = a["entry"]["hooks"][0]["command"]
             self.assertIn("hook-check", command)
             self.assertIn("autonomous_research_loop_runtime.py", command)
-            self.assertIn("python3", command)
+            self.assertIn(f'"{sys.executable}"', command)
+
+    def test_foreign_platform_uses_named_launcher(self) -> None:
+        from installer.ai_agents_skills.discovery import current_platform
+        from installer.ai_agents_skills.manifest import load_manifests
+        from installer.ai_agents_skills.planner import autoloop_stop_hook_actions
+
+        # A plan for a platform other than the host cannot embed the host interpreter, so it
+        # falls back to a platform-appropriate name: "py" on Windows (never the Store alias
+        # stub), "python3" on POSIX.
+        foreign = "windows" if current_platform() != "windows" else "linux"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            actions = autoloop_stop_hook_actions(
+                root, load_manifests(), ["autonomous-research-loop"], [self._claude(root)],
+                "full", None, foreign, False, False,
+            )
+            self.assertEqual(len(actions), 1)
+            command = actions[0]["entry"]["hooks"][0]["command"]
+            self.assertIn("hook-check", command)
+            self.assertNotIn(sys.executable, command)
+            if foreign == "windows":
+                self.assertTrue(command.startswith('py "'))
+            else:
+                self.assertTrue(command.startswith('python3 "'))
 
     def test_skips_when_runtime_not_selected(self) -> None:
         from installer.ai_agents_skills.manifest import load_manifests

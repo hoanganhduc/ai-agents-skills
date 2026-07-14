@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -389,7 +390,22 @@ def autoloop_stop_hook_actions(
     # Stop hook behaves identically on every OS: the runtime reads the hook JSON on
     # stdin, honors the kill switches and the re-entrancy payload, and resolves the
     # project root from CLAUDE_PROJECT_DIR.
-    interpreter = "python" if platform == "windows" else "python3"
+    # Prefer the absolute interpreter running this install (sys.executable): it is guaranteed
+    # to exist, needs no PATH lookup when the Stop hook fires, and sidesteps both the Windows
+    # "python3" -> Microsoft Store alias stub ("Python was not found") and a missing bare
+    # "python3" on POSIX (pyenv/conda, or a hook subprocess whose PATH is narrower than the
+    # login shell). bootstrap.sh always selects a persistent interpreter (AAS_PYTHON, the repo
+    # .venv, or a system python) -- never an ephemeral one -- so the embedded path stays valid;
+    # a re-apply refreshes it if Python later moves. This is only sound when planning for the
+    # host we run on. For a cross-platform plan (an explicit --platform differing from the host,
+    # e.g. installing into the Windows Claude home from WSL) we cannot embed a host interpreter
+    # for a foreign target, so fall back to a platform-appropriate name: "py" (the Windows
+    # launcher, never the Store stub) or "python3" on POSIX.
+    target_platform = current_platform(platform)
+    if target_platform == current_platform():
+        interpreter = f'"{sys.executable}"'
+    else:
+        interpreter = "py" if target_platform == "windows" else "python3"
     entry = {"hooks": [{"type": "command", "command": f'{interpreter} "{runtime_py}" hook-check'}]}
     actions: list[dict[str, Any]] = []
     for agent in agents:
