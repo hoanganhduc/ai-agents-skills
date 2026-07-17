@@ -36,6 +36,23 @@ This skill is the integration layer for the local `research_compute` broker.
 - the local machine is CPU, memory, disk, or GPU constrained for the requested workload
 - the workload is long-running enough that remote execution is a better fit
 
+## GitHub Actions offload
+
+When the broker or Modal is unavailable — or the workload is embarrassingly
+parallel certificate/enumeration sharding on a repo that already carries a
+compute branch — offload to GitHub Actions instead. Follow the contract in
+`references/github-actions-offload.md` (driver signature, per-config SIGALRM,
+no Pool on 2-core runners, merge `needs:` + non-vacuous banked-value controls,
+loud-fail semantics, staged pushes, merge-back/resume). Check billing once
+(`gh api /users/<owner>/settings/billing/usage`) before the first launch.
+
+When remote offload is unavailable (minutes exhausted, broker down,
+unverifiable credit) and computation must run locally, follow
+`references/local-compute-throttle.md` (one lockfile-guarded single-process
+job, idle priority per OS, subprocess-timeout watchdogs, chunked resumable
+checkpoints, load/CPU guards) — its rules are cross-platform (Linux, macOS,
+Windows).
+
 ## Core workflow
 
 1. If local resources matter, run `get-available-resources`.
