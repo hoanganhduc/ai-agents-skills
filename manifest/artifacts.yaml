@@ -22,6 +22,7 @@
         "template:deep-research-analysis",
         "template:deep-research-report",
         "template:autonomous-research-loop-runbook",
+        "template:autonomous-research-loop-portfolio-runbook",
         "template:engineering-delivery-loop-runbook",
         "template:reversible-decision-memo",
         "template:informal-to-lean-formalization-runbook",
@@ -41,6 +42,7 @@
         "template:deep-research-analysis",
         "template:deep-research-report",
         "template:autonomous-research-loop-runbook",
+        "template:autonomous-research-loop-portfolio-runbook",
         "template:cross-provider-research-panel",
         "template:manager-worker-research-review",
         "template:informal-to-lean-formalization-runbook",
@@ -156,6 +158,7 @@
         "template:deep-research-analysis",
         "template:deep-research-report",
         "template:autonomous-research-loop-runbook",
+        "template:autonomous-research-loop-portfolio-runbook",
         "template:engineering-delivery-loop-runbook",
         "template:reversible-decision-memo",
         "template:informal-to-lean-formalization-runbook",
@@ -309,6 +312,12 @@
       "autonomous-research-loop-runbook": {
         "description": "Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute offload.",
         "source": "autonomous-research-loop-runbook.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "modal-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
+      },
+      "autonomous-research-loop-portfolio-runbook": {
+        "description": "Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute offload.",
+        "source": "autonomous-research-loop-portfolio-runbook.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "modal-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
       },
