@@ -135,6 +135,23 @@ found and must cite at least one evidence id that resolves to a proof artifact,
 and `blocked` is not accepted: record the blocker and continue with `revise` or
 `delegate`.
 
+
+### Heavy computation inside iterations
+
+Route heavy computation (exhaustive enumeration, certificate suites, censuses)
+through the modal-research-compute skill: the local broker/Modal, or the
+GitHub Actions offload contract in
+`skills/modal-research-compute/references/github-actions-offload.md`.
+Local execution is for reasoning, spec building, and smoke slices only; a
+local job projected past a few minutes belongs on remote compute — or, when
+remote is unavailable, on the throttled local queue defined in
+`skills/modal-research-compute/references/local-compute-throttle.md`
+(cross-platform: lockfile singleton, idle priority, chunked resumable
+checkpoints, load guards). Never launch ad-hoc unthrottled heavy processes. Record run
+IDs and quote runner-log lines (not agent summaries) when banking offloaded
+results, and treat a red run with zero artifacts as a wiring bug but a red
+run with FAIL rows as mathematics to investigate.
+
 ## Evidence Gates
 
 Apply the relevant gates before accepting an iteration output:
