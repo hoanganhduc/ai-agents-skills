@@ -46,6 +46,13 @@ no Pool on 2-core runners, merge `needs:` + non-vacuous banked-value controls,
 loud-fail semantics, staged pushes, merge-back/resume). Check billing once
 (`gh api /users/<owner>/settings/billing/usage`) before the first launch.
 
+When remote offload is unavailable (minutes exhausted, broker down,
+unverifiable credit) and computation must run locally, follow
+`references/local-compute-throttle.md` (one lockfile-guarded single-process
+job, idle priority per OS, subprocess-timeout watchdogs, chunked resumable
+checkpoints, load/CPU guards) — its rules are cross-platform (Linux, macOS,
+Windows).
+
 ## Core workflow
 
 1. If local resources matter, run `get-available-resources`.
