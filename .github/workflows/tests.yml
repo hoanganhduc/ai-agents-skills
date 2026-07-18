@@ -158,6 +158,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Install Python compatibility dependencies
+        run: python -m pip install 'tomli>=2; python_version < "3.11"'
+
       - name: Run sanitizer checks
         run: make sanitize-check
 
