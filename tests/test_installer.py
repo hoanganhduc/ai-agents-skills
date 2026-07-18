@@ -200,6 +200,29 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("fresh", body.lower())
         self.assertIn("backtrack", body.lower())
 
+    def test_autonomous_research_loop_portfolio_runbook_template_registered(self) -> None:
+        manifests = load_manifests()
+        templates = manifests["artifacts"]["artifacts"]["template"]
+        self.assertIn("autonomous-research-loop-portfolio-runbook", templates)
+        spec = templates["autonomous-research-loop-portfolio-runbook"]
+        for skill in ("autonomous-research-loop", "cross-agent-delegation",
+                      "modal-research-compute", "research-verification-gate"):
+            self.assertIn(skill, spec["depends_on_skills"])
+        profiles = manifests["artifacts"]["artifact_profiles"]
+        for prof in ("workflow-templates", "workflow-artifacts", "serious-research"):
+            self.assertIn("template:autonomous-research-loop-portfolio-runbook",
+                          profiles[prof]["artifacts"])
+        body = render_artifact_content(
+            "template", "autonomous-research-loop-portfolio-runbook", spec, "claude")
+        # Fidelity: the load-bearing portfolio-variant requirements must survive rendering.
+        self.assertIn("Definition of Done", body)
+        self.assertIn("portfolio", body)
+        self.assertIn("Approach Registry", body)
+        self.assertIn("ASK", body)
+        self.assertIn("Modal credit", body)
+        self.assertIn("fresh", body.lower())
+        self.assertIn("backtrack", body.lower())
+
     def test_skill_recommended_templates_coupling(self) -> None:
         manifests = load_manifests()
         skills = manifests["skills"]["skills"]
@@ -208,7 +231,8 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(skills["tikz-draw"]["recommended_templates"],
                          ["tikz-figure-verification-runbook"])
         self.assertEqual(skills["autonomous-research-loop"]["recommended_templates"],
-                         ["autonomous-research-loop-runbook"])
+                         ["autonomous-research-loop-runbook",
+                          "autonomous-research-loop-portfolio-runbook"])
         for name, spec in skills.items():
             for slug in spec.get("recommended_templates", []):
                 self.assertIn(slug, templates, f"{name} recommends missing template {slug}")
