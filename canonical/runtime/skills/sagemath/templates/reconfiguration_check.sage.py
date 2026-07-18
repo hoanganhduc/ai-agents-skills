@@ -36,7 +36,7 @@ else:
     chrom_poly = G.chromatic_polynomial()
     num_colorings = int(chrom_poly(k))
 
-    # Build reconfiguration graph (Kempe adjacency)
+    # Build reconfiguration graph (single-vertex recoloring adjacency)
     # Two colorings are adjacent if they differ on exactly one vertex
     colorings = []
     vertices = list(G.vertices())

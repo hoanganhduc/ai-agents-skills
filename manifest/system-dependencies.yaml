@@ -30,7 +30,7 @@
       "requirement": "required for runtime-backed skills and the installer",
       "linux": "Native Python 3.10+ detected from environment override, repo venv, python3, or python.",
       "windows": "Native Python 3.10+ detected from environment override, repo venv, C:\\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python.",
-      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "submission-venue-selector", "annotated-review", "modal-research-compute", "session-logs", "lean-formalization-intake", "lean-explore-mcp", "lean-strict-verification-gate"]
+      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "submission-venue-selector", "annotated-review", "modal-research-compute", "hetzner-research-compute", "kaggle-research-compute", "session-logs", "lean-formalization-intake", "lean-explore-mcp", "lean-strict-verification-gate"]
     },
     "bash-or-posix-shell": {
       "display_name": "Bash or POSIX-compatible shell",
@@ -150,6 +150,20 @@
       "linux": "Installed by the modal Python package and authenticated with modal token set/new.",
       "windows": "Installed into the agent virtualenv; wrappers add the venv Scripts directory to PATH.",
       "used_by": ["modal-research-compute"]
+    },
+    "hcloud-cli": {
+      "display_name": "Hetzner Cloud CLI",
+      "requirement": "optional until up/push/run/wait/fetch/down are used",
+      "linux": "hcloud on PATH; HCLOUD_TOKEN supplied via the environment, never an hcloud context file.",
+      "windows": "hcloud.exe or hcloud on PATH; HCLOUD_TOKEN supplied via the environment.",
+      "used_by": ["hetzner-research-compute"]
+    },
+    "kaggle-cli": {
+      "display_name": "Kaggle CLI",
+      "requirement": "optional until push/status/wait/fetch/run are used",
+      "linux": "kaggle on PATH (pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'); the new Kaggle API token is supplied via KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never a legacy kaggle.json or KAGGLE_USERNAME + KAGGLE_KEY.",
+      "windows": "kaggle.exe or kaggle on PATH (pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'); KAGGLE_API_TOKEN supplied via the environment (or %USERPROFILE%\\.kaggle\\access_token).",
+      "used_by": ["kaggle-research-compute"]
     },
     "gpu-inspection-tools": {
       "display_name": "GPU inspection tools",
@@ -391,6 +405,20 @@
       "used_by": ["modal-research-compute"],
       "source": "Modal research-compute docs and Modal app imports."
     },
+    "kaggle": {
+      "requirement": "kaggle>=1.8.0",
+      "import_name": "kaggle",
+      "platforms": ["linux", "windows"],
+      "used_by": ["kaggle-research-compute"],
+      "source": "Kaggle CLI (>=1.8.0) kernel push/status/output; authenticates with the new KAGGLE_API_TOKEN (or ~/.kaggle/access_token)."
+    },
+    "kagglehub": {
+      "requirement": "kagglehub>=0.4.1",
+      "import_name": "kagglehub",
+      "platforms": ["linux", "windows"],
+      "used_by": ["kaggle-research-compute"],
+      "source": "kagglehub (>=0.4.1) validates the new Kaggle API token via kagglehub.whoami() and yields the authenticated username."
+    },
     "lean-explore": {
       "requirement": "lean-explore",
       "import_name": "lean_explore",
@@ -505,6 +533,14 @@
     "modal": {
       "description": "Modal token file and workspace credentials are configured outside this repo.",
       "used_by": ["modal-research-compute"]
+    },
+    "hetzner": {
+      "description": "Hetzner Cloud API token from a dedicated least-privilege project is configured outside this repo and read from the HCLOUD_TOKEN environment variable at runtime; it is never written to argv, logs, an hcloud context file, or a provisioned server.",
+      "used_by": ["hetzner-research-compute"]
+    },
+    "kaggle": {
+      "description": "The new single Kaggle API token is configured outside this repo and read from the KAGGLE_API_TOKEN environment variable (or ~/.kaggle/access_token) at runtime; kagglehub validates it and the kaggle CLI authenticates kernel ops with it. It is never written to argv, logs, a legacy kaggle.json, or a kernel, and the legacy KAGGLE_USERNAME + KAGGLE_KEY pair is not used. ToS: use for modest, legitimate research workloads only.",
+      "used_by": ["kaggle-research-compute"]
     },
     "google-drive": {
       "description": "Google Drive service-account or OAuth credentials are configured outside this repo.",

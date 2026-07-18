@@ -2,8 +2,8 @@
 
 Battle-tested patterns for sharding heavy research computation (enumeration,
 certificate suites, censuses) onto GitHub Actions runners. Derived from a
-long-running Kempe-reconfiguration campaign (60+ sharded suites, ~10^9 graphs,
-zero lost results after adopting this contract). Use these as the default
+long-running research computation campaign (60+ sharded suites, ~10^9 objects
+enumerated, zero lost results after adopting this contract). Use these as the default
 implementation whenever a research loop offloads to Actions.
 
 ## Preconditions

@@ -648,7 +648,8 @@
         "claude",
         "deepseek",
         "opencode",
-        "antigravity"
+        "antigravity",
+        "grok"
       ],
       "required_dependencies": [
         "python-runtime",
@@ -1137,7 +1138,8 @@
         "claude",
         "deepseek",
         "opencode",
-        "antigravity"
+        "antigravity",
+        "grok"
       ],
       "required_dependencies": [
         "python-runtime"
@@ -1145,6 +1147,68 @@
       "optional_dependencies": [
         "modal-python-package",
         "modal-auth"
+      ],
+      "optional_capabilities": [
+        "remote-cpu",
+        "remote-gpu"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
+    },
+    "hetzner-research-compute": {
+      "description": "Route heavy CPU or high-memory compute to a disposable Hetzner Cloud server through the local broker, with agent-driven provision, run, collect, and destroy under hard cost caps.",
+      "profiles": [
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity",
+        "grok"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "hcloud-cli",
+        "hetzner-auth"
+      ],
+      "optional_capabilities": [
+        "remote-cpu",
+        "disposable-vm"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible"
+      ]
+    },
+    "kaggle-research-compute": {
+      "description": "Route heavy compute to free Kaggle Kernels through the local broker, with agent-driven push, poll, fetch, and a multi-run resume loop across concurrent kernels; free CPU (quota-free) and GPU under a self-imposed weekly GPU-hour cap.",
+      "profiles": [
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity",
+        "grok"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "kaggle-cli",
+        "kaggle-python-package",
+        "kagglehub-python-package",
+        "kaggle-auth"
       ],
       "optional_capabilities": [
         "remote-cpu",

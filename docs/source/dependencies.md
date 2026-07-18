@@ -49,7 +49,9 @@ Status vocabulary used by `precheck`:
 | `git-cli` | Git command line client for repository-backed workflows and GitHub publishing. |
 | `github-cli` | GitHub CLI for workflows that need local Actions, PR, issue, or authentication commands. |
 | `gnupg-system-tool` | GnuPG (gpg) for optional PGP/MIME signing of outgoing email in send-email. |
+| `hcloud-cli` | Hetzner Cloud CLI used by the hetzner-research-compute lane to provision, run on, and DESTROY disposable compute servers. |
 | `imagemagick-system-tool` | ImageMagick convert/magick for optional post-capture cropping. |
+| `kaggle-cli` | Kaggle CLI (>=1.8.0) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=0.4.1) validates the API token. Auth is the new single Kaggle API token from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a kaggle.json. |
 | `lake-cli` | Lake command line executable for optional Lean project checks. |
 | `lean-cli` | Lean command line executable for optional local formal typechecking. |
 | `libreoffice-system-tool` | LibreOffice (soffice) headless for rendering PPTX decks to PDF. |
@@ -90,7 +92,13 @@ Status vocabulary used by `precheck`:
 | `gnupg-system-tool` | `tool` | gnupg-system-tool |
 | `google-api-python-client-package` | `python` | googleapiclient |
 | `google-auth-python-package` | `python` | google.oauth2 |
+| `hcloud-cli` | `tool` | hcloud-cli |
+| `hetzner-auth` | `remote-service` | remote-service |
 | `imagemagick-system-tool` | `tool` | imagemagick-system-tool |
+| `kaggle-auth` | `remote-service` | remote-service |
+| `kaggle-cli` | `tool` | kaggle-cli |
+| `kaggle-python-package` | `python` | kaggle; candidate set `agent` |
+| `kagglehub-python-package` | `python` | kagglehub; candidate set `agent` |
 | `kokoro-python-package` | `python` | kokoro |
 | `lean-explore-local-cache` | `manual-data` | manual-data |
 | `lean-explore-python-package` | `python` | lean_explore; candidate set `agent` |
@@ -167,6 +175,8 @@ Evidence inspected:
 | `github-cli` | optional for GitHub workflows that need local gh commands | gh on PATH with auth configured when needed. | gh.exe or gh on PATH with auth configured when needed. | `github`, `gh-fix-ci`, `yeet` |
 | `gnupg` | optional; only needed for PGP/MIME email signing (send-email --sign) | gpg on PATH with your secret key in the keyring, e.g. apt-get install gnupg. | gpg.exe on PATH (Gpg4win), with your secret key imported. | `send-email` |
 | `gpu-inspection-tools` | optional resource preflight enhancement | nvidia-smi for NVIDIA or rocm-smi for AMD when present. | nvidia-smi.exe or rocm-smi.exe when present; WSL GPU visibility depends on host driver support. | `get-available-resources` |
+| `hcloud-cli` | optional until up/push/run/wait/fetch/down are used | hcloud on PATH; HCLOUD_TOKEN supplied via the environment, never an hcloud context file. | hcloud.exe or hcloud on PATH; HCLOUD_TOKEN supplied via the environment. | `hetzner-research-compute` |
+| `kaggle-cli` | optional until push/status/wait/fetch/run are used | kaggle on PATH (pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'); the new Kaggle API token is supplied via KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never a legacy kaggle.json or KAGGLE_USERNAME + KAGGLE_KEY. | kaggle.exe or kaggle on PATH (pip install 'kaggle>=1.8.0' 'kagglehub>=0.4.1'); KAGGLE_API_TOKEN supplied via the environment (or %USERPROFILE%\.kaggle\access_token). | `kaggle-research-compute` |
 | `lake-cli` | optional for local Lean project checks; never installed by wrappers | Lake executable on PATH, via AAS_LAKE, or via an existing elan install. | Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate` |
 | `libreoffice` | optional PPTX renderer; not needed on Windows when Microsoft PowerPoint is installed | soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | soffice.exe on PATH from a LibreOffice install. | `slides-to-video PPTX input` |
@@ -178,7 +188,7 @@ Evidence inspected:
 | `ocr-runtime` | optional for scanned-document OCR | Tesseract with tessdata available; current Claude docling docs use TESSDATA_PREFIX=/usr/share/tessdata/. | Current Windows docling flow prefers rapidocr Python extras; Tesseract may be used through WSL if needed. | `docling` |
 | `powershell-runtime` | required for Windows bootstrap and Windows wrapper execution | not required | PowerShell 5.1+ or PowerShell 7+. | `make.bat`, `installer bootstrap`, `Windows runtime wrappers` |
 | `pptx-renderer` | optional, required only for PPTX input rendering | LibreOffice soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | Microsoft PowerPoint from Microsoft Office via COM automation, or LibreOffice soffice.exe on PATH. | `slides-to-video PPTX input` |
-| `python-runtime` | required for runtime-backed skills and the installer | Native Python 3.10+ detected from environment override, repo venv, python3, or python. | Native Python 3.10+ detected from environment override, repo venv, C:\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python. | `installer`, `zotero`, `calibre`, `docling`, `get-available-resources`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `graph-verifier`, `submission-venue-selector`, `annotated-review`, `modal-research-compute`, `session-logs`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate` |
+| `python-runtime` | required for runtime-backed skills and the installer | Native Python 3.10+ detected from environment override, repo venv, python3, or python. | Native Python 3.10+ detected from environment override, repo venv, C:\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python. | `installer`, `zotero`, `calibre`, `docling`, `get-available-resources`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `graph-verifier`, `submission-venue-selector`, `annotated-review`, `modal-research-compute`, `hetzner-research-compute`, `kaggle-research-compute`, `session-logs`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate` |
 | `ripgrep-cli` | optional but expected by local search/session workflows | rg on PATH. | rg.exe or rg on PATH. | `session-logs`, `research workflows`, `repo inspection` |
 | `sagemath` | required for the sagemath skill and optional Sage-backed graph/TikZ workflows | Native executable via `AAS_SAGE`, `sage` on `PATH`, a local Sage install, or a Docker-backed wrapper that behaves like `sage` for `--version` and `-c` probes. | WSL-backed SageMath inside Ubuntu 24.04, detected through wsl.exe when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when available, or an ext4.vhdx presence warning when the distro image is not inspectable. | `sagemath`, `tikz-draw`, `openclaw/source research math verification` |
 | `tex-runtime` | required for TikZ compile checks and optional annotated-review LaTeX/PDF output | TeX Live or compatible distribution providing pdflatex, lualatex, or xelatex. | MiKTeX, TeX Live, or compatible distribution providing pdflatex.exe, lualatex.exe, or xelatex.exe. | `tikz-draw`, `annotated-review` |
@@ -199,6 +209,8 @@ Evidence inspected:
 | `feedparser` | `feedparser` | feedparser | `linux`, `windows` | `research-digest-wrapper`, `rss-news-digest` |
 | `google-api-python-client` | `googleapiclient` | google-api-python-client>=2.100.0 | `linux`, `windows` | `calibre Google Drive sync`, `zotero Google Drive helpers` |
 | `google-auth` | `google.oauth2` | google-auth>=2.23.0 | `linux`, `windows` | `calibre Google Drive sync`, `zotero Google Drive helpers` |
+| `kaggle` | `kaggle` | kaggle>=1.8.0 | `linux`, `windows` | `kaggle-research-compute` |
+| `kagglehub` | `kagglehub` | kagglehub>=0.4.1 | `linux`, `windows` | `kaggle-research-compute` |
 | `kokoro` | `kokoro` | kokoro>=0.9.4 | `linux`, `windows` | `slides-to-video` |
 | `lean-explore` | `lean_explore` | lean-explore | `linux`, `windows` | `lean-explore-mcp` |
 | `local-getscipapers-helper` | `redacted` | optional local helper package with a maintainer-specific import name | `windows` | `zotero metadata fallback` |
@@ -241,6 +253,8 @@ Evidence inspected:
 | `github` | GitHub app/CLI authentication is configured outside this repo. | `github`, `gh-fix-ci`, `yeet` |
 | `github-copilot-cli` | Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when the Copilot target is detected or selected; known credential sources are reported by presence rather than value, config secret values are not read, and command arguments/version output are redacted. | `copilot target` |
 | `google-drive` | Google Drive service-account or OAuth credentials are configured outside this repo. | `calibre`, `zotero optional Google Drive helpers` |
+| `hetzner` | Hetzner Cloud API token from a dedicated least-privilege project is configured outside this repo and read from the HCLOUD_TOKEN environment variable at runtime; it is never written to argv, logs, an hcloud context file, or a provisioned server. | `hetzner-research-compute` |
+| `kaggle` | The new single Kaggle API token is configured outside this repo and read from the KAGGLE_API_TOKEN environment variable (or ~/.kaggle/access_token) at runtime; kagglehub validates it and the kaggle CLI authenticates kernel ops with it. It is never written to argv, logs, a legacy kaggle.json, or a kernel, and the legacy KAGGLE_USERNAME + KAGGLE_KEY pair is not used. ToS: use for modest, legitimate research workloads only. | `kaggle-research-compute` |
 | `leanexplore` | LeanExplore API key, MCP client configuration, and local search data are configured manually outside this repo; helpers report presence only and never write config or download data. | `lean-explore-mcp` |
 | `modal` | Modal token file and workspace credentials are configured outside this repo. | `modal-research-compute` |
 | `provider-configs` | OpenAI, Claude, DeepSeek, Copilot, and other provider auth/config files are intentionally excluded. | `agent frontends` |

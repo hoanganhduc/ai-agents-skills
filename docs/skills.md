@@ -43,7 +43,9 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `get-available-resources` | Detect CPU, memory, disk, and optional accelerator availability before heavy local work. | `workflow-tools`, `serious-research`, `full-research` |
 | `getscipapers-requester` | External paper retrieval fallback after local library checks. | `library`, `serious-research`, `full-research` |
 | `graph-verifier` | Lightweight graph sanity checks. | `math`, `full-research` |
+| `hetzner-research-compute` | Route heavy CPU or high-memory compute to a disposable Hetzner Cloud server through the local broker, with agent-driven provision, run, collect, and destroy under hard cost caps. | `full-research` |
 | `intent-interview` | Elicit and confirm real intent one question at a time before any brief, spec, or code. | `research-core`, `serious-research`, `full-research` |
+| `kaggle-research-compute` | Route heavy compute to free Kaggle Kernels through the local broker, with agent-driven push, poll, fetch, and a multi-run resume loop across concurrent kernels; free CPU (quota-free) and GPU under a self-imposed weekly GPU-hour cap. | `full-research` |
 | `lean-explore-mcp` | Optional inert LeanExplore MCP setup helper for Lean declaration search. | `formal-research`, `formal-research-remote`, `full-research` |
 | `lean-formalization-intake` | Optional local-first Lean formalization intake and suitability decision workflow. | `formal-research`, `formal-research-remote`, `full-research` |
 | `lean-strict-verification-gate` | Scanner-first Lean artifact verification gate that separates typecheck status from claim support. | `formal-research`, `formal-research-remote`, `full-research` |

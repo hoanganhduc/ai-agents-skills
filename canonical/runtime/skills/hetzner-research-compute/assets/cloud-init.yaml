@@ -1,0 +1,44 @@
+#cloud-config
+# ---------------------------------------------------------------------------
+# Hetzner dead-man's-switch (plan section 6, Arm 1). This is a TEMPLATE rendered by
+# hetzner_driver.render_cloud_init(): the {{MAX_MINUTES}} / {{MAX_SECONDS}} tokens are
+# substituted from the configured max_server_hours TTL before the file is passed to
+# `hcloud server create --user-data-from-file`.
+#
+# Purpose: cap COMPUTE on a rented box even if the controlling driver dies. It is
+# boot-relative and skew-immune (`shutdown -h +N` counts N minutes from now, so a wrong
+# clock cannot defeat it) and carries NO credential -- a server can only power itself OFF,
+# never delete itself. A powered-off Hetzner server STILL BILLS, so this only caps compute;
+# the detached reaper then sees the powered-off/past-TTL server and DELETEs it (the billing
+# stopper). Arm 1 (this file) hands off to Arm 2 (the reaper) by design.
+#
+# Two independent arms are installed so tampering with one still leaves the other:
+#   Arm 1a  `shutdown -h +MAX`               -- kernel-scheduled halt at the cap.
+#   Arm 1b  systemd unit with RuntimeMaxSec  -- systemd hard-stops a guard unit at the cap
+#            and powers the box off via ExecStopPost, even if the shutdown above was
+#            cancelled. The disposable box is single-boot, so the unit is started directly
+#            (async, no reboot-persistence needed).
+# ---------------------------------------------------------------------------
+write_files:
+  - path: /etc/systemd/system/aas-deadman.service
+    permissions: '0644'
+    content: |
+      [Unit]
+      Description=ai-agents-skills dead-man's-switch (compute self-cap backstop)
+      [Service]
+      Type=oneshot
+      # RuntimeMaxSec backstop: systemd terminates this unit at the cap regardless of the
+      # sleep below; ExecStopPost then powers the machine off. Independent of `shutdown`.
+      RuntimeMaxSec={{MAX_SECONDS}}
+      ExecStart=/bin/sleep {{MAX_SECONDS_PLUS}}
+      ExecStopPost=/bin/systemctl poweroff --no-block
+      TimeoutStopSec=60
+
+runcmd:
+  # Arm 1a: boot-relative absolute halt at the compute cap.
+  - [ /bin/sh, -c, "shutdown -h +{{MAX_MINUTES}} 'ai-agents-skills dead-man switch: compute cap {{MAX_MINUTES}} min'" ]
+  # Arm 1b: start the RuntimeMaxSec backstop unit asynchronously (--no-block so cloud-init
+  # does not wait on it). No reboot-persistence needed: the box is single-boot and disposable.
+  - [ /bin/sh, -c, "systemctl daemon-reload && systemctl start --no-block aas-deadman.service || true" ]
+
+final_message: "ai-agents-skills dead-man switch armed: compute capped at {{MAX_MINUTES}} min (no credential on this server; the detached reaper deletes it)."

@@ -192,6 +192,24 @@
       },
       "capabilities": ["github"]
     },
+    "hcloud-cli": {
+      "description": "Hetzner Cloud CLI used by the hetzner-research-compute lane to provision, run on, and DESTROY disposable compute servers.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": ["hcloud"],
+        "windows": ["hcloud.exe", "hcloud"]
+      },
+      "capabilities": ["hetzner"]
+    },
+    "kaggle-cli": {
+      "description": "Kaggle CLI (>=1.8.0) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=0.4.1) validates the API token. Auth is the new single Kaggle API token from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a kaggle.json.",
+      "version_constraint": ">=1.8.0",
+      "candidates": {
+        "linux": ["kaggle"],
+        "windows": ["kaggle.exe", "kaggle"]
+      },
+      "capabilities": ["kaggle"]
+    },
     "ripgrep-cli": {
       "description": "ripgrep command line search used by local research and session-inspection workflows.",
       "version_constraint": "any",
@@ -482,6 +500,8 @@
     "google-auth-python-package": {"type": "python", "module": "google.oauth2"},
     "ebooklib-python-package": {"type": "python", "module": "ebooklib"},
     "modal-python-package": {"type": "python", "module": "modal", "candidate_set": "agent"},
+    "kaggle-python-package": {"type": "python", "module": "kaggle", "candidate_set": "agent"},
+    "kagglehub-python-package": {"type": "python", "module": "kagglehub", "candidate_set": "agent"},
     "lean-explore-python-package": {"type": "python", "module": "lean_explore", "candidate_set": "agent"},
     "torch-python-package": {"type": "python", "module": "torch", "candidate_set": "docling"},
     "torchvision-python-package": {"type": "python", "module": "torchvision", "candidate_set": "docling"},
@@ -489,12 +509,16 @@
     "zotero-credentials": {"type": "remote-service"},
     "telegram-bot-config": {"type": "remote-service"},
     "modal-auth": {"type": "remote-service"},
+    "hetzner-auth": {"type": "remote-service"},
+    "kaggle-auth": {"type": "remote-service"},
     "axle-auth": {"type": "remote-service"},
     "leanexplore-auth": {"type": "remote-service"},
     "lean-explore-local-cache": {"type": "manual-data"},
     "calibre-cli": {"type": "tool", "logical_tool": "calibre-cli"},
     "git-cli": {"type": "tool", "logical_tool": "git-cli"},
     "github-cli": {"type": "tool", "logical_tool": "github-cli"},
+    "hcloud-cli": {"type": "tool", "logical_tool": "hcloud-cli"},
+    "kaggle-cli": {"type": "tool", "logical_tool": "kaggle-cli"},
     "ripgrep-cli": {"type": "tool", "logical_tool": "ripgrep-cli"},
     "getscipapers": {"type": "tool", "logical_tool": "getscipapers-cli"},
     "nvidia-smi-tool": {"type": "tool", "logical_tool": "nvidia-smi-tool"},
