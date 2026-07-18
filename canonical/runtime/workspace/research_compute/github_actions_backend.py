@@ -25,6 +25,7 @@ from . import budget_ledger
 GH_API_VERSION = "2026-03-10"
 OS_MULTIPLIER = {"linux": 1.0, "ubuntu": 1.0, "windows": 2.0, "macos": 10.0}
 PLAN_INCLUDED_MINUTES = {"free": 2000, "pro": 3000, "team": 3000, "enterprise": 50000}
+DEFAULT_MAX_USAGE_FRACTION = 0.60
 
 
 class GhaError(RuntimeError):
@@ -89,6 +90,66 @@ def worst_case_minutes(repo_cfg: dict[str, Any], cells: int = 1) -> float:
     timeout = min(int(repo_cfg.get("timeout_minutes", 30)), 360)
     mult = OS_MULTIPLIER.get(str(repo_cfg.get("runner_os", "linux")).lower(), 1.0)
     return math.ceil(timeout) * mult * max(1, cells)
+
+
+# ---- lane availability: cumulative 60% minutes cap (plan §6.1; mockable + gated) ----
+
+def usage_probe(owner: str, config: Any) -> dict[str, float]:  # pragma: no cover - real API path, never exercised in tests
+    """Actual CUMULATIVE account-wide Actions minutes used this cycle (all workflows) plus
+    the plan's included minutes, from the GitHub billing/usage API. The single mockable
+    hook for the lane's usage read; tests replace USAGE_PROBE (in-process) or inject a
+    result via resources['liveness']['gha']. The real call fires only at plan/doctor time."""
+    return {"used_this_cycle": float(minutes_used_this_cycle(owner)),
+            "included_minutes": float(included_minutes(owner, config))}
+
+
+USAGE_PROBE = usage_probe
+
+
+def _injected_usage(resources: Any) -> dict[str, Any] | None:
+    node = resources.get("liveness") if isinstance(resources, dict) else None
+    node = node.get("gha") if isinstance(node, dict) else None
+    return node if isinstance(node, dict) else None
+
+
+def usage_cap_ok(*, repo_cfg: dict[str, Any], config: Any, cells: int = 1,
+                 resources: Any = None) -> tuple[bool, dict[str, Any]]:
+    """GitHub Actions lane availability under the CUMULATIVE minutes cap (plan §6.1). The
+    lane is available only while the account-wide minutes already used this cycle plus this
+    job's worst case stay within ``max_usage_fraction`` of the included minutes:
+
+        used_this_cycle + job_worst_case <= max_usage_fraction * included_minutes
+
+    ``used_this_cycle`` is the TOTAL cumulative usage across ALL workflows (not a per-job
+    number), so the remaining ``1 - fraction`` of the monthly minutes is always reserved
+    for the user's other workflows. Injection-first (resources['liveness']['gha']) offline;
+    otherwise the real usage probe. Any usage-API failure => unavailable (fail-closed).
+    Returns (ok, detail)."""
+    fraction = float(getattr(config, "gha_max_usage_fraction", DEFAULT_MAX_USAGE_FRACTION))
+    owner = str(repo_cfg.get("repo", "")).split("/")[0]
+    injected = _injected_usage(resources)
+    try:
+        if injected is not None:
+            used = float(injected.get("used_this_cycle", 0.0))
+            inc = float(injected.get("included_minutes", 0.0)
+                        or getattr(config, "gha_included_minutes", 0) or 0.0)
+        else:
+            probe = USAGE_PROBE(owner, config)
+            used = float(probe["used_this_cycle"])
+            inc = float(probe["included_minutes"])
+    except GhaError as exc:
+        return False, {"ok": False, "reason": f"usage API unavailable (fail-closed): {exc}"}
+    worst = float(worst_case_minutes(repo_cfg, cells))
+    cap = fraction * inc
+    ok = inc > 0 and (used + worst) <= cap
+    detail = {
+        "ok": ok, "used_this_cycle": round(used, 1), "included_minutes": inc,
+        "worst_case": worst, "cap_minutes": round(cap, 1), "max_usage_fraction": fraction,
+        "reason": ("within usage cap" if ok else
+                   (f"used {used:.0f} + worst {worst:.0f} > {fraction:.0%} cap "
+                    f"({cap:.0f} of {inc:.0f} included)" if inc > 0 else "included_minutes unknown")),
+    }
+    return ok, detail
 
 
 def budget_gate(*, job_id: str, repo_cfg: dict[str, Any], config: Any, state_root: Path,

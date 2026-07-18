@@ -10,8 +10,20 @@ per_job_cost_cap_usd = 5.0
 default_archive_backend = "local"
 
 # Automatic backend order. The planner takes the first feasible, within-budget
-# backend; naming a backend in a job's policy ("local"|"modal"|"gha") overrides it.
-routing_order = ["local", "modal", "gha"]
+# backend; naming a backend in a job's policy ("local"|"kaggle"|"modal"|"hetzner"
+# |"gha") overrides it. `doctor` warns if this deviates from the intended priority.
+# Kaggle sits right behind local: its CPU compute is free and does NOT consume the
+# GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the
+# paid/quota'd lanes (Modal, Hetzner, GHA).
+routing_order = ["local", "kaggle", "modal", "hetzner", "gha"]
+# Router-wide GPU policy (plan §5.1). A job is GPU-requested when the estimate
+# auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)
+# OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit
+# request ALWAYS wins, even if auto-detection says CPU. A GPU-requested job walks
+# routing_order for the first GPU-capable + available lane: local (only if the box
+# has a GPU) -> Kaggle (free GPU under the weekly GPU-hour self-cap) -> Modal (paid
+# on-demand GPU workhorse); Hetzner has no on-demand GPU and is skipped; GitHub
+# Actions GPU is opt-in ([gha].gpu_enabled, off).
 # Optional Modal monthly spend cap (USD). 0 = rely on per_job_cost_cap_usd only.
 modal_monthly_budget_usd = 0.0
 
@@ -39,6 +51,13 @@ wait_poll_seconds = 5
 [gha]
 enabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes
 included_minutes = 0        # 0 = auto-detect from the account plan
+max_usage_fraction = 0.60   # GHA is available only while cumulative account-wide minutes
+                            # used this cycle + the job worst-case stay <= this fraction of
+                            # included_minutes -- reserving 40% for the user's other workflows
+gpu_enabled = false         # GPU on GitHub Actions requires PAID "larger runners"
+                            # (Team/Enterprise; not free minutes, not public repos), so it is
+                            # opt-in and OFF by default. When on, the GHA lane is GPU-capable
+                            # for GPU-requested jobs (still under max_usage_fraction).
 
 # One block per private research repo that carries an in-repo experiment.yml.
 # The broker sends only parameters (data); it never sends code.
@@ -51,3 +70,87 @@ included_minutes = 0        # 0 = auto-detect from the account plan
 # runner_os = "linux"                  # minute multiplier: linux 1x, windows 2x, macos 10x
 # timeout_minutes = 30
 # monthly_minute_budget = <minutes>   # optional per-repo cap
+
+# ---------------------------------------------------------------------------
+# Local-lane self-preservation veto (plan §5). Before choosing the local lane the
+# planner projects the full-run load and pins a safe worker count; a runtime
+# watchdog aborts and re-routes if the load breaches the ceiling mid-run. All
+# thresholds are fractions of the logical core count N. Conservative defaults;
+# calibrate to this host's measured auto-restart point.
+# ---------------------------------------------------------------------------
+[local]
+danger_load_frac = 0.5        # w_safe = floor(danger_load_frac*N - loadavg - session_headroom_frac*N)
+session_headroom_frac = 0.15  # reserve headroom for the interactive session itself
+soft = 0.4                    # soft breach (fraction of N): shed a worker
+hard = 0.55                   # hard breach (fraction of N): checkpoint + abort + fall back
+local_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads
+
+# ---------------------------------------------------------------------------
+# Hetzner Cloud lane (peer to Modal / GitHub Actions; the offload tier after Modal
+# for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->
+# DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE
+# stops it -- so teardown must run on every terminal path (later phase). GPU work
+# is out of scope in v1 and falls through to Modal. Disabled until HCLOUD_TOKEN
+# (from a dedicated least-privilege Hetzner project) is set and `doctor` passes.
+# ---------------------------------------------------------------------------
+[hetzner]
+enabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes
+location = "nbg1"             # default provisioning location; preflight availability-checks the
+                             # live datacenter list and picks an orderable location from the allow-list
+allowed_locations = ["nbg1", "hel1", "sin"]  # current orderable regions (fsn1 has no orderable types)
+image = "ubuntu-24.04"
+monthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only
+max_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)
+max_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap
+max_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4
+max_concurrent_servers = 2    # the Hetzner project server-limit enforces this too
+gpu_server_types = []         # empty in v1: GPU work falls through to Modal
+
+# Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current
+# orderable x86 generation; override per account). The router picks the cheapest adequate
+# type -- CPX22 (2 cores) for small jobs, CPX62 (16 AMD cores) for <=16-way, else CCX63
+# (48 dedicated cores). ARM cax* is supply-constrained and omitted. wall_h = core_h / vcpu.
+[hetzner.server_types.cpx22]
+vcpu = 2
+ram_gb = 4
+arch = "x86"
+eur_per_hour = 0.0180
+
+[hetzner.server_types.cpx62]
+vcpu = 16
+ram_gb = 32
+arch = "x86"
+eur_per_hour = 0.1550
+
+[hetzner.server_types.ccx63]
+vcpu = 48
+ram_gb = 192
+arch = "x86"
+eur_per_hour = 1.3678
+
+# ---------------------------------------------------------------------------
+# Kaggle Kernels lane (peer to Modal / Hetzner / GitHub Actions; the FIRST offload
+# tier after local). Kaggle runs async kernels (push a script + kernel-metadata,
+# poll status, download output), each capped at a 12h session on ~4 vCPU / ~32 GB.
+# CPU sessions are FREE and do NOT consume the weekly ~30h GPU quota, so CPU jobs are
+# ungated by quota (limited only by the 12h/session and concurrency caps). Kaggle has
+# no clean quota API, so GPU usage is bounded by a self-imposed weekly GPU-hour cap
+# read from a local usage ledger. Kernels auto-stop at 12h and cost nothing, so there
+# is NO cost gate, NO reaper, and NO teardown. A job longer than 12h spans multiple
+# kernel runs (push a chunk -> download checkpoints -> re-push to resume). Auth is the
+# new single Kaggle API token supplied via the KAGGLE_API_TOKEN environment variable (or
+# ~/.kaggle/access_token) -- NOT the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a
+# kaggle.json. kagglehub (>=0.4.1) validates the token and the kaggle CLI (>=1.8.0) runs
+# the kernel ops. Disabled until KAGGLE_API_TOKEN is set in the environment and `doctor`
+# passes. ToS: keep to modest, legitimate research workloads; verify the current Kaggle
+# terms permit this use before the first live run (the build makes no live Kaggle calls).
+# ---------------------------------------------------------------------------
+[kaggle]
+enabled = false              # off until KAGGLE_API_TOKEN is present and `doctor` passes
+weekly_gpu_hours_cap = 18.0  # self-imposed weekly GPU-hour cap (a local ledger; ~60% of the ~30h
+                             # floating quota, mirroring the GHA 60% idea). CPU work is ungated.
+max_runs = 5                 # safety bound on the multi-run resume loop (rounds per job)
+concurrency = 5              # max concurrent kernels (Kaggle's concurrent-session limit is ~5)
+session_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)
+kernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate
+kernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate

@@ -186,6 +186,8 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 | `get-available-resources` | `offline-smoke` | yes | Smoke records local resource metadata to a temporary file without network or secrets. |
 | `getscipapers-requester` | `manual-native` | no | External paper retrieval is intentionally manual/network-gated and has no generic offline smoke. |
 | `graph-verifier` | `offline-smoke` | yes | Smoke validates a small local graph fixture and JSON result without network. |
+| `hetzner-research-compute` | `manual-native` | no | Hetzner lifecycle verbs require an HCLOUD_TOKEN and provision paid servers; they are not safe for generic offline smoke. The offline dry-run and guard paths are covered by tests/test_hetzner_research_compute.py. |
+| `kaggle-research-compute` | `manual-native` | no | Kaggle lifecycle verbs require the new Kaggle API token (KAGGLE_API_TOKEN or ~/.kaggle/access_token) and push real kernels; per Kaggle ToS no live call is made in the build. The offline dry-run, resume-loop, fan-out, and guard paths are covered by tests/test_kaggle_research_compute.py (all kaggle CLI calls and the kagglehub-validate hook mocked). |
 | `lean-explore-mcp` | `offline-smoke` | yes | Smoke validates inert LeanExplore MCP setup guidance without installing packages, starting services, or calling live APIs. |
 | `lean-formalization-intake` | `offline-smoke` | yes | Doctor smoke records local Lean availability without installing dependencies. |
 | `lean-strict-verification-gate` | `offline-smoke` | yes | Doctor smoke records local Lean availability and scanner status without installing dependencies. |

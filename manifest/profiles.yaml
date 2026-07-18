@@ -175,6 +175,8 @@
         "prose",
         "cross-agent-delegation",
         "modal-research-compute",
+        "hetzner-research-compute",
+        "kaggle-research-compute",
         "paper-review",
         "annotated-review",
         "vnthuquan",

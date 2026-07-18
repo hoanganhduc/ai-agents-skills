@@ -536,7 +536,7 @@ def classify_diagram_family(
     hit("graph", 4, r"\bedge(s)?\b.*\bgadget\b|\bgadget\b.*\bedge(s)?\b", "edge-gadget vocabulary")
     hit("graph", 4, r"\bhardness reduction\b|\breduction\b.*\bgadget\b", "hardness-reduction/gadget vocabulary")
     hit("graph", 3, r"\breplac(?:e|ed|ing|ement)\b.*\bedge\b|\bedge\b.*\breplac(?:e|ed|ing|ement)\b", "edge replacement vocabulary")
-    hit("graph", 2, r"kempe|claw-free|k_\{1,|k1,|constructed instance|original instance|source instance", "graph reconfiguration context")
+    hit("graph", 2, r"\bsubgraph\b|\badjacen(?:t|cy)\b|\bneighbou?r(?:hood)?\b|constructed instance|original instance|source instance", "graph structure/instance vocabulary")
 
     hit("commutative", 5, r"commutative|tikz-cd|category|morphism|pullback|pushout", "commutative-diagram vocabulary")
     hit("tree", 4, r"\btree\b|rooted|children|parent|branch", "tree vocabulary")

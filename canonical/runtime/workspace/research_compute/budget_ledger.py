@@ -56,6 +56,17 @@ def outstanding(state_root: Path, backend: str) -> float:
     return sum(float(r["amount"]) for r in _read(path) if r.get("state") == "reserved")
 
 
+def reserved_job_ids(state_root: Path, backend: str) -> set[str]:
+    """Set of job ids with an outstanding (reserved, not reconciled) reservation.
+
+    This is the live active-jobs set the Hetzner reaper consults: a tagged server whose
+    job-id label is not in this set is orphaned (its controlling session finished, crashed,
+    or died) and must be deleted."""
+    path = _ledger_path(state_root, backend)
+    return {str(r["job_id"]) for r in _read(path)
+            if r.get("state") == "reserved" and r.get("job_id") is not None}
+
+
 def reserve(state_root: Path, backend: str, job_id: str, amount: float, unit: str) -> None:
     path = _ledger_path(state_root, backend)
     with _lock(path):

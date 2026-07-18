@@ -26,6 +26,8 @@
         "submission-venue-selector",
         "self-improving-agent",
         "modal-research-compute",
+        "hetzner-research-compute",
+        "kaggle-research-compute",
         "research-digest-wrapper",
         "rss-news-digest",
         "sagemath",
@@ -2015,6 +2017,32 @@
           "mode": "0644"
         },
         {
+          "source": "workspace/research_compute/hetzner_backend.py",
+          "target": "workspace/research_compute/hetzner_backend.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/kaggle_backend.py",
+          "target": "workspace/research_compute/kaggle_backend.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "workspace/research_compute/planner.py",
           "target": "workspace/research_compute/planner.py",
           "platforms": [
@@ -2065,6 +2093,159 @@
           "type": "text",
           "newline": "lf",
           "mode": "0644"
+        }
+      ]
+    },
+    "hetzner-research-compute": {
+      "runtime_dir": "hetzner-research-compute",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "Hetzner lifecycle verbs require an HCLOUD_TOKEN and provision paid servers; they are not safe for generic offline smoke. The offline dry-run and guard paths are covered by tests/test_hetzner_research_compute.py."
+      },
+      "files": [
+        {
+          "source": "skills/hetzner-research-compute/hetzner_research_compute.py",
+          "target": "workspace/skills/hetzner-research-compute/hetzner_research_compute.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/hetzner-research-compute/hetzner_driver.py",
+          "target": "workspace/skills/hetzner-research-compute/hetzner_driver.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/hetzner-research-compute/run_hetzner_research_compute.bat",
+          "target": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+          "target": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/hetzner-research-compute/hetzner_audit.py",
+          "target": "workspace/skills/hetzner-research-compute/hetzner_audit.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/hetzner-research-compute/hetzner_reaper.py",
+          "target": "workspace/skills/hetzner-research-compute/hetzner_reaper.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/hetzner-research-compute/assets/cloud-init.yaml",
+          "target": "workspace/skills/hetzner-research-compute/assets/cloud-init.yaml",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
+      ]
+    },
+    "kaggle-research-compute": {
+      "runtime_dir": "kaggle-research-compute",
+      "smoke_coverage": {
+        "status": "manual-native",
+        "reason": "Kaggle lifecycle verbs require the new Kaggle API token (KAGGLE_API_TOKEN or ~/.kaggle/access_token) and push real kernels; per Kaggle ToS no live call is made in the build. The offline dry-run, resume-loop, fan-out, and guard paths are covered by tests/test_kaggle_research_compute.py (all kaggle CLI calls and the kagglehub-validate hook mocked)."
+      },
+      "files": [
+        {
+          "source": "skills/kaggle-research-compute/kaggle_research_compute.py",
+          "target": "workspace/skills/kaggle-research-compute/kaggle_research_compute.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/kaggle-research-compute/kaggle_driver.py",
+          "target": "workspace/skills/kaggle-research-compute/kaggle_driver.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/kaggle-research-compute/run_kaggle_research_compute.bat",
+          "target": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+          "target": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
         }
       ]
     },
