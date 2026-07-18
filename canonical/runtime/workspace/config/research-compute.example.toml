@@ -154,3 +154,38 @@ concurrency = 5              # max concurrent kernels (Kaggle's concurrent-sessi
 session_hours = 12.0         # Kaggle's hard per-kernel session cap (CPU and GPU)
 kernel_cores = 4             # per-kernel vCPU (free tier) -- drives the #runs estimate
 kernel_ram_gb = 32.0         # per-kernel RAM (free tier) -- a job over this is inadequate
+
+# ---------------------------------------------------------------------------
+# Multi-backend parallel fan-out (v2). Fan-out is a SCHEDULER ON TOP of the
+# per-lane probes/drivers: it splits ONE large divisible job (M independent,
+# resumable chunks) across SEVERAL lanes AT ONCE -- some chunks local, some free
+# (Kaggle), some paid (Hetzner/Modal) -- each lane sized to its spare capacity, to
+# minimise makespan (time until every chunk is back) while minimising cost. Small
+# jobs keep using the single-lane router; fan-out is opt-in and only for large
+# divisible jobs (declared chunk count >= min_chunks). The allocator water-fills
+# chunks by cost-efficiency (free/cheap lanes first) and balances finish-times,
+# minimising  speed_cost_weight * norm(makespan) + (1 - speed_cost_weight) *
+# norm(cost). speed_cost_weight in [0,1] is the per-job knob (0 = cheapest / free
+# lanes only, accept slower; 1 = fastest / recruit paid lanes; 0.5 = blend);
+# job policy.speed_cost_weight overrides this default. The per-core-hour rates,
+# per-eur rate, and startup latencies feed ONLY the objective -- the HARD RAILS
+# (per-lane budget caps, the EUR3/day auto-approve envelope, the GitHub Actions
+# 60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's
+# self-preservation load-cap) are enforced as per-lane chunk ceilings that a
+# speed-leaning knob can never breach. Local (Oracle Cloud) is NOT free -- its
+# per-core-hour cost enters the model; Kaggle is the free lane.
+# ---------------------------------------------------------------------------
+[fanout]
+enabled = false              # off by default; opt-in for large divisible batch jobs
+speed_cost_weight = 0.5      # default objective knob (0 cheapest .. 1 fastest); per-job overridable
+min_chunks = 8               # below this many chunks, use the single-lane router instead
+usd_per_eur = 1.08           # normalise Hetzner EUR into the objective's USD cost term
+local_usd_per_core_hour = 0.006   # local Oracle box is NOT free; its cost enters the objective
+modal_usd_per_core_hour = 0.10    # Modal remote CPU per-core-hour (objective cost only)
+modal_slots = 16             # Modal parallel width used for makespan estimation
+gha_slots = 20               # GitHub Actions matrix parallel width for makespan estimation
+local_startup_seconds = 5.0       # fixed per-lane startup latency before the first result
+kaggle_startup_seconds = 300.0    # Kaggle kernels queue/start latency
+modal_startup_seconds = 45.0
+hetzner_startup_seconds = 180.0   # provision + boot latency
+gha_startup_seconds = 60.0        # Actions runner queue latency

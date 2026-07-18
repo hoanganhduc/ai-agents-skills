@@ -80,6 +80,47 @@ rejected rather than silently run on CPU. The Kaggle weekly GPU-hour cap, Modal'
 and (when opted in) the GitHub Actions minutes cap all still apply, so a GPU choice never
 bypasses the budget gate.
 
+## Multi-backend parallel fan-out (v2)
+
+The sections above route ONE job to ONE lane. For a LARGE divisible batch job -- M
+independent, resumable chunks (a sweep or enumeration split into shards) -- the v2 fan-out
+scheduler instead splits the chunks across SEVERAL lanes AT ONCE (some chunks local, some
+on the free lane, some on a paid lane), each lane sized to its spare capacity, to minimise
+the makespan (time until every chunk's result is back) while minimising cost. Fan-out is a
+scheduler layer ON TOP of the same per-lane probes and drivers; small jobs still use the
+single-lane router. It is opt-in (`[fanout].enabled`) and triggers only when the job
+declares at least `[fanout].min_chunks` chunks.
+
+- **Objective knob.** Each job carries `speed_cost_weight` in [0, 1]: `0` is cheapest (free
+  and cheap lanes only, accept a slower finish), `1` is fastest (recruit paid lanes
+  aggressively to cut the makespan), and values between blend the two. The allocator
+  minimises `weight * norm(makespan) + (1 - weight) * norm(cost)` over feasible splits by
+  water-filling chunks -- free and cheap lanes first, paid lanes added only as far as the
+  speed target needs. The default is `0.5`, overridable per job via
+  `policy.speed_cost_weight`.
+- **Cost model.** Local (Oracle Cloud) is **not** free -- its per-core-hour cost enters the
+  objective. Kaggle is the free lane (cost 0). Hetzner is billed in EUR and normalised into
+  the objective's USD cost term through `[fanout].usd_per_eur`; GitHub Actions minutes are
+  prepaid, so their marginal objective cost is 0 while their consumption stays rail-limited.
+- **Hard rails still bind.** The knob only redistributes chunks *within* each lane's
+  ceiling; it can never breach a cap. Every rail is enforced as a per-lane `max_chunks`
+  ceiling: per-lane budget caps, the <= EUR 3/day auto-approve envelope, the GitHub Actions
+  60% cumulative-minutes cap, Kaggle's weekly GPU-hour quota, and local's self-preservation
+  load-cap (`w_safe`) and wall budget. A speed-leaning knob uses more *allowed* capacity, not
+  more than is allowed. The per-lane budget gates (`budget_gate` / `gpu_budget_gate`) remain
+  the fail-closed enforcement at dispatch; the fan-out ceilings are the planning-time
+  sizing.
+- **Aggregation and fault-tolerance.** Each lane's partial `out/` is merged into one result
+  set, preserving the bundle's non-vacuous banked-value guard (a merge in which every chunk
+  is empty is refused). A stalled or failed lane's UNFINISHED chunks are reassigned to a
+  healthy lane; because chunks are resumable, no finished work is lost and every chunk is
+  covered exactly once.
+
+The scheduler is `research_compute/fanout.py`; its allocator is a pure, deterministic
+function (identical lane probes + M + weight give an identical split) separated from all IO.
+`run fanout-plan job.json` returns the split, makespan, cost, and each lane's chunk-id range
+without dispatching -- execution reuses the per-lane drivers above.
+
 ## Budget and teardown discipline
 
 - Every paid/quota'd offload lane is **budget-gated, fail-closed**: the broker reserves the pessimistic worst case in the shared append-only ledger before dispatch, so concurrent submits cannot collectively overspend. Hetzner reserves EUR, GitHub Actions reserves minutes, Modal reserves USD, and Kaggle GPU reserves GPU-hours against a self-imposed weekly cap. **Kaggle CPU is free and quota-free, so it has no cost gate.**
