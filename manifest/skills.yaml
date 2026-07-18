@@ -29,7 +29,8 @@
         "headless-driver-handoff"
       ],
       "recommended_templates": [
-        "autonomous-research-loop-runbook"
+        "autonomous-research-loop-runbook",
+        "autonomous-research-loop-portfolio-runbook"
       ],
       "verification": [
         "file-exists",
@@ -66,7 +67,8 @@
         "quota-pause-resume"
       ],
       "recommended_templates": [
-        "autonomous-research-loop-runbook"
+        "autonomous-research-loop-runbook",
+        "autonomous-research-loop-portfolio-runbook"
       ],
       "verification": [
         "file-exists",
