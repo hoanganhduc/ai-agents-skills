@@ -78,6 +78,27 @@ class BrokerConfig:
     local_soft_load_frac: float = 0.4
     local_hard_load_frac: float = 0.55
     local_wall_budget_h: float = 2.0
+    # Multi-backend fan-out scheduler (v2; disabled by default; configured under [fanout]).
+    # Fan-out splits ONE large divisible job (M chunks) across several lanes at once, each
+    # sized to its spare capacity, to minimise makespan while minimising cost. Small jobs
+    # keep using the single-lane router. speed_cost_weight in [0,1] blends the two goals
+    # (0 = cheapest / free lanes only, 1 = fastest / recruit paid lanes); it is a per-job
+    # override, defaulting here. The per-core-hour rates and per-eur rate feed ONLY the
+    # objective's cost term -- the hard rails (budget caps, EUR3/day, GHA 60%, Kaggle quota,
+    # local load-cap) are enforced separately and the knob can never breach them.
+    fanout_enabled: bool = False
+    fanout_speed_cost_weight: float = 0.5
+    fanout_min_chunks: int = 8
+    fanout_usd_per_eur: float = 1.08
+    fanout_local_usd_per_core_hour: float = 0.006  # local Oracle box is NOT free
+    fanout_modal_usd_per_core_hour: float = 0.10
+    fanout_modal_slots: int = 16
+    fanout_gha_slots: int = 20
+    fanout_local_startup_seconds: float = 5.0
+    fanout_kaggle_startup_seconds: float = 300.0
+    fanout_modal_startup_seconds: float = 45.0
+    fanout_hetzner_startup_seconds: float = 180.0
+    fanout_gha_startup_seconds: float = 60.0
     functions: FunctionMap = field(default_factory=FunctionMap)
     defaults: BrokerDefaults = field(default_factory=BrokerDefaults)
 
@@ -126,6 +147,7 @@ def load_config(path: Path | None = None) -> BrokerConfig:
     hetzner = data.get("hetzner", {}) or {}
     kaggle = data.get("kaggle", {}) or {}
     local = data.get("local", {}) or {}
+    fanout = data.get("fanout", {}) or {}
 
     return BrokerConfig(
         install_id=data["install_id"],
@@ -168,6 +190,19 @@ def load_config(path: Path | None = None) -> BrokerConfig:
         local_soft_load_frac=float(local.get("soft", 0.4)),
         local_hard_load_frac=float(local.get("hard", 0.55)),
         local_wall_budget_h=float(local.get("local_wall_budget_h", 2.0)),
+        fanout_enabled=bool(fanout.get("enabled", False)),
+        fanout_speed_cost_weight=float(fanout.get("speed_cost_weight", 0.5)),
+        fanout_min_chunks=int(fanout.get("min_chunks", 8)),
+        fanout_usd_per_eur=float(fanout.get("usd_per_eur", 1.08)),
+        fanout_local_usd_per_core_hour=float(fanout.get("local_usd_per_core_hour", 0.006)),
+        fanout_modal_usd_per_core_hour=float(fanout.get("modal_usd_per_core_hour", 0.10)),
+        fanout_modal_slots=int(fanout.get("modal_slots", 16)),
+        fanout_gha_slots=int(fanout.get("gha_slots", 20)),
+        fanout_local_startup_seconds=float(fanout.get("local_startup_seconds", 5.0)),
+        fanout_kaggle_startup_seconds=float(fanout.get("kaggle_startup_seconds", 300.0)),
+        fanout_modal_startup_seconds=float(fanout.get("modal_startup_seconds", 45.0)),
+        fanout_hetzner_startup_seconds=float(fanout.get("hetzner_startup_seconds", 180.0)),
+        fanout_gha_startup_seconds=float(fanout.get("gha_startup_seconds", 60.0)),
         functions=functions,
         defaults=defaults,
     )

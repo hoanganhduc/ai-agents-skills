@@ -15,6 +15,7 @@ from typing import Any
 from .config import caller_cwd, default_config_path, example_config_path, load_config, modal_config_path, workspace_root
 from .modal_backend import cancel_function_call, deploy_modal_app, modal_ready_summary, run_remote_job, submit_remote_job, wait_for_result
 from . import github_actions_backend as gha
+from .fanout import plan_fanout
 from .planner import normalize_job, plan_job
 from .state import append_event, attempt_dir, ensure_root, job_dir, manifest_path, next_attempt_id, plan_path, read_json, status_path, write_json
 
@@ -29,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_parser = subparsers.add_parser("plan", help="Plan a broker manifest")
     plan_parser.add_argument("manifest", help="Path to a job manifest JSON file or '-' for stdin")
+
+    fanout_parser = subparsers.add_parser(
+        "fanout-plan",
+        help="Plan a multi-backend parallel fan-out for a large divisible job (M chunks)",
+    )
+    fanout_parser.add_argument("manifest", help="Path to a job manifest JSON file or '-' for stdin")
 
     submit_parser = subparsers.add_parser("submit", help="Submit a broker manifest")
     submit_parser.add_argument("manifest", help="Path to a job manifest JSON file or '-' for stdin")
@@ -93,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "plan":
             job = load_manifest(args.manifest)
             result = command_plan(job=job, config=config, state_root=state_root, persist=True)
+        elif args.command == "fanout-plan":
+            job = load_manifest(args.manifest)
+            result = command_fanout_plan(job=job, config=config, state_root=state_root)
         elif args.command == "submit":
             job = load_manifest(args.manifest)
             result = command_submit(
@@ -160,6 +170,23 @@ def command_plan(*, job: dict[str, Any], config: Any, state_root: Path, persist:
         "job": normalized,
         "plan": plan,
     }
+
+
+def command_fanout_plan(*, job: dict[str, Any], config: Any, state_root: Path) -> dict[str, Any]:
+    """Plan a multi-backend parallel fan-out for a large divisible job. Distinct from the
+    single-lane `plan`: it splits the job's M chunks across several lanes at once, each sized
+    to its spare capacity, under every lane's hard rail. Returns the allocation and per-lane
+    chunk-id ranges; it does not dispatch (execution reuses the per-lane drivers)."""
+    normalized = normalize_job(job, config=config)
+    modal_ready = modal_ready_summary(config, modal_config_path())["modal_sdk_available"]
+    fanout = plan_fanout(
+        normalized,
+        config=config,
+        resources=load_local_resources(),
+        modal_ready=modal_ready,
+        state_root=state_root,
+    )
+    return {"job_id": normalized["job_id"], "job": normalized, "fanout": fanout}
 
 
 def command_submit(

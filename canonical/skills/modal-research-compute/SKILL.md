@@ -53,11 +53,30 @@ job, idle priority per OS, subprocess-timeout watchdogs, chunked resumable
 checkpoints, load/CPU guards) — its rules are cross-platform (Linux, macOS,
 Windows).
 
+## Multi-backend parallel fan-out (v2)
+
+For a LARGE divisible batch job — M independent, resumable chunks (a sweep or
+enumeration split into shards) — the fan-out scheduler splits the chunks across
+SEVERAL lanes at once (some chunks local, some on the free lane, some on a paid
+lane), each lane sized to its spare capacity, to minimise makespan while
+minimising cost. It is a scheduler on top of the same per-lane probes; small
+jobs keep using the single-lane router. Fan-out is opt-in (`[fanout].enabled`)
+and triggers only when the job declares at least `[fanout].min_chunks` chunks.
+
+Each job carries a `policy.speed_cost_weight` in `[0, 1]` (0 cheapest / free
+lanes only, 1 fastest / recruit paid lanes, 0.5 blend). Every hard rail still
+binds — per-lane budget caps, the €3/day auto-approve envelope, the GitHub
+Actions 60% minutes cap, Kaggle's weekly GPU-hour quota, and local's
+self-preservation load-cap are enforced as per-lane chunk ceilings the knob can
+never breach. See `compute-offload-routing.md` for the full contract. Plan a
+fan-out (no dispatch) with `run fanout-plan job.json`; a failed lane's
+unfinished chunks are reassigned to a healthy lane so no resumable work is lost.
+
 ## Core workflow
 
 1. If local resources matter, run `get-available-resources`.
 2. Build a broker manifest JSON for the task.
-3. Run broker `plan`.
+3. Run broker `plan` (or `fanout-plan` for a large divisible job).
 4. If the plan stays within policy, run broker `submit`.
 5. Use `wait` and `fetch` to retrieve results and logs back to local storage.
 
@@ -73,7 +92,8 @@ run() { bash "$runtime/run_skill.sh" skills/modal-research-compute/run_modal_res
 ```bash
 run bootstrap                          # one-time: generate config if absent, authenticate gh, check deps, doctor
 run doctor                             # broker + config + Modal + (if enabled) GitHub Actions readiness
-run plan   /path/to/job.json
+run plan        /path/to/job.json
+run fanout-plan /path/to/job.json      # v2: split a large divisible job across lanes (no dispatch)
 run submit /path/to/job.json
 run wait   <job_id>
 run fetch  <job_id> --dest /path/to/output
