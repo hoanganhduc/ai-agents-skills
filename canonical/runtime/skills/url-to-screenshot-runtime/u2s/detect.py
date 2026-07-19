@@ -248,7 +248,7 @@ def probe_browser_version(
     import re
 
     version_line = re.compile(
-        r"(?i)\b(?:chromium|google chrome(?: for testing)?|chrome|microsoft edge)\b.*\d"
+        r"(?i)^(?:chromium|google chrome(?: for testing)?|chrome|microsoft edge)\b.*\d"
     )
     return next((line for line in lines if version_line.search(line)), lines[0])
 

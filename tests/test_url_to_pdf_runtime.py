@@ -435,7 +435,8 @@ class RuntimeProvenanceTests(unittest.TestCase):
 
             browser.write_text(
                 "#!/bin/sh\n"
-                "printf '[warning] channel metadata unavailable\\n'\n"
+                "printf '[0719/153357.918143:WARNING:chrome/app/chrome_main_linux.cc:84] "
+                "Read channel stable from /opt/chrome/CHROME_VERSION_EXTRA\\n'\n"
                 "printf 'Google Chrome for Testing 150.0.1\\n'\n",
                 encoding="utf-8",
             )
