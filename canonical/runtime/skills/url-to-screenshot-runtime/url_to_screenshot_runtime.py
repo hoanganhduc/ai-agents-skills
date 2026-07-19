@@ -5,6 +5,8 @@ Subcommands:
   doctor    report environment readiness (browser, ImageMagick, Pillow); installs nothing
   capture   capture a URL to a PNG (SSRF-gated; requires a browser)
   verify    artifact-truth gate on a captured PNG (the only thing that declares success)
+  print-pdf print a URL to a bounded PDF through the guarded CDP path
+  verify-pdf conservative structural gate on a printed PDF (never a visual pass)
   selftest  offline smoke (no network/browser/socket/install)
 
 Invoke via the managed runner, e.g.:
@@ -51,6 +53,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
         timeout_ms=args.timeout,
         allow_private=args.allow_private_targets,
         allow_file_urls=args.allow_file_urls,
+        same_origin_only=args.same_origin_only,
         browser=args.browser,
         no_sandbox=args.no_sandbox,
     )
@@ -67,8 +70,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
     from u2s import verify as verify_mod
 
     try:
-        png_bytes = Path(args.png).read_bytes()
-    except OSError as exc:
+        png_bytes = verify_mod.read_png_file(args.png)
+    except (OSError, ValueError) as exc:
         _emit({"final_verdict": "UNVERIFIED", "status": "BLOCKED_INPUT", "detail": str(exc)})
         return 2
     result = verify_mod.verify_png(
@@ -79,6 +82,43 @@ def cmd_verify(args: argparse.Namespace) -> int:
     )
     _emit(result.to_dict())
     return 0 if result.ok else 2
+
+
+def cmd_print_pdf(args: argparse.Namespace) -> int:
+    from u2s import pdf as pdf_mod
+    from u2s import security
+
+    request = pdf_mod.PrintPdfRequest(
+        url=args.url,
+        out_path=args.out or "",
+        media=args.media,
+        print_background=args.print_background,
+        prefer_css_page_size=args.prefer_css_page_size,
+        consent=(args.consent == "on"),
+        wait_ms=args.wait,
+        timeout_ms=args.timeout,
+        max_bytes=args.max_bytes,
+        allow_private=args.allow_private_targets,
+        allow_file_urls=args.allow_file_urls,
+        same_origin_only=args.same_origin_only,
+        browser=args.browser,
+        no_sandbox=args.no_sandbox,
+    )
+    try:
+        result = pdf_mod.run_print_pdf(request)
+    except security.TargetBlocked as exc:
+        _emit({"status": exc.reason, "detail": exc.detail, "url": security.redact_url(args.url)})
+        return 2
+    _emit(result)
+    return 0 if result.get("status") == "PDF_PRINTED" else 2
+
+
+def cmd_verify_pdf(args: argparse.Namespace) -> int:
+    from u2s import pdf as pdf_mod
+
+    result = pdf_mod.verify_pdf_file(args.pdf, max_bytes=args.max_bytes)
+    _emit(result.to_dict())
+    return 0 if result.structurally_valid else 2
 
 
 def cmd_selftest(args: argparse.Namespace) -> int:
@@ -132,6 +172,13 @@ def build_parser() -> argparse.ArgumentParser:
         "(enables local file reads; never use on attacker-influenceable input)",
     )
     cap.add_argument(
+        "--same-origin-only",
+        action="store_true",
+        dest="same_origin_only",
+        help="abort if any paused request scheme, canonical host, or effective port "
+        "differs from the initial origin (CDP only)",
+    )
+    cap.add_argument(
         "--no-sandbox",
         action="store_true",
         dest="no_sandbox",
@@ -146,6 +193,73 @@ def build_parser() -> argparse.ArgumentParser:
     ver.add_argument("--expected-height", type=int, default=None, dest="expected_height")
     ver.add_argument("--consent-removed", action="store_true", dest="consent_removed")
     ver.set_defaults(func=cmd_verify)
+
+    pdf = sub.add_parser("print-pdf")
+    pdf.add_argument("--url", required=True, help="target URL (http/https only, SSRF-gated)")
+    pdf.add_argument("--out", default=None, help="output PDF path (default: auto-named under AAS_RUNS_ROOT)")
+    pdf.add_argument("--media", choices=["print", "screen"], default="print")
+    pdf.add_argument(
+        "--print-background",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        dest="print_background",
+        help="include CSS backgrounds (default: true)",
+    )
+    pdf.add_argument(
+        "--prefer-css-page-size",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        dest="prefer_css_page_size",
+        help="prefer CSS @page size (default: true)",
+    )
+    pdf.add_argument("--wait", type=int, default=800, help="settle wait in ms")
+    pdf.add_argument("--timeout", type=int, default=30000, help="hard navigation/print cap in ms")
+    pdf.add_argument(
+        "--max-bytes",
+        type=int,
+        default=100 * 1024 * 1024,
+        dest="max_bytes",
+        help="decoded PDF byte cap (hard maximum: 104857600)",
+    )
+    pdf.add_argument("--consent", choices=["on", "off"], default="on")
+    pdf.add_argument("--browser", default=None, help="browser path override (== URL_TO_SCREENSHOT_BROWSER)")
+    pdf.add_argument(
+        "--allow-private-targets",
+        action="store_true",
+        dest="allow_private_targets",
+        help="relax the private/loopback/link-local IP block ONLY (never scheme, never metadata)",
+    )
+    pdf.add_argument(
+        "--allow-file-urls",
+        action="store_true",
+        dest="allow_file_urls",
+        help="allow file:// URLs for TRUSTED LOCAL FIXTURES/TESTING ONLY",
+    )
+    pdf.add_argument(
+        "--same-origin-only",
+        action="store_true",
+        dest="same_origin_only",
+        help="abort if any paused request scheme, canonical host, or effective port "
+        "differs from the initial origin",
+    )
+    pdf.add_argument(
+        "--no-sandbox",
+        action="store_true",
+        dest="no_sandbox",
+        help="force Chromium --no-sandbox; recorded in the JSON result",
+    )
+    pdf.set_defaults(func=cmd_print_pdf)
+
+    pdf_ver = sub.add_parser("verify-pdf")
+    pdf_ver.add_argument("--pdf", required=True, help="path to the printed PDF")
+    pdf_ver.add_argument(
+        "--max-bytes",
+        type=int,
+        default=100 * 1024 * 1024,
+        dest="max_bytes",
+        help="PDF byte cap (hard maximum: 104857600)",
+    )
+    pdf_ver.set_defaults(func=cmd_verify_pdf)
 
     st = sub.add_parser("selftest")
     st.add_argument("--work-dir", default=None)

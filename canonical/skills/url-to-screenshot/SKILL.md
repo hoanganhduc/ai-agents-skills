@@ -62,7 +62,9 @@ Key options for `capture`: `--url` (required, http/https only), `--out`,
 `--viewport WxH` (or `--width`/`--height`), `--full-page`, `--device-scale`,
 `--wait`, `--timeout`, `--consent on|off`, `--engine auto|oneshot|cdp`,
 `--browser`, `--allow-private-targets` (relaxes the private-IP block ONLY), and
-`--allow-file-urls` (trusted local fixtures/testing ONLY) — see Security notes.
+`--allow-file-urls` (trusted local fixtures/testing ONLY), and
+`--same-origin-only` (CDP-only strict initial-origin boundary) — see Security
+notes.
 
 ## Required workflow
 
@@ -131,14 +133,20 @@ browser, so the security posture is stated plainly:
   `--allow-private-targets` it requires the CLI flag; the environment alone never
   enables it. A `file:` URL has no remote host, so the SSRF IP checks do not
   apply to it.
-- **Residual limitation.** Browser-side DNS rebind on a different
-  redirect/sub-resource host is out of scope of the Python pre-resolve gate; in
-  Tier-2 it is mitigated by per-request CDP `Fetch` interception (each paused
-  request is re-resolved and re-checked before send), with host-resolver-rules as
-  a same-host-only backstop. The re-resolve at interception time can still differ
-  from the IP the browser ultimately connects to (a TOCTOU window narrowed, not
-  eliminated). Tier-1 one-shot has no per-request hook. This skill never implies
-  full SSRF protection.
+- **Strict origin boundary.** `--same-origin-only` forces CDP and aborts every
+  paused redirect or sub-resource whose origin tuple differs from the initial
+  request: scheme, canonical hostname, or effective port (explicit port,
+  otherwise 80 for HTTP and 443 for HTTPS). Auto fallback to Tier-1 is disabled
+  while the flag is active, and explicit Tier-1 is rejected.
+- **Residual limitation for generic cross-host capture.** In ordinary Tier-2
+  capture, an allowed request to another host is re-resolved and checked by the
+  Python CDP interceptor before release, but Chromium resolves that cross-host
+  request independently. The checked address can therefore differ from the
+  address Chromium ultimately connects to: a cross-host DNS TOCTOU window is
+  narrowed, not eliminated. Tier-1 one-shot has no per-request hook. The strict
+  same-origin venue-proof path does not admit a different host and pins the
+  initial host, so this particular cross-host residual is not a venue-proof
+  limitation. This skill does not imply full SSRF protection for generic capture.
 
 ## References
 

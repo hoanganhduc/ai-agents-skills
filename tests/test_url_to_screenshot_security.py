@@ -249,6 +249,144 @@ class FetchInterceptionDecisionTests(unittest.TestCase):
         self.assertEqual(cdp.fetch_decision("file:///etc/passwd", []), "fail")
         self.assertEqual(cdp.fetch_decision("file:///tmp/x.html", [], allow_file_urls=True), "continue")
 
+    def test_same_origin_only_rejects_cross_host_redirect_and_subresource(self) -> None:
+        from u2s import cdp
+
+        for request_url in (
+            "https://redirect.example.net/landing",
+            "https://cdn.example.net/script.js",
+        ):
+            with self.subTest(request_url=request_url):
+                self.assertEqual(
+                    cdp.fetch_decision(
+                        request_url,
+                        ["93.184.216.34"],
+                        same_origin_only=True,
+                        initial_url="https://official.example/",
+                    ),
+                    "fail",
+                )
+
+    def test_same_origin_only_compares_scheme_host_and_effective_port(self) -> None:
+        from u2s import cdp
+
+        self.assertEqual(
+            cdp.fetch_decision(
+                "https://official.example:443/asset",
+                ["93.184.216.34"],
+                same_origin_only=True,
+                initial_url="https://OFFICIAL.EXAMPLE./",
+            ),
+            "continue",
+        )
+        for request_url in (
+            "http://official.example/asset",
+            "https://official.example:444/asset",
+        ):
+            with self.subTest(request_url=request_url):
+                self.assertEqual(
+                    cdp.fetch_decision(
+                        request_url,
+                        ["93.184.216.34"],
+                        same_origin_only=True,
+                        initial_url="https://official.example/",
+                    ),
+                    "fail",
+                )
+
+    def test_same_origin_only_preserves_trusted_file_fixture_navigation(self) -> None:
+        from u2s import cdp
+
+        self.assertEqual(
+            cdp.fetch_decision(
+                "file:///tmp/asset.css",
+                [],
+                allow_file_urls=True,
+                same_origin_only=True,
+                initial_url="file:///tmp/page.html",
+            ),
+            "continue",
+        )
+
+    def test_fetch_dispatch_aborts_cross_host_redirect_and_subresource(self) -> None:
+        import json
+
+        from u2s import cdp
+
+        class RecordingWebSocket:
+            def __init__(self) -> None:
+                self.messages: list[dict] = []
+
+            def send_text(self, body: str) -> None:
+                self.messages.append(json.loads(body))
+
+        for params in (
+            {
+                "requestId": "redirect",
+                "responseStatusCode": 302,
+                "request": {"url": "https://redirect.example.net/"},
+            },
+            {
+                "requestId": "subresource",
+                "resourceType": "Script",
+                "request": {"url": "https://cdn.example.net/script.js"},
+            },
+        ):
+            with self.subTest(request_id=params["requestId"]):
+                websocket = RecordingWebSocket()
+                session = cdp._CdpSession(websocket)
+                session.enable_fetch_interception(
+                    allow_private=False,
+                    allow_file_urls=False,
+                    same_origin_only=True,
+                    initial_url="https://official.example/",
+                )
+                with self.assertRaises(cdp._FetchBlocked) as caught:
+                    session._dispatch(
+                        {"method": "Fetch.requestPaused", "params": params}
+                    )
+                self.assertEqual(caught.exception.status, cdp.BLOCKED_CROSS_ORIGIN)
+                self.assertEqual(
+                    websocket.messages[-1]["method"], "Fetch.failRequest"
+                )
+
+    def test_network_redirect_chain_is_capped_per_request(self) -> None:
+        from u2s import cdp
+
+        class RecordingWebSocket:
+            def send_text(self, _body: str) -> None:
+                pass
+
+        session = cdp._CdpSession(RecordingWebSocket())
+        session.enable_fetch_interception(
+            allow_private=True,
+            allow_file_urls=False,
+            initial_url="http://127.0.0.1/",
+        )
+        for hop in range(cdp.MAX_REDIRECTS):
+            session._dispatch(
+                {
+                    "method": "Network.requestWillBeSent",
+                    "params": {
+                        "requestId": "chain-1",
+                        "redirectResponse": {"status": 302},
+                        "request": {"url": f"http://127.0.0.1/{hop + 1}"},
+                    },
+                }
+            )
+        with self.assertRaises(cdp._FetchBlocked) as caught:
+            session._dispatch(
+                {
+                    "method": "Network.requestWillBeSent",
+                    "params": {
+                        "requestId": "chain-1",
+                        "redirectResponse": {"status": 302},
+                        "request": {"url": "http://127.0.0.1/overflow"},
+                    },
+                }
+            )
+        self.assertEqual(caught.exception.status, cdp.BLOCKED_REDIRECT_LIMIT)
+
 
 class RedactionTests(unittest.TestCase):
     def test_redact_drops_query_fragment_userinfo(self) -> None:

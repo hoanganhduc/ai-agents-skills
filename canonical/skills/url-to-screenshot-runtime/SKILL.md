@@ -1,8 +1,8 @@
 ---
 name: url-to-screenshot-runtime
-description: Runtime engine for url-to-screenshot. Use to detect a browser, capture a URL to a PNG over CDP, verify a captured PNG, or run the offline self-test of the deterministic core, without network, package installation, or live browser launch in the smoke path.
+description: Runtime engine for url-to-screenshot. Use to detect a browser, capture and verify a URL-to-PNG result, browser-print and structurally inspect a PDF, or run the offline self-test of the deterministic core, without network, package installation, or live browser launch in the smoke path.
 metadata:
-  short-description: Headless-browser URL-to-PNG capture engine with an SSRF-safe admission gate and offline self-test
+  short-description: Guarded browser PNG/PDF capture engine with offline self-test
 ---
 
 # URL to Screenshot Runtime
@@ -51,16 +51,36 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_t
 bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh verify --png shot.png --expected-width 1280 --expected-height 800
 ```
 
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh print-pdf --url https://example.com/ --out page.pdf --same-origin-only
+```
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh verify-pdf --pdf page.pdf
+```
+
 ## Verbs
 
 - `doctor` — report capture readiness (browser, ImageMagick, Pillow); installs
   nothing; fail-soft to `missing` / `BLOCKED_ENVIRONMENT`. This is the only
   surface that reports whether a real capture is possible.
 - `capture` — capture a URL to a PNG. The target URL is admitted through the
-  fail-closed SSRF gate before any browser launch.
+  fail-closed SSRF gate before any browser launch. A full-page result includes
+  measured layout/pixel dimensions and a completeness attestation; the request
+  flag alone is not evidence that the whole top-level layout was captured.
 - `verify` — the artifact-truth gate: `final_verdict=VERIFIED` only when
   file/decode/dimensions/not-blank/consent all PASS; otherwise a structured
   `BLOCKED_*` / `UNVERIFIED`. Nothing else declares success.
+- `print-pdf` — browser-print a bounded PDF through the guarded CDP path.
+  `--same-origin-only` aborts if any paused redirect or sub-resource changes the
+  initial origin tuple: scheme, canonical hostname, or effective port (explicit
+  port, otherwise 80 for HTTP and 443 for HTTPS).
+- `verify-pdf` — conservative bounded structure inspection. A sound classic
+  page tree returns `status=STRUCTURALLY_VALID` but always
+  `final_verdict=UNVERIFIED`, because parsing alone cannot prove that rendered
+  pages are visually nonblank. The command exits 0 for this structural-only
+  success so it remains scriptable; pair it with an independent visual gate
+  when a final proof decision is required.
 - `selftest` — offline smoke (no network, no browser launch, no socket, no
   package install). Prints a JSON contract and exits nonzero on any failure.
 
@@ -80,6 +100,14 @@ The `selftest` path:
 offline self-test run with no third-party packages. A host browser
 (Chromium/Chrome/Edge) is an optional system tool surfaced by `doctor`, never an
 install gate.
+
+Real capture and print results include `runtime_version` and the detected
+browser's bounded `--version` probe. Guarded CDP results also include
+`navigation_complete=true` only after the requested frame/loader emits its own
+load lifecycle event. Full-page PNG results additionally include
+`document_ready_state=complete`; the runtime remeasures after capture and does
+not publish a false completeness attestation if the document grew beyond the
+admitted clip. The offline self-test does not run the browser version probe.
 
 Use the canonical `url-to-screenshot` skill for the user-facing workflow and
 this helper only for the executable engine.

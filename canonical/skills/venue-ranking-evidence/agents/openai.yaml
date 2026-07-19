@@ -1,0 +1,4 @@
+interface:
+  display_name: "Venue Ranking Evidence"
+  short_description: "Match venues; verify public ICORE evidence"
+  default_prompt: "Use $venue-ranking-evidence to match this journal or conference and preserve source-specific observations. Use built-in live freshness and proof only for public ICORE; treat the other nine built-ins as authorized normalized import-only, with Conference Ranks explicitly legacy."

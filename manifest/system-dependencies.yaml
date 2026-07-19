@@ -30,7 +30,7 @@
       "requirement": "required for runtime-backed skills and the installer",
       "linux": "Native Python 3.10+ detected from environment override, repo venv, python3, or python.",
       "windows": "Native Python 3.10+ detected from environment override, repo venv, C:\\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python.",
-      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "submission-venue-selector", "annotated-review", "modal-research-compute", "hetzner-research-compute", "kaggle-research-compute", "session-logs", "lean-formalization-intake", "lean-explore-mcp", "lean-strict-verification-gate"]
+      "used_by": ["installer", "zotero", "calibre", "docling", "get-available-resources", "research-digest-wrapper", "rss-news-digest", "digest-bridge", "tikz-draw", "graph-verifier", "submission-venue-selector", "venue-ranking-evidence", "annotated-review", "modal-research-compute", "hetzner-research-compute", "kaggle-research-compute", "session-logs", "lean-formalization-intake", "lean-explore-mcp", "lean-strict-verification-gate"]
     },
     "bash-or-posix-shell": {
       "display_name": "Bash or POSIX-compatible shell",
@@ -222,11 +222,18 @@
       "used_by": ["manim-math-animation"]
     },
     "chromium-browser": {
-      "display_name": "Chromium / Chrome / Edge (headless)",
-      "requirement": "optional for url-to-screenshot page capture (headless CDP screenshot); reported by the doctor verb, not an install gate",
-      "linux": "chromium or google-chrome on PATH, e.g. apt-get install chromium.",
-      "windows": "chrome.exe or msedge.exe at the default Program Files path or on PATH.",
-      "used_by": ["url-to-screenshot", "url-to-screenshot-runtime"]
+      "display_name": "Chromium / Chrome / Edge browser",
+      "requirement": "optional for url-to-screenshot capture and venue-ranking-evidence browser-print proof; installed manually and reported by doctor rather than treated as an install gate",
+      "linux": "chromium or google-chrome on PATH, e.g. apt-get install chromium. Venue proof is limited to the public unauthenticated ICORE detail page; licensed or authenticated browser-profile capture is not implemented.",
+      "windows": "chrome.exe or msedge.exe at the default Program Files path or on PATH. Venue proof is limited to the public unauthenticated ICORE detail page; licensed or authenticated browser-profile capture is not implemented.",
+      "used_by": ["url-to-screenshot", "url-to-screenshot-runtime", "venue-ranking-evidence"]
+    },
+    "pdftotext": {
+      "display_name": "Poppler pdftotext",
+      "requirement": "optional for venue lookup; required for venue-ranking-evidence browser-proof marker verification",
+      "linux": "pdftotext on PATH from Poppler, e.g. apt-get install poppler-utils.",
+      "windows": "pdftotext.exe from a Poppler distribution on PATH.",
+      "used_by": ["venue-ranking-evidence"]
     }
   },
   "python_packages": {
@@ -472,8 +479,15 @@
       "requirement": "Pillow>=10.2",
       "import_name": "PIL",
       "platforms": ["linux", "windows"],
-      "used_by": ["slides-to-video"],
-      "source": "PNG validation/normalization of slide frames for slides-to-video."
+      "used_by": ["slides-to-video", "url-to-screenshot-runtime", "venue-ranking-evidence"],
+      "source": "Optional richer image validation for browser evidence plus PNG normalization of slide frames."
+    },
+    "websocket-client": {
+      "requirement": "websocket-client>=1.6",
+      "import_name": "websocket",
+      "platforms": ["linux", "windows"],
+      "used_by": ["url-to-screenshot-runtime", "venue-ranking-evidence"],
+      "source": "Optional richer CDP WebSocket client; the browser evidence runtime retains a standard-library fallback."
     },
     "soundfile": {
       "requirement": "soundfile>=0.12",
@@ -553,6 +567,10 @@
     "github-copilot-cli": {
       "description": "Copilot CLI account, provider, and model entitlement state is detected as target precheck metadata when the Copilot target is detected or selected; known credential sources are reported by presence rather than value, config secret values are not read, and command arguments/version output are redacted.",
       "used_by": ["copilot target"]
+    },
+    "venue-ranking-providers": {
+      "description": "Scopus, Web of Science, JCR, and other licensed venue-source subscriptions, export access, API keys, and institutional access remain outside this repo. The runtime accepts only user-supplied authorized normalized imports for those sources; it never acquires credentials, automates licensed UIs, reuses browser profiles, or bypasses provider access controls.",
+      "used_by": ["venue-ranking-evidence"]
     },
     "provider-configs": {
       "description": "OpenAI, Claude, DeepSeek, Copilot, and other provider auth/config files are intentionally excluded.",

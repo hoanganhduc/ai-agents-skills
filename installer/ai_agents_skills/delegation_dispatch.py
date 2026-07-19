@@ -18,6 +18,52 @@ from .state import now_run_id, preflight_state_path, sha256_text, state_dir, wri
 EXTERNAL_PROVIDERS = {"claude", "deepseek", "copilot", "antigravity", "grok"}
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
+GROK_REMOTE_EXECUTABLES = {"grok-remote", "grok-remote.cmd"}
+GROK_PROFILE_STATUS_SCHEMA = "grok-remote.profile-status.v1"
+GROK_PROFILE_STATUS_FIELDS = {
+    "schema_version",
+    "status",
+    "profile_name",
+    "profile_sha256",
+    "release_id",
+    "grok_release_id",
+    "model_id",
+    "eligible_rungs",
+    "missing_rungs",
+    "reason_code",
+}
+GROK_PROFILE_READY_STATUSES = {"ready", "degraded"}
+GROK_PROFILE_BLOCKED_STATUSES = {"blocked", "unconfigured"}
+GROK_PROFILE_PROBE_TIMEOUT = 10
+GROK_PROFILE_HELP_TOKEN = "grok-remote doctor --json"
+GROK_PROFILE_NAME = "default"
+GROK_PROFILE_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+GROK_PROFILE_GROK_RELEASE_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+GROK_PROFILE_RELEASE_RE = re.compile(r"^[A-Za-z0-9._:+/@-]{1,128}$")
+GROK_PROFILE_MODEL_RE = re.compile(r"^[A-Za-z0-9._:+/@-]{1,128}$")
+GROK_PROFILE_RUNG_RE = re.compile(
+    r"^(?:direct|vpn|home:[A-Za-z0-9._:+@-]+|ios:[a-z0-9][a-z0-9._-]{0,63})$"
+)
+GROK_PROFILE_REASON_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+GROK_PROFILE_STATUS_REASONS = {
+    "ready": {"ready"},
+    "degraded": {"ready_with_missing_optional_rungs"},
+    "blocked": {
+        "active_profile_invalid",
+        "minimum_eligible_rungs_not_met",
+        "release_evidence_invalid",
+        "required_rungs_missing",
+    },
+    "unconfigured": {"no_active_profile"},
+}
+GROK_PROFILE_BOUND_BLOCKED_REASONS = {
+    "minimum_eligible_rungs_not_met",
+    "required_rungs_missing",
+}
+GROK_PROFILE_REDACTED_BLOCKED_REASONS = {
+    "active_profile_invalid",
+    "release_evidence_invalid",
+}
 
 
 def provider_env_defaults(provider: str, env: dict[str, str]) -> dict[str, str]:
@@ -279,9 +325,35 @@ def build_provider_dispatch_plan(
             "reason": f"research dispatch requires {dispatch_command_env_name(provider)} so model/thinking selectors are explicit",
             "research_model_policy": model_profile,
         }
+    grok_profile_status: dict[str, Any] | None = None
+    if provider == "grok":
+        grok_profile_status, profile_error = probe_grok_remote_profile(command_template, env)
+        if profile_error is not None:
+            blocked = {
+                "provider": provider,
+                "status": "blocked",
+                "reason": profile_error,
+                "research_model_policy": model_profile,
+            }
+            if grok_profile_status is not None:
+                blocked["grok_profile_status"] = grok_profile_status
+            return blocked
+        requested_model = model_profile["resolved_model"]
+        if (
+            grok_profile_status is not None
+            and requested_model != "not-specified"
+            and grok_profile_status["model_id"] != requested_model
+        ):
+            return {
+                "provider": provider,
+                "status": "blocked",
+                "reason": "grok-remote profile model does not match the resolved model",
+                "research_model_policy": model_profile,
+                "grok_profile_status": grok_profile_status,
+            }
     command = render_model_placeholders(command_template, model_profile)
     spec = delegation["providers"][provider]
-    return {
+    item = {
         "provider": provider,
         "status": "ready",
         "participant_id": f"{provider}-external-1",
@@ -293,6 +365,9 @@ def build_provider_dispatch_plan(
         "output_contract": "json-envelope-final-marker",
         "research_model_policy": model_profile,
     }
+    if grok_profile_status is not None:
+        item["grok_profile_status"] = grok_profile_status
+    return item
 
 
 def dispatch_command(provider: str, root: Path, platform: str, env: dict[str, str]) -> str | None:
@@ -318,8 +393,144 @@ def default_dispatch_command(provider: str, command: str) -> str:
         # reaches grok. A bare `grok --single` here exits 2 ("a value is required for '--single
         # <PROMPT>'") with the prompt never sent. grok-remote forwards this shape unchanged, and its
         # mid-flow `grok models` egress probes do not consume stdin, so the prompt survives to grok.
+        # grok-remote's active managed profile owns routing and multi-session mode; preserve the
+        # discovered command without adding provider or route selectors here.
         return f"{command} --prompt-file /dev/stdin"
     return command
+
+
+def probe_grok_remote_profile(
+    command: str,
+    env: dict[str, str],
+    *,
+    timeout: int = GROK_PROFILE_PROBE_TIMEOUT,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return the exact public managed-profile status for a grok-remote command."""
+    try:
+        parts = split_dispatch_command(command)
+    except ValueError:
+        return None, "grok-remote profile readiness command is invalid"
+    if not parts:
+        return None, "grok-remote profile readiness command is empty"
+    executable = parts[0]
+    executable_name = re.split(r"[\\/]", executable)[-1].lower()
+    if executable_name not in GROK_REMOTE_EXECUTABLES:
+        return None, None
+    try:
+        help_result = subprocess.run(
+            [executable, "--help"],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "grok-remote managed-profile support check timed out"
+    except OSError:
+        return None, "grok-remote managed-profile support check could not execute"
+    if help_result.returncode != 0 or GROK_PROFILE_HELP_TOKEN not in help_result.stdout:
+        return None, "grok-remote does not support managed-profile readiness"
+    try:
+        completed = subprocess.run(
+            [executable, "doctor", "--json"],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "grok-remote profile readiness probe timed out"
+    except OSError:
+        return None, "grok-remote profile readiness probe could not execute"
+    try:
+        value = json.loads(completed.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return None, "grok-remote profile readiness output is invalid"
+    if not valid_grok_profile_status(value):
+        return None, "grok-remote profile readiness output is invalid"
+    status = value["status"]
+    if status in GROK_PROFILE_READY_STATUSES and completed.returncode != 0:
+        return value, "grok-remote profile readiness exit status is inconsistent"
+    if status in GROK_PROFILE_BLOCKED_STATUSES and completed.returncode != 2:
+        return value, "grok-remote profile readiness exit status is inconsistent"
+    if status in GROK_PROFILE_BLOCKED_STATUSES:
+        return value, f"grok-remote profile is not ready: {value['reason_code']}"
+    return value, None
+
+
+def valid_grok_profile_status(value: Any) -> bool:
+    if not isinstance(value, dict) or set(value) != GROK_PROFILE_STATUS_FIELDS:
+        return False
+    if value.get("schema_version") != GROK_PROFILE_STATUS_SCHEMA:
+        return False
+    status = value.get("status")
+    if type(status) is not str or status not in GROK_PROFILE_READY_STATUSES | GROK_PROFILE_BLOCKED_STATUSES:
+        return False
+    identities = tuple(
+        value.get(field)
+        for field in ("profile_name", "profile_sha256", "release_id", "grok_release_id", "model_id")
+    )
+    if any(item is not None and type(item) is not str for item in identities):
+        return False
+    present = tuple(item is not None for item in identities)
+    if status in GROK_PROFILE_READY_STATUSES and not all(present):
+        return False
+    if status == "unconfigured" and any(present):
+        return False
+    if status == "blocked" and any(present) and not all(present):
+        return False
+    profile_name, profile_sha256, release_id, grok_release_id, model_id = identities
+    if profile_name is not None and profile_name != GROK_PROFILE_NAME:
+        return False
+    if profile_sha256 is not None and GROK_PROFILE_DIGEST_RE.fullmatch(profile_sha256) is None:
+        return False
+    if release_id is not None and GROK_PROFILE_RELEASE_RE.fullmatch(release_id) is None:
+        return False
+    if grok_release_id is not None and GROK_PROFILE_GROK_RELEASE_RE.fullmatch(grok_release_id) is None:
+        return False
+    if model_id is not None and GROK_PROFILE_MODEL_RE.fullmatch(model_id) is None:
+        return False
+    for field in ("eligible_rungs", "missing_rungs"):
+        field_value = value.get(field)
+        if (
+            type(field_value) is not list
+            or any(
+                type(item) is not str
+                or len(item) > 128
+                or GROK_PROFILE_RUNG_RE.fullmatch(item) is None
+                for item in field_value
+            )
+            or len(set(field_value)) != len(field_value)
+        ):
+            return False
+    if set(value["eligible_rungs"]) & set(value["missing_rungs"]):
+        return False
+    reason_code = value.get("reason_code")
+    if (
+        type(reason_code) is not str
+        or GROK_PROFILE_REASON_RE.fullmatch(reason_code) is None
+        or reason_code not in GROK_PROFILE_STATUS_REASONS[status]
+    ):
+        return False
+    if status == "blocked":
+        allowed_blocked_reasons = (
+            GROK_PROFILE_BOUND_BLOCKED_REASONS
+            if all(present)
+            else GROK_PROFILE_REDACTED_BLOCKED_REASONS
+        )
+        if reason_code not in allowed_blocked_reasons:
+            return False
+    if status in GROK_PROFILE_READY_STATUSES and not value["eligible_rungs"]:
+        return False
+    if status == "ready" and value["missing_rungs"]:
+        return False
+    if status == "degraded" and not value["missing_rungs"]:
+        return False
+    if status == "unconfigured" and (value["eligible_rungs"] or value["missing_rungs"]):
+        return False
+    return True
 
 
 def dispatch_command_env_name(provider: str) -> str:
@@ -405,7 +616,7 @@ def run_external_participant(
 
 def build_capability_profile(plan: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
-    return {
+    profile = {
         "profile_id": f"{plan['provider']}-{now.strftime('%Y%m%d%H%M%S')}",
         "provider": plan["provider"],
         "cli_name": plan["provider"],
@@ -427,6 +638,9 @@ def build_capability_profile(plan: dict[str, Any]) -> dict[str, Any]:
         "command_shape": plan["command_shape"],
         "research_model_policy": plan["research_model_policy"],
     }
+    if "grok_profile_status" in plan:
+        profile["grok_profile_status"] = dict(plan["grok_profile_status"])
+    return profile
 
 
 def smoke_prompt(final_marker: str) -> str:

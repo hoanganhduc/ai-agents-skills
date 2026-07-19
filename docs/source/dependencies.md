@@ -42,7 +42,7 @@ Status vocabulary used by `precheck`:
 | Logical Tool | Description |
 |---|---|
 | `calibre-cli` | Calibre command line tools for ebook metadata and conversion. |
-| `chromium-browser-system-tool` | Headless Chromium/Chrome/Edge for CDP-driven page screenshots. |
+| `chromium-browser-system-tool` | Chromium/Chrome/Edge for CDP-driven page screenshots and browser-print PDF evidence. |
 | `espeak-ng-system-tool` | eSpeak NG phonemizer used by offline TTS engines (Kokoro/Piper). |
 | `ffmpeg-system-tool` | FFmpeg/ffprobe for video encoding, audio normalization, and duration probing. |
 | `getscipapers-cli` | getscipapers console script from the maintainer fork, provisioned by the getscipapers-requester skill into a dedicated runtime-owned venv (~/.getscipapers_venv). |
@@ -60,6 +60,7 @@ Status vocabulary used by `precheck`:
 | `node-runtime` | Node runtime for MCP servers that use npx. |
 | `nvidia-smi-tool` | NVIDIA GPU inspection tool used by resource preflight when available. |
 | `ocr-runtime` | OCR command line runtime, normally Tesseract. |
+| `pdftotext-system-tool` | Poppler pdftotext for extracting expected markers from browser-print PDF evidence. |
 | `powershell-runtime` | PowerShell runtime for Windows bootstrap and argument forwarding. |
 | `pptx-render-system-tool` | PPTX renderer: Microsoft PowerPoint on Windows or LibreOffice elsewhere. |
 | `python-runtime` | Python runtime with venv, pip, and ssl support. |
@@ -114,6 +115,7 @@ Status vocabulary used by `precheck`:
 | `ocr-runtime` | `tool` | ocr-runtime |
 | `pdf2image-python-package` | `python` | pdf2image |
 | `pdfplumber-python-package` | `python` | pdfplumber |
+| `pdftotext-system-tool` | `tool` | pdftotext-system-tool |
 | `pillow-python-package` | `python` | PIL |
 | `piper-tts-python-package` | `python` | piper |
 | `pptx-render-system-tool` | `tool` | pptx-render-system-tool |
@@ -136,6 +138,7 @@ Status vocabulary used by `precheck`:
 | `telegram-bot-config` | `remote-service` | remote-service |
 | `torch-python-package` | `python` | torch; candidate set `docling` |
 | `torchvision-python-package` | `python` | torchvision; candidate set `docling` |
+| `venue-ranking-provider-access` | `remote-service` | remote-service |
 | `vnu-eoffice-python-package` | `python` | vnu_eoffice; candidate set `agent` |
 | `websocket-client-python-package` | `python` | websocket |
 | `zotero-credentials` | `remote-service` | remote-service |
@@ -167,7 +170,7 @@ Evidence inspected:
 |---|---|---|---|---|
 | `bash-or-posix-shell` | required on Linux and inside WSL-backed Windows flows | Used by shared runtime runner and shell skill wrappers. | Used through WSL for SageMath and other Linux-substrate commands. | `runtime wrappers`, `sagemath`, `make` |
 | `calibre-cli` | optional for richer ebook library operations | calibredb and ebook-convert on PATH. | calibredb.exe and ebook-convert.exe on PATH. | `calibre`, `vnthuquan` |
-| `chromium-browser` | optional for url-to-screenshot page capture (headless CDP screenshot); reported by the doctor verb, not an install gate | chromium or google-chrome on PATH, e.g. apt-get install chromium. | chrome.exe or msedge.exe at the default Program Files path or on PATH. | `url-to-screenshot`, `url-to-screenshot-runtime` |
+| `chromium-browser` | optional for url-to-screenshot capture and venue-ranking-evidence browser-print proof; installed manually and reported by doctor rather than treated as an install gate | chromium or google-chrome on PATH, e.g. apt-get install chromium. Venue proof is limited to the public unauthenticated ICORE detail page; licensed or authenticated browser-profile capture is not implemented. | chrome.exe or msedge.exe at the default Program Files path or on PATH. Venue proof is limited to the public unauthenticated ICORE detail page; licensed or authenticated browser-profile capture is not implemented. | `url-to-screenshot`, `url-to-screenshot-runtime`, `venue-ranking-evidence` |
 | `docling-cli` | optional CLI layer for docling workflows | Current Claude docs use <LINUX_HOME>/.local/share/docling-venv/bin/docling. | Current Claude docs use <WINDOWS_HOME>/.venv-docling/Scripts/docling.exe. | `docling` |
 | `espeak-ng` | optional, for offline TTS (Kokoro/Piper phonemization) | espeak-ng on PATH, e.g. apt-get install espeak-ng. | espeak-ng on PATH or at the default winget path C:\Program Files\eSpeak NG\espeak-ng.exe. | `slides-to-video offline TTS` |
 | `ffmpeg` | required for slides-to-video rendering (video encode, audio normalize, duration probe) | FFmpeg + ffprobe on PATH (LGPL build with libx264), e.g. apt-get install ffmpeg. | ffmpeg.exe + ffprobe.exe on PATH (LGPL build), via winget/choco or a static build. | `slides-to-video` |
@@ -186,9 +189,10 @@ Evidence inspected:
 | `modal-cli` | optional until submit/deploy/wait/fetch are used | Installed by the modal Python package and authenticated with modal token set/new. | Installed into the agent virtualenv; wrappers add the venv Scripts directory to PATH. | `modal-research-compute` |
 | `node-runtime` | required for Node-backed MCP servers and optional Zotero translation-server workflows | Node.js 18+ with npm. | Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server. | `Codex MCP`, `zotero translation server` |
 | `ocr-runtime` | optional for scanned-document OCR | Tesseract with tessdata available; current Claude docling docs use TESSDATA_PREFIX=/usr/share/tessdata/. | Current Windows docling flow prefers rapidocr Python extras; Tesseract may be used through WSL if needed. | `docling` |
+| `pdftotext` | optional for venue lookup; required for venue-ranking-evidence browser-proof marker verification | pdftotext on PATH from Poppler, e.g. apt-get install poppler-utils. | pdftotext.exe from a Poppler distribution on PATH. | `venue-ranking-evidence` |
 | `powershell-runtime` | required for Windows bootstrap and Windows wrapper execution | not required | PowerShell 5.1+ or PowerShell 7+. | `make.bat`, `installer bootstrap`, `Windows runtime wrappers` |
 | `pptx-renderer` | optional, required only for PPTX input rendering | LibreOffice soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | Microsoft PowerPoint from Microsoft Office via COM automation, or LibreOffice soffice.exe on PATH. | `slides-to-video PPTX input` |
-| `python-runtime` | required for runtime-backed skills and the installer | Native Python 3.10+ detected from environment override, repo venv, python3, or python. | Native Python 3.10+ detected from environment override, repo venv, C:\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python. | `installer`, `zotero`, `calibre`, `docling`, `get-available-resources`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `graph-verifier`, `submission-venue-selector`, `annotated-review`, `modal-research-compute`, `hetzner-research-compute`, `kaggle-research-compute`, `session-logs`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate` |
+| `python-runtime` | required for runtime-backed skills and the installer | Native Python 3.10+ detected from environment override, repo venv, python3, or python. | Native Python 3.10+ detected from environment override, repo venv, C:\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python. | `installer`, `zotero`, `calibre`, `docling`, `get-available-resources`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `graph-verifier`, `submission-venue-selector`, `venue-ranking-evidence`, `annotated-review`, `modal-research-compute`, `hetzner-research-compute`, `kaggle-research-compute`, `session-logs`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate` |
 | `ripgrep-cli` | optional but expected by local search/session workflows | rg on PATH. | rg.exe or rg on PATH. | `session-logs`, `research workflows`, `repo inspection` |
 | `sagemath` | required for the sagemath skill and optional Sage-backed graph/TikZ workflows | Native executable via `AAS_SAGE`, `sage` on `PATH`, a local Sage install, or a Docker-backed wrapper that behaves like `sage` for `--version` and `-c` probes. | WSL-backed SageMath inside Ubuntu 24.04, detected through wsl.exe when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when available, or an ext4.vhdx presence warning when the distro image is not inspectable. | `sagemath`, `tikz-draw`, `openclaw/source research math verification` |
 | `tex-runtime` | required for TikZ compile checks and optional annotated-review LaTeX/PDF output | TeX Live or compatible distribution providing pdflatex, lualatex, or xelatex. | MiKTeX, TeX Live, or compatible distribution providing pdflatex.exe, lualatex.exe, or xelatex.exe. | `tikz-draw`, `annotated-review` |
@@ -199,7 +203,7 @@ Evidence inspected:
 
 | Package | Import | Requirement | Platforms | Used By |
 |---|---|---|---|---|
-| `Pillow` | `PIL` | Pillow>=10.2 | `linux`, `windows` | `slides-to-video` |
+| `Pillow` | `PIL` | Pillow>=10.2 | `linux`, `windows` | `slides-to-video`, `url-to-screenshot-runtime`, `venue-ranking-evidence` |
 | `PyMuPDF` | `fitz` | pymupdf; tikz semantic verifier pins PyMuPDF==1.27.2.2 | `linux`, `windows` | `annotated-review`, `tikz-draw` |
 | `PyPDF2` | `PyPDF2` | PyPDF2>=3.0.0 | `linux`, `windows` | `zotero`, `calibre` |
 | `docling` | `docling` | docling>=2.88.0,<3 | `linux`, `windows` | `docling` |
@@ -236,6 +240,7 @@ Evidence inspected:
 | `tomli` | `tomli` | tomli>=2 on Python <3.11 for Docling TOML config parsing | `linux`, `windows` | `docling` |
 | `torch` | `torch` | torch CPU wheel for Windows docling; torch in Modal GPU image | `windows`, `remote-modal` | `docling Windows setup`, `modal GPU jobs` |
 | `torchvision` | `torchvision` | torchvision CPU wheel for Windows docling | `windows` | `docling Windows setup` |
+| `websocket-client` | `websocket` | websocket-client>=1.6 | `linux`, `windows` | `url-to-screenshot-runtime`, `venue-ranking-evidence` |
 
 ### Node Packages
 
@@ -258,6 +263,7 @@ Evidence inspected:
 | `leanexplore` | LeanExplore API key, MCP client configuration, and local search data are configured manually outside this repo; helpers report presence only and never write config or download data. | `lean-explore-mcp` |
 | `modal` | Modal token file and workspace credentials are configured outside this repo. | `modal-research-compute` |
 | `provider-configs` | OpenAI, Claude, DeepSeek, Copilot, and other provider auth/config files are intentionally excluded. | `agent frontends` |
+| `venue-ranking-providers` | Scopus, Web of Science, JCR, and other licensed venue-source subscriptions, export access, API keys, and institutional access remain outside this repo. The runtime accepts only user-supplied authorized normalized imports for those sources; it never acquires credentials, automates licensed UIs, reuses browser profiles, or bypasses provider access controls. | `venue-ranking-evidence` |
 | `zotero` | Zotero API/library/WebDAV credentials are configured outside this repo. | `zotero`, `annotated-review`, `paper-review` |
 
 ### Windows Substrate Notes

@@ -15,8 +15,8 @@ confirmation.
   available thinking or reasoning level for every parent, manager, and worker.
 - Treat Codex as the parent runtime and as an active provider for spawned
   subagents.
-- Treat Claude, DeepSeek, and Copilot as active external providers only after
-  fresh capability probes pass.
+- Treat Claude, DeepSeek, Copilot, Antigravity, and Grok as active external
+  providers only after fresh capability probes pass.
 - Treat OpenClaw as reference-only until a separate native execution safety
   gate approves it.
 - Prefer installed templates for repeatable delegation plans.
@@ -37,9 +37,23 @@ for the current run:
 - timeout behavior
 - file-read fidelity when local files are part of the task
 - same-model nested worker support when manager-worker delegation is requested
+- for `grok-remote`, active managed-profile readiness plus its concrete model
+  and proxy/Grok release identities
 
 Do not store raw provider commands, credentials, stdout, stderr, provider
 config, session IDs, or raw prompts in cross-agent packets.
+
+`grok-remote` dispatch is route-neutral. The dispatcher must not set
+`GROK_MULTI_SESSION` or synthesize `--vpn`, `--host`, `--iphone`, or `--ios`;
+the active managed profile owns default routing, and explicit caller-supplied
+flags pass through unchanged. Probe readiness with
+`grok-remote doctor --json`; require the exact
+`grok-remote.profile-status.v1` field set, accept only `ready` or `degraded`,
+and require `model_id` to match the resolved model. Invalid, inconsistent,
+timed-out, `blocked`, and `unconfigured` results fail closed. Record only those
+public fields: `schema_version`, `status`, `profile_name`, `profile_sha256`,
+`release_id`, `grok_release_id`, `model_id`, `eligible_rungs`, `missing_rungs`,
+and `reason_code`. Never record endpoints, ports, or node identities.
 
 ## Managed Dispatch
 

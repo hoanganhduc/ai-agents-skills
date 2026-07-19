@@ -443,6 +443,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         result = runtime_inventory(RUNTIME_SOURCE_ROOT)
         serialized = json.dumps(result)
 
+        self.assertEqual(result["source_root"], "<RUNTIME_SOURCE_ROOT>")
         self.assertFalse(has_sensitive_material(serialized))
         self.assertNotIn(str(RUNTIME_SOURCE_ROOT), serialized)
         for item in result["entries"]:

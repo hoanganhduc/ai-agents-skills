@@ -687,6 +687,19 @@ def validate_smoke_output(
         checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
         checks.append({"name": "browser-not-launched", "ok": payload.get("browser_launched") is False})
         checks.append({"name": "canary-not-leaked", "ok": "URL-TO-SCREENSHOT-SMOKE-CANARY" not in serialized})
+    elif skill == "venue-ranking-evidence":
+        payload = parse_json_stdout(completed.stdout)
+        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
+        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
+        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
+        checks.append({"name": "real-secrets-not-read", "ok": payload.get("real_secrets_read") is False})
+        checks.append({
+            "name": "source-registry-validated",
+            "ok": isinstance(payload.get("validated_sources"), int) and payload.get("validated_sources", 0) > 0,
+        })
+        checks.append({"name": "ambiguity-preserved", "ok": payload.get("ambiguous_fixture_matches") == 2})
     return checks
 
 
