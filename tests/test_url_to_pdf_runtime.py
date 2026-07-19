@@ -434,6 +434,17 @@ class RuntimeProvenanceTests(unittest.TestCase):
             )
 
             browser.write_text(
+                "#!/bin/sh\n"
+                "printf '[warning] channel metadata unavailable\\n'\n"
+                "printf 'Google Chrome for Testing 150.0.1\\n'\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                detect.probe_browser_version(str(browser)),
+                "Google Chrome for Testing 150.0.1",
+            )
+
+            browser.write_text(
                 "#!/bin/sh\nprintf '123456789'\n", encoding="utf-8"
             )
             self.assertEqual(

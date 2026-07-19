@@ -234,8 +234,23 @@ def probe_browser_version(
     if reader.is_alive() or exceeded.is_set() or process.poll() != 0:
         return ""
     text = bytes(output).decode("utf-8", "replace")
-    first_line = text.splitlines()[0].strip() if text.splitlines() else ""
-    return "".join(char for char in first_line if char.isprintable())[:512]
+    lines = [
+        "".join(char for char in line.strip() if char.isprintable())[:512]
+        for line in text.splitlines()
+    ]
+    lines = [line for line in lines if line]
+    if not lines:
+        return ""
+
+    # Some packaged Chrome builds emit a channel warning before the actual
+    # ``--version`` line.  Prefer the first vendor/version-shaped line while
+    # retaining the historical first-line fallback for compatible wrappers.
+    import re
+
+    version_line = re.compile(
+        r"(?i)\b(?:chromium|google chrome(?: for testing)?|chrome|microsoft edge)\b.*\d"
+    )
+    return next((line for line in lines if version_line.search(line)), lines[0])
 
 
 def _resolve_candidate(
