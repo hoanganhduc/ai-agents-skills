@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -7,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from installer.ai_agents_skills.agents import detect_agents, target_for
 from installer.ai_agents_skills.apply import apply_plan
@@ -666,6 +668,17 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             registry=registry,
         )
 
+    @unittest.skipUnless(os.name == "nt", "Windows-specific PID probe")
+    def test_windows_pid_probe_does_not_send_a_signal(self) -> None:
+        spec = importlib.util.spec_from_file_location("autonomous_research_loop_runtime", HELPER)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        runtime = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runtime)
+
+        with mock.patch.object(runtime.os, "kill", side_effect=AssertionError("os.kill was called")):
+            self.assertTrue(runtime.pid_alive(os.getpid()))
+
     def test_arm_hook_block_then_kill_switches_allow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -704,20 +717,41 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             reg, loop, proj = base / "reg", base / "loop", base / "proj"
             proj.mkdir()
             self._init(loop, reg)
-            # arm as the headless driver does: driver flag + a live pid
-            self._run(
-                "arm", "--dir", str(loop), "--root", str(proj),
-                "--pid", str(os.getpid()), "--driver", registry=reg,
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+            driver = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creationflags,
             )
-            self.assertFalse(json.loads(self._run("done", "--dir", str(loop), registry=reg).stdout)["done"])
-            # not done, but a live driver owns the loop -> interactive hook stands down
-            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
-            # same live pid without the driver flag is not driver proof -> hook blocks
-            self._run(
-                "arm", "--dir", str(loop), "--root", str(proj),
-                "--pid", str(os.getpid()), "--force", registry=reg,
-            )
-            self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 2)
+            try:
+                # arm as the headless driver does: driver flag + a live pid
+                self._run(
+                    "arm", "--dir", str(loop), "--root", str(proj),
+                    "--pid", str(driver.pid), "--driver", registry=reg,
+                )
+                self.assertFalse(
+                    json.loads(self._run("done", "--dir", str(loop), registry=reg).stdout)["done"]
+                )
+                # not done, but a live driver owns the loop -> interactive hook stands down
+                self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 0)
+                self.assertIsNone(driver.poll())
+                # same live pid without the driver flag is not driver proof -> hook blocks
+                self._run(
+                    "arm", "--dir", str(loop), "--root", str(proj),
+                    "--pid", str(driver.pid), "--force", registry=reg,
+                )
+                self.assertEqual(self._run("hook-check", "--root", str(proj), registry=reg).returncode, 2)
+                self.assertIsNone(driver.poll())
+            finally:
+                if driver.poll() is None:
+                    driver.terminate()
+                try:
+                    driver.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    driver.kill()
+                    driver.wait(timeout=5)
 
     def test_watch_reports_iteration_terminal_and_driver_death(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
