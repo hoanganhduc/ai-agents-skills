@@ -96,21 +96,41 @@ def grok_profile_status_payload(
     }
 
 
-def write_fake_grok_remote(path: Path) -> None:
-    path.write_text(
-        "#!/bin/sh\n"
-        "if [ \"$1\" = --help ]; then\n"
-        "  printf '%s\\n' '  grok-remote doctor --json   report managed profile readiness'\n"
-        "  exit 0\n"
-        "fi\n"
-        "if [ \"$1\" = doctor ] && [ \"$2\" = --json ]; then\n"
-        "  printf '%s\\n' \"$AAS_TEST_GROK_PROFILE_JSON\"\n"
-        "  exit \"$AAS_TEST_GROK_PROFILE_EXIT\"\n"
-        "fi\n"
-        "exit 97\n",
-        encoding="utf-8",
+def write_test_cli(path: Path, *, posix: str, windows: str) -> Path:
+    actual = path.with_suffix(".cmd") if os.name == "nt" else path
+    actual.write_text(windows if os.name == "nt" else posix, encoding="utf-8")
+    actual.chmod(0o755)
+    return actual
+
+
+def write_fake_grok_remote(path: Path) -> Path:
+    return write_test_cli(
+        path,
+        posix=(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = --help ]; then\n"
+            "  printf '%s\\n' '  grok-remote doctor --json   report managed profile readiness'\n"
+            "  exit 0\n"
+            "fi\n"
+            "if [ \"$1\" = doctor ] && [ \"$2\" = --json ]; then\n"
+            "  printf '%s\\n' \"$AAS_TEST_GROK_PROFILE_JSON\"\n"
+            "  exit \"$AAS_TEST_GROK_PROFILE_EXIT\"\n"
+            "fi\n"
+            "exit 97\n"
+        ),
+        windows=(
+            "@echo off\r\n"
+            "if \"%~1\"==\"--help\" (\r\n"
+            "  echo   grok-remote doctor --json   report managed profile readiness\r\n"
+            "  exit /b 0\r\n"
+            ")\r\n"
+            "if \"%~1\"==\"doctor\" if \"%~2\"==\"--json\" (\r\n"
+            "  echo %AAS_TEST_GROK_PROFILE_JSON%\r\n"
+            "  exit /b %AAS_TEST_GROK_PROFILE_EXIT%\r\n"
+            ")\r\n"
+            "exit /b 97\r\n"
+        ),
     )
-    path.chmod(0o755)
 
 
 def create_agent_homes(root: Path, *agents: str) -> None:
@@ -692,9 +712,11 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             root = Path(tmp)
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            agy = bin_dir / "agy"
-            agy.write_text("#!/bin/sh\nprintf 'agy test cli\\n'\n", encoding="utf-8")
-            agy.chmod(0o755)
+            write_test_cli(
+                bin_dir / "agy",
+                posix="#!/bin/sh\nprintf 'agy test cli\\n'\n",
+                windows="@echo off\r\necho agy test cli\r\n",
+            )
 
             old_path = os.environ.get("PATH", "")
             old_ls = os.environ.pop("ANTIGRAVITY_LS_ADDRESS", None)
@@ -772,9 +794,11 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             root = Path(tmp)
             bin_dir = root / "bin"
             bin_dir.mkdir()
-            grok = bin_dir / "grok"
-            grok.write_text("#!/bin/sh\nprintf 'grok test cli\\n'\n", encoding="utf-8")
-            grok.chmod(0o755)
+            write_test_cli(
+                bin_dir / "grok",
+                posix="#!/bin/sh\nprintf 'grok test cli\\n'\n",
+                windows="@echo off\r\necho grok test cli\r\n",
+            )
 
             old_path = os.environ.get("PATH", "")
             old_aas = os.environ.pop("AAS_GROK", None)
@@ -812,8 +836,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
 
     def test_grok_remote_profile_probe_accepts_ready_and_degraded_contracts(self):
         with tempfile.TemporaryDirectory() as tmp:
-            grok_remote = Path(tmp) / "grok-remote"
-            write_fake_grok_remote(grok_remote)
+            grok_remote = write_fake_grok_remote(Path(tmp) / "grok-remote")
             for status in ("ready", "degraded"):
                 with self.subTest(status=status):
                     payload = grok_profile_status_payload(status)
@@ -831,8 +854,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
 
     def test_grok_remote_profile_probe_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
-            grok_remote = Path(tmp) / "grok-remote"
-            write_fake_grok_remote(grok_remote)
+            grok_remote = write_fake_grok_remote(Path(tmp) / "grok-remote")
 
             for status in ("blocked", "unconfigured"):
                 with self.subTest(status=status):
@@ -927,11 +949,11 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
 
             old_grok_remote = Path(tmp) / "old" / "grok-remote"
             old_grok_remote.parent.mkdir()
-            old_grok_remote.write_text(
-                "#!/bin/sh\nprintf '%s\\n' 'old grok-remote help'\n",
-                encoding="utf-8",
+            old_grok_remote = write_test_cli(
+                old_grok_remote,
+                posix="#!/bin/sh\nprintf '%s\\n' 'old grok-remote help'\n",
+                windows="@echo off\r\necho old grok-remote help\r\n",
             )
-            old_grok_remote.chmod(0o755)
             observed, error = probe_grok_remote_profile(str(old_grok_remote), os.environ.copy())
             self.assertIsNone(observed)
             self.assertEqual(error, "grok-remote does not support managed-profile readiness")
@@ -945,8 +967,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             env={},
         )
         with tempfile.TemporaryDirectory() as tmp:
-            grok_remote = Path(tmp) / "grok-remote"
-            write_fake_grok_remote(grok_remote)
+            grok_remote = write_fake_grok_remote(Path(tmp) / "grok-remote")
             payload = grok_profile_status_payload()
             env = {
                 **os.environ,
@@ -1054,9 +1075,21 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             "fi\n"
         )
         with tempfile.TemporaryDirectory() as tmp:
-            grok = Path(tmp) / "grok"
-            grok.write_text(fake_grok, encoding="utf-8")
-            grok.chmod(0o755)
+            grok = write_test_cli(
+                Path(tmp) / "grok",
+                posix=fake_grok,
+                windows=(
+                    "@echo off\r\n"
+                    "if \"%~1\"==\"--prompt-file\" (\r\n"
+                    "  if \"%~2\"==\"\" exit /b 2\r\n"
+                    "  more\r\n"
+                    "  exit /b 0\r\n"
+                    ")\r\n"
+                    "if \"%~1\"==\"--single\" exit /b 2\r\n"
+                    "if \"%~1\"==\"-p\" exit /b 2\r\n"
+                    "exit /b 2\r\n"
+                ),
+            )
             env = dict(os.environ)
 
             good = default_dispatch_command("grok", str(grok))
