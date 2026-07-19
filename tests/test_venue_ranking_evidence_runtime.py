@@ -364,6 +364,15 @@ def create_fixture_independent_verified_run(
 
 
 class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
+    def test_atomic_write_supports_platforms_without_fchmod(self) -> None:
+        module = load_runtime_module()
+        with tempfile.TemporaryDirectory() as td:
+            target = Path(td) / "record.json"
+            with mock.patch.object(module.os, "fchmod", None, create=True):
+                module.write_atomic(target, b"closed\n", mode=0o600)
+            self.assertEqual(target.read_bytes(), b"closed\n")
+            self.assertFalse(list(target.parent.glob(".record.json.*")))
+
     @unittest.skipIf(os.name == "nt", "POSIX shell wrapper test")
     def test_posix_wrapper_uses_aas_runtime_python(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
