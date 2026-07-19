@@ -598,15 +598,15 @@ class PdfOfflineSelftestIsolationTests(unittest.TestCase):
         self.assertTrue(checks.passed, checks.results)
 
 
-CHROMIUM = next(
+CHROMIUM = os.environ.get("URL_TO_SCREENSHOT_BROWSER") or next(
     (
         found
         for name in (
-            "chromium",
-            "chromium-browser",
+            "chrome",
             "google-chrome",
             "google-chrome-stable",
-            "chrome",
+            "chromium",
+            "chromium-browser",
         )
         if (found := shutil.which(name))
     ),

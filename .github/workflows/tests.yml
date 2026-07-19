@@ -144,7 +144,8 @@ jobs:
 
       - name: Print and structurally verify PDF fixtures
         run: |
-          test -n "$(command -v chromium || command -v chromium-browser || command -v google-chrome || command -v google-chrome-stable || command -v chrome)"
+          export URL_TO_SCREENSHOT_BROWSER="$(command -v chrome || command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser)"
+          test -n "$URL_TO_SCREENSHOT_BROWSER"
           python -m unittest -v tests/test_url_to_pdf_runtime.py -k ChromiumPdfFixtureTests
 
   python-compat:
