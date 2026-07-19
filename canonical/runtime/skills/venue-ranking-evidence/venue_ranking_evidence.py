@@ -213,14 +213,20 @@ def write_atomic(path: Path, data: str | bytes, mode: int = 0o600) -> None:
     fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     tmp = Path(raw_tmp)
     try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, "wb") as handle:
+        fchmod = getattr(os, "fchmod", None)
+        if fchmod is not None:
+            fchmod(fd, mode)
+        handle = os.fdopen(fd, "wb")
+        fd = -1
+        with handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, path)
         os.chmod(path, mode)
     finally:
+        if fd >= 0:
+            os.close(fd)
         if tmp.exists():
             tmp.unlink()
 
