@@ -285,6 +285,7 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             "getscipapers-requester",
             "paper-lookup",
             "submission-venue-selector",
+            "venue-ranking-evidence",
             "docling",
             "database-lookup",
             "paper-review",

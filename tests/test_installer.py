@@ -2681,6 +2681,13 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("release-check: docs-check static-check sanitize-check test runtime-smoke", text)
         self.assertIn("./installer/bootstrap.sh --run-python -m sphinx", text)
 
+    def test_python_compat_workflow_installs_tomli_before_tests(self) -> None:
+        text = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        compat_job = text.split("  python-compat:\n", 1)[1].split("\n  macos:\n", 1)[0]
+        install = "python -m pip install 'tomli>=2; python_version < \"3.11\"'"
+        self.assertIn(install, compat_job)
+        self.assertLess(compat_job.index(install), compat_job.index("run: make test"))
+
     def test_cli_delegate_agent_research_blocks_without_resolved_model(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)

@@ -108,7 +108,18 @@ themselves.
 ## Delegation
 
 Grok is also a cross-agent delegation provider. Live dispatch is CLI-based
-through `grok --single`; on hosts with the region-correct `grok-remote` proxy it
-is preferred automatically. Grok authenticates through an interactive OIDC
-session rather than an API-key environment variable. See the repo
+through `grok --prompt-file /dev/stdin`; on hosts with the region-correct
+`grok-remote` proxy it is preferred automatically. The parent dispatcher sets
+no multi-session environment override and adds no route flags. A bare proxy
+command relies on its active managed profile; explicit caller-supplied route or
+profile flags are preserved. Concurrent participants must use the same ready
+profile and concrete model/release identities. The dispatcher checks
+`grok-remote doctor --json`, accepts only an exact
+`grok-remote.profile-status.v1` result in `ready` or `degraded` state, and
+requires its `model_id` to match the resolved model. Invalid or non-ready
+results fail closed, and private topology is not recorded. The dispatcher first
+requires `--help` to advertise that exact command, so older proxies fail closed
+without receiving `doctor` as ordinary Grok input. Grok authenticates through
+an interactive OIDC session rather than an API-key environment variable. See
+the repo
 [Architecture](../../docs/architecture.md) for the full per-target matrix.

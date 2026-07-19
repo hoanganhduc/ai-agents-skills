@@ -15,13 +15,15 @@ invariants:
     ``scale=device-scale-factor``, and the decompression-bomb area cap;
   * a ``--full-page`` request never silently degrades to a viewport capture;
   * the in-memory blank-output detector on synthesized PNGs;
-  * the verify gate on a synth golden + blank;
+  * the PNG verify gate on a synth golden + blank;
+  * Print-to-PDF parameters, atomic bounded output, and the strict page-tree
+    verifier on synthesized PDF bytes;
   * ``import u2s.procctl`` succeeds and ``select_kill_strategy`` per ``os.name``.
 
 Binding invariants:
-  * (M3) byte inputs come only from ``u2s.pngtools``; the committed HTML capture
-    fixtures are never read here, and there is no ``__file__``-relative fixture
-    read in this blocking path.
+  * (M3) PNG bytes come only from ``u2s.pngtools`` and PDF bytes are synthesized
+    in memory; committed capture fixtures are never read here, and there is no
+    ``__file__``-relative fixture read in this blocking path.
   * (M2) no browser launch and no socket are reached from this import graph.
 
 Prints a JSON body carrying BOTH the slides-to-video keys (``ok``, ``passed``,
@@ -40,7 +42,7 @@ import tempfile
 from pathlib import Path
 
 from . import blank as blank_mod
-from . import capture, cdp, consent, detect, oneshot, pngtools, procctl, security
+from . import capture, cdp, consent, detect, oneshot, pdf as pdf_mod, pngtools, procctl, security
 from . import verify as verify_mod
 
 
@@ -205,14 +207,34 @@ def _check_cdp_argv(c: _Checks) -> None:
          cdp.fetch_decision("file:///etc/passwd", []) == "fail")
     c.ok("fetch_continues_file_with_optin",
          cdp.fetch_decision("file:///tmp/x.html", [], allow_file_urls=True) == "continue")
+    c.ok(
+        "fetch_same_origin_blocks_cross_host_redirect",
+        cdp.fetch_decision(
+            "https://redirect.example.net/",
+            ["93.184.216.34"],
+            same_origin_only=True,
+            initial_hostname="official.example",
+        )
+        == "fail",
+    )
+    c.ok(
+        "fetch_same_origin_blocks_cross_host_subresource",
+        cdp.fetch_decision(
+            "https://cdn.example.net/script.js",
+            ["93.184.216.34"],
+            same_origin_only=True,
+            initial_hostname="official.example",
+        )
+        == "fail",
+    )
 
 
 def _check_full_page(c: _Checks) -> None:
-    metrics = {"cssContentSize": {"width": 1280, "height": 4000}, "contentSize": {"width": 2560, "height": 8000}}
+    metrics = {"cssContentSize": {"width": 1280, "height": 1600}, "contentSize": {"width": 2560, "height": 3200}}
     clip = cdp.build_full_page_clip(metrics, device_scale=2.0)
-    c.ok("clip_uses_csscontentsize", clip.width == 1280 and clip.height == 4000)
+    c.ok("clip_uses_csscontentsize", clip.width == 1280 and clip.height == 1600)
     c.ok("clip_scale_is_device_scale", clip.scale == 2.0)
-    # area = (1280*2)*(4000*2) = 20.48M px, under the cap.
+    # area = (1280*2)*(1600*2) = 8.192M px, under the cap.
     c.ok("clip_area_under_cap", clip.pixel_area() <= cdp.MAX_CAPTURE_PIXELS)
     # Bomb cap fires before capture.
     huge = {"cssContentSize": {"width": 20000, "height": 20000}}
@@ -258,6 +280,81 @@ def _check_blank_and_verify(c: _Checks) -> None:
     c.ok("verify_consent_pass", v_consent.checks.get("consent") == verify_mod.PASS)
 
 
+def _make_minimal_pdf(page_count: int) -> bytes:
+    """Synthesize a classic-xref PDF page tree entirely in memory."""
+    kids = b" ".join(f"{number} 0 R".encode("ascii") for number in range(3, 3 + page_count))
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Count " + str(page_count).encode("ascii") + b" /Kids [" + kids + b"] >>",
+    ]
+    for index in range(page_count):
+        content_number = 3 + page_count + index
+        objects.append(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents "
+            + f"{content_number} 0 R".encode("ascii")
+            + b" >>"
+        )
+    objects.extend(b"<< /Length 2 >> stream\nq\nendstream" for _ in range(page_count))
+    body = bytearray(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets: list[int] = []
+    for number, obj in enumerate(objects, start=1):
+        offsets.append(len(body))
+        body.extend(f"{number} 0 obj\n".encode("ascii"))
+        body.extend(obj)
+        body.extend(b"\nendobj\n")
+    xref_offset = len(body)
+    body.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    body.extend(b"0000000000 65535 f \n")
+    for offset in offsets:
+        body.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    body.extend(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode("ascii")
+    )
+    return bytes(body)
+
+
+def _check_pdf(c: _Checks, work: Path) -> None:
+    params = cdp.build_print_to_pdf_params()
+    c.ok(
+        "pdf_print_defaults_explicit",
+        params
+        == {
+            "printBackground": True,
+            "preferCSSPageSize": True,
+            "transferMode": "ReturnAsBase64",
+        },
+    )
+    valid = _make_minimal_pdf(2)
+    verified = pdf_mod.verify_pdf(valid)
+    c.ok(
+        "pdf_structurally_valid_positive_page_tree",
+        verified.final_verdict == pdf_mod.UNVERIFIED
+        and verified.status == pdf_mod.STRUCTURALLY_VALID
+        and verified.page_count == 2
+        and bool(verified.sha256),
+        str(verified.to_dict()),
+    )
+    forged = pdf_mod.verify_pdf(b"%PDF-1.4\n/Type /Page /Count 99\n%%EOF\n")
+    c.ok("pdf_signature_only_not_verified", forged.final_verdict == pdf_mod.UNVERIFIED)
+    mismatched = pdf_mod.verify_pdf(valid.replace(b"/Count 2", b"/Count 3"))
+    c.ok("pdf_mismatched_page_tree_not_verified", mismatched.final_verdict == pdf_mod.UNVERIFIED)
+    over_limit = pdf_mod.verify_pdf(valid, max_bytes=len(valid) - 1)
+    c.ok("pdf_over_byte_limit_not_verified", over_limit.final_verdict == pdf_mod.UNVERIFIED)
+
+    output = work / "offline-proof.pdf"
+    cdp._atomic_write_pdf(str(output), valid, max_bytes=len(valid))
+    from_file = pdf_mod.verify_pdf_file(output, max_bytes=len(valid))
+    c.ok(
+        "pdf_atomic_output_is_structurally_valid",
+        from_file.status == pdf_mod.STRUCTURALLY_VALID
+        and from_file.sha256 == verified.sha256,
+        str(from_file.to_dict()),
+    )
+
+
 def _check_procctl(c: _Checks) -> None:
     import importlib
 
@@ -278,6 +375,7 @@ def run_checks(work: Path) -> _Checks:
     _check_full_page(c)
     _check_consent(c)
     _check_blank_and_verify(c)
+    _check_pdf(c, work)
     _check_procctl(c)
     return c
 

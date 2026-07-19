@@ -142,6 +142,11 @@ jobs:
           test "${after_chrome:-0}" = "0" || (echo "leftover chrome child PID after reap" && exit 1)
           test "${after_chromium:-0}" = "0" || (echo "leftover chromium child PID after reap" && exit 1)
 
+      - name: Print and structurally verify PDF fixtures
+        run: |
+          test -n "$(command -v chromium || command -v chromium-browser || command -v google-chrome || command -v google-chrome-stable || command -v chrome)"
+          python -m unittest -v tests/test_url_to_pdf_runtime.py -k ChromiumPdfFixtureTests
+
   python-compat:
     runs-on: ubuntu-latest
     timeout-minutes: 15

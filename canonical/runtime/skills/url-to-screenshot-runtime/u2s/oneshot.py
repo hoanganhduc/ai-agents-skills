@@ -61,38 +61,87 @@ def build_oneshot_argv(spec: OneShotSpec) -> list[str]:
 
 
 def run_oneshot(spec: OneShotSpec, *, timeout: float, os_name: str | None = None) -> dict:
-    """Launch the one-shot capture into a fresh temp profile and reap on timeout.
+    """Launch into a fresh profile, then atomically publish a validated PNG.
 
     Imported lazily by the engine; never reached from the offline selftest. A
     fresh ``url2png_`` ``--user-data-dir`` is created and removed in ``finally``
     via ``procctl.cleanup_profile_dir``. On timeout the whole process tree is
-    reaped via the per-OS kill strategy and ``BLOCKED_TIMEOUT`` is returned.
+    reaped via the per-OS kill strategy and ``BLOCKED_TIMEOUT`` is returned. The
+    browser writes only to an adjacent unpredictable temporary path; the final
+    destination is replaced atomically, so a planted output symlink is never
+    followed.
     """
     import os
     import subprocess
     import tempfile
+    from dataclasses import replace
     from pathlib import Path
 
-    from . import procctl
+    from . import cdp, procctl
 
     os_name = os_name or os.name
     profile_dir = Path(tempfile.mkdtemp(prefix="url2png_"))
-    argv = build_oneshot_argv(spec)
+    destination = Path(spec.out_path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, staged_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp.png", dir=str(destination.parent)
+    )
+    os.close(descriptor)
+    os.unlink(staged_name)
+    staged = Path(staged_name)
+    argv = build_oneshot_argv(replace(spec, out_path=staged_name))
     # The one-shot needs its own user-data-dir; insert it right after the binary.
     argv.insert(1, f"--user-data-dir={profile_dir}")
     strategy = procctl.select_kill_strategy(os_name)
-    proc = subprocess.Popen(  # noqa: S603 - argv is built from validated inputs
-        argv,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        **procctl.popen_kwargs(os_name),
-    )
+    proc = None
     try:
+        proc = subprocess.Popen(  # noqa: S603 - argv is built from validated inputs
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            **procctl.popen_kwargs(os_name),
+        )
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             strategy.kill(proc)
             return {"returncode": None, "reaped": True, "reason": "BLOCKED_TIMEOUT"}
-        return {"returncode": proc.returncode, "reaped": False, "out_path": spec.out_path}
+        if proc.returncode != 0 or not staged.is_file():
+            return {
+                "returncode": proc.returncode,
+                "reaped": False,
+                "status": "ONESHOT_FAILED",
+                "reason": "browser did not produce a PNG",
+            }
+        size = staged.stat().st_size
+        if size <= 0 or size > cdp.MAX_PNG_BYTES:
+            return {
+                "returncode": proc.returncode,
+                "reaped": False,
+                "status": "BLOCKED_OUTPUT",
+                "reason": f"PNG size {size} exceeds byte limit {cdp.MAX_PNG_BYTES}",
+            }
+        png_bytes = staged.read_bytes()
+        width, height, digest = cdp._atomic_write_png(spec.out_path, png_bytes)
+        return {
+            "returncode": proc.returncode,
+            "reaped": False,
+            "out_path": spec.out_path,
+            "width": width,
+            "height": height,
+            "bytes": len(png_bytes),
+            "sha256": digest,
+        }
+    except cdp._OutputBlocked as exc:
+        return {
+            "returncode": proc.returncode if proc is not None else None,
+            "reaped": False,
+            "status": exc.status,
+            "reason": exc.detail,
+        }
     finally:
+        try:
+            staged.unlink()
+        except OSError:
+            pass
         procctl.cleanup_profile_dir(profile_dir)

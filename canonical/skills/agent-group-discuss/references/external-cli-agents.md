@@ -135,14 +135,35 @@ the prompt as an argv value (it does not read stdin), so the prompt is passed as
 file read from fd 0; a bare `grok --single` here exits 2 with the prompt never
 sent. On hosts with the region-correct `grok-remote` proxy it is preferred
 automatically (first-found discovery), and elsewhere resolution falls through to a
-bare `grok`. Research runs should still configure the command explicitly, for
-example:
+bare `grok`. The dispatcher invokes `grok-remote` route-neutrally: it neither
+sets `GROK_MULTI_SESSION` nor adds `--vpn`, `--host`, `--iphone`, or `--ios`.
+A bare proxy command delegates route selection to its active managed profile;
+caller-supplied route or profile flags in `AAS_GROK_DISPATCH_COMMAND` are
+preserved verbatim. Concurrent Grok participants must resolve the same ready
+profile and concrete model. Research runs should still configure the command
+explicitly, for example:
 
 ```bash
-export AAS_GROK_DISPATCH_COMMAND='grok --prompt-file /dev/stdin --model {model}'
+export AAS_GROK_DISPATCH_COMMAND='grok-remote --prompt-file /dev/stdin --model {model}'
 export AAS_GROK_LATEST_MODEL='<current-latest-model>'
 export AAS_GROK_HIGHEST_THINKING='high'
 ```
+
+For a direct manual invocation outside the dispatcher, use the equivalent
+shape:
+
+```bash
+grok-remote -m <concrete-model> --prompt-file <path>
+```
+
+Before dispatch, the parent runs `grok-remote doctor --json`, requires the
+`grok-remote.profile-status.v1` contract to report `ready` or `degraded`, and
+checks its `model_id` against the resolved model. `blocked`, `unconfigured`,
+invalid, inconsistent, or timed-out results fail closed. Only the contract's
+sanitized profile, release, model, rung, and reason fields enter parent-owned
+capability metadata; endpoints, ports, and node identities do not. The
+dispatcher first requires `--help` to advertise that exact command, so an older
+proxy fails closed without receiving `doctor` as ordinary Grok input.
 
 Grok authenticates through an interactive OIDC session rather than an API-key
 environment variable, so the dispatcher does not read a Grok token from the

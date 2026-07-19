@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from . import __version__ as RUNTIME_VERSION
 from . import cdp, consent, detect, security
 
 ENGINE_AUTO = "auto"
@@ -21,6 +22,7 @@ ENGINE_CDP = "cdp"
 
 BLOCKED_ENVIRONMENT = "BLOCKED_ENVIRONMENT"
 BLOCKED_INPUT = "BLOCKED_INPUT"
+BLOCKED_OUTPUT = "BLOCKED_OUTPUT"
 BLOCKED_TIMEOUT = "BLOCKED_TIMEOUT"
 
 
@@ -38,6 +40,7 @@ class CaptureRequest:
     timeout_ms: int = 30000
     allow_private: bool = False
     allow_file_urls: bool = False
+    same_origin_only: bool = False
     browser: str | None = None
     no_sandbox: bool = False
 
@@ -49,6 +52,8 @@ def choose_tier(request: CaptureRequest) -> str:
     consent dismissal is a CDP DOM op. Full-page also requires Tier-2. Tier-1 is
     chosen only when consent is off and the capture is viewport-only.
     """
+    if request.same_origin_only and request.engine != ENGINE_ONESHOT:
+        return ENGINE_CDP
     if request.engine == ENGINE_ONESHOT:
         return ENGINE_ONESHOT
     if request.engine == ENGINE_CDP:
@@ -142,13 +147,30 @@ def run_capture(request: CaptureRequest) -> dict:
     modules are imported lazily, so this is never reached by the selftest.
     """
     admission = admit(request)  # may raise TargetBlocked
+    if request.same_origin_only and request.engine == ENGINE_ONESHOT:
+        return {
+            "status": BLOCKED_INPUT,
+            "reason": "--same-origin-only requires the CDP engine",
+            "runtime_version": RUNTIME_VERSION,
+            "same_origin_only": True,
+            "origin_policy": cdp.ORIGIN_POLICY_SCHEME_HOST_PORT,
+            "url": security.redact_url(request.url),
+        }
     browser = resolve_browser(request)
     if browser.status != "available" or not browser.path:
         return {
             "status": BLOCKED_ENVIRONMENT,
             "reason": "no browser available; run doctor",
+            "runtime_version": RUNTIME_VERSION,
+            "same_origin_only": bool(request.same_origin_only),
+            "origin_policy": (
+                cdp.ORIGIN_POLICY_SCHEME_HOST_PORT
+                if request.same_origin_only
+                else "none"
+            ),
             "url": security.redact_url(request.url),
         }
+    browser.version = detect.probe_browser_version(browser.path)
 
     auto_no_sandbox, sandbox_reason = detect_sandbox_disable()
     no_sandbox = request.no_sandbox or auto_no_sandbox
@@ -162,9 +184,16 @@ def run_capture(request: CaptureRequest) -> dict:
     common = {
         "url": security.redact_url(request.url),
         "browser": browser.to_dict(),
+        "runtime_version": RUNTIME_VERSION,
         "tier": tier,
         "resolver_pin": pin,
         "private_targets_allowed": admission.private_targets_allowed,
+        "same_origin_only": bool(request.same_origin_only),
+        "origin_policy": (
+            cdp.ORIGIN_POLICY_SCHEME_HOST_PORT
+            if request.same_origin_only
+            else "none"
+        ),
         "sandbox": "disabled" if no_sandbox else "enabled",
     }
     if sandbox_reason:
@@ -181,11 +210,13 @@ def run_capture(request: CaptureRequest) -> dict:
         request.engine == ENGINE_AUTO
         and tier == ENGINE_CDP
         and not request.full_page
+        and not request.same_origin_only
         and result.get("status") not in (None, "VERIFIED")
         and result.get("status") not in (
             cdp.BLOCKED_PRIVATE_ADDRESS,
             cdp.BLOCKED_METADATA_ENDPOINT,
             cdp.BLOCKED_SCHEME,
+            cdp.BLOCKED_REDIRECT_LIMIT,
             BLOCKED_INPUT,
             BLOCKED_TIMEOUT,
         )
@@ -197,7 +228,14 @@ def run_capture(request: CaptureRequest) -> dict:
         )
 
     payload = {**common, **result}
-    _write_sidecar(out_path, payload)
+    try:
+        _write_sidecar(out_path, payload)
+    except OSError:
+        return {
+            **payload,
+            "status": BLOCKED_OUTPUT,
+            "reason": "result sidecar could not be written",
+        }
     return payload
 
 
@@ -228,6 +266,7 @@ def _run_tier(
             no_sandbox=no_sandbox,
             allow_private=request.allow_private,
             allow_file_urls=request.allow_file_urls,
+            same_origin_only=request.same_origin_only,
             resolver_pin=pin,
         )
         outcome = cdp.run_cdp_capture(cdp_req)
@@ -240,6 +279,15 @@ def _run_tier(
             "height": outcome.get("height"),
             "consent_removed": outcome.get("consent_removed"),
             "full_page": outcome.get("full_page"),
+            "bytes": outcome.get("bytes"),
+            "sha256": outcome.get("sha256"),
+            "document_width": outcome.get("document_width"),
+            "document_height": outcome.get("document_height"),
+            "document_ready_state": outcome.get("document_ready_state"),
+            "full_page_complete": outcome.get("full_page_complete"),
+            "navigation_complete": outcome.get("navigation_complete"),
+            "initial_url": outcome.get("initial_url"),
+            "final_url": outcome.get("final_url"),
         }
 
     # Tier-1 one-shot (viewport only; full-page is never routed here).
@@ -257,7 +305,19 @@ def _run_tier(
     outcome = oneshot.run_oneshot(spec, timeout=timeout_s)
     if outcome.get("reaped"):
         return {"status": BLOCKED_TIMEOUT, "reason": "one-shot exceeded --timeout"}
-    return {"status": "CAPTURED", "out_path": out_path, "consent_removed": False}
+    if outcome.get("status"):
+        return outcome
+    return {
+        "status": "CAPTURED",
+        "out_path": out_path,
+        "width": outcome.get("width"),
+        "height": outcome.get("height"),
+        "bytes": outcome.get("bytes"),
+        "sha256": outcome.get("sha256"),
+        "consent_removed": False,
+        "full_page": False,
+        "full_page_complete": None,
+    }
 
 
 def _write_sidecar(out_path: str, payload: dict) -> None:
@@ -265,8 +325,9 @@ def _write_sidecar(out_path: str, payload: dict) -> None:
 
     from . import naming
 
-    try:
-        if Path(out_path).exists():
-            naming.write_result_sidecar(Path(out_path), payload)
-    except OSError:
-        pass
+    artifact = Path(out_path)
+    if payload.get("status") not in {"CAPTURED", "VERIFIED"}:
+        return
+    if not artifact.is_file():
+        raise OSError("capture artifact is missing")
+    naming.write_result_sidecar(artifact, payload)

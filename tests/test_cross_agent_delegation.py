@@ -22,9 +22,12 @@ from installer.ai_agents_skills.delegation import (
 )
 from installer.ai_agents_skills.delegation_dispatch import (
     EXTERNAL_PROVIDERS,
+    build_capability_profile,
     build_dispatch_plan,
     default_dispatch_command,
+    dispatch_command,
     expand_auto_providers,
+    probe_grok_remote_profile,
     provider_env_defaults,
     run_command,
 )
@@ -66,6 +69,48 @@ REFERENCE_FILES = {
     "safety.md",
     "examples.md",
 }
+
+
+def grok_profile_status_payload(
+    status: str = "ready",
+    *,
+    model_id: str | None = "grok-current",
+) -> dict[str, Any]:
+    configured = status in {"ready", "degraded"}
+    return {
+        "schema_version": "grok-remote.profile-status.v1",
+        "status": status,
+        "profile_name": "default" if configured else None,
+        "profile_sha256": "a" * 64 if configured else None,
+        "release_id": "b" * 64 if configured else None,
+        "grok_release_id": "sha256:" + "c" * 64 if configured else None,
+        "model_id": model_id if configured else None,
+        "eligible_rungs": ["vpn"] if configured else [],
+        "missing_rungs": ["home:windows"] if status == "degraded" else [],
+        "reason_code": {
+            "ready": "ready",
+            "degraded": "ready_with_missing_optional_rungs",
+            "blocked": "active_profile_invalid",
+            "unconfigured": "no_active_profile",
+        }[status],
+    }
+
+
+def write_fake_grok_remote(path: Path) -> None:
+    path.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --help ]; then\n"
+        "  printf '%s\\n' '  grok-remote doctor --json   report managed profile readiness'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$1\" = doctor ] && [ \"$2\" = --json ]; then\n"
+        "  printf '%s\\n' \"$AAS_TEST_GROK_PROFILE_JSON\"\n"
+        "  exit \"$AAS_TEST_GROK_PROFILE_EXIT\"\n"
+        "fi\n"
+        "exit 97\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
 
 
 def create_agent_homes(root: Path, *agents: str) -> None:
@@ -629,10 +674,15 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
         self.assertEqual(
             provider_env_defaults("deepseek", {"DEEPSEEK_BASE_URL": "https://proxy.example"}), {}
         )
-        # Other providers get nothing.
+        # Other providers get nothing. In particular, Grok routing and
+        # multi-session selection belong to grok-remote's managed profile.
         self.assertEqual(provider_env_defaults("claude", {}), {})
         self.assertEqual(provider_env_defaults("antigravity", {}), {})
         self.assertEqual(provider_env_defaults("grok", {}), {})
+        self.assertEqual(
+            provider_env_defaults("grok", {"GROK_MULTI_SESSION": "0"}),
+            {},
+        )
 
     def test_antigravity_dispatch_uses_agy_print_without_ls_address(self):
         self.assertEqual(default_dispatch_command("antigravity", "agy"), "agy --print")
@@ -681,6 +731,41 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
 
     def test_grok_dispatch_uses_prompt_file_and_oidc_session(self):
         self.assertEqual(default_dispatch_command("grok", "grok"), "grok --prompt-file /dev/stdin")
+        self.assertEqual(
+            default_dispatch_command("grok", "/usr/local/bin/grok-remote"),
+            "/usr/local/bin/grok-remote --prompt-file /dev/stdin",
+        )
+        self.assertEqual(
+            default_dispatch_command("grok", "grok-remote --host windows"),
+            "grok-remote --host windows --prompt-file /dev/stdin",
+        )
+        self.assertEqual(
+            dispatch_command(
+                "grok",
+                REPO_ROOT,
+                "linux",
+                {"AAS_GROK_DISPATCH_COMMAND": "grok-remote --prompt-file /dev/stdin"},
+            ),
+            "grok-remote --prompt-file /dev/stdin",
+        )
+        self.assertEqual(
+            dispatch_command(
+                "grok",
+                REPO_ROOT,
+                "linux",
+                {"AAS_GROK_DISPATCH_COMMAND": "grok-remote --ios iphone-xr --prompt-file /dev/stdin"},
+            ),
+            "grok-remote --ios iphone-xr --prompt-file /dev/stdin",
+        )
+        self.assertEqual(
+            dispatch_command(
+                "grok",
+                REPO_ROOT,
+                "linux",
+                {"AAS_GROK_DISPATCH_COMMAND": "grok-remote --vpn --prompt-file /dev/stdin"},
+            ),
+            "grok-remote --vpn --prompt-file /dev/stdin",
+        )
 
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -724,6 +809,231 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(plan[0]["status"], "ready")
             self.assertEqual(plan[0]["provider"], "grok")
             self.assertIn("--prompt-file", plan[0]["command"])
+
+    def test_grok_remote_profile_probe_accepts_ready_and_degraded_contracts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            grok_remote = Path(tmp) / "grok-remote"
+            write_fake_grok_remote(grok_remote)
+            for status in ("ready", "degraded"):
+                with self.subTest(status=status):
+                    payload = grok_profile_status_payload(status)
+                    env = {
+                        **os.environ,
+                        "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
+                        "AAS_TEST_GROK_PROFILE_EXIT": "0",
+                    }
+                    observed, error = probe_grok_remote_profile(
+                        f"{grok_remote} --prompt-file /dev/stdin",
+                        env,
+                    )
+                    self.assertIsNone(error)
+                    self.assertEqual(observed, payload)
+
+    def test_grok_remote_profile_probe_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            grok_remote = Path(tmp) / "grok-remote"
+            write_fake_grok_remote(grok_remote)
+
+            for status in ("blocked", "unconfigured"):
+                with self.subTest(status=status):
+                    payload = grok_profile_status_payload(status)
+                    env = {
+                        **os.environ,
+                        "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
+                        "AAS_TEST_GROK_PROFILE_EXIT": "2",
+                    }
+                    observed, error = probe_grok_remote_profile(str(grok_remote), env)
+                    self.assertEqual(observed, payload)
+                    self.assertIn(payload["reason_code"], error or "")
+
+            configured_blocked = grok_profile_status_payload("ready")
+            configured_blocked.update(
+                {
+                    "status": "blocked",
+                    "missing_rungs": ["home:windows"],
+                    "reason_code": "required_rungs_missing",
+                }
+            )
+            env = {
+                **os.environ,
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(configured_blocked),
+                "AAS_TEST_GROK_PROFILE_EXIT": "2",
+            }
+            observed, error = probe_grok_remote_profile(str(grok_remote), env)
+            self.assertEqual(observed, configured_blocked)
+            self.assertIn("required_rungs_missing", error or "")
+
+            invalid = grok_profile_status_payload()
+            invalid["endpoint"] = "private.example"
+            env = {
+                **os.environ,
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(invalid),
+                "AAS_TEST_GROK_PROFILE_EXIT": "0",
+            }
+            observed, error = probe_grok_remote_profile(str(grok_remote), env)
+            self.assertIsNone(observed)
+            self.assertEqual(error, "grok-remote profile readiness output is invalid")
+
+            invalid_payloads = []
+            invalid_status = grok_profile_status_payload()
+            invalid_status["status"] = []
+            invalid_payloads.append(invalid_status)
+            missing_identity = grok_profile_status_payload()
+            missing_identity["profile_name"] = None
+            invalid_payloads.append(missing_identity)
+            invalid_reason = grok_profile_status_payload()
+            invalid_reason["reason_code"] = "private endpoint: secret.example"
+            invalid_payloads.append(invalid_reason)
+            inconsistent_ready_reason = grok_profile_status_payload()
+            inconsistent_ready_reason["reason_code"] = "arbitrary_ready_reason"
+            invalid_payloads.append(inconsistent_ready_reason)
+            configured_redacted_reason = grok_profile_status_payload("ready")
+            configured_redacted_reason.update(
+                {
+                    "status": "blocked",
+                    "reason_code": "active_profile_invalid",
+                }
+            )
+            invalid_payloads.append(configured_redacted_reason)
+            redacted_profile_bound_reason = grok_profile_status_payload("blocked")
+            redacted_profile_bound_reason["reason_code"] = "required_rungs_missing"
+            invalid_payloads.append(redacted_profile_bound_reason)
+            degraded_without_missing = grok_profile_status_payload("degraded")
+            degraded_without_missing["missing_rungs"] = []
+            invalid_payloads.append(degraded_without_missing)
+            unconfigured_with_identity = grok_profile_status_payload("unconfigured")
+            unconfigured_with_identity["profile_name"] = "default"
+            invalid_payloads.append(unconfigured_with_identity)
+            for payload in invalid_payloads:
+                with self.subTest(payload=payload):
+                    env = {
+                        **os.environ,
+                        "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
+                        "AAS_TEST_GROK_PROFILE_EXIT": "0",
+                    }
+                    observed, error = probe_grok_remote_profile(str(grok_remote), env)
+                    self.assertIsNone(observed)
+                    self.assertEqual(error, "grok-remote profile readiness output is invalid")
+
+            inconsistent = grok_profile_status_payload("ready")
+            env = {
+                **os.environ,
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(inconsistent),
+                "AAS_TEST_GROK_PROFILE_EXIT": "2",
+            }
+            observed, error = probe_grok_remote_profile(str(grok_remote), env)
+            self.assertEqual(observed, inconsistent)
+            self.assertEqual(error, "grok-remote profile readiness exit status is inconsistent")
+
+            old_grok_remote = Path(tmp) / "old" / "grok-remote"
+            old_grok_remote.parent.mkdir()
+            old_grok_remote.write_text(
+                "#!/bin/sh\nprintf '%s\\n' 'old grok-remote help'\n",
+                encoding="utf-8",
+            )
+            old_grok_remote.chmod(0o755)
+            observed, error = probe_grok_remote_profile(str(old_grok_remote), os.environ.copy())
+            self.assertIsNone(observed)
+            self.assertEqual(error, "grok-remote does not support managed-profile readiness")
+
+    def test_grok_dispatch_requires_matching_managed_profile(self):
+        manifests = load_manifests()
+        prechecks = build_external_agent_prechecks(
+            REPO_ROOT,
+            "linux",
+            manifests["delegation"],
+            env={},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            grok_remote = Path(tmp) / "grok-remote"
+            write_fake_grok_remote(grok_remote)
+            payload = grok_profile_status_payload()
+            env = {
+                **os.environ,
+                "AAS_GROK_DISPATCH_COMMAND": f"{grok_remote} --prompt-file /dev/stdin",
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
+                "AAS_TEST_GROK_PROFILE_EXIT": "0",
+            }
+            plan = build_dispatch_plan(
+                REPO_ROOT,
+                "linux",
+                manifests["delegation"],
+                prechecks,
+                ["grok"],
+                max_providers=1,
+                research=False,
+                resolved_model="grok-current",
+                resolved_thinking=None,
+                env=env,
+            )
+            self.assertEqual(plan[0]["status"], "ready")
+            self.assertEqual(plan[0]["grok_profile_status"], payload)
+            self.assertEqual(
+                build_capability_profile(plan[0])["grok_profile_status"],
+                payload,
+            )
+
+            mismatched = build_dispatch_plan(
+                REPO_ROOT,
+                "linux",
+                manifests["delegation"],
+                prechecks,
+                ["grok"],
+                max_providers=1,
+                research=False,
+                resolved_model="different-model",
+                resolved_thinking=None,
+                env=env,
+            )
+            self.assertEqual(mismatched[0]["status"], "blocked")
+            self.assertIn("model does not match", mismatched[0]["reason"])
+            self.assertEqual(mismatched[0]["grok_profile_status"], payload)
+
+            for status in ("blocked", "unconfigured"):
+                with self.subTest(status=status):
+                    nonready_payload = grok_profile_status_payload(status)
+                    env.update(
+                        {
+                            "AAS_TEST_GROK_PROFILE_JSON": json.dumps(nonready_payload),
+                            "AAS_TEST_GROK_PROFILE_EXIT": "2",
+                        }
+                    )
+                    nonready = build_dispatch_plan(
+                        REPO_ROOT,
+                        "linux",
+                        manifests["delegation"],
+                        prechecks,
+                        ["grok"],
+                        max_providers=1,
+                        research=False,
+                        resolved_model="grok-current",
+                        resolved_thinking=None,
+                        env=env,
+                    )
+                    self.assertEqual(nonready[0]["status"], "blocked")
+                    self.assertEqual(nonready[0]["grok_profile_status"], nonready_payload)
+
+            degraded_payload = grok_profile_status_payload("degraded")
+            env.update(
+                {
+                    "AAS_TEST_GROK_PROFILE_JSON": json.dumps(degraded_payload),
+                    "AAS_TEST_GROK_PROFILE_EXIT": "0",
+                }
+            )
+            degraded = build_dispatch_plan(
+                REPO_ROOT,
+                "linux",
+                manifests["delegation"],
+                prechecks,
+                ["grok"],
+                max_providers=1,
+                research=False,
+                resolved_model="grok-current",
+                resolved_thinking=None,
+                env=env,
+            )
+            self.assertEqual(degraded[0]["status"], "ready")
+            self.assertEqual(degraded[0]["grok_profile_status"], degraded_payload)
 
     def test_grok_dispatch_delivers_prompt_end_to_end(self):
         # Regression guard for the prompt-transport contract. run_command sends the prompt on STDIN

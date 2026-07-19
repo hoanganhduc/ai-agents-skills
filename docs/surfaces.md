@@ -2,7 +2,7 @@
 
 Support claims are intentionally separate from skill selection. This generated page separates install eligibility from support claims. `supported_agents` in `manifest/skills.yaml` and `manifest/artifacts.yaml` is selection eligibility; the rows below state how each target surface is rendered, whether it is supported, degraded, blocked, manual, or unsupported, and what code or policy backs that claim. Do not infer runtime support from `supported_agents` alone.
 
-The current manifest contains 55 installable skills; the matrix below describes the target/surface support contract that those generated skill and artifact plans use.
+The current manifest contains 56 installable skills; the matrix below describes the target/surface support contract that those generated skill and artifact plans use.
 
 OpenClaw source/import evidence and OpenClaw install-target behavior are separate. Source/import evidence never authorizes real `.openclaw` writes; current OpenClaw install-target behavior remains fake-root scoped.
 

@@ -47,7 +47,17 @@ dispatch is CLI-based through `agy --print`; it does not require
 `grok --prompt-file /dev/stdin` (the prompt is delivered on stdin; grok's
 `--single` needs an argv value and does not read stdin), prefers the
 region-correct `grok-remote` proxy when present, and uses an interactive OIDC
-session rather than an API-key environment variable.
+session rather than an API-key environment variable. The dispatcher invokes the
+proxy route-neutrally: it neither sets `GROK_MULTI_SESSION` nor adds route flags.
+A bare proxy command uses its active managed profile, while explicit caller
+flags are preserved. A parent readiness probe must validate that profile and
+its model/release identities before concurrent dispatch. The dispatcher runs
+`grok-remote doctor --json`, accepts only an exact
+`grok-remote.profile-status.v1` result in `ready` or `degraded` state, and
+requires its `model_id` to match the resolved model. Blocked, unconfigured,
+invalid, inconsistent, and timed-out probes fail closed; private topology is
+not recorded. An exact `--help` feature check prevents older proxies from
+receiving `doctor` as ordinary Grok input.
 
 ## Orchestration Lifecycle
 

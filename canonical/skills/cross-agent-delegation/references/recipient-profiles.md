@@ -112,14 +112,22 @@ Antigravity-like participant.
 - unsupported task classes: direct repo mutation, command execution, credential
   use, external posting, provider probing, or approval handling
 - symbolic credential requirements: none in V1
-- endpoint requirement: none; live dispatch is CLI-based through `grok --prompt-file /dev/stdin`
-  and uses an interactive OIDC session rather than an API-key environment
-  variable
+- endpoint requirement: none; live dispatch is CLI-based through
+  `grok --prompt-file /dev/stdin`, preferring a route-neutral `grok-remote`
+  invocation when that proxy is available, and uses an interactive OIDC
+  session rather than an API-key environment variable
 - confirmation requirements: parent-owned, outside packet content
 
 This packet profile does not claim Grok runtime availability. A parent workflow
-must verify `grok` CLI availability, auth/config status, model selection, output
-contract, and file-read fidelity before using a live Grok-like participant.
+must verify Grok CLI availability, auth/config status, active managed-profile
+readiness, concrete model and release identity, output contract, and file-read
+fidelity before using a live Grok-like participant. Routing remains
+parent-owned capability state: a bare proxy command uses its active profile,
+while explicit caller-supplied route or profile flags are preserved outside the
+packet. Verify profile readiness with `grok-remote doctor --json`: only `ready`
+or `degraded` with the exact `grok-remote.profile-status.v1` field set and
+matching `model_id` permits dispatch. Invalid, `blocked`, or `unconfigured`
+results fail closed; private topology does not enter capability metadata.
 
 ### model-only-api-reviewer
 

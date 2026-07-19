@@ -16,6 +16,9 @@ import shutil
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
+BROWSER_VERSION_TIMEOUT_SECONDS = 2.0
+BROWSER_VERSION_MAX_BYTES = 4096
+
 # PATH-resolvable command names, per OS, in preference order.
 _PATH_NAMES: dict[str, list[str]] = {
     "posix": [
@@ -161,6 +164,78 @@ def detect_browser(
         source="",
         candidates_checked=checked,
     )
+
+
+def probe_browser_version(
+    browser_path: str,
+    *,
+    timeout_seconds: float = BROWSER_VERSION_TIMEOUT_SECONDS,
+    max_output_bytes: int = BROWSER_VERSION_MAX_BYTES,
+) -> str:
+    """Run a wall-time/output-bounded ``browser --version`` probe.
+
+    The probe is called only by real capture/print paths, never by detection or
+    the offline self-test. A timeout, nonzero exit, excessive output, or invalid
+    bound yields an empty version rather than blocking capture readiness.
+    """
+
+    if not browser_path or timeout_seconds <= 0 or max_output_bytes <= 0:
+        return ""
+
+    import subprocess
+    import threading
+
+    from . import procctl
+
+    strategy = procctl.select_kill_strategy(os.name)
+    try:
+        process = subprocess.Popen(  # noqa: S603 - explicit detected executable, no shell
+            [browser_path, "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            **procctl.popen_kwargs(os.name),
+        )
+    except OSError:
+        return ""
+
+    output = bytearray()
+    exceeded = threading.Event()
+
+    def read_bounded() -> None:
+        assert process.stdout is not None
+        while len(output) <= max_output_bytes:
+            remaining = max_output_bytes + 1 - len(output)
+            try:
+                chunk = process.stdout.read(min(512, remaining))
+            except (OSError, ValueError):
+                return
+            if not chunk:
+                return
+            output.extend(chunk)
+            if len(output) > max_output_bytes:
+                exceeded.set()
+                strategy.kill(process)
+                return
+
+    reader = threading.Thread(target=read_bounded, daemon=True)
+    reader.start()
+    try:
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        strategy.kill(process)
+        try:
+            process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            pass
+    reader.join(timeout=1.0)
+    if process.stdout is not None:
+        process.stdout.close()
+    reader.join(timeout=0.1)
+    if reader.is_alive() or exceeded.is_set() or process.poll() != 0:
+        return ""
+    text = bytes(output).decode("utf-8", "replace")
+    first_line = text.splitlines()[0].strip() if text.splitlines() else ""
+    return "".join(char for char in first_line if char.isprintable())[:512]
 
 
 def _resolve_candidate(

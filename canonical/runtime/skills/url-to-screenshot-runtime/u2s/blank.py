@@ -1,7 +1,7 @@
 """Dependency-light blank/near-uniform output detection.
 
 A capture is "blank" when its byte length is below a floor, or when a decimated
-sample of its pixels is overwhelmingly a single dominant color. Detection runs on
+its composited pixels are overwhelmingly a single dominant color. Detection runs on
 raw decompressed PNG scanlines via ``u2s.pngtools`` (stdlib ``zlib``), so it never
 needs Pillow. Used both post-capture in the engine and in the offline selftest on
 in-memory synthesized PNGs.
@@ -17,11 +17,8 @@ from . import pngtools
 # ~69 bytes). Real Chromium captures are kilobytes; this floor only catches a
 # degenerate near-empty output.
 MIN_BYTES_FLOOR = 100
-# Fraction of sampled pixels sharing the single most common color that marks blank.
+# Fraction of analyzed composited pixels in one quantized color bin that marks blank.
 DOMINANT_COLOR_BLANK_THRESHOLD = 0.985
-# Cap on sampled pixels so very large captures stay cheap.
-MAX_SAMPLES = 20000
-
 BLANK_OUTPUT = "BLANK_OUTPUT"
 
 
@@ -47,6 +44,32 @@ class BlankMetrics:
         }
 
 
+def metrics_from_info(info: pngtools.PngInfo) -> BlankMetrics:
+    """Classify one already-decoded PNG from its exact composited-color counts."""
+
+    analyzed = info.analyzed_pixels
+    if analyzed == 0:
+        return BlankMetrics(
+            is_blank=True,
+            reason="no-pixels",
+            width=info.width,
+            height=info.height,
+            byte_length=info.byte_length,
+            dominant_color_fraction=1.0,
+        )
+    dominant = max(info.color_counts)
+    fraction = dominant / analyzed
+    blank = fraction >= DOMINANT_COLOR_BLANK_THRESHOLD
+    return BlankMetrics(
+        is_blank=blank,
+        reason="near-uniform-color" if blank else "ok",
+        width=info.width,
+        height=info.height,
+        byte_length=info.byte_length,
+        dominant_color_fraction=fraction,
+    )
+
+
 def is_blank(png_bytes: bytes) -> BlankMetrics:
     """Classify ``png_bytes`` as blank or not, with structured metrics."""
     byte_length = len(png_bytes)
@@ -67,35 +90,4 @@ def is_blank(png_bytes: bytes) -> BlankMetrics:
             byte_length=byte_length,
             decode_error=str(exc),
         )
-
-    counts: dict[tuple[int, int, int], int] = {}
-    sampled = 0
-    total_pixels = info.width * info.height
-    step = max(1, total_pixels // MAX_SAMPLES)
-    flat_index = 0
-    for row in info.rows:
-        for pixel in row:
-            if flat_index % step == 0:
-                counts[pixel] = counts.get(pixel, 0) + 1
-                sampled += 1
-            flat_index += 1
-    if sampled == 0:
-        return BlankMetrics(
-            is_blank=True,
-            reason="no-samples",
-            width=info.width,
-            height=info.height,
-            byte_length=byte_length,
-            dominant_color_fraction=1.0,
-        )
-    dominant = max(counts.values())
-    fraction = dominant / sampled
-    blank = fraction >= DOMINANT_COLOR_BLANK_THRESHOLD
-    return BlankMetrics(
-        is_blank=blank,
-        reason="near-uniform-color" if blank else "ok",
-        width=info.width,
-        height=info.height,
-        byte_length=byte_length,
-        dominant_color_fraction=fraction,
-    )
+    return metrics_from_info(info)

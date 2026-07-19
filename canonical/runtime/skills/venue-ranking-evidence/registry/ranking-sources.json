@@ -1,0 +1,156 @@
+{
+  "schema_version": "venue-ranking-registry.v1",
+  "sources": [
+    {
+      "source_id": "icore",
+      "display_name": "International CORE Conference Rankings",
+      "authority": "International CORE Conference Rankings",
+      "provenance_class": "official-current",
+      "venue_types": ["conference"],
+      "assertion_kinds": ["rank", "classification-level"],
+      "official_domains": ["portal.core.edu.au", "www.core.edu.au"],
+      "access_class": "public",
+      "may_claim_latest": true,
+      "lookup": {
+        "adapter": "icore-csv",
+        "discovery_url": "https://portal.core.edu.au/",
+        "export_url_template": "https://portal.core.edu.au/conf-ranks/?search=&by=all&source={edition}&sort=atitle&page=1&do=Export"
+      },
+      "proof": {
+        "strategy": "official-detail-page",
+        "association_adapter": "icore-detail-text-v1",
+        "allowed_query_keys": []
+      },
+      "freshness": {"mode": "official-edition-discovery", "cache_ttl_seconds": 604800}
+    },
+    {
+      "source_id": "ccf",
+      "display_name": "CCF Recommended International Conferences and Journals",
+      "authority": "China Computer Federation",
+      "provenance_class": "official-current",
+      "venue_types": ["conference", "journal"],
+      "assertion_kinds": ["classification-level"],
+      "official_domains": ["www.ccf.org.cn", "ccf.org.cn"],
+      "access_class": "public-manual-gate",
+      "may_claim_latest": true,
+      "lookup": {"adapter": "user-export"},
+      "proof": {"strategy": "official-release-or-detail-page"},
+      "freshness": {"mode": "official-release-discovery", "cache_ttl_seconds": 2592000}
+    },
+    {
+      "source_id": "scimago",
+      "display_name": "SCImago Journal & Country Rank",
+      "authority": "SCImago Lab",
+      "provenance_class": "official-current",
+      "venue_types": ["journal", "proceedings-series"],
+      "assertion_kinds": ["quartile", "metric", "coverage-status"],
+      "official_domains": ["www.scimagojr.com", "scimagojr.com", "www.scimagolab.com", "scimagolab.com"],
+      "access_class": "public-browser-gate",
+      "may_claim_latest": true,
+      "lookup": {"adapter": "user-export"},
+      "proof": {
+        "strategy": "official-detail-page",
+        "allowed_query_keys": ["q", "tip"]
+      },
+      "freshness": {"mode": "annual-data-as-of-discovery", "cache_ttl_seconds": 2592000}
+    },
+    {
+      "source_id": "scopus",
+      "display_name": "Scopus Sources",
+      "authority": "Elsevier",
+      "provenance_class": "official-current",
+      "venue_types": ["journal", "conference", "proceedings-series", "book-series"],
+      "assertion_kinds": ["index-membership", "coverage-status", "quartile", "metric"],
+      "official_domains": ["www.elsevier.com", "elsevier.com", "www.scopus.com", "scopus.com", "downloads.ctfassets.net", "api.elsevier.com"],
+      "access_class": "public-export-or-licensed",
+      "may_claim_latest": true,
+      "lookup": {"adapter": "user-export-or-api"},
+      "proof": {"strategy": "authorized-official-source-page"},
+      "freshness": {"mode": "official-list-update-discovery", "cache_ttl_seconds": 2592000}
+    },
+    {
+      "source_id": "wos-mjl",
+      "display_name": "Web of Science Master Journal List",
+      "authority": "Clarivate",
+      "provenance_class": "official-current",
+      "venue_types": ["journal"],
+      "assertion_kinds": ["index-membership", "collection-coverage", "coverage-status"],
+      "official_domains": ["mjl.clarivate.com", "clarivate.com", "www.clarivate.com"],
+      "access_class": "public-search-free-login-profile",
+      "may_claim_latest": true,
+      "lookup": {"adapter": "user-export"},
+      "proof": {"strategy": "authorized-official-profile"},
+      "freshness": {"mode": "official-list-update-discovery", "cache_ttl_seconds": 2592000}
+    },
+    {
+      "source_id": "clarivate-jcr",
+      "display_name": "Journal Citation Reports",
+      "authority": "Clarivate",
+      "provenance_class": "official-current",
+      "venue_types": ["journal"],
+      "assertion_kinds": ["rank", "quartile", "metric"],
+      "official_domains": ["jcr.clarivate.com", "clarivate.com", "www.clarivate.com"],
+      "access_class": "subscription",
+      "may_claim_latest": true,
+      "lookup": {"adapter": "user-export-or-api"},
+      "proof": {"strategy": "authorized-official-profile"},
+      "freshness": {"mode": "official-annual-release-discovery", "cache_ttl_seconds": 2592000}
+    },
+    {
+      "source_id": "jufo",
+      "display_name": "Publication Forum (JUFO)",
+      "authority": "Federation of Finnish Learned Societies",
+      "provenance_class": "official-current",
+      "venue_types": ["journal", "conference", "book-series", "publisher"],
+      "assertion_kinds": ["classification-level"],
+      "official_domains": ["jfp.csc.fi", "julkaisufoorumi.fi", "www.julkaisufoorumi.fi"],
+      "access_class": "public",
+      "may_claim_latest": true,
+      "lookup": {"adapter": "user-export"},
+      "proof": {"strategy": "official-detail-page"},
+      "freshness": {"mode": "effective-year-history", "cache_ttl_seconds": 2592000}
+    },
+    {
+      "source_id": "norwegian-register",
+      "display_name": "Norwegian Register for Scientific Journals, Series and Publishers",
+      "authority": "Norwegian Directorate for Higher Education and Skills",
+      "provenance_class": "official-current",
+      "venue_types": ["journal", "proceedings-series", "publisher"],
+      "assertion_kinds": ["classification-level", "index-membership"],
+      "official_domains": ["kanalregister.hkdir.no", "hkdir.no", "www.hkdir.no"],
+      "access_class": "public",
+      "may_claim_latest": true,
+      "lookup": {"adapter": "user-export"},
+      "proof": {"strategy": "official-detail-page"},
+      "freshness": {"mode": "effective-year-history", "cache_ttl_seconds": 604800}
+    },
+    {
+      "source_id": "doaj",
+      "display_name": "Directory of Open Access Journals",
+      "authority": "DOAJ",
+      "provenance_class": "official-current",
+      "venue_types": ["journal"],
+      "assertion_kinds": ["index-membership"],
+      "official_domains": ["doaj.org", "www.doaj.org"],
+      "access_class": "public",
+      "may_claim_latest": true,
+      "lookup": {"adapter": "user-export", "export_url": "https://doaj.org/csv"},
+      "proof": {"strategy": "official-detail-page"},
+      "freshness": {"mode": "official-export-date", "cache_ttl_seconds": 2592000}
+    },
+    {
+      "source_id": "conference-ranks",
+      "display_name": "Conference Ranks",
+      "authority": "Independent legacy aggregator",
+      "provenance_class": "secondary-legacy",
+      "venue_types": ["conference"],
+      "assertion_kinds": ["rank", "classification-level"],
+      "official_domains": ["conferenceranks.com", "www.conferenceranks.com"],
+      "access_class": "legacy-manual",
+      "may_claim_latest": false,
+      "lookup": {"adapter": "user-export"},
+      "proof": {"strategy": "legacy-page-only"},
+      "freshness": {"mode": "historical-edition-only", "cache_ttl_seconds": 31536000}
+    }
+  ]
+}

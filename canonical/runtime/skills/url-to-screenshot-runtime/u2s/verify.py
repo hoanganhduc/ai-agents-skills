@@ -12,6 +12,9 @@ on synthesized golden and blank PNGs.
 
 from __future__ import annotations
 
+import hashlib
+import os
+import stat
 from dataclasses import dataclass, field
 
 from . import blank as blank_mod
@@ -23,6 +26,8 @@ UNVERIFIED = "UNVERIFIED"
 PASS = "PASS"
 FAIL = "FAIL"
 SKIPPED = "SKIPPED"
+BLOCKED_INPUT = "BLOCKED_INPUT"
+MAX_PNG_FILE_BYTES = pngtools.MAX_PNG_FILE_BYTES
 
 
 @dataclass
@@ -30,17 +35,53 @@ class VerifyResult:
     final_verdict: str
     checks: dict[str, str] = field(default_factory=dict)
     detail: dict[str, object] = field(default_factory=dict)
+    status: str = ""
 
     @property
     def ok(self) -> bool:
         return self.final_verdict == VERIFIED
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "final_verdict": self.final_verdict,
             "checks": self.checks,
             "detail": self.detail,
         }
+        if self.status:
+            result["status"] = self.status
+        return result
+
+
+def read_png_file(path: str | os.PathLike[str]) -> bytes:
+    """Read one stable, bounded regular file without following a symlink."""
+
+    before = os.lstat(path)
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise pngtools.PngInputBlocked("PNG path must be a regular non-symlink file")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise pngtools.PngInputBlocked("PNG path must open as a regular file")
+        if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+            raise pngtools.PngInputBlocked("PNG path changed while it was opened")
+        if opened.st_size > MAX_PNG_FILE_BYTES:
+            raise pngtools.PngInputBlocked(
+                f"PNG byte length {opened.st_size} exceeds limit {MAX_PNG_FILE_BYTES}"
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            data = handle.read(opened.st_size + 1)
+        after = os.fstat(descriptor)
+        stable_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(after, field) != getattr(opened, field) for field in stable_fields):
+            raise pngtools.PngInputBlocked("PNG file changed while it was read")
+        if len(data) != opened.st_size:
+            raise pngtools.PngInputBlocked("PNG file changed while it was read")
+        return data
+    finally:
+        os.close(descriptor)
 
 
 def verify_png(
@@ -60,12 +101,18 @@ def verify_png(
     detail: dict[str, object] = {}
 
     # file / bytes
+    if len(png_bytes) > MAX_PNG_FILE_BYTES:
+        checks["file"] = FAIL
+        detail["bytes"] = len(png_bytes)
+        detail["limit"] = MAX_PNG_FILE_BYTES
+        return VerifyResult(UNVERIFIED, checks, detail, BLOCKED_INPUT)
     if len(png_bytes) < blank_mod.MIN_BYTES_FLOOR:
         checks["file"] = FAIL
         detail["bytes"] = len(png_bytes)
         return VerifyResult(UNVERIFIED, checks, detail)
     checks["file"] = PASS
     detail["bytes"] = len(png_bytes)
+    detail["sha256"] = hashlib.sha256(png_bytes).hexdigest()
 
     # decode
     try:
@@ -73,7 +120,7 @@ def verify_png(
     except ValueError as exc:
         checks["decode"] = FAIL
         detail["decode_error"] = str(exc)
-        return VerifyResult(UNVERIFIED, checks, detail)
+        return VerifyResult(UNVERIFIED, checks, detail, BLOCKED_INPUT)
     checks["decode"] = PASS
     detail["width"] = info.width
     detail["height"] = info.height
@@ -90,7 +137,7 @@ def verify_png(
         return VerifyResult(UNVERIFIED, checks, detail)
 
     # not-blank
-    metrics = blank_mod.is_blank(png_bytes)
+    metrics = blank_mod.metrics_from_info(info)
     detail["blank"] = metrics.to_dict()
     if metrics.is_blank:
         checks["not_blank"] = FAIL

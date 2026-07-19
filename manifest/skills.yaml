@@ -576,6 +576,46 @@
         "agent-visible"
       ]
     },
+    "venue-ranking-evidence": {
+      "description": "Resolve partial journal and conference names and preserve source-specific rank/index observations. ICORE alone has built-in live edition discovery and verified browser-print proof; nine other built-ins accept authorized normalized imports without establishing latest status, and Conference Ranks remains legacy.",
+      "profiles": [
+        "serious-research",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "chromium-browser-system-tool",
+        "pdftotext-system-tool",
+        "pillow-python-package",
+        "websocket-client-python-package",
+        "venue-ranking-provider-access"
+      ],
+      "optional_capabilities": [
+        "venue-identity-matching",
+        "source-specific-rank-and-index-evidence",
+        "authorized-normalized-source-imports",
+        "icore-live-edition-discovery",
+        "icore-browser-print-pdf",
+        "icore-full-page-png-completeness",
+        "icore-proof-bundle-verification",
+        "offline-smoke"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
+    },
     "database-lookup": {
       "description": "Structured public scientific, biomedical, regulatory, materials, and economic database lookups.",
       "profiles": [

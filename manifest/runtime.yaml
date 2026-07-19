@@ -24,6 +24,7 @@
         "getscipapers-requester",
         "graph-verifier",
         "submission-venue-selector",
+        "venue-ranking-evidence",
         "self-improving-agent",
         "modal-research-compute",
         "hetzner-research-compute",
@@ -1790,6 +1791,104 @@
         }
       }
     },
+    "venue-ranking-evidence": {
+      "runtime_dir": "venue-ranking-evidence",
+      "runtime_requires": [
+        "url-to-screenshot-runtime"
+      ],
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Smoke validates local source descriptors and deterministic evidence contracts without network access, browser launch, credentials, or package installation."
+      },
+      "files": [
+        {
+          "source": "skills/venue-ranking-evidence/venue_ranking_evidence.py",
+          "target": "workspace/skills/venue-ranking-evidence/venue_ranking_evidence.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/venue-ranking-evidence/registry/ranking-sources.json",
+          "target": "workspace/skills/venue-ranking-evidence/registry/ranking-sources.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/venue-ranking-evidence/run_venue_ranking_evidence.bat",
+          "target": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/venue-ranking-evidence/run_venue_ranking_evidence.ps1",
+          "target": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/venue-ranking-evidence/run_venue_ranking_evidence.sh",
+          "target": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.sh",
+          "macos": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.sh",
+          "wsl": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.sh",
+          "windows": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.bat",
+          "windows_ps1": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.ps1"
+        },
+        "args": [
+          "smoke"
+        ],
+        "timeout_seconds": 60,
+        "writes": {
+          "workspace_scratch": true
+        },
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "provider_cli": "forbidden",
+          "subagent_spawn": "forbidden",
+          "real_secrets": "forbidden"
+        }
+      }
+    },
     "self-improving-agent": {
       "runtime_dir": "self-improving-agent",
       "smoke_coverage": {
@@ -3283,6 +3382,8 @@
         {"source": "skills/url-to-screenshot-runtime/u2s/__init__.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/__init__.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/url-to-screenshot-runtime/u2s/security.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/security.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/url-to-screenshot-runtime/u2s/pngtools.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/pngtools.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
+        {"source": "skills/url-to-screenshot-runtime/u2s/pdf.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/pdf.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
+        {"source": "skills/url-to-screenshot-runtime/u2s/limits.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/limits.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/url-to-screenshot-runtime/u2s/detect.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/detect.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/url-to-screenshot-runtime/u2s/oneshot.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/oneshot.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/url-to-screenshot-runtime/u2s/cdp.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/cdp.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},

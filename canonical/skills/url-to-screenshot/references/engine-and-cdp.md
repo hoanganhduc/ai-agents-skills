@@ -50,10 +50,23 @@ denied unconditionally; private/loopback/link-local denied unless
 and an admissible one is released with `Fetch.continueRequest`. Redirects are
 capped (a 3xx reaching the request stage counts toward `MAX_REDIRECTS` ≈ 5).
 
+When `--same-origin-only` is enabled, the same interception loop also rejects
+every paused redirect and sub-resource whose origin tuple differs from the
+initial request: scheme, canonical hostname, or effective port (explicit port,
+otherwise 80 for HTTP and 443 for HTTPS). This flag forces Tier-2, disables
+automatic Tier-1 fallback, and is attested as `same_origin_only=true` in the
+result.
+
 This is true interception — the request is blocked BEFORE send, not observed
 after the fact. The same re-validation runs in every read loop (navigation, the
 settle pump, consent eval, screenshot), so a post-load JS fetch to a private/
 metadata host is paused and blocked too.
+
+Navigation completion is loader-scoped. The engine waits for the
+`Page.navigate` response, then accepts only a `Page.lifecycleEvent` load whose
+frame and loader IDs match that response. It does not accept the unscoped
+`Page.loadEventFired` emitted by Chromium's initial tab. Guarded results attest
+this as `navigation_complete=true`.
 
 v1 abort policy: ANY private/metadata (or disallowed-scheme) hit aborts the whole
 capture with the matching `BLOCKED_*` status (no partial screenshot is produced
@@ -67,7 +80,14 @@ advisory only for any host other than the main navigation host.
 Full-page uses `Page.getLayoutMetrics` -> `cssContentSize` (CSS px) for the clip
 width/height and passes `scale=device-scale-factor`. The requested pixel area
 (`w*h*scale^2`) is checked against the decompression-bomb cap BEFORE capture. A
-`--full-page` request never silently degrades to a viewport capture.
+`--full-page` request never silently degrades to a viewport capture. The result
+records the measured layout and output dimensions plus a completeness
+attestation; consumers must check that attestation rather than treating
+`full_page=true` alone as proof. It requires `document.readyState=complete`,
+remeasures the document after screenshot generation, and refuses publication if
+the page grew beyond the admitted clip. Completeness is relative to the bounded
+measured DOM/layout extent and does not promise expansion of arbitrary nested
+scroll containers, shadow trees, or out-of-process frames.
 
 ## Fallbacks
 
@@ -76,3 +96,12 @@ consent-removal-blanks-page guard. For a `--full-page` request that blanks after
 consent removal, the engine re-attempts full-page in CDP WITHOUT consent removal
 rather than dropping to a viewport one-shot; if still blank it emits
 `BLANK_OUTPUT` / `UNVERIFIED`.
+
+No Tier-1 fallback occurs when `--same-origin-only` is enabled, because Tier-1
+cannot enforce the paused-request origin boundary.
+
+For generic Tier-2 capture, cross-host requests retain a DNS TOCTOU residual:
+the Python interceptor checks its own fresh resolution before release, while
+Chromium performs the eventual connection. Strict same-origin capture admits no
+different host and pins the initial host, so this cross-host residual does not
+apply to the venue-proof path.

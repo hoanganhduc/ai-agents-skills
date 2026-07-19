@@ -126,8 +126,60 @@ def resolve_runtime_skills(
     declared = runtime_manifest.get("skills", {})
     profile = profiles[runtime_profile]
     if profile.get("mode") == "selected-skills":
-        return sorted(skill for skill in selected_skills if skill in declared)
-    return sorted(skill for skill in profile.get("skills", []) if skill in declared)
+        roots = [skill for skill in selected_skills if skill in declared]
+    else:
+        roots = [skill for skill in profile.get("skills", []) if skill in declared]
+    return runtime_dependency_closure(roots, declared)
+
+
+def runtime_dependency_closure(
+    roots: list[str],
+    declared: dict[str, Any],
+) -> list[str]:
+    resolved: set[str] = set()
+    active: list[str] = []
+    active_set: set[str] = set()
+
+    def visit(skill: str) -> None:
+        if skill in resolved:
+            return
+        if skill in active_set:
+            cycle_start = active.index(skill)
+            cycle = active[cycle_start:] + [skill]
+            raise ValueError(f"runtime dependency cycle: {' -> '.join(cycle)}")
+
+        spec = declared.get(skill)
+        if not isinstance(spec, dict):
+            raise ValueError(f"runtime skill {skill} must be an object")
+        requires = spec.get("runtime_requires", [])
+        if not isinstance(requires, list):
+            raise ValueError(f"runtime skill {skill} runtime_requires must be a list")
+
+        dependencies: set[str] = set()
+        for dependency in requires:
+            if not isinstance(dependency, str) or not dependency:
+                raise ValueError(
+                    f"runtime skill {skill} runtime_requires entries must be non-empty strings"
+                )
+            if dependency not in declared:
+                raise ValueError(
+                    f"runtime skill {skill} requires unknown runtime skill {dependency}"
+                )
+            dependencies.add(dependency)
+
+        active.append(skill)
+        active_set.add(skill)
+        try:
+            for dependency in sorted(dependencies):
+                visit(dependency)
+        finally:
+            active.pop()
+            active_set.remove(skill)
+        resolved.add(skill)
+
+    for root in sorted(set(roots)):
+        visit(root)
+    return sorted(resolved)
 
 
 def default_runtime_root(root: Path, agents: list[Any], platform: str | None = None) -> Path:
@@ -556,7 +608,11 @@ def missing_parent_dirs(root: Path, parent: Path) -> list[Path]:
 
 def runtime_inventory(source_root: Path, max_entries: int = 5000) -> dict[str, Any]:
     source_root = source_root.expanduser()
-    source_root_label = sanitize_text(str(source_root))
+    # Inventory output is a portable evidence artifact.  The caller-selected
+    # root is authority for the scan, but its machine-local absolute path is
+    # never evidence and must not survive serialization (including temporary
+    # worktrees outside a conventional home directory).
+    source_root_label = "<RUNTIME_SOURCE_ROOT>"
     if not source_root.exists():
         return {"status": "missing", "source_root": source_root_label, "entries": []}
     if not source_root.is_dir() or source_root.is_symlink():
