@@ -769,6 +769,15 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             events = [json.loads(ln) for ln in res.stdout.splitlines() if '"AUTOLOOP_EVENT"' in ln]
             self.assertEqual([e["AUTOLOOP_EVENT"] for e in events], ["iteration"])
             self.assertEqual(events[0]["AUTOLOOP_ITERATION"], "1")
+            # Live status surfaces are always written by watch.
+            self.assertTrue((loop / "LIVE_STATUS.md").is_file())
+            progress_path = loop / "driver_logs" / "progress.jsonl"
+            self.assertTrue(progress_path.is_file())
+            progress_events = [
+                json.loads(ln) for ln in progress_path.read_text(encoding="utf-8").splitlines() if ln.strip()
+            ]
+            self.assertTrue(any(e.get("event") == "iteration" for e in progress_events))
+            self.assertIn("Progress:", (loop / "LIVE_STATUS.md").read_text(encoding="utf-8"))
             # baseline current -> nothing new to report
             res = self._run("watch", "--dir", str(loop), "--once", registry=reg)
             self.assertNotIn('"AUTOLOOP_EVENT"', res.stdout)
@@ -785,6 +794,40 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             res = self._run("watch", "--dir", str(loop), "--once", registry=reg)
             events = [json.loads(ln) for ln in res.stdout.splitlines() if '"AUTOLOOP_EVENT"' in ln]
             self.assertEqual([e["AUTOLOOP_EVENT"] for e in events], ["terminal"])
+
+    def test_drive_writes_live_status_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg, "--max-iterations", "1")
+            # Final-iteration stop via sentinel so drive exits cleanly after one no-op.
+            (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
+            res = self._run(
+                "drive",
+                "--dir",
+                str(loop),
+                "--root",
+                str(loop),
+                "--cmd",
+                "echo should-not-run",
+                "--max-failures",
+                "1",
+                registry=reg,
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            live = loop / "LIVE_STATUS.md"
+            progress = loop / "driver_logs" / "progress.jsonl"
+            self.assertTrue(live.is_file(), live)
+            self.assertTrue(progress.is_file(), progress)
+            events = [
+                json.loads(ln) for ln in progress.read_text(encoding="utf-8").splitlines() if ln.strip()
+            ]
+            names = [e.get("event") for e in events]
+            self.assertIn("drive_start", names)
+            self.assertIn("drive_stop", names)
+            body = live.read_text(encoding="utf-8")
+            self.assertIn("Autonomous loop live status", body)
+            self.assertIn("drive_stop", body)
 
     def test_hook_check_allows_unrelated_root_and_missing_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
