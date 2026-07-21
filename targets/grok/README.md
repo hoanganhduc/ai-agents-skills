@@ -123,3 +123,87 @@ without receiving `doctor` as ordinary Grok input. Grok authenticates through
 an interactive OIDC session rather than an API-key environment variable. See
 the repo
 [Architecture](../../docs/architecture.md) for the full per-target matrix.
+
+## Autonomous research loop force-continue (driver)
+
+**Provider id is always `grok`.** There is no `grok-remote` provider. The on-disk
+CLI may resolve to `grok-remote` (region proxy) or bare `grok` / `grok.exe`.
+
+### What enforces force-continue
+
+| Mechanism | Role on Grok |
+|---|---|
+| **`drive --provider grok`** | **Only hard force-continue** — external process spawns one headless iteration at a time until `done` |
+| `arm --driver` | Registry ownership; interactive hooks stand down while the driver PID is live |
+| Stop hook (`~/.grok/hooks/ai-agents-skills-autoloop.json`) | **Passive only** — Grok documents `Stop` as non-blocking; exit codes cannot force the agent to keep working |
+| Skill / AGENTS.md text | Soft instructions only |
+
+Interactive Grok chat is for status and forks. Long unattended runs must use the
+headless driver, not a single chat session.
+
+### Binary resolution (drive / `agent-cmd --provider grok`)
+
+Preference (first usable wins), aligned with installer `GROK_CLI_TOOL_SPEC`:
+
+1. `AAS_AUTOLOOP_CMD_GROK` (full shell template)
+2. `AAS_AUTOLOOP_BIN_GROK` (explicit binary path)
+3. `AAS_GROK` (same override as installer/delegation)
+4. Platform candidates — prefer **`grok-remote`** then bare **`grok`**
+   - Linux/WSL: `grok-remote`, `~/grok-proxy/grok-remote`, `grok`, `~/.local/bin/grok`, `~/.grok/bin/grok`
+   - macOS: same plus `/opt/homebrew/bin/grok`, `/usr/local/bin/grok`
+   - Windows: `grok-remote.cmd`, `grok-remote`, `%USERPROFILE%\.grok\bin\grok.exe`, `grok.exe`, `grok`
+
+Native smoke and prechecks still resolve **bare `grok` only** (never open the
+proxy tunnel). Do not point `AAS_GROK` at `grok-remote` for diagnostic smoke
+unless you intentionally accept tunnel side effects.
+
+### Start a driven loop (cross-platform)
+
+From a checkout that has the runtime skill installed (paths may be the
+repo `.venv` python or the installed runtime copy):
+
+```bash
+# Linux / macOS
+python3 path/to/autonomous_research_loop_runtime.py drive \
+  --dir /path/to/loop \
+  --root /path/to/project \
+  --provider grok \
+  --max-failures 3 \
+  --max-quota-waits 0
+```
+
+```powershell
+# Windows (PowerShell)
+py path\to\autonomous_research_loop_runtime.py drive `
+  --dir C:\path\to\loop `
+  --root C:\path\to\project `
+  --provider grok `
+  --max-failures 3 `
+  --max-quota-waits 0
+```
+
+Convenience wrappers shipped with the runtime skill:
+`run_autonomous_research_loop.sh`, `.bat`, and `.ps1` (same arguments after the
+subcommand).
+
+Each iteration runs with the project **root as cwd** so Grok sees the correct
+workspace even if the driver process was started elsewhere.
+
+### Kill switches
+
+| Action | Linux/macOS | Windows PowerShell |
+|---|---|---|
+| Stop loop | `touch <loop>/STOP_REQUESTED` | `New-Item -ItemType File <loop>\STOP_REQUESTED` |
+| Pause | `touch <loop>/PAUSE` | `New-Item -ItemType File <loop>\PAUSE` |
+| Resume pause | `rm <loop>/PAUSE` | `Remove-Item <loop>\PAUSE` |
+| Disable hooks env | `AUTOLOOP_DISABLE=1` | `$env:AUTOLOOP_DISABLE=1` |
+| Disarm registry | `… disarm --dir <loop>` | same |
+
+### Probe which binary will be used
+
+```bash
+python3 path/to/autonomous_research_loop_runtime.py agent-cmd \
+  --provider grok --dir /path/to/loop
+```
+
+Inspect `providers.grok.binary` and `binary_found` in the JSON output.
