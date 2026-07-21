@@ -1,7 +1,7 @@
 # Compute offload routing (unified)
 
 Umbrella router guidance for heavy compute. The `research_compute` broker chooses a backend
-by available resources and credits, in this strict priority:
+by available resources and safety gates. Its recommended default priority is:
 
 > **local > Kaggle > Modal > Hetzner > GitHub Actions**
 
@@ -9,11 +9,18 @@ Kaggle sits right behind local because its CPU compute is **free** and does **no
 the GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the paid/quota'd
 lanes (Modal, Hetzner, GitHub Actions).
 
-The broker walks the routing order and takes the **first backend that is AVAILABLE**
+The broker honors a valid configured `routing_order` or explicit `policy.backend` override;
+otherwise it walks the recommended default order and takes the **first backend that is AVAILABLE**
 (credentials or credits present, reachable, within budget) **AND ADEQUATE** (resources fit
-the job estimate). `run plan job.json` and `run doctor` are the actual router; `doctor` warns
-if `routing_order` deviates from this priority. This doc links, and does not replace, the two
-per-backend routing docs:
+the job estimate). `run plan job.json` is the decision boundary; `doctor` warns if
+`routing_order` deviates from the recommended order. Provider guards are lazy: a safe local
+decision does not contact remote providers, and the ordered walk stops probing after the
+first admitted lane. This doc links, and does not replace,
+the lane-specific routing contracts:
+
+A valid custom order keeps `local` exactly once in the first position, then may reorder or
+omit remote lanes; lane names must be supported and unique. `doctor` reports invalid orders
+distinctly, and automatic planning rejects them rather than falling open to an unlisted lane.
 
 - `modal-offload-routing.md` -- when to keep work local vs. route to Modal (remote CPU, high-memory CPU, GPU).
 - `github-actions-offload-routing.md` -- when to route to GitHub Actions (private repo, budget-gated, last automatic lane).
@@ -43,7 +50,7 @@ only control is the worker count.
 
 1. **local** -- chosen only when the self-preservation projection proves it stays safe for the whole run.
 2. **Kaggle** -- the first offload tier: free Kaggle Kernels for CPU batch (and GPU under a weekly cap). CPU sessions are **free and quota-free**, so a CPU job that fits one kernel's ~32 GB and is chunkable/resumable to <=12h per run is preferred over the paid lanes. A job longer than 12h spans multiple kernel runs (the multi-run resume loop). No cost gate, no teardown -- kernels auto-stop at 12h. Available when the new Kaggle API token (`KAGGLE_API_TOKEN`, or `~/.kaggle/access_token`) is present; kagglehub validates it and the kaggle CLI (>=1.8.0) runs the kernel ops.
-3. **Modal** -- the next offload tier: remote CPU, high-memory CPU, or GPU, when the host is Modal-ready and within the USD budget. Modal is the paid on-demand GPU workhorse (see GPU policy below).
+3. **Modal** -- the next offload tier: remote CPU, high-memory CPU, or GPU, when the host has authenticated Modal API liveness and the job estimate is within the configured per-job USD cap. Modal is the paid on-demand GPU workhorse (see GPU policy below).
 4. **Hetzner** -- the next offload tier after Modal, for CPU / high-memory work, when `HCLOUD_TOKEN` is present and the budget allows. A disposable server runs the portable bundle at full cores, then is destroyed. Hetzner Cloud has no on-demand GPU, so GPU-requested jobs skip it (see GPU policy below).
 5. **GitHub Actions** -- the last automatic lane: a private research repo's own committed experiment code, budget-gated on included minutes, proportionate, never a general compute pool.
 
@@ -112,9 +119,11 @@ declares at least `[fanout].min_chunks` chunks.
   sizing.
 - **Aggregation and fault-tolerance.** Each lane's partial `out/` is merged into one result
   set, preserving the bundle's non-vacuous banked-value guard (a merge in which every chunk
-  is empty is refused). A stalled or failed lane's UNFINISHED chunks are reassigned to a
-  healthy lane; because chunks are resumable, no finished work is lost and every chunk is
-  covered exactly once.
+  is empty is refused); a successful retry replaces a stale failed/vacuous duplicate. A
+  stalled or failed lane's UNFINISHED chunks are reassigned to a healthy lane, but all work
+  that lane already consumed—including completed chunks—continues to count against its
+  cumulative quota/cost rail. Because chunks are resumable, no finished work is lost and
+  every chunk is covered exactly once.
 
 The scheduler is `research_compute/fanout.py`; its allocator is a pure, deterministic
 function (identical lane probes + M + weight give an identical split) separated from all IO.
@@ -123,7 +132,7 @@ without dispatching -- execution reuses the per-lane drivers above.
 
 ## Budget and teardown discipline
 
-- Every paid/quota'd offload lane is **budget-gated, fail-closed**: the broker reserves the pessimistic worst case in the shared append-only ledger before dispatch, so concurrent submits cannot collectively overspend. Hetzner reserves EUR, GitHub Actions reserves minutes, Modal reserves USD, and Kaggle GPU reserves GPU-hours against a self-imposed weekly cap. **Kaggle CPU is free and quota-free, so it has no cost gate.**
+- Every paid/quota'd offload lane is **guarded, fail-closed** before dispatch. Hetzner and GitHub Actions reserve pessimistic worst-case EUR/minutes in the shared ledger, and Kaggle GPU reserves GPU-hours against its weekly cap, so concurrent submissions cannot exceed those configured rails. Modal requires authenticated API liveness and enforces the lower of the job's USD cap and broker per-job USD cap at planning time; it does not claim a shared monthly reservation ledger. **Kaggle CPU is free and quota-free, so it has no cost gate.**
 - Within the auto-approve envelope the agent may submit alone (logged); spend above it needs out-of-band human confirmation the agent cannot mint.
 - **Teardown is mandatory on Hetzner.** A powered-off server still bills; only DELETE stops it. Teardown must run on every terminal path (success, failure, timeout, boot-fail, push-fail, crash), and failure or timeout paths fetch checkpoints before destroy so the run is resumable. Modal, GitHub Actions, and Kaggle are metered/free per run and need no explicit teardown -- Kaggle kernels auto-stop at the 12h session cap and cost nothing, so Kaggle needs no reaper.
 - Never print or copy remote credentials into prompts, logs, docs, or managed repo files. Tokens and API keys are read from the environment, never passed on argv, and never placed on a server or kernel.

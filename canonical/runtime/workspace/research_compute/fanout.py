@@ -52,7 +52,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import github_actions_backend, hetzner_backend, kaggle_backend, planner
+from . import budget_ledger, github_actions_backend, hetzner_backend, kaggle_backend, planner
 
 # Lanes in the canonical routing order; used only as a deterministic tie-break so that,
 # among equally-attractive lanes, the earlier (cheaper/free) lane fills first.
@@ -332,9 +332,13 @@ def reassign(
     for name, lane in by_name.items():
         if name in failed or not lane.usable:
             continue
-        seed = len([c for c in assignment.get(name, []) if int(c) not in completed])
-        headroom = max(0, lane.max_chunks - seed)
-        healthy.append(_LaneState(lane, count=seed, headroom=headroom))
+        assigned = [int(c) for c in assignment.get(name, [])]
+        active_seed = len([cid for cid in assigned if cid not in completed])
+        # max_chunks encodes cumulative cost/quota/wall-time rails. Completed work no
+        # longer contributes to the receiving lane's live finish time, but it still consumed
+        # rail capacity and must reduce recovery headroom.
+        headroom = max(0, lane.max_chunks - len(assigned))
+        healthy.append(_LaneState(lane, count=active_seed, headroom=headroom))
 
     t_ref, c_ref = _references([state.profile for state in healthy], len(lost) or 1) if healthy else (1.0, 0.0)
 
@@ -398,8 +402,8 @@ def merge_partials(
     """Merge each lane's partial ``out/`` records into one result set.
 
     ``lane_outputs`` maps a lane name to the list of per-chunk records it produced. Records
-    are de-duplicated by chunk id (the first-seen wins, so a chunk reassigned after a lane
-    failure does not double-count), sorted by chunk id, and checked for coverage against
+    are de-duplicated by chunk id (a successful/non-vacuous retry replaces an earlier failed
+    or vacuous record; otherwise deterministic first-seen wins), sorted by chunk id, and checked for coverage against
     ``expected_chunks``. The bundle's vacuity guard is preserved: with
     ``require_non_vacuous`` set, a merge in which every record is vacuous raises
     :class:`MergeVacuityError` rather than banking an empty result."""
@@ -414,6 +418,9 @@ def merge_partials(
                 continue
             if cid in merged:
                 duplicates.append(cid)
+                candidate = {**record, "_lane": lane}
+                if _is_vacuous(merged[cid]) and not _is_vacuous(candidate):
+                    merged[cid] = candidate
                 continue
             merged[cid] = {**record, "_lane": lane}
 
@@ -467,8 +474,15 @@ def chunk_core_seconds(job: dict[str, Any], total_chunks: int) -> float:
     return 60.0
 
 
-def _local_profile(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | None,
-                   ccs: float) -> LaneProfile:
+def _local_profile(
+    job: dict[str, Any],
+    *,
+    config: Any,
+    resources: dict[str, Any] | None,
+    ccs: float,
+    gpu: bool,
+    data_locality: str,
+) -> LaneProfile:
     """Local (Oracle Cloud) lane. Availability + parallel width come from the SAME
     self-preservation veto the single-lane router uses, so fan-out honours the load-cap:
     ``slots = w_safe`` and the wall budget bounds ``max_chunks``. Local is NOT free -- its
@@ -477,30 +491,37 @@ def _local_profile(job: dict[str, Any], *, config: Any, resources: dict[str, Any
         parameters=dict(dict(job.get("payload", {}) or {}).get("parameters", {}) or {}),
         constraints=dict(job.get("constraints", {}) or {}),
         policy=dict(job.get("policy", {}) or {}),
-        gpu_signal=False,
+        gpu_signal=gpu,
         runtime_sec=0,
+        data_locality=data_locality,
     )
     veto = planner.local_self_preservation_probe(estimate, config=config, resources=resources)
     w_safe = max(0, int(veto.get("w_safe", 0)))
-    secret = estimate.get("data_locality") == "secret"
+    local_gpu_count = int(planner.nested_get(resources, "gpu", "total_gpus", default=0) or 0)
+    slots = min(w_safe, local_gpu_count) if gpu else w_safe
     wall_budget_h = float(getattr(config, "local_wall_budget_h", 2.0))
     usd_per_core_hour = float(getattr(config, "fanout_local_usd_per_core_hour", 0.0))
-    max_chunks = _floor_div(w_safe * wall_budget_h * 3600.0, ccs)
-    available = w_safe >= 1
+    max_chunks = _floor_div(slots * wall_budget_h * 3600.0, ccs)
+    available = slots >= 1
+    if gpu and not local_gpu_count:
+        rail_reason = "no_local_gpu"
+    elif not available:
+        rail_reason = "local_self_preservation_veto"
+    elif data_locality == "secret":
+        rail_reason = "secret_locality_local_only"
+    else:
+        rail_reason = str(veto.get("reason", ""))
     return LaneProfile(
         name="local",
         available=available,
-        slots=w_safe,
+        slots=slots,
         chunk_seconds=ccs,
         cost_per_chunk=(ccs / 3600.0) * usd_per_core_hour,
         startup_seconds=float(getattr(config, "fanout_local_startup_seconds", 5.0)),
-        max_chunks=0 if secret else max_chunks,
+        max_chunks=max_chunks,
         native_cost_unit="usd",
         native_cost_per_chunk=(ccs / 3600.0) * usd_per_core_hour,
-        rail_reason=(
-            "secret_locality_not_offloadable" if secret else
-            (veto.get("reason", "") if available else "local_self_preservation_veto")
-        ),
+        rail_reason=rail_reason,
     )
 
 
@@ -546,10 +567,11 @@ def _hetzner_profile(hz: dict[str, Any], *, config: Any, ccs: float,
     spec = hz.get("server_spec") or {}
     vcpu = int(spec.get("vcpu", 0) or 0)
     eur_per_hour = float(spec.get("eur_per_hour", 0.0) or 0.0)
-    # Account-level availability (token valid + account usable + an adequate server type),
-    # NOT the single-lane probe's whole-job EUR verdict: the daily EUR cap and the auto-approve
-    # envelope are enforced per SHARE through max_chunks below.
-    available = bool(hz.get("account_usable")) and bool(hz.get("adequate"))
+    # A Hetzner server carries a fixed pessimistic reservation through its teardown TTL,
+    # regardless of how many chunks are assigned. Therefore fan-out must honor the same
+    # probe admission verdict as single-lane routing; partial allocation cannot bypass a
+    # failed worst-case per-job/day guard.
+    available = bool(hz.get("available")) and bool(hz.get("adequate"))
     eur_per_core_hour = (eur_per_hour / vcpu) if vcpu > 0 else 0.0
     eur_per_chunk = (ccs / 3600.0) * eur_per_core_hour
     usd_per_eur = float(getattr(config, "fanout_usd_per_eur", 1.08))
@@ -601,14 +623,18 @@ def _modal_profile(modal_ok: tuple[bool, str], *, config: Any, ccs: float) -> La
 
 
 def _gha_profile(gha_ok: bool, gha_detail: dict[str, Any], *, config: Any, ccs: float,
-                 os_multiplier: float, outstanding_minutes: float) -> LaneProfile:
+                 os_multiplier: float, outstanding_minutes: float,
+                 timeout_minutes: float) -> LaneProfile:
     """GitHub Actions lane. Minutes are prepaid, so the marginal objective cost is 0, but the
     cumulative 60% minutes cap bounds ``max_chunks`` -- the remaining allowed minutes divided
     by this job's minutes-per-chunk (timeout inflated by the runner OS multiplier)."""
     cap_minutes = float(gha_detail.get("cap_minutes", 0.0) or 0.0)
     used = float(gha_detail.get("used_this_cycle", 0.0) or 0.0)
     remaining = max(0.0, cap_minutes - used - outstanding_minutes)
-    minutes_per_chunk = (ccs / 3600.0) * 60.0 * float(os_multiplier)
+    # Each allocated chunk is an independently budgeted workflow cell. Admission and
+    # submit both reserve the registered timeout, not optimistic predicted runtime, so the
+    # planning rail must use that same pessimistic unit.
+    minutes_per_chunk = math.ceil(timeout_minutes) * float(os_multiplier)
     max_chunks = _floor_div(remaining, minutes_per_chunk) if minutes_per_chunk > 0 else 0
     return LaneProfile(
         name="gha",
@@ -632,25 +658,60 @@ def build_lane_profiles(
     modal_ready: bool = False,
     total_chunks: int,
     state_root: Any = None,
+    routing_order: list[str] | None = None,
+    gpu_requested: bool | None = None,
+    data_locality: str | None = None,
 ) -> list[LaneProfile]:
     """Turn each lane's probe verdict + the broker config into a :class:`LaneProfile`,
     computing every hard rail as that lane's ``max_chunks`` ceiling. Only lanes in
     ``routing_order`` are considered. All probes are injection-first offline (they read the
     liveness snapshot in ``resources``), so this is network-free in tests. GPU divisible
     fan-out uses the Kaggle GPU cap and skips Hetzner (no on-demand GPU)."""
-    order = list(getattr(config, "routing_order", list(_LANE_ORDER)))
+    order = list(
+        routing_order
+        if routing_order is not None
+        else getattr(config, "routing_order", list(_LANE_ORDER))
+    )
     constraints = dict(job.get("constraints", {}) or {})
     policy = dict(job.get("policy", {}) or {})
-    gpu = bool(policy.get("gpu")) or bool(constraints.get("gpu"))
+    explicit_gpu, gpu_error = planner.explicit_gpu_request(constraints, policy)
+    if gpu_error:
+        raise FanoutError(gpu_error)
+    resource_class = str(constraints.get("resource_class", "") or "").lower()
+    task_family = str(job.get("task_family", "") or "").lower()
+    task_type = str(job.get("task_type", "") or "").lower()
+    auto_gpu = resource_class == "gpu" or any(
+        marker in task_family or marker in task_type for marker in planner.GPU_TASK_MARKERS
+    )
+    gpu = auto_gpu or explicit_gpu if gpu_requested is None else gpu_requested
+    if data_locality is None:
+        data_locality, locality_error = planner.resolve_data_locality(constraints, policy)
+        if locality_error:
+            raise FanoutError(locality_error)
     ccs = chunk_core_seconds(job, total_chunks)
     parameters = dict(dict(job.get("payload", {}) or {}).get("parameters", {}) or {})
-    estimate = planner.build_estimate(parameters=parameters, constraints=constraints,
-                                      policy=policy, gpu_signal=gpu, runtime_sec=0)
+    estimate = planner.build_estimate(
+        parameters=parameters,
+        constraints=constraints,
+        policy=policy,
+        gpu_signal=gpu,
+        runtime_sec=0,
+        data_locality=data_locality,
+    )
 
     profiles: list[LaneProfile] = []
     for name in order:
         if name == "local":
-            profiles.append(_local_profile(job, config=config, resources=resources, ccs=ccs))
+            profiles.append(
+                _local_profile(
+                    job,
+                    config=config,
+                    resources=resources,
+                    ccs=ccs,
+                    gpu=gpu,
+                    data_locality=data_locality,
+                )
+            )
         elif name == "kaggle":
             kg = kaggle_backend.probe(estimate, config=config, resources=resources, state_root=state_root)
             profiles.append(_kaggle_profile(kg, config=config, ccs=ccs, gpu=gpu, total_chunks=total_chunks))
@@ -661,28 +722,45 @@ def build_lane_profiles(
             if gpu:
                 continue  # Hetzner Cloud has no on-demand GPU; a GPU fan-out skips it.
             hz = hetzner_backend.probe(estimate, config=config, resources=resources, state_root=state_root)
-            outstanding_eur = _injected_outstanding(resources, "hetzner")
+            outstanding_eur = _outstanding(resources, "hetzner", state_root)
             profiles.append(_hetzner_profile(hz, config=config, ccs=ccs, outstanding_eur=outstanding_eur))
         elif name == "gha":
-            gha_ok, gha_detail = _gha_cap(job, config=config, resources=resources, gpu=gpu)
+            gha_ok, gha_detail = _gha_cap(
+                job,
+                config=config,
+                resources=resources,
+                gpu=gpu,
+                state_root=state_root,
+                chunk_core_seconds=ccs,
+            )
             os_mult = _gha_os_multiplier(job, config)
-            outstanding_min = _injected_outstanding(resources, "gha")
+            repo_cfg = _gha_repo_cfg(job, config)
+            timeout_minutes = min(float(repo_cfg.get("timeout_minutes", 30)), 360.0)
+            outstanding_min = _outstanding(resources, "gha", state_root)
             profiles.append(_gha_profile(gha_ok, gha_detail, config=config, ccs=ccs,
-                                         os_multiplier=os_mult, outstanding_minutes=outstanding_min))
+                                         os_multiplier=os_mult,
+                                         outstanding_minutes=outstanding_min,
+                                         timeout_minutes=timeout_minutes))
     return profiles
 
 
-def _injected_outstanding(resources: dict[str, Any] | None, backend: str) -> float:
+def _outstanding(
+    resources: dict[str, Any] | None, backend: str, state_root: Any = None
+) -> float:
     """Already-reserved budget for a backend, injectable offline via
     ``resources['outstanding'][backend]`` (keeps the adapter deterministic without touching
-    the ledger); defaults to 0.0."""
+    the ledger). When a real ledger is present, an injected snapshot cannot lower it."""
     node = resources.get("outstanding") if isinstance(resources, dict) else None
+    injected = 0.0
     if isinstance(node, dict) and backend in node:
         try:
-            return float(node[backend])
-        except (TypeError, ValueError):
-            return 0.0
-    return 0.0
+            value = float(node[backend])
+            injected = value if math.isfinite(value) and value >= 0 else math.inf
+        except (TypeError, ValueError, OverflowError):
+            injected = math.inf
+    if state_root is not None:
+        return max(injected, budget_ledger.outstanding(state_root, backend))
+    return injected
 
 
 def _gha_repo_cfg(job: dict[str, Any], config: Any) -> dict[str, Any]:
@@ -693,12 +771,23 @@ def _gha_repo_cfg(job: dict[str, Any], config: Any) -> dict[str, Any]:
 
 def _gha_os_multiplier(job: dict[str, Any], config: Any) -> float:
     repo_cfg = _gha_repo_cfg(job, config)
-    runner_os = str(repo_cfg.get("runner_os", "linux")).lower()
-    return float(github_actions_backend.OS_MULTIPLIER.get(runner_os, 1.0))
+    try:
+        return float(
+            github_actions_backend.runner_multiplier(repo_cfg.get("runner_os", "linux"))
+        )
+    except github_actions_backend.GhaError:
+        return math.inf
 
 
-def _gha_cap(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | None,
-             gpu: bool) -> tuple[bool, dict[str, Any]]:
+def _gha_cap(
+    job: dict[str, Any],
+    *,
+    config: Any,
+    resources: dict[str, Any] | None,
+    gpu: bool,
+    state_root: Any = None,
+    chunk_core_seconds: float | None = None,
+) -> tuple[bool, dict[str, Any]]:
     """GitHub Actions availability + the cap detail (which carries the remaining minutes).
     Registered + enabled + (GPU only when opted in) and under the cumulative 60% cap."""
     if not bool(getattr(config, "gha_enabled", False)):
@@ -708,9 +797,33 @@ def _gha_cap(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
     repo_cfg = _gha_repo_cfg(job, config)
     if not repo_cfg:
         return False, {"reason": "gha_target_not_registered"}
-    cells = int(dict(job.get("constraints", {}) or {}).get("matrix_cells", 1) or 1)
-    return github_actions_backend.usage_cap_ok(repo_cfg=repo_cfg, config=config, cells=cells,
-                                               resources=resources)
+    constraints = dict(job.get("constraints", {}) or {})
+    if chunk_core_seconds is not None:
+        # Fan-out schedules independent single-worker chunks; the job-level cpu,
+        # parallelism, and core_hours describe the full batch. Admission must compare one
+        # scheduled chunk with one registered runner. Lane concurrency is bounded
+        # separately by the profile's slots and max_chunks rails.
+        constraints.update({
+            "cpu": 1,
+            "parallelism": 1,
+            "core_hours": max(0.0, float(chunk_core_seconds)) / 3600.0,
+        })
+    adequate, adequacy_reason = github_actions_backend.job_adequacy(
+        repo_cfg, constraints
+    )
+    if not adequate:
+        return False, {"reason": f"inadequate:{adequacy_reason}", "adequate": False}
+    ready, ready_reason = github_actions_backend.repo_ready(repo_cfg, resources)
+    if not ready:
+        return False, {"reason": ready_reason, "adequate": True}
+    cells = int(constraints.get("matrix_cells", 1) or 1)
+    return github_actions_backend.usage_cap_ok(
+        repo_cfg=repo_cfg,
+        config=config,
+        cells=cells,
+        resources=resources,
+        state_root=state_root,
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -762,13 +875,98 @@ def plan_fanout(
     ``speed_cost_weight`` knob is taken from the job policy (``policy.speed_cost_weight``),
     falling back to the config default. Does NOT dispatch -- execution reuses the existing
     per-lane drivers."""
-    accepted_gate, gate_reason = should_fanout(job, config=config)
     m = job_chunk_count(job)
+    constraints = dict(job.get("constraints", {}) or {})
     policy = dict(job.get("policy", {}) or {})
     weight = policy.get("speed_cost_weight")
     if weight is None:
         weight = getattr(config, "fanout_speed_cost_weight", 0.5)
     weight = min(1.0, max(0.0, float(weight)))
+
+    def rejected(reason: str, risk_flag: str) -> dict[str, Any]:
+        return {
+            "mode": "fanout",
+            "accepted": False,
+            "use_fanout": False,
+            "chunks": m,
+            "speed_cost_weight": weight,
+            "reason": reason,
+            "fallback": "single_lane_router",
+            "risk_flags": [risk_flag],
+        }
+
+    allow_remote, allow_remote_error = planner.policy_boolean(
+        policy, "allow_remote", default=True
+    )
+    if allow_remote_error:
+        return rejected(allow_remote_error, "invalid_allow_remote_policy")
+
+    data_locality, locality_error = planner.resolve_data_locality(constraints, policy)
+    if locality_error:
+        return rejected(locality_error, "invalid_data_locality")
+
+    explicit_gpu, gpu_error = planner.explicit_gpu_request(constraints, policy)
+    if gpu_error:
+        return rejected(gpu_error, "invalid_gpu_request")
+    resource_class = str(constraints.get("resource_class", "") or "").lower()
+    task_family = str(job.get("task_family", "") or "").lower()
+    task_type = str(job.get("task_type", "") or "").lower()
+    auto_gpu = resource_class == "gpu" or any(
+        marker in task_family or marker in task_type for marker in planner.GPU_TASK_MARKERS
+    )
+    gpu_requested = auto_gpu or explicit_gpu
+
+    backend_override, backend_override_error = planner.backend_override_value(policy)
+    if backend_override_error:
+        return rejected(backend_override_error, "invalid_backend_override")
+    if backend_override and backend_override not in planner.SUPPORTED_BACKENDS:
+        return rejected(
+            f"Unsupported policy.backend '{backend_override}'.",
+            "invalid_backend_override",
+        )
+    if backend_override and backend_override != "local" and not allow_remote:
+        return rejected(
+            f"policy.backend='{backend_override}' conflicts with allow_remote=false.",
+            "remote_override_forbidden",
+        )
+    if backend_override and backend_override != "local" and data_locality == "secret":
+        return rejected(
+            f"Secret-locality data cannot use the explicit remote backend '{backend_override}'.",
+            "secret_remote_override_forbidden",
+        )
+    if backend_override == "hetzner" and gpu_requested:
+        return rejected(
+            "Hetzner Cloud has no on-demand GPU lane.",
+            "hetzner_gpu_unsupported",
+        )
+    if (
+        backend_override == "gha"
+        and gpu_requested
+        and not bool(getattr(config, "gha_gpu_enabled", False))
+    ):
+        return rejected(
+            "GitHub Actions GPU larger runners are not enabled for this broker.",
+            "gha_gpu_disabled",
+        )
+
+    configured_order_raw = getattr(config, "routing_order", list(_LANE_ORDER))
+    if backend_override:
+        effective_order = [backend_override]
+    else:
+        order_error = planner.routing_order_error(configured_order_raw)
+        if order_error:
+            return rejected(
+                f"Invalid routing_order: {order_error}.",
+                "invalid_routing_order",
+            )
+        configured_order = list(configured_order_raw)
+        effective_order = (
+            ["local"]
+            if data_locality == "secret" or not allow_remote
+            else configured_order
+        )
+
+    accepted_gate, gate_reason = should_fanout(job, config=config)
 
     if not accepted_gate:
         return {
@@ -781,8 +979,17 @@ def plan_fanout(
             "fallback": "single_lane_router",
         }
 
-    profiles = build_lane_profiles(job, config=config, resources=resources,
-                                   modal_ready=modal_ready, total_chunks=m, state_root=state_root)
+    profiles = build_lane_profiles(
+        job,
+        config=config,
+        resources=resources,
+        modal_ready=modal_ready,
+        total_chunks=m,
+        state_root=state_root,
+        routing_order=effective_order,
+        gpu_requested=gpu_requested,
+        data_locality=data_locality,
+    )
     allocation = allocate(profiles, m, speed_cost_weight=weight)
     assignment = chunk_ranges(allocation.counts)
 
@@ -793,6 +1000,7 @@ def plan_fanout(
         "chunks": m,
         "speed_cost_weight": weight,
         "reason": gate_reason,
+        "effective_routing_order": effective_order,
         "allocation": allocation.as_dict(),
         "chunk_assignment": assignment,
         "lanes": [

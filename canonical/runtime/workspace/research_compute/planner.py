@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import math
 import os
+import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
 from . import github_actions_backend, hetzner_backend, kaggle_backend
+from .config import DEFAULT_ROUTING_ORDER, SUPPORTED_BACKENDS, routing_order_error
 
 # Runtime-watchdog verdicts (plan §5).
 WATCH_OK = "completed"
@@ -37,6 +39,79 @@ SUPPORTED_TEMPLATES = {
     "parameter_sweep",
 }
 
+SUPPORTED_DATA_LOCALITIES = frozenset({"public", "private", "secret"})
+
+
+def policy_boolean(policy: dict[str, Any], key: str, *, default: bool) -> tuple[bool, str | None]:
+    """Read a JSON policy boolean without truthiness coercion.
+
+    Strings such as ``"false"`` must not silently become true at a trust boundary.
+    """
+    value = policy.get(key, default)
+    if not isinstance(value, bool):
+        return default, f"policy.{key} must be a boolean"
+    return value, None
+
+
+def resolve_data_locality(
+    constraints: dict[str, Any], policy: dict[str, Any]
+) -> tuple[str, str | None]:
+    """Normalize locality and conservatively merge its two supported input locations.
+
+    Either source declaring ``secret`` wins, so a less restrictive constraint cannot
+    shadow a secret policy. Non-string values are rejected instead of stringified.
+    """
+    normalized: list[str] = []
+    for label, value in (
+        ("constraints.data_locality", constraints.get("data_locality")),
+        ("policy.data_locality", policy.get("data_locality")),
+    ):
+        if value is None:
+            continue
+        if not isinstance(value, str):
+            return "", f"{label} must be a string"
+        locality = value.strip().lower()
+        if locality:
+            if locality not in SUPPORTED_DATA_LOCALITIES:
+                return "", (
+                    f"{label} must be one of "
+                    f"{sorted(SUPPORTED_DATA_LOCALITIES)}"
+                )
+            normalized.append(locality)
+    if "secret" in normalized:
+        return "secret", None
+    if "private" in normalized:
+        return "private", None
+    return ("public" if "public" in normalized else ""), None
+
+
+def explicit_gpu_request(
+    constraints: dict[str, Any], policy: dict[str, Any]
+) -> tuple[bool, str | None]:
+    """Resolve the two explicit GPU flags without truthiness coercion."""
+    requested = False
+    for label, value in (
+        ("constraints.gpu", constraints.get("gpu", False)),
+        ("policy.gpu", policy.get("gpu", False)),
+    ):
+        if not isinstance(value, bool):
+            return False, f"{label} must be a boolean"
+        requested = requested or value
+    return requested, None
+
+
+def backend_override_value(policy: dict[str, Any]) -> tuple[str, str | None]:
+    """Return a normalized backend hard pin; reject present non-string values."""
+    if "backend" not in policy:
+        return "", None
+    value = policy["backend"]
+    if not isinstance(value, str):
+        return "", "policy.backend must be a backend-name string"
+    normalized = value.strip().lower()
+    if not normalized:
+        return "", "policy.backend must be a non-empty backend-name string"
+    return normalized, None
+
 
 def normalize_job(job: dict[str, Any], *, config: Any) -> dict[str, Any]:
     normalized = dict(job)
@@ -51,12 +126,36 @@ def normalize_job(job: dict[str, Any], *, config: Any) -> dict[str, Any]:
     return normalized
 
 
-def _default_modal_liveness_probe(config: Any) -> tuple[bool, str]:  # pragma: no cover - richer probe deferred
-    """Default Modal account-usable liveness. The plan permits reusing readiness here
-    ("reuse existing modal readiness if a richer check isn't cheaply available; wire the
-    hook"); a future probe queries the workspace budget / free-allowance -- the real
-    "out of credits" state the user hits. Returns (usable, reason)."""
-    return True, "assumed usable (readiness-based; wire the workspace-budget probe)"
+def _default_modal_liveness_probe(config: Any) -> tuple[bool, str]:  # pragma: no cover - live CLI path
+    """Authenticated, read-only Modal API liveness check.
+
+    Listing apps proves the configured credentials, profile, environment, and API are usable
+    without spawning paid work. Provider-side spend refusal can still occur later, so the
+    planner also enforces its local per-job USD estimate cap.
+    """
+    from .modal_backend import modal_cli_status
+
+    cli_ok, cli_path = modal_cli_status()
+    if not cli_ok:
+        return False, "modal_cli_unavailable"
+    env = os.environ.copy()
+    profile = getattr(config, "modal_profile", None)
+    if profile:
+        env["MODAL_PROFILE"] = str(profile)
+    environment = str(getattr(config, "modal_environment", "main") or "main")
+    try:
+        result = subprocess.run(
+            [cli_path, "app", "list", "--json", "-e", environment],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"modal_liveness_failed:{exc.__class__.__name__}"
+    if result.returncode != 0:
+        return False, "modal_auth_or_api_unavailable"
+    return True, "modal_authenticated_api_usable"
 
 
 # Tests replace this hook (in-process) so the real check never runs offline.
@@ -65,15 +164,18 @@ MODAL_LIVENESS_PROBE = _default_modal_liveness_probe
 
 def modal_lane_available(config: Any, resources: dict[str, Any] | None,
                          modal_ready: bool) -> tuple[bool, str]:
-    """Modal lane availability = SDK/config readiness AND account-usable liveness (payment
-    method on file + workspace-budget / free-allowance not exhausted, per plan §6.1).
+    """Modal lane availability = SDK/config readiness AND authenticated API liveness.
     Injection-first (resources['liveness']['modal'] with optional 'ready'/'usable' keys) so
     offline tests are deterministic and host-independent; otherwise readiness plus the
     MODAL_LIVENESS_PROBE hook. Returns (available, reason)."""
     injected = nested_get(resources, "liveness", "modal", default=None)
     if isinstance(injected, dict):
-        ready = bool(injected.get("ready", modal_ready))
-        usable = bool(injected.get("usable", True))
+        if "usable" not in injected:
+            return False, "modal_liveness_snapshot_incomplete"
+        ready = injected.get("ready", modal_ready)
+        usable = injected["usable"]
+        if not isinstance(ready, bool) or not isinstance(usable, bool):
+            return False, "modal_liveness_snapshot_must_use_booleans"
         reason = str(injected.get("reason") or ("available" if (ready and usable) else "modal_unavailable"))
         return (ready and usable), reason
     if not modal_ready:
@@ -83,17 +185,16 @@ def modal_lane_available(config: Any, resources: dict[str, Any] | None,
 
 
 def select_remote_lane(*, order: list[str], modal_decision: str, gpu_signal: bool,
-                       hz: dict[str, Any], hz_in_order: bool,
-                       kg: dict[str, Any] | None = None, kg_in_order: bool = False,
-                       modal_ok: tuple[bool, str],
+                       hz: Any, hz_in_order: bool,
+                       kg: Any = None, kg_in_order: bool = False,
+                       modal_ok: Any,
                        gha_ok: Any) -> tuple[str | None, str | None, list[dict[str, Any]]]:
     """Order-driven cascade over routing_order for the first AVAILABLE + ADEQUATE REMOTE
     lane (the caller owns the local lane). The walk is driven entirely by `order`, so it
     stays correct if the routing priority is reordered. Kaggle, Hetzner, and GitHub Actions
     are CPU lanes here (GPU work goes through select_gpu_lane). Kaggle sits ahead of the paid
-    lanes because its CPU compute is free and quota-free. `modal_ok` is a precomputed
-    (available, reason) pair; `gha_ok` is a zero-arg callable returning (available, reason) so
-    the GitHub usage probe runs only if the cascade actually reaches the GHA lane. Returns
+    lanes because its CPU compute is free and quota-free. Provider arguments may be cached
+    zero-argument guards; each is resolved only when the walk reaches that lane. Returns
     (decision | None, backend | None, trail)."""
     trail: list[dict[str, Any]] = []
     for backend in order:
@@ -102,29 +203,31 @@ def select_remote_lane(*, order: list[str], modal_decision: str, gpu_signal: boo
         if backend == "kaggle":
             if not kg_in_order:
                 continue
-            adequate = bool(kg.get("adequate")) and not gpu_signal
-            available = bool(kg.get("available"))
-            reason = "gpu_out_of_scope_for_cpu_cascade" if gpu_signal else str(kg.get("reason", ""))
+            kg_result = kg() if callable(kg) else kg
+            adequate = bool(kg_result.get("adequate")) and not gpu_signal
+            available = bool(kg_result.get("available"))
+            reason = "gpu_out_of_scope_for_cpu_cascade" if gpu_signal else str(kg_result.get("reason", ""))
             trail.append({"backend": "kaggle", "available": available, "adequate": adequate, "reason": reason})
             if available and adequate:
                 return "kaggle", "kaggle", trail
         elif backend == "modal":
-            ok, reason = modal_ok
+            ok, reason = modal_ok() if callable(modal_ok) else modal_ok
             trail.append({"backend": "modal", "available": bool(ok), "adequate": True, "reason": reason})
             if ok:
                 return modal_decision, "modal", trail
         elif backend == "hetzner":
             if not hz_in_order:
                 continue
-            adequate = bool(hz.get("adequate")) and not gpu_signal
-            available = bool(hz.get("available"))
-            reason = "gpu_out_of_scope_v1" if gpu_signal else str(hz.get("reason", ""))
+            hz_result = hz() if callable(hz) else hz
+            adequate = bool(hz_result.get("adequate")) and not gpu_signal
+            available = bool(hz_result.get("available"))
+            reason = "gpu_out_of_scope_v1" if gpu_signal else str(hz_result.get("reason", ""))
             trail.append({"backend": "hetzner", "available": available, "adequate": adequate, "reason": reason})
             if available and adequate:
                 return "hetzner", "hetzner", trail
         elif backend == "gha":
             ok, reason = gha_ok()
-            adequate = not gpu_signal
+            adequate = not gpu_signal and not str(reason).startswith("inadequate:")
             trail.append({"backend": "gha", "available": bool(ok) and adequate,
                           "adequate": adequate, "reason": reason})
             if ok and adequate:
@@ -133,8 +236,8 @@ def select_remote_lane(*, order: list[str], modal_decision: str, gpu_signal: boo
 
 
 def select_gpu_lane(*, order: list[str], local_gpu: bool, config: Any,
-                    kg: dict[str, Any] | None = None, kg_in_order: bool = False,
-                    modal_ok: tuple[bool, str],
+                    kg: Any = None, kg_in_order: bool = False,
+                    modal_ok: Any,
                     gha_ok: Any) -> tuple[str | None, str | None, list[dict[str, Any]]]:
     """Order-driven cascade over routing_order for the first GPU-CAPABLE + AVAILABLE lane
     (plan §5.1). A GPU-requested job (auto-signalled OR explicitly requested) must land on a
@@ -154,10 +257,9 @@ def select_gpu_lane(*, order: list[str], local_gpu: bool, config: Any,
                    GHA is GPU-capable but still gated by the cumulative Actions-minutes cap
                    (`gha_ok`).
 
-    `modal_ok` is a precomputed (available, reason) pair; `gha_ok` is a zero-arg callable
-    returning (available, reason) so the GitHub usage probe runs only if the cascade reaches
-    an enabled GHA-GPU lane. Returns (decision | None, backend | None, trail); decision is
-    None when no GPU lane is available, so the caller rejects."""
+    Provider arguments may be cached zero-argument guards, so a lane probe runs only if the
+    cascade reaches it. Returns (decision | None, backend | None, trail); decision is None
+    when no GPU lane is available, so the caller rejects."""
     trail: list[dict[str, Any]] = []
     for backend in order:
         if backend == "local":
@@ -171,13 +273,14 @@ def select_gpu_lane(*, order: list[str], local_gpu: bool, config: Any,
                 continue
             # Kaggle offers free GPU kernels; `kg.available` already folds in the weekly
             # GPU-hour self-cap, so an exhausted quota makes the lane unavailable here.
-            available = bool(kg.get("available"))
+            kg_result = kg() if callable(kg) else kg
+            available = bool(kg_result.get("available"))
             trail.append({"backend": "kaggle", "gpu_capable": True, "available": available,
-                          "adequate": available, "reason": str(kg.get("reason", ""))})
+                          "adequate": available, "reason": str(kg_result.get("reason", ""))})
             if available:
                 return "kaggle_gpu", "kaggle", trail
         elif backend == "modal":
-            ok, reason = modal_ok
+            ok, reason = modal_ok() if callable(modal_ok) else modal_ok
             trail.append({"backend": "modal", "gpu_capable": True, "available": bool(ok),
                           "adequate": True, "reason": reason})
             if ok:
@@ -193,15 +296,24 @@ def select_gpu_lane(*, order: list[str], local_gpu: bool, config: Any,
                               "adequate": False, "reason": "gha_gpu_disabled"})
                 continue
             ok, reason = gha_ok()
-            trail.append({"backend": "gha", "gpu_capable": True, "available": bool(ok),
-                          "adequate": True, "reason": reason})
-            if ok:
+            adequate = not str(reason).startswith("inadequate:")
+            trail.append({"backend": "gha", "gpu_capable": True,
+                          "available": bool(ok) and adequate,
+                          "adequate": adequate, "reason": reason})
+            if ok and adequate:
                 return "gha", "gha", trail
         # Any other backend name is ignored until wired above.
     return None, None, trail
 
 
-def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | None = None, modal_ready: bool = False) -> dict[str, Any]:
+def plan_job(
+    job: dict[str, Any],
+    *,
+    config: Any,
+    resources: dict[str, Any] | None = None,
+    modal_ready: bool = False,
+    state_root: Any = None,
+) -> dict[str, Any]:
     task_family = str(job.get("task_family", "") or "").lower()
     task_type = str(job.get("task_type", "") or "").lower()
     template = str(job.get("template", "") or "").lower()
@@ -211,35 +323,291 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
     parameters = dict(payload.get("parameters", {}) or {})
 
     resource_class = str(constraints.get("resource_class", "") or "").lower()
-    requested_gpu = constraints.get("gpu")
-    allow_remote = bool(policy.get("allow_remote", True))
+    allow_remote, allow_remote_error = policy_boolean(
+        policy, "allow_remote", default=True
+    )
+    data_locality, data_locality_error = resolve_data_locality(constraints, policy)
+    explicit_gpu, explicit_gpu_error = explicit_gpu_request(constraints, policy)
     execution_primitive = str(constraints.get("execution_primitive", "function") or "function")
 
     risk_flags: list[str] = []
     reasoning: list[str] = []
 
-    # --- backend routing: explicit override > automatic order [local, modal, hetzner, gha] ---
-    backend_override = str(policy.get("backend", "") or "").lower()
+    # --- backend routing: explicit override > configured automatic order ---
+    backend_override, backend_override_error = backend_override_value(policy)
     gha_target = str(job.get("gha_target", "") or template or "")
     gha_repos = dict(getattr(config, "gha_repos", {}) or {})
     gha_registered = bool(getattr(config, "gha_enabled", False)) and gha_target in gha_repos
     runtime_sec = estimate_runtime_sec(parameters, constraints)
 
+    local_gpu_count = nested_get(resources, "gpu", "total_gpus", default=0)
+    auto_gpu_signal = resource_class == "gpu" or any(
+        marker in task_family or marker in task_type for marker in GPU_TASK_MARKERS
+    )
+    gpu_requested = auto_gpu_signal or explicit_gpu
+
+    if allow_remote_error:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["invalid_allow_remote_policy"],
+            required_policy_exceptions=[],
+            reasoning_summary=allow_remote_error,
+        )
+
+    if data_locality_error:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["invalid_data_locality"],
+            required_policy_exceptions=[],
+            reasoning_summary=data_locality_error,
+        )
+
+    if explicit_gpu_error:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["invalid_gpu_request"],
+            required_policy_exceptions=[],
+            reasoning_summary=explicit_gpu_error,
+        )
+
+    if backend_override_error:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["invalid_backend_override"],
+            required_policy_exceptions=[],
+            reasoning_summary=backend_override_error,
+        )
+
+    local_estimate = build_estimate(
+        parameters=parameters,
+        constraints=constraints,
+        policy=policy,
+        gpu_signal=gpu_requested,
+        runtime_sec=runtime_sec,
+        data_locality=data_locality,
+    )
+
+    def constrained_local_capacity() -> tuple[dict[str, Any], int]:
+        veto = local_self_preservation_probe(
+            local_estimate, config=config, resources=resources
+        )
+        workers = int(veto["w_eff"] if veto["adequate"] else max(veto["w_safe"], 0))
+        return veto, workers
+
+    if backend_override and backend_override not in SUPPORTED_BACKENDS:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["invalid_backend_override"],
+            required_policy_exceptions=[],
+            reasoning_summary=(
+                f"Unsupported policy.backend '{backend_override}'; expected one of "
+                f"{list(DEFAULT_ROUTING_ORDER)}."
+            ),
+        )
+
     if backend_override == "local":
         # Forced-local self-preservation (plan section 6; Phase A deviation 3): an explicit
         # local override skips the PRE-LAUNCH veto, but the RUNTIME load-watchdog stays armed
-        # and non-negotiable. On a hard load breach it checkpoints, aborts, and offloads, so
-        # even a forced-local run can never trip this host's auto-restart. watchdog_armed tells
-        # the executor to wrap the run in run_local_watched.
-        forced_workers = max(1, int(constraints.get("parallelism") or constraints.get("cpu") or 1))
-        return finalize_plan(decision="local_cpu", execution_primitive=execution_primitive,
+        # and non-negotiable. On a hard load breach it checkpoints and aborts; the explicit
+        # backend pin forbids remote fallback. watchdog_armed tells the executor to wrap the
+        # run in run_local_watched.
+        secret_local = data_locality == "secret"
+        remote_fallback_allowed = False
+        fallback_note = (
+            "On a load breach it aborts without remote fallback because the data is secret."
+            if secret_local
+            else "On a load breach it checkpoints and aborts without remote fallback "
+            "because the explicit local backend is a hard pin."
+        )
+        if gpu_requested and not local_gpu_count:
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=["forced_local_gpu_unavailable"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Explicit local GPU execution was requested, but no local GPU is "
+                    "available; the request cannot be silently downgraded to CPU."
+                ),
+                extra={"remote_fallback_allowed": False},
+            )
+        local_veto, forced_workers = constrained_local_capacity()
+        if forced_workers < 1:
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=["forced_local_load_unsafe"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Explicit local execution is hard-pinned, but no worker is safe under "
+                    f"the current load boundary: {local_veto['reason']}."
+                ),
+                extra={"remote_fallback_allowed": False,
+                       "routing_trail": [local_veto]},
+            )
+        local_risks = list(risk_flags)
+        if not local_veto["adequate"]:
+            local_risks.extend(["local_self_preservation_veto", "local_over_wall_budget"])
+        local_decision = "local_gpu" if gpu_requested else "local_cpu"
+        return finalize_plan(decision=local_decision, execution_primitive=execution_primitive,
             accepted=True, estimated_cost_usd=0.0, estimated_runtime_sec=runtime_sec,
-            risk_flags=risk_flags, required_policy_exceptions=[],
+            risk_flags=local_risks, required_policy_exceptions=[],
             reasoning_summary=("Explicit override: run locally. The runtime load-watchdog stays "
-                               "armed, so even this forced-local run aborts and offloads on a load "
-                               "breach and cannot trip this host's auto-restart."),
+                               f"armed. {fallback_note}"),
             extra={"backend": "local", "forced_local": True, "watchdog_armed": True,
-                   "local_workers": forced_workers})
+                   "remote_fallback_allowed": remote_fallback_allowed,
+                   "gpu": gpu_requested,
+                   "local_workers": forced_workers,
+                   "w_safe": local_veto["w_safe"],
+                   "w_needed": local_veto["w_needed"],
+                   "routing_trail": [local_veto]})
+
+    if not allow_remote:
+        if backend_override:
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=["remote_override_forbidden"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    f"policy.backend='{backend_override}' conflicts with allow_remote=false."
+                ),
+            )
+        if gpu_requested and not local_gpu_count:
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=["remote_disabled_gpu_requires_local_gpu"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Remote execution is disabled, GPU execution was requested, and no "
+                    "local GPU is available; the request cannot be silently run on CPU."
+                ),
+                extra={"remote_fallback_allowed": False},
+            )
+        local_veto, forced_workers = constrained_local_capacity()
+        if forced_workers < 1:
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=["remote_disabled_local_unsafe"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Remote execution is disabled and no local worker is safe under the "
+                    f"current load boundary: {local_veto['reason']}."
+                ),
+                extra={"remote_fallback_allowed": False,
+                       "routing_trail": [local_veto]},
+            )
+        local_risks = list(risk_flags)
+        if not local_veto["adequate"]:
+            local_risks.extend(["local_self_preservation_veto", "local_over_wall_budget"])
+        local_decision = "local_gpu" if gpu_requested else "local_cpu"
+        return finalize_plan(
+            decision=local_decision,
+            execution_primitive=execution_primitive,
+            accepted=True,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=local_risks,
+            required_policy_exceptions=[],
+            reasoning_summary=(
+                "Remote execution is disabled by policy; run locally with the runtime "
+                "load-watchdog armed and no remote fallback."
+            ),
+            extra={
+                "backend": "local",
+                "forced_local": True,
+                "watchdog_armed": True,
+                "remote_fallback_allowed": False,
+                "gpu": gpu_requested,
+                "local_workers": forced_workers,
+                "w_safe": local_veto["w_safe"],
+                "w_needed": local_veto["w_needed"],
+                "routing_trail": [local_veto],
+            },
+        )
+
+    if data_locality == "secret" and backend_override:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["secret_remote_override_forbidden"],
+            required_policy_exceptions=[],
+            reasoning_summary=(
+                f"Secret-locality data cannot use the explicit remote backend "
+                f"'{backend_override}'."
+            ),
+        )
+
+    def gha_ok() -> tuple[bool, str]:
+        # Lazy for automatic routing; explicit GHA calls it immediately. The usage check is
+        # part of lane admission, not merely a submit-time accounting reservation.
+        if not gha_registered:
+            return False, "gha_not_registered"
+        repo_cfg = dict(gha_repos.get(gha_target, {}))
+        gha_constraints = dict(constraints)
+        # build_estimate applies the broker's declared-work precedence
+        # (constraints.core_hours, then payload.parameters.core_hours, then runtime).
+        # Carry that normalized value into GHA admission so moving core_hours between the
+        # two supported manifest locations cannot bypass the workflow timeout guard.
+        gha_constraints["core_hours"] = local_estimate["core_hours"]
+        adequate, adequacy_reason = github_actions_backend.job_adequacy(
+            repo_cfg, gha_constraints
+        )
+        if not adequate:
+            return False, f"inadequate:{adequacy_reason}"
+        ready, ready_reason = github_actions_backend.repo_ready(repo_cfg, resources)
+        if not ready:
+            return False, ready_reason
+        cells = int(constraints.get("matrix_cells", 1) or 1)
+        ok, detail = github_actions_backend.usage_cap_ok(
+            repo_cfg=repo_cfg,
+            config=config,
+            cells=cells,
+            resources=resources,
+            state_root=state_root,
+        )
+        return ok, str(detail.get("reason", "gha"))
+
     if backend_override == "gha":
         if not gha_registered:
             return finalize_plan(decision="rejected", execution_primitive=execution_primitive,
@@ -247,45 +615,87 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
                 risk_flags=risk_flags + ["gha_target_not_registered"],
                 required_policy_exceptions=["gha_registration"],
                 reasoning_summary=f"Explicit gha requested but target '{gha_target}' is not registered/enabled.")
+        if gpu_requested and not bool(getattr(config, "gha_gpu_enabled", False)):
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=["gha_gpu_disabled"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Explicit GHA GPU execution was requested, but paid GPU larger runners "
+                    "are not enabled for this broker."
+                ),
+            )
+        gha_available, gha_reason = gha_ok()
+        if not gha_available:
+            gha_risk = (
+                "gha_inadequate"
+                if gha_reason.startswith("inadequate:")
+                else "gha_unavailable"
+            )
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=[gha_risk],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    f"Explicit GHA requested but its lane guard failed: {gha_reason}."
+                ),
+                extra={"routing_trail": [{
+                    "backend": "gha",
+                    "available": False,
+                    "adequate": not gha_reason.startswith("inadequate:"),
+                    "reason": gha_reason,
+                }]},
+            )
         return finalize_plan(decision="gha", execution_primitive=execution_primitive,
             accepted=True, estimated_cost_usd=0.0, estimated_runtime_sec=runtime_sec,
             risk_flags=risk_flags, required_policy_exceptions=[],
-            reasoning_summary=f"Explicit override: GitHub Actions (target '{gha_target}'); minutes budget enforced at submit.")
+            reasoning_summary=(
+                f"Explicit override: GitHub Actions (target '{gha_target}'); the cumulative "
+                "minutes-cap guard passed and the submit-time reservation still applies."
+            ),
+            extra={"backend": "gha", "gpu": gpu_requested,
+                   "routing_trail": [{"backend": "gha", "available": True,
+                                      "adequate": True, "reason": gha_reason}]})
+
+    if backend_override == "hetzner" and gpu_requested:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["hetzner_gpu_unsupported"],
+            required_policy_exceptions=[],
+            reasoning_summary=(
+                "Explicit Hetzner GPU execution was requested, but Hetzner Cloud has no "
+                "on-demand GPU lane; the request cannot be silently downgraded to CPU."
+            ),
+        )
 
     if template and template not in SUPPORTED_TEMPLATES:
         risk_flags.append("template_not_yet_supported")
 
-    if not allow_remote:
-        reasoning.append("Remote execution is disabled by policy.")
-        return finalize_plan(
-            decision="local_cpu",
-            execution_primitive=execution_primitive,
-            accepted=True,
-            estimated_cost_usd=0.0,
-            estimated_runtime_sec=estimate_runtime_sec(parameters, constraints),
-            risk_flags=risk_flags,
-            required_policy_exceptions=[],
-            reasoning_summary=" ".join(reasoning),
-        )
-
     local_ram_gb = nested_get(resources, "memory", "total_gb", default=0.0)
-    local_gpu_count = nested_get(resources, "gpu", "total_gpus", default=0)
     local_disk_gb = nested_get(resources, "disk", "available_gb", default=0.0)
 
     requested_mem_mb = int(constraints.get("memory_mb", 0) or 0)
     requested_disk_mb = int(constraints.get("ephemeral_disk_mb", 0) or 0)
     requested_cpu = float(constraints.get("cpu", 0) or 0)
-    estimated_runtime_sec = estimate_runtime_sec(parameters, constraints)
+    estimated_runtime_sec = runtime_sec
 
     # GPU trigger (plan §5.1): gpu_requested = auto_gpu_signal OR an explicit request.
     # auto_gpu_signal is inferred from the job estimate -- a GPU task-family/type marker or an
     # explicit gpu resource_class. The explicit request is policy.gpu (or the equivalent job
     # constraint constraints.gpu). Because the trigger is a disjunction, an EXPLICIT request
     # ALWAYS wins: it forces a GPU lane even when auto-detection would classify the job as CPU.
-    auto_gpu_signal = resource_class == "gpu" or any(
-        marker in task_family or marker in task_type for marker in GPU_TASK_MARKERS)
-    explicit_gpu = bool(policy.get("gpu")) or bool(requested_gpu)
-    gpu_requested = auto_gpu_signal or explicit_gpu
     cpu_heavy_signal = task_family in CPU_HEAVY_FAMILIES or resource_class in {"cpu", "highmem_cpu"} or parameters.get("max_vertices", 0) >= 40
     highmem_signal = resource_class == "highmem_cpu" or requested_mem_mb >= 32768 or (local_ram_gb and requested_mem_mb > int(local_ram_gb * 1024 * 0.75))
     disk_pressure = bool(local_disk_gb and local_disk_gb < 5.0) or requested_disk_mb >= 65536
@@ -298,7 +708,7 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
     if gpu_requested:
         # Seed a Modal-GPU decision; the GPU cascade in the routing section below walks
         # routing_order and overrides this with the first GPU-capable + available lane
-        # (local_gpu / modal_gpu / gha), or rejects if no GPU lane is available.
+        # (local_gpu / kaggle_gpu / modal_gpu / gha), or rejects if no GPU lane is available.
         decision = "modal_gpu"
         reasoning.append("The job is GPU-requested (auto-signalled from the estimate or "
                          "explicitly requested); routing to a GPU-capable lane.")
@@ -318,38 +728,214 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
     # jobs walk it through `select_gpu_lane` (plan §5.1), so the priority stays correct if
     # routing_order is reordered. Each lane's availability is an account-usable liveness check
     # (plan §6.1): Kaggle (credentials valid; CPU free/quota-free, GPU under a weekly GPU-hour
-    # self-cap), Modal (readiness + payment/allowance), Hetzner (token valid + API reachable
+    # self-cap), Modal (authenticated API liveness), Hetzner (token valid + API reachable
     # + not payment-blocked), GHA (cumulative minutes cap). Kaggle sits right behind local
     # because its CPU compute is free. Hetzner has no on-demand GPU, so a GPU job always skips
     # it; GPU on GHA is opt-in (gha.gpu_enabled, off by default).
-    order = list(getattr(config, "routing_order", ["local", "kaggle", "modal", "hetzner", "gha"]))
+    configured_order = getattr(config, "routing_order", DEFAULT_ROUTING_ORDER)
+    configured_order_error = routing_order_error(configured_order)
+    order = (
+        list(configured_order)
+        if not configured_order_error
+        else []
+    )
+    estimate = build_estimate(
+        parameters=parameters,
+        constraints=constraints,
+        policy=policy,
+        gpu_signal=gpu_requested,
+        runtime_sec=estimated_runtime_sec,
+        data_locality=data_locality,
+    )
+
+    # Secret-locality is a global trust boundary, not merely a condition on one local-veto
+    # branch. It is resolved before any remote probe so credentials, liveness calls, and
+    # dispatch decisions cannot observe or move a secret job.
+    if data_locality == "secret":
+        if gpu_requested:
+            if local_gpu_count:
+                local_veto, forced_workers = constrained_local_capacity()
+                if forced_workers < 1:
+                    return finalize_plan(
+                        decision="rejected",
+                        execution_primitive=execution_primitive,
+                        accepted=False,
+                        estimated_cost_usd=0.0,
+                        estimated_runtime_sec=estimated_runtime_sec,
+                        risk_flags=risk_flags + [
+                            "local_self_preservation_veto",
+                            "unfallable_secret_local_unsafe",
+                        ],
+                        required_policy_exceptions=[],
+                        reasoning_summary=(
+                            "Secret-locality GPU work cannot offload, and no local worker "
+                            "is safe under the current load boundary."
+                        ),
+                        extra={
+                            "remote_fallback_allowed": False,
+                            "routing_trail": [local_veto],
+                        },
+                    )
+                local_risks = list(risk_flags)
+                if not local_veto["adequate"]:
+                    local_risks.extend([
+                        "local_self_preservation_veto", "local_over_wall_budget"
+                    ])
+                return finalize_plan(
+                    decision="local_gpu",
+                    execution_primitive=execution_primitive,
+                    accepted=True,
+                    estimated_cost_usd=0.0,
+                    estimated_runtime_sec=estimated_runtime_sec,
+                    risk_flags=local_risks,
+                    required_policy_exceptions=[],
+                    reasoning_summary=(
+                        "Secret-locality data is constrained to the available local GPU "
+                        f"at {forced_workers} safe worker(s); remote fallback is forbidden."
+                    ),
+                    extra={
+                        "backend": "local",
+                        "gpu": True,
+                        "local_workers": forced_workers,
+                        "w_safe": local_veto["w_safe"],
+                        "w_needed": local_veto["w_needed"],
+                        "remote_fallback_allowed": False,
+                        "routing_trail": [local_veto],
+                    },
+                )
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=estimated_runtime_sec,
+                risk_flags=risk_flags + ["secret_gpu_requires_local_gpu"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Secret-locality GPU work cannot offload and no local GPU is available."
+                ),
+            )
+
+        veto = local_self_preservation_probe(estimate, config=config, resources=resources)
+        trail = [{key: veto[key] for key in (
+            "backend", "available", "adequate", "w_safe", "w_needed", "w_eff", "reason"
+        )}]
+        if veto["adequate"]:
+            return finalize_plan(
+                decision="local_cpu",
+                execution_primitive=execution_primitive,
+                accepted=True,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=estimated_runtime_sec,
+                risk_flags=risk_flags,
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Secret-locality data is constrained to safe local CPU execution; "
+                    "remote fallback is forbidden. " + str(veto["reason"])
+                ),
+                extra={
+                    "backend": "local",
+                    "local_workers": veto["w_eff"],
+                    "w_safe": veto["w_safe"],
+                    "w_needed": veto["w_needed"],
+                    "remote_fallback_allowed": False,
+                    "routing_trail": trail,
+                },
+            )
+        if veto["w_safe"] >= 1:
+            return finalize_plan(
+                decision="local_cpu",
+                execution_primitive=execution_primitive,
+                accepted=True,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=estimated_runtime_sec,
+                risk_flags=risk_flags + [
+                    "local_self_preservation_veto", "local_over_wall_budget"
+                ],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Secret-locality data cannot offload; running throttled-local beyond "
+                    f"the wall budget at {veto['w_safe']} worker(s)."
+                ),
+                extra={
+                    "backend": "local",
+                    "local_workers": veto["w_safe"],
+                    "w_safe": veto["w_safe"],
+                    "w_needed": veto["w_needed"],
+                    "remote_fallback_allowed": False,
+                    "routing_trail": trail,
+                },
+            )
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=estimated_runtime_sec,
+            risk_flags=risk_flags + [
+                "local_self_preservation_veto", "unfallable_secret_local_unsafe"
+            ],
+            required_policy_exceptions=[],
+            reasoning_summary=(
+                "Secret-locality data cannot offload and local execution is load-unsafe."
+            ),
+            extra={"remote_fallback_allowed": False, "routing_trail": trail},
+        )
+
+    if not backend_override:
+        if configured_order_error:
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=estimated_runtime_sec,
+                risk_flags=risk_flags + ["invalid_routing_order"],
+                required_policy_exceptions=[],
+                reasoning_summary=f"Invalid routing_order: {configured_order_error}.",
+            )
+
     hetzner_in_order = "hetzner" in order
     kaggle_in_order = "kaggle" in order
-    estimate = build_estimate(parameters=parameters, constraints=constraints, policy=policy,
-                              gpu_signal=gpu_requested, runtime_sec=estimated_runtime_sec)
-    if hetzner_in_order:
-        hz = hetzner_backend.probe(estimate, config=config, resources=resources)
-    else:
-        hz = {"backend": "hetzner", "available": False, "adequate": False, "server_spec": None,
-              "est_cost": 0.0, "est_wall_h": 0.0, "within_auto_approve": False,
-              "reason": "hetzner_not_in_routing_order"}
-    if kaggle_in_order:
-        kg = kaggle_backend.probe(estimate, config=config, resources=resources)
-    else:
-        kg = {"backend": "kaggle", "available": False, "adequate": False,
-              "reason": "kaggle_not_in_routing_order"}
-    modal_ok = modal_lane_available(config, resources, modal_ready)
+    modal_in_order = "modal" in order
+    automatic_routing = not backend_override
+    hz = {"backend": "hetzner", "available": False, "adequate": False,
+          "server_spec": None, "est_cost": 0.0, "est_wall_h": 0.0,
+          "within_auto_approve": False, "reason": "hetzner_not_in_routing_order"}
+    kg = {"backend": "kaggle", "available": False, "adequate": False,
+          "reason": "kaggle_not_in_routing_order"}
+    modal_ok = (False, "modal_not_selected")
+    hz_loaded = False
+    kg_loaded = False
+    modal_loaded = False
 
-    def gha_ok() -> tuple[bool, str]:
-        # Lazy: the GitHub usage probe (network at real runtime) runs only if the cascade
-        # actually reaches the GHA lane and the target is registered.
-        if not gha_registered:
-            return False, "gha_not_registered"
-        repo_cfg = dict(gha_repos.get(gha_target, {}))
-        cells = int(constraints.get("matrix_cells", 1) or 1)
-        ok, detail = github_actions_backend.usage_cap_ok(
-            repo_cfg=repo_cfg, config=config, cells=cells, resources=resources)
-        return ok, str(detail.get("reason", "gha"))
+    def get_hetzner() -> dict[str, Any]:
+        nonlocal hz, hz_loaded
+        if not hz_loaded:
+            if backend_override == "hetzner" or (automatic_routing and hetzner_in_order):
+                hz = hetzner_backend.probe(
+                    estimate, config=config, resources=resources, state_root=state_root
+                )
+            hz_loaded = True
+        return hz
+
+    def get_kaggle() -> dict[str, Any]:
+        nonlocal kg, kg_loaded
+        if not kg_loaded:
+            if backend_override == "kaggle" or (automatic_routing and kaggle_in_order):
+                kg = kaggle_backend.probe(
+                    estimate, config=config, resources=resources, state_root=state_root
+                )
+            kg_loaded = True
+        return kg
+
+    def get_modal() -> tuple[bool, str]:
+        nonlocal modal_ok, modal_loaded
+        if not modal_loaded:
+            if backend_override == "modal" or (automatic_routing and modal_in_order):
+                modal_ok = modal_lane_available(config, resources, modal_ready)
+            modal_loaded = True
+        return modal_ok
 
     routing_extra: dict[str, Any] = {}
     routing_trail: list[dict[str, Any]] = []
@@ -399,7 +985,26 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
             reasoning.append(f"{context}: routing to GitHub Actions.")
         return True
 
-    if backend_override == "hetzner":
+    if backend_override == "kaggle":
+        kg = get_kaggle()
+        routing_trail.append({"backend": "kaggle", "available": kg["available"],
+                              "adequate": kg["adequate"], "reason": kg["reason"]})
+        if kg["available"] and kg["adequate"]:
+            decision = "kaggle_gpu" if gpu_requested else "kaggle"
+            _attach_kaggle()
+            reasoning.append(
+                "Explicit override: Kaggle GPU offload."
+                if gpu_requested
+                else "Explicit override: Kaggle CPU offload."
+            )
+        else:
+            decision = "rejected"
+            risk_flags.append("kaggle_unavailable")
+            reasoning.append(
+                f"Explicit kaggle requested but unavailable or inadequate: {kg['reason']}."
+            )
+    elif backend_override == "hetzner":
+        hz = get_hetzner()
         routing_trail.append({"backend": "hetzner", "available": hz["available"],
                               "adequate": hz["adequate"], "reason": hz["reason"]})
         if hz["available"] and hz["adequate"]:
@@ -410,9 +1015,25 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
             decision = "rejected"
             risk_flags.append("hetzner_unavailable")
             reasoning.append(f"Explicit hetzner requested but unavailable: {hz['reason']}.")
-    elif backend_override == "modal" and decision == "local_cpu":
-        decision = "modal_cpu"
-        reasoning.append("Explicit override: Modal (forced remote).")
+    elif backend_override == "modal":
+        modal_available, modal_reason = get_modal()
+        routing_trail.append({
+            "backend": "modal",
+            "available": modal_available,
+            "adequate": True,
+            "reason": modal_reason,
+        })
+        if modal_available:
+            if decision == "local_cpu":
+                decision = "modal_cpu"
+            routing_extra["backend"] = "modal"
+            reasoning.append("Explicit override: Modal (forced remote).")
+        else:
+            decision = "rejected"
+            risk_flags.append("modal_unavailable")
+            reasoning.append(
+                f"Explicit modal requested but unavailable: {modal_reason}."
+            )
     elif not backend_override and gpu_requested:
         # GPU cascade (plan §5.1): a GPU-requested job walks routing_order for the first
         # GPU-capable + available lane. GPU-capable = local (only if the box has a GPU),
@@ -423,7 +1044,8 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
         # cascade.
         chosen, backend_name, gpu_trail = select_gpu_lane(
             order=order, local_gpu=bool(local_gpu_count), config=config,
-            kg=kg, kg_in_order=kaggle_in_order, modal_ok=modal_ok, gha_ok=gha_ok)
+            kg=get_kaggle, kg_in_order=kaggle_in_order,
+            modal_ok=get_modal, gha_ok=gha_ok)
         routing_trail.extend(gpu_trail)
         if chosen is None:
             decision = "rejected"
@@ -459,23 +1081,20 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
             reasoning.append(veto["reason"])
         else:
             # Local is load-unsafe: fall through per routing_order, EXCLUDING local.
-            # Secret-locality data is never offloaded -- offloading it is itself the
-            # forbidden act -- so it can only run (throttled) local or be surfaced.
             risk_flags.append("local_self_preservation_veto")
             reasoning.append(veto["reason"])
-            secret = estimate["data_locality"] == "secret"
-            fell = False
-            if not secret:
-                # This fallthrough is CPU-only: gpu_requested jobs are handled by the GPU
-                # cascade above and never reach the local veto.
-                modal_decision = "modal_cpu"
-                chosen, backend_name, cascade_trail = select_remote_lane(
-                    order=order, modal_decision=modal_decision, gpu_signal=gpu_requested,
-                    hz=hz, hz_in_order=hetzner_in_order, kg=kg, kg_in_order=kaggle_in_order,
-                    modal_ok=modal_ok, gha_ok=gha_ok)
-                routing_trail.extend(cascade_trail)
-                fell = _apply_lane(chosen, backend_name,
-                                   context="Local vetoed for self-preservation")
+            # This fallthrough is CPU-only: gpu_requested jobs are handled by the GPU
+            # cascade above and never reach the local veto. Secret-locality jobs return at
+            # the global trust-boundary gate before any remote probe.
+            modal_decision = "modal_cpu"
+            chosen, backend_name, cascade_trail = select_remote_lane(
+                order=order, modal_decision=modal_decision, gpu_signal=gpu_requested,
+                hz=get_hetzner, hz_in_order=hetzner_in_order,
+                kg=get_kaggle, kg_in_order=kaggle_in_order,
+                modal_ok=get_modal, gha_ok=gha_ok)
+            routing_trail.extend(cascade_trail)
+            fell = _apply_lane(chosen, backend_name,
+                               context="Local vetoed for self-preservation")
             if not fell:
                 if veto["w_safe"] >= 1:
                     # Safe (throttled) but over the wall budget: run local rather than gamble.
@@ -483,14 +1102,8 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
                     routing_extra.update({"backend": "local", "local_workers": veto["w_safe"],
                                           "w_safe": veto["w_safe"], "w_needed": veto["w_needed"]})
                     risk_flags.append("local_over_wall_budget")
-                    note = "secret data cannot offload; " if secret else ""
-                    reasoning.append(f"{note}no remote backend available; running throttled-local at "
+                    reasoning.append(f"No remote backend available; running throttled-local at "
                                      f"{veto['w_safe']} worker(s), beyond the wall budget.")
-                elif secret:
-                    decision = "rejected"
-                    risk_flags.append("unfallable_secret_local_unsafe")
-                    reasoning.append("Unfallable: secret data cannot offload and local is "
-                                     "load-unsafe; surfacing to the user rather than gambling locally.")
                 else:
                     decision = "rejected"
                     risk_flags.append("no_safe_backend")
@@ -504,26 +1117,43 @@ def plan_job(job: dict[str, Any], *, config: Any, resources: dict[str, Any] | No
         # earlier fix for the old jump straight to GHA when Modal was out of credits.
         chosen, backend_name, cascade_trail = select_remote_lane(
             order=order, modal_decision=decision, gpu_signal=gpu_requested,
-            hz=hz, hz_in_order=hetzner_in_order, kg=kg, kg_in_order=kaggle_in_order,
-            modal_ok=modal_ok, gha_ok=gha_ok)
+            hz=get_hetzner, hz_in_order=hetzner_in_order,
+            kg=get_kaggle, kg_in_order=kaggle_in_order,
+            modal_ok=get_modal, gha_ok=gha_ok)
         routing_trail.extend(cascade_trail)
         if backend_name == "kaggle":
             decision = "kaggle"
             _attach_kaggle()
-            reasoning.append("Routing order local>kaggle>modal>hetzner>gha: offloading free "
-                             "CPU work to Kaggle ahead of the paid lanes.")
+            reasoning.append(
+                "The configured routing order selected Kaggle as the first available "
+                "adequate remote lane; offloading free CPU work there."
+            )
         elif backend_name == "hetzner":
             decision = "hetzner"
             _attach_hetzner()
-            reasoning.append("Routing order local>kaggle>modal>hetzner>gha: Kaggle and Modal "
-                             "unavailable, offloading CPU work to Hetzner.")
+            reasoning.append(
+                "The configured routing order selected Hetzner as the first available "
+                "adequate remote lane; offloading CPU work there."
+            )
         elif backend_name == "gha":
             decision = "gha"
-            reasoning.append("Routing order: Kaggle, Modal, and Hetzner unavailable; routing to GitHub Actions.")
+            reasoning.append(
+                "The configured routing order selected GitHub Actions as the first "
+                "available adequate remote lane."
+            )
         elif backend_name == "modal":
             decision = chosen  # keep the specific base modal_* decision
-        # else (chosen is None): no lane available -> keep the base modal_* decision, which
-        # is flagged modal_not_ready_on_host below so submit surfaces the gap.
+            reasoning.append(
+                "The configured routing order selected Modal as the first available "
+                "adequate remote lane."
+            )
+        else:
+            decision = "rejected"
+            risk_flags.append("no_remote_lane_available")
+            reasoning.append(
+                "No configured remote lane is both available and adequate; rejecting "
+                "instead of retaining the seeded Modal decision."
+            )
 
     if execution_primitive == "sandbox" and decision.startswith("modal_"):
         decision = "modal_sandbox_experimental"
@@ -602,8 +1232,15 @@ def finalize_plan(
     return plan
 
 
-def build_estimate(*, parameters: dict[str, Any], constraints: dict[str, Any],
-                   policy: dict[str, Any], gpu_signal: bool, runtime_sec: int) -> dict[str, Any]:
+def build_estimate(
+    *,
+    parameters: dict[str, Any],
+    constraints: dict[str, Any],
+    policy: dict[str, Any],
+    gpu_signal: bool,
+    runtime_sec: int,
+    data_locality: str | None = None,
+) -> dict[str, Any]:
     """Backend-agnostic job estimate consumed by the local veto and the Hetzner probe.
     core_hours is the manifest's explicit core-hour estimate when present, else a floor of
     one core's wall time; parallelism is the requested fan-out width."""
@@ -613,12 +1250,14 @@ def build_estimate(*, parameters: dict[str, Any], constraints: dict[str, Any],
         core_hours = parameters.get("core_hours")
     if core_hours in (None, 0, 0.0):
         core_hours = runtime_sec / 3600.0
+    if data_locality is None:
+        data_locality, _ = resolve_data_locality(constraints, policy)
     return {
         "core_hours": float(core_hours),
         "parallelism": max(1, parallelism),
         "peak_ram_gb": float(int(constraints.get("memory_mb", 0) or 0)) / 1024.0,
         "gpu": bool(gpu_signal),
-        "data_locality": str(constraints.get("data_locality") or policy.get("data_locality") or "").lower(),
+        "data_locality": data_locality,
         "runtime_sec": int(runtime_sec),
     }
 

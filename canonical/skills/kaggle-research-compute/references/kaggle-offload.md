@@ -93,7 +93,7 @@ core-h (5 kernels x 4 cores x 12h) or for a single chunk that needs more than 12
 - **GPU jobs** -- available only while the trailing-7-day GPU-hours plus this job's estimate
   stay within the self-imposed weekly GPU-hour cap (a local usage ledger). Adequate because the
   job is GPU-requested and Kaggle offers GPU kernels. A GPU-quota-exhausted lane is unavailable
-  and the router falls through to Modal.
+  and the router continues to the next GPU-capable lane in the configured order.
 - A bigger-than-`~32 GB` job is inadequate on this lane and falls through.
 
 ## Guardrails

@@ -10,8 +10,11 @@ per_job_cost_cap_usd = 5.0
 default_archive_backend = "local"
 
 # Automatic backend order. The planner takes the first feasible, within-budget
-# backend; naming a backend in a job's policy ("local"|"kaggle"|"modal"|"hetzner"
-# |"gha") overrides it. `doctor` warns if this deviates from the intended priority.
+# backend. A custom order must keep "local" exactly once and first; the supported
+# remote lanes may then be reordered or omitted, but not duplicated. Naming a backend
+# in a job's policy ("local"|"kaggle"|"modal"|"hetzner"|"gha") overrides the order.
+# `doctor` warns on deviations and identifies invalid orders; automatic planning
+# rejects an invalid order rather than falling open to an unlisted lane.
 # Kaggle sits right behind local: its CPU compute is free and does NOT consume the
 # GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the
 # paid/quota'd lanes (Modal, Hetzner, GHA).
@@ -45,8 +48,8 @@ wait_poll_seconds = 5
 # inside a private research repo, executes that repo's own committed experiment
 # code (parameters are DATA, never executed), as that project's own validation,
 # budget-gated and kept proportionate, and is the LAST automatic backend (after
-# local and Modal) -- never a general compute pool. Source: GitHub Terms for
-# Additional Products and Features -> GitHub Actions.
+# local, Kaggle, Modal, and Hetzner) -- never a general compute pool. Source:
+# GitHub Terms for Additional Products and Features -> GitHub Actions.
 # ---------------------------------------------------------------------------
 [gha]
 enabled = false             # off until a classic PAT (billing-read + user scope) is set and `doctor` passes
@@ -67,8 +70,10 @@ gpu_enabled = false         # GPU on GitHub Actions requires PAID "larger runner
 # workflow = "experiment.yml"
 # runtime = "python"                   # python | sage | cpp
 # experiment = "my_sweep"
-# runner_os = "linux"                  # minute multiplier: linux 1x, windows 2x, macos 10x
-# timeout_minutes = 30
+# runner_os = "linux"                  # exact: linux/ubuntu 1x, windows 2x, macos 10x
+# timeout_minutes = 30                  # admission also checks core_hours / requested width
+# max_cpu = 2                           # bounds both cpu and parallelism; declare larger runners
+# max_memory_mb = 7168                  # conservative standard private Linux runner envelope
 # monthly_minute_budget = <minutes>   # optional per-repo cap
 
 # ---------------------------------------------------------------------------
@@ -86,12 +91,13 @@ hard = 0.55                   # hard breach (fraction of N): checkpoint + abort 
 local_wall_budget_h = 2.0     # a local run must finish within this budget or it offloads
 
 # ---------------------------------------------------------------------------
-# Hetzner Cloud lane (peer to Modal / GitHub Actions; the offload tier after Modal
+# Hetzner Cloud lane (peer to Kaggle / Modal / GitHub Actions; the offload tier after Modal
 # for non-GPU work). Agents drive the full lifecycle (provision -> run -> collect ->
 # DESTROY) under hard cost caps. A powered-off server still bills -- only DELETE
-# stops it -- so teardown must run on every terminal path (later phase). GPU work
-# is out of scope in v1 and falls through to Modal. Disabled until HCLOUD_TOKEN
-# (from a dedicated least-privilege Hetzner project) is set and `doctor` passes.
+# stops it -- so teardown must run on every terminal path. GPU work is out of
+# scope in v1, so the router skips Hetzner and continues to the next GPU-capable
+# lane. Disabled until HCLOUD_TOKEN (from a dedicated least-privilege Hetzner
+# project) is set and `doctor` passes.
 # ---------------------------------------------------------------------------
 [hetzner]
 enabled = false               # off until HCLOUD_TOKEN is present and `doctor` passes
@@ -104,7 +110,7 @@ max_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (
 max_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap
 max_server_hours = 6.0        # dead-man's-switch TTL; worst-case reservation = rate x ceil(hours) x count + IPv4
 max_concurrent_servers = 2    # the Hetzner project server-limit enforces this too
-gpu_server_types = []         # empty in v1: GPU work falls through to Modal
+gpu_server_types = []         # empty in v1: GPU work skips Hetzner
 
 # Server rate card (approximate public Hetzner Cloud list prices in EUR/hour, current
 # orderable x86 generation; override per account). The router picks the cheapest adequate

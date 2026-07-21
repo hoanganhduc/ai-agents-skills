@@ -7,7 +7,7 @@ mechanics, with `cross-agent-delegation` for cross-family handoffs,
 `get-available-resources` and `modal-research-compute` for compute routing, and
 `research-verification-gate` plus `decision-doubt-loop` for verification. It is
 a guidance runbook, not runnable code; the runtime helper owns the ledger
-files and the agent performs the actual solving, verification, and credit
+files and the agent performs the actual solving, verification, and compute-guard
 checks.
 
 ## Run Metadata
@@ -40,7 +40,7 @@ condition.
 |---|---|---|---|---|
 | (a) | A **finite number of loops specified by the user** is reached | Iteration counter vs cap | `budget.json` `max_iterations`, `loop_state` | `stop` / `budget_exhausted` |
 | (b) | **The research question is fully resolved** | Success criteria met **and** evidence gate passes | Success/evidence artifact id in `iterations.jsonl` | `stop` (success) / `success_criteria_met` |
-| (c) | **The credit runs out** | `budget.json` `max_usd` / `max_tokens` exhausted, or Modal / GitHub Actions usage check fails | `budget.json` spent fields, credit-check field | `stop` / `budget_exhausted` or `blocked` |
+| (c) | **The credit runs out** | `budget.json` `max_usd` / `max_tokens` exhausted, or every permitted backend fails its required budget, quota, or teardown guard (or an explicit backend override fails its guard) | `budget.json` spent fields, compute-guard field | `stop` / `budget_exhausted` or `blocked` |
 | (d) | **The user asks specifically to stop** | Explicit user signal | `termination_reason` in final record | `stop` (user request) / `user_stop` |
 
 ### Finite-N ASK gate (hard precondition before iteration 1)
@@ -68,14 +68,16 @@ budget and credit state stay in this runbook.
 | `max_wall_minutes` |  |  |
 | `max_usd` |  |  |
 | `max_tokens` |  |  |
-| Modal credit checked? |  | **Check Modal credit first to make sure it does not run out**, which would cause Modal tasks to fail. |
-| GitHub Actions usage minutes remaining checked? |  | **Check GitHub Action available usage time**: confirm the usage limit is not reached and the computation time for the script is enough. |
+| `compute_backend` |  | Recommended order: `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique. |
+| `compute_guard_status` |  | Record each attempted lane and its applicable guard: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle CPU is free/quota-free. A failed lane falls through to the next permitted lane. |
 | `spent_iterations` |  |  |
 | `spent_usd` |  |  |
 | `spent_tokens` |  |  |
 
-Re-check Modal credit and GitHub Actions usage at the start of **each** loop that
-may dispatch heavy compute, not only once at preflight.
+Re-check each candidate backend's compute guard at the start of **each** loop
+that may dispatch heavy compute, not only once at preflight. A failed lane falls
+through in configured order; block only after all permitted lanes are exhausted
+or an explicit backend override fails.
 
 ## Per-Loop Phase Plan
 
@@ -84,7 +86,7 @@ Apply every phase, in order, in each loop.
 | Phase | Objective | Inputs | Outputs | Status |
 |---|---|---|---|---|
 | P1. Path-select | Evaluate candidate paths and select the single highest-probability approach; pursue it exclusively. See Single-Path Solving Discipline. |  |  |  |
-| P2. Resource check | Run `get-available-resources` locally; if heavy compute is planned, check Modal credit and GitHub Actions usage. |  |  |  |
+| P2. Resource check | Run `get-available-resources` locally; if heavy compute is planned, check candidates in configured order and select the first permitted backend whose required compute guard passes. |  |  |  |
 | P3. Solve | Pursue the one selected path. **Use multi-agent if necessary**, and **always route cross-family handoffs through `cross-agent-delegation`** (cross-agent-delegation is mandatory; only multi-agent is conditional). If a script is required, **always implement it in a way that utilizes the current hardware resources**. |  |  |  |
 | P4. Independent verify | Cross-agent verification: the solving provider and the verifying provider must differ. **Do not blindly trust the returned answers; verify them carefully.** See Cross-Agent Verification Protocol. |  |  |  |
 | P5. Contradiction handling | On a definitive logical contradiction, state it, backtrack to the last valid node, pursue the second-best path, and re-verify by a fresh agent. |  |  |  |
@@ -194,24 +196,27 @@ let one substitute for the other.
 
 When a step needs heavy computation, route it through `modal-research-compute`.
 
-- **Use Modal/GitHub Action for heavy computation if required.**
-- The hardware rule applies to remote scripts too: any script Modal or GitHub
-  Actions executes must **always implement it in a way that utilizes the current
-  hardware resources** (cores, memory, accelerators) of the chosen backend.
-- **Check Modal credit first to make sure it does not run out**, which would
-  cause Modal tasks to fail mid-run.
-- If GitHub Actions is used, **check GitHub Action available usage time** and
-  confirm **the usage limit is not reached and the computation time for the
-  script is enough** to finish.
-- Re-run these credit and usage checks at every dispatching loop; insufficient
-  credit or usage maps to a `blocked` decision, not a silent retry.
+- The recommended automatic order is `local > Kaggle > Modal > Hetzner > GitHub Actions`;
+  a valid custom configured order is honored, with local first and remote lanes unique.
+- Kaggle CPU is free/quota-free. Before every remote dispatch, record the
+  selected lane and enforce its applicable guard: `Kaggle GPU-hours`,
+  `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or
+  `GitHub Actions minutes`.
+- The hardware rule applies to every remote script: it must **always implement
+  the work in a way that utilizes the current hardware resources** (cores,
+  memory, accelerators) of the chosen backend.
+- Re-run the applicable guard at every dispatching loop. If a lane's guard
+  fails, record the result and fall through to the next permitted lane in the
+  configured order. Map the run to `blocked` only after all permitted lanes are
+  exhausted or an explicit backend override fails; do not silently retry a
+  failed lane.
 
 ## Per-Iteration Ledger
 
 Append one row per loop. Each row maps to `iterations.jsonl` via the
 `autonomous-research-loop-runtime` append step.
 
-| `iteration_id` | Started at | Ended at | `selected_path` (single chosen approach) | Mode | `solver_provider` | `verifier_provider(s)` | Evidence / verification IDs | Contradiction? (backtrack target) | Fresh-agent recheck? | `compute_backend` (local/Modal/GitHub Actions) | Credit checked (Modal + GHA) | Budget spent | Decision | `termination_reason` |
+| `iteration_id` | Started at | Ended at | `selected_path` (single chosen approach) | Mode | `solver_provider` | `verifier_provider(s)` | Evidence / verification IDs | Contradiction? (backtrack target) | Fresh-agent recheck? | `compute_backend` (local/Kaggle/Modal/Hetzner/GitHub Actions) | Compute guard checked (`Kaggle GPU-hours` / `Modal USD` / `Hetzner EUR` / `Hetzner teardown` / `GitHub Actions minutes`) | Budget spent | Decision | `termination_reason` |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | I1 |  |  |  |  |  |  |  |  |  |  |  |  | `continue` |  |
 
@@ -226,7 +231,7 @@ Decision states (from `autonomous-research-loop`):
 | `revise` | Repairable evidence, verification, or scope gap remains. |
 | `delegate` | Work crosses an agent family; hand off via a cross-agent-delegation packet. |
 | `stop` | A stop condition fired; the run terminates. |
-| `blocked` | Preconditions, an unresolved contradiction, a failed fresh-agent recheck, or insufficient Modal/GHA credit prevent progress. |
+| `blocked` | Preconditions, an unresolved contradiction, a failed fresh-agent recheck, or exhausted permitted compute lanes (including a failed explicit backend override) prevent progress. |
 
 Termination mapping:
 
@@ -235,7 +240,7 @@ Termination mapping:
 | `success_criteria_met` | Question fully resolved; requires a passed proof/success evidence id. |
 | `budget_exhausted` | Finite-N cap reached, or credit/token/usd out. |
 | `user_stop` | The user asked specifically to stop. |
-| `blocked` | Contradiction unresolved, fresh-agent recheck failed, or Modal/GHA credit insufficient. |
+| `blocked` | Contradiction unresolved, fresh-agent recheck failed, all permitted compute lanes are exhausted, or an explicit backend override fails its guard. |
 
 ## Evidence Gate Before Early Stop
 
@@ -280,7 +285,7 @@ solving, the cross-provider verification, and the credit checks.
 | Solver verified itself | Cross-agent verification gate | Reject; re-verify with a different agent family. |
 | Parallel strategies explored | Single-path discipline | Collapse to the single highest-probability path. |
 | Backtrack treated as verified | Fresh-agent gate | Re-verify the second-best path by a fresh agent before moving on. |
-| Modal credit / GitHub Actions usage not checked before dispatch | Heavy-compute offload | Re-check; mark `blocked` if insufficient. |
+| Compute guard not checked before dispatch | Heavy-compute offload | Check each candidate's applicable guard and fall through in configured order; mark `blocked` only when all permitted lanes are exhausted or an explicit backend override fails. |
 | Early success stop without evidence | Evidence gate | Keep running or block; cite a passed artifact before stopping for success. |
 | Ledger field invented | Runtime validation | Reuse the documented decision states and the four ledger files. |
 | Budget/credit copied into a packet | Packet validation | Remove; keep budget and credit state in this runbook only. |

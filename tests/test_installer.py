@@ -187,7 +187,8 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("autonomous-research-loop-runbook", templates)
         spec = templates["autonomous-research-loop-runbook"]
         for skill in ("autonomous-research-loop", "cross-agent-delegation",
-                      "modal-research-compute", "research-verification-gate"):
+                      "kaggle-research-compute", "modal-research-compute",
+                      "hetzner-research-compute", "research-verification-gate"):
             self.assertIn(skill, spec["depends_on_skills"])
         profiles = manifests["artifacts"]["artifact_profiles"]
         for prof in ("workflow-templates", "workflow-artifacts", "serious-research"):
@@ -196,7 +197,10 @@ class ManifestTests(unittest.TestCase):
         # Fidelity: the load-bearing user requirements must survive rendering.
         self.assertIn("do NOT explore multiple parallel strategies", body)
         self.assertIn("ASK", body)
-        self.assertIn("Modal credit", body)
+        self.assertIn("Kaggle GPU-hours", body)
+        self.assertIn("Modal USD", body)
+        self.assertIn("Hetzner EUR", body)
+        self.assertIn("GitHub Actions minutes", body)
         self.assertIn("fresh", body.lower())
         self.assertIn("backtrack", body.lower())
 
@@ -206,7 +210,8 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("autonomous-research-loop-portfolio-runbook", templates)
         spec = templates["autonomous-research-loop-portfolio-runbook"]
         for skill in ("autonomous-research-loop", "cross-agent-delegation",
-                      "modal-research-compute", "research-verification-gate"):
+                      "kaggle-research-compute", "modal-research-compute",
+                      "hetzner-research-compute", "research-verification-gate"):
             self.assertIn(skill, spec["depends_on_skills"])
         profiles = manifests["artifacts"]["artifact_profiles"]
         for prof in ("workflow-templates", "workflow-artifacts", "serious-research"):
@@ -219,9 +224,53 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("portfolio", body)
         self.assertIn("Approach Registry", body)
         self.assertIn("ASK", body)
-        self.assertIn("Modal credit", body)
+        self.assertIn("Kaggle GPU-hours", body)
+        self.assertIn("Modal USD", body)
+        self.assertIn("Hetzner EUR", body)
+        self.assertIn("GitHub Actions minutes", body)
         self.assertIn("fresh", body.lower())
         self.assertIn("backtrack", body.lower())
+
+    def test_engineering_delivery_runbook_installs_all_compute_lanes(self) -> None:
+        manifests = load_manifests()
+        spec = manifests["artifacts"]["artifacts"]["template"][
+            "engineering-delivery-loop-runbook"
+        ]
+        for skill in (
+            "kaggle-research-compute",
+            "modal-research-compute",
+            "hetzner-research-compute",
+        ):
+            self.assertIn(skill, spec["depends_on_skills"])
+
+    def test_research_compute_entrypoint_installs_all_compute_lanes(self) -> None:
+        manifests = load_manifests()
+        spec = manifests["artifacts"]["artifacts"]["entrypoint-alias"][
+            "research-compute"
+        ]
+        for skill in (
+            "kaggle-research-compute",
+            "modal-research-compute",
+            "hetzner-research-compute",
+        ):
+            self.assertIn(skill, spec["depends_on_skills"])
+
+    def test_compute_aware_review_and_lean_templates_install_all_lanes(self) -> None:
+        manifests = load_manifests()
+        templates = manifests["artifacts"]["artifacts"]["template"]
+        for template in (
+            "cross-agent-adversarial-review",
+            "informal-to-lean-formalization-runbook",
+        ):
+            with self.subTest(template=template):
+                dependencies = templates[template]["depends_on_skills"]
+                for skill in (
+                    "get-available-resources",
+                    "kaggle-research-compute",
+                    "modal-research-compute",
+                    "hetzner-research-compute",
+                ):
+                    self.assertIn(skill, dependencies)
 
     def test_skill_recommended_templates_coupling(self) -> None:
         manifests = load_manifests()
@@ -3875,6 +3924,47 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue((root / ".claude" / "skills" / "deep-research-workflow" / "SKILL.md").exists())
             self.assertTrue((root / ".claude" / "commands" / "deep-research.md").exists())
+
+    def test_cli_with_deps_installs_compute_skills_for_review_and_lean_templates(self) -> None:
+        templates = (
+            "cross-agent-adversarial-review",
+            "informal-to-lean-formalization-runbook",
+        )
+        compute_skills = (
+            "get-available-resources",
+            "kaggle-research-compute",
+            "modal-research-compute",
+            "hetzner-research-compute",
+        )
+        for template in templates:
+            with self.subTest(template=template), fake_root() as tmp:
+                root = Path(tmp)
+                create_agent_homes(root, "claude")
+                with (
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                    patch("sys.stdin", io.StringIO(f"{INSTALL_CONFIRMATION_PHRASE}\n")),
+                ):
+                    code = main([
+                        "--json",
+                        "--root",
+                        str(root),
+                        "install",
+                        "--no-skills",
+                        "--artifact",
+                        f"template:{template}",
+                        "--with-deps",
+                        "--apply",
+                    ])
+                self.assertEqual(code, 0)
+                self.assertTrue(
+                    (root / ".claude" / "templates" / f"{template}.md").is_file()
+                )
+                for skill in compute_skills:
+                    self.assertTrue(
+                        (root / ".claude" / "skills" / skill / "SKILL.md").is_file(),
+                        skill,
+                    )
 
     def test_precheck_ignores_dependencies_for_absent_agent_filter(self) -> None:
         with fake_root() as tmp:

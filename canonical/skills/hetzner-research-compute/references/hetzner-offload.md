@@ -2,7 +2,7 @@
 
 Patterns for renting a disposable Hetzner Cloud server to run a portable research job
 bundle at full cores, then destroying it. This is the Hetzner lane of the `research_compute`
-broker, peer to the Modal and GitHub Actions lanes. Treat the agent itself as the adversary
+broker, peer to the Kaggle, Modal, and GitHub Actions lanes. Treat the agent itself as the adversary
 (looping, crashing, self-approving): every rule below exists to stop a compromised or runaway
 agent from leaking a token or leaving a paid server running.
 
@@ -17,7 +17,7 @@ agent from leaking a token or leaving a paid server running.
 
 ## Portable job bundle (backend-agnostic)
 
-One bundle runs unchanged on local, Modal, Hetzner, or GitHub Actions; only the fan-out
+One bundle runs unchanged on local, Kaggle, Modal, Hetzner, or GitHub Actions; only the fan-out
 harness differs. On a rented Hetzner box the harness is dedicated and disposable, so it runs
 at full `nproc` with no throttle.
 
@@ -55,7 +55,8 @@ the estimate. The default rate card is the current orderable x86 generation: `cp
 cores) for small jobs, `cpx62` (16 AMD cores) for up to 16-way fan-out, and `ccx63` (48
 dedicated cores) for larger jobs or a wall-time floor. Hetzner ARM (`cax*`) is
 supply-constrained and omitted from the defaults; override `[hetzner.server_types]` per
-account. GPU jobs are inadequate on this lane in v1 and fall through to Modal.
+account. GPU jobs are inadequate on this lane in v1, so the router skips Hetzner and
+continues to the next GPU-capable lane in the configured order.
 
 `preflight` and `up` availability-check the live datacenter list (`hcloud datacenter list`,
 read-only, through the mockable command runner) and provision the cheapest adequate
@@ -110,5 +111,5 @@ estimated EUR, reason) to `hetzner-audit.jsonl` under the broker state root. Sec
 written: the records are built without the token and each line is redacted before the write.
 
 `oneshot` and `down --orphans` remain the in-session teardown. This lane reuses the broker's
-`research_compute` budget and routing code, which installs with the Modal lane, so install both
-together (both are in the `full-research` profile).
+`research_compute` budget and routing code, which installs with the broker-backed compute
+lanes; the complete set is available in the `full-research` profile.

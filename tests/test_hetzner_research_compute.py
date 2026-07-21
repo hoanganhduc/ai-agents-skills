@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
 
@@ -25,6 +26,7 @@ if str(WORKSPACE) not in sys.path:
 
 # (a) imports clean -- a failure here fails the whole module, which is the signal.
 from research_compute import budget_ledger, hetzner_backend, planner  # noqa: E402
+from research_compute import cli as broker_cli  # noqa: E402
 from research_compute import config as rc_config  # noqa: E402
 from research_compute import github_actions_backend as gha  # noqa: E402
 
@@ -99,6 +101,8 @@ runtime = "python"
 experiment = "sweep"
 runner_os = "linux"
 timeout_minutes = 200
+max_cpu = 16
+max_memory_mb = 16384
 """
 
 CPX22 = {"name": "cpx22", "vcpu": 2, "ram_gb": 4, "arch": "x86", "eur_per_hour": 0.0180}
@@ -125,6 +129,11 @@ def _with_liveness_defaults(resources: dict | None) -> dict:
     snap = dict(resources or {})
     liveness = dict(snap.get("liveness", {}))
     liveness.setdefault("hetzner", {"usable": True, "reason": "injected-usable"})
+    if "gha" in liveness:
+        gha_liveness = dict(liveness["gha"])
+        gha_liveness.setdefault("authenticated", True)
+        gha_liveness.setdefault("repo_private", True)
+        liveness["gha"] = gha_liveness
     snap["liveness"] = liveness
     return snap
 
@@ -138,7 +147,7 @@ def _make_workspace(tmp: Path, resources: dict | None = None, *, config_toml: st
     return ws
 
 
-def _plan(ws: Path, job: dict, *, token: bool = True) -> dict:
+def _run_broker(ws: Path, command: str, job: dict, *, token: bool = True) -> dict:
     (ws / "job.json").write_text(json.dumps(job), encoding="utf-8")
     env = dict(os.environ)
     env["OPENCLAW_WORKSPACE"] = str(ws)
@@ -148,11 +157,15 @@ def _plan(ws: Path, job: dict, *, token: bool = True) -> dict:
     if token:
         env["HCLOUD_TOKEN"] = "dummy-token-for-offline-test"
     proc = subprocess.run(
-        [sys.executable, "-m", "research_compute", "plan", str(ws / "job.json")],
+        [sys.executable, "-m", "research_compute", command, str(ws / "job.json")],
         env=env, capture_output=True, text=True, timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
+
+
+def _plan(ws: Path, job: dict, *, token: bool = True) -> dict:
+    return _run_broker(ws, "plan", job, token=token)
 
 
 def _config(tmp: Path) -> rc_config.BrokerConfig:
@@ -219,6 +232,16 @@ class HetznerRoutingTests(unittest.TestCase):
             # No provisioning artifacts: only planning state exists.
             self.assertFalse((ws / "state" / "hetzner-reservations.jsonl").exists())
 
+    def test_submit_selected_hetzner_reports_lane_driver_handoff(self) -> None:
+        resources = {"liveness": {"modal": {"ready": True, "usable": False},
+                                  "hetzner": {"usable": True}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources)
+            result = _run_broker(ws, "submit", self.HEAVY_CPU_JOB, token=True)
+            self.assertEqual(result["status"], "external_driver_required")
+            self.assertEqual(result["plan"]["backend"], "hetzner")
+            self.assertIn("hetzner-research-compute", result["message"])
+
     def test_b_falls_to_modal_without_token(self) -> None:
         """With no HCLOUD_TOKEN Hetzner is unavailable; a Modal-usable host keeps the CPU
         job on Modal (the first offload tier)."""
@@ -227,6 +250,22 @@ class HetznerRoutingTests(unittest.TestCase):
             ws = _make_workspace(Path(tmp), resources=resources)
             out = _plan(ws, self.HEAVY_CPU_JOB, token=False)
             self.assertTrue(out["plan"]["decision"].startswith("modal_"))
+
+    def test_b_custom_remote_order_is_honored_without_false_reasoning(self) -> None:
+        custom = CONFIG_TOML.replace(
+            '["local", "modal", "hetzner", "gha"]',
+            '["local", "hetzner", "modal", "gha"]',
+            1,
+        )
+        self.assertNotEqual(custom, CONFIG_TOML)
+        resources = {"liveness": {"modal": {"ready": True, "usable": True},
+                                  "hetzner": {"usable": True}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources, config_toml=custom)
+            plan = _plan(ws, self.HEAVY_CPU_JOB, token=True)["plan"]
+            self.assertEqual(plan["decision"], "hetzner")
+            self.assertIn("configured routing order selected Hetzner", plan["reasoning_summary"])
+            self.assertNotIn("Modal unavailable", plan["reasoning_summary"])
 
     def test_b_hetzner_liveness_unusable_falls_through_to_gha(self) -> None:
         """A per-vendor liveness probe reporting the lane unusable makes it unavailable:
@@ -264,7 +303,7 @@ class HetznerRoutingTests(unittest.TestCase):
     def test_b_gha_cap_over_60pct_refuses_and_falls_through(self) -> None:
         """Cumulative TOTAL cap, NOT per-task: total already at 55% (1100) + a 10% job
         (200) = 1300 > 1200 makes GHA unavailable, so the lane falls through. With no other
-        lane usable the heavy job keeps the base Modal decision -- GHA was refused."""
+        lane usable the heavy job is rejected -- GHA was refused and the router fails closed."""
         resources = {"liveness": {"modal": {"usable": False}, "hetzner": {"usable": False},
                                   "gha": {"used_this_cycle": 1100, "included_minutes": 2000}}}
         job = {"task_family": "enumeration", "gha_target": "sweep",
@@ -274,7 +313,9 @@ class HetznerRoutingTests(unittest.TestCase):
             ws = _make_workspace(Path(tmp), resources=resources, config_toml=GHA_CONFIG_TOML)
             out = _plan(ws, job, token=False)
             plan = out["plan"]
-            self.assertNotEqual(plan["decision"], "gha")
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertFalse(plan["accepted"])
+            self.assertIn("no_remote_lane_available", plan["risk_flags"])
             gha_entry = next(t for t in plan["routing_trail"] if t["backend"] == "gha")
             self.assertFalse(gha_entry["available"])
             self.assertIn("cap", gha_entry["reason"])
@@ -338,13 +379,536 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertIn("local_over_wall_budget", plan["risk_flags"])
             self.assertEqual(plan["local_workers"], 1)
 
+    def test_c_heavy_secret_job_is_forced_to_safe_local(self) -> None:
+        """Remote classification never overrides the global secret-locality boundary."""
+        resources = {"cpu": {"logical_cores": 16}, "load": {"load_1m": 0.2},
+                     "liveness": {"modal": {"ready": True, "usable": True},
+                                  "hetzner": {"usable": True}}}
+        job = {"task_family": "enumeration",
+               "constraints": {"cpu": 12, "memory_mb": 8192, "parallelism": 12,
+                               "core_hours": 40, "resource_class": "cpu",
+                               "data_locality": "secret"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources)
+            plan = _plan(ws, job, token=True)["plan"]
+            self.assertTrue(plan["accepted"])
+            self.assertEqual(plan["decision"], "local_cpu")
+            self.assertEqual(plan["backend"], "local")
+            self.assertNotIn("modal", [t["backend"] for t in plan["routing_trail"]])
+            self.assertNotIn("hetzner", [t["backend"] for t in plan["routing_trail"]])
+
+    def test_c_secret_remote_override_is_rejected(self) -> None:
+        resources = {"liveness": {"modal": {"ready": True, "usable": True}}}
+        job = {"task_family": "enumeration",
+               "policy": {"backend": "modal"},
+               "constraints": {"cpu": 12, "memory_mb": 8192, "parallelism": 12,
+                               "core_hours": 40, "data_locality": "secret"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources)
+            plan = _plan(ws, job, token=True)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertIn("secret_remote_override_forbidden", plan["risk_flags"])
+
+    def test_c_remote_disabled_rejects_explicit_gha_conflict(self) -> None:
+        resources = {"liveness": {
+            "gha": {"used_this_cycle": 100, "included_minutes": 2000}
+        }}
+        job = {"task_family": "enumeration", "gha_target": "sweep",
+               "policy": {"backend": "gha", "allow_remote": False},
+               "constraints": {"cpu": 4, "parallelism": 4, "core_hours": 10}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources, config_toml=GHA_CONFIG_TOML)
+            plan = _plan(ws, job, token=False)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertIn("remote_override_forbidden", plan["risk_flags"])
+
+    def test_c_remote_disabled_without_override_runs_watched_local(self) -> None:
+        job = {"task_family": "enumeration", "policy": {"allow_remote": False},
+               "constraints": {"cpu": 4, "parallelism": 4, "core_hours": 10}}
+        with tempfile.TemporaryDirectory() as tmp:
+            resources = {"cpu": {"logical_cores": 16}, "load": {"load_1m": 0.2}}
+            ws = _make_workspace(Path(tmp), resources=resources)
+            plan = _plan(ws, job, token=False)["plan"]
+            self.assertTrue(plan["accepted"])
+            self.assertEqual(plan["decision"], "local_cpu")
+            self.assertEqual(plan["backend"], "local")
+            self.assertTrue(plan["watchdog_armed"])
+            self.assertFalse(plan["remote_fallback_allowed"])
+
+    def test_c_local_only_gpu_requests_never_downgrade_to_cpu(self) -> None:
+        policies = (
+            ("explicit-local", {"backend": "local", "gpu": True},
+             "forced_local_gpu_unavailable"),
+            ("remote-disabled", {"allow_remote": False, "gpu": True},
+             "remote_disabled_gpu_requires_local_gpu"),
+        )
+        for label, policy, unavailable_flag in policies:
+            for gpu_count in (0, 1):
+                with self.subTest(policy=label, gpu_count=gpu_count), tempfile.TemporaryDirectory() as tmp:
+                    resources = {"gpu": {"total_gpus": gpu_count},
+                                 "cpu": {"logical_cores": 16},
+                                 "load": {"load_1m": 0.2}}
+                    ws = _make_workspace(Path(tmp), resources=resources)
+                    job = {
+                        "task_family": "generic",
+                        "policy": policy,
+                        "constraints": {
+                            "cpu": 2,
+                            "parallelism": 2,
+                            "core_hours": 2,
+                        },
+                    }
+                    plan = _plan(ws, job, token=False)["plan"]
+                    if gpu_count:
+                        self.assertTrue(plan["accepted"])
+                        self.assertEqual(plan["decision"], "local_gpu")
+                        self.assertEqual(plan["backend"], "local")
+                        self.assertTrue(plan["gpu"])
+                    else:
+                        self.assertFalse(plan["accepted"])
+                        self.assertEqual(plan["decision"], "rejected")
+                        self.assertIn(unavailable_flag, plan["risk_flags"])
+
+    def test_c_secret_gpu_requires_and_uses_only_a_local_gpu(self) -> None:
+        job = {
+            "task_family": "generic",
+            "policy": {"gpu": True},
+            "constraints": {"cpu": 2, "parallelism": 2, "core_hours": 2,
+                            "data_locality": "secret"},
+        }
+        for gpu_count in (0, 1):
+            with self.subTest(gpu_count=gpu_count), tempfile.TemporaryDirectory() as tmp:
+                resources = {
+                    "gpu": {"total_gpus": gpu_count},
+                    "cpu": {"logical_cores": 16},
+                    "load": {"load_1m": 0.2},
+                    "liveness": {"modal": {"ready": True, "usable": True}},
+                }
+                ws = _make_workspace(Path(tmp), resources=resources)
+                plan = _plan(ws, job, token=True)["plan"]
+                if gpu_count:
+                    self.assertTrue(plan["accepted"])
+                    self.assertEqual(plan["decision"], "local_gpu")
+                    self.assertFalse(plan["remote_fallback_allowed"])
+                    self.assertEqual(
+                        [entry["backend"] for entry in plan["routing_trail"]], ["local"]
+                    )
+                else:
+                    self.assertFalse(plan["accepted"])
+                    self.assertIn("secret_gpu_requires_local_gpu", plan["risk_flags"])
+
+    def test_c_secret_local_boundary_never_probes_remote_lanes(self) -> None:
+        """Accepted and rejected secret jobs terminate at the local trust boundary."""
+        job = {
+            "task_family": "generic",
+            "constraints": {
+                "cpu": 2,
+                "parallelism": 2,
+                "core_hours": 2,
+                "data_locality": "secret",
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(Path(tmp))
+            fail = AssertionError("secret-local planning must not probe a remote lane")
+            with (
+                mock.patch.object(planner.kaggle_backend, "probe", side_effect=fail),
+                mock.patch.object(planner.hetzner_backend, "probe", side_effect=fail),
+                mock.patch.object(planner, "modal_lane_available", side_effect=fail),
+                mock.patch.object(
+                    planner.github_actions_backend, "job_adequacy", side_effect=fail
+                ),
+                mock.patch.object(
+                    planner.github_actions_backend, "repo_ready", side_effect=fail
+                ),
+                mock.patch.object(
+                    planner.github_actions_backend, "usage_cap_ok", side_effect=fail
+                ),
+            ):
+                accepted = planner.plan_job(
+                    job,
+                    config=config,
+                    resources={
+                        "cpu": {"logical_cores": 16},
+                        "load": {"load_1m": 0.2},
+                    },
+                    modal_ready=True,
+                )
+                rejected = planner.plan_job(
+                    job,
+                    config=config,
+                    resources={
+                        "cpu": {"logical_cores": 8},
+                        "load": {"load_1m": 2.5},
+                    },
+                    modal_ready=True,
+                )
+                gpu_rejected = planner.plan_job(
+                    {
+                        **job,
+                        "policy": {"gpu": True},
+                    },
+                    config=config,
+                    resources={
+                        "cpu": {"logical_cores": 8},
+                        "load": {"load_1m": 2.5},
+                        "gpu": {"total_gpus": 1},
+                    },
+                    modal_ready=True,
+                )
+
+        self.assertTrue(accepted["accepted"])
+        self.assertEqual(accepted["decision"], "local_cpu")
+        self.assertFalse(accepted["remote_fallback_allowed"])
+        self.assertFalse(rejected["accepted"])
+        self.assertEqual(rejected["decision"], "rejected")
+        self.assertIn("unfallable_secret_local_unsafe", rejected["risk_flags"])
+        self.assertFalse(gpu_rejected["accepted"])
+        self.assertEqual(gpu_rejected["decision"], "rejected")
+        self.assertFalse(gpu_rejected["remote_fallback_allowed"])
+        self.assertEqual(gpu_rejected["routing_trail"][0]["w_safe"], 0)
+
+    def test_c_policy_boundary_values_fail_closed_or_choose_secret(self) -> None:
+        cases = (
+            (
+                "string-allow-remote",
+                {"policy": {"allow_remote": "false"}},
+                "invalid_allow_remote_policy",
+            ),
+            (
+                "string-policy-gpu",
+                {"policy": {"gpu": "false"}},
+                "invalid_gpu_request",
+            ),
+            (
+                "string-constraint-gpu",
+                {"constraints": {"gpu": "false"}},
+                "invalid_gpu_request",
+            ),
+            (
+                "non-string-locality",
+                {"constraints": {"data_locality": 7}},
+                "invalid_data_locality",
+            ),
+            (
+                "unknown-locality",
+                {"constraints": {"data_locality": "secrt"}},
+                "invalid_data_locality",
+            ),
+            (
+                "non-string-backend",
+                {"policy": {"backend": False}},
+                "invalid_backend_override",
+            ),
+            (
+                "blank-backend",
+                {"policy": {"backend": "  "}},
+                "invalid_backend_override",
+            ),
+        )
+        for label, fields, risk_flag in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                job = {
+                    "task_family": "enumeration",
+                    "constraints": {"cpu": 12, "parallelism": 12, "core_hours": 40},
+                    **fields,
+                }
+                if "constraints" in fields:
+                    job["constraints"] = {
+                        "cpu": 12,
+                        "parallelism": 12,
+                        "core_hours": 40,
+                        **fields["constraints"],
+                    }
+                ws = _make_workspace(Path(tmp))
+                plan = _plan(ws, job, token=True)["plan"]
+                self.assertFalse(plan["accepted"])
+                self.assertIn(risk_flag, plan["risk_flags"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            resources = {"cpu": {"logical_cores": 16}, "load": {"load_1m": 0.2},
+                         "liveness": {"modal": {"ready": True, "usable": True}}}
+            job = {
+                "task_family": "enumeration",
+                "policy": {"data_locality": "  SeCrEt  "},
+                "constraints": {"cpu": 12, "parallelism": 12, "core_hours": 40,
+                                "data_locality": "public"},
+            }
+            ws = _make_workspace(Path(tmp), resources=resources)
+            plan = _plan(ws, job, token=True)["plan"]
+            self.assertTrue(plan["accepted"])
+            self.assertEqual(plan["decision"], "local_cpu")
+            self.assertFalse(plan["remote_fallback_allowed"])
+
+    def test_c_explicit_gha_enforces_cap_and_gpu_capability(self) -> None:
+        base = {
+            "task_family": "enumeration",
+            "gha_target": "sweep",
+            "policy": {"backend": "gha"},
+            "constraints": {"cpu": 4, "parallelism": 4, "core_hours": 10,
+                            "matrix_cells": 1},
+        }
+        cases = (
+            ("cpu-under-cap", GHA_CONFIG_TOML, 600, False, True, None),
+            ("cpu-over-cap", GHA_CONFIG_TOML, 1100, False, False, "gha_unavailable"),
+            ("gpu-disabled", GHA_CONFIG_TOML, 600, True, False, "gha_gpu_disabled"),
+            ("gpu-enabled", GHA_GPU_CONFIG_TOML, 600, True, True, None),
+        )
+        for label, config_text, used, gpu, accepted, risk_flag in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                job = json.loads(json.dumps(base))
+                if gpu:
+                    job["policy"]["gpu"] = True
+                resources = {"gpu": {"total_gpus": 0}, "liveness": {
+                    "gha": {"used_this_cycle": used, "included_minutes": 2000}
+                }}
+                ws = _make_workspace(
+                    Path(tmp), resources=resources, config_toml=config_text
+                )
+                plan = _plan(ws, job, token=False)["plan"]
+                self.assertEqual(plan["accepted"], accepted)
+                if accepted:
+                    self.assertEqual(plan["decision"], "gha")
+                    self.assertEqual(plan["backend"], "gha")
+                    self.assertEqual(plan["gpu"], gpu)
+                else:
+                    self.assertEqual(plan["decision"], "rejected")
+                    self.assertIn(risk_flag, plan["risk_flags"])
+
+    def test_c_explicit_gha_enforces_registered_runner_envelope(self) -> None:
+        default_runner = GHA_CONFIG_TOML.replace("max_cpu = 16\n", "").replace(
+            "max_memory_mb = 16384\n", ""
+        )
+        self.assertNotEqual(default_runner, GHA_CONFIG_TOML)
+        cases = (
+            (
+                "parallelism-over-runner-cpu",
+                GHA_CONFIG_TOML,
+                {"cpu": 1, "parallelism": 17, "core_hours": 1},
+                "CPU/parallelism",
+            ),
+            (
+                "requested-runtime-over-target-timeout",
+                GHA_CONFIG_TOML,
+                {"cpu": 4, "parallelism": 4, "core_hours": 1,
+                 "timeout_sec": 200 * 60 + 1},
+                "requested timeout",
+            ),
+            (
+                "core-hours-over-target-timeout",
+                GHA_CONFIG_TOML,
+                {"cpu": 4, "parallelism": 4, "core_hours": 20},
+                "core-hours",
+            ),
+            (
+                "default-runner-high-cpu",
+                default_runner,
+                {"cpu": 3, "parallelism": 3, "core_hours": 1},
+                "CPU/parallelism",
+            ),
+            (
+                "default-runner-high-memory",
+                default_runner,
+                {"cpu": 2, "parallelism": 2, "memory_mb": 8192,
+                 "core_hours": 1},
+                "memory",
+            ),
+        )
+        for label, config_text, constraints, reason_fragment in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                job = {
+                    "task_family": "enumeration",
+                    "gha_target": "sweep",
+                    "policy": {"backend": "gha"},
+                    "constraints": constraints,
+                }
+                resources = {"liveness": {"gha": {
+                    "authenticated": True,
+                    "repo_private": True,
+                    "used_this_cycle": 100,
+                    "included_minutes": 2000,
+                }}}
+                ws = _make_workspace(
+                    Path(tmp), resources=resources, config_toml=config_text
+                )
+                plan = _plan(ws, job, token=False)["plan"]
+                self.assertFalse(plan["accepted"])
+                self.assertEqual(plan["decision"], "rejected")
+                self.assertIn("gha_inadequate", plan["risk_flags"])
+                self.assertIn(reason_fragment, plan["routing_trail"][0]["reason"])
+
+    def test_c_explicit_gha_uses_payload_core_hours_for_adequacy(self) -> None:
+        thirty_minute_target = GHA_CONFIG_TOML.replace(
+            "timeout_minutes = 200", "timeout_minutes = 30"
+        )
+        self.assertNotEqual(thirty_minute_target, GHA_CONFIG_TOML)
+        job = {
+            "task_family": "enumeration",
+            "gha_target": "sweep",
+            "policy": {"backend": "gha"},
+            "payload": {"parameters": {"core_hours": 500}},
+            "constraints": {"cpu": 2, "parallelism": 2},
+        }
+        resources = {"liveness": {"gha": {
+            "authenticated": True,
+            "repo_private": True,
+            "used_this_cycle": 100,
+            "included_minutes": 2000,
+        }}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(
+                Path(tmp), resources=resources, config_toml=thirty_minute_target
+            )
+            plan = _plan(ws, job, token=False)["plan"]
+        self.assertFalse(plan["accepted"])
+        self.assertIn("gha_inadequate", plan["risk_flags"])
+        self.assertIn("500 core-hours", plan["routing_trail"][0]["reason"])
+
+    def test_c_explicit_gha_rejects_public_repo_snapshot(self) -> None:
+        job = {
+            "task_family": "enumeration",
+            "gha_target": "sweep",
+            "policy": {"backend": "gha"},
+            "constraints": {"cpu": 4, "parallelism": 4, "core_hours": 1},
+        }
+        resources = {"liveness": {"gha": {
+            "authenticated": True,
+            "repo_private": False,
+            "used_this_cycle": 100,
+            "included_minutes": 2000,
+        }}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(
+                Path(tmp), resources=resources, config_toml=GHA_CONFIG_TOML
+            )
+            plan = _plan(ws, job, token=False)["plan"]
+        self.assertFalse(plan["accepted"])
+        self.assertEqual(plan["decision"], "rejected")
+        self.assertIn("gha_unavailable", plan["risk_flags"])
+        self.assertEqual(plan["routing_trail"][0]["reason"], "gha_repo_not_private")
+
+    def test_c_explicit_hetzner_gpu_pin_is_rejected(self) -> None:
+        job = {
+            "task_family": "generic",
+            "policy": {"backend": "hetzner", "gpu": True},
+            "constraints": {"cpu": 2, "parallelism": 2, "core_hours": 2},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources={"gpu": {"total_gpus": 0}})
+            plan = _plan(ws, job, token=True)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertIn("hetzner_gpu_unsupported", plan["risk_flags"])
+
+    def test_c_explicit_remote_pins_do_not_probe_unrelated_providers(self) -> None:
+        job = {
+            "task_family": "enumeration",
+            "constraints": {"cpu": 12, "memory_mb": 8192, "parallelism": 12,
+                            "core_hours": 40},
+        }
+        resources = {"liveness": {"modal": {"ready": True, "usable": True},
+                                  "hetzner": {"usable": True}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(Path(tmp))
+            selected_hetzner = {
+                "backend": "hetzner",
+                "available": True,
+                "adequate": True,
+                "server_spec": CPX62,
+                "est_cost": 0.5,
+                "est_wall_h": 2.0,
+                "within_auto_approve": True,
+                "reason": "available",
+            }
+            with mock.patch.object(
+                planner.hetzner_backend, "probe", return_value=selected_hetzner
+            ), mock.patch.object(
+                planner.kaggle_backend,
+                "probe",
+                side_effect=AssertionError("unrelated Kaggle probe"),
+            ), mock.patch.object(
+                planner,
+                "modal_lane_available",
+                side_effect=AssertionError("unrelated Modal probe"),
+            ):
+                hetzner_plan = planner.plan_job(
+                    {**job, "policy": {"backend": "hetzner"}},
+                    config=config,
+                    resources=resources,
+                    modal_ready=True,
+                )
+            self.assertEqual(hetzner_plan["decision"], "hetzner")
+
+            with mock.patch.object(
+                planner.hetzner_backend,
+                "probe",
+                side_effect=AssertionError("unrelated Hetzner probe"),
+            ), mock.patch.object(
+                planner.kaggle_backend,
+                "probe",
+                side_effect=AssertionError("unrelated Kaggle probe"),
+            ), mock.patch.object(
+                planner, "modal_lane_available", return_value=(True, "available")
+            ):
+                modal_plan = planner.plan_job(
+                    {**job, "policy": {"backend": "modal"}},
+                    config=config,
+                    resources=resources,
+                    modal_ready=True,
+                )
+            self.assertTrue(modal_plan["decision"].startswith("modal_"))
+
+    def test_c_invalid_backend_override_is_rejected(self) -> None:
+        job = {"task_family": "enumeration", "policy": {"backend": "bogus"},
+               "constraints": {"cpu": 12, "memory_mb": 8192,
+                               "parallelism": 12, "core_hours": 40}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp))
+            plan = _plan(ws, job, token=True)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertIn("invalid_backend_override", plan["risk_flags"])
+
+    def test_c_local_only_order_never_falls_open_to_modal(self) -> None:
+        local_only = CONFIG_TOML.replace(
+            'routing_order = ["local", "modal", "hetzner", "gha"]',
+            'routing_order = ["local"]',
+        )
+        resources = {"liveness": {"modal": {"ready": True, "usable": True}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources, config_toml=local_only)
+            plan = _plan(ws, self.HEAVY_CPU_JOB, token=True)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertIn("no_remote_lane_available", plan["risk_flags"])
+
+    def test_c_invalid_routing_order_is_rejected(self) -> None:
+        cases = (
+            '["local", "bogus"]',
+            '["local", "modal", "modal"]',
+            '["modal", "local"]',
+            '["modal"]',
+            '[]',
+        )
+        for configured in cases:
+            with self.subTest(routing_order=configured), tempfile.TemporaryDirectory() as tmp:
+                config_toml = CONFIG_TOML.replace(
+                    '["local", "modal", "hetzner", "gha"]', configured, 1
+                )
+                ws = _make_workspace(Path(tmp), config_toml=config_toml)
+                plan = _plan(ws, self.HEAVY_CPU_JOB, token=True)["plan"]
+                self.assertFalse(plan["accepted"])
+                self.assertEqual(plan["decision"], "rejected")
+                self.assertIn("invalid_routing_order", plan["risk_flags"])
+
     def test_c_forced_local_keeps_watchdog_armed(self) -> None:
         """Phase A deviation 3 (plan section 6): an explicit backend=local override skips the
         PRE-LAUNCH veto but keeps the RUNTIME load-watchdog armed, so a forced-local run can
-        still abort and offload on a load breach and cannot trip the host's auto-restart. The
-        load here (3.5 on 8 cores) would fail the pre-launch veto, yet the forced run is
-        accepted WITH watchdog_armed set."""
-        resources = {"cpu": {"logical_cores": 8}, "load": {"load_1m": 3.5}}
+        still checkpoint and abort on a load breach without violating its no-remote hard pin.
+        The requested width is above the safe ceiling, so the plan is accepted only at the
+        computed safe width with watchdog_armed set."""
+        resources = {"cpu": {"logical_cores": 8}, "load": {"load_1m": 1.0}}
         with tempfile.TemporaryDirectory() as tmp:
             ws = _make_workspace(Path(tmp), resources=resources)
             job = {"task_family": "generic", "policy": {"backend": "local"},
@@ -355,7 +919,26 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertTrue(plan["accepted"])
             self.assertTrue(plan["forced_local"])
             self.assertTrue(plan["watchdog_armed"])
-            self.assertGreaterEqual(plan["local_workers"], 1)
+            self.assertFalse(plan["remote_fallback_allowed"])
+            self.assertEqual(plan["local_workers"], 1)
+            self.assertLess(plan["local_workers"], 4)
+
+    def test_c_local_only_policies_reject_when_no_worker_is_safe(self) -> None:
+        resources = {"cpu": {"logical_cores": 8}, "load": {"load_1m": 3.5}}
+        cases = (
+            ({"backend": "local"}, "forced_local_load_unsafe"),
+            ({"allow_remote": False}, "remote_disabled_local_unsafe"),
+        )
+        for policy, risk_flag in cases:
+            with self.subTest(policy=policy), tempfile.TemporaryDirectory() as tmp:
+                ws = _make_workspace(Path(tmp), resources=resources)
+                job = {"task_family": "generic", "policy": policy,
+                       "constraints": {"cpu": 100, "parallelism": 100,
+                                       "core_hours": 100}}
+                plan = _plan(ws, job, token=False)["plan"]
+                self.assertFalse(plan["accepted"])
+                self.assertIn(risk_flag, plan["risk_flags"])
+                self.assertFalse(plan["remote_fallback_allowed"])
 
     def test_d_budget_gate_fail_closed_over_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -526,9 +1109,9 @@ class LocalVetoAndWatchdogTests(unittest.TestCase):
         self.assertTrue(marks)
 
     def test_forced_local_watchdog_aborts_on_load_breach(self) -> None:
-        """The armed watchdog a forced-local plan carries aborts and offloads (checkpoint +
-        ABORT_FALLBACK) on a hard load breach, so even a forced-local run cannot shut the box
-        down. Uses the forced worker count (w_eff=4) with a breaching load reading."""
+        """The armed watchdog a forced-local plan carries checkpoints and returns its abort
+        signal on a hard load breach. The enclosing plan's hard-pin flag forbids using that
+        signal for remote fallback. Uses w_eff=4 with a breaching load reading."""
         resources = {"cpu": {"logical_cores": 8}}  # hard = 0.55 * 8 = 4.4
         verdict = planner.run_local_watched(
             w_eff=4, config=self.config, resources=resources,
@@ -648,6 +1231,138 @@ class LivenessAndCapTests(unittest.TestCase):
 
     # -- GitHub Actions cumulative 60% minutes cap ----------------------------
 
+    def test_gha_repo_ready_rejects_non_boolean_injected_fields(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-ready-types")
+        repo_cfg = dict(cfg.gha_repos["sweep"])
+        cases = (
+            {"authenticated": "true", "repo_private": True},
+            {"authenticated": True, "repo_private": 1},
+        )
+        for snapshot in cases:
+            with self.subTest(snapshot=snapshot):
+                ok, reason = gha.repo_ready(
+                    repo_cfg, {"liveness": {"gha": snapshot}}
+                )
+                self.assertFalse(ok)
+                self.assertEqual(reason, "gha_readiness_snapshot_must_use_booleans")
+
+    def test_gha_repo_ready_normalizes_missing_or_hung_gh_as_unavailable(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-subprocess-failures")
+        repo_cfg = dict(cfg.gha_repos["sweep"])
+        failures = (
+            FileNotFoundError("gh executable missing"),
+            subprocess.TimeoutExpired(cmd=["gh", "api"], timeout=60),
+        )
+        for failure in failures:
+            with self.subTest(failure=failure.__class__.__name__), mock.patch.object(
+                gha.subprocess, "run", side_effect=failure
+            ):
+                ok, reason = gha.repo_ready(repo_cfg)
+                self.assertFalse(ok)
+                self.assertEqual(reason, "gha_repo_unreachable:GhaError")
+
+    def test_gha_malformed_api_json_is_normalized_and_repo_unavailable(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-malformed-json")
+        repo_cfg = dict(cfg.gha_repos["sweep"])
+        with mock.patch.object(gha, "_gh", return_value="{not-json"):
+            with self.assertRaisesRegex(gha.GhaError, "malformed JSON"):
+                gha._gh_api(f"/repos/{repo_cfg['repo']}")
+            ok, reason = gha.repo_ready(repo_cfg)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "gha_repo_unreachable:GhaError")
+
+    def test_gha_repo_ready_rejects_non_object_api_response(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-repo-response-shape")
+        repo_cfg = dict(cfg.gha_repos["sweep"])
+        for response in ([], "private", 1):
+            with self.subTest(response=response), mock.patch.object(
+                gha, "_gh_api", return_value=response
+            ):
+                ok, reason = gha.repo_ready(repo_cfg)
+                self.assertFalse(ok)
+                self.assertEqual(reason, "gha_repo_unreachable:GhaError")
+
+    def test_gha_minutes_used_rejects_malformed_response_shapes(self) -> None:
+        cases = (
+            ("non-object-top-level", ["not-an-object"]),
+            ("non-list-usage-items", {"usageItems": {}}),
+            ("non-object-usage-item", {"usageItems": ["not-an-object"]}),
+        )
+        for label, response in cases:
+            with self.subTest(case=label), mock.patch.object(
+                gha, "_gh_api", return_value=response
+            ):
+                with self.assertRaises(gha.GhaBudgetError):
+                    gha.minutes_used_this_cycle("owner")
+
+    def test_gha_included_minutes_falls_back_for_malformed_user_plan_shapes(self) -> None:
+        config = mock.Mock(gha_included_minutes=0)
+        malformed = (
+            ("non-object-top-level", ["not-an-object"]),
+            ("non-object-plan", {"plan": ["pro"]}),
+            ("non-string-plan-name", {"plan": {"name": ["pro"]}}),
+        )
+        for label, response in malformed:
+            with self.subTest(case=label), mock.patch.object(
+                gha, "_gh_api", return_value=response
+            ):
+                self.assertEqual(gha.included_minutes("owner", config), 2000)
+
+        with mock.patch.object(
+            gha, "_gh_api", return_value={"plan": {"name": "Pro"}}
+        ):
+            self.assertEqual(gha.included_minutes("owner", config), 3000)
+
+    def test_gha_correlate_rejects_malformed_workflow_run_shapes(self) -> None:
+        cases = (
+            ("non-object-top-level", []),
+            ("missing-workflow-runs", {}),
+            ("non-list-workflow-runs", {"workflow_runs": {}}),
+            ("non-object-run-entry", {"workflow_runs": ["not-an-object"]}),
+        )
+        for label, response in cases:
+            with self.subTest(case=label), mock.patch.object(
+                gha, "_gh_api", return_value=response
+            ):
+                with self.assertRaises(gha.GhaError):
+                    gha.correlate(
+                        repo="owner/repo",
+                        workflow="experiment.yml",
+                        job_id="dispatch-shape-test",
+                        attempts=1,
+                        interval=0,
+                    )
+
+    def test_gha_wait_rejects_non_object_run_response(self) -> None:
+        for response in ([], "completed", 1):
+            with self.subTest(response=response), mock.patch.object(
+                gha, "_gh_api", return_value=response
+            ):
+                with self.assertRaises(gha.GhaError):
+                    gha.wait(
+                        repo="owner/repo",
+                        run_id=123,
+                        timeout=0,
+                        interval=0,
+                    )
+
+    def test_gha_usage_cap_rejects_partial_readiness_snapshot_as_incomplete_usage(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-partial-usage")
+        repo_cfg = dict(cfg.gha_repos["sweep"])
+        with mock.patch.object(
+            gha,
+            "USAGE_PROBE",
+            side_effect=AssertionError("partial injection must not fall through to API"),
+        ):
+            ok, detail = gha.usage_cap_ok(
+                repo_cfg=repo_cfg,
+                config=cfg,
+                cells=1,
+                resources={"liveness": {"gha": {"authenticated": True}}},
+            )
+        self.assertFalse(ok)
+        self.assertIn("incomplete", detail["reason"])
+
     def test_gha_cap_cumulative_not_per_task(self) -> None:
         cfg = _gha_config(Path(self._tmp.name) / "gha")
         repo_cfg = dict(cfg.gha_repos["sweep"])  # worst case = 200 min (10% of 2000; cap 1200)
@@ -668,6 +1383,258 @@ class LivenessAndCapTests(unittest.TestCase):
         gha.USAGE_PROBE = lambda owner, config: {"used_this_cycle": 1171.0, "included_minutes": 2000.0}
         ok_over, _ = gha.usage_cap_ok(repo_cfg=repo_cfg, config=cfg, cells=1)  # 1201 > 1200
         self.assertFalse(ok_over)
+
+    def test_gha_cap_and_atomic_gate_include_outstanding_reservations(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-ledger")
+        repo_cfg = dict(cfg.gha_repos["sweep"])
+        state = Path(self._tmp.name) / "gha-state"
+        budget_ledger.reserve(state, "gha", "already-running", 150.0, "minutes")
+
+        ok, detail = gha.usage_cap_ok(
+            repo_cfg=repo_cfg,
+            config=cfg,
+            cells=1,
+            resources={"liveness": {"gha": {
+                "used_this_cycle": 900,
+                "included_minutes": 2000,
+            }}},
+            state_root=state,
+        )
+        self.assertFalse(ok)  # 900 used + 150 reserved + 200 new > 1200 cap
+        self.assertEqual(detail["outstanding_minutes"], 150.0)
+
+        with mock.patch.object(gha, "minutes_used_this_cycle", return_value=900.0), \
+             mock.patch.object(gha, "included_minutes", return_value=2000):
+            with self.assertRaises(gha.GhaBudgetError):
+                gha.budget_gate(
+                    job_id="next",
+                    repo_cfg=repo_cfg,
+                    config=cfg,
+                    state_root=state,
+                    cells=1,
+                )
+
+    def test_gha_fetch_download_uses_exact_positional_run_id(self) -> None:
+        state = Path(self._tmp.name) / "gha-exact-run-state"
+        budget_ledger.reserve(state, "gha", "dispatch-exact", 30.0, "minutes")
+        with mock.patch.object(gha, "_gh") as gh_call, mock.patch.object(
+            gha,
+            "_gh_api",
+            return_value={"billable": {"UBUNTU": {"total_ms": 60_000}}},
+        ):
+            gha.fetch(
+                repo="owner/PrivateResearchRepo",
+                job_id="dispatch-exact",
+                dest=Path(self._tmp.name) / "exact-run-result",
+                state_root=state,
+                run_id=987654,
+            )
+        argv = gh_call.call_args.args[0]
+        self.assertEqual(
+            argv[:5],
+            ["run", "download", "987654", "-R", "owner/PrivateResearchRepo"],
+        )
+        self.assertNotIn("--name", argv[:3])
+
+    def test_gha_fetch_timing_failure_keeps_full_reservation(self) -> None:
+        state = Path(self._tmp.name) / "gha-timing-failure-state"
+        budget_ledger.reserve(state, "gha", "dispatch-timing-failed", 200.0, "minutes")
+        with mock.patch.object(gha, "_gh"), mock.patch.object(
+            gha,
+            "_gh_api",
+            side_effect=gha.GhaError("timing endpoint unavailable"),
+        ):
+            fetched = gha.fetch(
+                repo="owner/PrivateResearchRepo",
+                job_id="dispatch-timing-failed",
+                dest=Path(self._tmp.name) / "timing-failure-result",
+                state_root=state,
+                run_id=123,
+            )
+        self.assertIsNone(fetched["actual_minutes"])
+        self.assertEqual(budget_ledger.outstanding(state, "gha"), 200.0)
+        self.assertIn("dispatch-timing-failed", budget_ledger.reserved_job_ids(state, "gha"))
+
+    def test_gha_verified_completion_remains_accrued_against_stale_usage(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-accrued-config")
+        repo_cfg = dict(cfg.gha_repos["sweep"])
+        state = Path(self._tmp.name) / "gha-accrued-state"
+        budget_ledger.reserve(state, "gha", "dispatch-complete", 200.0, "minutes")
+        with mock.patch.object(gha, "_gh"), mock.patch.object(
+            gha,
+            "_gh_api",
+            return_value={"billable": {"UBUNTU": {"total_ms": 12 * 60_000}}},
+        ):
+            fetched = gha.fetch(
+                repo=repo_cfg["repo"],
+                job_id="dispatch-complete",
+                dest=Path(self._tmp.name) / "accrued-result",
+                state_root=state,
+                run_id=456,
+            )
+        self.assertEqual(fetched["actual_minutes"], 12.0)
+        self.assertEqual(budget_ledger.outstanding(state, "gha"), 12.0)
+
+        ok, detail = gha.usage_cap_ok(
+            repo_cfg=repo_cfg,
+            config=cfg,
+            cells=1,
+            resources={"liveness": {"gha": {
+                "authenticated": True,
+                "repo_private": True,
+                "used_this_cycle": 1000,
+                "included_minutes": 2000,
+            }}},
+            state_root=state,
+        )
+        self.assertFalse(ok)  # stale 1000 + accrued 12 + next worst-case 200 > 1200
+        self.assertEqual(detail["outstanding_minutes"], 12.0)
+
+    def test_gha_timing_preserves_linux_equivalent_os_and_matrix_minutes(self) -> None:
+        cases = (
+            (
+                "billable-windows-and-macos",
+                {"billable": {
+                    "WINDOWS": {"total_ms": 60_000},
+                    "MACOS": {"total_ms": 60_000},
+                }},
+                "linux",
+                4,
+                12.0,
+            ),
+            (
+                "aggregate-windows-matrix",
+                {"run_duration_ms": 61_000},
+                "windows",
+                3,
+                12.0,
+            ),
+            (
+                "aggregate-macos-matrix",
+                {"run_duration_ms": 60_000},
+                "macos",
+                2,
+                20.0,
+            ),
+        )
+        for index, (label, timing, runner_os, cells, expected) in enumerate(cases):
+            with self.subTest(case=label):
+                state = Path(self._tmp.name) / f"gha-timing-{index}-state"
+                job_id = f"dispatch-timing-{index}"
+                budget_ledger.reserve(state, "gha", job_id, 100.0, "minutes")
+                with mock.patch.object(gha, "_gh"), mock.patch.object(
+                    gha, "_gh_api", return_value=timing
+                ):
+                    fetched = gha.fetch(
+                        repo="owner/PrivateResearchRepo",
+                        job_id=job_id,
+                        dest=Path(self._tmp.name) / f"timing-{index}-result",
+                        state_root=state,
+                        run_id=1000 + index,
+                        runner_os=runner_os,
+                        cells=cells,
+                    )
+                self.assertEqual(fetched["actual_minutes"], expected)
+                self.assertEqual(budget_ledger.outstanding(state, "gha"), expected)
+
+    def test_budget_ledger_duplicate_ids_reconcile_only_one_reservation(self) -> None:
+        state = Path(self._tmp.name) / "gha-duplicate-id-state"
+        budget_ledger.reserve(state, "gha", "legacy-duplicate", 100.0, "minutes")
+        budget_ledger.reserve(state, "gha", "legacy-duplicate", 100.0, "minutes")
+        budget_ledger.reconcile(state, "gha", "legacy-duplicate", 12.0)
+
+        self.assertEqual(budget_ledger.outstanding(state, "gha"), 112.0)
+        rows = [
+            json.loads(line)
+            for line in (state / "gha-reservations.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual([row["state"] for row in rows].count("accrued"), 1)
+        self.assertEqual([row["state"] for row in rows].count("reserved"), 1)
+
+    def test_gha_async_wait_fetch_uses_run_id_and_keeps_timeout_reservation(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-async")
+        state = Path(self._tmp.name) / "gha-async-state"
+        job_id = "gha-async-job"
+        budget_ledger.reserve(state, "gha", job_id, 200.0, "minutes")
+        broker_cli.update_gha_status(
+            state_root=state,
+            job_id=job_id,
+            status="submitted",
+            plan={"decision": "gha"},
+            attempt_id="attempt-001",
+            repo="owner/PrivateResearchRepo",
+            workflow="experiment.yml",
+            run_id=123,
+        )
+
+        with mock.patch.object(broker_cli.gha, "wait", return_value="timeout"), \
+             mock.patch.object(
+                 broker_cli.gha,
+                 "fetch",
+                 side_effect=AssertionError("timeout must not fetch or reconcile"),
+             ):
+            timed_out = broker_cli.command_wait(
+                job_id=job_id, config=cfg, state_root=state, timeout=0
+            )
+        self.assertEqual(timed_out["status"], "running")
+        self.assertEqual(budget_ledger.outstanding(state, "gha"), 200.0)
+
+        def completed_fetch(**kwargs):
+            budget_ledger.reconcile(kwargs["state_root"], "gha", kwargs["job_id"], 12.0)
+            return {"result": {"status": "ok"}, "actual_minutes": 12.0}
+
+        with mock.patch.object(broker_cli.gha, "wait", return_value="success"), \
+             mock.patch.object(broker_cli.gha, "fetch", side_effect=completed_fetch):
+            completed = broker_cli.command_wait(
+                job_id=job_id, config=cfg, state_root=state, timeout=60
+            )
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["gha_run_id"], 123)
+        self.assertEqual(budget_ledger.outstanding(state, "gha"), 12.0)
+
+    def test_gha_submit_wait_timeout_does_not_fetch_or_release_budget(self) -> None:
+        cfg = _gha_config(Path(self._tmp.name) / "gha-submit-timeout")
+        state = Path(self._tmp.name) / "gha-submit-state"
+        job = {
+            "job_id": "gha-submit-timeout",
+            "gha_target": "sweep",
+            "template": "parameter_sweep",
+            "payload": {"parameters": {}},
+            "constraints": {"matrix_cells": 1},
+        }
+        plan = {"accepted": True, "decision": "gha"}
+
+        def reserve_budget(**kwargs):
+            budget_ledger.reserve(
+                kwargs["state_root"], "gha", kwargs["job_id"], 200.0, "minutes"
+            )
+            return {"ok": True, "reserved": 200.0}
+
+        with mock.patch.object(broker_cli.gha, "budget_gate", side_effect=reserve_budget), \
+             mock.patch.object(
+                 broker_cli.gha,
+                 "repo_ready",
+                 return_value=(True, "gha_authenticated_private_repo"),
+             ), \
+             mock.patch.object(broker_cli.gha, "dispatch"), \
+             mock.patch.object(broker_cli.gha, "correlate", return_value=456), \
+             mock.patch.object(broker_cli.gha, "wait", return_value="timeout"), \
+             mock.patch.object(
+                 broker_cli.gha,
+                 "fetch",
+                 side_effect=AssertionError("timeout must not fetch or reconcile"),
+             ):
+            result = broker_cli.command_submit_gha(
+                job=job,
+                plan=plan,
+                config=cfg,
+                config_path=Path(self._tmp.name) / "research-compute.toml",
+                state_root=state,
+                wait=True,
+                timeout=0,
+            )
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(budget_ledger.outstanding(state, "gha"), 200.0)
 
 
 class GpuRoutingTests(unittest.TestCase):
@@ -829,6 +1796,19 @@ class GpuRoutingTests(unittest.TestCase):
             plan = _plan(ws, job, token=True)["plan"]
             self.assertEqual(plan["decision"], "modal_cpu")
 
+    def test_cpu_explicit_modal_override_unavailable_rejected(self) -> None:
+        """A hard Modal pin cannot bypass the lane's account-usable readiness gate."""
+        res = self._resources(gpus=0, modal_usable=False)
+        job = {"task_family": "generic", "policy": {"backend": "modal"},
+               "constraints": {"cpu": 1, "memory_mb": 1024,
+                               "parallelism": 1, "core_hours": 1}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=res)
+            plan = _plan(ws, job, token=True)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertIn("modal_unavailable", plan["risk_flags"])
+
     def test_cpu_explicit_hetzner_override_unavailable_rejected(self) -> None:
         """CPU x explicit-request x unavailable: an explicit backend=hetzner override with no
         HCLOUD_TOKEN (lane unavailable) is rejected rather than silently re-routed."""
@@ -840,6 +1820,29 @@ class GpuRoutingTests(unittest.TestCase):
             plan = _plan(ws, job, token=False)["plan"]
             self.assertEqual(plan["decision"], "rejected")
             self.assertIn("hetzner_unavailable", plan["risk_flags"])
+
+    def test_cpu_explicit_hetzner_override_bypasses_routing_order(self) -> None:
+        """A hard provider pin probes Hetzner even when automatic order omits it."""
+        res = self._resources(gpus=0, modal_usable=True)
+        job = {"task_family": "enumeration", "policy": {"backend": "hetzner"},
+               "constraints": {"cpu": 12, "memory_mb": 8192,
+                               "parallelism": 12, "core_hours": 40}}
+        config_without_hetzner = CONFIG_TOML.replace(
+            'routing_order = ["local", "modal", "hetzner", "gha"]',
+            'routing_order = ["local", "modal", "gha"]',
+        )
+        self.assertNotEqual(config_without_hetzner, CONFIG_TOML)
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(
+                Path(tmp), resources=res, config_toml=config_without_hetzner
+            )
+            plan = _plan(ws, job, token=True)["plan"]
+            self.assertTrue(plan["accepted"])
+            self.assertEqual(plan["decision"], "hetzner")
+            self.assertEqual(plan["backend"], "hetzner")
+            self.assertEqual(
+                [entry["backend"] for entry in plan["routing_trail"]], ["hetzner"]
+            )
 
 
 class GpuLaneUnitTests(unittest.TestCase):

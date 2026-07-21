@@ -64,8 +64,13 @@ to one such incident.
 
 ## Choosing the venue
 
-Order of preference for heavy work: remote CI/offload (see
-`github-actions-offload.md`, subject to minute budgets) or the Modal
-broker (check credit first; do not run on unverifiable credit) -> the
-throttled local queue (this contract) -> defer with an exact pending list.
-Never "just run it" unthrottled locally: that is how sessions die.
+Use the unified broker rather than a venue-specific shortcut. Its recommended
+order is `local > Kaggle > Modal > Hetzner > GitHub Actions`, while an explicitly
+configured valid order keeps local first and may reorder or omit unique remote
+lanes. This legacy single-process throttle remains a safe
+fallback when the broker is unavailable; the broker's own local lane instead
+computes a safe worker count under its self-preservation policy. Remote lanes must
+pass their own readiness and safety gates (Kaggle GPU-hours when GPU is requested,
+Modal USD, Hetzner EUR plus teardown, or GitHub Actions minutes). If no adequate
+lane passes, defer with an exact pending list. Never "just run it" unthrottled
+locally: that is how sessions die.

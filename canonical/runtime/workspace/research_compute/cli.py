@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import re
+import secrets
 import shutil
 import socket
 import subprocess
@@ -12,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import caller_cwd, default_config_path, example_config_path, load_config, modal_config_path, workspace_root
+from .config import DEFAULT_ROUTING_ORDER, caller_cwd, default_config_path, example_config_path, load_config, modal_config_path, routing_order_error, workspace_root
 from .modal_backend import cancel_function_call, deploy_modal_app, modal_ready_summary, run_remote_job, submit_remote_job, wait_for_result
 from . import github_actions_backend as gha
 from .fanout import plan_fanout
@@ -142,6 +143,12 @@ def main(argv: list[str] | None = None) -> int:
 
 def command_doctor(*, config: Any, config_path: Path, state_root: Path) -> dict[str, Any]:
     modal_summary = modal_ready_summary(config, modal_config_path())
+    configured_order = getattr(config, "routing_order", [])
+    routing_order = (
+        list(configured_order)
+        if isinstance(configured_order, (list, tuple))
+        else configured_order
+    )
     summary = {
         "config_path": str(config_path),
         "config_exists": config_path.exists(),
@@ -149,9 +156,36 @@ def command_doctor(*, config: Any, config_path: Path, state_root: Path) -> dict[
         "workspace_root": str(workspace_root()),
         "caller_cwd": str(caller_cwd()),
         "state_root": str(state_root),
-        "routing_order": list(getattr(config, "routing_order", [])),
+        "routing_order": routing_order,
         **modal_summary,
     }
+    recommended_order = list(DEFAULT_ROUTING_ORDER)
+    summary["warnings"] = []
+    validation_error = routing_order_error(routing_order)
+    if validation_error:
+        summary["warnings"].append(
+            {
+                "code": "routing_order_invalid",
+                "message": (
+                    "Configured routing_order is invalid; automatic planning will reject "
+                    "until it is corrected."
+                ),
+                "configured": routing_order,
+                "error": validation_error,
+            }
+        )
+    if routing_order != recommended_order and not validation_error:
+        summary["warnings"].append(
+            {
+                "code": "routing_order_deviation",
+                "message": (
+                    "Configured routing_order differs from the recommended priority; "
+                    "the planner will honor the configured order."
+                ),
+                "configured": routing_order,
+                "recommended": recommended_order,
+            }
+        )
     if getattr(config, "gha_enabled", False):
         try:
             summary["gha"] = gha.doctor(config)
@@ -162,7 +196,13 @@ def command_doctor(*, config: Any, config_path: Path, state_root: Path) -> dict[
 
 def command_plan(*, job: dict[str, Any], config: Any, state_root: Path, persist: bool) -> dict[str, Any]:
     normalized = normalize_job(job, config=config)
-    plan = plan_job(normalized, config=config, resources=load_local_resources(), modal_ready=modal_ready_summary(config, modal_config_path())["modal_sdk_available"])
+    plan = plan_job(
+        normalized,
+        config=config,
+        resources=load_local_resources(),
+        modal_ready=modal_ready_summary(config, modal_config_path())["modal_ready"],
+        state_root=state_root,
+    )
     if persist:
         persist_plan(state_root=state_root, job=normalized, plan=plan)
     return {
@@ -178,7 +218,7 @@ def command_fanout_plan(*, job: dict[str, Any], config: Any, state_root: Path) -
     to its spare capacity, under every lane's hard rail. Returns the allocation and per-lane
     chunk-id ranges; it does not dispatch (execution reuses the per-lane drivers)."""
     normalized = normalize_job(job, config=config)
-    modal_ready = modal_ready_summary(config, modal_config_path())["modal_sdk_available"]
+    modal_ready = modal_ready_summary(config, modal_config_path())["modal_ready"]
     fanout = plan_fanout(
         normalized,
         config=config,
@@ -221,6 +261,25 @@ def command_submit(
             job=normalized, plan=plan, config=config, config_path=config_path,
             state_root=state_root, wait=wait, timeout=timeout,
         )
+
+    selected_backend = str(plan.get("backend", "") or "")
+    if selected_backend in {"kaggle", "hetzner"}:
+        lane_skill = f"{selected_backend}-research-compute"
+        update_status(
+            state_root=state_root,
+            job_id=job_id,
+            status="external_driver_required",
+            plan=plan,
+        )
+        return {
+            "job_id": job_id,
+            "status": "external_driver_required",
+            "plan": plan,
+            "message": (
+                f"The broker selected {selected_backend}; execute this plan through the "
+                f"{lane_skill} lane driver."
+            ),
+        }
 
     if not str(plan["decision"]).startswith("modal_"):
         update_status(
@@ -328,50 +387,316 @@ def command_submit_gha(
                 "message": f"gha target '{gha_target}' is not registered"}
 
     parameters = dict(job.get("payload", {}).get("parameters", {}) or {})
-    cells = int(job.get("constraints", {}).get("matrix_cells", 1) or 1)
+    constraints = dict(job.get("constraints", {}) or {})
+    cells = int(constraints.get("matrix_cells", 1) or 1)
+
+    gha_constraints = dict(constraints)
+    core_hours = gha_constraints.get("core_hours")
+    if core_hours in (None, 0, 0.0):
+        core_hours = parameters.get("core_hours")
+    if core_hours in (None, 0, 0.0):
+        core_hours = float(plan.get("estimated_runtime_sec", 0) or 0) / 3600.0
+    gha_constraints["core_hours"] = core_hours
+    adequate, adequacy_reason = gha.job_adequacy(repo_cfg, gha_constraints)
+    if not adequate:
+        update_status(state_root=state_root, job_id=job_id, status="rejected", plan=plan)
+        return {"job_id": job_id, "status": "rejected", "plan": plan,
+                "reason": f"GHA runner inadequate: {adequacy_reason}"}
+    ready, ready_reason = gha.repo_ready(repo_cfg)
+    if not ready:
+        update_status(state_root=state_root, job_id=job_id, status="rejected", plan=plan)
+        return {"job_id": job_id, "status": "rejected", "plan": plan,
+                "reason": f"GHA readiness failed: {ready_reason}"}
+
+    nonce = secrets.token_hex(16)
+    attempt_id = f"{next_attempt_id(state_root, job_id)}-{nonce[:8]}"
+    dispatch_id = f"gha-{nonce}"
+    attempt_root = ensure_root(attempt_dir(state_root, job_id, attempt_id))
+    workflow = repo_cfg.get("workflow", "experiment.yml")
+    ref = str(repo_cfg.get("ref", "main"))
+    runner_os = str(repo_cfg.get("runner_os", "linux"))
+    submission_record = {
+        "job_id": job_id,
+        "attempt_id": attempt_id,
+        "gha_dispatch_id": dispatch_id,
+        "decision": "gha",
+        "gha_repo": repo_cfg["repo"],
+        "gha_workflow": workflow,
+        "gha_ref": ref,
+        "gha_runner_os": runner_os,
+        "gha_matrix_cells": cells,
+        "gha_run_id": None,
+        "budget": None,
+    }
+    write_json(attempt_root / "submission.json", submission_record)
+    update_gha_status(
+        state_root=state_root,
+        job_id=job_id,
+        status="budgeting",
+        plan=plan,
+        attempt_id=attempt_id,
+        repo=repo_cfg["repo"],
+        workflow=workflow,
+        run_id=None,
+        dispatch_id=dispatch_id,
+        dispatched_at=None,
+        ref=ref,
+        runner_os=runner_os,
+        cells=cells,
+    )
 
     try:  # fail-closed budget gate + worst-case reservation
-        budget = gha.budget_gate(job_id=job_id, repo_cfg=repo_cfg, config=config,
+        budget = gha.budget_gate(job_id=dispatch_id, repo_cfg=repo_cfg, config=config,
                                  state_root=state_root, cells=cells)
     except gha.GhaBudgetError as exc:
         update_status(state_root=state_root, job_id=job_id, status="rejected", plan=plan)
         return {"job_id": job_id, "status": "rejected", "plan": plan, "reason": str(exc)}
 
-    gha.dispatch(job_id=job_id, repo_cfg=repo_cfg, parameters=parameters)
-    run_id = gha.correlate(repo=repo_cfg["repo"],
-                           workflow=repo_cfg.get("workflow", "experiment.yml"), job_id=job_id)
-
-    attempt_id = next_attempt_id(state_root, job_id)
-    attempt_root = ensure_root(attempt_dir(state_root, job_id, attempt_id))
-    submission_record = {"job_id": job_id, "attempt_id": attempt_id, "submitted_at": timestamp(),
-                         "decision": "gha", "gha_repo": repo_cfg["repo"], "gha_run_id": run_id,
-                         "budget": budget}
+    dispatched_at = timestamp()
+    submission_record["submitted_at"] = dispatched_at
+    submission_record["budget"] = budget
     write_json(attempt_root / "submission.json", submission_record)
-    append_event(job_dir(state_root, job_id) / "events.jsonl", {"event": "submitted", **submission_record})
-    update_status(state_root=state_root, job_id=job_id, status="submitted", plan=plan, attempt_id=attempt_id)
-    status = read_json(status_path(state_root, job_id))
-    status.update({"gha_run_id": run_id, "gha_repo": repo_cfg["repo"]})
-    write_json(status_path(state_root, job_id), status)
+    update_gha_status(
+        state_root=state_root,
+        job_id=job_id,
+        status="dispatching",
+        plan=plan,
+        attempt_id=attempt_id,
+        repo=repo_cfg["repo"],
+        workflow=workflow,
+        run_id=None,
+        dispatch_id=dispatch_id,
+        dispatched_at=dispatched_at,
+        ref=ref,
+        runner_os=runner_os,
+        cells=cells,
+    )
+    try:
+        gha.dispatch(job_id=dispatch_id, repo_cfg=repo_cfg, parameters=parameters)
+    except gha.GhaError as exc:
+        # Dispatch failure can be transport-ambiguous. Keep the reservation fail-closed and
+        # persist enough metadata for an operator to correlate/reconcile safely.
+        update_gha_status(
+            state_root=state_root,
+            job_id=job_id,
+            status="dispatch_failed",
+            plan=plan,
+            attempt_id=attempt_id,
+            repo=repo_cfg["repo"],
+            workflow=workflow,
+            run_id=None,
+            dispatch_id=dispatch_id,
+            dispatched_at=dispatched_at,
+            ref=ref,
+            runner_os=runner_os,
+            cells=cells,
+        )
+        return {
+            "job_id": job_id,
+            "status": "dispatch_failed",
+            "attempt_id": attempt_id,
+            "gha_dispatch_id": dispatch_id,
+            "budget": budget,
+            "detail": f"{exc}; reservation remains active until reconciled",
+        }
+
+    try:
+        run_id = gha.correlate(
+            repo=repo_cfg["repo"], workflow=workflow, job_id=dispatch_id,
+            ref=ref, not_before=dispatched_at,
+        )
+        correlation_detail = None
+    except gha.GhaError as exc:
+        run_id = None
+        correlation_detail = str(exc)
+
+    submission_record["gha_run_id"] = run_id
+    write_json(attempt_root / "submission.json", submission_record)
+    append_event(
+        job_dir(state_root, job_id) / "events.jsonl",
+        {"event": "submitted", **submission_record},
+    )
+    submission_status = "submitted" if run_id is not None else "correlation_pending"
+    update_gha_status(
+        state_root=state_root,
+        job_id=job_id,
+        status=submission_status,
+        plan=plan,
+        attempt_id=attempt_id,
+        repo=repo_cfg["repo"],
+        workflow=workflow,
+        run_id=run_id,
+        dispatch_id=dispatch_id,
+        dispatched_at=dispatched_at,
+        ref=ref,
+        runner_os=runner_os,
+        cells=cells,
+    )
 
     if wait and run_id:
         conclusion = gha.wait(repo=repo_cfg["repo"], run_id=run_id, timeout=timeout)
-        fetched = gha.fetch(repo=repo_cfg["repo"], job_id=job_id,
+        if conclusion == "timeout":
+            update_gha_status(
+                state_root=state_root,
+                job_id=job_id,
+                status="running",
+                plan=plan,
+                attempt_id=attempt_id,
+                repo=repo_cfg["repo"],
+                workflow=workflow,
+                run_id=run_id,
+                dispatch_id=dispatch_id,
+                dispatched_at=dispatched_at,
+                ref=ref,
+                runner_os=runner_os,
+                cells=cells,
+            )
+            return {
+                "job_id": job_id,
+                "status": "running",
+                "attempt_id": attempt_id,
+                "gha_run_id": run_id,
+                "gha_dispatch_id": dispatch_id,
+                "budget": budget,
+                "detail": "wait timed out; reservation remains active",
+            }
+        fetched = gha.fetch(repo=repo_cfg["repo"], job_id=dispatch_id,
                             dest=ensure_root(attempt_root / "download"),
-                            state_root=state_root, run_id=run_id)
+                            state_root=state_root, run_id=run_id,
+                            runner_os=runner_os, cells=cells)
         write_json(attempt_root / "result.json", fetched["result"])
-        update_status(state_root=state_root, job_id=job_id,
-                      status="completed" if conclusion == "success" else conclusion,
-                      plan=plan, attempt_id=attempt_id)
-        return {"job_id": job_id, "status": conclusion, "attempt_id": attempt_id,
-                "gha_run_id": run_id, "budget": budget, "actual_minutes": fetched["actual_minutes"],
+        final_status = (
+            "artifact_missing"
+            if conclusion == "success" and fetched["result"].get("status") == "no-artifact"
+            else ("completed" if conclusion == "success" else conclusion)
+        )
+        update_gha_status(
+            state_root=state_root,
+            job_id=job_id,
+            status=final_status,
+            plan=plan,
+            attempt_id=attempt_id,
+            repo=repo_cfg["repo"],
+            workflow=workflow,
+            run_id=run_id,
+            dispatch_id=dispatch_id,
+            dispatched_at=dispatched_at,
+            ref=ref,
+            runner_os=runner_os,
+            cells=cells,
+        )
+        return {"job_id": job_id, "status": final_status, "attempt_id": attempt_id,
+                "gha_run_id": run_id, "gha_dispatch_id": dispatch_id,
+                "budget": budget, "actual_minutes": fetched["actual_minutes"],
                 "result_manifest_path": str(attempt_root / "result.json")}
 
-    return {"job_id": job_id, "status": "submitted", "attempt_id": attempt_id,
-            "gha_run_id": run_id, "budget": budget, "plan": plan, "config_path": str(config_path)}
+    result = {"job_id": job_id, "status": submission_status, "attempt_id": attempt_id,
+              "gha_run_id": run_id, "gha_dispatch_id": dispatch_id,
+              "budget": budget, "plan": plan,
+              "config_path": str(config_path)}
+    if correlation_detail:
+        result["detail"] = (
+            f"{correlation_detail}; retry wait to correlate by job id; reservation remains active"
+        )
+    return result
 
 
 def command_wait(*, job_id: str, config: Any, state_root: Path, timeout: float | None) -> dict[str, Any]:
     status = read_json(status_path(state_root, job_id))
+    gha_repo = status.get("gha_repo")
+    if gha_repo:
+        attempt_id = status.get("attempt_id") or next_attempt_id(state_root, job_id)
+        workflow = str(status.get("gha_workflow") or "experiment.yml")
+        dispatch_id = str(status.get("gha_dispatch_id") or job_id)
+        dispatched_at = status.get("gha_dispatched_at")
+        ref = str(status.get("gha_ref") or "main")
+        runner_os = str(status.get("gha_runner_os") or "linux")
+        cells = int(status.get("gha_matrix_cells") or 1)
+        run_id = status.get("gha_run_id")
+        if run_id is None:
+            try:
+                run_id = gha.correlate(
+                    repo=str(gha_repo), workflow=workflow, job_id=dispatch_id,
+                    ref=ref, not_before=dispatched_at,
+                )
+            except gha.GhaError as exc:
+                return {
+                    "job_id": job_id,
+                    "status": "correlation_pending",
+                    "detail": (
+                        f"{exc}; retry wait; the reservation remains active"
+                    ),
+                }
+            if run_id is None:
+                return {
+                    "job_id": job_id,
+                    "status": "correlation_pending",
+                    "detail": "GitHub Actions run id is not visible yet; retry wait.",
+                }
+        conclusion = gha.wait(repo=str(gha_repo), run_id=int(run_id), timeout=timeout)
+        if conclusion == "timeout":
+            update_gha_status(
+                state_root=state_root,
+                job_id=job_id,
+                status="running",
+                plan=status.get("plan", {}),
+                attempt_id=attempt_id,
+                repo=str(gha_repo),
+                workflow=workflow,
+                run_id=int(run_id),
+                dispatch_id=dispatch_id,
+                dispatched_at=dispatched_at,
+                ref=ref,
+                runner_os=runner_os,
+                cells=cells,
+            )
+            return {
+                "job_id": job_id,
+                "status": "running",
+                "gha_run_id": int(run_id),
+                "detail": "wait timed out; reservation remains active",
+            }
+        attempt_root = ensure_root(attempt_dir(state_root, job_id, attempt_id))
+        fetched = gha.fetch(
+            repo=str(gha_repo),
+            job_id=dispatch_id,
+            dest=ensure_root(attempt_root / "download"),
+            state_root=state_root,
+            run_id=int(run_id),
+            runner_os=runner_os,
+            cells=cells,
+        )
+        write_json(attempt_root / "result.json", fetched["result"])
+        final_status = (
+            "artifact_missing"
+            if conclusion == "success" and fetched["result"].get("status") == "no-artifact"
+            else ("completed" if conclusion == "success" else conclusion)
+        )
+        update_gha_status(
+            state_root=state_root,
+            job_id=job_id,
+            status=final_status,
+            plan=status.get("plan", {}),
+            attempt_id=attempt_id,
+            repo=str(gha_repo),
+            workflow=workflow,
+            run_id=int(run_id),
+            dispatch_id=dispatch_id,
+            dispatched_at=dispatched_at,
+            ref=ref,
+            runner_os=runner_os,
+            cells=cells,
+        )
+        return {
+            "job_id": job_id,
+            "status": final_status,
+            "attempt_id": attempt_id,
+            "gha_run_id": int(run_id),
+            "gha_dispatch_id": dispatch_id,
+            "actual_minutes": fetched["actual_minutes"],
+            "result_manifest_path": str(attempt_root / "result.json"),
+        }
+
     function_call_id = status.get("function_call_id")
     if not function_call_id:
         raise RuntimeError(f"No remote function call is recorded for job '{job_id}'.")
@@ -429,6 +754,7 @@ def command_fetch(*, job_id: str, config: Any, state_root: Path, dest: str | Non
         waited = command_wait(job_id=job_id, config=config, state_root=state_root, timeout=0)
         if waited.get("status") != "completed":
             raise RuntimeError(f"Job '{job_id}' is not complete yet.")
+        status = read_json(status_path(state_root, job_id))
 
     result_manifest = read_json(result_path)
     materialize_root = resolve_materialize_root(dest, config.default_materialize_root)
@@ -647,6 +973,44 @@ def update_status(
         "attempt_id": attempt_id,
         "function_call_id": function_call_id,
     }
+    write_json(status_path(state_root, job_id), payload)
+
+
+def update_gha_status(
+    *,
+    state_root: Path,
+    job_id: str,
+    status: str,
+    plan: dict[str, Any],
+    attempt_id: str,
+    repo: str,
+    workflow: str,
+    run_id: int | None,
+    dispatch_id: str | None = None,
+    dispatched_at: str | None = None,
+    ref: str | None = None,
+    runner_os: str = "linux",
+    cells: int = 1,
+) -> None:
+    """Persist generic status plus the recovery handle required by GHA wait/fetch."""
+    update_status(
+        state_root=state_root,
+        job_id=job_id,
+        status=status,
+        plan=plan,
+        attempt_id=attempt_id,
+    )
+    payload = read_json(status_path(state_root, job_id))
+    payload.update({
+        "gha_repo": repo,
+        "gha_workflow": workflow,
+        "gha_run_id": run_id,
+        "gha_dispatch_id": dispatch_id or job_id,
+        "gha_dispatched_at": dispatched_at,
+        "gha_ref": ref,
+        "gha_runner_os": runner_os,
+        "gha_matrix_cells": cells,
+    })
     write_json(status_path(state_root, job_id), payload)
 
 

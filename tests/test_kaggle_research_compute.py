@@ -26,6 +26,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
 
@@ -98,6 +99,8 @@ runtime = "python"
 experiment = "sweep"
 runner_os = "linux"
 timeout_minutes = 200
+max_cpu = 16
+max_memory_mb = 16384
 """
 
 # Kaggle-disabled variant: Kaggle absent from routing_order entirely, to prove the lane is
@@ -117,6 +120,11 @@ def _with_liveness_defaults(resources: dict | None) -> dict:
     liveness = dict(snap.get("liveness", {}))
     liveness.setdefault("kaggle", {"usable": True, "reason": "injected-usable"})
     liveness.setdefault("hetzner", {"usable": True, "reason": "injected-usable"})
+    if "gha" in liveness:
+        gha_liveness = dict(liveness["gha"])
+        gha_liveness.setdefault("authenticated", True)
+        gha_liveness.setdefault("repo_private", True)
+        liveness["gha"] = gha_liveness
     snap["liveness"] = liveness
     return snap
 
@@ -130,7 +138,7 @@ def _make_workspace(tmp: Path, resources: dict | None = None, *, config_toml: st
     return ws
 
 
-def _plan(ws: Path, job: dict, *, creds: bool = True) -> dict:
+def _run_broker(ws: Path, command: str, job: dict, *, creds: bool = True) -> dict:
     """Run the real router in a subprocess. The API token is set only in the env (never argv);
     NO live Kaggle call is made because the Kaggle probe reads the injected liveness snapshot.
     KAGGLE_CONFIG_DIR points at the temp workspace (which has no access_token) so the box's real
@@ -146,11 +154,15 @@ def _plan(ws: Path, job: dict, *, creds: bool = True) -> dict:
     if creds:
         env["KAGGLE_API_TOKEN"] = "offline-token-for-test"
     proc = subprocess.run(
-        [sys.executable, "-m", "research_compute", "plan", str(ws / "job.json")],
+        [sys.executable, "-m", "research_compute", command, str(ws / "job.json")],
         env=env, capture_output=True, text=True, timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
+
+
+def _plan(ws: Path, job: dict, *, creds: bool = True) -> dict:
+    return _run_broker(ws, "plan", job, creds=creds)
 
 
 def _config(tmp: Path, text: str = CONFIG_TOML) -> rc_config.BrokerConfig:
@@ -189,6 +201,17 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertTrue(trail[0]["available"])
             # Modal was never consulted -- Kaggle won at position 2, ahead of the paid lanes.
             self.assertNotIn("modal", [t["backend"] for t in trail])
+
+    def test_submit_selected_kaggle_reports_lane_driver_handoff(self) -> None:
+        """The umbrella submit path must not mislabel a Kaggle plan as local execution."""
+        resources = {"liveness": {"kaggle": {"usable": True},
+                                  "modal": {"ready": True, "usable": True}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources)
+            result = _run_broker(ws, "submit", HEAVY_CPU_JOB, creds=True)
+            self.assertEqual(result["status"], "external_driver_required")
+            self.assertEqual(result["plan"]["backend"], "kaggle")
+            self.assertIn("kaggle-research-compute", result["message"])
 
     def test_cpu_local_still_first(self) -> None:
         """Local remains position 1: a small job whose full-run load stays under the ceiling
@@ -237,6 +260,136 @@ class KaggleRoutingTests(unittest.TestCase):
             plan = _plan(ws, HEAVY_CPU_JOB, creds=True)["plan"]
             self.assertTrue(plan["decision"].startswith("modal_"))
             self.assertNotIn("kaggle", [t["backend"] for t in plan["routing_trail"]])
+
+    def test_explicit_kaggle_override_bypasses_routing_order_for_cpu(self) -> None:
+        """An explicit override selects Kaggle even when it is absent from routing_order."""
+        resources = {"liveness": {"kaggle": {"usable": True},
+                                  "modal": {"ready": True, "usable": True}}}
+        job = {**HEAVY_CPU_JOB, "policy": {"backend": "kaggle"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(
+                Path(tmp), resources=resources, config_toml=NO_KAGGLE_CONFIG_TOML
+            )
+            plan = _plan(ws, job, creds=True)["plan"]
+            self.assertTrue(plan["accepted"])
+            self.assertEqual(plan["decision"], "kaggle")
+            self.assertEqual(plan["backend"], "kaggle")
+            self.assertEqual(
+                [entry["backend"] for entry in plan["routing_trail"]], ["kaggle"]
+            )
+
+    def test_explicit_kaggle_override_selects_gpu_when_requested(self) -> None:
+        resources = {"gpu": {"total_gpus": 1},
+                     "liveness": {"kaggle": {"usable": True},
+                                  "modal": {"ready": True, "usable": True}}}
+        job = {
+            "task_family": "generic",
+            "policy": {"backend": "kaggle", "gpu": True},
+            "constraints": {
+                "cpu": 2,
+                "memory_mb": 2048,
+                "parallelism": 2,
+                "core_hours": 4,
+            },
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources)
+            plan = _plan(ws, job, creds=True)["plan"]
+            self.assertTrue(plan["accepted"])
+            self.assertEqual(plan["decision"], "kaggle_gpu")
+            self.assertEqual(plan["backend"], "kaggle")
+            self.assertTrue(plan["within_weekly_gpu_cap"])
+
+    def test_explicit_kaggle_override_fails_closed_when_unavailable(self) -> None:
+        resources = {"liveness": {
+            "kaggle": {"usable": False, "reason": "kaggle_auth_failed"},
+            "modal": {"ready": True, "usable": True},
+        }}
+        job = {**HEAVY_CPU_JOB, "policy": {"backend": "kaggle"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources)
+            plan = _plan(ws, job, creds=True)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertIn("kaggle_unavailable", plan["risk_flags"])
+            self.assertNotIn("modal", [t["backend"] for t in plan["routing_trail"]])
+
+    def test_explicit_kaggle_gpu_pin_fails_when_weekly_cap_is_exhausted(self) -> None:
+        resources = {"gpu": {"total_gpus": 0}, "liveness": {
+            "kaggle": {"usable": True, "gpu_hours_used_this_week": 18.0},
+            "modal": {"ready": True, "usable": True},
+        }}
+        job = {
+            "task_family": "generic",
+            "policy": {"backend": "kaggle", "gpu": True},
+            "constraints": {"cpu": 2, "memory_mb": 2048, "parallelism": 2,
+                            "core_hours": 4},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources)
+            plan = _plan(ws, job, creds=True)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertIn("kaggle_unavailable", plan["risk_flags"])
+            self.assertIn("cap", plan["routing_trail"][0]["reason"])
+            self.assertNotIn("modal", [entry["backend"] for entry in plan["routing_trail"]])
+
+    def test_explicit_kaggle_cpu_pin_fails_when_one_kernel_is_inadequate(self) -> None:
+        resources = {"liveness": {
+            "kaggle": {"usable": True},
+            "modal": {"ready": True, "usable": True},
+        }}
+        job = {
+            "task_family": "enumeration",
+            "policy": {"backend": "kaggle"},
+            "constraints": {"cpu": 12, "memory_mb": 64 * 1024, "parallelism": 12,
+                            "core_hours": 40, "resource_class": "highmem_cpu"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(Path(tmp), resources=resources)
+            plan = _plan(ws, job, creds=True)["plan"]
+            self.assertFalse(plan["accepted"])
+            self.assertEqual(plan["decision"], "rejected")
+            self.assertIn("kaggle_unavailable", plan["risk_flags"])
+            self.assertFalse(plan["routing_trail"][0]["adequate"])
+
+    def test_explicit_kaggle_pin_does_not_probe_unrelated_providers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _config(Path(tmp))
+            selected_kaggle = {
+                "backend": "kaggle",
+                "available": True,
+                "adequate": True,
+                "reason": "available",
+                "est_runs": 1,
+                "est_kernels": 1,
+                "concurrency": 1,
+                "session_hours": 12.0,
+                "gpu_hours_est": 0.0,
+                "gpu_hours_cap": 18.0,
+                "within_gpu_cap": True,
+            }
+            with mock.patch.object(
+                planner.kaggle_backend, "probe", return_value=selected_kaggle
+            ), mock.patch.object(
+                planner.hetzner_backend,
+                "probe",
+                side_effect=AssertionError("unrelated Hetzner probe"),
+            ), mock.patch.object(
+                planner,
+                "modal_lane_available",
+                side_effect=AssertionError("unrelated Modal probe"),
+            ):
+                plan = planner.plan_job(
+                    {**HEAVY_CPU_JOB, "policy": {"backend": "kaggle"}},
+                    config=config,
+                    resources={},
+                    modal_ready=True,
+                )
+            self.assertEqual(plan["decision"], "kaggle")
+            self.assertEqual(
+                [entry["backend"] for entry in plan["routing_trail"]], ["kaggle"]
+            )
 
     def test_cpu_highmem_inadequate_falls_through_to_paid_lane(self) -> None:
         """A job needing more than one kernel's ~32 GB is INADEQUATE for Kaggle and falls

@@ -6,6 +6,32 @@ from pathlib import Path
 from typing import Any
 
 
+DEFAULT_ROUTING_ORDER = ("local", "kaggle", "modal", "hetzner", "gha")
+SUPPORTED_BACKENDS = frozenset(DEFAULT_ROUTING_ORDER)
+
+
+def routing_order_error(order: Any) -> str | None:
+    """Return a fail-closed validation error for automatic routing, else ``None``.
+
+    Local is a non-negotiable first safety boundary. Remote lanes may be reordered or
+    omitted, but every configured lane must be known and appear at most once.
+    """
+    if not isinstance(order, (list, tuple)):
+        return "routing_order must be an array of backend names"
+    if not order:
+        return "routing_order must not be empty"
+    if any(not isinstance(backend, str) for backend in order):
+        return "routing_order entries must be backend-name strings"
+    unknown = [backend for backend in order if backend not in SUPPORTED_BACKENDS]
+    if unknown:
+        return f"routing_order contains unsupported backends: {unknown}"
+    if len(set(order)) != len(order):
+        return "routing_order must not contain duplicate backends"
+    if order[0] != "local":
+        return "routing_order must start with local"
+    return None
+
+
 @dataclass
 class BrokerDefaults:
     auto_submit: bool = True
@@ -32,7 +58,7 @@ class BrokerConfig:
     allowed_gpu_families: list[str]
     per_job_cost_cap_usd: float
     default_archive_backend: str
-    routing_order: list[str] = field(default_factory=lambda: ["local", "kaggle", "modal", "hetzner", "gha"])
+    routing_order: list[str] = field(default_factory=lambda: list(DEFAULT_ROUTING_ORDER))
     gha_enabled: bool = False
     gha_included_minutes: int = 0
     gha_repos: dict[str, Any] = field(default_factory=dict)
@@ -160,7 +186,9 @@ def load_config(path: Path | None = None) -> BrokerConfig:
         allowed_gpu_families=list(data.get("allowed_gpu_families", [])),
         per_job_cost_cap_usd=float(data.get("per_job_cost_cap_usd", 5.0)),
         default_archive_backend=data.get("default_archive_backend", "local"),
-        routing_order=list(data.get("routing_order", ["local", "kaggle", "modal", "hetzner", "gha"])),
+        # Preserve malformed values so `doctor` and the planners can return a structured
+        # fail-closed diagnostic instead of crashing here during list coercion.
+        routing_order=data.get("routing_order", list(DEFAULT_ROUTING_ORDER)),
         gha_enabled=bool(data.get("gha", {}).get("enabled", False)),
         gha_included_minutes=int(data.get("gha", {}).get("included_minutes", 0)),
         gha_repos=dict(data.get("gha", {}).get("repos", {})),

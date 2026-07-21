@@ -7,8 +7,8 @@ highest-probability path from the start, this one presumes a **diverse
 multi-approach portfolio**, adds a rigorous definition-of-done, an approach
 registry with blocked-route discipline, and an adversarial audit gate. It keeps
 the same operational spine: the four stop conditions, cross-agent verification,
-fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute
-offload.
+fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with
+per-lane safety gates.
 
 Prefer this runbook when the problem is genuinely open, no single approach is
 obviously correct, or premature convergence on an "attractive but incomplete"
@@ -97,14 +97,16 @@ condition.
 | (c) | **A hard user-set spend cap is exhausted** | `budget.json` `max_usd` / `max_tokens` / `max_wall_minutes` reached | `budget.json` `spent_usd` / `spent_tokens` fields | `stop` / `budget_exhausted` |
 | (d) | **The user asks specifically to stop** | Explicit user signal | `termination_reason` in final record | `stop` / `user_stop` |
 
-**Credit/quota outage is NOT a terminal stop.** A Modal credit shortfall, an
-exhausted GitHub Actions minute allowance, or an agent-CLI credit/quota outage
-triggers **pause-and-wait**: set status `paused`, record the outage, and resume
-when credit returns (matching the `autonomous-research-loop-runtime` driver,
-which treats outages as pause, not failure). Only condition (c) — a hard spend
-cap the user set — is terminal. The provider-credit preflight in condition (c)'s
-row is separate from the user spend cap: check it before dispatch (see
-Heavy-Compute Offload) so a doomed job is never launched.
+**Credit/quota outage is NOT a terminal stop.** A candidate backend's failed
+budget/quota guard falls through to the next permitted lane in configured order.
+Only after all permitted lanes are exhausted—or an explicit backend override
+fails—does the outage trigger **pause-and-wait**: set status `paused`, record the
+outage, and resume when a guard clears (matching the
+`autonomous-research-loop-runtime` driver, which treats outages as pause, not
+failure). Only condition (c) — a hard spend cap the user set — is terminal. The
+compute-guard preflight in condition (c)'s row is separate from the user spend
+cap: check it before each dispatch candidate (see Heavy-Compute Offload) so a
+doomed job is never launched.
 
 ### Finite-N ASK gate (hard precondition before iteration 1)
 
@@ -133,16 +135,16 @@ budget and credit state stay in this runbook.
 | `max_wall_minutes` |  |  |
 | `max_usd` |  | Hard spend cap; hitting it is terminal condition (c). |
 | `max_tokens` |  | Hard token cap; hitting it is terminal condition (c). |
-| `modal_credit_ok` |  | Boolean from the last Modal credit check. **Check Modal credit first so it does not run out**, which would fail Modal tasks mid-run. |
-| `gha_minutes_remaining` |  | **Check GitHub Actions available usage time**: confirm the limit is not reached and remaining minutes cover the script. |
-| `credit_checked_at` |  | Timestamp of the last provider-credit check. |
+| `compute_backend` |  | Recommended order: `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique. |
+| `compute_guard_status` |  | Record each attempted lane and its applicable guard: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle CPU is free/quota-free. A failed lane falls through to the next permitted lane. |
+| `credit_checked_at` |  | Timestamp of the last applicable budget, quota, or teardown-guard check. |
 | `spent_iterations` |  |  |
 | `spent_portfolio_iterations` |  |  |
 | `spent_usd` |  |  |
 | `spent_tokens` |  |  |
 
-Re-check `modal_credit_ok` and `gha_minutes_remaining` (and update
-`credit_checked_at`) at the start of **each** loop that may dispatch heavy
+Re-check `compute_guard_status` (and update `credit_checked_at`) for candidates
+in configured order at the start of **each** loop that may dispatch heavy
 compute, not only once at preflight.
 
 ## Per-Loop Phase Plan
@@ -153,7 +155,7 @@ changes what P1 and P3 do, not whether they run.
 | Phase | Objective | Inputs | Outputs | Status |
 |---|---|---|---|---|
 | P1. Triage / path-select | Set this loop's `path_mode` via Approach Triage (portfolio is the presumption; single-path only with a recorded dominance justification). Update the approach registry. |  |  |  |
-| P2. Resource check | Run `get-available-resources` locally; if heavy compute is planned, re-check `modal_credit_ok` and `gha_minutes_remaining`. |  |  |  |
+| P2. Resource check | Run `get-available-resources` locally; if heavy compute is planned, re-check candidates in configured order and select the first permitted backend whose `compute_guard_status` passes. |  |  |  |
 | P3. Solve | Advance the selected approach(es): one path in single-path mode, or the live portfolio (bounded by `max_child_workers` / `max_portfolio_approaches`) in portfolio mode. **Always route cross-family handoffs through `cross-agent-delegation`** (mandatory; multi-agent fan-out is conditional on portfolio mode). If a script is required, **always implement it in a way that utilizes the current hardware resources** (see Heavy-Compute Offload for the concrete criterion). |  |  |  |
 | P4. Adversarial audit | Cross-agent verification plus the failure-mode checklist, per advanced approach. The solving family and the verifying family must differ. **Do not blindly trust the returned answers; verify them carefully.** See Adversarial Audit Gate. |  |  |  |
 | P5. Contradiction / refutation / stall handling | On a definitive logical contradiction, a verified refutation, or a theorem-strength stall, mark that route `blocked` in the registry, backtrack to the last valid node, pursue the next-best path, and re-verify by a fresh agent. This is route-level blocking, not loop termination. |  |  |  |
@@ -350,20 +352,25 @@ let one substitute for the other.
 
 When a step needs heavy computation, route it through `modal-research-compute`.
 
-- **Use Modal/GitHub Actions for heavy computation if required.**
-- The hardware rule applies to remote scripts too: any script Modal or GitHub
-  Actions executes must **always implement it in a way that utilizes the current
-  hardware resources** (cores, memory, accelerators) of the chosen backend.
+- The recommended automatic order is `local > Kaggle > Modal > Hetzner > GitHub Actions`;
+  a valid custom configured order is honored, with local first and remote lanes unique.
+- Kaggle CPU is free/quota-free. Before every remote dispatch, record the
+  selected lane and enforce its applicable guard: `Kaggle GPU-hours`,
+  `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or
+  `GitHub Actions minutes`.
+- The hardware rule applies to every remote script: it must **always implement
+  the work in a way that utilizes the current hardware resources** (cores,
+  memory, accelerators) of the chosen backend.
   Concretely, before accepting such a script confirm it: parallelizes across the
   available cores (or documents why it is single-threaded), uses the accelerator
   when one is present, batches I/O, and is sized against the
   `get-available-resources` report for the backend.
-- **Check `modal_credit_ok` first** so Modal credit does not run out mid-run.
-- If GitHub Actions is used, **check `gha_minutes_remaining`** and confirm the
-  usage limit is not reached and the remaining minutes cover the script.
-- Re-run these checks at every dispatching loop. A credit/quota outage is a
-  **pause-and-wait** (status `paused`, resume when restored), not a silent retry
-  and not a terminal stop; only a user-set spend cap (condition (c)) is terminal.
+- Re-run the applicable guard at every dispatching loop. If a lane's guard
+  fails—including a missing `Hetzner teardown` guarantee—record the result and
+  fall through to the next permitted lane in configured order. A budget/quota
+  outage becomes **pause-and-wait** (status `paused`, resume when restored) only
+  after all permitted lanes are exhausted or an explicit backend override
+  fails; only a user-set spend cap (condition (c)) is terminal.
 
 ## Approach Registry
 
@@ -400,8 +407,10 @@ Detail fields recorded per iteration:
 - evidence / verification ids
 - backtrack trigger (contradiction / refutation / stall) and backtrack target, if any
 - fresh-agent recheck result (`pass` / `not-applicable`)
-- `compute_backend` (local / Modal / GitHub Actions)
-- credit checks: `modal_credit_ok`, `gha_minutes_remaining`, `credit_checked_at`
+- `compute_backend` (local / Kaggle / Modal / Hetzner / GitHub Actions)
+- attempted-lane compute guards: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`,
+  `Hetzner teardown`, `GitHub Actions minutes`, plus `credit_checked_at` and the
+  selected lane after fall-through
 - budget spent this loop, including `spent_portfolio_iterations`
 
 Decision states (from `autonomous-research-loop`):
@@ -510,8 +519,8 @@ verification, and the credit checks.
 | One approach advanced without its own audit | Per-approach evidence | Reject; audit each advanced approach before logging progress. |
 | Status report accepted as a result | Concrete-deliverable requirement | Reject; require a lemma+proof, construction, or counterexample. |
 | Backtrack treated as verified | Fresh-agent gate | Re-verify the next-best path by a fresh agent before moving on. |
-| Credit/quota outage treated as terminal | Stop Conditions note | Pause-and-wait (status `paused`); resume when credit returns; only a user spend cap is terminal. |
-| Modal credit / GitHub Actions usage not checked before dispatch | Heavy-compute offload | Re-check `modal_credit_ok` / `gha_minutes_remaining`; pause if insufficient. |
+| Credit/quota outage treated as terminal | Stop Conditions note | Fall through all permitted lanes, then pause-and-wait (status `paused`) if none pass; resume when a guard clears. Only a user spend cap is terminal. |
+| Compute guard not checked before dispatch | Heavy-compute offload | Re-check each candidate's `compute_guard_status` and fall through in configured order; pause only after all permitted lanes are exhausted or an explicit backend override fails. |
 | Early success stop without evidence | Evidence gate | Reject the stop; continue with `revise`/`delegate` citing the missing evidence id. |
 | Ledger field invented | Runtime validation | Reuse the documented decision states and the loop files. |
 | Budget/credit copied into a packet | Packet validation | Remove; keep budget and credit state in this runbook only. |

@@ -29,19 +29,19 @@ Use this skill when the task is about:
 
 This skill is the Hetzner Cloud lane of the local `research_compute` broker. It rents a
 disposable server, runs a portable job bundle on it at full cores, fetches the results,
-and destroys the server. It is peer to the Modal and GitHub Actions lanes.
+and destroys the server. It is peer to the Kaggle, Modal, and GitHub Actions lanes.
 
 ## When to prefer this skill
 
 - the local machine is CPU, memory, or disk constrained for the requested workload, or must stay responsive so a local run would trip the self-preservation veto
-- the workload is CPU-heavy or high-memory (GPU work is out of scope in v1 and falls through to Modal)
+- the workload is CPU-heavy or high-memory (GPU work is out of scope in v1, so the router skips Hetzner and continues to the next GPU-capable lane)
 - a dedicated, disposable, full-core box is a better fit than a throttled local run
-- routing order is `local > Modal > Hetzner > GitHub Actions`, so Hetzner is the second offload tier (after Modal) for non-GPU work when a token and budget are available
+- the recommended routing order is `local > Kaggle > Modal > Hetzner > GitHub Actions`, so Hetzner follows the free Kaggle lane and Modal for non-GPU work when a token and budget are available; a valid custom order keeps local first and may reorder or omit unique remote lanes
 
 ## Unified routing
 
-The umbrella doc `compute-offload-routing.md` explains backend selection across the four
-lanes (local, Modal, Hetzner, GitHub Actions), the keep-local rules, and the local
+The umbrella doc `compute-offload-routing.md` explains backend selection across the five
+lanes (local, Kaggle, Modal, Hetzner, GitHub Actions), the keep-local rules, and the local
 self-preservation veto. The per-lane contract for Hetzner — driver verbs, guardrails, the
 lifecycle invariant, budget, and teardown — is in `references/hetzner-offload.md`. The
 broker router is the decision boundary: `plan` and `doctor` choose the backend; this skill
@@ -109,7 +109,7 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 - Within the auto-approve envelope (worst case at or below `max_eur_per_job`, at or below `max_concurrent_servers`, allow-listed types) the agent may submit alone; a larger spend needs out-of-band human confirmation the agent cannot mint.
 - Teardown must run on every terminal path (success, failure, timeout, boot-fail, push-fail, crash). Failure and timeout paths fetch checkpoints before destroy so work is resumable. A detached reaper (systemd timer or cron, never a session child) is the durable billing-stopper: deploy it from `references/reaper-deployment.md`. `oneshot` and `down --orphans` are the in-session teardown, and every `up` auto-attaches a cloud-init dead-man's-switch that caps compute even if the driver dies.
 - Billing-safety guardrails are on by default: a reconcile-before-create runaway-loop guard aborts `up` if live tagged servers would exceed `max_concurrent_servers`, and every provision/destroy/reap/kill is written to a redacted append-only audit log (`hetzner-audit.jsonl`). The standalone kill switch is `hetzner_reaper kill` (peer of `down --all`).
-- CPU-heavy or high-memory combinatorial workloads are the target. GPU work is out of scope in v1 and falls through to Modal.
+- CPU-heavy or high-memory combinatorial workloads are the target. GPU work is out of scope in v1, so the router skips Hetzner and continues to the next GPU-capable lane.
 - `doctor` and `preflight` work without a token or a server. `up`, `push`, `run`, `wait`, `fetch`, and `down` need the host to be Hetzner-ready (the `hcloud` CLI installed and `HCLOUD_TOKEN` set).
 - One-time per machine, run `bootstrap`: it checks the `hcloud` CLI and token presence and reports `doctor`. It never provisions.
 
@@ -118,5 +118,5 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 When this skill is involved, consider the same workflow templates as the other offload lanes
 (install via the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
 
-- `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and credit-gated heavy-compute offload.
-- `engineering-delivery-loop-runbook` -- Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and credit-gated heavy-compute offload.
+- `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
+- `engineering-delivery-loop-runbook` -- Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and five-lane broker-routed heavy-compute offload with per-lane safety gates.

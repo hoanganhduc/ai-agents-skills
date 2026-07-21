@@ -179,6 +179,38 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                 name,
             )
 
+    def test_compute_workflow_guidance_covers_default_order_and_lane_guards(self) -> None:
+        routing = self.read(
+            REPO_ROOT / "canonical" / "instructions" / "compute-offload-routing.md"
+        )
+        self.assertIn("local > Kaggle > Modal > Hetzner > GitHub Actions", routing)
+
+        workflow_templates = (
+            "autonomous-research-loop-runbook.md",
+            "autonomous-research-loop-portfolio-runbook.md",
+            "engineering-delivery-loop-runbook.md",
+            "cross-agent-adversarial-review.md",
+            "informal-to-lean-formalization-runbook.md",
+        )
+        required_guard_terms = (
+            "Kaggle GPU-hours",
+            "Modal USD",
+            "Hetzner EUR",
+            "Hetzner teardown",
+            "GitHub Actions minutes",
+        )
+        for name in workflow_templates:
+            text = self.read(TEMPLATES / name)
+            with self.subTest(template=name):
+                self.assertIn("local > Kaggle > Modal > Hetzner > GitHub Actions", text)
+                self.assertIn("custom configured order is honored", text)
+                self.assertIn("all permitted lanes", text)
+                self.assertIn("explicit backend override", text)
+                for term in required_guard_terms:
+                    self.assertIn(term, text)
+                self.assertNotIn("local/Modal/GitHub Actions", text)
+                self.assertNotIn("Modal/GitHub Actions credit-gated", text)
+
     def test_deep_research_skill_links_quality_guard_reference(self) -> None:
         skill_text = self.read(DEEP_RESEARCH / "SKILL.md")
         guard_text = self.read(DEEP_RESEARCH / "references" / "research-quality-guards.md")

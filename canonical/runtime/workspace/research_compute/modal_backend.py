@@ -27,14 +27,18 @@ def modal_ready_summary(config: Any, modal_config_path: Path) -> dict[str, Any]:
     cli_ok, cli_detail = modal_cli_status()
     token_env = bool(os.environ.get("MODAL_TOKEN_ID") and os.environ.get("MODAL_TOKEN_SECRET"))
 
+    config_exists = modal_config_path.exists()
+    authenticated = token_env or config_exists
     return {
         "modal_sdk_available": sdk_ok,
         "modal_sdk_detail": sdk_detail,
         "modal_cli_available": cli_ok,
         "modal_cli_path": cli_detail,
         "modal_config_path": str(modal_config_path),
-        "modal_config_exists": modal_config_path.exists(),
+        "modal_config_exists": config_exists,
         "modal_tokens_in_env": token_env,
+        "modal_authenticated": authenticated,
+        "modal_ready": bool(sdk_ok and authenticated),
         "modal_profile": config.modal_profile,
         "modal_environment": config.modal_environment,
         "deployment_alias": config.deployment_alias,
