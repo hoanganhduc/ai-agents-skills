@@ -189,6 +189,28 @@ subcommand).
 Each iteration runs with the project **root as cwd** so Grok sees the correct
 workspace even if the driver process was started elsewhere.
 
+### Progress updates while driving
+
+`drive` (unless `--no-progress`) and `watch` keep a live surface next to the ledger:
+
+| Path | What it is |
+|---|---|
+| `<loop>/LIVE_STATUS.md` | Human one-pager rewritten after every cycle / watch event |
+| `<loop>/driver_logs/progress.jsonl` | Append-only structured events (`drive_start`, `iteration_ok`, …) |
+| `<loop>/PROGRESS_REPORT.md` | Longer narrative each agent iteration should append |
+| stderr of `drive` | One progress line per event |
+
+Optional push notify (email, chat webhook, etc.):
+
+```bash
+… drive --dir <loop> --provider grok \
+  --notify-cmd 'echo "$AUTOLOOP_TEXT" >> /tmp/autoloop-notify.log'
+… watch --dir <loop> --poll 60 \
+  --notify-cmd 'echo "$AUTOLOOP_TEXT" >> /tmp/autoloop-notify.log'
+```
+
+`watch` is read-only and can run beside an already-started `drive`.
+
 ### Kill switches
 
 | Action | Linux/macOS | Windows PowerShell |

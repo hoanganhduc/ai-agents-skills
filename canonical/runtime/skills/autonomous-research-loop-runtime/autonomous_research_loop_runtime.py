@@ -1446,6 +1446,170 @@ def loop_driver_entry(reg: Path, run_dir: Path) -> dict[str, Any] | None:
     return None
 
 
+def progress_paths(run_dir: Path, log_dir: Path | None = None) -> dict[str, Path]:
+    """On-disk progress surfaces updated by drive and watch."""
+    logs = Path(log_dir).expanduser() if log_dir is not None else run_dir / "driver_logs"
+    return {
+        "log_dir": logs,
+        "progress_jsonl": logs / "progress.jsonl",
+        "live_status": run_dir / "LIVE_STATUS.md",
+    }
+
+
+def build_progress_event(
+    run_dir: Path,
+    event: str,
+    *,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a structured progress event from the current ledger tip."""
+    paths = loop_paths(run_dir)
+    record = last_ledger_record(run_dir) or {}
+    state: dict[str, Any] = {}
+    budget: dict[str, Any] = {}
+    try:
+        if paths["state"].exists():
+            state = read_json(paths["state"])
+    except (OSError, ValueError, json.JSONDecodeError):
+        state = {}
+    try:
+        if paths["budget"].exists():
+            budget = read_json(paths["budget"])
+    except (OSError, ValueError, json.JSONDecodeError):
+        budget = {}
+    iteration = int(record.get("iteration") or state.get("last_iteration") or 0)
+    spent = int(budget.get("spent_iterations") or iteration or 0)
+    max_iter = int(budget.get("max_iterations") or 0)
+    decision = str(record.get("decision") or state.get("status") or "?")
+    objective = str(record.get("objective") or "")
+    output = str(record.get("output") or "")
+    remaining = max(0, max_iter - spent) if max_iter else 0
+    text = (
+        f"autoloop {run_dir.name}: [{event}] iter {iteration}/{max_iter or '?'} "
+        f"({decision}) — {objective[:160]}"
+        + (f" | {output[:240]}" if output else "")
+    )
+    payload: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "timestamp": utc_now(),
+        "event": event,
+        "dir": str(run_dir),
+        "iteration": iteration,
+        "spent_iterations": spent,
+        "max_iterations": max_iter,
+        "remaining_iterations": remaining,
+        "decision": decision,
+        "status": str(state.get("status") or ""),
+        "objective": objective[:400],
+        "output_preview": output[:500],
+        "text": text,
+    }
+    if extra:
+        for key, value in extra.items():
+            if value is None or key == "text_override":
+                continue
+            payload[key] = value
+        if extra.get("text_override"):
+            payload["text"] = str(extra["text_override"])
+    return payload
+
+
+def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | None = None) -> None:
+    """Write LIVE_STATUS.md and append progress.jsonl (best-effort, never raises)."""
+    try:
+        paths = progress_paths(run_dir, log_dir)
+        paths["log_dir"].mkdir(parents=True, exist_ok=True)
+        append_jsonl(paths["progress_jsonl"], payload)
+        recovery_hint = ""
+        recovery_path = loop_paths(run_dir)["recovery"]
+        if recovery_path.exists():
+            try:
+                for line in recovery_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    if line.startswith("- HEARTBEAT") or line.startswith("- Next safe action"):
+                        recovery_hint = line.lstrip("- ").strip()
+                        break
+            except OSError:
+                recovery_hint = ""
+        body = "\n".join(
+            [
+                "# Autonomous loop live status",
+                "",
+                f"- Updated: {payload.get('timestamp', utc_now())}",
+                f"- Event: `{payload.get('event', '')}`",
+                f"- Loop: `{run_dir}`",
+                (
+                    f"- Progress: **{payload.get('spent_iterations', '?')}"
+                    f"/{payload.get('max_iterations') or '?'}**"
+                    f" ({payload.get('remaining_iterations', '?')} remaining)"
+                ),
+                f"- Loop status: `{payload.get('status') or '?'}`",
+                f"- Last decision: `{payload.get('decision') or '?'}`",
+                f"- Last iteration: **{payload.get('iteration', '?')}**",
+                f"- Objective: {payload.get('objective') or '(none yet)'}",
+                f"- Output preview: {payload.get('output_preview') or '(none yet)'}",
+                f"- Summary: {payload.get('text') or ''}",
+            ]
+            + (
+                [f"- Driver rc: `{payload.get('rc')}`", f"- Drive cycle: {payload.get('drive_cycle')}"]
+                if payload.get("drive_cycle") is not None or payload.get("rc") is not None
+                else []
+            )
+            + (
+                [f"- Log: `{payload.get('log_path')}`"]
+                if payload.get("log_path")
+                else []
+            )
+            + (
+                [f"- Recovery hint: {recovery_hint}"]
+                if recovery_hint
+                else []
+            )
+            + [
+                "",
+                "This file is rewritten after every drive cycle and every `watch` event.",
+                "Full history: `driver_logs/progress.jsonl`. Narrative log: `PROGRESS_REPORT.md`.",
+                "Kill switches: `STOP_REQUESTED`, `PAUSE`, or disarm the driver registry entry.",
+                "",
+            ]
+        )
+        paths["live_status"].write_text(body, encoding="utf-8")
+    except Exception:  # noqa: BLE001 - progress surfaces must never kill the driver.
+        pass
+
+
+def emit_loop_progress(
+    run_dir: Path,
+    event: str,
+    *,
+    log_dir: Path | None = None,
+    notify_cmd: str | None = None,
+    to_stderr: bool = True,
+    to_stdout_json: bool = False,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Record a progress event to disk, optional notify hook, and console."""
+    payload = build_progress_event(run_dir, event, extra=extra)
+    write_live_status(run_dir, payload, log_dir=log_dir)
+    env_payload = {
+        "AUTOLOOP_EVENT": str(event),
+        "AUTOLOOP_DIR": str(run_dir),
+        "AUTOLOOP_ITERATION": str(payload.get("iteration", "")),
+        "AUTOLOOP_DECISION": str(payload.get("decision", "")),
+        "AUTOLOOP_TEXT": str(payload.get("text", "")),
+        "AUTOLOOP_SPENT": str(payload.get("spent_iterations", "")),
+        "AUTOLOOP_MAX": str(payload.get("max_iterations", "")),
+        "AUTOLOOP_STATUS": str(payload.get("status", "")),
+    }
+    if to_stderr:
+        sys.stderr.write(str(payload.get("text", "")) + "\n")
+        sys.stderr.flush()
+    if to_stdout_json and not notify_cmd:
+        print(json.dumps(env_payload), flush=True)
+    if notify_cmd:
+        watch_notify(notify_cmd, env_payload)
+    return payload
+
+
 def watch_notify(cmd: str | None, payload: dict[str, str]) -> None:
     if not cmd:
         print(json.dumps(payload), flush=True)
@@ -1463,17 +1627,33 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
 
     Emits one event per newly appended iteration, one on terminal state, and
     one when the registry says a driver owns the loop but its pid is dead.
+    Always refreshes LIVE_STATUS.md and appends driver_logs/progress.jsonl.
     Read-only alongside `drive`; safe to start or stop at any time. Without
-    --notify-cmd, events print as JSON lines; with it, the command runs via
+    --notify-cmd, events also print as JSON lines; with it, the command runs via
     the shell with AUTOLOOP_EVENT/_DIR/_ITERATION/_DECISION/_TEXT in env.
     """
     run_dir = Path(args.dir).expanduser().resolve()
     reg = registry_dir(args)
+    log_dir = (
+        Path(args.log_dir).expanduser()
+        if getattr(args, "log_dir", None)
+        else run_dir / "driver_logs"
+    )
     start_record = last_ledger_record(run_dir)
     start_iter = int(start_record.get("iteration", 0)) if start_record else 0
     seen = args.from_iteration if args.from_iteration >= 0 else start_iter
     driver_dead_alerted = False
     events = 0
+    # Seed LIVE_STATUS immediately so operators see current tip without waiting.
+    emit_loop_progress(
+        run_dir,
+        "watch_start",
+        log_dir=log_dir,
+        notify_cmd=None,
+        to_stderr=False,
+        to_stdout_json=False,
+        extra={"source": "watch"},
+    )
     while True:
         verdict = compute_done(run_dir)
         record = last_ledger_record(run_dir)
@@ -1484,24 +1664,32 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                 f"autoloop {run_dir.name}: iteration {current} ({decision}) — "
                 f"{str(record.get('objective', ''))[:160]} | {str(record.get('output', ''))[:240]}"
             )
-            watch_notify(args.notify_cmd, {
-                "AUTOLOOP_EVENT": "iteration",
-                "AUTOLOOP_DIR": str(run_dir),
-                "AUTOLOOP_ITERATION": str(current),
-                "AUTOLOOP_DECISION": decision,
-                "AUTOLOOP_TEXT": text,
-            })
+            emit_loop_progress(
+                run_dir,
+                "iteration",
+                log_dir=log_dir,
+                notify_cmd=args.notify_cmd,
+                to_stderr=bool(args.notify_cmd),
+                to_stdout_json=not bool(args.notify_cmd),
+                extra={"source": "watch", "text_override": text},
+            )
+            # Prefer the human text we built for watch (matches prior CLI contract).
+            if not args.notify_cmd:
+                # emit_loop_progress already printed env-shaped JSON when to_stdout_json.
+                pass
             events += 1
             seen = current
         if verdict.get("done"):
             reason = str(verdict.get("reason") or "done")
-            watch_notify(args.notify_cmd, {
-                "AUTOLOOP_EVENT": "terminal",
-                "AUTOLOOP_DIR": str(run_dir),
-                "AUTOLOOP_ITERATION": str(current),
-                "AUTOLOOP_DECISION": reason,
-                "AUTOLOOP_TEXT": f"autoloop {run_dir.name}: FINISHED — {reason} (last iteration {current})",
-            })
+            emit_loop_progress(
+                run_dir,
+                "terminal",
+                log_dir=log_dir,
+                notify_cmd=args.notify_cmd,
+                to_stderr=bool(args.notify_cmd),
+                to_stdout_json=not bool(args.notify_cmd),
+                extra={"source": "watch", "terminal_reason": reason},
+            )
             events += 1
             return {"status": "ok", "action": "watch", "events": events, "reason": reason}
         if not verdict.get("paused"):
@@ -1510,16 +1698,15 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
             alive = isinstance(pid, int) and pid > 0 and pid_alive(pid)
             if entry is not None and not alive and not driver_dead_alerted:
                 driver_dead_alerted = True
-                watch_notify(args.notify_cmd, {
-                    "AUTOLOOP_EVENT": "driver_dead",
-                    "AUTOLOOP_DIR": str(run_dir),
-                    "AUTOLOOP_ITERATION": str(current),
-                    "AUTOLOOP_DECISION": "driver_dead",
-                    "AUTOLOOP_TEXT": (
-                        f"autoloop {run_dir.name}: DRIVER NOT RUNNING at iteration {current}, "
-                        "loop not done — relaunch drive or investigate"
-                    ),
-                })
+                emit_loop_progress(
+                    run_dir,
+                    "driver_dead",
+                    log_dir=log_dir,
+                    notify_cmd=args.notify_cmd,
+                    to_stderr=bool(args.notify_cmd),
+                    to_stdout_json=not bool(args.notify_cmd),
+                    extra={"source": "watch", "driver_pid": pid},
+                )
                 events += 1
             elif alive:
                 driver_dead_alerted = False
@@ -1593,6 +1780,21 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         else run_dir / "driver_logs"
     )
     log_dir.mkdir(parents=True, exist_ok=True)
+    notify_cmd = getattr(args, "notify_cmd", None)
+    progress_enabled = not bool(getattr(args, "no_progress", False))
+
+    def _progress(event: str, **extra: Any) -> None:
+        if not progress_enabled:
+            return
+        emit_loop_progress(
+            run_dir,
+            event,
+            log_dir=log_dir,
+            notify_cmd=notify_cmd,
+            to_stderr=True,
+            to_stdout_json=False,
+            extra=extra or None,
+        )
 
     # Arm (best-effort) so a concurrent interactive Stop hook for this root stands
     # down; the driver itself enforces "done" regardless of the registry.
@@ -1616,6 +1818,8 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     quota_waits_total = 0
     iterations_run = 0
     reason = "unknown"
+    was_paused = False
+    _progress("drive_start", source="drive", provider=provider or "", drive_pid=os.getpid())
     try:
         while True:
             try:
@@ -1627,8 +1831,12 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 reason = "done"
                 break
             if verdict.get("paused"):
+                if not was_paused:
+                    _progress("paused", source="drive")
+                    was_paused = True
                 time.sleep(poll)
                 continue
+            was_paused = False
             refresh_heartbeat(reg, run_id)
             if provider:
                 try:
@@ -1669,6 +1877,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             iterations_run += 1
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
             log_path = log_dir / f"iter_{stamp}_{iterations_run:04d}.log"
+            _progress(
+                "iteration_start",
+                source="drive",
+                drive_cycle=iterations_run,
+                log_path=str(log_path),
+                provider=provider or "",
+            )
             try:
                 with log_path.open("w", encoding="utf-8", errors="replace") as log_fh:
                     # Always run the iteration agent with project root as cwd so
@@ -1699,6 +1914,14 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     # still stops the moment a real stop condition fires.
                     quota_waits += 1
                     quota_waits_total += 1
+                    _progress(
+                        "quota_wait",
+                        source="drive",
+                        drive_cycle=iterations_run,
+                        rc=rc,
+                        log_path=str(log_path),
+                        quota_waits=quota_waits,
+                    )
                     if max_quota_waits and quota_waits > max_quota_waits:
                         reason = "quota_wait_exhausted"
                         break
@@ -1712,6 +1935,15 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     time.sleep(quota_backoff)
                     continue
                 failures += 1
+                _progress(
+                    "iteration_failed",
+                    source="drive",
+                    drive_cycle=iterations_run,
+                    rc=rc,
+                    log_path=str(log_path),
+                    failures=failures,
+                    max_failures=max_failures,
+                )
                 sys.stderr.write(
                     f"autoloop-driver: iteration command failed "
                     f"(rc={rc}, {failures}/{max_failures}, log: {log_path})\n"
@@ -1722,6 +1954,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 failures = 0
                 quota_waits = 0
+                _progress(
+                    "iteration_ok",
+                    source="drive",
+                    drive_cycle=iterations_run,
+                    rc=0,
+                    log_path=str(log_path),
+                )
     finally:
         disarm_ns = argparse.Namespace(
             dir=str(run_dir), run_id=None, registry_dir=getattr(args, "registry_dir", None)
@@ -1730,6 +1969,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             disarm_loop(disarm_ns)
         except Exception:  # noqa: BLE001 - disarm is best-effort cleanup.
             pass
+        _progress(
+            "drive_stop",
+            source="drive",
+            drive_cycle=iterations_run,
+            terminal_reason=reason,
+            provider=provider or "",
+        )
 
     exit_code = DRIVE_EXIT_CODES.get(reason, 0)
     return {
@@ -1742,6 +1988,8 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         "quota_waits_total": quota_waits_total,
         "log_dir": str(log_dir),
         "exit_code": exit_code,
+        "live_status": str(run_dir / "LIVE_STATUS.md"),
+        "progress_jsonl": str(log_dir / "progress.jsonl"),
     }
 
 
@@ -1835,7 +2083,9 @@ def build_parser() -> argparse.ArgumentParser:
         )
 
     watch = subparsers.add_parser(
-        "watch", help="report loop progress: per-iteration, terminal, and driver-death events"
+        "watch",
+        help="report loop progress: per-iteration, terminal, and driver-death events "
+        "(also refreshes LIVE_STATUS.md and driver_logs/progress.jsonl)",
     )
     watch.add_argument("--dir", required=True)
     watch.add_argument(
@@ -1846,6 +2096,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--from-iteration", type=int, default=-1,
                        help="baseline iteration; report anything newer (default: current ledger tip)")
     watch.add_argument("--once", action="store_true", help="single poll cycle, then exit")
+    watch.add_argument(
+        "--log-dir",
+        default=None,
+        help="directory for progress.jsonl (default: <dir>/driver_logs)",
+    )
     add_registry_args(watch)
     watch.set_defaults(func=watch_command)
 
@@ -1942,6 +2197,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--log-dir",
         default=None,
         help="directory for per-iteration output logs (default: <dir>/driver_logs)",
+    )
+    drive.add_argument(
+        "--notify-cmd",
+        default=None,
+        help="optional shell command per progress event (AUTOLOOP_EVENT/_DIR/_ITERATION/_DECISION/_TEXT env); "
+        "LIVE_STATUS.md and progress.jsonl are always updated unless --no-progress",
+    )
+    drive.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="disable LIVE_STATUS.md / progress.jsonl / stderr progress lines",
     )
     add_registry_args(drive)
     drive.set_defaults(func=drive_command)
