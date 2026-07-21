@@ -226,16 +226,21 @@ build contradicts it.
 
 Most Lean elaboration is local. If a build, large `decide`/`native_decide`
 enumeration, or a Mathlib-scale rebuild is too heavy for local execution, route
-it through `modal-research-compute` (after local, then Modal, then GitHub
-Actions per repo policy).
+it through `modal-research-compute`. The recommended automatic order is
+`local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored,
+with local first and remote lanes unique.
 
-- **Check Modal credit first** so a build does not fail mid-run for lack of
-  credit. If GitHub Actions is used, **check available usage minutes** and
-  confirm the runner time is enough for the Lean build.
+- Kaggle CPU is free/quota-free. Before every remote dispatch, record the
+  selected lane and enforce its applicable guard: `Kaggle GPU-hours`,
+  `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or
+  `GitHub Actions minutes`.
 - Any offloaded build script must **utilize the available hardware** (cores,
   memory) of the chosen backend.
-- Re-run the credit/usage check at each dispatching step. Insufficient credit or
-  usage maps to a `blocked` decision, not a silent retry.
+- Re-run the applicable guard at each dispatching step. If a lane's guard
+  fails, record the result and fall through to the next permitted lane in the
+  configured order. Map the run to `blocked` only after all permitted lanes are
+  exhausted or an explicit backend override fails; do not silently retry a
+  failed lane.
 
 ## Recovery Notes
 
@@ -247,7 +252,7 @@ Actions per repo policy).
 | Next safe action |  |
 | Open sorry-ledger rows |  |
 | Reused Mathlib declarations so far |  |
-| Toolchain / credit remaining |  |
+| Toolchain / attempted compute guards and selected lane |  |
 
 ## Failure Modes
 
@@ -264,7 +269,7 @@ Actions per repo policy).
 | Skeleton written for a proof that should not be formalized yet | Intake gate | Stop at F1; set `blocked`/`abandoned` and record the reason. |
 | Parallel speculative proofs kept alive | Single-path discipline | Collapse to the single highest-probability approach; drop the rest. |
 | Fresh context unavailable for acceptance | Cross-check gate | Output `BLOCKED-FRESH-CONTEXT-UNAVAILABLE` and ask for direction; do not self-confirm. |
-| Modal credit / GitHub Actions usage not checked before a heavy build | Heavy-compute offload | Re-check; mark `blocked` if insufficient. |
+| Compute guard not checked before a heavy build | Heavy-compute offload | Check candidate guards and fall through in configured order; mark `blocked` only when all permitted lanes are exhausted or an explicit backend override fails. |
 
 ## Final Outcome
 

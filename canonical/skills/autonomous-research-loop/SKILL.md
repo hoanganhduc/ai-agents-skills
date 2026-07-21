@@ -139,12 +139,15 @@ and `blocked` is not accepted: record the blocker and continue with `revise` or
 ### Heavy computation inside iterations
 
 Route heavy computation (exhaustive enumeration, certificate suites, censuses)
-through the modal-research-compute skill: the local broker/Modal, or the
-GitHub Actions offload contract in
-`skills/modal-research-compute/references/github-actions-offload.md`.
-Local execution is for reasoning, spec building, and smoke slices only; a
-local job projected past a few minutes belongs on remote compute — or, when
-remote is unavailable, on the throttled local queue defined in
+through the unified broker exposed by `modal-research-compute`. The recommended
+order is `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom order
+keeps local first and may reorder or omit unique remote lanes, while explicit
+backend overrides are hard pins that still pass lane safety gates. Let the broker's adequacy and
+self-preservation policy decide whether work stays local or falls through to an
+available remote lane. Use `run plan` as the decision boundary. Execute a selected
+Kaggle or Hetzner lane through its corresponding lane skill; `run submit` dispatches
+only Modal/GitHub Actions. When the broker is unavailable, use the throttled local
+queue defined in
 `skills/modal-research-compute/references/local-compute-throttle.md`
 (cross-platform: lockfile singleton, idle priority, chunked resumable
 checkpoints, load guards). Never launch ad-hoc unthrottled heavy processes. Record run
@@ -284,5 +287,5 @@ count a bare `style_applied: true` value as force-use evidence.
 When this skill is involved, consider these workflow templates (install via
 the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
 
-- `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute offload.
-- `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute offload.
+- `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
+- `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.

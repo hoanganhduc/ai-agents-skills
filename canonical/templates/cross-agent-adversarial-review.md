@@ -76,13 +76,18 @@ executing tests, or sweeping inputs.
 | Check | Requirement | Status |
 |---|---|---|
 | Local resources sufficient | Confirm CPU, memory, disk before local build, test, or sweep |  |
-| Credit preflight before remote | Verify Modal or GitHub Actions credit before any offloaded run |  |
+| Backend selection | Use the recommended order `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique |  |
+| Compute guard preflight | Verify each candidate's applicable guard before dispatch: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`; Kaggle CPU is free/quota-free |  |
 | Hardware utilization | Confirm the offloaded job actually uses the requested cores, memory, or GPU; idle paid hardware is a failure |  |
 | Cheapest sufficient tier | Pick the smallest tier that meets the need; do not over-provision |  |
 
-If credit preflight fails, do not start the remote run. Record the gap, fall
-back to a local check when feasible, or mark the affected finding
-`not-applicable` with a reason.
+If a lane's compute-guard preflight fails, do not start that lane. Record the
+result and fall through to the next permitted lane in configured order. For
+Hetzner, a run is not admissible unless the `Hetzner teardown` guarantee is
+active, but that failure still falls through. Only after all permitted lanes
+are exhausted—or an explicit backend override fails—fall back to a local check
+when feasible, block the review, or mark the affected finding `not-applicable`
+with a reason.
 
 ## Reviewer Role Assignment
 
@@ -248,7 +253,7 @@ blocking item named.
 | Fresh agent unavailable | Confirmation gate | Record `BLOCKED-FRESH-CONTEXT-UNAVAILABLE`; keep review `blocked`. |
 | Result packet unvalidated | Handoff contract validation | Treat the packet as absent until schema, provenance, and limitations pass. |
 | Parallel competing review paths | Single-path rule | Collapse to one path; keep only role and family diversity for verification. |
-| Credit preflight skipped before remote run | Compute preflight | Stop the remote run; preflight credit, then proceed or fall back locally. |
+| Compute guard preflight skipped before remote run | Compute preflight | Stop the remote run; check candidate guards and fall through in configured order. Block or fall back locally only after all permitted lanes are exhausted or an explicit backend override fails. |
 | Model or reasoning rule violated | Model policy review | Re-run affected roles with the parent's resolved model and reasoning. |
 
 ## Final Outcome

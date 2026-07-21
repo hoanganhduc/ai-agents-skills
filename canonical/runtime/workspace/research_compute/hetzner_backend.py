@@ -1,6 +1,6 @@
 """Hetzner Cloud compute backend for the research broker (routing/budget lane).
 
-This is the router-facing Hetzner lane, peer to the Modal and GitHub Actions
+This is the router-facing Hetzner lane, peer to the Kaggle, Modal, and GitHub Actions
 backends. Phase A ships ROUTING, BUDGET, and TEARDOWN-SAFETY LOGIC ONLY: the
 `probe` the planner consults, a fail-closed `budget_gate` mirroring the GitHub
 Actions minutes gate, and guarded `provision`/`teardown` stubs that refuse to
@@ -8,9 +8,9 @@ touch real infrastructure without credentials and an explicit confirmation. No
 network call, no `hcloud` invocation, and no server is ever created here; the
 provisioning driver ships in a later phase.
 
-Routing order is local > kaggle > modal > hetzner > gha. Hetzner is the offload tier
-after Modal for CPU / high-RAM work; GPU work is out of scope for v1 and falls through to
-Modal. Server sizing picks the cheapest configured type whose vCPU meets the
+Recommended routing order is local > kaggle > modal > hetzner > gha. Hetzner is the offload tier
+after Modal for CPU / high-RAM work; GPU work is out of scope for v1, so the router skips
+Hetzner and continues to the next GPU-capable lane. Server sizing picks the cheapest configured type whose vCPU meets the
 requested parallelism and whose RAM meets the estimate -- CPX22 (2 shared AMD cores)
 for small jobs, CPX62 (16 shared AMD cores) for up to 16-way fan-out, otherwise CCX63
 (48 dedicated cores); all are current orderable x86 types (Hetzner ARM cax* is
@@ -260,7 +260,7 @@ def probe(
     if state_root is not None:
         outstanding = budget_ledger.outstanding(Path(state_root), "hetzner")
     day_headroom = max(per_day - outstanding, 0.0)
-    within_budget = bool(spec) and est_cost <= day_headroom
+    within_budget = bool(spec) and worst_case <= day_headroom
 
     reasons: list[str] = []
     if not enabled:
@@ -271,10 +271,18 @@ def probe(
         reasons.append(usable_reason)
     if not adequate:
         reasons.append(adequacy_reason)
+    if spec and not within_auto_approve:
+        reasons.append(
+            f"worst-case EUR{worst_case:.2f} over per-job cap EUR{per_job:.2f}"
+        )
     if spec and not within_budget:
-        reasons.append(f"est_cost EUR{est_cost:.2f} over daily headroom EUR{day_headroom:.2f}")
+        reasons.append(
+            f"worst-case EUR{worst_case:.2f} over daily headroom EUR{day_headroom:.2f}"
+        )
 
-    available = bool(enabled and has_token and usable and within_budget)
+    available = bool(
+        enabled and has_token and usable and within_auto_approve and within_budget
+    )
     reason = "available" if (available and adequate) else ("; ".join(reasons) or "unavailable")
 
     return {

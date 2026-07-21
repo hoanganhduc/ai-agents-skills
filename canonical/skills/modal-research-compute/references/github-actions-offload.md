@@ -32,6 +32,10 @@ implementation whenever a research loop offloads to Actions.
 
 ## Workflow contract (`.github/workflows/<name>.yml`)
 
+- Accept the broker's opaque `job_id` input and bind both `run-name` and the consolidated
+  result artifact to it: `run-name: exp-${{ inputs.job_id }}` and
+  `result-${{ inputs.job_id }}`. The broker makes this value attempt-unique, correlates with
+  it, and downloads only from the exact persisted run id; never substitute a reusable title.
 - Matrix over `(suite, shard)`; `timeout-minutes` per job slightly above the
   driver budget; `fail-fast: false`.
 - Upload one artifact per shard with a stable name (`<suite>-<shard>`).

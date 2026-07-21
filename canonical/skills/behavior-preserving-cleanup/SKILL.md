@@ -45,4 +45,4 @@ does. Two guards prevent that.
 When this skill is involved, consider these workflow templates (install via
 the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
 
-- `engineering-delivery-loop-runbook` -- Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and credit-gated heavy-compute offload.
+- `engineering-delivery-loop-runbook` -- Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and five-lane broker-routed heavy-compute offload with per-lane safety gates.

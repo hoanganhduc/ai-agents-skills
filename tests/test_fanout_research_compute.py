@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
 
@@ -27,7 +28,7 @@ if str(WORKSPACE) not in sys.path:
     sys.path.insert(0, str(WORKSPACE))
 
 # (a) imports clean -- a failure here fails the whole module, which is the signal.
-from research_compute import fanout  # noqa: E402
+from research_compute import budget_ledger, fanout, hetzner_backend  # noqa: E402
 from research_compute import config as rc_config  # noqa: E402
 
 
@@ -107,6 +108,8 @@ runtime = "python"
 experiment = "sweep"
 runner_os = "linux"
 timeout_minutes = 60
+max_cpu = 16
+max_memory_mb = 16384
 """
 
 
@@ -277,6 +280,11 @@ class RailAdapterTests(unittest.TestCase):
                 "hetzner": {"usable": True},
                 "kaggle": {"usable": True}}
         live.update(liveness)
+        if "gha" in live:
+            gha_live = dict(live["gha"])
+            gha_live.setdefault("authenticated", True)
+            gha_live.setdefault("repo_private", True)
+            live["gha"] = gha_live
         return {"cpu": {"logical_cores": 8}, "memory": {"total_gb": 32, "available_gb": 24},
                 "disk": {"available_gb": 100}, "gpu": {"total_gpus": 0},
                 "load": {"load_1m": 0.2}, "liveness": live}
@@ -310,29 +318,68 @@ class RailAdapterTests(unittest.TestCase):
         self.assertEqual(kaggle.max_chunks, 100)          # no CPU quota rail
         self.assertEqual(kaggle.slots, 5 * 4)             # concurrency * kernel cores
 
-    def test_hetzner_eur_per_day_envelope_bounds_max_chunks(self) -> None:
-        """The <= EUR3/day auto-approve envelope becomes a max_chunks ceiling: a 48-core
-        ccx63 (parallelism 48) is sized so its share's EUR stays within EUR3."""
+    def test_hetzner_ccx63_fixed_worst_case_exceeds_auto_approve_envelope(self) -> None:
+        """A partial chunk share cannot amortize a server's fixed TTL reservation."""
         job = self._cpu_job(parallelism=48)
         profiles = fanout.build_lane_profiles(
             job, config=self.config, resources=self._resources(),
             modal_ready=True, total_chunks=100)
         hetzner = self._lane(profiles, "hetzner")
-        # ccx63: eur/core-hour = 1.3678/48; eur/chunk = that * 1h; floor(3.0 / eur_per_chunk).
-        eur_per_chunk = (1.3678 / 48)
-        self.assertEqual(hetzner.max_chunks, int(3.0 // eur_per_chunk))
-        self.assertLessEqual(hetzner.max_chunks * eur_per_chunk, 3.0 + 1e-9)
+        spec = self.config.hetzner_server_types["ccx63"]
+        fixed_worst_case = hetzner_backend.worst_case_eur(
+            spec, self.config.hetzner_max_server_hours
+        )
+        self.assertGreater(fixed_worst_case, self.config.hetzner_max_eur_per_job)
+        self.assertFalse(hetzner.available)
+        self.assertFalse(hetzner.usable)
 
-    def test_hetzner_outstanding_eur_reduces_headroom(self) -> None:
-        """Already-reserved EUR (injected) shrinks the daily headroom, so the rail ceiling drops."""
-        job = self._cpu_job(parallelism=48)
-        res = self._resources()
-        res["outstanding"] = {"hetzner": 2.0}  # only EUR1 of the EUR3/day cap remains
-        profiles = fanout.build_lane_profiles(
-            job, config=self.config, resources=res, modal_ready=True, total_chunks=100)
-        hetzner = self._lane(profiles, "hetzner")
-        eur_per_chunk = (1.3678 / 48)
-        self.assertEqual(hetzner.max_chunks, int(1.0 // eur_per_chunk))
+    def test_hetzner_real_ledger_reservations_close_fanout_lane(self) -> None:
+        """Fan-out reads the real ledger when no synthetic outstanding value is injected."""
+        job = self._cpu_job(parallelism=16)
+        resources = self._resources()
+        state = Path(self._tmp.name) / "fanout-real-ledger"
+        baseline = self._lane(
+            fanout.build_lane_profiles(
+                job,
+                config=self.config,
+                resources=resources,
+                modal_ready=True,
+                total_chunks=100,
+                state_root=state,
+            ),
+            "hetzner",
+        )
+        self.assertTrue(baseline.available)
+
+        spec = self.config.hetzner_server_types["cpx62"]
+        fixed_worst_case = hetzner_backend.worst_case_eur(
+            spec, self.config.hetzner_max_server_hours
+        )
+        for index in range(3):
+            hetzner_backend.budget_gate(
+                job_id=f"already-running-{index}",
+                server_spec=spec,
+                config=self.config,
+                state_root=state,
+            )
+        self.assertAlmostEqual(
+            budget_ledger.outstanding(state, "hetzner"),
+            3 * fixed_worst_case,
+        )
+
+        blocked = self._lane(
+            fanout.build_lane_profiles(
+                job,
+                config=self.config,
+                resources=resources,
+                modal_ready=True,
+                total_chunks=100,
+                state_root=state,
+            ),
+            "hetzner",
+        )
+        self.assertFalse(blocked.available)
+        self.assertFalse(blocked.usable)
 
     def test_modal_per_job_usd_cap_bounds_max_chunks(self) -> None:
         profiles = fanout.build_lane_profiles(
@@ -365,6 +412,64 @@ class RailAdapterTests(unittest.TestCase):
             job, config=self.config, resources=res, modal_ready=True, total_chunks=100)
         gha = self._lane(profiles, "gha")
         self.assertFalse(gha.available)  # 1180 + 60 worst-case > 1200 cap
+
+    def test_gha_fanout_uses_registered_timeout_and_os_multiplier_per_chunk(self) -> None:
+        job = self._cpu_job(core_hours=1)
+        job["gha_target"] = "sweep"
+        resources = self._resources(
+            gha={"used_this_cycle": 600, "included_minutes": 2000}
+        )
+        cases = (
+            ("linux", 1.0, 60.0, 10),
+            ("windows", 2.0, 120.0, 5),
+            ("macos", 10.0, 600.0, 1),
+        )
+        for label, multiplier, minutes_per_chunk, max_chunks in cases:
+            with self.subTest(runner_os=label):
+                config_text = CONFIG_TOML.replace(
+                    'runner_os = "linux"', f'runner_os = "{label}"'
+                )
+                config_path = Path(self._tmp.name) / f"gha-{label}.toml"
+                config_path.write_text(config_text, encoding="utf-8")
+                config = rc_config.load_config(config_path)
+                profiles = fanout.build_lane_profiles(
+                    job,
+                    config=config,
+                    resources=resources,
+                    modal_ready=True,
+                    total_chunks=100,
+                )
+                gha_lane = self._lane(profiles, "gha")
+                self.assertTrue(gha_lane.available)
+                self.assertEqual(gha_lane.native_cost_per_chunk, minutes_per_chunk)
+                self.assertEqual(gha_lane.max_chunks, max_chunks)
+                self.assertEqual(
+                    gha_lane.native_cost_per_chunk,
+                    60 * multiplier,
+                )
+
+    def test_gha_fanout_rejects_unknown_runner_os(self) -> None:
+        config_text = CONFIG_TOML.replace(
+            'runner_os = "linux"', 'runner_os = "solaris"'
+        )
+        config_path = Path(self._tmp.name) / "gha-unknown-os.toml"
+        config_path.write_text(config_text, encoding="utf-8")
+        config = rc_config.load_config(config_path)
+        job = self._cpu_job(core_hours=1, chunks=8)
+        job["gha_target"] = "sweep"
+        job["policy"] = {"backend": "gha"}
+        plan = fanout.plan_fanout(
+            job,
+            config=config,
+            resources=self._resources(
+                gha={"used_this_cycle": 100, "included_minutes": 2000}
+            ),
+            modal_ready=True,
+        )
+        self.assertFalse(plan["accepted"])
+        self.assertEqual(plan["effective_routing_order"], ["gha"])
+        self.assertFalse(plan["lanes"][0]["available"])
+        self.assertFalse(plan["lanes"][0]["usable"])
 
     def test_gpu_job_uses_kaggle_quota_and_skips_hetzner(self) -> None:
         """A GPU fan-out: Kaggle's weekly GPU-hour quota bounds its share, and Hetzner (no
@@ -457,6 +562,28 @@ class ReassignTests(unittest.TestCase):
         self.assertFalse(result["all_covered"])
         self.assertEqual(result["uncovered"], list(range(10, 20)))
 
+    def test_reassign_counts_completed_and_assigned_healthy_chunks_against_rail(self) -> None:
+        lanes = [
+            _profile("kaggle", slots=8, cost_per_chunk=0.0, max_chunks=5, unit="free"),
+            _profile("modal", slots=8, cost_per_chunk=0.10, max_chunks=10, unit="usd"),
+        ]
+        assignment = {
+            "kaggle": [0, 1, 2, 3],
+            "modal": [4, 5, 6],
+        }
+        result = fanout.reassign(
+            assignment=assignment,
+            completed_chunks={0, 1},
+            failed_lanes={"modal"},
+            lanes=lanes,
+            speed_cost_weight=0.5,
+        )
+        # Kaggle has consumed/been assigned 4 of its cumulative 5-chunk allowance, even
+        # though two of those chunks already completed. It may absorb exactly one retry.
+        self.assertEqual(sum(map(len, result["reassigned"].values())), 1)
+        self.assertEqual(len(result["uncovered"]), 2)
+        self.assertFalse(result["all_covered"])
+
 
 class MergeTests(unittest.TestCase):
     """Aggregation with the bundle's vacuity guard preserved."""
@@ -488,6 +615,28 @@ class MergeTests(unittest.TestCase):
         merged = fanout.merge_partials(outputs)
         self.assertFalse(merged["vacuous"])
         self.assertEqual(merged["non_vacuous_chunk_ids"], [1])
+
+    def test_merge_duplicate_prefers_successful_non_vacuous_retry(self) -> None:
+        outputs = {
+            "a_failed_first": [
+                {"chunk": 0, "status": "failed", "result": None},
+                {"chunk": 1, "status": "empty", "result": []},
+            ],
+            "z_successful_retry": [
+                {"chunk": 0, "status": "ok", "result": [42]},
+                {"chunk": 1, "status": "ok", "result": [99]},
+            ],
+        }
+        merged = fanout.merge_partials(outputs, expected_chunks=2)
+        self.assertEqual(merged["duplicates"], [0, 1])
+        self.assertEqual(merged["non_vacuous_chunk_ids"], [0, 1])
+        self.assertEqual(
+            [record["result"] for record in merged["merged"]],
+            [[42], [99]],
+        )
+        self.assertTrue(
+            all(record["_lane"] == "z_successful_retry" for record in merged["merged"])
+        )
 
 
 class FanoutGateTests(unittest.TestCase):
@@ -525,6 +674,91 @@ class FanoutGateTests(unittest.TestCase):
         use, reason = fanout.should_fanout({"constraints": {"chunks": 64}}, config=off)
         self.assertFalse(use)
         self.assertEqual(reason, "fanout_disabled")
+
+    def test_local_boundaries_never_probe_or_cap_remote_lanes(self) -> None:
+        cases = (
+            ("secret", {"data_locality": "secret"}),
+            ("remote-disabled", {"allow_remote": False}),
+            ("local-pin", {"backend": "local"}),
+        )
+        resources = {
+            "cpu": {"logical_cores": 16},
+            "load": {"load_1m": 0.2},
+            "gpu": {"total_gpus": 0},
+        }
+        fail = AssertionError("local-only fanout must not probe a remote lane")
+        with (
+            mock.patch.object(fanout.kaggle_backend, "probe", side_effect=fail),
+            mock.patch.object(fanout.hetzner_backend, "probe", side_effect=fail),
+            mock.patch.object(
+                fanout.planner, "modal_lane_available", side_effect=fail
+            ),
+            mock.patch.object(
+                fanout.github_actions_backend, "job_adequacy", side_effect=fail
+            ),
+            mock.patch.object(
+                fanout.github_actions_backend, "repo_ready", side_effect=fail
+            ),
+            mock.patch.object(
+                fanout.github_actions_backend, "usage_cap_ok", side_effect=fail
+            ),
+        ):
+            for label, policy in cases:
+                with self.subTest(case=label):
+                    plan = fanout.plan_fanout(
+                        {
+                            "task_family": "enumeration",
+                            "policy": policy,
+                            "constraints": {
+                                "cpu": 2,
+                                "parallelism": 2,
+                                "core_hours": 2,
+                                "chunks": 8,
+                            },
+                        },
+                        config=self.config,
+                        resources=resources,
+                        modal_ready=True,
+                    )
+                    self.assertTrue(plan["accepted"])
+                    self.assertEqual(plan["effective_routing_order"], ["local"])
+                    self.assertEqual(set(plan["allocation"]["counts"]), {"local"})
+
+    def test_unknown_locality_rejects_before_fanout_probes(self) -> None:
+        fail = AssertionError("invalid locality must reject before remote probes")
+        with (
+            mock.patch.object(fanout.kaggle_backend, "probe", side_effect=fail),
+            mock.patch.object(fanout.hetzner_backend, "probe", side_effect=fail),
+            mock.patch.object(
+                fanout.planner, "modal_lane_available", side_effect=fail
+            ),
+            mock.patch.object(
+                fanout.github_actions_backend, "job_adequacy", side_effect=fail
+            ),
+            mock.patch.object(
+                fanout.github_actions_backend, "repo_ready", side_effect=fail
+            ),
+            mock.patch.object(
+                fanout.github_actions_backend, "usage_cap_ok", side_effect=fail
+            ),
+        ):
+            plan = fanout.plan_fanout(
+                {
+                    "task_family": "enumeration",
+                    "policy": {"data_locality": "secrt"},
+                    "constraints": {
+                        "cpu": 2,
+                        "parallelism": 2,
+                        "core_hours": 2,
+                        "chunks": 8,
+                    },
+                },
+                config=self.config,
+                resources={"cpu": {"logical_cores": 16}},
+                modal_ready=True,
+            )
+        self.assertFalse(plan["accepted"])
+        self.assertIn("invalid_data_locality", plan["risk_flags"])
 
 
 class ConfigTests(unittest.TestCase):
@@ -581,7 +815,10 @@ class CliFanoutPlanTests(unittest.TestCase):
                      "load": {"load_1m": 0.2},
                      "liveness": {"modal": {"ready": True, "usable": True},
                                   "hetzner": {"usable": True}, "kaggle": {"usable": True},
-                                  "gha": {"used_this_cycle": 300, "included_minutes": 2000}}}
+                                  "gha": {"used_this_cycle": 300,
+                                          "included_minutes": 2000,
+                                          "authenticated": True,
+                                          "repo_private": True}}}
         (ws / ".codex_resources.json").write_text(json.dumps(resources), encoding="utf-8")
         return ws
 
@@ -624,6 +861,111 @@ class CliFanoutPlanTests(unittest.TestCase):
             fast = _fanout_plan(ws, {**base, "policy": {"speed_cost_weight": 1.0}})["fanout"]
             self.assertLessEqual(cheap["allocation"]["total_cost_usd"], fast["allocation"]["total_cost_usd"])
             self.assertLessEqual(fast["allocation"]["makespan_seconds"], cheap["allocation"]["makespan_seconds"])
+
+    def test_cli_fanout_locality_and_remote_policy_never_allocate_remote(self) -> None:
+        cases = (
+            ("secret", {"data_locality": "secret"}),
+            ("remote-disabled", {"allow_remote": False}),
+            ("local-pin", {"backend": "local"}),
+        )
+        for label, policy in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as tmp:
+                ws = self._make_ws(Path(tmp))
+                job = {
+                    "task_family": "enumeration",
+                    "policy": policy,
+                    "constraints": {
+                        "cpu": 2,
+                        "parallelism": 2,
+                        "core_hours": 2,
+                        "chunks": 8,
+                    },
+                }
+                fan = _fanout_plan(ws, job)["fanout"]
+                self.assertEqual(fan["effective_routing_order"], ["local"])
+                self.assertEqual(set(fan["allocation"]["counts"]), {"local"})
+                self.assertEqual(sum(fan["allocation"]["counts"].values()), 8)
+                self.assertNotIn("modal", fan["allocation"]["counts"])
+
+    def test_cli_fanout_secret_gpu_without_local_gpu_fails_closed(self) -> None:
+        job = {
+            "task_family": "generic",
+            "policy": {"gpu": True, "data_locality": "secret"},
+            "constraints": {"cpu": 2, "parallelism": 2, "core_hours": 2, "chunks": 8},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._make_ws(Path(tmp))
+            fan = _fanout_plan(ws, job)["fanout"]
+            self.assertFalse(fan["accepted"])
+            self.assertEqual(fan["effective_routing_order"], ["local"])
+            self.assertEqual(fan["allocation"]["counts"], {})
+            self.assertEqual([lane["lane"] for lane in fan["lanes"]], ["local"])
+            self.assertEqual(fan["lanes"][0]["rail_reason"], "no_local_gpu")
+
+    def test_cli_fanout_auto_gpu_never_assigns_cpu_only_local_or_hetzner(self) -> None:
+        job = {
+            "task_family": "embedding",
+            "constraints": {"cpu": 2, "parallelism": 2, "core_hours": 2, "chunks": 8},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._make_ws(Path(tmp))
+            fan = _fanout_plan(ws, job)["fanout"]
+            self.assertTrue(fan["accepted"])
+            self.assertNotIn("local", fan["allocation"]["counts"])
+            self.assertNotIn("hetzner", fan["allocation"]["counts"])
+            lanes = {lane["lane"]: lane for lane in fan["lanes"]}
+            self.assertFalse(lanes["local"]["usable"])
+            self.assertNotIn("hetzner", lanes)
+
+    def test_cli_fanout_hard_pin_restricts_allocation_to_selected_backend(self) -> None:
+        job = {
+            "task_family": "enumeration",
+            "policy": {"backend": "modal"},
+            "constraints": {"cpu": 4, "parallelism": 4, "core_hours": 4, "chunks": 8},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._make_ws(Path(tmp))
+            fan = _fanout_plan(ws, job)["fanout"]
+            self.assertTrue(fan["accepted"])
+            self.assertEqual(fan["effective_routing_order"], ["modal"])
+            self.assertEqual(set(fan["allocation"]["counts"]), {"modal"})
+
+    def test_cli_fanout_rejects_invalid_order_and_policy_types(self) -> None:
+        base = {
+            "task_family": "enumeration",
+            "constraints": {"cpu": 4, "parallelism": 4, "core_hours": 4, "chunks": 8},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._make_ws(Path(tmp))
+            config_path = ws / "config" / "research-compute.toml"
+            invalid_config = CONFIG_TOML.replace(
+                '["local", "kaggle", "modal", "hetzner", "gha"]',
+                '["modal", "local"]',
+                1,
+            )
+            self.assertNotEqual(invalid_config, CONFIG_TOML)
+            config_path.write_text(
+                invalid_config,
+                encoding="utf-8",
+            )
+            fan = _fanout_plan(ws, base)["fanout"]
+            self.assertFalse(fan["accepted"])
+            self.assertIn("invalid_routing_order", fan["risk_flags"])
+
+        cases = (
+            ({"allow_remote": "false"}, "invalid_allow_remote_policy"),
+            ({"gpu": "false"}, "invalid_gpu_request"),
+            ({"data_locality": 7}, "invalid_data_locality"),
+            ({"backend": 0}, "invalid_backend_override"),
+            ({"backend": " "}, "invalid_backend_override"),
+            ({"backend": "modal", "allow_remote": False}, "remote_override_forbidden"),
+        )
+        for policy, risk_flag in cases:
+            with self.subTest(policy=policy), tempfile.TemporaryDirectory() as tmp:
+                ws = self._make_ws(Path(tmp))
+                fan = _fanout_plan(ws, {**base, "policy": policy})["fanout"]
+                self.assertFalse(fan["accepted"])
+                self.assertIn(risk_flag, fan["risk_flags"])
 
 
 if __name__ == "__main__":

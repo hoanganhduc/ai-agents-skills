@@ -27,7 +27,7 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
         shutil.copy(EXAMPLE, ws / "config" / "research-compute.example.toml")
         return ws
 
-    def _run_bootstrap(self, ws: Path) -> dict:
+    def _run_cli(self, ws: Path, *args: str) -> dict:
         env = dict(os.environ)
         env["OPENCLAW_WORKSPACE"] = str(ws)
         env["PYTHONPATH"] = os.pathsep.join([str(WORKSPACE), env.get("PYTHONPATH", "")])
@@ -35,7 +35,7 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
         # so the runtime-inventory "only candidate sources" invariant stays intact.
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         proc = subprocess.run(
-            [sys.executable, "-m", "research_compute", "bootstrap", "--no-auth"],
+            [sys.executable, "-m", "research_compute", *args],
             env=env,
             capture_output=True,
             text=True,
@@ -43,6 +43,33 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)
+
+    def _run_bootstrap(self, ws: Path) -> dict:
+        return self._run_cli(ws, "bootstrap", "--no-auth")
+
+    def _install_example_config(
+        self,
+        ws: Path,
+        *,
+        routing_order: str | None = None,
+        omit_routing_order: bool = False,
+    ) -> None:
+        text = EXAMPLE.read_text(encoding="utf-8")
+        marker = 'routing_order = ["local", "kaggle", "modal", "hetzner", "gha"]'
+        self.assertIn(marker, text)
+        if omit_routing_order:
+            text = text.replace(
+                marker + "\n",
+                "",
+            )
+            self.assertNotIn(marker, text)
+        elif routing_order is not None:
+            text = text.replace(
+                marker,
+                f"routing_order = {routing_order}",
+            )
+            self.assertNotIn(marker, text)
+        (ws / "config" / "research-compute.toml").write_text(text, encoding="utf-8")
 
     def test_generates_config_if_absent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -69,6 +96,77 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
             again = self._run_bootstrap(ws)
             self.assertFalse(again["config"]["generated"])
             self.assertIn("left unchanged", again["config"].get("reason", ""))
+
+    def test_doctor_warns_when_routing_order_deviates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._make_workspace(Path(tmp))
+            configured = ["local", "modal", "hetzner", "gha"]
+            recommended = ["local", "kaggle", "modal", "hetzner", "gha"]
+            self._install_example_config(ws, routing_order=json.dumps(configured))
+
+            result = self._run_cli(ws, "doctor")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["routing_order"], configured)
+            self.assertEqual(
+                result["warnings"],
+                [
+                    {
+                        "code": "routing_order_deviation",
+                        "message": (
+                            "Configured routing_order differs from the recommended priority; "
+                            "the planner will honor the configured order."
+                        ),
+                        "configured": configured,
+                        "recommended": recommended,
+                    }
+                ],
+            )
+
+    def test_doctor_has_no_warning_for_recommended_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._make_workspace(Path(tmp))
+            self._install_example_config(ws, omit_routing_order=True)
+
+            result = self._run_cli(ws, "doctor")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(
+                result["routing_order"],
+                ["local", "kaggle", "modal", "hetzner", "gha"],
+            )
+            self.assertEqual(result["warnings"], [])
+
+    def test_doctor_distinguishes_invalid_routing_order_from_valid_deviation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = self._make_workspace(Path(tmp))
+            configured = ["modal", "local"]
+            self._install_example_config(ws, routing_order=json.dumps(configured))
+
+            result = self._run_cli(ws, "doctor")
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["routing_order"], configured)
+            self.assertEqual(
+                [warning["code"] for warning in result["warnings"]],
+                ["routing_order_invalid"],
+            )
+            self.assertIn("must start with local", result["warnings"][0]["error"])
+
+    def test_doctor_reports_non_array_routing_order_without_crashing(self) -> None:
+        for configured in ("7", '"local"'):
+            with self.subTest(configured=configured), tempfile.TemporaryDirectory() as tmp:
+                ws = self._make_workspace(Path(tmp))
+                self._install_example_config(ws, routing_order=configured)
+
+                result = self._run_cli(ws, "doctor")
+
+                self.assertTrue(result["ok"])
+                self.assertEqual(
+                    [warning["code"] for warning in result["warnings"]],
+                    ["routing_order_invalid"],
+                )
+                self.assertIn("must be an array", result["warnings"][0]["error"])
 
     def test_gh_probe_failure_does_not_crash_bootstrap(self) -> None:
         """A `gh` probe that times out/errors (seen intermittently on Windows

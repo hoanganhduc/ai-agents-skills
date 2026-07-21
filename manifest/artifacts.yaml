@@ -312,22 +312,22 @@
         "depends_on_skills": ["deep-research-workflow"]
       },
       "autonomous-research-loop-runbook": {
-        "description": "Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute offload.",
+        "description": "Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.",
         "source": "autonomous-research-loop-runbook.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "modal-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
+        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "kaggle-research-compute", "modal-research-compute", "hetzner-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
       },
       "autonomous-research-loop-portfolio-runbook": {
-        "description": "Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and Modal/GitHub Actions credit-gated heavy-compute offload.",
+        "description": "Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.",
         "source": "autonomous-research-loop-portfolio-runbook.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "modal-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
+        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "kaggle-research-compute", "modal-research-compute", "hetzner-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
       },
       "engineering-delivery-loop-runbook": {
-        "description": "Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and credit-gated heavy-compute offload.",
+        "description": "Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and five-lane broker-routed heavy-compute offload with per-lane safety gates.",
         "source": "engineering-delivery-loop-runbook.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-        "depends_on_skills": ["cross-agent-delegation", "behavior-preserving-cleanup", "decision-doubt-loop", "get-available-resources", "modal-research-compute", "agent-group-discuss", "model-router"]
+        "depends_on_skills": ["cross-agent-delegation", "behavior-preserving-cleanup", "decision-doubt-loop", "get-available-resources", "kaggle-research-compute", "modal-research-compute", "hetzner-research-compute", "agent-group-discuss", "model-router"]
       },
       "reversible-decision-memo": {
         "description": "Evidence-grounded decision record with named alternatives, source-cited rationale, reversibility class and trip-wires, and a fresh-context adversarial confirmation before the decision stands.",
@@ -339,13 +339,13 @@
         "description": "Local-first intake mapping an informal proof to Lean declarations with a scanner-first verification gate separating typecheck status from claim support.",
         "source": "informal-to-lean-formalization-runbook.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-        "depends_on_skills": ["lean-formalization-intake", "formal-skeleton-helper", "lean-explore-mcp", "lean-strict-verification-gate", "decision-doubt-loop", "cross-agent-delegation"]
+        "depends_on_skills": ["lean-formalization-intake", "formal-skeleton-helper", "lean-explore-mcp", "lean-strict-verification-gate", "decision-doubt-loop", "cross-agent-delegation", "get-available-resources", "kaggle-research-compute", "modal-research-compute", "hetzner-research-compute"]
       },
       "cross-agent-adversarial-review": {
         "description": "Producer-never-confirmer adversarial review of a paper, proof, or code artifact across agent families with a fresh-agent confirmation gate.",
         "source": "cross-agent-adversarial-review.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-        "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation", "paper-review", "annotated-review", "decision-doubt-loop", "research-verification-gate", "model-router"]
+        "depends_on_skills": ["agent-group-discuss", "cross-agent-delegation", "paper-review", "annotated-review", "decision-doubt-loop", "research-verification-gate", "model-router", "get-available-resources", "kaggle-research-compute", "modal-research-compute", "hetzner-research-compute"]
       },
       "tikz-figure-verification-runbook": {
         "description": "Bounded draw-compile-verify-redraw loop for a TikZ figure that guarantees it is free of overlap, wrong meaning, and bad layout, with Sage-assisted graph realization and fresh-agent visual confirmation before the strict approval gate.",
@@ -424,7 +424,7 @@
         "depends_on_skills": ["modal-research-compute"]
       },
       "github-actions-offload-routing": {
-        "description": "When to route compute to GitHub Actions (private repo, budget-gated, after local and Modal).",
+        "description": "When to route compute to GitHub Actions (private repo, budget-gated, last in the recommended five-lane order).",
         "source": "github-actions-offload-routing.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok"],
         "depends_on_skills": ["modal-research-compute"]
@@ -551,9 +551,9 @@
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "research-compute": {
-        "description": "Route heavy compute planning and offload decisions.",
+        "description": "Route heavy-compute planning and execution handoff across the unified five-lane broker.",
         "source": "research-compute.md",
-        "depends_on_skills": ["modal-research-compute"],
+        "depends_on_skills": ["kaggle-research-compute", "modal-research-compute", "hetzner-research-compute"],
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"]
       },
       "rss": {
