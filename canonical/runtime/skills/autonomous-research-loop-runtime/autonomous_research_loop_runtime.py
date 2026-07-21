@@ -1037,7 +1037,14 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
             return {"status": "ok", "action": "hook-check", "block": False, "reason": "stop_hook_active"}
         reg = registry_dir(args)
         gc_registry(reg)
-        raw_root = args.root or os.environ.get("CLAUDE_PROJECT_DIR")
+        # Workspace root for hooks: Grok sets GROK_WORKSPACE_ROOT and the Claude
+        # alias CLAUDE_PROJECT_DIR; Claude sets CLAUDE_PROJECT_DIR. Diagnostic only
+        # on Grok (Stop is non-blocking there).
+        raw_root = (
+            args.root
+            or os.environ.get("GROK_WORKSPACE_ROOT")
+            or os.environ.get("CLAUDE_PROJECT_DIR")
+        )
         root = Path(raw_root).expanduser().resolve() if raw_root else Path.cwd().resolve()
         match: dict[str, Any] | None = None
         for _, entry in list_registry_entries(reg):
@@ -1100,8 +1107,50 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
 #   AAS_AUTOLOOP_ARGS_<PROVIDER> replacement argument template (shlex-split;
 #                                {prompt}/{dir} placeholders substituted)
 #   AAS_AUTOLOOP_BIN_<PROVIDER>  replacement binary path
+#   AAS_GROK                     (grok only) binary override when AAS_AUTOLOOP_BIN_GROK
+#                                is unset; aligned with installer GROK_CLI_TOOL_SPEC
 # The default flag sets grant full tool autonomy, which unattended research
 # loops require; point the loop at a workspace you trust the agent to write.
+#
+# Grok binary preference MUST stay aligned with installer GROK_CLI_TOOL_SPEC
+# (drive/delegation): prefer region proxy grok-remote when present, else bare
+# grok. Diagnostics/smoke stay bare-grok-only (installer GROK_DIAGNOSTIC_*).
+# Logical provider id is always "grok" — never a separate "grok-remote" provider.
+
+# Platform-keyed candidates for provider "grok" (first existing/executable wins).
+# Keep preference order in sync with installer/ai_agents_skills/grok.py GROK_CLI_TOOL_SPEC.
+GROK_BINARY_CANDIDATES: dict[str, list[str]] = {
+    "linux": [
+        "grok-remote",
+        "~/grok-proxy/grok-remote",
+        "grok",
+        "~/.local/bin/grok",
+        "~/.grok/bin/grok",
+    ],
+    "macos": [
+        "grok-remote",
+        "~/grok-proxy/grok-remote",
+        "grok",
+        "~/.local/bin/grok",
+        "~/.grok/bin/grok",
+        "/opt/homebrew/bin/grok",
+        "/usr/local/bin/grok",
+    ],
+    "wsl": [
+        "grok-remote",
+        "~/grok-proxy/grok-remote",
+        "grok",
+        "~/.local/bin/grok",
+        "~/.grok/bin/grok",
+    ],
+    "windows": [
+        "grok-remote.cmd",
+        "grok-remote",
+        "%USERPROFILE%\\.grok\\bin\\grok.exe",
+        "grok.exe",
+        "grok",
+    ],
+}
 
 PROVIDER_SPECS: dict[str, dict[str, Any]] = {
     "claude": {
@@ -1133,6 +1182,17 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
         "binaries": ["gemini"],
         "args": ["--yolo", "-p", "{prompt}"],
         "consent_note": "--yolo auto-approves all actions",
+    },
+    "grok": {
+        # Short display list for error messages; full platform lists in GROK_BINARY_CANDIDATES.
+        "binaries": ["grok-remote", "grok"],
+        "args": ["-p", "{prompt}", "--yolo"],
+        "consent_note": (
+            "--yolo auto-approves tools for unattended loops; "
+            "binary is first of grok-remote then grok (platform-aware candidates); "
+            "override AAS_AUTOLOOP_BIN_GROK or AAS_GROK"
+        ),
+        "platform_candidates": GROK_BINARY_CANDIDATES,
     },
 }
 
@@ -1175,6 +1235,137 @@ def provider_env_key(provider: str) -> str:
     return provider.upper().replace("-", "_")
 
 
+def runtime_platform_name() -> str:
+    """Coarse platform key for binary candidate lists (linux/macos/wsl/windows)."""
+    if os.name == "nt" or sys.platform.startswith("win"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    try:
+        if "microsoft" in Path("/proc/version").read_text(encoding="utf-8", errors="ignore").lower():
+            return "wsl"
+    except OSError:
+        pass
+    return "linux"
+
+
+def expand_env_in_path(raw: str, environ: dict[str, str]) -> str:
+    """Expand ${VAR}, $VAR, and %VAR% using *environ*, then ~."""
+    text = raw
+    # Windows %VAR%
+    while True:
+        start = text.find("%")
+        if start < 0:
+            break
+        end = text.find("%", start + 1)
+        if end < 0:
+            break
+        name = text[start + 1 : end]
+        if not name:
+            break
+        text = text[:start] + environ.get(name, environ.get(name.upper(), "")) + text[end + 1 :]
+    # ${VAR} then $VAR (POSIX-ish)
+    def _dollar_brace(match: re.Match[str]) -> str:
+        return environ.get(match.group(1), "")
+
+    text = re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", _dollar_brace, text)
+    text = re.sub(
+        r"\$([A-Za-z_][A-Za-z0-9_]*)",
+        lambda m: environ.get(m.group(1), ""),
+        text,
+    )
+    # Expand ~ using *environ* HOME/USERPROFILE so isolated resolves (tests) work.
+    home = environ.get("HOME") or environ.get("USERPROFILE")
+    if text == "~":
+        text = home or str(Path.home())
+    elif text.startswith("~/") or text.startswith("~\\"):
+        text = str(Path(home or Path.home()) / text[2:])
+    elif text.startswith("~"):
+        # Other ~user forms: fall back to Path.expanduser (host home).
+        text = str(Path(text).expanduser())
+    return text
+
+
+def candidate_is_usable(raw: str, environ: dict[str, str]) -> tuple[bool, str]:
+    """Return (usable, resolved_path_or_name) for a binary candidate."""
+    expanded = expand_env_in_path(raw, environ)
+    if not expanded:
+        return False, raw
+    path = Path(expanded)
+    # Absolute / explicit path (after expand): must exist as a file.
+    if path.is_absolute() or os.sep in expanded or (os.altsep and os.altsep in expanded):
+        try:
+            if path.is_file():
+                return True, str(path)
+        except OSError:
+            return False, expanded
+        return False, expanded
+    # Bare command name: PATH lookup (Windows PATHEXT applies via shutil.which).
+    # Honor *environ* PATH when provided (tests and isolated resolve).
+    path_env = environ.get("PATH")
+    located = shutil.which(expanded, path=path_env) if path_env is not None else shutil.which(expanded)
+    if located:
+        return True, located
+    # Relative path that exists as a file (e.g. ./grok)
+    try:
+        if path.is_file():
+            return True, str(path.resolve())
+    except OSError:
+        pass
+    return False, expanded
+
+
+def provider_binary_candidates(
+    provider: str, environ: dict[str, str] | None = None, platform: str | None = None
+) -> list[str]:
+    """Ordered binary candidates for a provider (for probe + error messages)."""
+    env = os.environ if environ is None else environ
+    if provider not in PROVIDER_SPECS:
+        raise ValueError(f"unknown provider: {provider}")
+    spec = PROVIDER_SPECS[provider]
+    plat = platform or runtime_platform_name()
+    platform_map = spec.get("platform_candidates")
+    if isinstance(platform_map, dict):
+        return list(platform_map.get(plat) or platform_map.get("linux") or spec["binaries"])
+    return list(spec["binaries"])
+
+
+def resolve_provider_binary(
+    provider: str, environ: dict[str, str] | None = None, platform: str | None = None
+) -> tuple[str, bool, list[str]]:
+    """Resolve binary path for a provider.
+
+    Precedence: AAS_AUTOLOOP_BIN_<P> → (grok only) AAS_GROK → platform candidates.
+    Returns (binary, found, tried_list).
+    """
+    env = os.environ if environ is None else environ
+    if provider not in PROVIDER_SPECS:
+        raise ValueError(f"unknown provider: {provider}")
+    key = provider_env_key(provider)
+    tried: list[str] = []
+    override = env.get(f"AAS_AUTOLOOP_BIN_{key}")
+    if override:
+        tried.append(override)
+        ok, resolved = candidate_is_usable(override, env)
+        return (resolved if ok else override), ok, tried
+    if provider == "grok":
+        aas_grok = env.get("AAS_GROK")
+        if aas_grok:
+            tried.append(aas_grok)
+            ok, resolved = candidate_is_usable(aas_grok, env)
+            if ok:
+                return resolved, True, tried
+    candidates = provider_binary_candidates(provider, environ=env, platform=platform)
+    for cand in candidates:
+        tried.append(cand)
+        ok, resolved = candidate_is_usable(cand, env)
+        if ok:
+            return resolved, True, tried
+    # Nothing found: return first candidate name for error display.
+    fallback = candidates[0] if candidates else provider
+    return fallback, False, tried
+
+
 def resolve_provider_command(
     provider: str, run_dir: Path, environ: dict[str, str] | None = None
 ) -> dict[str, Any]:
@@ -1198,18 +1389,9 @@ def resolve_provider_command(
             "binary_found": True,
             "prompt": prompt,
             "consent_note": spec["consent_note"],
+            "tried": [],
         }
-    override = env.get(f"AAS_AUTOLOOP_BIN_{key}")
-    if override:
-        binary = override
-        binary_found = (
-            shutil.which(override) is not None
-            or Path(override).expanduser().exists()
-        )
-    else:
-        located = next((b for b in spec["binaries"] if shutil.which(b)), None)
-        binary = located or spec["binaries"][0]
-        binary_found = located is not None
+    binary, binary_found, tried = resolve_provider_binary(provider, environ=env)
     args_raw = env.get(f"AAS_AUTOLOOP_ARGS_{key}")
     template = shlex.split(args_raw) if args_raw else list(spec["args"])
     argv = [str(binary)] + [
@@ -1224,6 +1406,7 @@ def resolve_provider_command(
         "binary_found": binary_found,
         "prompt": prompt,
         "consent_note": spec["consent_note"],
+        "tried": tried,
     }
 
 
@@ -1454,11 +1637,18 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     reason = "bad_arguments"
                     break
                 if spec["mode"] == "argv" and not spec["binary_found"]:
+                    tried = spec.get("tried") or PROVIDER_SPECS[provider]["binaries"]
                     sys.stderr.write(
-                        f"autoloop-driver: no {provider} binary found on PATH "
-                        f"(tried: {', '.join(PROVIDER_SPECS[provider]['binaries'])}); "
+                        f"autoloop-driver: no {provider} binary found "
+                        f"(tried: {', '.join(tried)}); "
                         f"set AAS_AUTOLOOP_BIN_{provider_env_key(provider)} or "
-                        f"AAS_AUTOLOOP_CMD_{provider_env_key(provider)}\n"
+                        f"AAS_AUTOLOOP_CMD_{provider_env_key(provider)}"
+                        + (
+                            " or AAS_GROK"
+                            if provider == "grok"
+                            else ""
+                        )
+                        + "\n"
                     )
                     reason = "provider_unavailable"
                     break
@@ -1481,10 +1671,14 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             log_path = log_dir / f"iter_{stamp}_{iterations_run:04d}.log"
             try:
                 with log_path.open("w", encoding="utf-8", errors="replace") as log_fh:
+                    # Always run the iteration agent with project root as cwd so
+                    # headless CLIs (including grok -p) see the correct workspace
+                    # even when the driver was started from another directory.
                     completed = subprocess.run(
                         run_args,
                         shell=use_shell,
                         env=child_env,
+                        cwd=str(root),
                         timeout=iter_timeout,
                         stdout=log_fh,
                         stderr=subprocess.STDOUT,
@@ -1686,7 +1880,10 @@ def build_parser() -> argparse.ArgumentParser:
     hook.add_argument(
         "--root",
         default=None,
-        help="current session project root (default: $CLAUDE_PROJECT_DIR or cwd)",
+        help=(
+            "current session project root "
+            "(default: $GROK_WORKSPACE_ROOT, $CLAUDE_PROJECT_DIR, or cwd)"
+        ),
     )
     add_registry_args(hook)
     hook.set_defaults(func=hook_check_command)

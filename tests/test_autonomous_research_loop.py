@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
@@ -1072,3 +1073,303 @@ class AutoloopDriverShimTests(unittest.TestCase):
             )
             self.assertEqual(res.returncode, 0)
             self.assertFalse((loop / "ran").exists())  # iteration command never ran
+
+
+def _load_arl_runtime():
+    spec = importlib.util.spec_from_file_location("arl_runtime_under_test", HELPER)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class GrokProviderResolveTests(unittest.TestCase):
+    """Platform-aware grok binary resolution (provider id always 'grok')."""
+
+    def setUp(self) -> None:
+        self.mod = _load_arl_runtime()
+
+    def test_grok_in_provider_specs_not_grok_remote(self) -> None:
+        self.assertIn("grok", self.mod.PROVIDER_SPECS)
+        self.assertNotIn("grok-remote", self.mod.PROVIDER_SPECS)
+
+    def test_prefers_grok_remote_when_on_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            remote = bindir / "grok-remote"
+            bare = bindir / "grok"
+            remote.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            bare.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            remote.chmod(0o755)
+            bare.chmod(0o755)
+            env = {"PATH": str(bindir), "HOME": str(bindir)}
+            binary, found, tried = self.mod.resolve_provider_binary(
+                "grok", environ=env, platform="linux"
+            )
+            self.assertTrue(found)
+            self.assertTrue(binary.endswith("grok-remote") or Path(binary).name == "grok-remote")
+            self.assertIn("grok-remote", tried[0] if tried else "")
+
+    def test_falls_back_to_grok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            bare = bindir / "grok"
+            bare.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            bare.chmod(0o755)
+            env = {"PATH": str(bindir), "HOME": str(bindir)}
+            binary, found, _tried = self.mod.resolve_provider_binary(
+                "grok", environ=env, platform="linux"
+            )
+            self.assertTrue(found)
+            self.assertEqual(Path(binary).name, "grok")
+
+    def test_aas_autoloop_bin_override_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            forced = bindir / "custom-grok"
+            forced.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            forced.chmod(0o755)
+            remote = bindir / "grok-remote"
+            remote.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            remote.chmod(0o755)
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "AAS_AUTOLOOP_BIN_GROK": str(forced),
+            }
+            binary, found, _ = self.mod.resolve_provider_binary(
+                "grok", environ=env, platform="linux"
+            )
+            self.assertTrue(found)
+            self.assertEqual(Path(binary).resolve(), forced.resolve())
+
+    def test_aas_grok_override_when_no_autoloop_bin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            forced = bindir / "via-aas-grok"
+            forced.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            forced.chmod(0o755)
+            remote = bindir / "grok-remote"
+            remote.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            remote.chmod(0o755)
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "AAS_GROK": str(forced),
+            }
+            binary, found, _ = self.mod.resolve_provider_binary(
+                "grok", environ=env, platform="linux"
+            )
+            self.assertTrue(found)
+            self.assertEqual(Path(binary).resolve(), forced.resolve())
+
+    def test_windows_candidates_include_cmd_and_exe(self) -> None:
+        cands = self.mod.provider_binary_candidates("grok", platform="windows")
+        self.assertIn("grok-remote.cmd", cands)
+        self.assertIn("grok.exe", cands)
+        self.assertEqual(cands[0], "grok-remote.cmd")
+
+    def test_macos_candidates_include_homebrew(self) -> None:
+        cands = self.mod.provider_binary_candidates("grok", platform="macos")
+        self.assertIn("/opt/homebrew/bin/grok", cands)
+        self.assertEqual(cands[0], "grok-remote")
+
+    def test_resolve_provider_command_grok_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            bare = bindir / "grok"
+            bare.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            bare.chmod(0o755)
+            loop = Path(tmp) / "loop"
+            loop.mkdir()
+            env = {"PATH": str(bindir), "HOME": str(bindir)}
+            # Isolate from host AAS_* overrides
+            for k in list(env):
+                pass
+            with mock.patch.dict(os.environ, env, clear=False):
+                # clear host overrides
+                cleaned = {
+                    k: v
+                    for k, v in os.environ.items()
+                    if not k.startswith("AAS_AUTOLOOP_") and k != "AAS_GROK"
+                }
+                cleaned.update(env)
+                entry = self.mod.resolve_provider_command("grok", loop, environ=cleaned)
+            self.assertTrue(entry["binary_found"])
+            self.assertEqual(entry["mode"], "argv")
+            self.assertIn("-p", entry["argv"])
+            self.assertIn("--yolo", entry["argv"])
+
+
+class HookCheckWorkspaceRootTests(unittest.TestCase):
+    def test_prefers_grok_workspace_root_over_claude_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg = base / "reg"
+            root_a = base / "projA"
+            root_b = base / "projB"
+            loop = base / "loop"
+            root_a.mkdir()
+            root_b.mkdir()
+            loop.mkdir()
+            # init minimal loop state so compute_done works if matched
+            run_helper(
+                "init",
+                "--dir",
+                str(loop),
+                "--goal",
+                "g",
+                "--success-criteria",
+                "s",
+                "--max-iterations",
+                "5",
+            )
+            env = dict(
+                os.environ,
+                AAS_AUTOLOOP_REGISTRY=str(reg),
+                GROK_WORKSPACE_ROOT=str(root_a),
+                CLAUDE_PROJECT_DIR=str(root_b),
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(HELPER),
+                    "arm",
+                    "--dir",
+                    str(loop),
+                    "--root",
+                    str(root_a),
+                    "--pid",
+                    str(os.getpid()),
+                    "--registry-dir",
+                    str(reg),
+                ],
+                check=True,
+                capture_output=True,
+                env=env,
+            )
+            # hook-check with no --root uses env
+            res = subprocess.run(
+                [sys.executable, str(HELPER), "hook-check", "--registry-dir", str(reg)],
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+            # active unfinished loop for root_a -> exit 2 (block); no JSON on stdout
+            self.assertEqual(res.returncode, 2, res.stderr)
+            self.assertIn("Autoloop", res.stderr)
+
+            # Preferring GROK_WORKSPACE_ROOT: if only CLAUDE points at armed root,
+            # but GROK points elsewhere, do not match armed root_a.
+            env_wrong = dict(
+                os.environ,
+                AAS_AUTOLOOP_REGISTRY=str(reg),
+                GROK_WORKSPACE_ROOT=str(root_b),
+                CLAUDE_PROJECT_DIR=str(root_a),
+            )
+            res2 = subprocess.run(
+                [sys.executable, str(HELPER), "hook-check", "--registry-dir", str(reg)],
+                capture_output=True,
+                text=True,
+                env=env_wrong,
+                check=False,
+            )
+            self.assertEqual(res2.returncode, 0, res2.stderr)
+
+
+class DriveCwdTests(unittest.TestCase):
+    def test_drive_sets_child_cwd_to_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg = base / "reg"
+            loop = base / "loop"
+            root = base / "project root with spaces"
+            root.mkdir()
+            _init_loop(loop, reg, max_iterations=5)
+            # Record cwd then stop
+            cmd = _py_iteration(
+                "import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); "
+                "d.joinpath('cwd').write_text(os.getcwd()); "
+                "pathlib.Path(os.environ['AUTOLOOP_DIR'],'STOP_REQUESTED').write_text('x')"
+            )
+            env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(reg))
+            res = subprocess.run(
+                [
+                    sys.executable,
+                    str(HELPER),
+                    "drive",
+                    "--dir",
+                    str(loop),
+                    "--root",
+                    str(root),
+                    "--cmd",
+                    cmd,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=40,
+                env=env,
+                check=False,
+                cwd=str(base),  # driver started outside root
+            )
+            self.assertEqual(res.returncode, 0, res.stderr)
+            recorded = (loop / "cwd").read_text()
+            self.assertEqual(Path(recorded).resolve(), root.resolve())
+
+
+class DriveProviderGrokTests(unittest.TestCase):
+    def test_drive_provider_grok_multi_iter_and_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg = base / "reg"
+            loop = base / "loop"
+            root = base / "proj"
+            bindir = base / "bin"
+            root.mkdir()
+            bindir.mkdir()
+            # Fake grok: record invocations, stop after 2
+            fake = bindir / "grok-remote"
+            fake.write_text(
+                "#!/bin/sh\n"
+                "d=\"$AUTOLOOP_DIR\"\n"
+                "c=0; [ -f \"$d/c\" ] && c=$(cat \"$d/c\")\n"
+                "c=$((c+1)); echo \"$c\" > \"$d/c\"\n"
+                "pwd > \"$d/cwd_$c\"\n"
+                "if [ \"$c\" -ge 2 ]; then touch \"$d/STOP_REQUESTED\"; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            _init_loop(loop, reg, max_iterations=10)
+            env = dict(os.environ)
+            env["AAS_AUTOLOOP_REGISTRY"] = str(reg)
+            env["AAS_AUTOLOOP_BIN_GROK"] = str(fake)
+            env.pop("AAS_AUTOLOOP_CMD_GROK", None)
+            env.pop("AAS_GROK", None)
+            res = subprocess.run(
+                [
+                    sys.executable,
+                    str(HELPER),
+                    "drive",
+                    "--dir",
+                    str(loop),
+                    "--root",
+                    str(root),
+                    "--provider",
+                    "grok",
+                    "--max-failures",
+                    "2",
+                    "--iteration-timeout",
+                    "10",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=45,
+                env=env,
+                check=False,
+                cwd=str(base),
+            )
+            self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
+            self.assertEqual((loop / "c").read_text().strip(), "2")
+            self.assertEqual(Path((loop / "cwd_1").read_text().strip()).resolve(), root.resolve())
