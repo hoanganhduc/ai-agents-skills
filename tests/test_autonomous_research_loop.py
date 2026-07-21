@@ -1083,11 +1083,30 @@ def _load_arl_runtime():
     return mod
 
 
+def _fake_cli(bindir: Path, name: str, body: str | None = None) -> Path:
+    """Create a host-runnable stub CLI (POSIX script or Windows .cmd)."""
+    if os.name == "nt":
+        path = bindir / f"{name}.cmd"
+        if body is None:
+            path.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+        else:
+            path.write_text(body, encoding="utf-8")
+        return path
+    path = bindir / name
+    if body is None:
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    else:
+        path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
 class GrokProviderResolveTests(unittest.TestCase):
     """Platform-aware grok binary resolution (provider id always 'grok')."""
 
     def setUp(self) -> None:
         self.mod = _load_arl_runtime()
+        self.plat = self.mod.runtime_platform_name()
 
     def test_grok_in_provider_specs_not_grok_remote(self) -> None:
         self.assertIn("grok", self.mod.PROVIDER_SPECS)
@@ -1096,49 +1115,57 @@ class GrokProviderResolveTests(unittest.TestCase):
     def test_prefers_grok_remote_when_on_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bindir = Path(tmp)
-            remote = bindir / "grok-remote"
-            bare = bindir / "grok"
-            remote.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            bare.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            remote.chmod(0o755)
-            bare.chmod(0o755)
-            env = {"PATH": str(bindir), "HOME": str(bindir)}
+            remote = _fake_cli(bindir, "grok-remote")
+            bare = _fake_cli(bindir, "grok")
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+            }
             binary, found, tried = self.mod.resolve_provider_binary(
-                "grok", environ=env, platform="linux"
+                "grok", environ=env, platform=self.plat
             )
-            self.assertTrue(found)
-            self.assertTrue(binary.endswith("grok-remote") or Path(binary).name == "grok-remote")
-            self.assertIn("grok-remote", tried[0] if tried else "")
+            self.assertTrue(found, tried)
+            self.assertTrue(
+                Path(binary).name.startswith("grok-remote"),
+                binary,
+            )
+            self.assertTrue(
+                any(t.startswith("grok-remote") for t in tried),
+                tried,
+            )
+            self.assertTrue(remote.exists() and bare.exists())
 
     def test_falls_back_to_grok(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bindir = Path(tmp)
-            bare = bindir / "grok"
-            bare.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            bare.chmod(0o755)
-            env = {"PATH": str(bindir), "HOME": str(bindir)}
+            bare = _fake_cli(bindir, "grok")
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+            }
             binary, found, _tried = self.mod.resolve_provider_binary(
-                "grok", environ=env, platform="linux"
+                "grok", environ=env, platform=self.plat
             )
-            self.assertTrue(found)
-            self.assertEqual(Path(binary).name, "grok")
+            self.assertTrue(found, _tried)
+            self.assertTrue(Path(binary).name.startswith("grok"), binary)
+            self.assertFalse(Path(binary).name.startswith("grok-remote"), binary)
+            self.assertTrue(bare.exists())
 
     def test_aas_autoloop_bin_override_wins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bindir = Path(tmp)
-            forced = bindir / "custom-grok"
-            forced.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            forced.chmod(0o755)
-            remote = bindir / "grok-remote"
-            remote.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            remote.chmod(0o755)
+            forced = _fake_cli(bindir, "custom-grok")
+            _fake_cli(bindir, "grok-remote")
             env = {
                 "PATH": str(bindir),
                 "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
                 "AAS_AUTOLOOP_BIN_GROK": str(forced),
             }
             binary, found, _ = self.mod.resolve_provider_binary(
-                "grok", environ=env, platform="linux"
+                "grok", environ=env, platform=self.plat
             )
             self.assertTrue(found)
             self.assertEqual(Path(binary).resolve(), forced.resolve())
@@ -1146,19 +1173,16 @@ class GrokProviderResolveTests(unittest.TestCase):
     def test_aas_grok_override_when_no_autoloop_bin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bindir = Path(tmp)
-            forced = bindir / "via-aas-grok"
-            forced.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            forced.chmod(0o755)
-            remote = bindir / "grok-remote"
-            remote.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            remote.chmod(0o755)
+            forced = _fake_cli(bindir, "via-aas-grok")
+            _fake_cli(bindir, "grok-remote")
             env = {
                 "PATH": str(bindir),
                 "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
                 "AAS_GROK": str(forced),
             }
             binary, found, _ = self.mod.resolve_provider_binary(
-                "grok", environ=env, platform="linux"
+                "grok", environ=env, platform=self.plat
             )
             self.assertTrue(found)
             self.assertEqual(Path(binary).resolve(), forced.resolve())
@@ -1177,25 +1201,22 @@ class GrokProviderResolveTests(unittest.TestCase):
     def test_resolve_provider_command_grok_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bindir = Path(tmp)
-            bare = bindir / "grok"
-            bare.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            bare.chmod(0o755)
+            _fake_cli(bindir, "grok")
             loop = Path(tmp) / "loop"
             loop.mkdir()
-            env = {"PATH": str(bindir), "HOME": str(bindir)}
-            # Isolate from host AAS_* overrides
-            for k in list(env):
-                pass
-            with mock.patch.dict(os.environ, env, clear=False):
-                # clear host overrides
-                cleaned = {
-                    k: v
-                    for k, v in os.environ.items()
-                    if not k.startswith("AAS_AUTOLOOP_") and k != "AAS_GROK"
-                }
-                cleaned.update(env)
-                entry = self.mod.resolve_provider_command("grok", loop, environ=cleaned)
-            self.assertTrue(entry["binary_found"])
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+            }
+            cleaned = {
+                k: v
+                for k, v in os.environ.items()
+                if not k.startswith("AAS_AUTOLOOP_") and k != "AAS_GROK"
+            }
+            cleaned.update(env)
+            entry = self.mod.resolve_provider_command("grok", loop, environ=cleaned)
+            self.assertTrue(entry["binary_found"], entry)
             self.assertEqual(entry["mode"], "argv")
             self.assertIn("-p", entry["argv"])
             self.assertIn("--yolo", entry["argv"])
@@ -1328,19 +1349,31 @@ class DriveProviderGrokTests(unittest.TestCase):
             bindir = base / "bin"
             root.mkdir()
             bindir.mkdir()
-            # Fake grok: record invocations, stop after 2
-            fake = bindir / "grok-remote"
-            fake.write_text(
-                "#!/bin/sh\n"
-                "d=\"$AUTOLOOP_DIR\"\n"
-                "c=0; [ -f \"$d/c\" ] && c=$(cat \"$d/c\")\n"
-                "c=$((c+1)); echo \"$c\" > \"$d/c\"\n"
-                "pwd > \"$d/cwd_$c\"\n"
-                "if [ \"$c\" -ge 2 ]; then touch \"$d/STOP_REQUESTED\"; fi\n"
-                "exit 0\n",
-                encoding="utf-8",
-            )
-            fake.chmod(0o755)
+            # Fake grok via host Python so Windows and POSIX both can exec it.
+            fake = bindir / ("fake_grok.cmd" if os.name == "nt" else "fake_grok")
+            if os.name == "nt":
+                fake.write_text(
+                    "@echo off\r\n"
+                    f"\"{sys.executable}\" -c "
+                    "\"import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); "
+                    "c=(int((d/'c').read_text()) if (d/'c').exists() else 0)+1; "
+                    "(d/'c').write_text(str(c)); "
+                    "(d/f'cwd_{c}').write_text(os.getcwd()); "
+                    "(c>=2 and (d/'STOP_REQUESTED').write_text('x'))\"\r\n",
+                    encoding="utf-8",
+                )
+            else:
+                fake.write_text(
+                    "#!/bin/sh\n"
+                    f"exec \"{sys.executable}\" -c "
+                    "\"import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); "
+                    "c=(int((d/'c').read_text()) if (d/'c').exists() else 0)+1; "
+                    "(d/'c').write_text(str(c)); "
+                    "(d/f'cwd_{c}').write_text(os.getcwd()); "
+                    "(c>=2 and (d/'STOP_REQUESTED').write_text('x'))\"\n",
+                    encoding="utf-8",
+                )
+                fake.chmod(0o755)
             _init_loop(loop, reg, max_iterations=10)
             env = dict(os.environ)
             env["AAS_AUTOLOOP_REGISTRY"] = str(reg)
