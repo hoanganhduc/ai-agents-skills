@@ -55,6 +55,7 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `paper-lookup` | External paper metadata and discovery fallback. | `library`, `serious-research`, `full-research` |
 | `paper-review` | Single-agent paper review workflow. | `serious-research`, `full-research` |
 | `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `serious-research`, `full-research` |
+| `remote-bridge` | Cross-target remote control plane: Zulip default control plus optional Telegram mobile notify, mailbox approvals/instructions, and ARL drive integration. Not for OpenClaw. |  |
 | `research-briefing` | Scope nontrivial research before execution with evidence plan and workflow recommendation. | `research-core`, `serious-research`, `full-research` |
 | `research-digest-wrapper` | Run tracked-topic research digests. | `digest`, `full-research` |
 | `research-report-reviewer` | Review draft research reports for unsupported claims, ambiguity, and evidence gaps. | `research-core`, `serious-research`, `full-research` |
