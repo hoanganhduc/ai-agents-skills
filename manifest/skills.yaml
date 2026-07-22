@@ -874,6 +874,43 @@
         "offline-smoke"
       ]
     },
+    "opengauss": {
+      "description": "Optional inert readiness helper for Math Inc. OpenGauss Lean prove/formalize workflows; live install is manual-native.",
+      "profiles": [
+        "formal-research",
+        "formal-research-remote",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "lean-cli",
+        "lake-cli",
+        "uvx-cli",
+        "gauss-cli"
+      ],
+      "optional_capabilities": [
+        "manual-opengauss-setup",
+        "opengauss-run-evidence"
+      ],
+      "recommended_templates": [
+        "informal-to-lean-formalization-runbook"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
+    },
     "model-router": {
       "description": "Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work.",
       "profiles": [

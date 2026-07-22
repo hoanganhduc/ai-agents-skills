@@ -610,6 +610,27 @@ def validate_smoke_output(
         checks.append({"name": "placeholder-present", "ok": payload.get("snippet_contains_placeholder") is True})
         checks.append({"name": "package-pinned", "ok": payload.get("snippet_package_pinned") is True})
         checks.append({"name": "no-secret-value", "ok": "AXLE-SMOKE-CANARY" not in serialized})
+    elif skill == "opengauss":
+        payload = parse_json_stdout(completed.stdout)
+        serialized = json.dumps(payload, sort_keys=True)
+        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok" and payload.get("ok") is True})
+        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
+        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
+        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
+        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
+        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
+        checks.append({"name": "gauss-not-launched", "ok": payload.get("gauss_launched") is False})
+        checks.append({"name": "placeholder-present", "ok": payload.get("snippet_contains_placeholder") is True})
+        checks.append({"name": "install-pointer-present", "ok": payload.get("snippet_has_install_pointer") is True})
+        checks.append({"name": "windows-live-policy", "ok": payload.get("native_windows_refused") is True})
+        checks.append({"name": "no-secret-value", "ok": "OPENGAUSS-SMOKE-CANARY" not in serialized})
+        policy = payload.get("evidence_policy") if isinstance(payload.get("evidence_policy"), dict) else {}
+        checks.append({
+            "name": "evidence-policy-present",
+            "ok": "opengauss_run" in policy and "formal_check" in policy,
+        })
     elif skill == "lean-explore-mcp":
         payload = parse_json_stdout(completed.stdout)
         serialized = json.dumps(payload, sort_keys=True)

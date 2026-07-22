@@ -45,6 +45,7 @@ Status vocabulary used by `precheck`:
 | `chromium-browser-system-tool` | Chromium/Chrome/Edge for CDP-driven page screenshots and browser-print PDF evidence. |
 | `espeak-ng-system-tool` | eSpeak NG phonemizer used by offline TTS engines (Kokoro/Piper). |
 | `ffmpeg-system-tool` | FFmpeg/ffprobe for video encoding, audio normalization, and duration probing. |
+| `gauss-cli` | Optional OpenGauss gauss CLI for manual live formal workflows. |
 | `getscipapers-cli` | getscipapers console script from the maintainer fork, provisioned by the getscipapers-requester skill into a dedicated runtime-owned venv (~/.getscipapers_venv). |
 | `git-cli` | Git command line client for repository-backed workflows and GitHub publishing. |
 | `github-cli` | GitHub CLI for workflows that need local Actions, PR, issue, or authentication commands. |
@@ -196,7 +197,7 @@ Evidence inspected:
 | `ripgrep-cli` | optional but expected by local search/session workflows | rg on PATH. | rg.exe or rg on PATH. | `session-logs`, `research workflows`, `repo inspection` |
 | `sagemath` | required for the sagemath skill and optional Sage-backed graph/TikZ workflows | Native executable via `AAS_SAGE`, `sage` on `PATH`, a local Sage install, or a Docker-backed wrapper that behaves like `sage` for `--version` and `-c` probes. | WSL-backed SageMath inside Ubuntu 24.04, detected through wsl.exe when runnable, current local WSL paths when precheck runs from WSL/Linux, mounted WSL rootfs paths when available, or an ext4.vhdx presence warning when the distro image is not inspectable. | `sagemath`, `tikz-draw`, `openclaw/source research math verification` |
 | `tex-runtime` | required for TikZ compile checks and optional annotated-review LaTeX/PDF output | TeX Live or compatible distribution providing pdflatex, lualatex, or xelatex. | MiKTeX, TeX Live, or compatible distribution providing pdflatex.exe, lualatex.exe, or xelatex.exe. | `tikz-draw`, `annotated-review` |
-| `uvx-cli` | optional manual command runner for AxiomMath AXLE MCP; never invoked by installer, precheck, or smoke | uvx on PATH for manual live AXLE MCP setup. | uvx.exe or uvx on PATH for manual live AXLE MCP setup. | `axiom-axle-mcp manual setup` |
+| `uvx-cli` | optional manual command runner for AxiomMath AXLE MCP; never invoked by installer, precheck, or smoke | uvx on PATH for manual live AXLE MCP setup. | uvx.exe or uvx on PATH for manual live AXLE MCP setup. | `axiom-axle-mcp manual setup`, `opengauss manual setup` |
 | `wsl-runtime` | required when a Windows skill delegates to Linux-only tools | not applicable | Current SageMath flow uses direct WSL execution with an Ubuntu 24.04 distro. When precheck is run from WSL/Linux against a mounted Windows profile, the current local WSL filesystem is also inspected. Mounted rootfs directories are inspected when present; ext4.vhdx presence is reported as a degraded inspection gap because Sage inside the image cannot be verified without WSL, a local WSL filesystem, or a mounted rootfs. Docker is explicitly not required by the current Windows Sage config. | `sagemath`, `tikz-draw optional Sage graph mode` |
 
 ### Python Packages

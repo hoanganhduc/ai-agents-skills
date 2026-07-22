@@ -1,0 +1,113 @@
+---
+name: opengauss
+description: Use when preparing optional Math Inc. OpenGauss readiness for Lean prove/formalize workflows in the formal research lane. Inert doctor and config guidance only; never auto-installs or claims formal proof from Gauss success.
+metadata:
+  short-description: Inert OpenGauss readiness and evidence policy for formal lane
+---
+
+# OpenGauss (Math, Inc.)
+
+## Windows Runtime Commands
+
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
+
+```powershell
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.bat" "skills/opengauss/run_opengauss.bat" doctor
+& "$runtime\run_skill.bat" "skills/opengauss/run_opengauss.ps1" doctor
+```
+
+POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
+
+## What this skill is
+
+Optional **inert** helper for the formal lane around [OpenGauss](https://www.math.inc/opengauss) ([GitHub](https://github.com/math-inc/OpenGauss)): a project-scoped Lean workflow orchestrator (`gauss`) that can run prove/draft/formalize workflows via claude-code or codex backends.
+
+This skill:
+
+- reports local readiness (`doctor`) without executing `gauss`, `lake`, or backends
+- emits manual install / Morph / WSL snippets (`config-snippet`) with placeholders only
+- provides offline smoke (`smoke` / `selftest`)
+
+This skill does **not**:
+
+- install OpenGauss, Lean, Mathlib, or backends
+- start `gauss`, tmux sessions, or swarms
+- write `~/.gauss` config or read secret values
+- promote research claims to “proved” from a Gauss job
+
+Live install is **manual-native**. Unattended auto-launch is **out of scope until** a `headless_qualified` feasibility spike (see plan Phase 1).
+
+## Runtime Helper
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/opengauss/run_opengauss.sh doctor
+```
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/opengauss/run_opengauss.sh config-snippet
+```
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/opengauss/run_opengauss.sh smoke
+```
+
+## When to use in research
+
+| Situation | Action |
+|-----------|--------|
+| Literature / discovery only | Stay in source-research / deep-research; may **mention** formal candidates |
+| Stable lemma + intake `proceed` + Lake project | Skeleton → optional OpenGauss fill (Phase 1+) → **strict gate** |
+| Paper review only | Tag `formal_candidates`; do not launch Gauss unless user asked to formalize |
+| Missing `gauss` | `tool_unavailable` / defer — **not** failed theorem evidence |
+
+Pipeline (after live invoke exists):
+
+```text
+lean-formalization-intake (proceed)
+  → lean-explore-mcp (reuse first)
+  → formal-skeleton-helper
+  → OpenGauss /prove or /draft (opengauss_run provenance)
+  → lean-strict-verification-gate
+  → lead/human statement-equivalence for claim support
+```
+
+## Evidence policy
+
+- Record harness output as **`opengauss_run`** (provenance only).
+- Never treat Gauss success as `formal_check` or claim-support by itself.
+- Local formal status uses `lean-strict-verification-gate` and existing deep-research claim-support statuses.
+- Forbidden language: “OpenGauss proved …”, “fully formalized” with open sorry/axioms, equating job OK with informal claim C.
+
+See `references/evidence-policy.md`.
+
+## Platform notes
+
+| Host | Skill install | Live Gauss |
+|------|---------------|------------|
+| Linux | yes | primary (when installed) |
+| macOS | yes | experimental until dated evidence |
+| WSL | yes | supported Windows path (same distro as AAS+Lean) |
+| Native Windows | helper yes | **unsupported** — use WSL2 or Morph |
+
+Details: `references/local-install.md`, `references/windows-wsl.md`, `references/morph-cloud.md`.
+
+## Commands (MVP documented workflows)
+
+After a real OpenGauss install (not this helper):
+
+- Prefer `/prove` and `/draft` for guided work
+- Gate `/swarm`, unbounded `/autoprove`, `/autoformalize` behind budgets and later auto policy
+- Always run strict verification after harvest
+
+## Supporting references
+
+Open only when needed:
+
+- `references/evidence-policy.md`
+- `references/local-install.md`
+- `references/windows-wsl.md`
+- `references/morph-cloud.md`
