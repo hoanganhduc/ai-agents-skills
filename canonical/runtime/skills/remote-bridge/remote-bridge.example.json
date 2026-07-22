@@ -1,19 +1,28 @@
 {
+  "_README": [
+    "Sample configuration for remote-bridge.",
+    "Copy into ~/.config/remote-bridge/secrets.json (Linux/WSL),",
+    "~/Library/Application Support/remote-bridge/secrets.json (macOS),",
+    "or %APPDATA%\\remote-bridge\\secrets.json (Windows).",
+    "Replace every <placeholder>. Prefer a dedicated Zulip bot user and a",
+    "dedicated Telegram bot (not shared with OpenClaw getUpdates).",
+    "This file is a template only; the skill does not load it by path."
+  ],
   "default_channel": "zulip",
   "notify_channels": ["zulip", "telegram"],
-  "allowed_user_ids": ["<your-zulip-or-telegram-user-id>"],
+  "allowed_user_ids": ["<operator-user-id>"],
   "zulip": {
     "site": "https://your.zulipchat.com",
-    "email": "aas-bridge-bot@your.zulipchat.com",
+    "email": "<zulip-bot-email>",
     "api_key": "<bot-api-key>",
     "control_stream": "aas-remote",
     "topic_prefix": "job/",
-    "allowed_user_ids": ["12345"]
+    "allowed_user_ids": ["<zulip-user-id>"]
   },
   "telegram": {
-    "bot_token": "<dedicated-aas-bot-token-not-openclaw>",
+    "bot_token": "<dedicated-aas-bot-token>",
     "mode": "outbound_only",
     "allowed_chat_ids": ["<chat-id>"],
-    "allowed_user_ids": ["<user-id>"]
+    "allowed_user_ids": ["<telegram-user-id>"]
   }
 }
