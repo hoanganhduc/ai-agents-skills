@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|shell|run_terminal_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${AAS_RUNTIME_ROOT}/workspace/skills/remote-bridge/hooks/pretooluse_deny_until_approved.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
