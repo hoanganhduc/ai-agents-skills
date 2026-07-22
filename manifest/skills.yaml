@@ -1440,13 +1440,7 @@
     },
     "remote-bridge": {
       "description": "Cross-target remote control plane: Zulip default control plus optional Telegram mobile notify, mailbox approvals/instructions, and ARL drive integration. Not for OpenClaw.",
-      "profiles": [
-        "research-core",
-        "serious-research",
-        "workflow-tools",
-        "multi-agent",
-        "full-research"
-      ],
+      "profiles": [],
       "supported_agents": [
         "codex",
         "claude",
