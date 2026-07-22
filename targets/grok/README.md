@@ -189,6 +189,13 @@ subcommand).
 Each iteration runs with the project **root as cwd** so Grok sees the correct
 workspace even if the driver process was started elsewhere.
 
+### Remote control (Zulip + Telegram)
+
+Install the `remote-bridge` skill (all non-OpenClaw targets). Prefer **Zulip** for
+control (`aas-remote` / `job/<id>`) and **Telegram** for mobile notify (dedicated
+bot). Arm a job, set `AAS_REMOTE_JOB_ID` / `AAS_AUTOLOOP_NOTIFY=zulip`, then
+`drive --provider grok --notify zulip`. See `skills/remote-bridge/SKILL.md`.
+
 ### Progress updates while driving
 
 `drive` (unless `--no-progress`) and `watch` keep a live surface next to the ledger:

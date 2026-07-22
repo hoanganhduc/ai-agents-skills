@@ -1207,9 +1207,42 @@ QUOTA_PATTERN = re.compile(
 )
 
 
+def format_remote_inbox_for_prompt(job_id: str | None = None) -> str:
+    """Best-effort remote-bridge inbox block for headless iterations.
+
+    Uses AAS_REMOTE_JOB_ID when job_id is omitted. Never raises; empty on failure.
+    Claims and consumes items so each is delivered at-most-once after a successful
+    claim+consume cycle (see remote-bridge mailbox SM).
+    """
+    jid = job_id or os.environ.get("AAS_REMOTE_JOB_ID")
+    if not jid:
+        return ""
+    try:
+        # Import sibling skill when installed under the same workspace/skills tree.
+        skills_root = Path(__file__).resolve().parent.parent
+        rb_path = skills_root / "remote-bridge" / "remote_bridge.py"
+        if not rb_path.is_file():
+            return ""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("aas_remote_bridge", rb_path)
+        if spec is None or spec.loader is None:
+            return ""
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        mb = mod.Mailbox()
+        block, ids = mb.format_inbox_block(jid, claimer=f"arl-drive-{os.getpid()}")
+        if ids:
+            mb.consume_claimed(jid, ids)
+        return block or ""
+    except Exception:  # noqa: BLE001 - prompt assembly must not kill drive
+        return ""
+
+
 def iteration_prompt(run_dir: Path) -> str:
     """The standard one-iteration contract handed to a headless agent."""
-    return (
+    base = (
         "You are one iteration of a bounded autonomous research loop governed by "
         "the autonomous-research-loop skill and the autonomous-loop-enforcement "
         f"policy. The loop directory is: {run_dir}. Do exactly ONE iteration now: "
@@ -1229,6 +1262,27 @@ def iteration_prompt(run_dir: Path) -> str:
         "conditions. If you hit a credit or quota error, exit nonzero with the "
         "provider's error text visible in your output."
     )
+    inbox = format_remote_inbox_for_prompt()
+    if inbox:
+        return base + "\n\n" + inbox
+    return base
+
+
+def resolve_remote_notify_argv(channel: str, text: str, job_id: str | None = None) -> list[str] | None:
+    """Build argv for remote-bridge send (no shell). Returns None if unavailable."""
+    if os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1" and os.environ.get("AAS_AUTOLOOP_NOTIFY_CMD"):
+        return None  # caller may use shell escape hatch
+    skills_root = Path(__file__).resolve().parent.parent
+    rb = skills_root / "remote-bridge" / "remote_bridge.py"
+    if not rb.is_file():
+        return None
+    py = os.environ.get("AAS_RUNTIME_PYTHON") or sys.executable
+    argv = [py, str(rb), "send", "--text", text]
+    if channel in {"zulip", "telegram", "both"}:
+        argv.extend(["--channel", channel])
+    if job_id:
+        argv.extend(["--job", job_id])
+    return argv
 
 
 def provider_env_key(provider: str) -> str:
@@ -1577,12 +1631,26 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
         pass
 
 
+_DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
+    {
+        "iteration_ok",
+        "iteration_failed",
+        "iteration",
+        "quota_wait",
+        "drive_stop",
+        "terminal",
+        "driver_dead",
+    }
+)
+
+
 def emit_loop_progress(
     run_dir: Path,
     event: str,
     *,
     log_dir: Path | None = None,
     notify_cmd: str | None = None,
+    notify_channel: str | None = None,
     to_stderr: bool = True,
     to_stdout_json: bool = False,
     extra: dict[str, Any] | None = None,
@@ -1603,10 +1671,27 @@ def emit_loop_progress(
     if to_stderr:
         sys.stderr.write(str(payload.get("text", "")) + "\n")
         sys.stderr.flush()
-    if to_stdout_json and not notify_cmd:
+    if to_stdout_json and not notify_cmd and not notify_channel:
         print(json.dumps(env_payload), flush=True)
+    # Structured remote-bridge notify (preferred).
+    channel = notify_channel or os.environ.get("AAS_AUTOLOOP_NOTIFY") or os.environ.get(
+        "AAS_REMOTE_NOTIFY"
+    )
+    if channel and event in _DEFAULT_REMOTE_NOTIFY_EVENTS:
+        argv = resolve_remote_notify_argv(
+            channel if channel != "both" else "both",
+            str(payload.get("text") or ""),
+            job_id=os.environ.get("AAS_REMOTE_JOB_ID"),
+        )
+        if argv:
+            try:
+                subprocess.run(argv, check=False, timeout=60, capture_output=True)
+            except Exception:  # noqa: BLE001 - notify is best-effort
+                pass
     if notify_cmd:
-        watch_notify(notify_cmd, env_payload)
+        if os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1" or notify_cmd:
+            # Raw shell notify remains available; prefer AAS_ALLOW_RAW_NOTIFY_CMD=1.
+            watch_notify(notify_cmd, env_payload)
     return payload
 
 
@@ -1644,12 +1729,14 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
     seen = args.from_iteration if args.from_iteration >= 0 else start_iter
     driver_dead_alerted = False
     events = 0
+    notify_channel = getattr(args, "notify", None) or os.environ.get("AAS_AUTOLOOP_NOTIFY")
     # Seed LIVE_STATUS immediately so operators see current tip without waiting.
     emit_loop_progress(
         run_dir,
         "watch_start",
         log_dir=log_dir,
         notify_cmd=None,
+        notify_channel=None,
         to_stderr=False,
         to_stdout_json=False,
         extra={"source": "watch"},
@@ -1669,14 +1756,11 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                 "iteration",
                 log_dir=log_dir,
                 notify_cmd=args.notify_cmd,
-                to_stderr=bool(args.notify_cmd),
-                to_stdout_json=not bool(args.notify_cmd),
+                notify_channel=notify_channel,
+                to_stderr=bool(args.notify_cmd or notify_channel),
+                to_stdout_json=not bool(args.notify_cmd or notify_channel),
                 extra={"source": "watch", "text_override": text},
             )
-            # Prefer the human text we built for watch (matches prior CLI contract).
-            if not args.notify_cmd:
-                # emit_loop_progress already printed env-shaped JSON when to_stdout_json.
-                pass
             events += 1
             seen = current
         if verdict.get("done"):
@@ -1686,8 +1770,9 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                 "terminal",
                 log_dir=log_dir,
                 notify_cmd=args.notify_cmd,
-                to_stderr=bool(args.notify_cmd),
-                to_stdout_json=not bool(args.notify_cmd),
+                notify_channel=notify_channel,
+                to_stderr=bool(args.notify_cmd or notify_channel),
+                to_stdout_json=not bool(args.notify_cmd or notify_channel),
                 extra={"source": "watch", "terminal_reason": reason},
             )
             events += 1
@@ -1703,8 +1788,9 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                     "driver_dead",
                     log_dir=log_dir,
                     notify_cmd=args.notify_cmd,
-                    to_stderr=bool(args.notify_cmd),
-                    to_stdout_json=not bool(args.notify_cmd),
+                    notify_channel=notify_channel,
+                    to_stderr=bool(args.notify_cmd or notify_channel),
+                    to_stdout_json=not bool(args.notify_cmd or notify_channel),
                     extra={"source": "watch", "driver_pid": pid},
                 )
                 events += 1
@@ -1781,6 +1867,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     )
     log_dir.mkdir(parents=True, exist_ok=True)
     notify_cmd = getattr(args, "notify_cmd", None)
+    notify_channel = getattr(args, "notify", None) or os.environ.get("AAS_AUTOLOOP_NOTIFY")
     progress_enabled = not bool(getattr(args, "no_progress", False))
 
     def _progress(event: str, **extra: Any) -> None:
@@ -1791,6 +1878,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             event,
             log_dir=log_dir,
             notify_cmd=notify_cmd,
+            notify_channel=notify_channel,
             to_stderr=True,
             to_stdout_json=False,
             extra=extra or None,
@@ -2089,6 +2177,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     watch.add_argument("--dir", required=True)
     watch.add_argument(
+        "--notify",
+        default=None,
+        choices=["zulip", "telegram", "both"],
+        help="structured remote-bridge notify channel",
+    )
+    watch.add_argument(
         "--notify-cmd", default=None,
         help="shell command run per event with AUTOLOOP_EVENT/_DIR/_ITERATION/_DECISION/_TEXT in env (default: print JSON lines)",
     )
@@ -2199,10 +2293,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory for per-iteration output logs (default: <dir>/driver_logs)",
     )
     drive.add_argument(
+        "--notify",
+        default=None,
+        choices=["zulip", "telegram", "both"],
+        help="structured remote-bridge notify channel (preferred over --notify-cmd)",
+    )
+    drive.add_argument(
         "--notify-cmd",
         default=None,
         help="optional shell command per progress event (AUTOLOOP_EVENT/_DIR/_ITERATION/_DECISION/_TEXT env); "
-        "LIVE_STATUS.md and progress.jsonl are always updated unless --no-progress",
+        "prefer --notify; set AAS_ALLOW_RAW_NOTIFY_CMD=1 when using untrusted templates",
     )
     drive.add_argument(
         "--no-progress",

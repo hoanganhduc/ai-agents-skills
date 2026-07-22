@@ -1,0 +1,19 @@
+{
+  "default_channel": "zulip",
+  "notify_channels": ["zulip", "telegram"],
+  "allowed_user_ids": ["<your-zulip-or-telegram-user-id>"],
+  "zulip": {
+    "site": "https://your.zulipchat.com",
+    "email": "aas-bridge-bot@your.zulipchat.com",
+    "api_key": "<bot-api-key>",
+    "control_stream": "aas-remote",
+    "topic_prefix": "job/",
+    "allowed_user_ids": ["12345"]
+  },
+  "telegram": {
+    "bot_token": "<dedicated-aas-bot-token-not-openclaw>",
+    "mode": "outbound_only",
+    "allowed_chat_ids": ["<chat-id>"],
+    "allowed_user_ids": ["<user-id>"]
+  }
+}

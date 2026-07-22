@@ -1438,6 +1438,42 @@
         "offline-smoke"
       ]
     },
+    "remote-bridge": {
+      "description": "Cross-target remote control plane: Zulip default control plus optional Telegram mobile notify, mailbox approvals/instructions, and ARL drive integration. Not for OpenClaw.",
+      "profiles": [
+        "research-core",
+        "serious-research",
+        "workflow-tools",
+        "multi-agent",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "copilot",
+        "opencode",
+        "antigravity",
+        "grok"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [],
+      "optional_capabilities": [
+        "zulip-control",
+        "telegram-notify",
+        "mailbox-approvals",
+        "autoloop-notify",
+        "offline-smoke"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
+    },
     "slides-to-video": {
       "description": "Turn prepared slides (PNG/PDF/PPTX) into a narrated, captioned video in a chosen language and presenter role using only free tools; three-phase human-in-the-loop with an approval gate before rendering.",
       "profiles": [
