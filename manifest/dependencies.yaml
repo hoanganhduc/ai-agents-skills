@@ -49,6 +49,15 @@
       },
       "capabilities": ["npm"]
     },
+    "gauss-cli": {
+      "description": "Optional OpenGauss gauss CLI for manual live formal workflows.",
+      "version_constraint": "manual",
+      "candidates": {
+        "linux": ["${AAS_GAUSS}", "gauss", "~/.local/bin/gauss"],
+        "windows": ["%AAS_GAUSS%", "gauss.exe", "gauss"]
+      },
+      "capabilities": ["manual-opengauss"]
+    },
     "uvx-cli": {
       "description": "uvx command for optional manual AXLE MCP server execution.",
       "version_constraint": "manual",

@@ -267,6 +267,7 @@ Hard rules:
 - check both directions of equivalences
 - check boundary cases explicitly
 - prefer a weaker correct theorem over a stronger broken one
+- when formalization may help later, list **Formal candidates** (ids, statements, blockers) without executing OpenGauss here
 
 ---
 
@@ -366,6 +367,7 @@ Hard rules:
 - separate construction, local behavior, completeness, soundness, noninterference, and size preservation
 - never merge prose polishing with proof repair
 - stabilize correctness first
+- if formalization is relevant, list **Formal candidates** (0–N ids, one-line statements, blockers) but do **not** execute OpenGauss in this template; hand off to Lean Formalization Team / informal-to-lean runbook
 
 ---
 
@@ -408,6 +410,11 @@ Codex adaptation:
 
 - use `formal-skeleton-helper` when a scaffold is needed quickly
 - use local Lean tooling through `functions.exec_command` if the environment supports it
+- optional OpenGauss path: if `opengauss` doctor is ready and a live `gauss` install
+  exists, Formalizer/Repair may use guided `/prove` or `/draft` (MVP); record
+  `opengauss_run` provenance only — Checker still requires
+  `lean-strict-verification-gate` and must not treat Gauss logs as claim support
+- prefer pure codex_spawned scaffold when OpenGauss is unavailable
 - distinguish mathematical gaps from formalization friction
 
 Final output:
@@ -415,6 +422,7 @@ Final output:
 - Lean file or scaffold status
 - list of missing lemmas
 - assessment of whether formalization reveals a gap in the paper proof
+- OpenGauss used? (`no` / `unavailable` / run ref) — never "proved by Gauss"
 
 ---
 

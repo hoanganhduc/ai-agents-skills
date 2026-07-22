@@ -12,6 +12,7 @@ hypothesis, or an added axiom is NOT a supported claim.
 It composes `lean-formalization-intake` for the local-first suitability
 decision, `formal-skeleton-helper` for minimal statement stubs and namespace
 wrappers, `lean-explore-mcp` for reuse search before stating new lemmas,
+optional `opengauss` for guided prove/draft fill when installed and ready,
 `lean-strict-verification-gate` for the scanner-first verification, and
 `cross-agent-delegation` for the fresh-context cross-check handoff.
 `decision-doubt-loop` supplies the fresh-context discipline for the acceptance
@@ -48,7 +49,8 @@ Apply every phase, in order.
 | F1. Intake & suitability | Local-first decision on whether to formalize and at what granularity. | `lean-formalization-intake` |  |  |  |
 | F2. Declaration map | Map each informal step to a Lean declaration; search for reusable Mathlib results first. | `lean-explore-mcp` |  |  |  |
 | F3. Skeleton | Emit minimal statement stubs and namespace wrappers with explicit `sorry` placeholders. | `formal-skeleton-helper` |  |  |  |
-| F4. Fill & track | Discharge each `sorry`; track blocking lemmas and candidate Mathlib declarations. | `lean-explore-mcp` |  |  |  |
+| F4a. Fill & track (agent/Mathlib) | Discharge each `sorry` via reuse and local proof work; track blockers. | `lean-explore-mcp` |  |  |  |
+| F4b. OpenGauss fill (optional) | When `opengauss doctor` is ready and live install exists, use guided `/prove` or `/draft` only; record `opengauss_run` provenance — never claim-support. | `opengauss` |  |  |  |
 | F5. Strict verify | Scanner-first verification; report typecheck status and claim-support status separately. | `lean-strict-verification-gate` |  |  |  |
 | F6. Fresh-context cross-check | A different context independently confirms both typecheck and claim support. | `cross-agent-delegation`, `decision-doubt-loop` |  |  |  |
 | F7. Acceptance | Decide `verified` or `not-ready`; both a clean typecheck and confirmed claim support are required. |  |  |  |  |
@@ -130,6 +132,34 @@ Status values: `open`, `in-progress`, `discharged-by-mathlib`,
 - **A non-empty ledger of `open` / `in-progress` / `blocked` rows means the claim
   is NOT yet supported, regardless of whether the file compiles.** Lean accepts
   `sorry`-bearing proofs as compiling.
+
+## Optional OpenGauss Fill (F4b)
+
+After F3 (and usually after attempting F4a reuse), you may use OpenGauss **only
+when all of the following hold**:
+
+1. `lean-formalization-intake` decided `proceed` (or equivalent suitability).
+2. An existing Lake project root is registered (do not invent a project mid-run).
+3. `opengauss` skill `doctor` reports readiness policy; a real `gauss` install
+   exists for live work (this is manual-native — AAS does not auto-install).
+4. Workflow is MVP-safe: prefer `/prove` or `/draft`. Gate `/swarm` and unbounded
+   auto prove/formalize behind explicit budgets later.
+
+Rules:
+
+- Record harness output as **`opengauss_run` provenance**, not `formal_check`.
+- Missing OpenGauss is **not** failed theorem evidence — stay on F4a or defer.
+- Always continue to **F5** after harvest. Gauss job success never skips strict
+  verification or statement-equivalence discipline.
+- Unattended auto-launch is out of scope until a `headless_qualified` spike
+  exists; Phase 0 ships inert doctor/smoke only.
+
+| Field | Value |
+|---|---|
+| OpenGauss used? (`yes` / `no` / `unavailable`) |  |
+| Workflow (`/prove`, `/draft`, other) |  |
+| `opengauss_run` id / log ref |  |
+| Pins (gauss commit / backend if known) |  |
 
 ## Strict Verification Gate (F5)
 

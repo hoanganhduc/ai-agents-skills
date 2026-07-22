@@ -338,6 +338,29 @@ class ManifestTests(unittest.TestCase):
         args.profile = "research-core"
         self.assertNotIn("axiom-axle-mcp", resolve_skills(args, manifests))
 
+    def test_opengauss_is_explicit_formal_skill(self) -> None:
+        manifests = load_manifests()
+        skill = manifests["skills"]["skills"]["opengauss"]
+
+        self.assertEqual(
+            set(skill["profiles"]),
+            {"formal-research", "formal-research-remote", "full-research"},
+        )
+        self.assertIn("offline-smoke", skill["verification"])
+        self.assertIn("gauss-cli", skill["optional_dependencies"])
+
+        args = Args()
+        args.profile = "formal-research"
+        self.assertIn("opengauss", resolve_skills(args, manifests))
+        args.profile = "formal-research-remote"
+        self.assertIn("opengauss", resolve_skills(args, manifests))
+        args.profile = "full-research"
+        self.assertIn("opengauss", resolve_skills(args, manifests))
+        args.profile = "research-core"
+        self.assertNotIn("opengauss", resolve_skills(args, manifests))
+        args.profile = "serious-research"
+        self.assertNotIn("opengauss", resolve_skills(args, manifests))
+
     def test_lean_explore_mcp_is_explicit_formal_skill(self) -> None:
         manifests = load_manifests()
         skill = manifests["skills"]["skills"]["lean-explore-mcp"]

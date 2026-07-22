@@ -52,6 +52,7 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `manim-math-animation` | Render Manim math animations (handwritten-style equation Write, equation morphing, emphasis) to a silent clip normalized for splicing into slides-to-video or standalone use. | `media`, `full-research` |
 | `modal-research-compute` | Route heavy compute through the unified local broker, including Modal-backed remote CPU, high-memory CPU, and GPU execution. | `full-research` |
 | `model-router` | Choose an appropriate model, reasoning level, and role for subagents or multi-agent research work. | `workflow-tools`, `multi-agent`, `serious-research`, `full-research` |
+| `opengauss` | Optional inert readiness helper for Math Inc. OpenGauss Lean prove/formalize workflows; live install is manual-native. | `formal-research`, `formal-research-remote`, `full-research` |
 | `paper-lookup` | External paper metadata and discovery fallback. | `library`, `serious-research`, `full-research` |
 | `paper-review` | Single-agent paper review workflow. | `serious-research`, `full-research` |
 | `prose` | Structured reproducible research and workflow orchestration. | `multi-agent`, `serious-research`, `full-research` |

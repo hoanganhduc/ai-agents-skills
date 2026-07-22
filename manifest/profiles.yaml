@@ -91,7 +91,8 @@
         "formal-skeleton-helper",
         "lean-formalization-intake",
         "lean-explore-mcp",
-        "lean-strict-verification-gate"
+        "lean-strict-verification-gate",
+        "opengauss"
       ]
     },
     "formal-research-remote": {
@@ -101,7 +102,8 @@
         "lean-formalization-intake",
         "lean-explore-mcp",
         "lean-strict-verification-gate",
-        "axiom-axle-mcp"
+        "axiom-axle-mcp",
+        "opengauss"
       ]
     },
     "figure": {
@@ -165,6 +167,7 @@
         "lean-explore-mcp",
         "lean-strict-verification-gate",
         "axiom-axle-mcp",
+        "opengauss",
         "model-router",
         "workspace-rearranger",
         "research-digest-wrapper",

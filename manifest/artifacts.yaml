@@ -339,7 +339,7 @@
         "description": "Local-first intake mapping an informal proof to Lean declarations with a scanner-first verification gate separating typecheck status from claim support.",
         "source": "informal-to-lean-formalization-runbook.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
-        "depends_on_skills": ["lean-formalization-intake", "formal-skeleton-helper", "lean-explore-mcp", "lean-strict-verification-gate", "decision-doubt-loop", "cross-agent-delegation", "get-available-resources", "kaggle-research-compute", "modal-research-compute", "hetzner-research-compute"]
+        "depends_on_skills": ["lean-formalization-intake", "formal-skeleton-helper", "lean-explore-mcp", "lean-strict-verification-gate", "opengauss", "decision-doubt-loop", "cross-agent-delegation", "get-available-resources", "kaggle-research-compute", "modal-research-compute", "hetzner-research-compute"]
       },
       "cross-agent-adversarial-review": {
         "description": "Producer-never-confirmer adversarial review of a paper, proof, or code artifact across agent families with a fresh-agent confirmation gate.",

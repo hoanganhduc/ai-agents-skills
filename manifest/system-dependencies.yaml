@@ -79,7 +79,7 @@
       "requirement": "optional manual command runner for AxiomMath AXLE MCP; never invoked by installer, precheck, or smoke",
       "linux": "uvx on PATH for manual live AXLE MCP setup.",
       "windows": "uvx.exe or uvx on PATH for manual live AXLE MCP setup.",
-      "used_by": ["axiom-axle-mcp manual setup"]
+      "used_by": ["axiom-axle-mcp manual setup", "opengauss manual setup"]
     },
     "lean-cli": {
       "display_name": "Lean command line",
