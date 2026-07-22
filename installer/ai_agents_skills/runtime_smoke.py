@@ -700,6 +700,27 @@ def validate_smoke_output(
             "ok": isinstance(payload.get("validated_sources"), int) and payload.get("validated_sources", 0) > 0,
         })
         checks.append({"name": "ambiguity-preserved", "ok": payload.get("ambiguous_fixture_matches") == 2})
+    elif skill == "remote-bridge":
+        payload = parse_json_stdout(completed.stdout)
+        checks.append({"name": "json-ok", "ok": payload.get("ok") is True and payload.get("status") == "ok"})
+        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
+        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
+        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
+        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
+        checks.append({"name": "real-secrets-not-read", "ok": payload.get("real_secrets_read") is False})
+        required_checks = {
+            "arm_conflict",
+            "digest",
+            "cas",
+            "single_use_approval",
+            "inbox_once",
+            "parse",
+            "redaction",
+        }
+        reported = set(payload.get("checks") or [])
+        checks.append({"name": "selftest-checks", "ok": required_checks.issubset(reported)})
     return checks
 
 

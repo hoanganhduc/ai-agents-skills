@@ -1040,6 +1040,14 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         pass
     return _ok(
         "selftest",
+        status="ok",
+        smoke_mode="offline",
+        network_required=False,
+        live_api_attempted=False,
+        package_install_attempted=False,
+        server_started=False,
+        config_written=False,
+        real_secrets_read=False,
         checks=[
             "arm_conflict",
             "digest",
