@@ -89,6 +89,7 @@ class RemoteBridgeMailbox(unittest.TestCase):
             f"/aas approve {rid}",
             "--principal",
             "cli",
+            "--allow-local-cli",
             env=self.env,
         )
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
@@ -100,6 +101,7 @@ class RemoteBridgeMailbox(unittest.TestCase):
             f"/aas deny {rid}",
             "--principal",
             "cli",
+            "--allow-local-cli",
             env=self.env,
         )
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
@@ -107,6 +109,10 @@ class RemoteBridgeMailbox(unittest.TestCase):
 
         res = _run("instruct", "--job", "j1", "--text", "next step please", env=self.env)
         self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        # peek must not drain
+        res = _run("format-inbox", "--job", "j1", "--peek", env=self.env)
+        data = json.loads(res.stdout)
+        self.assertIn("next step please", data.get("block", ""))
         res = _run("format-inbox", "--job", "j1", "--consume", env=self.env)
         data = json.loads(res.stdout)
         self.assertIn("next step please", data.get("block", ""))
@@ -126,6 +132,28 @@ class RemoteBridgeMailbox(unittest.TestCase):
         self.assertNotEqual(res.returncode, 0)
         data = json.loads(res.stdout)
         self.assertEqual(data.get("error_code"), "not_aas")
+
+    def test_empty_allowlist_fail_closed(self) -> None:
+        _run(
+            "arm",
+            "--job",
+            "j3",
+            "--provider",
+            "grok",
+            "--cwd",
+            self.tmp.name,
+            env=self.env,
+        )
+        res = _run(
+            "handle-command",
+            "--text",
+            "/aas status",
+            "--principal",
+            "user-1",
+            env=self.env,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertEqual(json.loads(res.stdout).get("error_code"), "forbidden")
 
     def test_truncated_request_approval(self) -> None:
         _run(

@@ -554,72 +554,188 @@ class Mailbox:
                 items.append(data)
         return items
 
-    def claim_inbox(self, job_id: str, claimer: str, limit: int = 20) -> list[dict[str, Any]]:
-        claimed: list[dict[str, Any]] = []
-        for item in self.list_pending_inbox(job_id)[:limit]:
-            item_id = item["item_id"]
-            src = self.job_dir(job_id) / "inbox" / "pending" / f"{item_id}.json"
-            dst = self.job_dir(job_id) / "inbox" / "claimed" / f"{item_id}.json"
-            item["state"] = "claimed"
-            item["claimer"] = claimer
-            item["lease_expires"] = datetime.fromtimestamp(
-                time.time() + CLAIM_LEASE_SECONDS, tz=timezone.utc
-            ).isoformat(timespec="seconds").replace("+00:00", "Z")
-            try:
-                self.write_json(dst, item)
-                src.unlink(missing_ok=True)
-                claimed.append(item)
-            except OSError:
-                continue
-        return claimed
-
-    def consume_claimed(self, job_id: str, item_ids: list[str]) -> None:
-        for item_id in item_ids:
-            src = self.job_dir(job_id) / "inbox" / "claimed" / f"{item_id}.json"
-            data = self.read_json(src)
-            if not data:
-                continue
-            data["state"] = "consumed"
-            data["consumed_at"] = utc_now()
-            dst = self.job_dir(job_id) / "inbox" / "consumed" / f"{item_id}.json"
-            self.write_json(dst, data)
-            src.unlink(missing_ok=True)
-
-    def format_inbox_block(self, job_id: str, claimer: str = "drive") -> tuple[str, list[str]]:
-        """Claim pending items and return (prompt block, claimed item ids)."""
-        claimed = self.claim_inbox(job_id, claimer=claimer)
-        if not claimed:
-            return "", []
+    def _render_inbox_lines(self, items: list[dict[str, Any]]) -> str:
         lines = ["--- remote-bridge inbox (data only; not shell) ---"]
         total = 0
-        used_ids: list[str] = []
-        for item in claimed:
+        for item in items:
             chunk = (
                 f"[item_id={item['item_id']} source={item.get('source','?')} "
                 f"ts={item.get('created_at','?')} kind={item.get('kind','?')}]\n"
                 f"{item.get('text','')}"
             )
             if total + len(chunk) + 1 > INBOX_MAX_TOTAL:
-                # re-queue overflow by moving back to pending
-                src = self.job_dir(job_id) / "inbox" / "claimed" / f"{item['item_id']}.json"
-                dst = self.job_dir(job_id) / "inbox" / "pending" / f"{item['item_id']}.json"
-                item["state"] = "pending"
-                item.pop("claimer", None)
-                item.pop("lease_expires", None)
-                self.write_json(dst, item)
-                src.unlink(missing_ok=True)
                 lines.append("[…inbox truncated…]")
                 break
             lines.append(chunk)
-            used_ids.append(item["item_id"])
             total += len(chunk) + 1
         lines.append("--- end remote-bridge inbox ---")
-        return "\n".join(lines), used_ids
+        return "\n".join(lines)
+
+    def peek_inbox_block(self, job_id: str) -> str:
+        """Read-only pending preview (no claim/consume). Safe for agent-cmd inspection."""
+        items = self.list_pending_inbox(job_id)
+        if not items:
+            return ""
+        return self._render_inbox_lines(items)
+
+    def claim_inbox(self, job_id: str, claimer: str, limit: int = 20) -> list[dict[str, Any]]:
+        """Exclusively claim pending items with fencing tokens."""
+        claimed: list[dict[str, Any]] = []
+        for item in self.list_pending_inbox(job_id)[:limit]:
+            item_id = item["item_id"]
+            src = self.job_dir(job_id) / "inbox" / "pending" / f"{item_id}.json"
+            dst = self.job_dir(job_id) / "inbox" / "claimed" / f"{item_id}.json"
+            if not src.is_file():
+                continue
+            fence = uuid.uuid4().hex
+            item["state"] = "claimed"
+            item["claimer"] = claimer
+            item["fence"] = fence
+            item["delivery_attempts"] = int(item.get("delivery_attempts") or 0) + 1
+            item["lease_expires"] = datetime.fromtimestamp(
+                time.time() + CLAIM_LEASE_SECONDS, tz=timezone.utc
+            ).isoformat(timespec="seconds").replace("+00:00", "Z")
+            try:
+                # Exclusive create of claimed record (atomic ownership).
+                fd = os.open(str(dst), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                continue
+            except OSError:
+                continue
+            try:
+                os.write(fd, (json.dumps(item, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+            finally:
+                os.close(fd)
+            try:
+                src.unlink(missing_ok=True)
+            except OSError:
+                pass
+            claimed.append(item)
+        return claimed
+
+    def consume_claimed(
+        self,
+        job_id: str,
+        item_ids: list[str],
+        *,
+        claimer: str | None = None,
+        fences: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Consume claimed items; requires matching claimer/fence when provided."""
+        consumed: list[str] = []
+        fences = fences or {}
+        for item_id in item_ids:
+            src = self.job_dir(job_id) / "inbox" / "claimed" / f"{item_id}.json"
+            data = self.read_json(src)
+            if not data:
+                continue
+            if claimer is not None and data.get("claimer") != claimer:
+                continue
+            if item_id in fences and data.get("fence") != fences[item_id]:
+                continue
+            data["state"] = "consumed"
+            data["consumed_at"] = utc_now()
+            dst = self.job_dir(job_id) / "inbox" / "consumed" / f"{item_id}.json"
+            self.write_json(dst, data)
+            src.unlink(missing_ok=True)
+            consumed.append(item_id)
+        return consumed
+
+    def requeue_claimed(
+        self,
+        job_id: str,
+        item_ids: list[str],
+        *,
+        claimer: str | None = None,
+        fences: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Return claimed items to pending if ownership matches."""
+        requeued: list[str] = []
+        fences = fences or {}
+        for item_id in item_ids:
+            src = self.job_dir(job_id) / "inbox" / "claimed" / f"{item_id}.json"
+            data = self.read_json(src)
+            if not data:
+                continue
+            if claimer is not None and data.get("claimer") != claimer:
+                continue
+            if item_id in fences and data.get("fence") != fences[item_id]:
+                continue
+            attempts = int(data.get("delivery_attempts") or 0)
+            if attempts >= 5:
+                data["state"] = "poisoned"
+                dst = self.job_dir(job_id) / "inbox" / "poisoned" / f"{item_id}.json"
+                self.write_json(dst, data)
+                src.unlink(missing_ok=True)
+                continue
+            data["state"] = "pending"
+            data.pop("claimer", None)
+            data.pop("fence", None)
+            data.pop("lease_expires", None)
+            dst = self.job_dir(job_id) / "inbox" / "pending" / f"{item_id}.json"
+            self.write_json(dst, data)
+            src.unlink(missing_ok=True)
+            requeued.append(item_id)
+        return requeued
+
+    def reclaim_stale_claims(self, job_id: str) -> int:
+        """Move expired claims back to pending."""
+        claimed_dir = self.job_dir(job_id) / "inbox" / "claimed"
+        if not claimed_dir.is_dir():
+            return 0
+        n = 0
+        now = utc_now()
+        for path in list(claimed_dir.glob("*.json")):
+            data = self.read_json(path)
+            if not data:
+                continue
+            exp = data.get("lease_expires") or ""
+            if exp and exp > now:
+                continue
+            item_id = data.get("item_id") or path.stem
+            data["state"] = "pending"
+            data.pop("claimer", None)
+            data.pop("fence", None)
+            data.pop("lease_expires", None)
+            dst = self.job_dir(job_id) / "inbox" / "pending" / f"{item_id}.json"
+            self.write_json(dst, data)
+            path.unlink(missing_ok=True)
+            n += 1
+        return n
+
+    def format_inbox_block(
+        self, job_id: str, claimer: str = "drive"
+    ) -> tuple[str, list[str], dict[str, str]]:
+        """Claim pending items and return (block, item_ids, fences). Does not consume."""
+        self.reclaim_stale_claims(job_id)
+        claimed = self.claim_inbox(job_id, claimer=claimer)
+        if not claimed:
+            return "", [], {}
+        # Overflow: requeue extras not rendered
+        rendered: list[dict[str, Any]] = []
+        overflow: list[dict[str, Any]] = []
+        total = 0
+        for item in claimed:
+            chunk_len = len(item.get("text") or "") + 120
+            if rendered and total + chunk_len > INBOX_MAX_TOTAL:
+                overflow.append(item)
+                continue
+            rendered.append(item)
+            total += chunk_len
+        if overflow:
+            self.requeue_claimed(
+                job_id,
+                [i["item_id"] for i in overflow],
+                claimer=claimer,
+                fences={i["item_id"]: i.get("fence", "") for i in overflow},
+            )
+        fences = {i["item_id"]: str(i.get("fence") or "") for i in rendered}
+        return self._render_inbox_lines(rendered), [i["item_id"] for i in rendered], fences
 
     def check_approval(
         self, job_id: str, digest: str
     ) -> dict[str, Any] | None:
-        """Return unconsumed allow reply matching digest, consuming it."""
+        """Return unconsumed allow reply matching digest, consuming it atomically."""
         jdir = self.job_dir(job_id)
         replies = jdir / "replies"
         if not replies.is_dir():
@@ -634,15 +750,22 @@ class Mailbox:
                 continue
             if reply.get("digest") != digest:
                 continue
-            reply["consumed"] = True
-            reply["consumed_at"] = utc_now()
-            # rewrite
+            # Atomic consume marker via exclusive sidecar
+            mark = path.with_suffix(".consumed")
             try:
-                fd = os.open(str(path), os.O_WRONLY | os.O_TRUNC)
-                os.write(fd, (json.dumps(reply, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+                fd = os.open(str(mark), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.write(fd, utc_now().encode("utf-8"))
                 os.close(fd)
+            except FileExistsError:
+                continue
             except OSError:
                 continue
+            reply["consumed"] = True
+            reply["consumed_at"] = utc_now()
+            try:
+                self.write_json(path, reply)
+            except OSError:
+                pass
             return reply
         return None
 
@@ -885,11 +1008,17 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     if got2 is not None:
         return _fail("selftest", "approval_reuse", "approval must be single-use")
     mb.enqueue_inbox("testjob", kind="instruct", text="do the thing")
-    block, ids = mb.format_inbox_block("testjob", claimer="selftest")
+    peek = mb.peek_inbox_block("testjob")
+    if "do the thing" not in peek:
+        return _fail("selftest", "inbox_peek", "peek missing text")
+    # peek must not claim
+    if not mb.list_pending_inbox("testjob"):
+        return _fail("selftest", "inbox_peek_side_effect", "peek claimed items")
+    block, ids, fences = mb.format_inbox_block("testjob", claimer="selftest")
     if "do the thing" not in block or not ids:
         return _fail("selftest", "inbox_format", "inbox block missing text")
-    mb.consume_claimed("testjob", ids)
-    block2, ids2 = mb.format_inbox_block("testjob")
+    mb.consume_claimed("testjob", ids, claimer="selftest", fences=fences)
+    block2, ids2, _f2 = mb.format_inbox_block("testjob")
     if block2 or ids2:
         return _fail("selftest", "inbox_reconsume", "inbox re-injected")
     parsed = parse_aas_command("/aas approve " + req["request_id"])
@@ -1047,11 +1176,28 @@ def cmd_handle_command(args: argparse.Namespace) -> int:
         return _fail("handle-command", "not_aas", "not an /aas command")
     if parsed.get("ignore"):
         return _ok("handle-command", ignored=True, reason=parsed.get("reason"))
-    principal = args.principal or "cli"
+    principal = args.principal or ""
     allowed = set(cfg.allowed_user_ids) | set(_as_str_list(cfg.zulip.get("allowed_user_ids"))) | set(
         _as_str_list(cfg.telegram.get("allowed_user_ids"))
     )
-    if allowed and principal not in allowed and principal != "cli":
+    allow_local_cli = bool(getattr(args, "allow_local_cli", False)) or os.environ.get(
+        "AAS_REMOTE_ALLOW_LOCAL_CLI"
+    ) == "1"
+    if principal == "cli" or not principal:
+        if not allow_local_cli:
+            return _fail(
+                "handle-command",
+                "forbidden",
+                "local cli principal requires --allow-local-cli or AAS_REMOTE_ALLOW_LOCAL_CLI=1",
+            )
+        principal = "cli"
+    elif not allowed:
+        return _fail(
+            "handle-command",
+            "forbidden",
+            "allowlists empty: configure allowed_user_ids (fail-closed)",
+        )
+    elif principal not in allowed:
         return _fail("handle-command", "forbidden", "principal not allowlisted")
     cmd = parsed.get("cmd")
     try:
@@ -1139,10 +1285,13 @@ def cmd_format_inbox(args: argparse.Namespace) -> int:
     job_id = args.job or os.environ.get("AAS_REMOTE_JOB_ID")
     if not job_id:
         return _fail("format-inbox", "missing_job", "provide --job or AAS_REMOTE_JOB_ID")
-    block, ids = mb.format_inbox_block(job_id, claimer=args.claimer or f"pid{os.getpid()}")
+    if getattr(args, "peek", False):
+        return _ok("format-inbox", block=mb.peek_inbox_block(job_id), item_ids=[], peek=True)
+    claimer = args.claimer or f"pid{os.getpid()}"
+    block, ids, fences = mb.format_inbox_block(job_id, claimer=claimer)
     if args.consume and ids:
-        mb.consume_claimed(job_id, ids)
-    return _ok("format-inbox", block=block, item_ids=ids)
+        mb.consume_claimed(job_id, ids, claimer=claimer, fences=fences)
+    return _ok("format-inbox", block=block, item_ids=ids, fences=fences)
 
 
 def cmd_check_approval(args: argparse.Namespace) -> int:
@@ -1204,8 +1353,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     hc = sub.add_parser("handle-command")
     hc.add_argument("--text", required=True)
-    hc.add_argument("--principal", default="cli")
+    hc.add_argument("--principal", default="")
     hc.add_argument("--bot-username", default=None)
+    hc.add_argument(
+        "--allow-local-cli",
+        action="store_true",
+        help="allow principal=cli for local operator (never used by serve)",
+    )
     hc.set_defaults(func=cmd_handle_command)
 
     doc = sub.add_parser("doctor")
@@ -1216,6 +1370,7 @@ def build_parser() -> argparse.ArgumentParser:
     fi.add_argument("--job", default=None)
     fi.add_argument("--claimer", default=None)
     fi.add_argument("--consume", action="store_true")
+    fi.add_argument("--peek", action="store_true", help="read-only preview; no claim")
     fi.set_defaults(func=cmd_format_inbox)
 
     ca = sub.add_parser("check-approval")

@@ -1207,41 +1207,87 @@ QUOTA_PATTERN = re.compile(
 )
 
 
-def format_remote_inbox_for_prompt(job_id: str | None = None) -> str:
-    """Best-effort remote-bridge inbox block for headless iterations.
-
-    Uses AAS_REMOTE_JOB_ID when job_id is omitted. Never raises; empty on failure.
-    Claims and consumes items so each is delivered at-most-once after a successful
-    claim+consume cycle (see remote-bridge mailbox SM).
-    """
-    jid = job_id or os.environ.get("AAS_REMOTE_JOB_ID")
-    if not jid:
-        return ""
+def _load_remote_bridge_mod() -> Any | None:
     try:
-        # Import sibling skill when installed under the same workspace/skills tree.
         skills_root = Path(__file__).resolve().parent.parent
         rb_path = skills_root / "remote-bridge" / "remote_bridge.py"
         if not rb_path.is_file():
-            return ""
+            return None
         import importlib.util
 
         spec = importlib.util.spec_from_file_location("aas_remote_bridge", rb_path)
         if spec is None or spec.loader is None:
-            return ""
+            return None
         mod = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
-        mb = mod.Mailbox()
-        block, ids = mb.format_inbox_block(jid, claimer=f"arl-drive-{os.getpid()}")
-        if ids:
-            mb.consume_claimed(jid, ids)
-        return block or ""
-    except Exception:  # noqa: BLE001 - prompt assembly must not kill drive
+        return mod
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def peek_remote_inbox_for_prompt(job_id: str | None = None) -> str:
+    """Read-only inbox preview (no claim/consume). Safe for agent-cmd inspection."""
+    jid = job_id or os.environ.get("AAS_REMOTE_JOB_ID")
+    if not jid:
+        return ""
+    try:
+        mod = _load_remote_bridge_mod()
+        if mod is None:
+            return ""
+        return mod.Mailbox().peek_inbox_block(jid) or ""
+    except Exception:  # noqa: BLE001
         return ""
 
 
-def iteration_prompt(run_dir: Path) -> str:
-    """The standard one-iteration contract handed to a headless agent."""
+def claim_remote_inbox_for_drive(
+    job_id: str | None = None, claimer: str | None = None
+) -> tuple[str, list[str], dict[str, str], str]:
+    """Drive-only exclusive claim. Returns (block, item_ids, fences, claimer)."""
+    jid = job_id or os.environ.get("AAS_REMOTE_JOB_ID")
+    if not jid:
+        return "", [], {}, ""
+    who = claimer or f"arl-drive-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    try:
+        mod = _load_remote_bridge_mod()
+        if mod is None:
+            return "", [], {}, who
+        block, ids, fences = mod.Mailbox().format_inbox_block(jid, claimer=who)
+        return block or "", ids, fences, who
+    except Exception:  # noqa: BLE001
+        return "", [], {}, who
+
+
+def finalize_remote_inbox_claim(
+    job_id: str,
+    item_ids: list[str],
+    *,
+    claimer: str,
+    fences: dict[str, str],
+    success: bool,
+) -> None:
+    """Consume on success; ownership-checked requeue on failure."""
+    if not job_id or not item_ids:
+        return
+    try:
+        mod = _load_remote_bridge_mod()
+        if mod is None:
+            return
+        mb = mod.Mailbox()
+        if success:
+            mb.consume_claimed(job_id, item_ids, claimer=claimer, fences=fences)
+        else:
+            mb.requeue_claimed(job_id, item_ids, claimer=claimer, fences=fences)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def iteration_prompt(run_dir: Path, *, inbox_block: str | None = None) -> str:
+    """The standard one-iteration contract handed to a headless agent.
+
+    Pure by default: does **not** claim/consume remote-bridge inbox.
+    Drive sets AAS_DRIVE_INBOX_BLOCK (or pass inbox_block) after exclusive claim.
+    """
     base = (
         "You are one iteration of a bounded autonomous research loop governed by "
         "the autonomous-research-loop skill and the autonomous-loop-enforcement "
@@ -1262,9 +1308,18 @@ def iteration_prompt(run_dir: Path) -> str:
         "conditions. If you hit a credit or quota error, exit nonzero with the "
         "provider's error text visible in your output."
     )
-    inbox = format_remote_inbox_for_prompt()
-    if inbox:
-        return base + "\n\n" + inbox
+    block = inbox_block if inbox_block is not None else os.environ.get("AAS_DRIVE_INBOX_BLOCK")
+    if block:
+        return base + "\n\n" + block
+    # Inspection path: read-only peek (no claim).
+    peek = peek_remote_inbox_for_prompt()
+    if peek:
+        return (
+            base
+            + "\n\n"
+            + peek
+            + "\n(Note: peek-only; drive claims items transactionally per iteration.)"
+        )
     return base
 
 
@@ -1688,10 +1743,8 @@ def emit_loop_progress(
                 subprocess.run(argv, check=False, timeout=60, capture_output=True)
             except Exception:  # noqa: BLE001 - notify is best-effort
                 pass
-    if notify_cmd:
-        if os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1" or notify_cmd:
-            # Raw shell notify remains available; prefer AAS_ALLOW_RAW_NOTIFY_CMD=1.
-            watch_notify(notify_cmd, env_payload)
+    if notify_cmd and os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1":
+        watch_notify(notify_cmd, env_payload)
     return payload
 
 
@@ -1926,10 +1979,27 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 continue
             was_paused = False
             refresh_heartbeat(reg, run_id)
+            # Transactional remote-bridge claim (drive only; agent-cmd uses peek).
+            remote_job = os.environ.get("AAS_REMOTE_JOB_ID")
+            inbox_block, claim_ids, claim_fences, claimer = claim_remote_inbox_for_drive(
+                remote_job
+            )
+            if inbox_block:
+                os.environ["AAS_DRIVE_INBOX_BLOCK"] = inbox_block
+            else:
+                os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
             if provider:
                 try:
                     spec = resolve_provider_command(provider, run_dir)
                 except ValueError:
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=False,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
                     reason = "bad_arguments"
                     break
                 if spec["mode"] == "argv" and not spec["binary_found"]:
@@ -1946,9 +2016,17 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         )
                         + "\n"
                     )
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=False,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
                     reason = "provider_unavailable"
                     break
-                run_args: object = spec["argv"] if spec["mode"] == "argv" else spec["shell"]
+                run_args = spec["argv"] if spec["mode"] == "argv" else spec["shell"]
                 use_shell = spec["mode"] == "shell"
                 prompt = spec["prompt"]
             else:
@@ -1972,6 +2050,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 log_path=str(log_path),
                 provider=provider or "",
             )
+            pre_spent = 0
+            try:
+                budget_path = loop_paths(run_dir)["budget"]
+                if budget_path.exists():
+                    pre_spent = int(read_json(budget_path).get("spent_iterations") or 0)
+            except Exception:  # noqa: BLE001
+                pre_spent = 0
             try:
                 with log_path.open("w", encoding="utf-8", errors="replace") as log_fh:
                     # Always run the iteration agent with project root as cwd so
@@ -1993,6 +2078,23 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 with log_path.open("a", encoding="utf-8", errors="replace") as log_fh:
                     log_fh.write(f"autoloop-driver: spawn failed: {exc}\n")
                 rc = 127
+            post_spent = pre_spent
+            try:
+                budget_path = loop_paths(run_dir)["budget"]
+                if budget_path.exists():
+                    post_spent = int(read_json(budget_path).get("spent_iterations") or 0)
+            except Exception:  # noqa: BLE001
+                post_spent = pre_spent
+            ledger_advanced = post_spent > pre_spent
+            iter_ok = rc == 0 and (ledger_advanced or not remote_job)
+            finalize_remote_inbox_claim(
+                remote_job or "",
+                claim_ids,
+                claimer=claimer,
+                fences=claim_fences,
+                success=iter_ok,
+            )
+            os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
             if rc != 0:
                 tail = read_log_tail(log_path)
                 if QUOTA_PATTERN.search(tail):
