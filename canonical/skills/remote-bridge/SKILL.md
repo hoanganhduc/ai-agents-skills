@@ -26,12 +26,15 @@ evidence-gated).
 
 ## Windows Runtime Commands
 
+On native Windows, use the managed Windows runner and the native runtime command target. Set `$runtime` to the installed runtime root. Multi-agent installs usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
+
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.bat" "skills/remote-bridge/run_remote_bridge.bat" <args>
+& "$runtime\run_skill.bat" "skills/remote-bridge/run_remote_bridge.ps1" <args>
 ```
 
-POSIX:
+POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
 
 ```bash
 bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh \
