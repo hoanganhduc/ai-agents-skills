@@ -66,6 +66,10 @@ Zotero note storage is off by default for review-only requests.
 
 Do not touch Zotero beyond lookup/retrieval unless the user explicitly asks.
 
+For load-bearing lemmas, you may list **formal candidates** and recommend the
+informal-to-lean / `opengauss` lane. Do not launch OpenGauss during a
+review-only request unless the user also asked to formalize or prove.
+
 ## Review expectations
 
 - Keep the review single-agent by default.

@@ -249,6 +249,11 @@ is supplemental context only: it cannot replace local `formal_check` evidence,
 set local Lean typecheck status, satisfy placeholder/trust-base scans, or
 promote formal support on its own.
 
+OpenGauss harness runs, when present, are recorded as `opengauss_run` evidence
+(provenance only). They cannot replace local `formal_check` evidence or promote
+formal support. Prefer manual `/prove`/`/draft` after intake; AAS auto-launch
+remains fail-closed without `headless_qualified` spike + headless driver.
+
 LeanExplore MCP output, when present, is recorded as `lean_declaration_search`
 evidence. It is supplemental retrieval context only: it can help locate
 declarations, modules, source links, dependencies, and informalizations before
@@ -347,6 +352,9 @@ Output structure guidance:
   proof evidence.
 - Use `axiom-axle-mcp` only for manual optional AXLE MCP setup. Treat its
   results as `axle_remote_check` evidence, not as local formal proof evidence.
+- Use `opengauss` for optional OpenGauss readiness, handoffs, and fail-closed
+  adapter verbs. Treat results as `opengauss_run` provenance, not local formal
+  proof evidence.
 
 ## Escalation rules
 
@@ -394,6 +402,9 @@ Output structure guidance:
       `formal_check` evidence
 - [ ] AXLE remote checks, if used, are recorded as supplemental
       `axle_remote_check` evidence and paired with local `formal_check` evidence
+      before any formal support is promoted
+- [ ] OpenGauss runs, if used, are recorded as supplemental `opengauss_run`
+      provenance and paired with local `formal_check` + lead/human equivalence
       before any formal support is promoted
 - [ ] Budget/model policy state is recorded only in parent-owned runbook artifacts
 - [ ] No aggregate research quality score replaces guard outputs

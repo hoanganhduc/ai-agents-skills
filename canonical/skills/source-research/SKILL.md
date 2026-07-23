@@ -36,6 +36,7 @@ Open these only when relevant:
 - Topic/news digests route to `research-digest-wrapper` or `rss-news-digest`.
 - Digest-to-paper extraction routes to `digest-bridge`.
 - Explicit phased deep research with structured source handoff routes to `deep-research-workflow`.
+- Load-bearing lemmas that may need formalization: **mention/tag** as formal candidates and hand off to `lean-formalization-intake` / informal-to-lean runbook; do **not** run OpenGauss from discovery. Use `opengauss` only after intake `proceed` and (for live work) a manual Gauss install.
 - Writing, report, review, digest, or final-answer workflows must load
   `writing-style-settings.md`; math or LaTeX writing must also load
   `math-manuscript-style.md`.

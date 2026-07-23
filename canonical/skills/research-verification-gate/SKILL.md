@@ -39,6 +39,12 @@ Include:
 - `Next step` — deliver now or fix specific gaps first
 - `Style` — `style_profile_ref`, active overlays, `active_requirement_ids`, and
   whether `style_applied` is supported
+- `Formal status` (when formal claims appear) —
+  - `opengauss_run`: completed | failed | not_used
+  - `lean_check_status` / placeholder / trust-base from strict gate
+  - `claim_support_status` from deep-research ladder
+  - `statement_relation_status` / `review_status`
+  - OpenGauss success alone → **NOT READY** for “proved C”
 
 Use the checklist in `references/checklist.md`.
 

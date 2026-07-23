@@ -116,6 +116,20 @@ for that artifact. The producer may explain or answer questions, but its
 statements are producer claims, never confirmations. A finding is confirmed only
 by a different family independently re-deriving or refuting it.
 
+### OpenGauss / formal appendix
+
+If the artifact was produced with OpenGauss (or another formal harness):
+
+- Record `producer_family_set` including launcher, backend (claude-code/codex),
+  formalizer, and repair roles.
+- Confirmer family must be **disjoint** from that set when claim-support is at stake.
+- Confirmer inputs: **artifact hash + informal claim** (and toolchain pins). Do
+  not treat Gauss transcripts or producer verdicts as authority.
+- If no independent confirmer family is available, **defer** claim-support;
+  never same-family confirm.
+- `opengauss_run` evidence is provenance only; local `formal_check` + lead/human
+  equivalence remain required for “supports claim C” language.
+
 **Do not blindly trust the returned answers; verify them carefully.** A verifier
 that merely restates the producer's reasoning has not verified anything: it must
 independently re-derive the result, check each load-bearing step against its

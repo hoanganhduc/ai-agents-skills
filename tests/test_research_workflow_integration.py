@@ -1015,3 +1015,35 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OpenGaussEvidenceTests(unittest.TestCase):
+    def test_opengauss_run_evidence_validator(self) -> None:
+        import importlib.util
+        from pathlib import Path as P
+
+        path = P(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills" / "deep-research-workflow" / "deep_research_workflow.py"
+        spec = importlib.util.spec_from_file_location("drw_og", path)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        self.assertIn("opengauss_run", mod.EVIDENCE_TYPES)
+
+        errors: list = []
+        row = {
+            "tool_name": "opengauss",
+            "run_id": "og-1",
+            "workflow": "prove",
+            "result_status": "success",
+            "input_encoding_ref": "formal/input/C1.json",
+            "payload_hash": "sha256:test",
+            "limitations": ["provenance only; not formal_check"],
+        }
+        mod.validate_opengauss_run_evidence(row, P("evidence.jsonl"), errors, 1)
+        self.assertEqual(errors, [])
+
+        bad = dict(row)
+        bad["tool_name"] = "other"
+        errors2: list = []
+        mod.validate_opengauss_run_evidence(bad, P("evidence.jsonl"), errors2, 1)
+        self.assertTrue(any(e["code"] == "OPENGAUSS_RUN_TOOL_INVALID" for e in errors2))
