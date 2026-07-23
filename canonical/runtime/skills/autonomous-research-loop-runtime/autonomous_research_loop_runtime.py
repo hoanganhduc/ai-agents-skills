@@ -2515,16 +2515,20 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
         pass
 
 
-# Events that fan out to Zulip/Telegram. Intentionally omits iteration_start /
-# watch_start: those pair with iteration_ok ~1s later using the same objective
-# text and look like "every message twice" in chat.
+# Events that fan out to Zulip/Telegram.
+#
+# Intentionally omits:
+# - iteration_start / watch_start: pair with iteration_ok ~1s later (looks like
+#   "every message twice").
+# - iteration (watch ledger tick): drive already owns remote completion via
+#   iteration_ok / iteration_failed. When drive + watch run together, notifying
+#   both produced duplicate Zulip posts for the same iteration.
 _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
     {
         "drive_start",
         "drive_stop",
         "iteration_ok",
         "iteration_failed",
-        "iteration",
         "quota_wait",
         "paused",
         "terminal",
@@ -2532,10 +2536,88 @@ _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
     }
 )
 
-# In-process dedupe so a single drive cannot double-post identical body text
-# within a short window (covers accidental double emit / restart races).
+# In-process + on-disk dedupe so concurrent drive/watch (or restarts) cannot
+# double-post identical / same-iteration bodies. Disk file is per loop dir.
 _LAST_REMOTE_NOTIFY: dict[str, Any] = {"fp": "", "at": 0.0}
 _REMOTE_NOTIFY_DEDUPE_SEC = 15.0
+_REMOTE_NOTIFY_ITER_DEDUPE_SEC = 120.0
+
+
+def _remote_notify_dedupe_path(run_dir: Path) -> Path:
+    return Path(run_dir).expanduser().resolve() / "driver_logs" / ".remote_notify_dedupe.json"
+
+
+def _remote_notify_load_disk(run_dir: Path) -> dict[str, Any]:
+    path = _remote_notify_dedupe_path(run_dir)
+    try:
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+    return {}
+
+
+def _remote_notify_store_disk(run_dir: Path, data: dict[str, Any]) -> None:
+    path = _remote_notify_dedupe_path(run_dir)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+
+
+def _remote_notify_is_duplicate(
+    run_dir: Path,
+    *,
+    fp: str,
+    iter_key: str,
+    now: float,
+) -> bool:
+    """True if this remote body/iteration was already sent recently."""
+    last_fp = str(_LAST_REMOTE_NOTIFY.get("fp") or "")
+    last_at = float(_LAST_REMOTE_NOTIFY.get("at") or 0.0)
+    if fp and fp == last_fp and (now - last_at) < _REMOTE_NOTIFY_DEDUPE_SEC:
+        return True
+    disk = _remote_notify_load_disk(run_dir)
+    disk_fp = str(disk.get("fp") or "")
+    disk_at = float(disk.get("at") or 0.0)
+    if fp and fp == disk_fp and (now - disk_at) < _REMOTE_NOTIFY_DEDUPE_SEC:
+        return True
+    if iter_key:
+        last_iter = str(_LAST_REMOTE_NOTIFY.get("iter_key") or "")
+        last_iter_at = float(_LAST_REMOTE_NOTIFY.get("iter_at") or 0.0)
+        if iter_key == last_iter and (now - last_iter_at) < _REMOTE_NOTIFY_ITER_DEDUPE_SEC:
+            return True
+        disk_iter = str(disk.get("iter_key") or "")
+        disk_iter_at = float(disk.get("iter_at") or 0.0)
+        if iter_key == disk_iter and (now - disk_iter_at) < _REMOTE_NOTIFY_ITER_DEDUPE_SEC:
+            return True
+    return False
+
+
+def _remote_notify_remember(
+    run_dir: Path,
+    *,
+    fp: str,
+    iter_key: str,
+    now: float,
+) -> None:
+    _LAST_REMOTE_NOTIFY["fp"] = fp
+    _LAST_REMOTE_NOTIFY["at"] = now
+    if iter_key:
+        _LAST_REMOTE_NOTIFY["iter_key"] = iter_key
+        _LAST_REMOTE_NOTIFY["iter_at"] = now
+    disk = {
+        "fp": fp,
+        "at": now,
+        "iter_key": iter_key or str(_LAST_REMOTE_NOTIFY.get("iter_key") or ""),
+        "iter_at": now if iter_key else float(_LAST_REMOTE_NOTIFY.get("iter_at") or 0.0),
+    }
+    _remote_notify_store_disk(run_dir, disk)
 
 
 def resolve_remote_job_id(run_dir: Path | None = None) -> str | None:
@@ -2592,12 +2674,14 @@ def emit_loop_progress(
         # Prefer multi-line body; Telegram gets HTML when available.
         notify_text = str(payload.get("text") or payload.get("text_compact") or "")
         notify_html = str(payload.get("text_html") or "")
-        # Dedupe identical bodies (and near-identical start/ok pairs if re-enabled).
         now = time.time()
         fp = f"{event}\n{notify_text}".strip()
-        last_fp = str(_LAST_REMOTE_NOTIFY.get("fp") or "")
-        last_at = float(_LAST_REMOTE_NOTIFY.get("at") or 0.0)
-        if fp and fp == last_fp and (now - last_at) < _REMOTE_NOTIFY_DEDUPE_SEC:
+        iter_no = payload.get("iteration")
+        # Cross-process key: same loop + event family + iteration within window.
+        iter_key = f"{event}:{iter_no}" if iter_no not in (None, "") else ""
+        if _remote_notify_is_duplicate(
+            run_dir, fp=fp, iter_key=iter_key, now=now
+        ):
             pass  # skip duplicate remote send
         else:
             argv = resolve_remote_notify_argv(
@@ -2609,8 +2693,7 @@ def emit_loop_progress(
             if argv:
                 try:
                     subprocess.run(argv, check=False, timeout=60, capture_output=True)
-                    _LAST_REMOTE_NOTIFY["fp"] = fp
-                    _LAST_REMOTE_NOTIFY["at"] = now
+                    _remote_notify_remember(run_dir, fp=fp, iter_key=iter_key, now=now)
                 except Exception:  # noqa: BLE001 - notify is best-effort
                     pass
     if notify_cmd and os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1":
