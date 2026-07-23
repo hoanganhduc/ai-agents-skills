@@ -2298,8 +2298,8 @@ The shared skills involved are:
 |---|---|
 | `agent-group-discuss` | Template-based multi-agent discussion, review, and research. |
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
-| `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes. |
-| `autonomous-research-loop-runtime` | Headless `drive` and host-owned `panel` phases around each iteration. |
+| `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes; optional soft `goal_priority.v1` path discipline. |
+| `autonomous-research-loop-runtime` | Headless `drive`, host-owned `panel` phases (adaptive per-provider timeouts), and optional goal_priority soft ledger fields. |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
 | `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
@@ -2330,6 +2330,12 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
 # Probe panel providers without starting drive
 … panel --smoke --root .
 ```
+
+Panel provider budgets default to **adaptive** timeouts (prompt size, provider
+multipliers, recent elapsed history, hard max). Set `"timeout_mode": "fixed"` for
+legacy flat caps. Optional soft **goal priority** (`goal_priority.json` with
+explicit `"enabled": true`) injects goal-EV / campaign / streak warnings without
+adding stop conditions; see template `goal-priority`.
 
 Optional loop config (`panel.json` or `loop_state.standing_orders.panel`):
 
@@ -2853,11 +2859,12 @@ Autonomous loop enforcement:
 When an autonomous loop runs, stop-condition enforcement is built in rather than
 hand-wired per project. One stop policy governs it: user requirements override
 everything; otherwise the loop stops only when the required iteration count is
-reached, credit or a spend cap is exhausted, the stated goal is resolved by a
-machine-checkable success check, or the user asks to stop. Nothing else is a
-valid stop. The policy ships as the `autonomous-loop-enforcement` instruction
-rule, and a single runtime arbiter (`done`) derives the verdict both enforcement
-paths consult.
+reached, credit or a spend cap is exhausted, the stated goal is fully resolved
+(agents may run an optional machine-checkable `success_check` command and record
+proof/success evidence; the `done` arbiter does **not** execute that command
+itself), or the user asks to stop. Nothing else is a valid stop. The policy
+ships as the `autonomous-loop-enforcement` instruction rule, and a single
+runtime arbiter (`done`) derives the verdict both enforcement paths consult.
 
 - Interactive (Claude): a managed `hooks.Stop` entry is merged into
   `~/.claude/settings.json` (the `settings-hook-merge` surface). The entry invokes

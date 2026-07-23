@@ -85,7 +85,7 @@ Apply every phase, in order, in each loop.
 
 | Phase | Objective | Inputs | Outputs | Status |
 |---|---|---|---|---|
-| P1. Path-select | Evaluate candidate paths and select the single highest-probability approach; pursue it exclusively. See Single-Path Solving Discipline. |  |  |  |
+| P1. Path-select | Evaluate candidate paths and select the single highest-probability approach; pursue it exclusively. When `goal_priority` is active, rank candidates by contribution to `loop_state.goal` (goal EV), not local residual size alone. See Single-Path Solving Discipline. |  |  |  |
 | P2. Resource check | Run `get-available-resources` locally; if heavy compute is planned, check candidates in configured order and select the first permitted backend whose required compute guard passes. |  |  |  |
 | P3. Solve | Pursue the one selected path. **Use multi-agent if necessary**, and **always route cross-family handoffs through `cross-agent-delegation`** (cross-agent-delegation is mandatory; only multi-agent is conditional). If a script is required, **always implement it in a way that utilizes the current hardware resources**. |  |  |  |
 | P3b. Formal execution (optional) | Only if `formal_policy` is `auto`/`on` and a load-bearing lemma is stable: intake → lean-explore → skeleton → **manual OpenGauss or fail-closed adapter** → `lean-strict-verification-gate`. Do not auto-spawn gauss unless `spike_report.json` is `headless_qualified` **and** a headless driver exists (currently adapter always refuses live spawn). Record `opengauss_run` as provenance only. |  |  |  |

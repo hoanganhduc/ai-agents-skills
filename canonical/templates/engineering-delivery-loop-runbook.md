@@ -313,6 +313,12 @@ from the last green node.
 | Early delivery stop without evidence | Evidence gate | Keep running or block; cite a seen-to-fail proof and a cross-agent verification id before stopping for success. |
 | Budget/credit copied into a packet | Packet validation | Remove; keep budget and credit state in this runbook only. |
 
+## Related (optional)
+
+For research-style open-problem loops, see the autonomous-research-loop runbooks
+and optional soft `goal_priority` template (path discipline only; does not change
+this engineering stop policy).
+
 ## Final Outcome
 
 Delivered work:

@@ -281,7 +281,8 @@ class ManifestTests(unittest.TestCase):
                          ["tikz-figure-verification-runbook"])
         self.assertEqual(skills["autonomous-research-loop"]["recommended_templates"],
                          ["autonomous-research-loop-runbook",
-                          "autonomous-research-loop-portfolio-runbook"])
+                          "autonomous-research-loop-portfolio-runbook",
+                          "goal-priority"])
         for name, spec in skills.items():
             for slug in spec.get("recommended_templates", []):
                 self.assertIn(slug, templates, f"{name} recommends missing template {slug}")

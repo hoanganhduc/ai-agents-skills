@@ -4,11 +4,11 @@
 Architecture
 ------------
 The ARL **driver** (or an interactive top parent) owns multi-agent
-target-advice and result-review. The drive **primary** does single-path math
-only and must not nest panel CLIs under its sandbox.
+target-advice and result-review. The drive **primary** does single-path
+work only and must not nest panel CLIs under its sandbox.
 
 This module runs **outside** the primary agent process: correct CLI argv, real
-auth homes, parallel dispatch, longer timeouts, and standard panel artifacts.
+auth homes, parallel dispatch, adaptive timeouts, and standard panel artifacts.
 
 See autonomous-research-loop skill docs: hybrid parent-owned panel model.
 """
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -31,6 +32,23 @@ DEFAULT_TIMEOUT_S = {
     "target_advice": 600,
     "result_review": 900,
     "smoke": 120,
+}
+
+# Adaptive timeout defaults (see compute_provider_timeouts).
+DEFAULT_PROVIDER_MULT: dict[str, float] = {
+    "kimi": 1.5,
+    "claude": 1.15,
+    "codex": 1.1,
+    "codewhale": 1.0,
+}
+DEFAULT_TIMEOUT_CALC: dict[str, Any] = {
+    "min_s": 120,
+    "max_s": 2400,
+    "max_s_smoke": 180,
+    "size_free": 4000,
+    "size_chars_per_second": 80,
+    "hist_margin": 1.25,
+    "history_n": 5,
 }
 
 MIN_USABLE_CHARS = 8
@@ -239,6 +257,184 @@ def phase_dirs(iter_dir: Path, phase: str) -> tuple[Path, Path]:
     return out, raw
 
 
+def _timeout_calc_constants(cfg: dict[str, Any] | None) -> dict[str, Any]:
+    out = dict(DEFAULT_TIMEOUT_CALC)
+    if not cfg:
+        return out
+    raw = cfg.get("timeout_calc")
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if value is not None:
+                out[key] = value
+    return out
+
+
+def _provider_mult(provider: str, cfg: dict[str, Any] | None) -> float:
+    defaults = dict(DEFAULT_PROVIDER_MULT)
+    if cfg and isinstance(cfg.get("timeouts_by_provider"), dict):
+        entry = cfg["timeouts_by_provider"].get(provider)
+        if isinstance(entry, (int, float)) and not isinstance(entry, bool):
+            return float(entry)
+        if isinstance(entry, dict):
+            mult = entry.get("mult", entry.get("multiplier"))
+            if isinstance(mult, (int, float)) and not isinstance(mult, bool):
+                return float(mult)
+    return float(defaults.get(provider, 1.0))
+
+
+def _history_elapsed(
+    run_dir: Path | None,
+    provider: str,
+    phase: str,
+    history_n: int,
+) -> float:
+    """Max successful elapsed_s for provider+phase from recent dispatch summaries."""
+    if run_dir is None or not Path(run_dir).is_dir() or history_n < 1:
+        return 0.0
+    root = Path(run_dir)
+    candidates: list[Path] = []
+    # Prefer iteration data panel_dispatch_*.json under this loop
+    for path in sorted(root.glob("iterations/**/data/panel_dispatch_*.json")):
+        candidates.append(path)
+    for path in sorted(root.glob("iterations/**/panel/**/dispatch_summary.json")):
+        candidates.append(path)
+    # Also accept summaries placed directly under run_dir (tests / ad-hoc)
+    for path in sorted(root.glob("**/panel_dispatch_*.json")):
+        if path not in candidates:
+            candidates.append(path)
+    # Newest last; walk reverse
+    best = 0.0
+    seen = 0
+    for path in reversed(candidates):
+        if seen >= history_n:
+            break
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if data.get("phase") and data.get("phase") != phase and phase != "smoke":
+            # allow unmatched only when file name encodes phase
+            if phase not in path.name:
+                continue
+        results = data.get("results") or {}
+        meta = results.get(provider) if isinstance(results, dict) else None
+        if not isinstance(meta, dict):
+            continue
+        seen += 1
+        if not meta.get("usable"):
+            continue
+        try:
+            elapsed = float(meta.get("elapsed_s") or 0)
+        except (TypeError, ValueError):
+            elapsed = 0.0
+        if elapsed > best:
+            best = elapsed
+    return best
+
+
+def compute_provider_timeouts(
+    phase: str,
+    prompt: str,
+    providers: list[str],
+    cfg: dict[str, Any] | None = None,
+    *,
+    run_dir: Path | None = None,
+    explicit_timeout_s: int | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Per-provider timeout budgets (adaptive or fixed).
+
+    Returns map provider -> {timeout_s, timeout_mode, timeout_inputs}.
+    """
+    cfg = cfg or {}
+    mode = str(cfg.get("timeout_mode") or "adaptive").strip().lower()
+    if mode not in {"adaptive", "fixed"}:
+        mode = "adaptive"
+    timeouts = cfg.get("timeouts") if isinstance(cfg.get("timeouts"), dict) else {}
+    base = int(timeouts.get(phase, DEFAULT_TIMEOUT_S.get(phase, 600)))
+    if explicit_timeout_s is not None and int(explicit_timeout_s) > 0:
+        if mode == "fixed":
+            base = int(explicit_timeout_s)
+        else:
+            base = max(base, int(explicit_timeout_s))
+    calc = _timeout_calc_constants(cfg)
+    try:
+        min_s = int(calc.get("min_s", 120))
+    except (TypeError, ValueError):
+        min_s = 120
+    try:
+        max_s = int(calc.get("max_s", 2400))
+    except (TypeError, ValueError):
+        max_s = 2400
+    if phase == "smoke":
+        try:
+            max_s = min(max_s, int(calc.get("max_s_smoke", 180)))
+        except (TypeError, ValueError):
+            max_s = min(max_s, 180)
+    prompt_chars = len(prompt or "")
+    try:
+        size_free = int(calc.get("size_free", 4000))
+    except (TypeError, ValueError):
+        size_free = 4000
+    try:
+        cps = float(calc.get("size_chars_per_second", 80)) or 80.0
+    except (TypeError, ValueError):
+        cps = 80.0
+    size_extra = int(math.ceil(max(0, prompt_chars - size_free) / cps))
+    try:
+        hist_margin = float(calc.get("hist_margin", 1.25)) or 1.25
+    except (TypeError, ValueError):
+        hist_margin = 1.25
+    try:
+        history_n = int(calc.get("history_n", 5))
+    except (TypeError, ValueError):
+        history_n = 5
+
+    out: dict[str, dict[str, Any]] = {}
+    for provider in providers:
+        if mode == "fixed":
+            t = max(min_s, min(max_s, base))
+            out[provider] = {
+                "timeout_s": t,
+                "timeout_mode": "fixed",
+                "timeout_inputs": {
+                    "base": base,
+                    "size_extra": 0,
+                    "provider_mult": 1.0,
+                    "hist_pad": 0,
+                    "prompt_chars": prompt_chars,
+                    "clamped": t != base,
+                    "min_s": min_s,
+                    "max_s": max_s,
+                },
+            }
+            continue
+        mult = _provider_mult(provider, cfg)
+        hist = _history_elapsed(run_dir, provider, phase, history_n)
+        hist_pad = int(math.ceil(hist * hist_margin)) if hist > 0 else 0
+        raw = max(base + size_extra, hist_pad) * mult
+        t = int(round(raw))
+        clamped = max(min_s, min(max_s, t))
+        out[provider] = {
+            "timeout_s": clamped,
+            "timeout_mode": "adaptive",
+            "timeout_inputs": {
+                "base": base,
+                "size_extra": size_extra,
+                "provider_mult": mult,
+                "hist_pad": hist_pad,
+                "hist_elapsed": hist,
+                "prompt_chars": prompt_chars,
+                "raw": raw,
+                "clamped": clamped != t,
+                "min_s": min_s,
+                "max_s": max_s,
+            },
+        }
+    return out
+
+
 def dispatch_phase(
     iter_dir: Path,
     phase: str,
@@ -248,10 +444,30 @@ def dispatch_phase(
     root: Path,
     *,
     runner: Runner | None = None,
+    panel_cfg: dict[str, Any] | None = None,
+    run_dir: Path | None = None,
 ) -> dict[str, Any]:
     out_dir, raw_dir = phase_dirs(iter_dir, phase)
     (out_dir / "prompt.md").write_text(
         prompt if prompt.endswith("\n") else prompt + "\n", encoding="utf-8"
+    )
+
+    cfg = panel_cfg if panel_cfg is not None else {}
+    history_root = run_dir
+    if history_root is None:
+        # iter_dir is often <loop>/iterations/iterNNN
+        try:
+            if iter_dir.parent.name == "iterations":
+                history_root = iter_dir.parent.parent
+        except Exception:  # noqa: BLE001
+            history_root = None
+    budgets = compute_provider_timeouts(
+        phase,
+        prompt,
+        list(providers),
+        cfg,
+        run_dir=history_root,
+        explicit_timeout_s=timeout_s if timeout_s and timeout_s > 0 else None,
     )
 
     results: dict[str, Any] = {}
@@ -259,7 +475,14 @@ def dispatch_phase(
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         futs = {
             pool.submit(
-                run_one, p, prompt, root, raw_dir, phase, timeout_s, runner=runner
+                run_one,
+                p,
+                prompt,
+                root,
+                raw_dir,
+                phase,
+                int(budgets[p]["timeout_s"]),
+                runner=runner,
             ): p
             for p in providers
         }
@@ -277,6 +500,12 @@ def dispatch_phase(
                     "credit_or_quota_error": False,
                     "stderr": str(exc),
                 }
+            # Attach timeout telemetry even on exception path
+            meta = budgets.get(p) or {}
+            if isinstance(results.get(p), dict):
+                results[p]["timeout_s"] = meta.get("timeout_s", results[p].get("timeout_s"))
+                results[p]["timeout_mode"] = meta.get("timeout_mode")
+                results[p]["timeout_inputs"] = meta.get("timeout_inputs")
 
     for p, meta in results.items():
         md_path = out_dir / f"{p}.md"
@@ -308,6 +537,8 @@ def dispatch_phase(
         "all_invited_usable": set(usable) >= set(providers),
         "different_family_logic_available": different_family
         or any(p in usable for p in ("claude", "kimi", "codewhale")),
+        "timeout_mode": (next(iter(budgets.values()), {}) or {}).get("timeout_mode"),
+        "provider_timeouts": {p: budgets[p]["timeout_s"] for p in providers if p in budgets},
         "results": results,
         "generated_unix": time.time(),
     }
@@ -328,6 +559,7 @@ def load_panel_config(run_dir: Path) -> dict[str, Any]:
         "enabled": False,
         "providers": list(DEFAULT_PROVIDERS),
         "timeouts": dict(DEFAULT_TIMEOUT_S),
+        "timeout_mode": "adaptive",
         "require_different_family": True,
         "anti_deadlock_math_without_panel": True,
     }
@@ -400,22 +632,27 @@ def ensure_iter_dir(run_dir: Path, iteration: int | None = None) -> Path:
 
 
 def build_target_brief(run_dir: Path, *, max_chars: int = 12000) -> str:
-    """Compact brief from recovery + loop_state for target_advice."""
+    """Compact brief: goal/replan, then next path, then truncated recovery."""
     parts: list[str] = [
         "# Panel target-advice brief (host parent)",
         "",
         "You are a panelist. Advise on the **single next path** only.",
-        "Do not claim results are banked. Do not start formal OpenGauss work unless recovery requires it.",
+        "Do not claim results are banked. Do not start formal-lane work unless recovery requires it.",
         "Label encoding-scoped vs manuscript claims carefully.",
         "",
     ]
-    recovery = run_dir / "recovery.md"
-    if recovery.is_file():
-        text = recovery.read_text(encoding="utf-8", errors="replace")
-        parts.append("## recovery.md (excerpt)")
-        parts.append("")
-        parts.append(text[:8000])
-        parts.append("")
+    # (1) Goal / replan block first so truncation cannot drop it
+    try:
+        from goal_priority import goal_priority_brief_block  # type: ignore
+
+        gp_block = goal_priority_brief_block(run_dir)
+        if gp_block.strip():
+            parts.append(gp_block.rstrip())
+            parts.append("")
+    except Exception:  # noqa: BLE001 — panel works without goal_priority module
+        pass
+
+    # (2) next_preferred_path / committed path
     state_path = run_dir / "loop_state.json"
     if state_path.is_file():
         try:
@@ -423,17 +660,26 @@ def build_target_brief(run_dir: Path, *, max_chars: int = 12000) -> str:
             npp = state.get("next_preferred_path") or ""
             parts.append("## next_preferred_path")
             parts.append("")
-            parts.append(str(npp)[:2000])
+            parts.append(str(npp)[:2000] if npp else "(unset)")
             parts.append("")
             parts.append(f"last_iteration: {state.get('last_iteration')}")
             parts.append("")
         except (OSError, json.JSONDecodeError):
             pass
+
+    # (3) recovery excerpt (may be truncated by max_chars)
+    recovery = run_dir / "recovery.md"
+    if recovery.is_file():
+        text = recovery.read_text(encoding="utf-8", errors="replace")
+        parts.append("## recovery.md (excerpt)")
+        parts.append("")
+        parts.append(text[:8000])
+        parts.append("")
     parts.append("## Required output")
     parts.append("")
     parts.append(
         "1) Rank 1–3 next targets under single-path policy.\n"
-        "2) Prefer the recovery next path unless you have a host-verifiable blocker.\n"
+        "2) Prefer the committed next path unless you have a host-verifiable blocker.\n"
         "3) Name what would falsify the preferred target.\n"
         "4) Flag encoding vs manuscript scope.\n"
         "Keep the reply under ~1500 words."
@@ -458,9 +704,20 @@ def build_review_brief(run_dir: Path, iter_dir: Path, *, max_chars: int = 12000)
         "6) off-by-one / scope errors",
         "",
         "List inspected paths, uninspected paths, pass/fail/partial, and what would invalidate claims.",
-        "Do not bank F-numbers or manuscript theorems.",
+        "Do not bank uncertified numeric tallies or manuscript theorems without independent checks.",
         "",
     ]
+    try:
+        from goal_priority import campaign_match_line  # type: ignore
+
+        match = campaign_match_line(run_dir)
+        if match.strip():
+            parts.append("## Goal / campaign")
+            parts.append("")
+            parts.append(match.rstrip())
+            parts.append("")
+    except Exception:  # noqa: BLE001
+        pass
     # List iteration files (names only)
     try:
         names = sorted(p.name for p in iter_dir.iterdir() if p.is_file())[:40]
@@ -526,8 +783,9 @@ def write_host_synthesis(
     lines.append("")
     if not usable:
         lines.append(
-            "## Note\n\nNo usable panel content. Anti-deadlock may allow math if dual "
-            "engines are ready; do not bank logic/scope without different-family review.\n"
+            "## Note\n\nNo usable panel content. Anti-deadlock may allow single-path "
+            "work if dual engines are ready; do not bank logic/scope without "
+            "different-family review.\n"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
@@ -547,7 +805,7 @@ def panel_prompt_addon(run_dir: Path, iter_dir: Path | None) -> str:
         "(`claude -p`, `codewhale exec`, `kimi -p`, nested `codex exec`) for panel purposes.\n"
         "- You may still run local scripts/tests for machine independence.\n"
         "- Independently host-verify any agent claims before banking; panel consensus ≠ evidence.\n"
-        "- Append iteration ledger as usual; leave formal OpenGauss rules from standing orders intact.\n"
+        "- Append iteration ledger as usual; leave formal-lane rules from standing orders intact.\n"
     )
 
 
@@ -573,6 +831,7 @@ def smoke(
             timeout_s=timeout_s,
             root=root,
             runner=runner,
+            panel_cfg={"timeout_mode": "fixed", "timeouts": dict(DEFAULT_TIMEOUT_S)},
         )
         return summary
     finally:
@@ -595,7 +854,8 @@ def run_panel_phase_for_drive(
     prov = providers or list(cfg.get("providers") or DEFAULT_PROVIDERS)
     timeouts = cfg.get("timeouts") or DEFAULT_TIMEOUT_S
     t_default = int(timeouts.get(phase, DEFAULT_TIMEOUT_S.get(phase, 600)))
-    t_s = int(timeout_s if timeout_s is not None else t_default)
+    # 0 / None → let adaptive formula use phase base only
+    t_s = int(timeout_s) if timeout_s is not None and int(timeout_s) > 0 else t_default
     idir = iter_dir or ensure_iter_dir(run_dir)
     if prompt is None:
         if phase == "target_advice":
@@ -612,6 +872,8 @@ def run_panel_phase_for_drive(
         timeout_s=t_s,
         root=root,
         runner=runner,
+        panel_cfg=cfg,
+        run_dir=run_dir,
     )
     next_path = ""
     state_path = run_dir / "loop_state.json"

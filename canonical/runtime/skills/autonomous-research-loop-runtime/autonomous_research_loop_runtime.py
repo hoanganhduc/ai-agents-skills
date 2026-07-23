@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-# Sibling module: parent-owned multi-agent panel (hybrid model).
+# Sibling modules: hybrid panel + optional goal_priority.v1.
 try:
     from panel_parent import (  # type: ignore  # noqa: I001 — same-dir runtime import
         ensure_iter_dir,
@@ -28,6 +28,13 @@ try:
         run_panel_phase_for_drive,
         smoke as panel_smoke,
     )
+    from goal_priority import (  # type: ignore
+        collect_goal_priority_warnings,
+        example_goal_priority_json,
+        goal_priority_prompt_addon,
+        is_goal_priority_active,
+        load_goal_priority,
+    )
 except ImportError:  # pragma: no cover - package-style import during tests
     from .panel_parent import (  # type: ignore
         ensure_iter_dir,
@@ -36,6 +43,13 @@ except ImportError:  # pragma: no cover - package-style import during tests
         resolve_panel_mode,
         run_panel_phase_for_drive,
         smoke as panel_smoke,
+    )
+    from .goal_priority import (  # type: ignore
+        collect_goal_priority_warnings,
+        example_goal_priority_json,
+        goal_priority_prompt_addon,
+        is_goal_priority_active,
+        load_goal_priority,
     )
 
 
@@ -287,11 +301,20 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
         encoding="utf-8",
         newline="\n",
     )
+    files_out = {name: str(path) for name, path in paths.items()}
+    if bool(getattr(args, "goal_priority_template", False)):
+        gp_path = run_dir / "goal_priority.json"
+        if gp_path.exists() and not args.force:
+            raise ValueError(
+                f"{gp_path} already exists; pass --force to overwrite goal_priority template"
+            )
+        gp_path.write_text(example_goal_priority_json(), encoding="utf-8", newline="\n")
+        files_out["goal_priority"] = str(gp_path)
     return {
         "status": "ok",
         "action": "init",
         "dir": str(run_dir),
-        "files": {name: str(path) for name, path in paths.items()},
+        "files": files_out,
         "directories": {"proof_artifacts": str(proof_artifacts_dir(run_dir))},
     }
 
@@ -368,6 +391,18 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
         "decision": args.decision,
         "stop_reason": args.stop_reason,
     }
+    # Optional goal_priority.v1 soft fields (open vocabulary).
+    goal_contrib = getattr(args, "goal_contribution", None) or ""
+    campaign_id = getattr(args, "campaign_id", None) or ""
+    if str(goal_contrib).strip():
+        record["goal_contribution"] = str(goal_contrib).strip()
+    if str(campaign_id).strip():
+        record["campaign_id"] = str(campaign_id).strip()
+    if bool(getattr(args, "local_without_goal_delta", False)):
+        record["local_without_goal_delta"] = True
+    tag = getattr(args, "local_without_goal_delta_tag", None) or ""
+    if str(tag).strip():
+        record["local_without_goal_delta_tag"] = str(tag).strip()
     append_jsonl(paths["iterations"], record)
 
     state["last_iteration"] = number
@@ -399,12 +434,14 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
         encoding="utf-8",
         newline="\n",
     )
+    gp_warnings = collect_goal_priority_warnings(run_dir, latest_record=record)
     return {
         "status": "ok",
         "action": "append-iteration",
         "dir": str(run_dir),
         "iteration": number,
         "decision": args.decision,
+        "warnings": gp_warnings,
     }
 
 
@@ -507,9 +544,12 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
                                 for error in validate_proof_artifact(run_dir, evidence_id)
                             )
 
+    latest = iterations[-1] if iterations else None
+    warnings = collect_goal_priority_warnings(run_dir, latest_record=latest)
     return {
         "status": "failed" if errors else "ok",
         "errors": errors,
+        "warnings": warnings,
         "checked": {
             "dir": str(run_dir),
             "files": {name: path.exists() for name, path in paths.items()},
@@ -1472,6 +1512,8 @@ def iteration_prompt(
     )
     if panel_enabled:
         base = base + panel_prompt_addon(run_dir, panel_iter_dir)
+    if is_goal_priority_active(run_dir):
+        base = base + goal_priority_prompt_addon(run_dir)
     block = inbox_block if inbox_block is not None else os.environ.get("AAS_DRIVE_INBOX_BLOCK")
     if block:
         return base + "\n\n" + block
@@ -3344,6 +3386,11 @@ def build_parser() -> argparse.ArgumentParser:
         "loop-count/credit/goal defaults",
     )
     init.add_argument("--stop-condition", action="append", help="free-text user stop requirement (priority 0)")
+    init.add_argument(
+        "--goal-priority-template",
+        action="store_true",
+        help="also write goal_priority.json example with enabled:false",
+    )
     init.set_defaults(func=init_loop)
 
     append = subparsers.add_parser("append-iteration", help="append one iteration record")
@@ -3363,6 +3410,26 @@ def build_parser() -> argparse.ArgumentParser:
     append.add_argument("--usd", type=nonnegative_float, default=0.0)
     append.add_argument("--wall-time-seconds", type=positive_int, default=0)
     append.add_argument("--stop-reason", default="")
+    append.add_argument(
+        "--goal-contribution",
+        default="",
+        help="optional goal_priority soft field (open vocabulary contribution label)",
+    )
+    append.add_argument(
+        "--campaign-id",
+        default="",
+        help="optional goal_priority campaign id for this iteration",
+    )
+    append.add_argument(
+        "--local-without-goal-delta",
+        action="store_true",
+        help="mark iteration as local residual without goal progress",
+    )
+    append.add_argument(
+        "--local-without-goal-delta-tag",
+        default="",
+        help="optional advisory tag for local-without-goal-delta",
+    )
     append.set_defaults(func=append_iteration)
 
     validate = subparsers.add_parser("validate", help="validate loop ledger files")

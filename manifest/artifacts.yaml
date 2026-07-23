@@ -323,6 +323,18 @@
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "cross-agent-delegation", "agent-group-discuss", "model-router", "kaggle-research-compute", "modal-research-compute", "hetzner-research-compute", "research-verification-gate", "decision-doubt-loop", "get-available-resources"]
       },
+      "goal-priority": {
+        "description": "Optional goal_priority.v1 reference for ARL loops: enable rules, soft ledger fields, streak / REPLAN_REQUIRED semantics, and vocabulary (does not change stop conditions).",
+        "source": "goal-priority.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime"]
+      },
+      "goal-priority-example": {
+        "description": "Example goal_priority.json with enabled:false for ARL init --goal-priority-template.",
+        "source": "goal-priority.example.json",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime"]
+      },
       "engineering-delivery-loop-runbook": {
         "description": "Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and five-lane broker-routed heavy-compute offload with per-lane safety gates.",
         "source": "engineering-delivery-loop-runbook.md",

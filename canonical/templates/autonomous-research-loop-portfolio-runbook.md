@@ -171,7 +171,10 @@ exception and must be justified in writing.
 
 1. **Assess dominance.** Enumerate candidate approaches briefly, grouped by their
    underlying idea (not surface wording), and rank them by estimated probability
-   of success.
+   of success. When optional `goal_priority` is active, also rank live approaches
+   by estimated contribution to the loop goal (goal EV); soft ledger fields apply
+   at iteration granularity (see template `goal-priority` and the insufficient
+   results list below).
 2. **Default to portfolio** unless one approach is clearly dominant. Collapse to
    `path_mode: single-path` only when you record a **dominance justification** in
    the ledger (why one approach is clearly strongest and cheap to verify). In

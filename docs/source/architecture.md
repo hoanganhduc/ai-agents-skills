@@ -141,11 +141,12 @@ Autonomous loop enforcement:
 When an autonomous loop runs, stop-condition enforcement is built in rather than
 hand-wired per project. One stop policy governs it: user requirements override
 everything; otherwise the loop stops only when the required iteration count is
-reached, credit or a spend cap is exhausted, the stated goal is resolved by a
-machine-checkable success check, or the user asks to stop. Nothing else is a
-valid stop. The policy ships as the `autonomous-loop-enforcement` instruction
-rule, and a single runtime arbiter (`done`) derives the verdict both enforcement
-paths consult.
+reached, credit or a spend cap is exhausted, the stated goal is fully resolved
+(agents may run an optional machine-checkable `success_check` command and record
+proof/success evidence; the `done` arbiter does **not** execute that command
+itself), or the user asks to stop. Nothing else is a valid stop. The policy
+ships as the `autonomous-loop-enforcement` instruction rule, and a single
+runtime arbiter (`done`) derives the verdict both enforcement paths consult.
 
 - Interactive (Claude): a managed `hooks.Stop` entry is merged into
   `~/.claude/settings.json` (the `settings-hook-merge` surface). The entry invokes
