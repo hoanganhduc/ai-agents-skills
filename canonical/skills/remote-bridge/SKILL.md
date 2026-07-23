@@ -75,13 +75,32 @@ Chat control commands (Zulip/Telegram body): `/aas help|status|approve|deny|say|
 
 ## ARL / drive integration
 
+**Default-on when secrets are configured.** `arm` and `drive` use `--notify auto`
+(default): if Zulip and/or Telegram credentials are present in
+`~/.config/remote-bridge/secrets.json` (or env), progress events are sent
+without an extra flag. Prefer:
+
+```bash
+# one-time arm (persists notify_channel on loop_state + registry)
+… run_autonomous_research_loop.sh arm --dir <loop> --root <proj> --notify auto
+
+# drive inherits arm/env/secrets (auto by default)
+… run_autonomous_research_loop.sh drive --dir <loop> --root <proj> \
+  --provider codex
+# equivalent explicit: --notify auto
+# silence: --notify off   or   AAS_AUTOLOOP_NOTIFY=off
+```
+
+Optional job id for topic routing:
+
 ```bash
 export AAS_REMOTE_JOB_ID=clawfree
-export AAS_AUTOLOOP_NOTIFY=zulip   # or telegram|both
-# arm job first, then:
-… run_autonomous_research_loop.sh drive --dir <loop> --root <proj> \
-  --provider grok --notify zulip
+export AAS_AUTOLOOP_NOTIFY=both   # force channel; overrides auto pick
 ```
+
+Events notified (best-effort, never abort the loop): `drive_start`,
+`drive_stop`, `iteration_start` / `iteration_ok` / `iteration_failed`,
+`quota_wait`, `paused`, `terminal`, `driver_dead`.
 
 Headless iterations inject a labeled **data-only** inbox block when
 `AAS_REMOTE_JOB_ID` is set. Approvals for auto-approve providers (`--yolo`,

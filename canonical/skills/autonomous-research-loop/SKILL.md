@@ -219,17 +219,22 @@ the stop conditions:
 
 ```bash
 ... run_autonomous_research_loop.sh drive --dir <loop_dir> --provider <claude|codex|deepseek|opencode|copilot|antigravity>
+# notify defaults to --notify auto (remote-bridge when secrets configured)
+# silence with --notify off or AAS_AUTOLOOP_NOTIFY=off
 ```
 
 `agent-cmd --provider all --dir <loop_dir>` prints the per-target iteration
 commands and probes binary availability. The driver captures per-iteration
 logs, re-checks the stop conditions every cycle, and treats detected
 credit/quota outages as pause-and-wait (not failure), resuming when credits
-return. Interactive sessions on Claude are additionally governed by the
-installed `hooks.Stop` entry while a loop is armed (`arm --dir <loop_dir>
---root <project_root>`): the hook blocks turn-end until a real stop condition
-fires. Kill switches in both modes: `touch <loop_dir>/STOP_REQUESTED`,
-`touch <loop_dir>/PAUSE`, `AUTOLOOP_DISABLE=1`, or `disarm`.
+return. **Progress notify** uses the `remote-bridge` skill by default when
+Zulip/Telegram secrets exist (`--notify auto` on `arm`/`drive`/`watch`);
+failures to send never stop the loop. Interactive sessions on Claude are
+additionally governed by the installed `hooks.Stop` entry while a loop is
+armed (`arm --dir <loop_dir> --root <project_root>`): the hook blocks turn-end
+until a real stop condition fires. Kill switches in both modes:
+`touch <loop_dir>/STOP_REQUESTED`, `touch <loop_dir>/PAUSE`,
+`AUTOLOOP_DISABLE=1`, or `disarm`.
 
 ## Stop Rules
 

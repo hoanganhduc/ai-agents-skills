@@ -563,6 +563,9 @@ def selftest_drive_args(run_dir: Path, registry: Path, stub_cmd: str) -> argpars
         quota_backoff=0,
         max_quota_waits=3,
         log_dir=None,
+        notify="off",
+        notify_cmd=None,
+        no_progress=False,
         registry_dir=str(registry),
     )
 
@@ -581,6 +584,56 @@ STUB_ITERATION_SNIPPET = (
     "json.dump(budget, open(budget_path, 'w'))\n"
     "print('stub iteration complete')\n"
 )
+GROK_PROFILE_STATUS_SCHEMA = "grok-remote.profile-status.v1"
+GROK_PROFILE_STATUS_FIELDS = {
+    "schema_version",
+    "status",
+    "profile_name",
+    "profile_sha256",
+    "release_id",
+    "grok_release_id",
+    "model_id",
+    "eligible_rungs",
+    "missing_rungs",
+    "reason_code",
+}
+GROK_PROFILE_READY_STATUSES = {"ready", "degraded"}
+GROK_PROFILE_BLOCKED_STATUSES = {"blocked", "unconfigured"}
+GROK_PROFILE_HELP_TOKEN = "grok-remote doctor --json"
+GROK_PROFILE_NAME = "default"
+GROK_PROFILE_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+GROK_PROFILE_GROK_RELEASE_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+GROK_PROFILE_RELEASE_RE = re.compile(r"^[A-Za-z0-9._:+/@-]{1,128}$")
+GROK_PROFILE_RUNG_RE = re.compile(
+    r"^(?:direct|vpn|home:[A-Za-z0-9._:+@-]+|ios:[a-z0-9][a-z0-9._-]{0,63})$"
+)
+GROK_PROFILE_REASON_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+GROK_PROFILE_STATUS_REASONS = {
+    "ready": {"ready"},
+    "degraded": {"ready_with_missing_optional_rungs"},
+    "blocked": {
+        "active_profile_invalid",
+        "minimum_eligible_rungs_not_met",
+        "release_evidence_invalid",
+        "required_rungs_missing",
+    },
+    "unconfigured": {"no_active_profile"},
+}
+GROK_PROFILE_BOUND_BLOCKED_REASONS = {
+    "minimum_eligible_rungs_not_met",
+    "required_rungs_missing",
+}
+GROK_PROFILE_REDACTED_BLOCKED_REASONS = {
+    "active_profile_invalid",
+    "release_evidence_invalid",
+}
+
+
+def provider_subprocess_options(provider: str | None) -> dict[str, int]:
+    """Return provider-scoped subprocess hardening without changing Windows."""
+    if provider == "grok" and os.name == "posix":
+        return {"umask": 0o077}
+    return {}
 
 
 def selftest_driver_checks() -> dict[str, Any]:
@@ -897,6 +950,21 @@ def arm_loop(args: argparse.Namespace) -> dict[str, Any]:
                 and entry_is_live(entry)
             ):
                 raise ValueError(f"a live autoloop is already armed for {root}; pass --force to override")
+    # Notify policy: explicit arm flag → env/loop → secrets-backed auto (default on when configured).
+    explicit_notify = getattr(args, "notify", None)
+    notify_channel = resolve_notify_channel(
+        explicit=explicit_notify,
+        run_dir=run_dir,
+        registry=reg,
+        default_auto=True,
+    )
+    # Persist preference token (off|channel) so later drive inherits without re-probing secrets if off.
+    persist_token = normalize_notify_token(explicit_notify)
+    if persist_token is None:
+        persist_token = notify_channel or "off"
+    elif persist_token == "auto":
+        persist_token = notify_channel or "off"
+    write_loop_notify_policy(run_dir, None if persist_token == "off" else persist_token)
     now = utc_now()
     entry = {
         "schema_version": SCHEMA_VERSION,
@@ -905,11 +973,20 @@ def arm_loop(args: argparse.Namespace) -> dict[str, Any]:
         "project_root": str(root),
         "pid": int(args.pid) if args.pid else 0,
         "driver": bool(getattr(args, "driver", False)),
+        "notify_channel": persist_token if persist_token != "off" else "off",
         "heartbeat": now,
         "created_at": now,
     }
     write_json(reg / f"{run_id}.json", entry)
-    return {"status": "ok", "action": "arm", "run_id": run_id, "registry": str(reg), "project_root": str(root)}
+    return {
+        "status": "ok",
+        "action": "arm",
+        "run_id": run_id,
+        "registry": str(reg),
+        "project_root": str(root),
+        "notify_channel": entry["notify_channel"],
+        "notify_resolved": notify_channel,
+    }
 
 
 def disarm_loop(args: argparse.Namespace) -> dict[str, Any]:
@@ -1113,23 +1190,29 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
 # loops require; point the loop at a workspace you trust the agent to write.
 #
 # Grok binary preference MUST stay aligned with installer GROK_CLI_TOOL_SPEC
-# (drive/delegation): prefer region proxy grok-remote when present, else bare
-# grok. Diagnostics/smoke stay bare-grok-only (installer GROK_DIAGNOSTIC_*).
+# (drive/delegation): use bare Grok by default, or, when
+# AAS_GROK_LATEST_MODEL resolves an exact model, confirm that model in anchored
+# ``grok models`` rows before allowing a grok-remote fallback. Diagnostics/smoke
+# stay bare-grok-only (installer GROK_DIAGNOSTIC_*).
 # Logical provider id is always "grok" — never a separate "grok-remote" provider.
 
-# Platform-keyed candidates for provider "grok" (first existing/executable wins).
-# Keep preference order in sync with installer/ai_agents_skills/grok.py GROK_CLI_TOOL_SPEC.
-GROK_BINARY_CANDIDATES: dict[str, list[str]] = {
+GROK_MODEL_PROBE_SCHEMA = "grok-model-membership.v1"
+GROK_MODEL_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:+/@-]{0,127}"
+GROK_MODEL_ID_RE = re.compile(rf"^{GROK_MODEL_ID_PATTERN}$")
+GROK_AVAILABLE_MODEL_LINE_RE = re.compile(
+    rf"^\s*\*\s+(?P<model>{GROK_MODEL_ID_PATTERN})(?:\s+\(default\))?\s*$"
+)
+
+# Platform-keyed automatic candidate tiers for provider "grok". Keep these in
+# sync with installer/ai_agents_skills/grok.py. The proxy tier is never
+# consulted without an exact resolved model and a failed bare-model confirmation.
+GROK_BARE_BINARY_CANDIDATES: dict[str, list[str]] = {
     "linux": [
-        "grok-remote",
-        "~/grok-proxy/grok-remote",
         "grok",
         "~/.local/bin/grok",
         "~/.grok/bin/grok",
     ],
     "macos": [
-        "grok-remote",
-        "~/grok-proxy/grok-remote",
         "grok",
         "~/.local/bin/grok",
         "~/.grok/bin/grok",
@@ -1137,19 +1220,27 @@ GROK_BINARY_CANDIDATES: dict[str, list[str]] = {
         "/usr/local/bin/grok",
     ],
     "wsl": [
-        "grok-remote",
-        "~/grok-proxy/grok-remote",
         "grok",
         "~/.local/bin/grok",
         "~/.grok/bin/grok",
     ],
     "windows": [
-        "grok-remote.cmd",
-        "grok-remote",
         "%USERPROFILE%\\.grok\\bin\\grok.exe",
         "grok.exe",
         "grok",
     ],
+}
+
+GROK_REMOTE_BINARY_CANDIDATES: dict[str, list[str]] = {
+    "linux": ["grok-remote", "~/grok-proxy/grok-remote"],
+    "macos": ["grok-remote", "~/grok-proxy/grok-remote"],
+    "wsl": ["grok-remote", "~/grok-proxy/grok-remote"],
+    "windows": ["grok-remote.cmd", "grok-remote"],
+}
+
+GROK_BINARY_CANDIDATES: dict[str, list[str]] = {
+    platform: [*GROK_BARE_BINARY_CANDIDATES[platform], *GROK_REMOTE_BINARY_CANDIDATES[platform]]
+    for platform in GROK_BARE_BINARY_CANDIDATES
 }
 
 PROVIDER_SPECS: dict[str, dict[str, Any]] = {
@@ -1185,11 +1276,11 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
     },
     "grok": {
         # Short display list for error messages; full platform lists in GROK_BINARY_CANDIDATES.
-        "binaries": ["grok-remote", "grok"],
+        "binaries": ["grok", "grok-remote"],
         "args": ["-p", "{prompt}", "--yolo"],
         "consent_note": (
             "--yolo auto-approves tools for unattended loops; "
-            "binary is first of grok-remote then grok (platform-aware candidates); "
+            "bare Grok is preferred and grok-remote is an exact-model fallback; "
             "override AAS_AUTOLOOP_BIN_GROK or AAS_GROK"
         ),
         "platform_candidates": GROK_BINARY_CANDIDATES,
@@ -1340,6 +1431,153 @@ def resolve_remote_notify_argv(channel: str, text: str, job_id: str | None = Non
     return argv
 
 
+_NOTIFY_OFF_TOKENS = frozenset({"", "off", "none", "no", "0", "false", "disable", "disabled"})
+_NOTIFY_ON_CHANNELS = frozenset({"zulip", "telegram", "both", "auto"})
+
+
+def normalize_notify_token(raw: str | None) -> str | None:
+    """Return canonical channel token, 'auto', 'off', or None if unset."""
+    if raw is None:
+        return None
+    token = str(raw).strip().lower()
+    if token in _NOTIFY_OFF_TOKENS:
+        return "off"
+    if token in _NOTIFY_ON_CHANNELS:
+        return token
+    return None
+
+
+def detect_configured_notify_channels() -> list[str]:
+    """Channels with usable credentials in remote-bridge secrets/env (fail-open)."""
+    try:
+        mod = _load_remote_bridge_mod()
+        if mod is None:
+            return []
+        cfg = mod.build_config()
+        channels: list[str] = []
+        zulip = cfg.zulip or {}
+        telegram = cfg.telegram or {}
+        if zulip.get("site") and zulip.get("email") and zulip.get("api_key"):
+            channels.append("zulip")
+        if telegram.get("bot_token"):
+            channels.append("telegram")
+        # Prefer declared notify_channels when subset of ready channels.
+        declared = [str(c).lower() for c in (cfg.notify_channels or [])]
+        if declared:
+            ready = [c for c in declared if c in channels]
+            if ready:
+                return ready
+        return channels
+    except Exception:  # noqa: BLE001 - notify discovery is best-effort
+        return []
+
+
+def auto_notify_channel_from_secrets() -> str | None:
+    """Pick default channel when secrets are configured; else None."""
+    channels = detect_configured_notify_channels()
+    if not channels:
+        return None
+    if "zulip" in channels and "telegram" in channels:
+        return "both"
+    if "zulip" in channels:
+        return "zulip"
+    if "telegram" in channels:
+        return "telegram"
+    return None
+
+
+def read_loop_notify_policy(run_dir: Path) -> str | None:
+    """Notify preference stored on the loop (loop_state.json)."""
+    try:
+        state = read_json(loop_paths(run_dir)["state"])
+    except Exception:  # noqa: BLE001
+        return None
+    for key in ("notify_channel", "notify", "autoloop_notify"):
+        token = normalize_notify_token(state.get(key) if isinstance(state.get(key), str) else None)
+        if token is not None:
+            return token
+    return None
+
+
+def write_loop_notify_policy(run_dir: Path, channel: str | None) -> None:
+    """Persist notify policy on loop_state (best-effort, never raises)."""
+    try:
+        paths = loop_paths(run_dir)
+        state = read_json(paths["state"])
+        if channel and channel != "off":
+            state["notify_channel"] = channel
+            state["notify_policy"] = "on"
+        else:
+            state["notify_channel"] = "off"
+            state["notify_policy"] = "off"
+        state["updated_at"] = utc_now()
+        write_json(paths["state"], state)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def read_registry_notify_policy(reg: Path, run_dir: Path) -> str | None:
+    """Notify preference from an armed registry entry for this loop dir."""
+    try:
+        target = str(run_dir.resolve())
+        for _, entry in list_registry_entries(reg):
+            if entry.get("loop_dir") == target:
+                token = normalize_notify_token(
+                    entry.get("notify_channel") if isinstance(entry.get("notify_channel"), str) else None
+                )
+                if token is not None:
+                    return token
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def resolve_notify_channel(
+    *,
+    explicit: str | None = None,
+    run_dir: Path | None = None,
+    registry: Path | None = None,
+    default_auto: bool = True,
+) -> str | None:
+    """Resolve effective notify channel for drive/watch/arm.
+
+    Order (first decisive wins):
+      1. explicit CLI token (including off/auto)
+      2. AAS_AUTOLOOP_NOTIFY / AAS_REMOTE_NOTIFY env
+      3. loop_state.json notify_channel
+      4. armed registry entry notify_channel
+      5. if default_auto: secrets-backed auto channel (or None if unconfigured)
+
+    Returns a concrete channel (zulip|telegram|both) or None when disabled/unavailable.
+    Never raises.
+    """
+    candidates: list[str | None] = [
+        normalize_notify_token(explicit),
+        normalize_notify_token(os.environ.get("AAS_AUTOLOOP_NOTIFY")),
+        normalize_notify_token(os.environ.get("AAS_REMOTE_NOTIFY")),
+    ]
+    if run_dir is not None:
+        candidates.append(read_loop_notify_policy(run_dir))
+    if registry is not None and run_dir is not None:
+        candidates.append(read_registry_notify_policy(registry, run_dir))
+
+    chosen: str | None = None
+    for token in candidates:
+        if token is None:
+            continue
+        if token == "off":
+            return None
+        if token == "auto":
+            chosen = "auto"
+            break
+        if token in {"zulip", "telegram", "both"}:
+            return token
+
+    if chosen == "auto" or (chosen is None and default_auto):
+        return auto_notify_channel_from_secrets()
+    return None
+
+
 def provider_env_key(provider: str) -> str:
     return provider.upper().replace("-", "_")
 
@@ -1439,6 +1677,382 @@ def provider_binary_candidates(
     return list(spec["binaries"])
 
 
+def parse_grok_available_models(output: str) -> list[str]:
+    """Parse only anchored available-model rows from ``grok models``."""
+    models: list[str] = []
+    for line in output.splitlines():
+        match = GROK_AVAILABLE_MODEL_LINE_RE.fullmatch(line)
+        if match is not None and match.group("model") not in models:
+            models.append(match.group("model"))
+    return models
+
+
+def probe_grok_model_membership(
+    binary: str,
+    resolved_model: str,
+    environ: dict[str, str],
+    *,
+    timeout: int = 10,
+) -> dict[str, Any]:
+    """Confirm exact resolved-model membership before automatic proxy fallback."""
+    result: dict[str, Any] = {
+        "schema_version": GROK_MODEL_PROBE_SCHEMA,
+        "status": "not-confirmed",
+        "resolved_model": resolved_model,
+        "available_models": [],
+        "reason_code": "probe_failed",
+    }
+    if GROK_MODEL_ID_RE.fullmatch(resolved_model) is None:
+        result["reason_code"] = "resolved_model_invalid"
+        return result
+    probe_env = dict(environ)
+    probe_env.setdefault("NO_COLOR", "1")
+    probe_env.setdefault("TERM", "dumb")
+    private_umask = provider_subprocess_options("grok")
+    try:
+        completed = subprocess.run(
+            [binary, "models"],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            env=probe_env,
+            check=False,
+            **private_umask,
+        )
+    except subprocess.TimeoutExpired:
+        result["reason_code"] = "probe_timed_out"
+        return result
+    except OSError:
+        result["reason_code"] = "probe_could_not_execute"
+        return result
+    models = parse_grok_available_models(completed.stdout)
+    result["available_models"] = models
+    if completed.returncode != 0:
+        result["reason_code"] = "probe_exit_nonzero"
+    elif not models:
+        result["reason_code"] = "available_model_rows_missing"
+    elif resolved_model not in models:
+        result["reason_code"] = "resolved_model_not_listed"
+    else:
+        result["status"] = "confirmed"
+        result["reason_code"] = "resolved_model_listed"
+    return result
+
+
+def valid_grok_profile_status(value: Any) -> bool:
+    """Validate the exact public managed-profile status contract."""
+    if not isinstance(value, dict) or set(value) != GROK_PROFILE_STATUS_FIELDS:
+        return False
+    if value.get("schema_version") != GROK_PROFILE_STATUS_SCHEMA:
+        return False
+    status = value.get("status")
+    if type(status) is not str or status not in GROK_PROFILE_READY_STATUSES | GROK_PROFILE_BLOCKED_STATUSES:
+        return False
+    identities = tuple(
+        value.get(field)
+        for field in ("profile_name", "profile_sha256", "release_id", "grok_release_id", "model_id")
+    )
+    if any(item is not None and type(item) is not str for item in identities):
+        return False
+    present = tuple(item is not None for item in identities)
+    if status in GROK_PROFILE_READY_STATUSES and not all(present):
+        return False
+    if status == "unconfigured" and any(present):
+        return False
+    if status == "blocked" and any(present) and not all(present):
+        return False
+    profile_name, profile_sha256, release_id, grok_release_id, model_id = identities
+    if profile_name is not None and profile_name != GROK_PROFILE_NAME:
+        return False
+    if profile_sha256 is not None and GROK_PROFILE_DIGEST_RE.fullmatch(profile_sha256) is None:
+        return False
+    if release_id is not None and GROK_PROFILE_RELEASE_RE.fullmatch(release_id) is None:
+        return False
+    if grok_release_id is not None and GROK_PROFILE_GROK_RELEASE_RE.fullmatch(grok_release_id) is None:
+        return False
+    if model_id is not None and GROK_MODEL_ID_RE.fullmatch(model_id) is None:
+        return False
+    for field in ("eligible_rungs", "missing_rungs"):
+        field_value = value.get(field)
+        if (
+            type(field_value) is not list
+            or any(
+                type(item) is not str
+                or len(item) > 128
+                or GROK_PROFILE_RUNG_RE.fullmatch(item) is None
+                for item in field_value
+            )
+            or len(set(field_value)) != len(field_value)
+        ):
+            return False
+    if set(value["eligible_rungs"]) & set(value["missing_rungs"]):
+        return False
+    reason_code = value.get("reason_code")
+    if (
+        type(reason_code) is not str
+        or GROK_PROFILE_REASON_RE.fullmatch(reason_code) is None
+        or reason_code not in GROK_PROFILE_STATUS_REASONS[status]
+    ):
+        return False
+    if status == "blocked":
+        allowed_blocked_reasons = (
+            GROK_PROFILE_BOUND_BLOCKED_REASONS
+            if all(present)
+            else GROK_PROFILE_REDACTED_BLOCKED_REASONS
+        )
+        if reason_code not in allowed_blocked_reasons:
+            return False
+    if status in GROK_PROFILE_READY_STATUSES and not value["eligible_rungs"]:
+        return False
+    if status == "ready" and value["missing_rungs"]:
+        return False
+    if status == "degraded" and not value["missing_rungs"]:
+        return False
+    if status == "unconfigured" and (value["eligible_rungs"] or value["missing_rungs"]):
+        return False
+    return True
+
+
+def probe_grok_remote_profile(
+    binary: str,
+    resolved_model: str,
+    environ: dict[str, str],
+    *,
+    timeout: int = 10,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Require exact managed-profile readiness and model match for auto fallback."""
+    private_umask = provider_subprocess_options("grok")
+    try:
+        help_result = subprocess.run(
+            [binary, "--help"],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            env=environ,
+            check=False,
+            **private_umask,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "managed_profile_help_timed_out"
+    except OSError:
+        return None, "managed_profile_help_could_not_execute"
+    if help_result.returncode != 0 or GROK_PROFILE_HELP_TOKEN not in help_result.stdout:
+        return None, "managed_profile_help_unsupported"
+    try:
+        completed = subprocess.run(
+            [binary, "doctor", "--json"],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            env=environ,
+            check=False,
+            **private_umask,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "managed_profile_probe_timed_out"
+    except OSError:
+        return None, "managed_profile_probe_could_not_execute"
+    try:
+        value = json.loads(completed.stdout)
+    except (json.JSONDecodeError, TypeError):
+        return None, "managed_profile_output_invalid"
+    if not valid_grok_profile_status(value):
+        return None, "managed_profile_output_invalid"
+    status = value["status"]
+    if status in GROK_PROFILE_READY_STATUSES and completed.returncode != 0:
+        return value, "managed_profile_exit_inconsistent"
+    if status in GROK_PROFILE_BLOCKED_STATUSES and completed.returncode != 2:
+        return value, "managed_profile_exit_inconsistent"
+    if status in GROK_PROFILE_BLOCKED_STATUSES:
+        return value, f"managed_profile_not_ready:{value['reason_code']}"
+    if value["model_id"] != resolved_model:
+        return value, "managed_profile_model_mismatch"
+    return value, None
+
+
+def resolve_provider_binary_details(
+    provider: str,
+    environ: dict[str, str] | None = None,
+    platform: str | None = None,
+) -> tuple[str, bool, list[str], dict[str, Any] | None]:
+    """Resolve a binary and return Grok selection evidence when applicable."""
+    env = os.environ if environ is None else environ
+    if provider not in PROVIDER_SPECS:
+        raise ValueError(f"unknown provider: {provider}")
+    key = provider_env_key(provider)
+    tried: list[str] = []
+    if provider == "grok":
+        resolved_model = env.get("AAS_GROK_LATEST_MODEL")
+        if resolved_model and GROK_MODEL_ID_RE.fullmatch(resolved_model) is None:
+            plat = platform or runtime_platform_name()
+            bare_candidates = list(
+                GROK_BARE_BINARY_CANDIDATES.get(plat)
+                or GROK_BARE_BINARY_CANDIDATES["linux"]
+            )
+            fallback = bare_candidates[0] if bare_candidates else "grok"
+            return (
+                fallback,
+                False,
+                tried,
+                {
+                    "status": "blocked",
+                    "source": "resolved-model-validation",
+                    "reason_code": "resolved_model_invalid",
+                    "resolved_model": resolved_model,
+                },
+            )
+    override = env.get(f"AAS_AUTOLOOP_BIN_{key}")
+    if override:
+        tried.append(override)
+        ok, resolved = candidate_is_usable(override, env)
+        selection = (
+            {
+                "status": "operator-override",
+                "source": f"AAS_AUTOLOOP_BIN_{key}",
+                "reason_code": "automatic_model_probe_bypassed",
+            }
+            if provider == "grok"
+            else None
+        )
+        return (resolved if ok else override), ok, tried, selection
+    if provider == "grok":
+        aas_grok = env.get("AAS_GROK")
+        if aas_grok:
+            tried.append(aas_grok)
+            ok, resolved = candidate_is_usable(aas_grok, env)
+            return (
+                resolved if ok else aas_grok,
+                ok,
+                tried,
+                {
+                    "status": "operator-override",
+                    "source": "AAS_GROK",
+                    "reason_code": "automatic_model_probe_bypassed",
+                },
+            )
+
+        plat = platform or runtime_platform_name()
+        bare_candidates = list(
+            GROK_BARE_BINARY_CANDIDATES.get(plat)
+            or GROK_BARE_BINARY_CANDIDATES["linux"]
+        )
+        resolved_model = env.get("AAS_GROK_LATEST_MODEL")
+        if not resolved_model:
+            for candidate in bare_candidates:
+                tried.append(candidate)
+                ok, resolved = candidate_is_usable(candidate, env)
+                if ok:
+                    return (
+                        resolved,
+                        True,
+                        tried,
+                        {
+                            "status": "not-performed",
+                            "source": "bare-default-no-resolved-model",
+                            "reason_code": "resolved_model_not_provided",
+                        },
+                    )
+            fallback = bare_candidates[0] if bare_candidates else "grok"
+            return (
+                fallback,
+                False,
+                tried,
+                {
+                    "status": "not-performed",
+                    "source": "bare-default-no-resolved-model",
+                    "reason_code": "resolved_model_not_provided_no_proxy_fallback",
+                },
+            )
+        last_probe: dict[str, Any] = {
+            "schema_version": GROK_MODEL_PROBE_SCHEMA,
+            "status": "not-confirmed",
+            "resolved_model": resolved_model,
+            "available_models": [],
+            "reason_code": "bare_cli_missing",
+        }
+        probed_bare_executables: set[str] = set()
+        for candidate in bare_candidates:
+            tried.append(candidate)
+            ok, resolved = candidate_is_usable(candidate, env)
+            if not ok:
+                continue
+            executable_identity = os.path.normcase(os.path.realpath(resolved))
+            if executable_identity in probed_bare_executables:
+                continue
+            probed_bare_executables.add(executable_identity)
+            last_probe = probe_grok_model_membership(resolved, resolved_model, env)
+            if last_probe["status"] == "confirmed":
+                return (
+                    resolved,
+                    True,
+                    tried,
+                    {
+                        "status": "confirmed",
+                        "source": "bare-model-confirmed",
+                        "model_probe": last_probe,
+                    },
+                )
+
+        remote_candidates = list(
+            GROK_REMOTE_BINARY_CANDIDATES.get(plat)
+            or GROK_REMOTE_BINARY_CANDIDATES["linux"]
+        )
+        probed_remote_executables: set[str] = set()
+        last_remote_profile: dict[str, Any] | None = None
+        last_remote_error = "remote_cli_missing"
+        for candidate in remote_candidates:
+            tried.append(candidate)
+            ok, resolved = candidate_is_usable(candidate, env)
+            if not ok:
+                continue
+            executable_identity = os.path.normcase(os.path.realpath(resolved))
+            if executable_identity in probed_remote_executables:
+                continue
+            probed_remote_executables.add(executable_identity)
+            last_remote_profile, last_remote_error = probe_grok_remote_profile(
+                resolved,
+                resolved_model,
+                env,
+            )
+            if last_remote_error is not None:
+                continue
+            return (
+                resolved,
+                True,
+                tried,
+                {
+                    "status": "fallback",
+                    "source": "remote-fallback-after-bare-nonconfirmation",
+                    "model_probe": last_probe,
+                    "grok_profile_status": last_remote_profile,
+                },
+            )
+        fallback = bare_candidates[0] if bare_candidates else "grok"
+        blocked_selection = {
+            "status": "blocked",
+            "source": "remote-fallback-after-bare-nonconfirmation",
+            "reason_code": last_remote_error,
+            "model_probe": last_probe,
+        }
+        if last_remote_profile is not None:
+            blocked_selection["grok_profile_status"] = last_remote_profile
+        return (
+            fallback,
+            False,
+            tried,
+            blocked_selection,
+        )
+
+    candidates = provider_binary_candidates(provider, environ=env, platform=platform)
+    for candidate in candidates:
+        tried.append(candidate)
+        ok, resolved = candidate_is_usable(candidate, env)
+        if ok:
+            return resolved, True, tried, None
+    fallback = candidates[0] if candidates else provider
+    return fallback, False, tried, None
+
+
 def resolve_provider_binary(
     provider: str, environ: dict[str, str] | None = None, platform: str | None = None
 ) -> tuple[str, bool, list[str]]:
@@ -1447,32 +2061,12 @@ def resolve_provider_binary(
     Precedence: AAS_AUTOLOOP_BIN_<P> → (grok only) AAS_GROK → platform candidates.
     Returns (binary, found, tried_list).
     """
-    env = os.environ if environ is None else environ
-    if provider not in PROVIDER_SPECS:
-        raise ValueError(f"unknown provider: {provider}")
-    key = provider_env_key(provider)
-    tried: list[str] = []
-    override = env.get(f"AAS_AUTOLOOP_BIN_{key}")
-    if override:
-        tried.append(override)
-        ok, resolved = candidate_is_usable(override, env)
-        return (resolved if ok else override), ok, tried
-    if provider == "grok":
-        aas_grok = env.get("AAS_GROK")
-        if aas_grok:
-            tried.append(aas_grok)
-            ok, resolved = candidate_is_usable(aas_grok, env)
-            if ok:
-                return resolved, True, tried
-    candidates = provider_binary_candidates(provider, environ=env, platform=platform)
-    for cand in candidates:
-        tried.append(cand)
-        ok, resolved = candidate_is_usable(cand, env)
-        if ok:
-            return resolved, True, tried
-    # Nothing found: return first candidate name for error display.
-    fallback = candidates[0] if candidates else provider
-    return fallback, False, tried
+    binary, found, tried, _selection = resolve_provider_binary_details(
+        provider,
+        environ=environ,
+        platform=platform,
+    )
+    return binary, found, tried
 
 
 def resolve_provider_command(
@@ -1486,11 +2080,16 @@ def resolve_provider_command(
     key = provider_env_key(provider)
     prompt = iteration_prompt(run_dir)
     full = env.get(f"AAS_AUTOLOOP_CMD_{key}")
-    if full:
+    invalid_grok_model = (
+        provider == "grok"
+        and bool(env.get("AAS_GROK_LATEST_MODEL"))
+        and GROK_MODEL_ID_RE.fullmatch(env["AAS_GROK_LATEST_MODEL"]) is None
+    )
+    if full and not invalid_grok_model:
         shell_cmd = full.replace("{prompt}", shlex.quote(prompt)).replace(
             "{dir}", str(run_dir)
         )
-        return {
+        result = {
             "provider": provider,
             "mode": "shell",
             "shell": shell_cmd,
@@ -1500,14 +2099,26 @@ def resolve_provider_command(
             "consent_note": spec["consent_note"],
             "tried": [],
         }
-    binary, binary_found, tried = resolve_provider_binary(provider, environ=env)
+        if provider == "grok":
+            result["grok_selection"] = {
+                "status": "operator-override",
+                "source": f"AAS_AUTOLOOP_CMD_{key}",
+                "reason_code": "automatic_model_probe_bypassed",
+            }
+        return result
+    binary, binary_found, tried, grok_selection = resolve_provider_binary_details(
+        provider,
+        environ=env,
+    )
     args_raw = env.get(f"AAS_AUTOLOOP_ARGS_{key}")
     template = shlex.split(args_raw) if args_raw else list(spec["args"])
+    if provider == "grok" and not args_raw and env.get("AAS_GROK_LATEST_MODEL"):
+        template.extend(["-m", env["AAS_GROK_LATEST_MODEL"]])
     argv = [str(binary)] + [
         arg.replace("{prompt}", prompt).replace("{dir}", str(run_dir))
         for arg in template
     ]
-    return {
+    result = {
         "provider": provider,
         "mode": "argv",
         "argv": argv,
@@ -1517,6 +2128,9 @@ def resolve_provider_command(
         "consent_note": spec["consent_note"],
         "tried": tried,
     }
+    if grok_selection is not None:
+        result["grok_selection"] = grok_selection
+    return result
 
 
 def agent_cmd_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -1688,13 +2302,17 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
 
 _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
     {
+        "drive_start",
+        "drive_stop",
+        "iteration_start",
         "iteration_ok",
         "iteration_failed",
         "iteration",
         "quota_wait",
-        "drive_stop",
+        "paused",
         "terminal",
         "driver_dead",
+        "watch_start",
     }
 )
 
@@ -1728,11 +2346,12 @@ def emit_loop_progress(
         sys.stderr.flush()
     if to_stdout_json and not notify_cmd and not notify_channel:
         print(json.dumps(env_payload), flush=True)
-    # Structured remote-bridge notify (preferred).
-    channel = notify_channel or os.environ.get("AAS_AUTOLOOP_NOTIFY") or os.environ.get(
-        "AAS_REMOTE_NOTIFY"
-    )
-    if channel and event in _DEFAULT_REMOTE_NOTIFY_EVENTS:
+    # Structured remote-bridge notify (preferred). Channel already resolved by
+    # drive/watch/arm via resolve_notify_channel; env is a last-resort fallback.
+    channel = notify_channel
+    if channel is None:
+        channel = resolve_notify_channel(explicit=None, run_dir=run_dir, default_auto=False)
+    if channel and channel != "off" and event in _DEFAULT_REMOTE_NOTIFY_EVENTS:
         argv = resolve_remote_notify_argv(
             channel if channel != "both" else "both",
             str(payload.get("text") or ""),
@@ -1782,17 +2401,22 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
     seen = args.from_iteration if args.from_iteration >= 0 else start_iter
     driver_dead_alerted = False
     events = 0
-    notify_channel = getattr(args, "notify", None) or os.environ.get("AAS_AUTOLOOP_NOTIFY")
+    notify_channel = resolve_notify_channel(
+        explicit=getattr(args, "notify", None),
+        run_dir=run_dir,
+        registry=reg,
+        default_auto=True,
+    )
     # Seed LIVE_STATUS immediately so operators see current tip without waiting.
     emit_loop_progress(
         run_dir,
         "watch_start",
         log_dir=log_dir,
         notify_cmd=None,
-        notify_channel=None,
+        notify_channel=notify_channel,
         to_stderr=False,
         to_stdout_json=False,
-        extra={"source": "watch"},
+        extra={"source": "watch", "notify_channel": notify_channel or "off"},
     )
     while True:
         verdict = compute_done(run_dir)
@@ -1920,7 +2544,15 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     )
     log_dir.mkdir(parents=True, exist_ok=True)
     notify_cmd = getattr(args, "notify_cmd", None)
-    notify_channel = getattr(args, "notify", None) or os.environ.get("AAS_AUTOLOOP_NOTIFY")
+    reg = registry_dir(args)
+    # Default: auto (secrets-backed). Explicit --notify off disables. Env and
+    # prior arm/loop_state preferences take precedence via resolve_notify_channel.
+    notify_channel = resolve_notify_channel(
+        explicit=getattr(args, "notify", None),
+        run_dir=run_dir,
+        registry=reg,
+        default_auto=True,
+    )
     progress_enabled = not bool(getattr(args, "no_progress", False))
 
     def _progress(event: str, **extra: Any) -> None:
@@ -1939,7 +2571,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
 
     # Arm (best-effort) so a concurrent interactive Stop hook for this root stands
     # down; the driver itself enforces "done" regardless of the registry.
-    reg = registry_dir(args)
+    # Propagate notify preference so registry + loop_state stay aligned.
     run_id: object = None
     arm_ns = argparse.Namespace(
         dir=str(run_dir),
@@ -1947,13 +2579,17 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         force=False,
         pid=os.getpid(),
         driver=True,
+        notify=getattr(args, "notify", None) or ("off" if notify_channel is None else notify_channel),
         registry_dir=getattr(args, "registry_dir", None),
     )
     try:
-        run_id = arm_loop(arm_ns).get("run_id")
+        arm_result = arm_loop(arm_ns)
+        run_id = arm_result.get("run_id")
+        # Prefer resolved channel from arm when drive used auto.
+        if arm_result.get("notify_resolved") and getattr(args, "notify", None) in (None, "auto"):
+            notify_channel = arm_result.get("notify_resolved")
     except Exception:  # noqa: BLE001 - arming is best-effort.
         pass
-
     failures = 0
     quota_waits = 0
     quota_waits_total = 0
@@ -2070,6 +2706,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         timeout=iter_timeout,
                         stdout=log_fh,
                         stderr=subprocess.STDOUT,
+                        **provider_subprocess_options(provider),
                     )
                 rc = completed.returncode
             except subprocess.TimeoutExpired:
@@ -2280,9 +2917,9 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--dir", required=True)
     watch.add_argument(
         "--notify",
-        default=None,
-        choices=["zulip", "telegram", "both"],
-        help="structured remote-bridge notify channel",
+        default="auto",
+        choices=["auto", "off", "zulip", "telegram", "both"],
+        help="remote-bridge notify: auto (default when secrets configured), off, or a channel",
     )
     watch.add_argument(
         "--notify-cmd", default=None,
@@ -2307,6 +2944,12 @@ def build_parser() -> argparse.ArgumentParser:
     arm.add_argument("--driver", action="store_true",
                      help="mark the entry as owned by a headless driver; the interactive Stop-hook stands down while that pid is alive")
     arm.add_argument("--force", action="store_true")
+    arm.add_argument(
+        "--notify",
+        default="auto",
+        choices=["auto", "off", "zulip", "telegram", "both"],
+        help="persist notify policy for this loop (auto = secrets-backed default when configured)",
+    )
     add_registry_args(arm)
     arm.set_defaults(func=arm_loop)
 
@@ -2396,9 +3039,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     drive.add_argument(
         "--notify",
-        default=None,
-        choices=["zulip", "telegram", "both"],
-        help="structured remote-bridge notify channel (preferred over --notify-cmd)",
+        default="auto",
+        choices=["auto", "off", "zulip", "telegram", "both"],
+        help="remote-bridge notify (default auto: on when secrets configured; off to silence)",
     )
     drive.add_argument(
         "--notify-cmd",

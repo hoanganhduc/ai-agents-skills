@@ -35,6 +35,18 @@ Read these when relevant:
 
 If the user requests a named template, or if the task clearly matches one, open `TEMPLATES.md` and `EXECUTION.md` before spawning any agents.
 
+## Long multi-agent jobs and remote notify
+
+For multi-round / multi-hour panels, the parent should notify via `remote-bridge`
+when secrets are configured (same policy as ARL `--notify auto`):
+
+- on panel start and terminal synthesis
+- optionally on each round boundary when wall time is high
+
+Prefer structured `remote-bridge send --channel zulip|telegram|both` over raw
+shell notify. Do not block the panel if notify fails. Short single-round
+spawns need not notify.
+
 ## Clarification policy
 
 If the request is underspecified, ask only for the minimum needed.
