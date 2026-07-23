@@ -11,10 +11,53 @@ The shared skills involved are:
 |---|---|
 | `agent-group-discuss` | Template-based multi-agent discussion, review, and research. |
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
+| `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes. |
+| `autonomous-research-loop-runtime` | Headless `drive` and host-owned `panel` phases around each iteration. |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
 | `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
 | `research-verification-gate` | Final evidence and gap check before delivery. |
+
+## Autonomous research loop: host-owned hybrid panel
+
+For **unattended** multi-iteration research, prefer the hybrid model owned by
+`autonomous-research-loop-runtime`, not nested “primary agent shells out to four
+CLIs under its sandbox”:
+
+1. **Host parent (driver)** runs top-level provider CLIs for **target advice**.
+2. **Drive primary** (`drive --provider …`) executes **one** single-path math or
+   research step and must not nest panel CLIs for multi-agent purposes.
+3. **Host parent** runs **result review** on new artifacts.
+4. **Host evidence gates** bank claims; panel consensus is not evidence.
+5. **Notify** (optional remote-bridge) is progress messaging only.
+
+```bash
+# Enable host panel around each drive iteration
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh \
+  drive --dir research/run --provider codex --panel on
+
+# auto: on when loop panel.json / standing_orders.panel / AAS_AUTOLOOP_PANEL=on
+… drive --dir research/run --provider codex --panel auto
+
+# Probe panel providers without starting drive
+… panel --smoke --root .
+```
+
+Optional loop config (`panel.json` or `loop_state.standing_orders.panel`):
+
+```json
+{
+  "enabled": true,
+  "providers": ["claude", "codex", "codewhale", "kimi"],
+  "timeouts": {"target_advice": 600, "result_review": 900}
+}
+```
+
+Use **`agent-group-discuss`** for heavy strategy pauses and template panels.
+Use **ARL `drive --panel`** for routine per-iteration advice and review while the
+loop runs unattended. Keep cross-provider depth shallow: one parent layer, not
+recursive multi-vendor trees.
 
 Codex has a native `spawn_agent` orchestration model. Claude and DeepSeek get
 the same templates and adapter instructions, but their actual process control

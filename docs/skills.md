@@ -23,8 +23,8 @@ Some older local skill names are accepted as migration aliases. For example, `de
 | `adversarial-boundary-gate` | Pre-delivery threat-model of trust boundaries and an abuse-case/injection check, delegating to a fresh-context security reviewer. | `serious-research`, `full-research` |
 | `agent-group-discuss` | Multi-agent discussion, review, and research orchestration. | `multi-agent`, `serious-research`, `full-research` |
 | `annotated-review` | Annotated paper review workflow when both annotation and review are requested. | `full-research` |
-| `autonomous-research-loop` | Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs. | `research-core`, `serious-research`, `workflow-tools`, `multi-agent`, `full-research` |
-| `autonomous-research-loop-runtime` | Offline runtime helper for autonomous research loop ledger initialization, iteration appends, validation, status, and selftest. | `research-core`, `serious-research`, `workflow-tools`, `multi-agent`, `full-research` |
+| `autonomous-research-loop` | Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs; prefers host-owned multi-agent panel with single-path drive primary. | `research-core`, `serious-research`, `workflow-tools`, `multi-agent`, `full-research` |
+| `autonomous-research-loop-runtime` | Offline runtime helper for loop ledgers plus headless `drive` / `panel` (host-owned multi-agent phases via `--panel on`, `auto`, or `off`). | `research-core`, `serious-research`, `workflow-tools`, `multi-agent`, `full-research` |
 | `axiom-axle-mcp` | Optional inert setup helper for AxiomMath AXLE MCP formal-proof assistance. | `formal-research-remote`, `full-research` |
 | `behavior-preserving-cleanup` | Clarity-only edit pass behind a comprehension gate with verify-after-each-change so behavior stays fixed. | `serious-research`, `full-research` |
 | `calibre` | Calibre ebook lookup and library helper workflows. | `library`, `ebook`, `serious-research`, `full-research` |

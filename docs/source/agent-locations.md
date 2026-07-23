@@ -119,8 +119,12 @@ personas under `~/.kimi-code/agents/`, inert templates/tools/instructions
 support storage, and managed instruction blocks into `~/.kimi-code/AGENTS.md`.
 Copy mode is the default. The installer does not rewrite `config.toml` (hooks
 remain manual). Unattended ARL force-continue uses `drive --provider kimi`.
-`KIMI_CODE_HOME`-relocated installs are unsupported; unset that variable before
-real-system install. See `targets/kimi/README.md`.
+Optional host-owned multi-agent panel phases use `drive --panel on|auto|off`
+(top-level CLIs such as Claude, Codex, CodeWhale, and Kimi for advice/review;
+the drive primary does not nest those panel calls). See
+`docs/multi-agent-examples.md`. `KIMI_CODE_HOME`-relocated installs are
+unsupported; unset that variable before real-system install. See
+`targets/kimi/README.md`.
 
 OpenClaw is included in default target detection when an eligible `.openclaw`
 fake-root home exists, and remains fake-root-only before native target
