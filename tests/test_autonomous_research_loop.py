@@ -34,6 +34,20 @@ HELPER = (
     / "autonomous_research_loop_runtime.py"
 )
 
+# Never write __pycache__ into the canonical runtime tree (inventory CI).
+sys.dont_write_bytecode = True
+
+
+def _subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    # Keep host Telegram/Zulip secrets from auto-notifying (or suppressing watch
+    # JSON) during unit tests unless a test explicitly opts in.
+    env.setdefault("AAS_AUTOLOOP_NOTIFY", "off")
+    if extra:
+        env.update(extra)
+    return env
+
 
 def create_agent_home(root: Path, agent: str) -> None:
     target_for(root, agent).home.mkdir(parents=True, exist_ok=True)
@@ -41,11 +55,12 @@ def create_agent_home(root: Path, agent: str) -> None:
 
 def run_helper(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(HELPER), *args],
+        [sys.executable, "-B", str(HELPER), *args],
         capture_output=True,
         text=True,
         timeout=20,
         check=check,
+        env=_subprocess_env(),
     )
 
 
@@ -186,11 +201,12 @@ def iteration_record(
 class AutonomousResearchLoopTests(unittest.TestCase):
     def test_runtime_helper_selftest_is_offline_and_validates_ledger(self) -> None:
         completed = subprocess.run(
-            [sys.executable, str(HELPER), "selftest"],
+            [sys.executable, "-B", str(HELPER), "selftest"],
             capture_output=True,
             text=True,
             timeout=20,
             check=True,
+            env=_subprocess_env(),
         )
         payload = json.loads(completed.stdout)
 
@@ -213,18 +229,20 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             init_loop(run_dir)
             append_iteration(run_dir, "continue")
             validate = subprocess.run(
-                [sys.executable, str(HELPER), "validate", "--dir", str(run_dir)],
+                [sys.executable, "-B", str(HELPER), "validate", "--dir", str(run_dir)],
                 capture_output=True,
                 text=True,
                 timeout=20,
                 check=True,
+                env=_subprocess_env(),
             )
             status = subprocess.run(
-                [sys.executable, str(HELPER), "status", "--dir", str(run_dir)],
+                [sys.executable, "-B", str(HELPER), "status", "--dir", str(run_dir)],
                 capture_output=True,
                 text=True,
                 timeout=20,
                 check=True,
+                env=_subprocess_env(),
             )
 
             validate_payload = json.loads(validate.stdout)
@@ -624,11 +642,12 @@ class AutonomousResearchLoopTests(unittest.TestCase):
         )
 
         completed = subprocess.run(
-            [sys.executable, str(HELPER), "selftest"],
+            [sys.executable, "-B", str(HELPER), "selftest"],
             capture_output=True,
             text=True,
             timeout=20,
             check=True,
+            env=_subprocess_env(),
         )
         checks = validate_smoke_output(
             manifests,
@@ -643,11 +662,11 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
     """Force-management: arm/disarm/active/done/hook-check with a fail-open Stop hook."""
 
     def _run(self, *args: str, registry: Path, env_extra: dict[str, str] | None = None):
-        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+        env = _subprocess_env({"AAS_AUTOLOOP_REGISTRY": str(registry)})
         if env_extra:
             env.update(env_extra)
         return subprocess.run(
-            [sys.executable, str(HELPER), *args],
+            [sys.executable, "-B", str(HELPER), *args],
             capture_output=True,
             text=True,
             timeout=20,
@@ -903,17 +922,17 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
 
 
 def _arm_loop(run_dir: Path, registry: Path, root: Path) -> None:
-    env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+    env = _subprocess_env({"AAS_AUTOLOOP_REGISTRY": str(registry)})
     subprocess.run(
-        [sys.executable, str(HELPER), "arm", "--dir", str(run_dir), "--root", str(root)],
+        [sys.executable, "-B", str(HELPER), "arm", "--dir", str(run_dir), "--root", str(root)],
         capture_output=True, text=True, timeout=20, env=env, check=False,
     )
 
 
 def _init_loop(run_dir: Path, registry: Path, *extra: str, max_iterations: int = 3) -> None:
-    env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+    env = _subprocess_env({"AAS_AUTOLOOP_REGISTRY": str(registry)})
     subprocess.run(
-        [sys.executable, str(HELPER), "init", "--dir", str(run_dir), "--goal", "g",
+        [sys.executable, "-B", str(HELPER), "init", "--dir", str(run_dir), "--goal", "g",
          "--success-criteria", "sc", "--max-iterations", str(max_iterations), *extra],
         capture_output=True, text=True, timeout=20, env=env, check=False,
     )
@@ -935,13 +954,15 @@ class RuntimeHookCheckTests(unittest.TestCase):
     there is no shell wrapper and the behavior is identical on every OS."""
 
     def _hook(self, *, registry: Path, root: Path, payload: str = "", env_extra: dict[str, str] | None = None):
-        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry), CLAUDE_PROJECT_DIR=str(root))
+        env = _subprocess_env(
+            {"AAS_AUTOLOOP_REGISTRY": str(registry), "CLAUDE_PROJECT_DIR": str(root)}
+        )
         env.pop("AUTOLOOP_DISABLE", None)
         env.pop("AUTOLOOP_DRIVER", None)
         if env_extra:
             env.update(env_extra)
         return subprocess.run(
-            [sys.executable, str(HELPER), "hook-check"],
+            [sys.executable, "-B", str(HELPER), "hook-check"],
             input=payload,
             capture_output=True,
             text=True,
@@ -997,7 +1018,9 @@ class AutoloopStopHookShimTests(unittest.TestCase):
     STOP_HOOK = HELPER.parent / "autoloop_stop_hook.sh"
 
     def _shim(self, *, registry: Path, root: Path, payload: str = ""):
-        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry), CLAUDE_PROJECT_DIR=str(root))
+        env = _subprocess_env(
+            {"AAS_AUTOLOOP_REGISTRY": str(registry), "CLAUDE_PROJECT_DIR": str(root)}
+        )
         env.pop("AUTOLOOP_DISABLE", None)
         env.pop("AUTOLOOP_DRIVER", None)
         return subprocess.run(
@@ -1028,9 +1051,9 @@ class RuntimeDriveTests(unittest.TestCase):
     fails safe. Replaces the bash driver; the POSIX .sh shim delegates here."""
 
     def _drive(self, run_dir: Path, registry: Path, cmd: str, *extra: str, timeout: int = 40):
-        env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(registry))
+        env = _subprocess_env({"AAS_AUTOLOOP_REGISTRY": str(registry)})
         return subprocess.run(
-            [sys.executable, str(HELPER), "drive", "--dir", str(run_dir), "--root", str(run_dir),
+            [sys.executable, "-B", str(HELPER), "drive", "--dir", str(run_dir), "--root", str(run_dir),
              "--cmd", cmd, *extra],
             capture_output=True, text=True, timeout=timeout, env=env, check=False,
         )
@@ -1105,9 +1128,11 @@ class RuntimeDriveTests(unittest.TestCase):
                     for key, value in os.environ.items()
                     if not key.startswith("AAS_AUTOLOOP_") and not key.startswith("AAS_GROK")
                 }
+                env["PYTHONDONTWRITEBYTECODE"] = "1"
                 env["AAS_AUTOLOOP_REGISTRY"] = str(reg)
                 argv = [
                     sys.executable,
+                    "-B",
                     str(HELPER),
                     "drive",
                     "--dir",
@@ -1160,7 +1185,7 @@ class AutoloopDriverShimTests(unittest.TestCase):
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
             _init_loop(loop, reg, max_iterations=5)
             (loop / "STOP_REQUESTED").write_text("", encoding="utf-8")
-            env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(reg))
+            env = _subprocess_env({"AAS_AUTOLOOP_REGISTRY": str(reg)})
             res = subprocess.run(
                 ["bash", str(self.DRIVER), "--dir", str(loop), "--root", str(loop),
                  "--cmd", ': > "$AUTOLOOP_DIR/ran"'],
@@ -1664,15 +1689,17 @@ class HookCheckWorkspaceRootTests(unittest.TestCase):
                 "--max-iterations",
                 "5",
             )
-            env = dict(
-                os.environ,
-                AAS_AUTOLOOP_REGISTRY=str(reg),
-                GROK_WORKSPACE_ROOT=str(root_a),
-                CLAUDE_PROJECT_DIR=str(root_b),
+            env = _subprocess_env(
+                {
+                    "AAS_AUTOLOOP_REGISTRY": str(reg),
+                    "GROK_WORKSPACE_ROOT": str(root_a),
+                    "CLAUDE_PROJECT_DIR": str(root_b),
+                }
             )
             subprocess.run(
                 [
                     sys.executable,
+                    "-B",
                     str(HELPER),
                     "arm",
                     "--dir",
@@ -1690,7 +1717,7 @@ class HookCheckWorkspaceRootTests(unittest.TestCase):
             )
             # hook-check with no --root uses env
             res = subprocess.run(
-                [sys.executable, str(HELPER), "hook-check", "--registry-dir", str(reg)],
+                [sys.executable, "-B", str(HELPER), "hook-check", "--registry-dir", str(reg)],
                 capture_output=True,
                 text=True,
                 env=env,
@@ -1702,14 +1729,15 @@ class HookCheckWorkspaceRootTests(unittest.TestCase):
 
             # Preferring GROK_WORKSPACE_ROOT: if only CLAUDE points at armed root,
             # but GROK points elsewhere, do not match armed root_a.
-            env_wrong = dict(
-                os.environ,
-                AAS_AUTOLOOP_REGISTRY=str(reg),
-                GROK_WORKSPACE_ROOT=str(root_b),
-                CLAUDE_PROJECT_DIR=str(root_a),
+            env_wrong = _subprocess_env(
+                {
+                    "AAS_AUTOLOOP_REGISTRY": str(reg),
+                    "GROK_WORKSPACE_ROOT": str(root_b),
+                    "CLAUDE_PROJECT_DIR": str(root_a),
+                }
             )
             res2 = subprocess.run(
-                [sys.executable, str(HELPER), "hook-check", "--registry-dir", str(reg)],
+                [sys.executable, "-B", str(HELPER), "hook-check", "--registry-dir", str(reg)],
                 capture_output=True,
                 text=True,
                 env=env_wrong,
@@ -1733,10 +1761,11 @@ class DriveCwdTests(unittest.TestCase):
                 "d.joinpath('cwd').write_text(os.getcwd()); "
                 "pathlib.Path(os.environ['AUTOLOOP_DIR'],'STOP_REQUESTED').write_text('x')"
             )
-            env = dict(os.environ, AAS_AUTOLOOP_REGISTRY=str(reg))
+            env = _subprocess_env({"AAS_AUTOLOOP_REGISTRY": str(reg)})
             res = subprocess.run(
                 [
                     sys.executable,
+                    "-B",
                     str(HELPER),
                     "drive",
                     "--dir",
@@ -1794,14 +1823,18 @@ class DriveProviderGrokTests(unittest.TestCase):
                 )
                 fake.chmod(0o755)
             _init_loop(loop, reg, max_iterations=10)
-            env = dict(os.environ)
-            env["AAS_AUTOLOOP_REGISTRY"] = str(reg)
-            env["AAS_AUTOLOOP_BIN_GROK"] = str(fake)
+            env = _subprocess_env(
+                {
+                    "AAS_AUTOLOOP_REGISTRY": str(reg),
+                    "AAS_AUTOLOOP_BIN_GROK": str(fake),
+                }
+            )
             env.pop("AAS_AUTOLOOP_CMD_GROK", None)
             env.pop("AAS_GROK", None)
             res = subprocess.run(
                 [
                     sys.executable,
+                    "-B",
                     str(HELPER),
                     "drive",
                     "--dir",

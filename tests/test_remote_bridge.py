@@ -13,16 +13,24 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 RB = REPO / "canonical" / "runtime" / "skills" / "remote-bridge" / "remote_bridge.py"
 
+# Never write __pycache__ into the canonical runtime tree (inventory CI).
+sys.dont_write_bytecode = True
+
+
+def _subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    if extra:
+        env.update(extra)
+    return env
+
 
 def _run(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    base = os.environ.copy()
-    if env:
-        base.update(env)
     return subprocess.run(
-        [sys.executable, str(RB), *args],
+        [sys.executable, "-B", str(RB), *args],
         capture_output=True,
         text=True,
-        env=base,
+        env=_subprocess_env(env),
         check=False,
     )
 
