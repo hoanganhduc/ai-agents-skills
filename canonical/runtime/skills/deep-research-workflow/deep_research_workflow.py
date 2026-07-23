@@ -53,12 +53,22 @@ EVIDENCE_TYPES = {
     "formal_check",
     "lean_declaration_search",
     "axle_remote_check",
+    "opengauss_run",
     "computation",
     "guard",
     "consent",
     "agd_result",
     "report",
     "other",
+}
+OPENGAUSS_RUN_RESULT_STATUSES = {
+    "success",
+    "partial",
+    "blocked",
+    "unavailable",
+    "failed",
+    "refused",
+    "harvested",
 }
 INSPECTION_STATUSES = {"unchecked", "checked", "failed", "not_applicable"}
 REDACTION_STATUSES = {"safe", "redacted", "private", "not_reviewed"}
@@ -456,6 +466,7 @@ def write_structured_files(target_dir: Path, *, force: bool, schema_version: str
                 "- delivery_blocked_by_formal_lane: false\n"
                 "- lean_declaration_search: supplemental retrieval only; cannot promote formal support without local formal_check evidence\n"
                 "- axle_remote_check: supplemental only; cannot promote formal support without local formal_check evidence\n"
+                "- opengauss_run: harness provenance only; cannot promote formal support without local formal_check evidence\n"
                 "- recommended_next_action: add formal targets or mark the lane deferred/not applicable\n",
                 force=force,
             ),
@@ -747,6 +758,8 @@ def validate_evidence(
             validate_lean_declaration_search_evidence(row, path, errors, line)
         if evidence_type == "axle_remote_check":
             validate_axle_remote_evidence(row, path, errors, line)
+        if evidence_type == "opengauss_run":
+            validate_opengauss_run_evidence(row, path, errors, line)
         if evidence_type == "consent":
             validate_consent_evidence(row, path, errors, line)
         if evidence_type == "agd_result":
@@ -835,6 +848,61 @@ def validate_axle_remote_evidence(
     if row.get("result_status") not in AXLE_REMOTE_RESULT_STATUSES:
         add_error(errors, "AXLE_REMOTE_RESULT_STATUS_INVALID", path, f"line {line}: invalid AXLE result_status")
     validate_timestamp(row.get("expiry"), path, errors, line, "expiry")
+
+
+def validate_opengauss_run_evidence(
+    row: dict[str, Any],
+    path: Path,
+    errors: list[dict[str, Any]],
+    line: int | None,
+) -> None:
+    """Provenance-only OpenGauss harness run; cannot promote formal support alone."""
+    for field in (
+        "tool_name",
+        "run_id",
+        "workflow",
+        "result_status",
+        "input_encoding_ref",
+        "payload_hash",
+    ):
+        if not is_nonempty_string(row.get(field)):
+            add_error(
+                errors,
+                "OPENGAUSS_RUN_EVIDENCE_FIELD_REQUIRED",
+                path,
+                f"line {line}: opengauss_run evidence requires {field}",
+            )
+    if row.get("tool_name") != "opengauss":
+        add_error(
+            errors,
+            "OPENGAUSS_RUN_TOOL_INVALID",
+            path,
+            f"line {line}: opengauss_run tool_name must be 'opengauss'",
+        )
+    if row.get("result_status") not in OPENGAUSS_RUN_RESULT_STATUSES:
+        add_error(
+            errors,
+            "OPENGAUSS_RUN_RESULT_STATUS_INVALID",
+            path,
+            f"line {line}: invalid opengauss_run result_status",
+        )
+    limitations = row.get("limitations")
+    if not isinstance(limitations, list) or not limitations:
+        add_error(
+            errors,
+            "OPENGAUSS_RUN_LIMITATIONS_REQUIRED",
+            path,
+            f"line {line}: opengauss_run requires limitations noting provenance-only / not formal_check",
+        )
+    else:
+        blob = " ".join(str(x) for x in limitations).lower()
+        if "provenance" not in blob and "formal_check" not in blob and "not claim" not in blob:
+            add_error(
+                errors,
+                "OPENGAUSS_RUN_LIMITATIONS_REQUIRED",
+                path,
+                f"line {line}: opengauss_run limitations must state provenance-only or not formal_check",
+            )
 
 
 def validate_consent_evidence(

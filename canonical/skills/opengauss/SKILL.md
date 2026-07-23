@@ -111,3 +111,44 @@ Open only when needed:
 - `references/local-install.md`
 - `references/windows-wsl.md`
 - `references/morph-cloud.md`
+
+
+## Manual live workflows (Phase 1)
+
+After installing OpenGauss yourself (see `references/local-install.md`):
+
+1. Register a Lake project (`gauss` `/project init` or existing `.gauss/project.yaml`).
+2. Prefer `/prove` and `/draft` only for MVP.
+3. Harvest Lean paths, then run `lean-strict-verification-gate`.
+4. Record `opengauss_run` evidence via the helper harvest shape or handoff-gate JSON — never claim-support alone.
+
+Handoff helpers (offline JSON):
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/opengauss/run_opengauss.sh \
+  handoff-intake --claim-id C1 --informal-statement-ref claims/C1.md --project-root /path/to/lean
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/opengauss/run_opengauss.sh \
+  handoff-gate --run-id manual-1 --project-root /path/to/lean --workflow prove --gauss-exit success
+```
+
+## Feasibility spike (Phase 1)
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/opengauss/run_opengauss.sh \
+  spike --work-dir /tmp/og-spike
+```
+
+Outcomes: `headless_qualified` | `interactive_only` | `failed`.  
+Default probe is **non-executing** and will not invent headless success. Operator-dated headless evidence is required before auto mode.
+
+## Adapter verbs (Phase 3 — fail-closed)
+
+```text
+preflight | launch | status | harvest | kill
+```
+
+- `preflight` requires `spike_report.json` with `outcome=headless_qualified` and host headroom.
+- `launch` **refuses** to spawn gauss until a documented headless driver exists (even if spike is forced).
+- Use interactive Gauss manually; use `harvest` to emit provenance-only `opengauss_run` evidence stubs.
+
+Caps for future auto mode: agent-immutable standing auth; wall/concurrency/attempts; USD advisory unless measurable; host load re-check.

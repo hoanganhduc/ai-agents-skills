@@ -12,6 +12,10 @@ Review the draft against this list:
 - Is any recommendation stronger than the cited evidence allows?
 - For blog/article/report drafting, were prior posts, templates, style guides,
   or supplied examples inspected before writing?
+- **Formal overclaim (BLOCK if present):** draft says proved/machine-checked/
+  formalized claim C while citing only `opengauss_run`/job success, active
+  `sorry`/`admit`, missing lead/human equivalence, or no local `formal_check`.
+- **Formal FLAG:** formal work incomplete but language is hedged as partial.
 
 Compact output shape:
 

@@ -98,6 +98,51 @@ class OpenGaussRuntimeTests(unittest.TestCase):
         checks = validate_smoke_output({}, "opengauss", res, ["smoke"])
         self.assertTrue(all(c["ok"] for c in checks), checks)
 
+    def test_spike_and_fail_closed_launch(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            res = _run("spike", "--work-dir", tmp)
+            self.assertIn(res.returncode, (0, 2), res.stdout + res.stderr)
+            data = json.loads(res.stdout)
+            self.assertIn(data.get("outcome"), {"headless_qualified", "interactive_only", "failed"})
+            self.assertFalse(data.get("unlocks_phase3_auto") and data.get("outcome") != "headless_qualified")
+
+            res2 = _run("launch", "--work-dir", tmp, "--workflow", "prove")
+            self.assertNotEqual(res2.returncode, 0)
+            launch = json.loads(res2.stdout)
+            self.assertFalse(launch.get("gauss_launched"))
+            self.assertFalse(launch.get("ok"))
+
+            # Even forced unqualified requires env flag; still no live spawn.
+            res3 = _run(
+                "launch",
+                "--work-dir",
+                tmp,
+                "--workflow",
+                "prove",
+                "--force-unqualified",
+                env={"AAS_OPENGAUSS_ALLOW_FORCE": "1"},
+            )
+            body = json.loads(res3.stdout)
+            self.assertFalse(body.get("gauss_launched"))
+            self.assertIn(body.get("error_code"), {"no_headless_driver", "force_forbidden", "not_headless_qualified"})
+
+    def test_handoff_helpers(self) -> None:
+        res = _run(
+            "handoff-intake",
+            "--claim-id",
+            "C1",
+            "--informal-statement-ref",
+            "claims/C1.md",
+            "--project-root",
+            "/tmp/lean-project",
+        )
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        data = json.loads(res.stdout)
+        self.assertEqual(data["handoff"]["schema"], "opengauss.intake_handoff.v1")
+        self.assertTrue(data["handoff"]["no_claim_support"])
+
 
 class OpenGaussManifestTests(unittest.TestCase):
     def test_profiles_and_runtime_wired(self) -> None:

@@ -39,19 +39,27 @@ make delegate-agent ARGS="--provider auto --task-file ./task.md --research --dry
 ```
 
 Actual launch requires `--allow-external-cli`. Research launch also requires a
-provider dispatch command plus resolved latest-model and highest-thinking
-settings, for example `AAS_CLAUDE_DISPATCH_COMMAND`,
+resolved latest-model and highest-thinking setting. Most providers also require
+an explicit dispatch command, for example `AAS_CLAUDE_DISPATCH_COMMAND`,
 `AAS_CLAUDE_LATEST_MODEL`, and `AAS_CLAUDE_HIGHEST_THINKING`. Antigravity
 dispatch is CLI-based through `agy --print`; it does not require
 `ANTIGRAVITY_LS_ADDRESS`. Grok dispatch is CLI-based through
 `grok --prompt-file /dev/stdin` (the prompt is delivered on stdin; grok's
-`--single` needs an argv value and does not read stdin), prefers the
-region-correct `grok-remote` proxy when present, and uses an interactive OIDC
-session rather than an API-key environment variable. The dispatcher invokes the
-proxy route-neutrally: it neither sets `GROK_MULTI_SESSION` nor adds route flags.
-A bare proxy command uses its active managed profile, while explicit caller
-flags are preserved. A parent readiness probe must validate that profile and
-its model/release identities before concurrent dispatch. The dispatcher runs
+`--single` needs an argv value and does not read stdin) and uses an interactive
+OIDC session rather than an API-key environment variable. Grok may use automatic
+selection for research because the resolved model gates the route. The
+dispatcher first parses only exact anchored available-model rows from bare
+`grok models`. Exact membership selects bare Grok and pins `--model`; only bare
+CLI absence or non-confirmation authorizes the region-correct `grok-remote`
+fallback. Without a resolved model, automatic selection stays bare and does not
+authorize the proxy. Generic provider prechecks are bare-only and never
+version-probe an automatically discovered proxy. Explicit `AAS_GROK` and
+`AAS_GROK_DISPATCH_COMMAND` overrides remain authoritative and are not silently
+replaced. The dispatcher
+invokes a selected proxy route-neutrally: it neither sets `GROK_MULTI_SESSION`
+nor adds route flags. A bare proxy command uses its active managed profile. A
+parent readiness probe must validate that profile and its model/release
+identities before concurrent dispatch. The dispatcher runs
 `grok-remote doctor --json`, accepts only an exact
 `grok-remote.profile-status.v1` result in `ready` or `degraded` state, and
 requires its `model_id` to match the resolved model. Blocked, unconfigured,

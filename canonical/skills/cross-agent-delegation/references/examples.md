@@ -700,3 +700,95 @@ Each JSON fixture is preceded by a canonical metadata marker:
   "audit_notes": []
 }
 ```
+
+
+## Valid Formal Artifact Audit Intent (preset)
+
+Intent preset for independent Lean/OpenGauss artifact audit. Uses existing
+`cross-agent-delegation.task.v1` only (no new schema_version). Verdict details
+belong in result `findings[]`, not custom status enums.
+
+<!-- fixture: id=valid-formal-artifact-audit-intent kind=task valid=true errors=none -->
+```json
+{
+  "schema_version": "cross-agent-delegation.task.v1",
+  "packet_id": "pkt-formal-audit-001",
+  "created_at": "2026-07-22T00:00:00Z",
+  "created_by": "parent-session",
+  "intended_recipient": "independent formal auditor",
+  "adapter_spec_id": "formal-artifact-auditor",
+  "recipient_profile": {
+    "profile_id": "formal-artifact-auditor",
+    "profile_version": "v1",
+    "execution_status": "reference_only"
+  },
+  "recipient_capability_snapshot": {},
+  "intent": "formal-artifact-audit: independently audit Lean artifacts from an OpenGauss or agent formalization run for safety, placeholders, trust-base scan, and scope. Do not promote claim support.",
+  "requested_actions": [
+    "review"
+  ],
+  "side_effects": {
+    "writes_files": false,
+    "external_service_posts": false,
+    "network_calls": false,
+    "subprocesses": false
+  },
+  "success_criteria": [
+    "Findings cover safety, placeholders, trust-base, and scope.",
+    "No claim-support promotion language."
+  ],
+  "constraints": [
+    "Do not re-launch OpenGauss as proof of correctness.",
+    "Do not trust producer transcripts as authority.",
+    "Receive only artifact refs and informal claim ref."
+  ],
+  "provenance": [],
+  "input_refs": [
+    {
+      "ref_id": "lean-bundle",
+      "kind": "artifact_bundle",
+      "source": "artifact:lean-bundle-hash",
+      "sensitivity": "public",
+      "access_note": "Parent supplies hash-manifested Lean files out of band."
+    },
+    {
+      "ref_id": "informal-claim",
+      "kind": "claim_excerpt",
+      "source": "artifact:claim-C1",
+      "sensitivity": "public",
+      "access_note": "Informal claim text only."
+    }
+  ],
+  "artifact_refs": [],
+  "scope_constraints": [
+    "Audit only supplied Lean bundle and claim."
+  ],
+  "out_of_scope": [
+    "Live OpenGauss execution.",
+    "Claim-support promotion."
+  ],
+  "context_policy": {
+    "forward_raw_chat": false,
+    "forward_system_instructions": false,
+    "summary_context_refs": [],
+    "context_refs_to_include": [],
+    "context_refs_to_exclude": []
+  },
+  "confirmation_requirement": "parent_decides_outside_packet",
+  "expected_output": {
+    "format": "result_packet",
+    "required_sections": [
+      "findings",
+      "limitations"
+    ]
+  },
+  "evidence_requirements": [
+    "Each finding cites supplied artifact refs."
+  ],
+  "failure_policy": "block",
+  "audit_notes": [
+    "Intent preset formal-artifact-audit; schema remains cross-agent-delegation.task.v1",
+    "Exclude Gauss transcripts and producer verdicts out of band."
+  ]
+}
+```
