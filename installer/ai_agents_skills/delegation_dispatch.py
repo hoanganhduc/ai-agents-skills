@@ -1169,11 +1169,33 @@ def run_command(
                 f"kimi prompt exceeds safe argv budget of {KIMI_MAX_PROMPT_CHARS} characters "
                 "(shell_argument_limit)"
             )
+        # Fail closed on known CLI conflicts: one-shot -p cannot combine with
+        # agent-mode flags (host-observed: "Cannot combine --prompt with --yolo").
+        kimi_forbidden = {
+            "-y",
+            "--yolo",
+            "--auto",
+            "-p",
+            "--prompt",
+        }
+        bad = [p for p in parts[1:] if p in kimi_forbidden or p.startswith("--prompt=")]
+        if bad:
+            raise ValueError(
+                "kimi_flag_conflict: AAS_KIMI_DISPATCH_COMMAND must not include "
+                f"{sorted(set(bad))}; managed dispatch appends -p <prompt> "
+                "(and optional -m). Do not combine one-shot --prompt with --yolo/--auto."
+            )
         # runtime_argv_prompt: deliver after prompt is known; do not rely on stdin.
         if "{prompt}" in rendered:
             # Operator template requested explicit placeholder substitution.
             rendered = rendered.replace("{prompt}", prompt)
             parts = split_dispatch_command(rendered)
+            bad2 = [p for p in parts[1:] if p in {"-y", "--yolo", "--auto"}]
+            if bad2:
+                raise ValueError(
+                    "kimi_flag_conflict: prompt template must not include "
+                    f"{sorted(set(bad2))} with one-shot -p"
+                )
         else:
             parts = [*parts, "-p", prompt]
         model = resolved_model or env.get("AAS_KIMI_LATEST_MODEL")
