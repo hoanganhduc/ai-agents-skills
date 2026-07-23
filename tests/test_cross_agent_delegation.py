@@ -41,6 +41,7 @@ from installer.ai_agents_skills.delegation_dispatch import (
     run_command,
     validate_resolved_model_syntax_before_prechecks,
 )
+from installer.ai_agents_skills.discovery import split_command
 from installer.ai_agents_skills.grok import (
     GROK_CLI_TOOL_SPEC,
     parse_grok_available_models,
@@ -117,6 +118,14 @@ def write_test_cli(path: Path, *, posix: str, windows: str) -> Path:
     actual.write_text(windows if os.name == "nt" else posix, encoding="utf-8")
     actual.chmod(0o755)
     return actual
+
+
+def command_executable(command: str) -> Path:
+    """First argv of a rendered dispatch command (handles shlex.quote on Windows)."""
+    parts = split_command(command)
+    if not parts:
+        raise AssertionError(f"empty dispatch command: {command!r}")
+    return Path(parts[0])
 
 
 def write_fake_grok_remote(path: Path) -> Path:
@@ -1047,7 +1056,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(selection["status"], "ok")
             self.assertEqual(selection["source"], "bare-model-confirmed")
             self.assertEqual(selection["model_probe"]["status"], "confirmed")
-            self.assertTrue(selection["command"].startswith(str(bare)))
+            self.assertEqual(command_executable(selection["command"]), bare)
             self.assertNotIn("grok-remote", selection["command"])
 
     def test_grok_auto_resolution_uses_remote_only_after_bare_nonconfirmation(self):
@@ -1067,7 +1076,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(selection["status"], "ok")
             self.assertEqual(selection["source"], "remote-fallback-after-bare-nonconfirmation")
             self.assertEqual(selection["model_probe"]["reason_code"], "resolved_model_not_listed")
-            self.assertTrue(selection["command"].startswith(str(remote)))
+            self.assertEqual(command_executable(selection["command"]), remote)
 
     def test_grok_no_resolved_model_uses_bare_and_never_authorizes_proxy(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1085,7 +1094,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
                 )
             self.assertEqual(selection["source"], "bare-default-no-resolved-model")
             self.assertEqual(selection["model_probe"]["status"], "not-performed")
-            self.assertTrue(selection["command"].startswith(str(bare)))
+            self.assertEqual(command_executable(selection["command"]), bare)
             self.assertNotIn("grok-remote", selection["command"])
 
     def test_grok_explicit_bare_override_does_not_silently_fall_back(self):
@@ -1142,7 +1151,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(plan[0]["status"], "ready", plan[0])
             self.assertEqual(plan[0]["grok_selection"]["source"], "bare-model-confirmed")
             self.assertNotIn("grok_profile_status", plan[0])
-            self.assertTrue(plan[0]["command"].startswith(str(bare)))
+            self.assertEqual(command_executable(plan[0]["command"]), bare)
             self.assertIn("--model grok-4.5", plan[0]["command"])
 
     def test_grok_research_auto_falls_back_remote_after_bare_nonconfirmation(self):
@@ -1189,7 +1198,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
                 "resolved_model_not_listed",
             )
             self.assertEqual(plan[0]["grok_profile_status"], payload)
-            self.assertTrue(plan[0]["command"].startswith(str(remote)))
+            self.assertEqual(command_executable(plan[0]["command"]), remote)
             self.assertIn("--model grok-4.5", plan[0]["command"])
 
     def test_grok_remote_profile_probe_accepts_ready_and_degraded_contracts(self):
