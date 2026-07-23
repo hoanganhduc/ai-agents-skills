@@ -206,9 +206,9 @@ For Kimi Code CLI, the managed dispatch shape is **runtime argv prompt**:
 `runtime_argv_prompt`, not `stdin`. Research runs require
 `AAS_KIMI_DISPATCH_COMMAND` plus resolved model metadata
 (`AAS_KIMI_LATEST_MODEL`). Auth is config/credentials under `~/.kimi-code` and
-must never enter packets. Long prompts should respect the dispatcher's argv
-budget (`shell_argument_limit`); do not invent temp prompt files without a
-verified Kimi file-based flag.
+must never enter packets. Long prompts must stay within the dispatcher argv
+budget (`KIMI_MAX_PROMPT_CHARS`, currently 24_000); do not invent temp prompt
+files without a verified Kimi file-based flag.
 
 ```bash
 export AAS_KIMI_DISPATCH_COMMAND='kimi'
@@ -216,11 +216,54 @@ export AAS_KIMI_LATEST_MODEL='<model-alias>'
 export AAS_KIMI_HIGHEST_THINKING='high'
 ```
 
+#### Kimi one-shot / AGD panel rules (host-observed)
+
+These rules come from a live AGD strategy-panel failure (Kimi Code CLI ≥0.29).
+They apply to parent-owned launches, not only `delegate-agent`.
+
+1. **Do not combine `-p` / `--prompt` with agent-mode flags.**  
+   Observed hard error: `Cannot combine --prompt with --yolo.`  
+   Forbidden alongside one-shot `-p` for panel/discussion roles:
+   `-y`, `--yolo`, `--auto` (and any flag that enables multi-turn tool autonomy
+   for the same invocation). Use pure one-shot:
+   `kimi -p "<prompt>" --output-format text` (optional `-m <model>`).
+
+2. **Keep one-shot prompts compact.**  
+   Full evidence dumps (25k–100k characters) are a poor fit for argv transport
+   and encourage long tool-using digressions. For AGD Round-1 style roles:
+   - put a **compressed brief** (≤ ~8–12k chars) in the prompt body, or
+   - pass **inert path refs** and a short task contract, and accept that
+     file-read fidelity must be freshly probed if the role depends on tools.
+
+3. **Prefer text one-shot for discussion/falsifier roles.**  
+   When the contract is “Markdown final answer only,” do not start Kimi in
+   interactive or auto tool mode. Long stderr monologues without a final
+   stdout body are a **participant failure** (`output_parse_failed` /
+   `timeout_no_final` / empty stdout), not usable panel evidence.
+
+4. **Stdout is the contract surface.**  
+   Capture `stdout` as the reply; treat `stderr` as diagnostics only. If
+   stdout is empty/short and stderr is long, mark the participant
+   `invalid` or `partial` and continue the panel with other agents—do not
+   silently promote stderr thinking as the result packet body.
+
+5. **Dispatcher / template hygiene.**  
+   `AAS_KIMI_DISPATCH_COMMAND` must not itself include `-p`, `--prompt`,
+   `-y`, `--yolo`, or `--auto`. The managed path appends `-p <prompt>` (and
+   optional `-m`) at execution time. Pre-baking those flags causes flag
+   conflicts or double-prompt errors.
+
+Diagnostic codes (in addition to the shared taxonomy): `kimi_flag_conflict`
+when the CLI rejects prompt+agent-mode combinations;
+`shell_argument_limit` when the prompt exceeds the argv budget.
+
 Do not hardcode provider model names into shared templates unless a specific
 target system has just probed and recorded that model as current.
 
-For long prompts or long drafts, avoid shell argument transport. Use stdin,
-prompt files, or bounded chunks with a manifest.
+For long prompts or long drafts on providers that support stdin or prompt
+files, prefer those transports. **Kimi is the exception:** it remains argv
+`-p` only—compact or chunk with a manifest; do not fall back to stdin as if
+it were Claude/Grok.
 
 ## Artifact Layout
 
@@ -270,6 +313,7 @@ Use stable diagnostic codes in participant state and validation artifacts:
 - `missing_artifact`
 - `evidence_contract_failed`
 - `stale_capability_profile`
+- `kimi_flag_conflict`
 
 ## Role-Aware Evidence Policy
 

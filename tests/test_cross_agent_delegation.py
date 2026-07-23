@@ -1607,6 +1607,27 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
         self.assertIn(endpoint["status"], {"not-detected", "env-present"})
         self.assertEqual(endpoint["endpoint_sources"][0]["name"], "DEEPSEEK_BASE_URL")
 
+    def test_kimi_dispatch_rejects_yolo_with_oneshot_prompt(self):
+        """Host-observed: kimi -p cannot combine with --yolo/--auto."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            kimi = write_test_cli(
+                root / "kimi",
+                posix="#!/bin/sh\necho should-not-run\n",
+                windows="@echo off\r\necho should-not-run\r\n",
+            )
+            with self.assertRaises(ValueError) as ctx:
+                run_command(
+                    f"{kimi} --yolo",
+                    "panel prompt body",
+                    timeout=5,
+                    env=os.environ,
+                    final_marker="M",
+                    provider="kimi",
+                    resolved_model=None,
+                )
+            self.assertIn("kimi_flag_conflict", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

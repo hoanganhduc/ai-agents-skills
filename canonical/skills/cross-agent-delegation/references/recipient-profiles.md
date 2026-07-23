@@ -158,6 +158,19 @@ must verify Kimi CLI availability, auth/config status (path existence only),
 output contract, and file-read fidelity before using a live Kimi-like
 participant.
 
+Live one-shot / panel notes (parent-owned; not packet fields):
+
+- Dispatch is `kimi -p <prompt>` (optional `-m <model>`). Do **not** combine
+  `--prompt` with `--yolo` / `-y` / `--auto` (CLI error:
+  `Cannot combine --prompt with --yolo`).
+- Keep prompts under the managed argv budget (~24k chars in
+  `delegate-agent`). For AGD panels, prefer a compressed brief plus inert
+  path refs over dumping full evidence trees into argv.
+- Expect the answer on **stdout**. Empty/short stdout with long stderr is a
+  failed or partial participant, not a result packet body.
+- See `agent-group-discuss/references/external-cli-agents.md` § Kimi one-shot /
+  AGD panel rules.
+
 ### model-only-api-reviewer
 
 - intended recipient family: generic model-only reviewer
