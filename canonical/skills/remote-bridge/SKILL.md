@@ -116,8 +116,10 @@ export AAS_REMOTE_JOB_ID=clawfree
 ```
 
 Events notified (best-effort, never abort the loop): `drive_start`,
-`drive_stop`, `iteration_start` / `iteration_ok` / `iteration_failed`,
-`quota_wait`, `paused`, `terminal`, `driver_dead`.
+`drive_stop`, `iteration_ok` / `iteration_failed`, `quota_wait`, `paused`,
+`terminal`, `driver_dead`. **`iteration_start` is not notified** (it pairs with
+`iteration_ok` ~1s later on the same objective and looked like double posts).
+Identical notify bodies are also deduped for 15s in-process.
 
 Headless iterations inject a labeled **data-only** inbox block when
 `AAS_REMOTE_JOB_ID` is set. Approvals for auto-approve providers (`--yolo`,

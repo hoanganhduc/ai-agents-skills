@@ -2457,11 +2457,13 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
         pass
 
 
+# Events that fan out to Zulip/Telegram. Intentionally omits iteration_start /
+# watch_start: those pair with iteration_ok ~1s later using the same objective
+# text and look like "every message twice" in chat.
 _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
     {
         "drive_start",
         "drive_stop",
-        "iteration_start",
         "iteration_ok",
         "iteration_failed",
         "iteration",
@@ -2469,9 +2471,25 @@ _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
         "paused",
         "terminal",
         "driver_dead",
-        "watch_start",
     }
 )
+
+# In-process dedupe so a single drive cannot double-post identical body text
+# within a short window (covers accidental double emit / restart races).
+_LAST_REMOTE_NOTIFY: dict[str, Any] = {"fp": "", "at": 0.0}
+_REMOTE_NOTIFY_DEDUPE_SEC = 15.0
+
+
+def resolve_remote_job_id(run_dir: Path | None = None) -> str | None:
+    """Topic id for remote-bridge: env first, else loop directory name."""
+    env_id = (os.environ.get("AAS_REMOTE_JOB_ID") or "").strip()
+    if env_id:
+        return env_id
+    if run_dir is not None:
+        name = Path(run_dir).expanduser().resolve().name.strip()
+        if name:
+            return name
+    return None
 
 
 def emit_loop_progress(
@@ -2516,17 +2534,27 @@ def emit_loop_progress(
         # Prefer multi-line body; Telegram gets HTML when available.
         notify_text = str(payload.get("text") or payload.get("text_compact") or "")
         notify_html = str(payload.get("text_html") or "")
-        argv = resolve_remote_notify_argv(
-            channel if channel != "both" else "both",
-            notify_text,
-            job_id=os.environ.get("AAS_REMOTE_JOB_ID"),
-            html=notify_html or None,
-        )
-        if argv:
-            try:
-                subprocess.run(argv, check=False, timeout=60, capture_output=True)
-            except Exception:  # noqa: BLE001 - notify is best-effort
-                pass
+        # Dedupe identical bodies (and near-identical start/ok pairs if re-enabled).
+        now = time.time()
+        fp = f"{event}\n{notify_text}".strip()
+        last_fp = str(_LAST_REMOTE_NOTIFY.get("fp") or "")
+        last_at = float(_LAST_REMOTE_NOTIFY.get("at") or 0.0)
+        if fp and fp == last_fp and (now - last_at) < _REMOTE_NOTIFY_DEDUPE_SEC:
+            pass  # skip duplicate remote send
+        else:
+            argv = resolve_remote_notify_argv(
+                channel if channel != "both" else "both",
+                notify_text,
+                job_id=resolve_remote_job_id(run_dir),
+                html=notify_html or None,
+            )
+            if argv:
+                try:
+                    subprocess.run(argv, check=False, timeout=60, capture_output=True)
+                    _LAST_REMOTE_NOTIFY["fp"] = fp
+                    _LAST_REMOTE_NOTIFY["at"] = now
+                except Exception:  # noqa: BLE001 - notify is best-effort
+                    pass
     if notify_cmd and os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1":
         watch_notify(notify_cmd, env_payload)
     return payload
