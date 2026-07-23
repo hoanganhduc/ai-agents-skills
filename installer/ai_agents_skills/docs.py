@@ -162,7 +162,10 @@ workflow examples.
 Multi-agent work is documented separately in `docs/multi-agent-examples.md`.
 That page explains how the orchestrator selects templates, spawns bounded role
 agents, waits for round outputs, runs verification, and merges the result. It
-also summarizes the available templates:
+also covers the **ARL hybrid model**: host-owned panel phases around unattended
+`drive` (top-level provider CLIs for target advice and result review; the drive
+primary stays single-path math-only—see `drive --panel on|auto|off`). Template
+examples include:
 
 - Lakatos Proof and Refutation: proof stress-testing.
 - Polya Multi-Strategy Problem Solving: open problem exploration.
@@ -2295,10 +2298,53 @@ The shared skills involved are:
 |---|---|
 | `agent-group-discuss` | Template-based multi-agent discussion, review, and research. |
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
+| `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes. |
+| `autonomous-research-loop-runtime` | Headless `drive` and host-owned `panel` phases around each iteration. |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
 | `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
 | `research-verification-gate` | Final evidence and gap check before delivery. |
+
+## Autonomous research loop: host-owned hybrid panel
+
+For **unattended** multi-iteration research, prefer the hybrid model owned by
+`autonomous-research-loop-runtime`, not nested “primary agent shells out to four
+CLIs under its sandbox”:
+
+1. **Host parent (driver)** runs top-level provider CLIs for **target advice**.
+2. **Drive primary** (`drive --provider …`) executes **one** single-path math or
+   research step and must not nest panel CLIs for multi-agent purposes.
+3. **Host parent** runs **result review** on new artifacts.
+4. **Host evidence gates** bank claims; panel consensus is not evidence.
+5. **Notify** (optional remote-bridge) is progress messaging only.
+
+```bash
+# Enable host panel around each drive iteration
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
+  skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh \\
+  drive --dir research/run --provider codex --panel on
+
+# auto: on when loop panel.json / standing_orders.panel / AAS_AUTOLOOP_PANEL=on
+… drive --dir research/run --provider codex --panel auto
+
+# Probe panel providers without starting drive
+… panel --smoke --root .
+```
+
+Optional loop config (`panel.json` or `loop_state.standing_orders.panel`):
+
+```json
+{
+  "enabled": true,
+  "providers": ["claude", "codex", "codewhale", "kimi"],
+  "timeouts": {"target_advice": 600, "result_review": 900}
+}
+```
+
+Use **`agent-group-discuss`** for heavy strategy pauses and template panels.
+Use **ARL `drive --panel`** for routine per-iteration advice and review while the
+loop runs unattended. Keep cross-provider depth shallow: one parent layer, not
+recursive multi-vendor trees.
 
 Codex has a native `spawn_agent` orchestration model. Claude and DeepSeek get
 the same templates and adapter instructions, but their actual process control
@@ -2786,8 +2832,10 @@ The installer copies directory-layout `SKILL.md` files under
 personas into `~/.kimi-code/agents/`, and inert templates/tools/instructions
 support storage. Copy mode is the default. The installer does not rewrite
 `config.toml` (hooks stay manual). Unattended ARL force-continue uses
-`drive --provider kimi`. `KIMI_CODE_HOME`-relocated installs are unsupported:
-unset `KIMI_CODE_HOME` before installing. See `targets/kimi/README.md`.
+`drive --provider kimi`. Host-owned ARL panel phases use `drive --panel
+on|auto|off` so multi-agent advice/review stays outside the primary sandbox.
+`KIMI_CODE_HOME`-relocated installs are unsupported: unset `KIMI_CODE_HOME`
+before installing. See `targets/kimi/README.md`.
 
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
@@ -2826,7 +2874,11 @@ paths consult.
   delegates to it), exports `AUTOLOOP_DRIVER=1` so the interactive hook stands
   down, enforces a per-iteration timeout, and stops on the arbiter's verdict or
   after repeated iteration failures. It fails safe: if it cannot determine state,
-  it stops rather than running unbounded.
+  it stops rather than running unbounded. Optional **host-owned multi-agent
+  panel** phases (`drive --panel on|auto|off`, or loop `panel.json`) run
+  top-level provider CLIs for target advice and result review **outside** the
+  primary agent sandbox; the primary stays single-path math/research only. See
+  `docs/multi-agent-examples.md` and the ARL runtime skill.
 
 Per-target enforcement is honest, not uniform: Claude supports both the Stop
 hook and the driver; Codex and OpenCode are driver-only because they use TOML
@@ -3465,8 +3517,12 @@ personas under `~/.kimi-code/agents/`, inert templates/tools/instructions
 support storage, and managed instruction blocks into `~/.kimi-code/AGENTS.md`.
 Copy mode is the default. The installer does not rewrite `config.toml` (hooks
 remain manual). Unattended ARL force-continue uses `drive --provider kimi`.
-`KIMI_CODE_HOME`-relocated installs are unsupported; unset that variable before
-real-system install. See `targets/kimi/README.md`.
+Optional host-owned multi-agent panel phases use `drive --panel on|auto|off`
+(top-level CLIs such as Claude, Codex, CodeWhale, and Kimi for advice/review;
+the drive primary does not nest those panel calls). See
+`docs/multi-agent-examples.md`. `KIMI_CODE_HOME`-relocated installs are
+unsupported; unset that variable before real-system install. See
+`targets/kimi/README.md`.
 
 OpenClaw is included in default target detection when an eligible `.openclaw`
 fake-root home exists, and remains fake-root-only before native target

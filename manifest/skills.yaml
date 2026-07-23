@@ -2,7 +2,7 @@
   "schema_version": 1,
   "skills": {
     "autonomous-research-loop": {
-      "description": "Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs.",
+      "description": "Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs; prefers host-owned multi-agent panel with single-path drive primary.",
       "profiles": [
         "research-core",
         "serious-research",
@@ -39,7 +39,7 @@
       ]
     },
     "autonomous-research-loop-runtime": {
-      "description": "Offline runtime helper for autonomous research loop ledger initialization, iteration appends, validation, status, and selftest.",
+      "description": "Offline runtime helper for loop ledgers plus headless drive and panel (host-owned multi-agent phases via --panel on, auto, or off).",
       "profiles": [
         "research-core",
         "serious-research",

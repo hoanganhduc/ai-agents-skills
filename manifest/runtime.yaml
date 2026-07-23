@@ -376,6 +376,19 @@
           "mode": "0644"
         },
         {
+          "source": "skills/autonomous-research-loop-runtime/panel_parent.py",
+          "target": "workspace/skills/autonomous-research-loop-runtime/panel_parent.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/autonomous-research-loop-runtime/autoloop_stop_hook.sh",
           "target": "workspace/skills/autonomous-research-loop-runtime/autoloop_stop_hook.sh",
           "platforms": [
