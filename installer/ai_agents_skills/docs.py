@@ -97,7 +97,7 @@ def readme_text(manifests: dict[str, Any]) -> str:
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
 ![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-blue)
-![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity%20%7C%20Grok%20%7C%20OpenClaw-black)
+![Agents](https://img.shields.io/badge/agents-Codex%20%7C%20Claude%20%7C%20DeepSeek%20%7C%20Copilot%20%7C%20OpenCode%20%7C%20Antigravity%20%7C%20Grok%20%7C%20Kimi%20%7C%20OpenClaw-black)
 ![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-brightgreen?logo=githubpages)
 ![Status](https://img.shields.io/badge/status-active-yellow)
 ![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)
@@ -109,8 +109,8 @@ def readme_text(manifests: dict[str, Any]) -> str:
 > see the [introductory blog post](https://hoanganhduc.github.io/misc/coding-system-rebuild/).
 
 Shared, manifest-driven skills and settings for Codex, Claude, DeepSeek,
-GitHub Copilot, OpenCode, Antigravity CLI, Grok, and restricted OpenClaw
-fake-root targets.
+GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, and restricted
+OpenClaw fake-root targets.
 
 ## System Summary
 
@@ -120,18 +120,19 @@ product, and it may not behave as desired on other machines, other agent
 versions, or research tasks outside the assumptions documented here.
 
 This repo turns a multi-agent research setup into one maintainable skill source.
-Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, and Grok
-can each load local skills. OpenClaw participates as a default fake-root-only
-target for normal installer flows, with a separate reviewed v2 skill-file path
-for real-system skill writes and an evidence-gated runtime-install path (the
-`openclaw-runtime-*` commands plus the host `openclaw-broker`) for real-system
-runtime files. This repository keeps the
+Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, and
+Kimi Code can each load local skills. OpenClaw participates as a default
+fake-root-only target for normal installer flows, with a separate reviewed v2
+skill-file path for real-system skill writes, an evidence-gated runtime-install
+path (the `openclaw-runtime-*` commands plus the host `openclaw-broker`) for
+real-system runtime files, and an optional dual-route `/aas` adapter published
+from `remote-bridge` into the OpenClaw workspace. This repository keeps the
 shared research workflows, profiles, delegation settings, dependency metadata,
 and installer logic in one place.
 
 The research stack is organized as:
 
-- agent frontends and targets: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, and restricted OpenClaw
+- agent frontends and targets: Codex, Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code, and restricted OpenClaw
 - shared skill source: `manifest/`, `canonical/skills/`, and `targets/`
 - external capabilities: Python, TeX, optional SageMath, local library tools,
   document parsers, public databases, and retrieval helpers
@@ -441,11 +442,12 @@ Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
 targets follow auto mode: Claude links to `canonical/skills`, Codex and
-DeepSeek receive reference adapters, OpenCode and Grok receive copied native
-skill files plus support files (Grok installs under `~/.grok` and disables its
-`[compat.claude]` ride-along for a self-contained view), and Antigravity
-receives flat global Markdown adapters plus native plugin/config scaffolds
-unless native loader evidence
+DeepSeek receive reference adapters, OpenCode, Grok, and Kimi Code receive
+copied native skill files plus support files (Grok installs under `~/.grok` and
+disables its `[compat.claude]` ride-along for a self-contained view; Kimi
+installs under `~/.kimi-code` and does not auto-edit `config.toml`), and
+Antigravity receives flat global Markdown adapters plus native plugin/config
+scaffolds unless native loader evidence
 justifies a different policy. Explicit `symlink`, `reference`, and `copy`
 modes force the same strategy for every agent. Use `--skill` or `--skills` for
 narrow installs.
@@ -484,9 +486,9 @@ def skills_text(manifests: dict[str, Any]) -> str:
         "skill. Skipped skills do not receive instruction blocks. Default "
         "`auto` mode links Claude skill files to `canonical/skills`, while "
         "Codex, DeepSeek, and Copilot receive reference adapters unless native "
-        "loader evidence justifies a different policy. OpenCode and Antigravity "
-        "receive copied regular files by default. Explicit `symlink`, "
-        "`reference`, and `copy` modes force the same strategy for every "
+        "loader evidence justifies a different policy. OpenCode, Grok, Kimi "
+        "Code, and Antigravity receive copied regular files by default. Explicit "
+        "`symlink`, `reference`, and `copy` modes force the same strategy for every "
         "agent. In `reference` mode, the installed `SKILL.md` is an adapter "
         "that points back to this repo; support files remain in "
         "`canonical/skills/<skill>/` instead of being copied into the agent "
@@ -1664,7 +1666,7 @@ Concrete repo artifacts inspected:
 
 Confirmed from repo inspection:
 
-- default install targets are currently Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity, and OpenClaw
+- default install targets are currently Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity, Grok, Kimi, and OpenClaw
 - OpenClaw is a default target for restricted fake-root layout tests
 - OpenClaw has a Phase 1 target capability record and central target gate that
   preserves normal installer real-system denials
@@ -2221,7 +2223,7 @@ The system has three layers:
 
 | Layer | Role |
 |---|---|
-| Agent frontends and targets | Codex, Claude, DeepSeek, Copilot, OpenCode, and Antigravity receive user requests and load installed skill instructions; OpenClaw is a restricted fake-root target for normal installer flows, with reviewed v2 real-system skill-file writes only through `openclaw-target-*`. |
+| Agent frontends and targets | Codex, Claude, DeepSeek, Copilot, OpenCode, Antigravity, Grok, and Kimi receive user requests and load installed skill instructions; OpenClaw is a restricted fake-root target for normal installer flows, with reviewed v2 real-system skill-file writes only through `openclaw-target-*`, plus an optional dual-route `/aas` adapter published from remote-bridge. |
 | Shared skill repository | `manifest/` selects skills and profiles; `canonical/skills/` stores reusable workflows; `targets/` holds agent-specific notes. |
 | Runtime and software tools | Python, TeX, optional SageMath, local library tools, document parsers, public databases, and external retrieval helpers do the actual work when a skill needs them. |
 
@@ -2306,7 +2308,7 @@ round protocol for manual or sequential execution.
 
 True cross-provider delegation is parent-owned by `agent-group-discuss`.
 `manifest/delegation.yaml` sets the default policy: include Codex as the parent
-and spawned-subagent provider; prefer Claude, DeepSeek, Copilot, Antigravity, and Grok when fresh
+and spawned-subagent provider; prefer Claude, DeepSeek, Copilot, Antigravity, Grok, and Kimi when fresh
 probes pass; keep OpenClaw reference-only; fall back to Codex-only when
 configured; and require latest-model plus highest-thinking for research roles.
 This policy is general across supported target-agent installs. External CLI
@@ -2666,7 +2668,7 @@ def architecture_text() -> str:
 
 This page explains how the repository turns one canonical skill catalog into
 agent-specific files for Codex, Claude, DeepSeek, GitHub Copilot, OpenCode,
-Antigravity CLI, and Grok.
+Antigravity CLI, Grok, and Kimi Code.
 
 The manifests are the source of truth:
 
@@ -2712,14 +2714,14 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode, Antigravity, and Grok copy the full canonical skill body and support files by default; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, and Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode, Antigravity, Grok, and Kimi copy the full canonical skill body and support files by default; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`, and Kimi writes directory-layout `SKILL.md` files under `~/.kimi-code/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
-| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Grok receives Claude-style Markdown subagents (name/description overlay; Claude tool-restriction frontmatter is not enforced on Grok), Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude, OpenCode, and Kimi receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Grok receives Claude-style Markdown subagents (name/description overlay; Claude tool-restriction frontmatter is not enforced on Grok), Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
-| `entrypoint-alias` | Optional quick-action aliases. Claude, OpenCode, and Grok receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents. |
+| `entrypoint-alias` | Optional quick-action aliases. Claude, OpenCode, and Grok receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents; Kimi has no commands-dir loader (skills are invoked as `/skill:<name>`). |
 | `plugin` | Antigravity receives a managed `ai-agents-skills` plugin marker and payload directory when Antigravity artifacts are installed. |
 | `mcp-config` | Antigravity receives a no-op plugin-scoped `mcp_config.json` scaffold with an empty `mcpServers` map. |
 | `hook-config` | Antigravity receives a no-op plugin-scoped `hooks.json` scaffold. |
@@ -2732,14 +2734,15 @@ Artifact classes:
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
 Target rendering is intentionally adapter-heavy where native behavior has not
-been proven. Codex personas are TOML custom-agent files, Claude and OpenCode
-personas are Markdown subagents, Antigravity personas are plugin-scoped
+been proven. Codex personas are TOML custom-agent files, Claude, OpenCode, and
+Kimi personas are Markdown subagents, Antigravity personas are plugin-scoped
 Markdown agent definitions, Grok personas are Claude-style Markdown subagents
 (name/description overlay only), Copilot personas are `.agent.md` custom-agent
 profiles, and DeepSeek personas are reference prompts. Claude, OpenCode, and
 Grok entrypoint aliases are command files, Antigravity entrypoint aliases are
-flat global Markdown skill aliases, and Codex and DeepSeek entrypoint aliases
-are reference documents under `instructions/entrypoints`.
+flat global Markdown skill aliases, Codex and DeepSeek entrypoint aliases are
+reference documents under `instructions/entrypoints`, and Kimi does not install
+command-file entrypoint aliases.
 
 Copilot is included in default target detection when `~/.copilot` exists.
 Existing repository-level `.github/*` files do not activate the personal
@@ -2776,6 +2779,15 @@ install presents a single self-contained view. Because Grok's `[compat.claude]`
 ride-along is default-on, installing both Claude and Grok would otherwise
 double-load every managed surface from both homes. `GROK_HOME`-relocated
 installs are unsupported: unset `GROK_HOME` before installing.
+
+Kimi Code is included in default target detection when `~/.kimi-code` exists.
+The installer copies directory-layout `SKILL.md` files under
+`~/.kimi-code/skills/`, managed instruction blocks into `~/.kimi-code/AGENTS.md`,
+personas into `~/.kimi-code/agents/`, and inert templates/tools/instructions
+support storage. Copy mode is the default. The installer does not rewrite
+`config.toml` (hooks stay manual). Unattended ARL force-continue uses
+`drive --provider kimi`. `KIMI_CODE_HOME`-relocated installs are unsupported:
+unset `KIMI_CODE_HOME` before installing. See `targets/kimi/README.md`.
 
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
@@ -2861,9 +2873,9 @@ optional skill, artifact-directory, install-mode, and read-policy metadata; the
 values remain paths inspected from the current host/root. Target prechecks do
 not read target file contents; known auth-token sources are reported by
 presence only rather than value. `external_agent_prechecks` reports sanitized
-Claude, DeepSeek, Copilot, Antigravity, Grok, and reference-only OpenClaw delegation readiness,
-including latest-model/highest-thinking probe requirements and nested-worker
-capability status. Copilot extends the base precheck with CLI
+Claude, DeepSeek, Copilot, Antigravity, Grok, Kimi, and reference-only OpenClaw
+delegation readiness, including latest-model/highest-thinking probe requirements
+and nested-worker capability status. Copilot extends the base precheck with CLI
 detection, the `.copilot` directory shape, redacted auth-source presence,
 provider/model probe status, delegation authority metadata, and a separate
 `copilot_status` field for CLI/account/model readiness; command arguments and
@@ -2907,6 +2919,10 @@ Grok prechecks report the user-global `~/.grok` target, its `skills/`,
 GROK_HOME-pinned native smoke expectations without reading config contents or
 credentials; `~/.grok/settings.json` is not reported because Grok does not read
 it for hooks.
+Kimi prechecks report the user-global `~/.kimi-code` target, its `skills/` and
+`agents/` children, `AGENTS.md`, copy-mode default, bare `kimi` CLI discovery
+status, and `KIMI_CODE_HOME`-pinned native smoke expectations without opening
+`config.toml` for secrets. Relocated `KIMI_CODE_HOME` installs are unsupported.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.
@@ -3346,6 +3362,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | OpenCode | `~/.config/opencode` | `~/.config/opencode/skills/<skill>/` | `~/.config/opencode/AGENTS.md` |
 | Antigravity | `~/.gemini/antigravity-cli` | `~/.gemini/antigravity-cli/skills/<skill>.md` | `~/.gemini/GEMINI.md` |
 | Grok | `~/.grok` | `~/.grok/skills/<skill>/` | `~/.grok/AGENTS.md` |
+| Kimi | `~/.kimi-code` | `~/.kimi-code/skills/<skill>/` | `~/.kimi-code/AGENTS.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
 
 **Source of truth vs install products.** Reusable skill and runtime logic is
@@ -3375,6 +3392,7 @@ Optional or compatibility skill locations:
 | OpenCode | `~/.claude/skills`, `~/.agents/skills` | Compatibility locations reported but not used as the primary write target. |
 | Antigravity | `.agents/skills`, `~/.gemini/skills` | Workspace and Gemini compatibility locations reported but not used as the global write target. |
 | Grok | `~/.claude/skills`, `~/.agents/skills` | Compatibility locations reported but not used as the primary write target. |
+| Kimi | none additional | Primary write target is only `~/.kimi-code`. |
 
 Optional artifact-class target directories:
 
@@ -3387,16 +3405,17 @@ Optional artifact-class target directories:
 | OpenCode | `~/.config/opencode/agents` | `~/.config/opencode/templates` | `~/.config/opencode/commands` | `~/.config/opencode/tools` |
 | Antigravity | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/agents` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/templates` | `~/.gemini/antigravity-cli/skills/<alias>.md` | `~/.gemini/antigravity-cli/plugins/ai-agents-skills/tools` |
 | Grok | `~/.grok/agents` | `~/.grok/templates` | `~/.grok/commands` | `~/.grok/tools` |
+| Kimi | `~/.kimi-code/agents` | `~/.kimi-code/templates` | not supported | `~/.kimi-code/tools` |
 | OpenClaw | not supported | not supported | not supported | not supported |
 
 Rendered artifact behavior differs by agent:
 
-| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | Grok | OpenClaw |
-|---|---|---|---|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copied flat Markdown skill file in `~/.gemini/antigravity-cli/skills`. | Copied directory-layout `SKILL.md` plus support files in `~/.grok/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
-| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Markdown subagent file (name/description overlay). | Not supported. |
-| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Command file in `~/.grok/commands`. | Not supported. |
-| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Managed block in `~/.grok/AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. |
+| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | Grok | Kimi | OpenClaw |
+|---|---|---|---|---|---|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copied flat Markdown skill file in `~/.gemini/antigravity-cli/skills`. | Copied directory-layout `SKILL.md` plus support files in `~/.grok/skills`. | Copied directory-layout `SKILL.md` plus support files in `~/.kimi-code/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Markdown subagent file (name/description overlay). | Markdown subagent file (`name`/`description` frontmatter). | Not supported. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Command file in `~/.grok/commands`. | Not supported; skills use `/skill:<name>`. | Not supported. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Managed block in `~/.grok/AGENTS.md`. | Managed block in `~/.kimi-code/AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. |
 
 Instruction docs target each agent's `instructions` or rules directory.
 Entrypoint aliases target Claude and OpenCode commands and Antigravity global
@@ -3439,6 +3458,15 @@ into `~/.grok/AGENTS.md`, and merges a managed `[compat.claude]` block into
 `~/.grok/hooks/ai-agents-skills-autoloop.json`; `~/.grok/settings.json` is never
 written. Templates and tool shims copy to `~/.grok/templates` and `~/.grok/tools`
 as inert support storage. `GROK_HOME`-relocated installs are unsupported.
+
+Kimi Code is included in default target detection when `~/.kimi-code` exists.
+The installer copies directory-layout skills under `~/.kimi-code/skills/`,
+personas under `~/.kimi-code/agents/`, inert templates/tools/instructions
+support storage, and managed instruction blocks into `~/.kimi-code/AGENTS.md`.
+Copy mode is the default. The installer does not rewrite `config.toml` (hooks
+remain manual). Unattended ARL force-continue uses `drive --provider kimi`.
+`KIMI_CODE_HOME`-relocated installs are unsupported; unset that variable before
+real-system install. See `targets/kimi/README.md`.
 
 OpenClaw is included in default target detection when an eligible `.openclaw`
 fake-root home exists, and remains fake-root-only before native target

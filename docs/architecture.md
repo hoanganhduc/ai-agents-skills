@@ -2,7 +2,7 @@
 
 This page explains how the repository turns one canonical skill catalog into
 agent-specific files for Codex, Claude, DeepSeek, GitHub Copilot, OpenCode,
-Antigravity CLI, and Grok.
+Antigravity CLI, Grok, and Kimi Code.
 
 The manifests are the source of truth:
 
@@ -48,14 +48,14 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode, Antigravity, and Grok copy the full canonical skill body and support files by default; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, and Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode, Antigravity, Grok, and Kimi copy the full canonical skill body and support files by default; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`, and Kimi writes directory-layout `SKILL.md` files under `~/.kimi-code/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
-| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude and OpenCode receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Grok receives Claude-style Markdown subagents (name/description overlay; Claude tool-restriction frontmatter is not enforced on Grok), Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude, OpenCode, and Kimi receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Grok receives Claude-style Markdown subagents (name/description overlay; Claude tool-restriction frontmatter is not enforced on Grok), Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
-| `entrypoint-alias` | Optional quick-action aliases. Claude, OpenCode, and Grok receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents. |
+| `entrypoint-alias` | Optional quick-action aliases. Claude, OpenCode, and Grok receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents; Kimi has no commands-dir loader (skills are invoked as `/skill:<name>`). |
 | `plugin` | Antigravity receives a managed `ai-agents-skills` plugin marker and payload directory when Antigravity artifacts are installed. |
 | `mcp-config` | Antigravity receives a no-op plugin-scoped `mcp_config.json` scaffold with an empty `mcpServers` map. |
 | `hook-config` | Antigravity receives a no-op plugin-scoped `hooks.json` scaffold. |
@@ -68,14 +68,15 @@ Artifact classes:
 | `tool-shim` | Reserved optional target class for DeepSeek or runtime helper tools. |
 
 Target rendering is intentionally adapter-heavy where native behavior has not
-been proven. Codex personas are TOML custom-agent files, Claude and OpenCode
-personas are Markdown subagents, Antigravity personas are plugin-scoped
+been proven. Codex personas are TOML custom-agent files, Claude, OpenCode, and
+Kimi personas are Markdown subagents, Antigravity personas are plugin-scoped
 Markdown agent definitions, Grok personas are Claude-style Markdown subagents
 (name/description overlay only), Copilot personas are `.agent.md` custom-agent
 profiles, and DeepSeek personas are reference prompts. Claude, OpenCode, and
 Grok entrypoint aliases are command files, Antigravity entrypoint aliases are
-flat global Markdown skill aliases, and Codex and DeepSeek entrypoint aliases
-are reference documents under `instructions/entrypoints`.
+flat global Markdown skill aliases, Codex and DeepSeek entrypoint aliases are
+reference documents under `instructions/entrypoints`, and Kimi does not install
+command-file entrypoint aliases.
 
 Copilot is included in default target detection when `~/.copilot` exists.
 Existing repository-level `.github/*` files do not activate the personal
@@ -112,6 +113,15 @@ install presents a single self-contained view. Because Grok's `[compat.claude]`
 ride-along is default-on, installing both Claude and Grok would otherwise
 double-load every managed surface from both homes. `GROK_HOME`-relocated
 installs are unsupported: unset `GROK_HOME` before installing.
+
+Kimi Code is included in default target detection when `~/.kimi-code` exists.
+The installer copies directory-layout `SKILL.md` files under
+`~/.kimi-code/skills/`, managed instruction blocks into `~/.kimi-code/AGENTS.md`,
+personas into `~/.kimi-code/agents/`, and inert templates/tools/instructions
+support storage. Copy mode is the default. The installer does not rewrite
+`config.toml` (hooks stay manual). Unattended ARL force-continue uses
+`drive --provider kimi`. `KIMI_CODE_HOME`-relocated installs are unsupported:
+unset `KIMI_CODE_HOME` before installing. See `targets/kimi/README.md`.
 
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
