@@ -844,12 +844,20 @@ def zulip_send(cfg: BridgeConfig, *, stream: str, topic: str, content: str, dry_
     return {"ok": result.get("result") == "success", "channel": "zulip", "result": result}
 
 
-def telegram_send(cfg: BridgeConfig, *, chat_id: str, text: str, dry_run: bool = False) -> dict[str, Any]:
+def telegram_send(
+    cfg: BridgeConfig,
+    *,
+    chat_id: str,
+    text: str,
+    dry_run: bool = False,
+    parse_mode: str | None = None,
+) -> dict[str, Any]:
     token = str(cfg.telegram.get("bot_token") or "")
     if not token:
         raise ValueError("telegram bot_token missing")
-    # split long messages
-    chunks = [text[i : i + 3500] for i in range(0, max(len(text), 1), 3500)] or [text]
+    # split long messages (Telegram hard limit ~4096; stay under with margin)
+    limit = 3500
+    chunks = [text[i : i + limit] for i in range(0, max(len(text), 1), limit)] or [text]
     if dry_run:
         return {
             "ok": True,
@@ -858,16 +866,28 @@ def telegram_send(cfg: BridgeConfig, *, chat_id: str, text: str, dry_run: bool =
             "chat_id": chat_id,
             "chunks": len(chunks),
             "preview": chunks[0][:200],
+            "parse_mode": parse_mode,
         }
     results = []
     for chunk in chunks:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": chunk,
+            "disable_web_page_preview": True,
+        }
+        if parse_mode:
+            data["parse_mode"] = parse_mode
         result = http_json(
             "POST",
             url,
-            data={"chat_id": chat_id, "text": chunk, "disable_web_page_preview": True},
+            data=data,
             form=True,
         )
+        # If HTML/Markdown fails (bad entities), retry once as plain text.
+        if not result.get("ok") and parse_mode:
+            data.pop("parse_mode", None)
+            result = http_json("POST", url, data=data, form=True)
         results.append(result)
         if not result.get("ok"):
             return {"ok": False, "channel": "telegram", "result": result}
@@ -881,6 +901,57 @@ def telegram_webhook_info(cfg: BridgeConfig) -> dict[str, Any]:
     return http_json("GET", f"https://api.telegram.org/bot{token}/getWebhookInfo")
 
 
+def _channel_ready(cfg: BridgeConfig, channel: str) -> bool:
+    if channel == "zulip":
+        return bool(cfg.zulip.get("site") and cfg.zulip.get("email") and cfg.zulip.get("api_key"))
+    if channel == "telegram":
+        return bool(cfg.telegram.get("bot_token") and _as_str_list(cfg.telegram.get("allowed_chat_ids")))
+    return False
+
+
+def resolve_notify_channel_order(
+    cfg: BridgeConfig,
+    *,
+    requested: str | None = None,
+) -> list[str]:
+    """Ordered channels for a send.
+
+    Default policy: **Zulip first**, Telegram only as fallback (not dual-send).
+    - ``None`` / ``auto`` / ``both`` → [zulip?, telegram?] (zulip first)
+    - ``zulip`` → [zulip] + [telegram] if telegram ready (fallback on fail)
+    - ``telegram`` → [telegram] only (explicit)
+    """
+    token = (requested or "").strip().lower() or None
+    if token in {"", "auto", "both", "default"}:
+        token = None
+    if token == "telegram":
+        return ["telegram"] if _channel_ready(cfg, "telegram") else []
+    # zulip primary (+ telegram fallback when available)
+    order: list[str] = []
+    if token in {None, "zulip"}:
+        if _channel_ready(cfg, "zulip"):
+            order.append("zulip")
+        if _channel_ready(cfg, "telegram"):
+            order.append("telegram")
+        if order:
+            return order
+        # fall through to declared list
+    if token and token not in {"zulip", "telegram", "both", "auto"}:
+        return [token]
+    declared = [str(c).lower() for c in (cfg.notify_channels or []) if str(c).strip()]
+    if not declared and cfg.default_channel:
+        declared = [str(cfg.default_channel).lower()]
+    # Prefer zulip before telegram in declared list
+    ordered: list[str] = []
+    for pref in ("zulip", "telegram"):
+        if pref in declared and _channel_ready(cfg, pref) and pref not in ordered:
+            ordered.append(pref)
+    for ch in declared:
+        if ch not in ordered and _channel_ready(cfg, ch):
+            ordered.append(ch)
+    return ordered
+
+
 def notify_channels(
     cfg: BridgeConfig,
     *,
@@ -888,8 +959,26 @@ def notify_channels(
     job_id: str | None = None,
     channels: list[str] | None = None,
     dry_run: bool = False,
+    html: str | None = None,
+    stop_on_first_success: bool = True,
 ) -> dict[str, Any]:
-    chans = channels or list(cfg.notify_channels) or [cfg.default_channel]
+    """Send notify text.
+
+    Default ``stop_on_first_success=True`` implements **Zulip-primary, Telegram-fallback**:
+    once a channel succeeds, remaining channels are skipped (no dual spam).
+    """
+    if channels is None:
+        chans = resolve_notify_channel_order(cfg, requested=None)
+    else:
+        # Preserve caller order but still drop unready channels
+        chans = [c for c in channels if _channel_ready(cfg, c) or c not in {"zulip", "telegram"}]
+        # If caller passed both, force Zulip-before-Telegram
+        if "zulip" in chans and "telegram" in chans:
+            chans = [c for c in ("zulip", "telegram") if c in chans] + [
+                c for c in chans if c not in {"zulip", "telegram"}
+            ]
+    if not chans:
+        chans = list(cfg.notify_channels) or [cfg.default_channel]
     results: dict[str, Any] = {}
     for ch in chans:
         try:
@@ -897,14 +986,25 @@ def notify_channels(
                 stream = str(cfg.zulip.get("control_stream") or "aas-remote")
                 prefix = str(cfg.zulip.get("topic_prefix") or "job/")
                 topic = f"{prefix}{job_id or 'general'}".replace("//", "/")
-                results[ch] = zulip_send(cfg, stream=stream, topic=topic, content=text, dry_run=dry_run)
+                # Zulip uses Markdown; prefer the multi-line plain/markdown body.
+                results[ch] = zulip_send(
+                    cfg, stream=stream, topic=topic, content=text, dry_run=dry_run
+                )
             elif ch == "telegram":
                 chats = _as_str_list(cfg.telegram.get("allowed_chat_ids"))
                 if not chats:
                     results[ch] = {"ok": False, "error": "no allowed_chat_ids"}
                     continue
-                # send to first chat by default (mobile)
-                results[ch] = telegram_send(cfg, chat_id=chats[0], text=text, dry_run=dry_run)
+                # Prefer HTML when provided (richer mobile formatting).
+                body = html if html else text
+                parse_mode = "HTML" if html else None
+                results[ch] = telegram_send(
+                    cfg,
+                    chat_id=chats[0],
+                    text=body,
+                    dry_run=dry_run,
+                    parse_mode=parse_mode,
+                )
             else:
                 results[ch] = {"ok": False, "error": f"unknown channel {ch}"}
         except Exception as exc:  # noqa: BLE001
@@ -912,6 +1012,9 @@ def notify_channels(
                 "ok": False,
                 "error": redact_secrets(str(exc), cfg.secret_values()),
             }
+        # Primary/fallback: do not dual-send on success
+        if stop_on_first_success and isinstance(results.get(ch), dict) and results[ch].get("ok"):
+            break
     return results
 
 
@@ -920,12 +1023,33 @@ def notify_channels(
 # ---------------------------------------------------------------------------
 
 
+_AAS_BUILTIN_CMDS = frozenset(
+    {
+        "help",
+        "status",
+        "progress",
+        "jobs",
+        "doctor",
+        "approve",
+        "deny",
+        "say",
+        "instruct",
+        "stop",
+        "pause",
+        "resume",
+        "focus",
+    }
+)
+
+
 def parse_aas_command(text: str, bot_username: str | None = None) -> dict[str, Any] | None:
     raw = (text or "").strip()
     if not raw:
         return None
+    # Allow leading bot mention then /aas (Zulip/OpenClaw often prefix @bot)
+    raw = re.sub(r"^@\S+\s+", "", raw).strip()
     # strip bot mention form /aas@BotName
-    m = re.match(r"^/aas(?:@([A-Za-z0-9_]+))?(?:\s+|$)(.*)$", raw, re.S)
+    m = re.match(r"^/aas(?:@([A-Za-z0-9_]+))?(?:\s+|$)(.*)$", raw, re.S | re.I)
     if not m:
         return None
     mentioned = m.group(1)
@@ -937,16 +1061,31 @@ def parse_aas_command(text: str, bot_username: str | None = None) -> dict[str, A
     parts = rest.split(None, 1)
     cmd = parts[0].lower()
     argtext = parts[1] if len(parts) > 1 else ""
-    args = argtext.split() if cmd in {"approve", "deny", "stop", "pause", "resume", "focus", "status", "doctor", "help", "jobs"} else []
+    # Freeform: "/aas do openGauss on F5" → instruct to focused/default job
+    if cmd not in _AAS_BUILTIN_CMDS:
+        return {"cmd": "instruct_freeform", "text": rest}
+    args = (
+        argtext.split()
+        if cmd in {"approve", "deny", "stop", "pause", "resume", "focus", "status", "progress", "doctor", "help", "jobs"}
+        else []
+    )
     if cmd in {"say", "instruct"}:
         bits = argtext.split(None, 1)
+        # "/aas instruct <text>" with no job id → freeform instruct (needs focus/default)
+        if len(bits) == 1 and bits[0]:
+            return {"cmd": "instruct_freeform", "text": bits[0]}
         if len(bits) < 2:
-            return {"cmd": cmd, "error": "usage"}
+            return {"cmd": cmd, "error": "usage", "usage": "/aas instruct <job_id> <text>"}
         return {"cmd": cmd, "target": bits[0], "text": bits[1]}
     if cmd in {"approve", "deny"} and args:
         return {"cmd": cmd, "request_id": args[0], "args": args[1:]}
-    if cmd in {"stop", "pause", "resume", "focus"} and args:
-        return {"cmd": cmd, "job_id": args[0]}
+    if cmd in {"stop", "pause", "resume", "focus"}:
+        if args:
+            return {"cmd": cmd, "job_id": args[0]}
+        # Allow "/aas pause" with focused job
+        return {"cmd": cmd, "job_id": None, "needs_default_job": True}
+    if cmd in {"status", "progress"}:
+        return {"cmd": "status", "args": args, "text": argtext}
     return {"cmd": cmd, "args": args, "text": argtext}
 
 
@@ -1082,11 +1221,105 @@ def cmd_arm(args: argparse.Namespace) -> int:
     return _ok("arm", job=job)
 
 
+def _loop_progress_snapshot(loop_dir: str | None) -> dict[str, Any]:
+    """Best-effort read of ARL live surfaces for chat-facing status."""
+    if not loop_dir:
+        return {}
+    root = Path(loop_dir).expanduser()
+    out: dict[str, Any] = {"loop_dir": str(root)}
+    try:
+        state_path = root / "loop_state.json"
+        if state_path.is_file():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            out["loop_status"] = state.get("status")
+            out["last_iteration"] = state.get("last_iteration")
+            out["next_preferred_path"] = state.get("next_preferred_path")
+            out["goal"] = (state.get("goal") or "")[:400]
+        budget_path = root / "budget.json"
+        if budget_path.is_file():
+            budget = json.loads(budget_path.read_text(encoding="utf-8"))
+            out["spent_iterations"] = budget.get("spent_iterations")
+            out["max_iterations"] = budget.get("max_iterations")
+        live = root / "LIVE_STATUS.md"
+        if live.is_file():
+            out["live_status_md"] = live.read_text(encoding="utf-8")[:2500]
+        recovery = root / "recovery.md"
+        if recovery.is_file():
+            out["recovery_head"] = recovery.read_text(encoding="utf-8")[:1500]
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)
+    return out
+
+
+def _format_status_human(jobs: list[dict[str, Any]], pending: list[Any], focus_job: str | None) -> str:
+    lines = ["**remote-bridge status**", ""]
+    if focus_job:
+        lines.append(f"Focus job: `{focus_job}`")
+    if not jobs:
+        lines.append("No armed jobs.")
+        return "\n".join(lines)
+    for job in jobs:
+        jid = job.get("job_id") or job.get("id") or "?"
+        loop = job.get("loop_dir")
+        lines.append(f"### Job `{jid}`")
+        lines.append(f"- provider: `{job.get('provider') or '?'}`")
+        lines.append(f"- cwd: `{job.get('cwd') or '?'}`")
+        if loop:
+            lines.append(f"- loop: `{loop}`")
+            snap = _loop_progress_snapshot(str(loop) if loop else None)
+            if snap.get("loop_status") is not None:
+                spent = snap.get("spent_iterations")
+                mx = snap.get("max_iterations")
+                prog = f"{spent}/{mx}" if spent is not None and mx is not None else str(snap.get("last_iteration"))
+                lines.append(f"- loop status: **{snap.get('loop_status')}** · progress **{prog}**")
+            if snap.get("next_preferred_path"):
+                lines.append(f"- next: {snap['next_preferred_path'][:500]}")
+            if snap.get("live_status_md"):
+                lines.append("")
+                lines.append(snap["live_status_md"].strip())
+        lines.append("")
+    if pending:
+        lines.append(f"Pending approvals: **{len(pending)}**")
+    return "\n".join(lines).strip()
+
+
+def _resolve_focus_job(mb: Mailbox) -> str | None:
+    focus = mb.read_json(mb.bridge_dir / "focus.json") or {}
+    jid = focus.get("job_id")
+    if isinstance(jid, str) and jid.strip():
+        return jid.strip()
+    env_jid = os.environ.get("AAS_REMOTE_JOB_ID")
+    if env_jid and env_jid.strip():
+        return env_jid.strip()
+    jobs = mb.list_jobs()
+    if len(jobs) == 1:
+        only = jobs[0].get("job_id") or jobs[0].get("id")
+        if isinstance(only, str):
+            return only
+    return None
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     mb = Mailbox()
     jobs = mb.list_jobs()
     pending = mb.pending_requests()
-    return _ok("status", jobs=jobs, pending_requests=pending, count=len(jobs))
+    focus = _resolve_focus_job(mb)
+    # Optional single-job filter: /aas status clawfree
+    want = None
+    extra_args = getattr(args, "args", None)
+    if isinstance(extra_args, list) and extra_args:
+        want = str(extra_args[0])
+    if want:
+        jobs = [j for j in jobs if (j.get("job_id") or j.get("id")) == want]
+    human = _format_status_human(jobs, pending, focus if not want else want)
+    return _ok(
+        "status",
+        jobs=jobs,
+        pending_requests=pending,
+        count=len(jobs),
+        focus_job=focus,
+        human_reply=human,
+    )
 
 
 def cmd_send(args: argparse.Namespace) -> int:
@@ -1094,14 +1327,28 @@ def cmd_send(args: argparse.Namespace) -> int:
     text = args.text or os.environ.get("AUTOLOOP_TEXT") or os.environ.get("AAS_REMOTE_TEXT")
     if not text:
         return _fail("send", "missing_text", "provide --text or AUTOLOOP_TEXT")
+    html = getattr(args, "html", None) or os.environ.get("AUTOLOOP_TEXT_HTML") or os.environ.get(
+        "AAS_REMOTE_TEXT_HTML"
+    )
     job_id = args.job or os.environ.get("AAS_REMOTE_JOB_ID")
-    if args.channel:
-        channels = ["zulip", "telegram"] if args.channel == "both" else [args.channel]
+    # Default / both / auto → Zulip-first order with Telegram fallback (not dual fan-out).
+    if args.channel in {None, "both", "auto"}:
+        channels = resolve_notify_channel_order(cfg, requested=args.channel or "auto")
+    elif args.channel == "zulip":
+        channels = resolve_notify_channel_order(cfg, requested="zulip")
+    elif args.channel == "telegram":
+        channels = resolve_notify_channel_order(cfg, requested="telegram")
     else:
-        channels = None
+        channels = [args.channel]
     try:
         results = notify_channels(
-            cfg, text=text, job_id=job_id, channels=channels, dry_run=args.dry_run
+            cfg,
+            text=text,
+            job_id=job_id,
+            channels=channels,
+            dry_run=args.dry_run,
+            html=html,
+            stop_on_first_success=True,
         )
     except Exception as exc:  # noqa: BLE001
         return _fail("send", "send_failed", redact_secrets(str(exc), cfg.secret_values()))
@@ -1176,18 +1423,37 @@ def cmd_instruct(args: argparse.Namespace) -> int:
 
 
 def cmd_handle_command(args: argparse.Namespace) -> int:
-    """Process a single inbound control text (for tests / soft ingress)."""
+    """Process a single inbound control text (for tests / soft ingress / OpenClaw /aas route)."""
     mb = Mailbox()
     cfg = build_config(args.secrets_file)
     parsed = parse_aas_command(args.text, bot_username=args.bot_username)
     if not parsed:
-        return _fail("handle-command", "not_aas", "not an /aas command")
+        return _fail(
+            "handle-command",
+            "not_aas",
+            "not an /aas command",
+            human_reply="Not an `/aas` command. Normal chat is handled by OpenClaw.",
+        )
     if parsed.get("ignore"):
-        return _ok("handle-command", ignored=True, reason=parsed.get("reason"))
+        return _ok(
+            "handle-command",
+            ignored=True,
+            reason=parsed.get("reason"),
+            human_reply="Ignored (other bot mention).",
+        )
+    if parsed.get("error") == "usage":
+        return _fail(
+            "handle-command",
+            "usage",
+            parsed.get("usage") or "bad usage",
+            human_reply=f"Usage: {parsed.get('usage') or '/aas help'}",
+        )
     principal = args.principal or ""
     allowed = set(cfg.allowed_user_ids) | set(_as_str_list(cfg.zulip.get("allowed_user_ids"))) | set(
         _as_str_list(cfg.telegram.get("allowed_user_ids"))
     )
+    # Also accept Telegram chat ids listed for outbound notify
+    allowed |= set(_as_str_list(cfg.telegram.get("allowed_chat_ids")))
     allow_local_cli = bool(getattr(args, "allow_local_cli", False)) or os.environ.get(
         "AAS_REMOTE_ALLOW_LOCAL_CLI"
     ) == "1"
@@ -1197,6 +1463,7 @@ def cmd_handle_command(args: argparse.Namespace) -> int:
                 "handle-command",
                 "forbidden",
                 "local cli principal requires --allow-local-cli or AAS_REMOTE_ALLOW_LOCAL_CLI=1",
+                human_reply="Forbidden: local CLI principal not allowed.",
             )
         principal = "cli"
     elif not allowed:
@@ -1204,62 +1471,165 @@ def cmd_handle_command(args: argparse.Namespace) -> int:
             "handle-command",
             "forbidden",
             "allowlists empty: configure allowed_user_ids (fail-closed)",
+            human_reply="Forbidden: remote-bridge allowlists are empty.",
         )
     elif principal not in allowed:
-        return _fail("handle-command", "forbidden", "principal not allowlisted")
+        return _fail(
+            "handle-command",
+            "forbidden",
+            "principal not allowlisted",
+            human_reply=f"Forbidden: principal `{principal}` is not allowlisted for `/aas`.",
+        )
     cmd = parsed.get("cmd")
+    default_job = _resolve_focus_job(mb)
+
+    def _need_job(job_id: str | None) -> str | None:
+        jid = job_id or default_job
+        return jid if isinstance(jid, str) and jid.strip() else None
+
     try:
         if cmd == "help":
-            return _ok("handle-command", help="/aas status|approve|deny|say|instruct|stop|pause|resume|focus|doctor")
+            help_text = (
+                "**remote-bridge `/aas` commands** (research loop control)\n\n"
+                "- `/aas status [job]` — live loop progress (reads `LIVE_STATUS.md`)\n"
+                "- `/aas progress` — same as status for focused job\n"
+                "- `/aas instruct <job> <text>` — enqueue instruction for next drive iteration\n"
+                "- `/aas <freeform text>` — instruct focused/default job\n"
+                "- `/aas pause|stop|resume [job]` — loop sentinels\n"
+                "- `/aas focus <job>` — set default job for freeform instruct\n"
+                "- `/aas approve|deny <request_id>` — tool approvals\n"
+                "- `/aas doctor` — bridge health\n\n"
+                "Messages **without** `/aas` are handled by **OpenClaw** (general chat)."
+            )
+            return _ok("handle-command", help=help_text, human_reply=help_text)
         if cmd == "status":
+            # Pass through optional job filter args for cmd_status
+            args.args = parsed.get("args") or []
             return cmd_status(args)
         if cmd == "approve":
             jid, _req = mb.resolve_request_job(parsed["request_id"])
             reply = mb.write_reply(jid, parsed["request_id"], decision="allow", principal=principal)
-            return _ok("handle-command", reply=reply)
+            return _ok(
+                "handle-command",
+                reply=reply,
+                human_reply=f"Approved request `{parsed['request_id']}` on job `{jid}`.",
+            )
         if cmd == "deny":
             jid, _req = mb.resolve_request_job(parsed["request_id"])
             reply = mb.write_reply(jid, parsed["request_id"], decision="deny", principal=principal)
-            return _ok("handle-command", reply=reply)
+            return _ok(
+                "handle-command",
+                reply=reply,
+                human_reply=f"Denied request `{parsed['request_id']}` on job `{jid}`.",
+            )
         if cmd == "say":
             jid, _req = mb.resolve_request_job(parsed["target"])
             reply = mb.write_reply(
                 jid, parsed["target"], decision="say", principal=principal, text=parsed["text"]
             )
-            return _ok("handle-command", reply=reply)
+            return _ok("handle-command", reply=reply, human_reply="Recorded say-reply.")
         if cmd == "instruct":
             item = mb.enqueue_inbox(
                 parsed["target"], kind="instruct", text=parsed["text"], source="command"
             )
-            return _ok("handle-command", item=item)
+            return _ok(
+                "handle-command",
+                item=item,
+                human_reply=(
+                    f"Instruction queued for job `{parsed['target']}` "
+                    f"(applied on the **next** drive iteration):\n\n> {parsed['text']}"
+                ),
+            )
+        if cmd == "instruct_freeform":
+            jid = _need_job(None)
+            if not jid:
+                return _fail(
+                    "handle-command",
+                    "no_default_job",
+                    "no focused job; use /aas focus <job> or /aas instruct <job> <text>",
+                    human_reply=(
+                        "No default job. Arm a job, then `/aas focus <job>`, "
+                        "or use `/aas instruct <job> <text>`."
+                    ),
+                )
+            item = mb.enqueue_inbox(jid, kind="instruct", text=parsed["text"], source="command")
+            return _ok(
+                "handle-command",
+                item=item,
+                job_id=jid,
+                human_reply=(
+                    f"Instruction queued for job `{jid}` "
+                    f"(next drive iteration):\n\n> {parsed['text']}"
+                ),
+            )
         if cmd in {"stop", "pause", "resume"}:
-            job = mb.read_json(mb.job_dir(parsed["job_id"]) / "job.json") or {}
+            jid = _need_job(parsed.get("job_id"))
+            if not jid:
+                return _fail(
+                    "handle-command",
+                    "missing_job",
+                    "provide job id or focus a job",
+                    human_reply="Missing job id. Example: `/aas pause clawfree`",
+                )
+            job = mb.read_json(mb.job_dir(jid) / "job.json") or {}
             loop = job.get("loop_dir")
             if not loop:
-                return _fail("handle-command", "no_loop", "job has no loop_dir")
+                return _fail(
+                    "handle-command",
+                    "no_loop",
+                    "job has no loop_dir",
+                    human_reply=f"Job `{jid}` has no linked loop directory.",
+                )
             name = {"stop": "STOP_REQUESTED", "pause": "PAUSE", "resume": None}[cmd]
             loop_path = Path(loop)
             if cmd == "resume":
                 (loop_path / "PAUSE").unlink(missing_ok=True)
             else:
                 (loop_path / name).write_text("", encoding="utf-8")
-            return _ok("handle-command", job_id=parsed["job_id"], action=cmd)
+            return _ok(
+                "handle-command",
+                job_id=jid,
+                action=cmd,
+                human_reply=f"**{cmd}** applied to job `{jid}` (loop `{loop}`).",
+            )
         if cmd == "focus":
+            jid = parsed.get("job_id") or (parsed.get("args") or [None])[0]
+            if not jid:
+                return _fail(
+                    "handle-command",
+                    "missing_job",
+                    "usage: /aas focus <job>",
+                    human_reply="Usage: `/aas focus clawfree`",
+                )
             focus_path = mb.bridge_dir / "focus.json"
             mb.write_json(
                 focus_path,
                 {
-                    "job_id": parsed["job_id"],
+                    "job_id": jid,
                     "principal": principal,
                     "created_at": utc_now(),
                 },
             )
-            return _ok("handle-command", focus=parsed["job_id"])
+            return _ok(
+                "handle-command",
+                focus=jid,
+                human_reply=f"Focus set to job `{jid}`. Freeform `/aas <text>` now targets it.",
+            )
         if cmd == "doctor":
             return cmd_doctor(args)
     except Exception as exc:  # noqa: BLE001
-        return _fail("handle-command", "error", str(exc))
-    return _fail("handle-command", "unknown_cmd", f"unknown command {cmd}")
+        return _fail(
+            "handle-command",
+            "error",
+            str(exc),
+            human_reply=f"remote-bridge error: {exc}",
+        )
+    return _fail(
+        "handle-command",
+        "unknown_cmd",
+        f"unknown command {cmd}",
+        human_reply=f"Unknown `/aas` command `{cmd}`. Try `/aas help`.",
+    )
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -1335,8 +1705,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     send = sub.add_parser("send")
     send.add_argument("--text", default=None)
+    send.add_argument(
+        "--html",
+        default=None,
+        help="optional HTML body for Telegram (parse_mode=HTML); Zulip still uses --text Markdown",
+    )
     send.add_argument("--job", default=None)
-    send.add_argument("--channel", choices=["zulip", "telegram", "both"], default=None)
+    send.add_argument(
+        "--channel",
+        choices=["zulip", "telegram", "both", "auto"],
+        default=None,
+        help="zulip (default primary; Telegram only if Zulip fails), telegram, both/auto (same primary/fallback policy)",
+    )
     send.add_argument("--dry-run", action="store_true")
     send.set_defaults(func=cmd_send)
 

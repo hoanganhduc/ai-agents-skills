@@ -6,6 +6,8 @@
     "or %APPDATA%\\remote-bridge\\secrets.json (Windows).",
     "Replace every <placeholder>. Prefer a dedicated Zulip bot user and a",
     "dedicated Telegram bot (not shared with OpenClaw getUpdates).",
+    "Notify policy: Zulip is primary; Telegram is fallback only when Zulip fails",
+    "(notify_channels order + stop_on_first_success). Not dual fan-out.",
     "This file is a template only; the skill does not load it by path."
   ],
   "default_channel": "zulip",

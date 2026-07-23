@@ -1420,7 +1420,13 @@ def iteration_prompt(run_dir: Path, *, inbox_block: str | None = None) -> str:
     return base
 
 
-def resolve_remote_notify_argv(channel: str, text: str, job_id: str | None = None) -> list[str] | None:
+def resolve_remote_notify_argv(
+    channel: str,
+    text: str,
+    job_id: str | None = None,
+    *,
+    html: str | None = None,
+) -> list[str] | None:
     """Build argv for remote-bridge send (no shell). Returns None if unavailable."""
     if os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1" and os.environ.get("AAS_AUTOLOOP_NOTIFY_CMD"):
         return None  # caller may use shell escape hatch
@@ -1430,6 +1436,8 @@ def resolve_remote_notify_argv(channel: str, text: str, job_id: str | None = Non
         return None
     py = os.environ.get("AAS_RUNTIME_PYTHON") or sys.executable
     argv = [py, str(rb), "send", "--text", text]
+    if html:
+        argv.extend(["--html", html])
     if channel in {"zulip", "telegram", "both"}:
         argv.extend(["--channel", channel])
     if job_id:
@@ -1479,12 +1487,14 @@ def detect_configured_notify_channels() -> list[str]:
 
 
 def auto_notify_channel_from_secrets() -> str | None:
-    """Pick default channel when secrets are configured; else None."""
+    """Pick default channel when secrets are configured; else None.
+
+    Policy: **Zulip is the default primary**. Telegram is not dual-selected here;
+    remote-bridge falls back to Telegram only when a Zulip send fails.
+    """
     channels = detect_configured_notify_channels()
     if not channels:
         return None
-    if "zulip" in channels and "telegram" in channels:
-        return "both"
     if "zulip" in channels:
         return "zulip"
     if "telegram" in channels:
@@ -1506,16 +1516,27 @@ def read_loop_notify_policy(run_dir: Path) -> str | None:
 
 
 def write_loop_notify_policy(run_dir: Path, channel: str | None) -> None:
-    """Persist notify policy on loop_state (best-effort, never raises)."""
+    """Persist notify policy on loop_state (best-effort, never raises).
+
+    Default policy is Zulip-primary with Telegram fallback. ``notify_fallback``
+    is recorded for operators; remote-bridge enforces stop-on-first-success.
+    """
     try:
         paths = loop_paths(run_dir)
         state = read_json(paths["state"])
         if channel and channel != "off":
             state["notify_channel"] = channel
             state["notify_policy"] = "on"
+            # Telegram is the automatic fallback unless the operator forced
+            # Telegram-only (no further fallback) or silenced notify.
+            if channel == "telegram":
+                state["notify_fallback"] = None
+            else:
+                state["notify_fallback"] = "telegram"
         else:
             state["notify_channel"] = "off"
             state["notify_policy"] = "off"
+            state["notify_fallback"] = None
         state["updated_at"] = utc_now()
         write_json(paths["state"], state)
     except Exception:  # noqa: BLE001
@@ -2185,6 +2206,107 @@ def progress_paths(run_dir: Path, log_dir: Path | None = None) -> dict[str, Path
     }
 
 
+_NOTIFY_EVENT_MARKERS: dict[str, str] = {
+    "drive_start": "🚀",
+    "drive_stop": "🏁",
+    "iteration_start": "▶️",
+    "iteration_ok": "✅",
+    "iteration_failed": "❌",
+    "iteration": "📌",
+    "quota_wait": "⏳",
+    "paused": "⏸️",
+    "terminal": "🛑",
+    "driver_dead": "💀",
+    "watch_start": "👀",
+}
+
+
+def format_progress_notify_text(
+    *,
+    loop_name: str,
+    event: str,
+    iteration: int,
+    max_iter: int,
+    remaining: int,
+    decision: str,
+    status: str,
+    objective: str,
+    output: str,
+    timestamp: str = "",
+) -> str:
+    """Human-readable multi-line notify body for Zulip/Telegram."""
+    marker = _NOTIFY_EVENT_MARKERS.get(event, "•")
+    prog = f"{iteration}/{max_iter}" if max_iter else str(iteration or "?")
+    rem = f"{remaining} left" if max_iter else ""
+    progress_line = f"Progress: *{prog}*" + (f" ({rem})" if rem else "")
+    lines = [
+        f"{marker} *{loop_name}* — `{event}`",
+        progress_line,
+        f"Decision: `{decision}` · Status: `{status or 'n/a'}`",
+    ]
+    if timestamp:
+        lines.append(f"Time: {timestamp}")
+    obj = (objective or "").strip()
+    if obj:
+        lines.append("")
+        lines.append("*Objective*")
+        lines.append(obj[:500])
+    out = (output or "").strip()
+    if out:
+        lines.append("")
+        lines.append("*Result*")
+        lines.append(out[:700])
+    # One-line compact fallback also kept as first non-marker summary for logs.
+    return "\n".join(lines).strip()
+
+
+def format_progress_notify_telegram_html(
+    *,
+    loop_name: str,
+    event: str,
+    iteration: int,
+    max_iter: int,
+    remaining: int,
+    decision: str,
+    status: str,
+    objective: str,
+    output: str,
+    timestamp: str = "",
+) -> str:
+    """Telegram HTML body (parse_mode=HTML)."""
+
+    def esc(s: str) -> str:
+        return (
+            str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+
+    marker = _NOTIFY_EVENT_MARKERS.get(event, "•")
+    prog = f"{iteration}/{max_iter}" if max_iter else str(iteration or "?")
+    rem = f"{remaining} left" if max_iter else ""
+    progress_line = f"Progress: <b>{esc(prog)}</b>" + (f" ({esc(rem)})" if rem else "")
+    lines = [
+        f"{marker} <b>{esc(loop_name)}</b> — <code>{esc(event)}</code>",
+        progress_line,
+        f"Decision: <code>{esc(decision)}</code> · Status: <code>{esc(status or 'n/a')}</code>",
+    ]
+    if timestamp:
+        lines.append(f"Time: {esc(timestamp)}")
+    obj = (objective or "").strip()
+    if obj:
+        lines.append("")
+        lines.append("<b>Objective</b>")
+        lines.append(esc(obj[:500]))
+    out = (output or "").strip()
+    if out:
+        lines.append("")
+        lines.append("<b>Result</b>")
+        lines.append(esc(out[:700]))
+    return "\n".join(lines).strip()
+
+
 def build_progress_event(
     run_dir: Path,
     event: str,
@@ -2213,14 +2335,41 @@ def build_progress_event(
     objective = str(record.get("objective") or "")
     output = str(record.get("output") or "")
     remaining = max(0, max_iter - spent) if max_iter else 0
-    text = (
+    status = str(state.get("status") or "")
+    ts = utc_now()
+    # Compact one-liner for logs / LIVE_STATUS summaries.
+    compact = (
         f"autoloop {run_dir.name}: [{event}] iter {iteration}/{max_iter or '?'} "
         f"({decision}) — {objective[:160]}"
         + (f" | {output[:240]}" if output else "")
     )
+    text = format_progress_notify_text(
+        loop_name=run_dir.name,
+        event=event,
+        iteration=iteration,
+        max_iter=max_iter,
+        remaining=remaining,
+        decision=decision,
+        status=status,
+        objective=objective,
+        output=output,
+        timestamp=ts,
+    )
+    text_html = format_progress_notify_telegram_html(
+        loop_name=run_dir.name,
+        event=event,
+        iteration=iteration,
+        max_iter=max_iter,
+        remaining=remaining,
+        decision=decision,
+        status=status,
+        objective=objective,
+        output=output,
+        timestamp=ts,
+    )
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "timestamp": utc_now(),
+        "timestamp": ts,
         "event": event,
         "dir": str(run_dir),
         "iteration": iteration,
@@ -2228,10 +2377,12 @@ def build_progress_event(
         "max_iterations": max_iter,
         "remaining_iterations": remaining,
         "decision": decision,
-        "status": str(state.get("status") or ""),
+        "status": status,
         "objective": objective[:400],
         "output_preview": output[:500],
         "text": text,
+        "text_compact": compact,
+        "text_html": text_html,
     }
     if extra:
         for key, value in extra.items():
@@ -2348,7 +2499,8 @@ def emit_loop_progress(
         "AUTOLOOP_STATUS": str(payload.get("status", "")),
     }
     if to_stderr:
-        sys.stderr.write(str(payload.get("text", "")) + "\n")
+        # Prefer compact one-liner on stderr; multi-line body is for notify clients.
+        sys.stderr.write(str(payload.get("text_compact") or payload.get("text") or "") + "\n")
         sys.stderr.flush()
     # Machine-readable JSON lines stay on stdout whenever requested. Remote-bridge
     # notify is additive and must not suppress them (secrets in env would break
@@ -2361,10 +2513,14 @@ def emit_loop_progress(
     if channel is None:
         channel = resolve_notify_channel(explicit=None, run_dir=run_dir, default_auto=False)
     if channel and channel != "off" and event in _DEFAULT_REMOTE_NOTIFY_EVENTS:
+        # Prefer multi-line body; Telegram gets HTML when available.
+        notify_text = str(payload.get("text") or payload.get("text_compact") or "")
+        notify_html = str(payload.get("text_html") or "")
         argv = resolve_remote_notify_argv(
             channel if channel != "both" else "both",
-            str(payload.get("text") or ""),
+            notify_text,
             job_id=os.environ.get("AAS_REMOTE_JOB_ID"),
+            html=notify_html or None,
         )
         if argv:
             try:

@@ -17,8 +17,21 @@ copilot, antigravity** (not OpenClaw).
 
 | Channel | Role |
 |---------|------|
-| **Zulip** | Default **control** + notify (`aas-remote` / `job/<job_id>`) |
-| **Telegram** | Mobile **notify**; inbound only with a dedicated bot |
+| **Zulip** | Default **control** + primary **notify** (`Research` / `job/<job_id>`) |
+| **Telegram** | Mobile **notify fallback** only when Zulip send fails; inbound only with a dedicated bot |
+
+### Notify policy (default)
+
+**Zulip first. Telegram only if Zulip fails.** Sends never dual-spam both
+channels on success (`stop_on_first_success`).
+
+| Token | Behavior |
+|-------|----------|
+| `auto` / default | Zulip if configured, else Telegram |
+| `zulip` | Try Zulip; fall back to Telegram on failure |
+| `both` | Same as Zulip-primary + Telegram-fallback (alias, **not** dual fan-out) |
+| `telegram` | Telegram only (explicit) |
+| `off` | Silence |
 
 Does **not** inject messages into live TUI chats. Continuations use the on-disk
 mailbox and headless `drive`, or a local PreToolUse gate (Grok; Claude
@@ -64,7 +77,7 @@ Env overrides: `REMOTE_BRIDGE_SECRETS_FILE`, `ZULIP_*`, `TELEGRAM_BOT_TOKEN`,
 | `doctor` | State root, jobs, channels (`--live` optional) |
 | `arm --job ID --provider P --cwd DIR [--loop DIR]` | Create mailbox job |
 | `status` | List jobs + pending requests |
-| `send --text "…" [--channel zulip\|telegram\|both] [--dry-run]` | Notify |
+| `send --text "…" [--channel zulip\|telegram\|both\|auto] [--dry-run]` | Notify (Zulip-primary; Telegram fallback) |
 | `request-approval --job ID --tool T [--wait --timeout N]` | Create approval + optional wait |
 | `instruct --job ID --text "…"` | Push inbox item |
 | `handle-command --text "/aas …" --principal USER` | Process one control command |
@@ -91,11 +104,15 @@ without an extra flag. Prefer:
 # silence: --notify off   or   AAS_AUTOLOOP_NOTIFY=off
 ```
 
-Optional job id for topic routing:
+Optional job id for topic routing / channel override:
 
 ```bash
 export AAS_REMOTE_JOB_ID=clawfree
-export AAS_AUTOLOOP_NOTIFY=both   # force channel; overrides auto pick
+# default when secrets present: Zulip primary, Telegram only if Zulip fails
+# export AAS_AUTOLOOP_NOTIFY=zulip     # same as default primary
+# export AAS_AUTOLOOP_NOTIFY=telegram  # Telegram only
+# export AAS_AUTOLOOP_NOTIFY=both      # alias for primary+fallback (not dual)
+# export AAS_AUTOLOOP_NOTIFY=off       # silence
 ```
 
 Events notified (best-effort, never abort the loop): `drive_start`,

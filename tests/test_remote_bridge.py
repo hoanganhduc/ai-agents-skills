@@ -225,5 +225,98 @@ class RemoteBridgeDigest(unittest.TestCase):
         self.assertNotEqual(a, c)
 
 
+class RemoteBridgeNotifyFallback(unittest.TestCase):
+    """Zulip is primary; Telegram only when Zulip fails (no dual spam)."""
+
+    def _mod(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("aas_remote_bridge_notify", RB)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _cfg(self, mod):
+        return mod.BridgeConfig(
+            raw={},
+            secrets_path=None,
+            default_channel="zulip",
+            notify_channels=["zulip", "telegram"],
+            allowed_user_ids=[],
+            zulip={
+                "site": "https://example.zulipchat.com",
+                "email": "bot@example.com",
+                "api_key": "k",
+                "control_stream": "Research",
+                "topic_prefix": "job/",
+            },
+            telegram={
+                "bot_token": "1:token",
+                "allowed_chat_ids": ["123"],
+            },
+        )
+
+    def test_order_is_zulip_then_telegram(self) -> None:
+        mod = self._mod()
+        cfg = self._cfg(mod)
+        for token in (None, "auto", "both", "zulip", "default"):
+            order = mod.resolve_notify_channel_order(cfg, requested=token)
+            self.assertEqual(order, ["zulip", "telegram"], token)
+
+    def test_telegram_only_when_explicit(self) -> None:
+        mod = self._mod()
+        cfg = self._cfg(mod)
+        self.assertEqual(
+            mod.resolve_notify_channel_order(cfg, requested="telegram"),
+            ["telegram"],
+        )
+
+    def test_stop_on_first_success_skips_telegram(self) -> None:
+        from unittest import mock
+
+        mod = self._mod()
+        cfg = self._cfg(mod)
+        with mock.patch.object(
+            mod, "zulip_send", return_value={"ok": True, "channel": "zulip"}
+        ) as zs, mock.patch.object(
+            mod, "telegram_send", return_value={"ok": True, "channel": "telegram"}
+        ) as ts:
+            results = mod.notify_channels(
+                cfg,
+                text="hi",
+                job_id="j",
+                channels=["zulip", "telegram"],
+                stop_on_first_success=True,
+            )
+        self.assertTrue(zs.called)
+        self.assertFalse(ts.called)
+        self.assertEqual(list(results.keys()), ["zulip"])
+
+    def test_fallback_to_telegram_when_zulip_fails(self) -> None:
+        from unittest import mock
+
+        mod = self._mod()
+        cfg = self._cfg(mod)
+        with mock.patch.object(
+            mod,
+            "zulip_send",
+            return_value={"ok": False, "channel": "zulip", "error": "boom"},
+        ) as zs, mock.patch.object(
+            mod, "telegram_send", return_value={"ok": True, "channel": "telegram"}
+        ) as ts:
+            results = mod.notify_channels(
+                cfg,
+                text="hi",
+                job_id="j",
+                channels=["zulip", "telegram"],
+                stop_on_first_success=True,
+            )
+        self.assertTrue(zs.called)
+        self.assertTrue(ts.called)
+        self.assertTrue(results["telegram"]["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()
