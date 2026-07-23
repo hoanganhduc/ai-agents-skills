@@ -148,9 +148,16 @@ export AAS_REMOTE_JOB_ID=example-job
 
 Events notified (best-effort, never abort the loop): `drive_start`,
 `drive_stop`, `iteration_ok` / `iteration_failed`, `quota_wait`, `paused`,
-`terminal`, `driver_dead`. **`iteration_start` is not notified** (it pairs with
-`iteration_ok` ~1s later on the same objective and looked like double posts).
-Identical notify bodies are also deduped for 15s in-process.
+`terminal`, `driver_dead`.
+
+**Not remote-notified** (local progress only):
+
+- `iteration_start` — pairs with `iteration_ok` ~1s later
+- watch ledger tick `iteration` — drive already owns completion notifies; sending
+  both produced duplicate Zulip posts when `drive` and `watch` ran together
+
+Identical bodies are deduped for 15s (in-process + per-loop disk). Same
+event+iteration is also deduped for 120s across processes.
 
 Headless iterations inject a labeled **data-only** inbox block when
 `AAS_REMOTE_JOB_ID` is set. Approvals for auto-approve providers (`--yolo`,
