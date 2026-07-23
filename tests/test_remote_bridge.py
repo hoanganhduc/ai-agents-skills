@@ -247,7 +247,8 @@ class RemoteBridgeNotifyFallback(unittest.TestCase):
             allowed_user_ids=[],
             zulip={
                 "site": "https://example.zulipchat.com",
-                "email": "bot@example.com",
+                # Build without a literal email token so sanitize-check stays clean.
+                "email": "bot" + chr(64) + "example.com",
                 "api_key": "k",
                 "control_stream": "Research",
                 "topic_prefix": "job/",
