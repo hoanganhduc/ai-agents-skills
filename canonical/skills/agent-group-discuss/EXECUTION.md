@@ -79,8 +79,9 @@ this repository:
 
 For research dispatch, the dispatcher blocks unless the provider has a resolved
 latest model and highest thinking/reasoning setting from arguments or provider
-environment, and a provider dispatch command is configured. Use dry-run first
-to see the selected providers and blocked reasons.
+environment. Most providers also require an explicit dispatch command. Grok may
+use its probe-gated automatic bare-first/remote-fallback resolver instead. Use
+dry-run first to see the selected providers and blocked reasons.
 
 ### Parent-Owned Artifacts and Evidence Mapping
 

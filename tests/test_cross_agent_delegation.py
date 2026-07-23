@@ -9,7 +9,9 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from installer.ai_agents_skills.agents import detect_agents
 from installer.ai_agents_skills.apply import apply_plan
@@ -25,11 +27,24 @@ from installer.ai_agents_skills.delegation_dispatch import (
     build_capability_profile,
     build_dispatch_plan,
     default_dispatch_command,
+    dispatch_external_agents,
     dispatch_command,
+    ensure_run_dir,
     expand_auto_providers,
+    resolve_grok_dispatch_command,
     probe_grok_remote_profile,
+    provider_subprocess_options,
     provider_env_defaults,
+    resolve_model_profile,
+    resolve_run_dir,
+    run_external_participant,
     run_command,
+    validate_resolved_model_syntax_before_prechecks,
+)
+from installer.ai_agents_skills.grok import (
+    GROK_CLI_TOOL_SPEC,
+    parse_grok_available_models,
+    probe_grok_model_membership,
 )
 from installer.ai_agents_skills.delegation_packets import RESULT_FIELDS, TASK_FIELDS, validate_result, validate_task
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
@@ -38,6 +53,7 @@ from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.runtime_smoke import selected_runtime_skills
 from installer.ai_agents_skills.selectors import resolve_skills
 from installer.ai_agents_skills.state import load_state
+from installer.ai_agents_skills.target_prechecks import build_target_prechecks
 from installer.ai_agents_skills.verify import verify
 
 
@@ -129,6 +145,53 @@ def write_fake_grok_remote(path: Path) -> Path:
             "  exit /b %AAS_TEST_GROK_PROFILE_EXIT%\r\n"
             ")\r\n"
             "exit /b 97\r\n"
+        ),
+    )
+
+
+def write_fake_bare_grok(
+    path: Path,
+    *,
+    available_model: str = "grok-current",
+    exit_code: int = 0,
+) -> Path:
+    return write_test_cli(
+        path,
+        posix=(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = models ]; then\n"
+            f"  printf '%s\\n' 'Default model: {available_model}'\n"
+            "  printf '%s\\n' 'Available models:'\n"
+            f"  printf '%s\\n' '* {available_model} (default)'\n"
+            f"  exit {exit_code}\n"
+            "fi\n"
+            "exit 97\n"
+        ),
+        windows=(
+            "@echo off\r\n"
+            "if \"%~1\"==\"models\" (\r\n"
+            f"  echo Default model: {available_model}\r\n"
+            "  echo Available models:\r\n"
+            f"  echo * {available_model} ^(default^)\r\n"
+            f"  exit /b {exit_code}\r\n"
+            ")\r\n"
+            "exit /b 97\r\n"
+        ),
+    )
+
+
+def write_marker_cli(path: Path, marker: Path) -> Path:
+    return write_test_cli(
+        path,
+        posix=(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' invoked > '{marker}'\n"
+            "exit 99\n"
+        ),
+        windows=(
+            "@echo off\r\n"
+            f">\"{marker}\" echo invoked\r\n"
+            "exit /b 99\r\n"
         ),
     )
 
@@ -834,6 +897,301 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(plan[0]["provider"], "grok")
             self.assertIn("--prompt-file", plan[0]["command"])
 
+    def test_grok_model_probe_requires_exact_anchored_available_row(self):
+        linux_candidates = GROK_CLI_TOOL_SPEC["candidates"]["linux"]
+        self.assertIn("grok", linux_candidates)
+        self.assertNotIn("grok-remote", linux_candidates)
+        output = "\n".join(
+            [
+                "Default model: grok-4.5",
+                "Available models:",
+                "  * grok-4.5 (default)",
+                "note: grok-4.6 is coming soon",
+                "* grok-4.50",
+            ]
+        )
+        self.assertEqual(parse_grok_available_models(output), ["grok-4.5", "grok-4.50"])
+        with tempfile.TemporaryDirectory() as tmp:
+            bare = write_fake_bare_grok(Path(tmp) / "grok", available_model="grok-4.50")
+            probe = probe_grok_model_membership(str(bare), "grok-4.5", os.environ.copy())
+        self.assertEqual(probe["status"], "not-confirmed")
+        self.assertEqual(probe["reason_code"], "resolved_model_not_listed")
+        self.assertEqual(probe["available_models"], ["grok-4.50"])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
+    def test_grok_model_probe_uses_private_posix_umask(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            bare = write_test_cli(
+                root / "grok",
+                posix=(
+                    "#!/bin/sh\n"
+                    "mkdir -p \"$HOME/.grok\"\n"
+                    ": > \"$HOME/.grok/models_cache.json\"\n"
+                    "printf '%s\\n' '* grok-4.5 (default)'\n"
+                ),
+                windows="@echo off\r\nexit /b 97\r\n",
+            )
+            previous_umask = os.umask(0o002)
+            try:
+                probe = probe_grok_model_membership(
+                    str(bare),
+                    "grok-4.5",
+                    {**os.environ, "HOME": str(home)},
+                )
+            finally:
+                os.umask(previous_umask)
+            cache = home / ".grok" / "models_cache.json"
+            self.assertEqual(probe["status"], "confirmed")
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+
+    def test_grok_invalid_resolved_model_blocks_before_any_cli_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            marker = root / "remote-invoked"
+            write_marker_cli(bin_dir / "grok-remote", marker)
+            env = {**os.environ, "PATH": str(bin_dir)}
+            with patch.dict(
+                os.environ,
+                {"PATH": str(bin_dir), "AAS_GROK": ""},
+                clear=False,
+            ):
+                selection = resolve_grok_dispatch_command(root, "linux", env, "_invalid")
+            self.assertEqual(selection["status"], "blocked")
+            self.assertEqual(selection["model_probe"]["reason_code"], "resolved_model_invalid")
+            self.assertFalse(marker.exists())
+            profile = resolve_model_profile("grok", True, "_invalid", "high", env)
+            self.assertEqual(profile["status"], "blocked")
+            self.assertIn("model ID is invalid", profile["reason"])
+
+    def test_grok_invalid_model_top_level_dispatch_executes_no_cli(self):
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            bare_marker = root / "bare-invoked"
+            remote_marker = root / "remote-invoked"
+            write_marker_cli(bin_dir / "grok", bare_marker)
+            write_marker_cli(bin_dir / "grok-remote", remote_marker)
+            args = SimpleNamespace(
+                root=root,
+                platform="linux",
+                task="review this claim",
+                task_file=None,
+                providers=None,
+                provider="grok",
+                resolved_model="_invalid",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "PATH": str(bin_dir),
+                    "AAS_GROK": "",
+                    "AAS_GROK_DISPATCH_COMMAND": "",
+                },
+                clear=False,
+            ):
+                with self.assertRaisesRegex(ValueError, "resolved Grok model ID is invalid"):
+                    dispatch_external_agents(args, manifests)
+            self.assertFalse(bare_marker.exists())
+            self.assertFalse(remote_marker.exists())
+
+    def test_precheck_model_syntax_gate_does_not_apply_grok_rules_to_other_providers(self):
+        validate_resolved_model_syntax_before_prechecks(["claude"], "_invalid", {})
+
+    def test_grok_generic_precheck_is_bare_only_on_remote_only_path(self):
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            marker = root / "remote-invoked"
+            write_marker_cli(bin_dir / "grok-remote", marker)
+            env = {**os.environ, "PATH": str(bin_dir)}
+            with patch.dict(
+                os.environ,
+                {"PATH": str(bin_dir), "AAS_GROK": ""},
+                clear=False,
+            ):
+                prechecks = build_external_agent_prechecks(
+                    root,
+                    "linux",
+                    manifests["delegation"],
+                    env=env,
+                )
+                target_prechecks = build_target_prechecks(root, "linux", ["grok"], [])
+            grok = next(item for item in prechecks["providers"] if item["provider"] == "grok")
+            self.assertEqual(grok["cli"]["status"], "missing")
+            self.assertEqual(target_prechecks[0]["cli"]["status"], "missing")
+            self.assertFalse(marker.exists())
+
+    def test_grok_auto_resolution_confirms_bare_before_remote_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            bare = write_fake_bare_grok(bin_dir / "grok", available_model="grok-4.5")
+            write_fake_grok_remote(bin_dir / "grok-remote")
+            with patch.dict(os.environ, {"PATH": str(bin_dir)}, clear=False):
+                selection = resolve_grok_dispatch_command(
+                    root,
+                    "linux",
+                    {**os.environ, "PATH": str(bin_dir)},
+                    "grok-4.5",
+                )
+            self.assertEqual(selection["status"], "ok")
+            self.assertEqual(selection["source"], "bare-model-confirmed")
+            self.assertEqual(selection["model_probe"]["status"], "confirmed")
+            self.assertTrue(selection["command"].startswith(str(bare)))
+            self.assertNotIn("grok-remote", selection["command"])
+
+    def test_grok_auto_resolution_uses_remote_only_after_bare_nonconfirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            write_fake_bare_grok(bin_dir / "grok", available_model="grok-4.4")
+            remote = write_fake_grok_remote(bin_dir / "grok-remote")
+            with patch.dict(os.environ, {"PATH": str(bin_dir)}, clear=False):
+                selection = resolve_grok_dispatch_command(
+                    root,
+                    "linux",
+                    {**os.environ, "PATH": str(bin_dir)},
+                    "grok-4.5",
+                )
+            self.assertEqual(selection["status"], "ok")
+            self.assertEqual(selection["source"], "remote-fallback-after-bare-nonconfirmation")
+            self.assertEqual(selection["model_probe"]["reason_code"], "resolved_model_not_listed")
+            self.assertTrue(selection["command"].startswith(str(remote)))
+
+    def test_grok_no_resolved_model_uses_bare_and_never_authorizes_proxy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            bare = write_fake_bare_grok(bin_dir / "grok")
+            write_fake_grok_remote(bin_dir / "grok-remote")
+            with patch.dict(os.environ, {"PATH": str(bin_dir)}, clear=False):
+                selection = resolve_grok_dispatch_command(
+                    root,
+                    "linux",
+                    {**os.environ, "PATH": str(bin_dir)},
+                    None,
+                )
+            self.assertEqual(selection["source"], "bare-default-no-resolved-model")
+            self.assertEqual(selection["model_probe"]["status"], "not-performed")
+            self.assertTrue(selection["command"].startswith(str(bare)))
+            self.assertNotIn("grok-remote", selection["command"])
+
+    def test_grok_explicit_bare_override_does_not_silently_fall_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            bare = write_fake_bare_grok(bin_dir / "grok", available_model="grok-4.4")
+            write_fake_grok_remote(bin_dir / "grok-remote")
+            env = {
+                **os.environ,
+                "PATH": str(bin_dir),
+                "AAS_GROK": str(bare),
+            }
+            selection = resolve_grok_dispatch_command(root, "linux", env, "grok-4.5")
+            self.assertEqual(selection["status"], "blocked")
+            self.assertEqual(selection["source"], "explicit-binary-override")
+            self.assertEqual(selection["model_probe"]["reason_code"], "resolved_model_not_listed")
+
+    def test_grok_research_auto_uses_confirmed_bare_and_pins_model(self):
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            bare = write_fake_bare_grok(bin_dir / "grok", available_model="grok-4.5")
+            # If the bare selection accidentally probes this old proxy, the plan
+            # will fail closed rather than report ready.
+            write_test_cli(
+                bin_dir / "grok-remote",
+                posix="#!/bin/sh\nexit 99\n",
+                windows="@echo off\r\nexit /b 99\r\n",
+            )
+            env = {**os.environ, "PATH": str(bin_dir)}
+            with patch.dict(os.environ, {"PATH": str(bin_dir)}, clear=False):
+                prechecks = build_external_agent_prechecks(
+                    root,
+                    "linux",
+                    manifests["delegation"],
+                    env=env,
+                )
+                plan = build_dispatch_plan(
+                    root,
+                    "linux",
+                    manifests["delegation"],
+                    prechecks,
+                    ["grok"],
+                    max_providers=1,
+                    research=True,
+                    resolved_model="grok-4.5",
+                    resolved_thinking="high",
+                    env=env,
+                )
+            self.assertEqual(plan[0]["status"], "ready", plan[0])
+            self.assertEqual(plan[0]["grok_selection"]["source"], "bare-model-confirmed")
+            self.assertNotIn("grok_profile_status", plan[0])
+            self.assertTrue(plan[0]["command"].startswith(str(bare)))
+            self.assertIn("--model grok-4.5", plan[0]["command"])
+
+    def test_grok_research_auto_falls_back_remote_after_bare_nonconfirmation(self):
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            write_fake_bare_grok(bin_dir / "grok", available_model="grok-4.4")
+            remote = write_fake_grok_remote(bin_dir / "grok-remote")
+            payload = grok_profile_status_payload(model_id="grok-4.5")
+            env = {
+                **os.environ,
+                "PATH": str(bin_dir),
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
+                "AAS_TEST_GROK_PROFILE_EXIT": "0",
+            }
+            with patch.dict(os.environ, {"PATH": str(bin_dir)}, clear=False):
+                prechecks = build_external_agent_prechecks(
+                    root,
+                    "linux",
+                    manifests["delegation"],
+                    env=env,
+                )
+                plan = build_dispatch_plan(
+                    root,
+                    "linux",
+                    manifests["delegation"],
+                    prechecks,
+                    ["grok"],
+                    max_providers=1,
+                    research=True,
+                    resolved_model="grok-4.5",
+                    resolved_thinking="high",
+                    env=env,
+                )
+            self.assertEqual(plan[0]["status"], "ready", plan[0])
+            self.assertEqual(
+                plan[0]["grok_selection"]["source"],
+                "remote-fallback-after-bare-nonconfirmation",
+            )
+            self.assertEqual(
+                plan[0]["grok_selection"]["model_probe"]["reason_code"],
+                "resolved_model_not_listed",
+            )
+            self.assertEqual(plan[0]["grok_profile_status"], payload)
+            self.assertTrue(plan[0]["command"].startswith(str(remote)))
+            self.assertIn("--model grok-4.5", plan[0]["command"])
+
     def test_grok_remote_profile_probe_accepts_ready_and_degraded_contracts(self):
         with tempfile.TemporaryDirectory() as tmp:
             grok_remote = write_fake_grok_remote(Path(tmp) / "grok-remote")
@@ -851,6 +1209,46 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
                     )
                     self.assertIsNone(error)
                     self.assertEqual(observed, payload)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
+    def test_grok_remote_help_and_doctor_use_private_posix_umask(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_dir = root / "cache"
+            cache_dir.mkdir()
+            remote = write_test_cli(
+                root / "grok-remote",
+                posix=(
+                    "#!/bin/sh\n"
+                    "if [ \"$1\" = --help ]; then\n"
+                    "  : > \"$AAS_TEST_CACHE_DIR/help-cache\"\n"
+                    "  printf '%s\\n' 'grok-remote doctor --json'\n"
+                    "  exit 0\n"
+                    "fi\n"
+                    "if [ \"$1\" = doctor ] && [ \"$2\" = --json ]; then\n"
+                    "  : > \"$AAS_TEST_CACHE_DIR/doctor-cache\"\n"
+                    "  printf '%s\\n' \"$AAS_TEST_GROK_PROFILE_JSON\"\n"
+                    "  exit 0\n"
+                    "fi\n"
+                    "exit 97\n"
+                ),
+                windows="@echo off\r\nexit /b 97\r\n",
+            )
+            payload = grok_profile_status_payload()
+            env = {
+                **os.environ,
+                "AAS_TEST_CACHE_DIR": str(cache_dir),
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
+            }
+            previous_umask = os.umask(0o002)
+            try:
+                observed, error = probe_grok_remote_profile(str(remote), env)
+            finally:
+                os.umask(previous_umask)
+            self.assertIsNone(error)
+            self.assertEqual(observed, payload)
+            self.assertEqual((cache_dir / "help-cache").stat().st_mode & 0o777, 0o600)
+            self.assertEqual((cache_dir / "doctor-cache").stat().st_mode & 0o777, 0o600)
 
     def test_grok_remote_profile_probe_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1102,6 +1500,94 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             broken = run_command(f"{grok} --single", "PROMPT_ROUND_TRIP", timeout=30, env=env, final_marker="M")
             self.assertNotEqual(broken.returncode, 0)
             self.assertNotIn("PROMPT_ROUND_TRIP", broken.stdout)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
+    def test_grok_smoke_and_task_children_use_private_posix_umask(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = resolve_run_dir(root, None, "umask-test")
+            cache_dir = root / "cache"
+            cache_dir.mkdir()
+            ensure_run_dir(root, run_dir)
+            for name in ("timeout_events.jsonl", "truncation_events.jsonl", "evidence-map.jsonl"):
+                (run_dir / name).write_text("", encoding="utf-8")
+            grok = write_test_cli(
+                root / "grok",
+                posix=(
+                    "#!/bin/sh\n"
+                    "count=0\n"
+                    "[ ! -f \"$AAS_TEST_CACHE_DIR/count\" ] || read count < \"$AAS_TEST_CACHE_DIR/count\"\n"
+                    "count=$((count + 1))\n"
+                    "printf '%s\\n' \"$count\" > \"$AAS_TEST_CACHE_DIR/count\"\n"
+                    ": > \"$AAS_TEST_CACHE_DIR/child-$count\"\n"
+                    "printf '%s\\n' 'AAS_RESULT_JSON_START'\n"
+                    "printf '%s\\n' '{\"status\":\"ok\",\"findings\":[],\"limitations\":[],\"warnings\":[]}'\n"
+                    "printf '%s\\n' 'AAS_RESULT_JSON_END'\n"
+                    "printf '%s\\n' \"$AAS_DELEGATION_FINAL_MARKER\"\n"
+                ),
+                windows="@echo off\r\nexit /b 97\r\n",
+            )
+            plan = {
+                "provider": "grok",
+                "participant_id": "grok-1",
+                "command": str(grok),
+                "command_shape": "grok --prompt-file /dev/stdin",
+                "recipient_profile": "grok-cli-reviewer",
+                "research_model_policy": {
+                    "status": "ok",
+                    "resolved_model": "grok-4.5",
+                    "resolved_thinking": "high",
+                },
+            }
+            env = {**os.environ, "AAS_TEST_CACHE_DIR": str(cache_dir)}
+            previous_umask = os.umask(0o002)
+            try:
+                result = run_external_participant(
+                    root,
+                    run_dir,
+                    plan,
+                    "review this claim",
+                    role="reviewer",
+                    template=None,
+                    timeout=30,
+                    env=env,
+                )
+            finally:
+                os.umask(previous_umask)
+            self.assertEqual(result["status"], "ok", result)
+            self.assertEqual((cache_dir / "child-1").stat().st_mode & 0o777, 0o600)
+            self.assertEqual((cache_dir / "child-2").stat().st_mode & 0o777, 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
+    def test_run_command_non_grok_paths_preserve_ambient_posix_umask(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            child = write_test_cli(
+                root / "child",
+                posix="#!/bin/sh\n: > \"$AAS_TEST_CACHE_PATH\"\n",
+                windows="@echo off\r\nexit /b 97\r\n",
+            )
+            previous_umask = os.umask(0o002)
+            try:
+                for provider in (None, "claude"):
+                    cache = root / ("arbitrary-cache" if provider is None else "claude-cache")
+                    completed = run_command(
+                        str(child),
+                        "prompt",
+                        timeout=30,
+                        env={**os.environ, "AAS_TEST_CACHE_PATH": str(cache)},
+                        final_marker="M",
+                        provider=provider,
+                    )
+                    self.assertEqual(completed.returncode, 0)
+                    self.assertEqual(cache.stat().st_mode & 0o777, 0o664)
+            finally:
+                os.umask(previous_umask)
+
+    def test_provider_subprocess_options_preserve_windows_behavior(self):
+        self.assertEqual(provider_subprocess_options("claude"), {})
+        with patch("installer.ai_agents_skills.delegation_dispatch.os.name", "nt"):
+            self.assertEqual(provider_subprocess_options("grok"), {})
 
     def test_deepseek_precheck_reports_endpoint(self):
         manifests = load_manifests()

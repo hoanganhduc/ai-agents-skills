@@ -37,13 +37,28 @@ for the current run:
 - timeout behavior
 - file-read fidelity when local files are part of the task
 - same-model nested worker support when manager-worker delegation is requested
-- for `grok-remote`, active managed-profile readiness plus its concrete model
-  and proxy/Grok release identities
+- for Grok, exact resolved-model membership in anchored bare `grok models`
+  available-model rows; when that probe does not confirm the model and selects
+  `grok-remote`, active managed-profile readiness plus its concrete model and
+  proxy/Grok release identities
 
 Do not store raw provider commands, credentials, stdout, stderr, provider
 config, session IDs, or raw prompts in cross-agent packets.
 
-`grok-remote` dispatch is route-neutral. The dispatcher must not set
+Automatic Grok selection is bare-first. With a resolved model, accept only an
+exact `* <model>` or `* <model> (default)` row from successful bare
+`grok models` output. On POSIX, run model probes, remote readiness checks, and
+actual Grok children with umask `0077` so any Grok cache they create remains
+private. Exact membership selects bare Grok and pins
+that model. Only bare CLI absence, timeout, failure, unrecognized output, or
+exact-model absence authorizes `grok-remote` fallback. Without a resolved model, automatic
+selection stays bare and does not authorize the proxy. Explicit `AAS_GROK`,
+`AAS_GROK_DISPATCH_COMMAND`, and `AAS_AUTOLOOP_BIN_GROK` choices remain
+authoritative and are never silently replaced. Generic provider prechecks use
+bare-only discovery and must not version-probe or execute an automatically
+discovered proxy.
+
+Selected `grok-remote` dispatch is route-neutral. The dispatcher must not set
 `GROK_MULTI_SESSION` or synthesize `--vpn`, `--host`, `--iphone`, or `--ios`;
 the active managed profile owns default routing, and explicit caller-supplied
 flags pass through unchanged. Probe readiness with
@@ -63,7 +78,8 @@ Default to `--dry-run` while planning. Actual external process launch requires
 
 For research roles, dispatch is blocked unless the provider has:
 
-- an explicit dispatch command such as `AAS_CLAUDE_DISPATCH_COMMAND`
+- an explicit dispatch command such as `AAS_CLAUDE_DISPATCH_COMMAND`, except
+  Grok may use its probe-gated automatic resolver
 - a resolved latest model from `--resolved-model` or `AAS_<PROVIDER>_LATEST_MODEL`
 - a resolved highest thinking/reasoning setting from `--resolved-thinking` or
   `AAS_<PROVIDER>_HIGHEST_THINKING`

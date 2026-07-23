@@ -13,7 +13,7 @@ from .capabilities import (
 )
 from .copilot import COPILOT_CLI_TOOL_SPEC, build_copilot_precheck
 from .discovery import discover_tool
-from .grok import GROK_DIAGNOSTIC_CLI_TOOL_SPEC, build_grok_precheck
+from .grok import GROK_BARE_CLI_TOOL_SPEC, build_grok_precheck
 from .openclaw_target_gate import openclaw_target_decision
 
 
@@ -57,7 +57,7 @@ def _build_target_precheck(root: Path, platform: str, target: AgentTarget) -> di
         antigravity["antigravity_status"] = antigravity_status
         return antigravity
     if target.name == "grok":
-        cli_result = discover_tool("grok-cli", GROK_DIAGNOSTIC_CLI_TOOL_SPEC, platform, root)
+        cli_result = discover_tool("grok-cli", GROK_BARE_CLI_TOOL_SPEC, platform, root)
         grok = build_grok_precheck(root, platform, cli_result)
         grok_status = grok["status"]
         grok.update(base)

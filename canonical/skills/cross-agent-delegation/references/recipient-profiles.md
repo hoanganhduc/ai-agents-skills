@@ -113,21 +113,25 @@ Antigravity-like participant.
   use, external posting, provider probing, or approval handling
 - symbolic credential requirements: none in V1
 - endpoint requirement: none; live dispatch is CLI-based through
-  `grok --prompt-file /dev/stdin`, preferring a route-neutral `grok-remote`
-  invocation when that proxy is available, and uses an interactive OIDC
+  `grok --prompt-file /dev/stdin`; automatic selection confirms the exact
+  resolved model in anchored bare `grok models` available-model rows before it
+  permits a route-neutral `grok-remote` fallback, and uses an interactive OIDC
   session rather than an API-key environment variable
 - confirmation requirements: parent-owned, outside packet content
 
 This packet profile does not claim Grok runtime availability. A parent workflow
-must verify Grok CLI availability, auth/config status, active managed-profile
-readiness, concrete model and release identity, output contract, and file-read
-fidelity before using a live Grok-like participant. Routing remains
-parent-owned capability state: a bare proxy command uses its active profile,
-while explicit caller-supplied route or profile flags are preserved outside the
-packet. Verify profile readiness with `grok-remote doctor --json`: only `ready`
-or `degraded` with the exact `grok-remote.profile-status.v1` field set and
-matching `model_id` permits dispatch. Invalid, `blocked`, or `unconfigured`
-results fail closed; private topology does not enter capability metadata.
+must verify Grok CLI availability, auth/config status, concrete model and
+release identity, output contract, and file-read fidelity before using a live
+Grok-like participant. Routing remains parent-owned capability state. With a
+resolved model, exact bare-model membership selects and model-pins bare Grok;
+only non-confirmation authorizes proxy fallback. Without a resolved model,
+automatic selection stays bare and records that latest-model verification was
+not performed. Explicit `AAS_GROK_DISPATCH_COMMAND` and `AAS_GROK` choices are
+preserved and never silently replaced. For a selected proxy, verify profile
+readiness with `grok-remote doctor --json`: only `ready` or `degraded` with the
+exact `grok-remote.profile-status.v1` field set and matching `model_id` permits
+dispatch. Invalid, `blocked`, or `unconfigured` results fail closed; private
+topology does not enter capability metadata.
 
 ### model-only-api-reviewer
 
