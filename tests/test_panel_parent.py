@@ -116,10 +116,143 @@ class PanelParentUnitTests(unittest.TestCase):
                 timeout_s=5,
                 root=root,
                 runner=runner,
+                panel_cfg={"timeout_mode": "fixed", "timeouts": {"result_review": 5}},
             )
             self.assertTrue(summary["panel_content_pass"])
             self.assertIn("codex", summary["usable_providers"])
             self.assertNotIn("claude", summary["usable_providers"])
+
+    def test_timeout_fixed_mode_same_for_all(self) -> None:
+        budgets = pp.compute_provider_timeouts(
+            "result_review",
+            "short",
+            ["claude", "kimi", "codex"],
+            {
+                "timeout_mode": "fixed",
+                "timeouts": {"result_review": 400},
+                "timeout_calc": {"min_s": 1, "max_s": 2400},
+            },
+            explicit_timeout_s=400,
+        )
+        vals = {b["timeout_s"] for b in budgets.values()}
+        self.assertEqual(vals, {400})
+        self.assertTrue(all(b["timeout_mode"] == "fixed" for b in budgets.values()))
+
+    def test_timeout_adaptive_size_and_provider_mult(self) -> None:
+        small = pp.compute_provider_timeouts(
+            "result_review",
+            "x" * 100,
+            ["codex", "kimi"],
+            {"timeout_mode": "adaptive", "timeouts": {"result_review": 900}},
+        )
+        large = pp.compute_provider_timeouts(
+            "result_review",
+            "x" * 20000,
+            ["codex", "kimi"],
+            {"timeout_mode": "adaptive", "timeouts": {"result_review": 900}},
+        )
+        self.assertGreater(large["codex"]["timeout_s"], small["codex"]["timeout_s"])
+        self.assertGreaterEqual(large["kimi"]["timeout_s"], large["codex"]["timeout_s"])
+        self.assertLessEqual(large["kimi"]["timeout_s"], 2400)
+
+    def test_timeout_clamp(self) -> None:
+        budgets = pp.compute_provider_timeouts(
+            "result_review",
+            "x" * 500000,
+            ["kimi"],
+            {
+                "timeout_mode": "adaptive",
+                "timeouts": {"result_review": 900},
+                "timeout_calc": {"max_s": 1000, "min_s": 120},
+            },
+        )
+        self.assertEqual(budgets["kimi"]["timeout_s"], 1000)
+
+    def test_timeout_history_pad(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            data = run_dir / "iterations" / "iter001" / "data"
+            data.mkdir(parents=True)
+            (data / "panel_dispatch_result_review.json").write_text(
+                json.dumps(
+                    {
+                        "phase": "result_review",
+                        "results": {
+                            "kimi": {
+                                "usable": True,
+                                "elapsed_s": 1100,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            budgets = pp.compute_provider_timeouts(
+                "result_review",
+                "short",
+                ["kimi"],
+                {"timeout_mode": "adaptive", "timeouts": {"result_review": 900}},
+                run_dir=run_dir,
+            )
+            # hist 1100 * 1.25 = 1375, times mult 1.5 → well above 900
+            self.assertGreaterEqual(budgets["kimi"]["timeout_s"], 1300)
+            self.assertIn("timeout_inputs", budgets["kimi"])
+
+    def test_dispatch_records_timeout_inputs(self) -> None:
+        def runner(cmd, env, cwd, timeout_s):  # noqa: ANN001
+            return 0, "enough usable content for panel advice here\n", ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            summary = pp.dispatch_phase(
+                iter_dir=root / "i",
+                phase="result_review",
+                prompt="review me",
+                providers=["codex"],
+                timeout_s=180,
+                root=root,
+                runner=runner,
+                panel_cfg={
+                    "timeout_mode": "fixed",
+                    "timeouts": {"result_review": 180},
+                    "timeout_calc": {"min_s": 1, "max_s": 2400},
+                },
+            )
+            meta = summary["results"]["codex"]
+            self.assertEqual(meta["timeout_s"], 180)
+            self.assertEqual(meta["timeout_mode"], "fixed")
+            self.assertIn("timeout_inputs", meta)
+
+    def test_target_brief_order_goal_before_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            (run_dir / "recovery.md").write_text(
+                "# recovery\nlong recovery body\n", encoding="utf-8"
+            )
+            (run_dir / "loop_state.json").write_text(
+                json.dumps(
+                    {
+                        "goal": "G",
+                        "success_criteria": "S",
+                        "next_preferred_path": "PATH-A",
+                        "last_iteration": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "goal_priority.json").write_text(
+                json.dumps({"enabled": True, "primary_campaign": "main"}),
+                encoding="utf-8",
+            )
+            (run_dir / "iterations.jsonl").write_text("", encoding="utf-8")
+            brief = pp.build_target_brief(run_dir)
+            goal_i = brief.find("Goal-EV") if "Goal-EV" in brief else brief.find("goal_priority")
+            path_i = brief.find("next_preferred_path")
+            rec_i = brief.find("recovery.md")
+            self.assertGreaterEqual(goal_i, 0)
+            self.assertGreater(path_i, goal_i)
+            self.assertGreater(rec_i, path_i)
+            self.assertIn("PATH-A", brief)
 
 
 if __name__ == "__main__":

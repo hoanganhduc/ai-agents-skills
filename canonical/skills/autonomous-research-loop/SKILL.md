@@ -180,6 +180,46 @@ If a gate fails, record the failure in `iterations.jsonl` and choose one of:
 - revise the scope
 - stop as blocked
 
+## Goal-focused single path
+
+When the research goal is an open problem or long-horizon claim, prefer that
+every primary path state how it advances `loop_state.goal` / `success_criteria`.
+Favor outcomes that kill a hypothesis, bridge two formulations, construct a
+hardness or algorithm artifact, verify trust, or replan — not unbounded local
+samples that leave the goal unchanged.
+
+Optional machine-readable campaign discipline: `{loop_dir}/goal_priority.json`
+(or `loop_state.standing_orders.goal_priority`). Contract template (not shipped
+inside this skill directory so OpenClaw can install the policy SKILL.md):
+
+- source repo: `canonical/templates/goal-priority.md`
+- example: `canonical/templates/goal-priority.example.json`
+- after install: workflow template `goal-priority` when the templates profile
+  is present; or `init --goal-priority-template`
+
+When `goal_priority` is **active** (merged config has JSON boolean
+`"enabled": true`, or a config object exists and
+`AAS_AUTOLOOP_GOAL_PRIORITY=on`):
+
+- Host panel target advice ranks candidates by **goal EV** (unless
+  `panel_rank_by_goal_ev: false`).
+- The iteration prompt injects campaign / closed-campaign forbids / streak
+  `REPLAN_REQUIRED` text.
+- Use `append-iteration --goal-contribution … --campaign-id …` (and optional
+  `--local-without-goal-delta`).
+- **Soft v1:** warnings and prompt injection only — does **not** stop the loop
+  (see `autonomous-loop-enforcement.md`). Residual-chasing can still happen if
+  agents ignore prompts.
+
+When a campaign or sampling stratum is **closed** with `forbid_as_sole_primary`,
+prefer not to continue it as the sole primary (e.g. “next host in the same
+sample”). Use `decision-doubt-loop` when closing or switching campaigns if the
+decision is load-bearing.
+
+Align with the portfolio runbook **insufficient results** list: special cases,
+elegant reductions, finite samples, and uncertified counterexamples are
+progress to record, not success stops.
+
 ## Multi-Agent Use
 
 ### Recommended hybrid (parent-owned panel + single-path worker)
@@ -196,7 +236,11 @@ parent** model owned by `autonomous-research-loop-runtime`:
 5. **Notify** (optional) — progress messaging only; orthogonal to panel.
 
 Enable with `drive --panel on|auto|off`, `panel.json`, `loop_state.standing_orders.panel`,
-or `AAS_AUTOLOOP_PANEL=on`. Run `… panel --smoke` to probe providers.
+or `AAS_AUTOLOOP_PANEL=on`. Run `… panel --smoke` to probe providers. When
+`goal_priority` is active, target advice should rank by goal EV (see above).
+Panel provider budgets use **adaptive timeouts** by default (prompt size,
+provider multipliers, recent elapsed history, hard max); set
+`"timeout_mode": "fixed"` in `panel.json` for legacy flat caps.
 
 Do **not** treat nested “primary agent shells out to four CLIs” as the architecture
 (that failed under Codex `workspace-write` sandboxes). For heavy strategy pauses,
@@ -314,3 +358,4 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
+- `goal-priority` -- Optional goal_priority.v1 reference (soft path discipline; does not change stop conditions).

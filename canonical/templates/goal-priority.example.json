@@ -1,0 +1,31 @@
+{
+  "schema_version": "goal_priority.v1",
+  "enabled": false,
+  "primary_campaign": "main",
+  "primary_objective": "State what this campaign must produce for loop_state.goal",
+  "campaign_registry": {
+    "main": {
+      "objective": "Advance the stated goal with a host-verifiable artifact",
+      "entry_condition": "Always while this is primary",
+      "non_goals": [
+        "Unbounded local sampling without goal reduction"
+      ]
+    }
+  },
+  "closed_campaigns": [],
+  "next_campaigns_ordered": [
+    "main"
+  ],
+  "max_consecutive_local_without_goal_delta": 3,
+  "local_without_goal_delta_tags": [
+    "finite_sample_only",
+    "bookkeeping",
+    "special_case_only",
+    "uncertified_counterexample",
+    "elegant_reduction",
+    "local_refinement_only",
+    "closed_campaign_sample"
+  ],
+  "require_goal_contribution_in_ledger": true,
+  "panel_rank_by_goal_ev": true
+}

@@ -134,14 +134,44 @@ Config (`<loop>/panel.json` or `loop_state.standing_orders.panel`):
 {
   "enabled": true,
   "providers": ["claude", "codex", "codewhale", "kimi"],
+  "timeout_mode": "adaptive",
   "timeouts": {"target_advice": 600, "result_review": 900},
+  "timeouts_by_provider": {"kimi": {"mult": 1.5}},
+  "timeout_calc": {"min_s": 120, "max_s": 2400, "size_free": 4000},
   "require_different_family": true,
   "anti_deadlock_math_without_panel": true
 }
 ```
 
+`timeout_mode` is `adaptive` (default) or `fixed` (legacy: same cap for every
+provider). Adaptive budgets scale by prompt size, provider multiplier, and
+recent successful `elapsed_s` under the loop dir, then clamp to
+`timeout_calc.min_s` / `max_s`. CLI `panel --timeout N` with adaptive mode
+raises the phase **base floor** (`base = max(base, N)`), not a hard exclusive
+cap. Panel budgets are independent of drive `--iteration-timeout`.
+
 Env: `AAS_AUTOLOOP_PANEL=on|off`, `AAS_AUTOLOOP_PANEL_PROVIDERS=claude,codex,…`.
 Notify remains orthogonal. Banking still requires host evidence gates.
+
+### Goal priority (optional path discipline)
+
+Opt-in file `{loop}/goal_priority.json` or `loop_state.standing_orders.goal_priority`
+with JSON boolean `"enabled": true` (or env force-on when a config object
+exists). Soft v1: injects campaign / goal-EV text into `iteration_prompt` and
+panel target briefs; derives local-without-goal-delta streak; emit validate
+**warnings** (key always present; never a new stop). Append soft fields:
+
+```bash
+… append-iteration --dir <loop> --mode bounded-research --objective "…" --decision continue \
+  --goal-contribution advance --campaign-id main
+```
+
+Optional: `--local-without-goal-delta`, `--local-without-goal-delta-tag`,
+`init --goal-priority-template` to write an example JSON with `enabled: false`
+(refuses overwrite unless `--force`). Reference template:
+`canonical/templates/goal-priority.md` (workflow template slug `goal-priority`).
+Env: `AAS_AUTOLOOP_GOAL_PRIORITY=on|off`. Does **not** execute `success_check` in
+`done` and does **not** expand recovery rewrite on append.
 
 The default flag sets grant the agent full tool autonomy, which unattended
 research requires; run loops only in workspaces you trust the agent to modify,
@@ -221,3 +251,4 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
+- `goal-priority` -- Optional goal_priority.v1 reference for soft path discipline.

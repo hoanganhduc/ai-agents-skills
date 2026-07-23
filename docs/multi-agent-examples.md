@@ -11,8 +11,8 @@ The shared skills involved are:
 |---|---|
 | `agent-group-discuss` | Template-based multi-agent discussion, review, and research. |
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
-| `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes. |
-| `autonomous-research-loop-runtime` | Headless `drive` and host-owned `panel` phases around each iteration. |
+| `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes; optional soft `goal_priority.v1` path discipline. |
+| `autonomous-research-loop-runtime` | Headless `drive`, host-owned `panel` phases (adaptive per-provider timeouts), and optional goal_priority soft ledger fields. |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
 | `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
@@ -43,6 +43,12 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
 # Probe panel providers without starting drive
 … panel --smoke --root .
 ```
+
+Panel provider budgets default to **adaptive** timeouts (prompt size, provider
+multipliers, recent elapsed history, hard max). Set `"timeout_mode": "fixed"` for
+legacy flat caps. Optional soft **goal priority** (`goal_priority.json` with
+explicit `"enabled": true`) injects goal-EV / campaign / streak warnings without
+adding stop conditions; see template `goal-priority`.
 
 Optional loop config (`panel.json` or `loop_state.standing_orders.panel`):
 
