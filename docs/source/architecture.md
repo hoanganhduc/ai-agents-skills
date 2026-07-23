@@ -120,8 +120,10 @@ The installer copies directory-layout `SKILL.md` files under
 personas into `~/.kimi-code/agents/`, and inert templates/tools/instructions
 support storage. Copy mode is the default. The installer does not rewrite
 `config.toml` (hooks stay manual). Unattended ARL force-continue uses
-`drive --provider kimi`. `KIMI_CODE_HOME`-relocated installs are unsupported:
-unset `KIMI_CODE_HOME` before installing. See `targets/kimi/README.md`.
+`drive --provider kimi`. Host-owned ARL panel phases use `drive --panel
+on|auto|off` so multi-agent advice/review stays outside the primary sandbox.
+`KIMI_CODE_HOME`-relocated installs are unsupported: unset `KIMI_CODE_HOME`
+before installing. See `targets/kimi/README.md`.
 
 Codex user-level skills target `~/.codex/skills` in this setup. The optional
 `.agents/skills` layout is treated as a compatibility or workspace target when
@@ -160,7 +162,11 @@ paths consult.
   delegates to it), exports `AUTOLOOP_DRIVER=1` so the interactive hook stands
   down, enforces a per-iteration timeout, and stops on the arbiter's verdict or
   after repeated iteration failures. It fails safe: if it cannot determine state,
-  it stops rather than running unbounded.
+  it stops rather than running unbounded. Optional **host-owned multi-agent
+  panel** phases (`drive --panel on|auto|off`, or loop `panel.json`) run
+  top-level provider CLIs for target advice and result review **outside** the
+  primary agent sandbox; the primary stays single-path math/research only. See
+  `docs/multi-agent-examples.md` and the ARL runtime skill.
 
 Per-target enforcement is honest, not uniform: Claude supports both the Stop
 hook and the driver; Codex and OpenCode are driver-only because they use TOML
