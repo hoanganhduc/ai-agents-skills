@@ -1,6 +1,6 @@
 ---
 name: autonomous-research-loop
-description: Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs. Use when the user asks to continue research autonomously, run a research loop, integrate autonomous agent loops, or keep improving a research workflow without repeated prompts.
+description: Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs; prefers host-owned multi-agent panel with single-path drive primary. Use when the user asks to continue research autonomously, run a research loop, integrate autonomous agent loops, or keep improving a research workflow without repeated prompts.
 ---
 
 # Autonomous Research Loop

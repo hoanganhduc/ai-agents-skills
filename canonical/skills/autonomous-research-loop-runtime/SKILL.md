@@ -1,6 +1,6 @@
 ---
 name: autonomous-research-loop-runtime
-description: Runtime helper for autonomous-research-loop ledgers. Use to initialize, append, validate, inspect, or smoke-test autonomous research loop state files without network, package installation, provider CLI calls, or live agent spawning.
+description: Runtime helper for autonomous-research-loop ledgers plus headless drive and host-owned multi-agent panel phases (--panel on, auto, or off). Use to initialize, append, validate, inspect, smoke-test, drive, or panel-dispatch loop state without requiring ad-hoc nested multi-agent CLIs from the primary agent.
 ---
 
 # Autonomous Research Loop Runtime
