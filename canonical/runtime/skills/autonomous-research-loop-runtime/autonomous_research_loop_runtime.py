@@ -1306,13 +1306,19 @@ def _load_remote_bridge_mod() -> Any | None:
             return None
         import importlib.util
 
-        spec = importlib.util.spec_from_file_location("aas_remote_bridge", rb_path)
-        if spec is None or spec.loader is None:
-            return None
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = mod
-        spec.loader.exec_module(mod)
-        return mod
+        # Never write __pycache__ into the canonical runtime tree (inventory CI).
+        prev = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec = importlib.util.spec_from_file_location("aas_remote_bridge", rb_path)
+            if spec is None or spec.loader is None:
+                return None
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            return mod
+        finally:
+            sys.dont_write_bytecode = prev
     except Exception:  # noqa: BLE001
         return None
 
@@ -2344,7 +2350,10 @@ def emit_loop_progress(
     if to_stderr:
         sys.stderr.write(str(payload.get("text", "")) + "\n")
         sys.stderr.flush()
-    if to_stdout_json and not notify_cmd and not notify_channel:
+    # Machine-readable JSON lines stay on stdout whenever requested. Remote-bridge
+    # notify is additive and must not suppress them (secrets in env would break
+    # watch consumers / tests). Only a raw --notify-cmd shell hook replaces JSON.
+    if to_stdout_json and not notify_cmd:
         print(json.dumps(env_payload), flush=True)
     # Structured remote-bridge notify (preferred). Channel already resolved by
     # drive/watch/arm via resolve_notify_channel; env is a last-resort fallback.
@@ -2386,8 +2395,10 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
     one when the registry says a driver owns the loop but its pid is dead.
     Always refreshes LIVE_STATUS.md and appends driver_logs/progress.jsonl.
     Read-only alongside `drive`; safe to start or stop at any time. Without
-    --notify-cmd, events also print as JSON lines; with it, the command runs via
-    the shell with AUTOLOOP_EVENT/_DIR/_ITERATION/_DECISION/_TEXT in env.
+    --notify-cmd, events also print as JSON lines on stdout (remote-bridge
+    channel notify is additive and does not suppress them). With --notify-cmd
+    and AAS_ALLOW_RAW_NOTIFY_CMD=1, the command runs via the shell with
+    AUTOLOOP_EVENT/_DIR/_ITERATION/_DECISION/_TEXT in env instead of JSON.
     """
     run_dir = Path(args.dir).expanduser().resolve()
     reg = registry_dir(args)
@@ -2435,7 +2446,7 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                 notify_cmd=args.notify_cmd,
                 notify_channel=notify_channel,
                 to_stderr=bool(args.notify_cmd or notify_channel),
-                to_stdout_json=not bool(args.notify_cmd or notify_channel),
+                to_stdout_json=not bool(args.notify_cmd),
                 extra={"source": "watch", "text_override": text},
             )
             events += 1
@@ -2449,7 +2460,7 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                 notify_cmd=args.notify_cmd,
                 notify_channel=notify_channel,
                 to_stderr=bool(args.notify_cmd or notify_channel),
-                to_stdout_json=not bool(args.notify_cmd or notify_channel),
+                to_stdout_json=not bool(args.notify_cmd),
                 extra={"source": "watch", "terminal_reason": reason},
             )
             events += 1
@@ -2467,7 +2478,7 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                     notify_cmd=args.notify_cmd,
                     notify_channel=notify_channel,
                     to_stderr=bool(args.notify_cmd or notify_channel),
-                    to_stdout_json=not bool(args.notify_cmd or notify_channel),
+                    to_stdout_json=not bool(args.notify_cmd),
                     extra={"source": "watch", "driver_pid": pid},
                 )
                 events += 1
