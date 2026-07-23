@@ -12,7 +12,7 @@ from .openclaw_inventory import DENYLIST_VERSION, REDACTION_VERSION, SCHEMA_VERS
 
 MANIFEST_SCHEMA_VERSION = "openclaw.apply-manifest.v1"
 GENERATOR_VERSION = "openclaw-manifest.phase2.v1"
-TARGET_AGENTS = ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok")
+TARGET_AGENTS = ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "kimi")
 PATH_STYLES = ("posix", "windows-drive", "windows-unc", "wsl-posix", "mounted-windows")
 DEFAULT_TARGET_AGENTS = TARGET_AGENTS
 
@@ -38,6 +38,7 @@ AGENT_HOME_DIR = {
     "opencode": ".config/opencode",
     "antigravity": ".gemini/antigravity-cli",
     "grok": ".grok",
+    "kimi": ".kimi-code",
 }
 
 OPERATION_BY_CATEGORY = {

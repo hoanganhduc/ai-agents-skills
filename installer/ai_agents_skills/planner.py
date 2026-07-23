@@ -201,6 +201,10 @@ def artifact_supported_by_agent(artifact_type: str, spec: dict[str, Any], agent:
         return False
     if agent.name == "copilot" and artifact_type != "agent-persona":
         return False
+    # Kimi has no commands/ or discrete hooks/ loader surfaces; do not fall back
+    # to skills_dir and create stray files via adapter inheritance.
+    if agent.name == "kimi" and artifact_type in {"entrypoint-alias", "native-hook-file", "command"}:
+        return False
     return agent_supports_manifest_entry(agent.name, spec["supported_agents"])
 
 

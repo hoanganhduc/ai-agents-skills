@@ -79,10 +79,10 @@ class OpenClawDryRunManifestTests(unittest.TestCase):
             make_source_root(source_root)
             manifest = build_manifest(build_inventory(source_root), target_root, created_at=CREATED_AT)
 
-            self.assertEqual(TARGET_AGENTS, ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok"))
+            self.assertEqual(TARGET_AGENTS, ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "kimi"))
             self.assertEqual(
                 manifest["target_agent_refs"],
-                ["antigravity", "claude", "codex", "copilot", "deepseek", "grok", "opencode"],
+                ["antigravity", "claude", "codex", "copilot", "deepseek", "grok", "kimi", "opencode"],
             )
             self.assertTrue(
                 any(

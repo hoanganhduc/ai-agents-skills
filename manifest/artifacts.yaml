@@ -420,19 +420,19 @@
       "modal-offload-routing": {
         "description": "When to keep work local and when to route heavy compute elsewhere.",
         "source": "modal-offload-routing.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
         "depends_on_skills": ["modal-research-compute"]
       },
       "github-actions-offload-routing": {
         "description": "When to route compute to GitHub Actions (private repo, budget-gated, last in the recommended five-lane order).",
         "source": "github-actions-offload-routing.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
         "depends_on_skills": ["modal-research-compute"]
       },
       "compute-offload-routing": {
         "description": "Unified router over local, Kaggle, Modal, Hetzner, and GitHub Actions: priority order, keep-local rules, the self-preservation veto, and budget/teardown discipline.",
         "source": "compute-offload-routing.md",
-        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok"],
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
         "depends_on_skills": ["kaggle-research-compute", "hetzner-research-compute", "modal-research-compute"]
       },
       "scrapling-integration": {

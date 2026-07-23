@@ -12,7 +12,7 @@ metadata:
 
 # Remote Bridge
 
-Cross-platform remote control plane for **claude, codex, grok, deepseek, opencode,
+Cross-platform remote control plane for **claude, codex, grok, kimi, deepseek, opencode,
 copilot, antigravity** (not OpenClaw).
 
 | Channel | Role |

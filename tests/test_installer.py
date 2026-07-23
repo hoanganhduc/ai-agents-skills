@@ -388,7 +388,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(delegation["policy"]["research_model_policy"], "latest_model_highest_reasoning_required")
         self.assertEqual(
             delegation["policy"]["active_providers"],
-            ["codex", "claude", "deepseek", "copilot", "antigravity", "grok"],
+            ["codex", "claude", "deepseek", "copilot", "antigravity", "grok", "kimi"],
         )
         self.assertEqual(delegation["policy"]["reference_only_providers"], ["openclaw"])
         self.assertEqual(delegation["providers"]["codex"]["recipient_profile"], "codex-like-coding-reviewer")
@@ -1525,7 +1525,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
-            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "openclaw")
+            create_agent_homes(root, "codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "kimi", "openclaw")
             from installer.ai_agents_skills.agents import detect_agents
 
             args = Args()
@@ -1548,6 +1548,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                     "opencode": "copy",
                     "antigravity": "copy",
                     "grok": "copy",
+                    "kimi": "copy",
                     "openclaw": "copy",
                 },
             )
@@ -3422,7 +3423,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             )
 
     def test_cli_precheck_reports_all_targets_for_all_platform_overrides(self) -> None:
-        target_names = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "openclaw"]
+        target_names = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "kimi", "openclaw"]
         expected_path_styles = {
             "linux": "posix",
             "macos": "posix",
@@ -4684,6 +4685,107 @@ class GrokTargetTests(unittest.TestCase):
             self.assertIn("grok-persona-visible:code-reviewer", check_names)
 
 
+class KimiTargetTests(unittest.TestCase):
+    def test_kimi_is_known_and_detected_by_default(self) -> None:
+        from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names, target_for
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "kimi")
+
+            self.assertIn("kimi", all_agent_names())
+            self.assertIn("kimi", known_agent_names())
+            self.assertEqual(target_for(root, "kimi").home, root / ".kimi-code")
+            self.assertEqual([agent.name for agent in detect_agents(root)], ["kimi"])
+            self.assertEqual([agent.name for agent in detect_agents(root, ["kimi"])], ["kimi"])
+
+    def test_project_local_agents_dir_does_not_activate_kimi_global_target(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            (root / ".agents" / "skills").mkdir(parents=True)
+            self.assertEqual(detect_agents(root, ["kimi"]), [])
+
+    def test_kimi_full_install_writes_native_surfaces_without_entrypoint_alias(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "kimi")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["kimi"]),
+                runtime_profile="none",
+                requested_agents=["kimi"],
+            )
+            skill_action = next(
+                action for action in plan["actions"]
+                if action["kind"] == "file" and action["artifact_type"] == "skill-file"
+            )
+            self.assertEqual(skill_action["install_mode"], "copy")
+            self.assertEqual(
+                Path(skill_action["path"]),
+                root / ".kimi-code" / "skills" / "zotero" / "SKILL.md",
+            )
+            self.assertFalse(
+                any(action.get("artifact_type") == "entrypoint-alias" for action in plan["actions"])
+            )
+            self.assertFalse(
+                any(action.get("artifact_type") == "native-hook-file" for action in plan["actions"])
+            )
+            self.assertFalse(
+                any(action.get("artifact_type") == "settings-compat-merge" for action in plan["actions"])
+            )
+
+            apply_plan(root, plan, dry_run=False)
+            home = root / ".kimi-code"
+            self.assertTrue((home / "skills" / "zotero" / "SKILL.md").is_file())
+            self.assertTrue((home / "AGENTS.md").is_file())
+            self.assertIn("ai-agents-skills:zotero", (home / "AGENTS.md").read_text(encoding="utf-8"))
+            self.assertFalse((root / ".kimi").exists())
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_kimi_native_smoke_skips_without_cli(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+        from installer.ai_agents_skills.kimi import run_kimi_native_smoke
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "kimi")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["kimi"]),
+                runtime_profile="none",
+                requested_agents=["kimi"],
+            )
+            apply_plan(root, plan, dry_run=False)
+            with patch.dict(os.environ, {"PATH": str(root / "empty-bin")}, clear=False):
+                (root / "empty-bin").mkdir(exist_ok=True)
+                result = run_kimi_native_smoke(root, agents={"kimi"}, platform="linux")
+            self.assertIn(result["status"], {"skipped", "degraded", "ok"})
+
+    def test_kimi_readme_captures_install_boundaries(self) -> None:
+        kimi = (REPO_ROOT / "targets" / "kimi" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("full install target", kimi)
+        self.assertIn("~/.kimi-code", kimi)
+        self.assertIn("KIMI_CODE_HOME", kimi)
+        self.assertIn("runtime argv", kimi)
+
+
 class CopilotTargetTests(unittest.TestCase):
     def test_adapter_target_readmes_capture_install_boundaries(self) -> None:
         copilot = (REPO_ROOT / "targets" / "copilot" / "README.md").read_text(encoding="utf-8")
@@ -4691,6 +4793,7 @@ class CopilotTargetTests(unittest.TestCase):
         opencode = (REPO_ROOT / "targets" / "opencode" / "README.md").read_text(encoding="utf-8")
         antigravity = (REPO_ROOT / "targets" / "antigravity" / "README.md").read_text(encoding="utf-8")
         grok = (REPO_ROOT / "targets" / "grok" / "README.md").read_text(encoding="utf-8")
+        kimi = (REPO_ROOT / "targets" / "kimi" / "README.md").read_text(encoding="utf-8")
 
         self.assertIn("adapter-only", copilot)
         self.assertIn("does not receive Codex or\nClaude instruction blocks", copilot)
@@ -4706,6 +4809,8 @@ class CopilotTargetTests(unittest.TestCase):
         self.assertIn("~/.grok", grok)
         self.assertIn("GROK_HOME", grok)
         self.assertIn("[compat.claude]", grok)
+        self.assertIn("full install target", kimi)
+        self.assertIn("~/.kimi-code", kimi)
 
     def test_copilot_is_known_and_detected_by_default(self) -> None:
         from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names

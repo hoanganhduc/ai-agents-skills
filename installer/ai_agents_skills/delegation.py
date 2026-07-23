@@ -9,6 +9,7 @@ from .capabilities import existing_parents, normalized_path_within, resolved_pat
 from .copilot import COPILOT_CLI_TOOL_SPEC
 from .discovery import discover_tool, render_command, split_command
 from .grok import GROK_CLI_TOOL_SPEC
+from .kimi import KIMI_CLI_TOOL_SPEC
 
 
 PROVIDER_CLI_SPECS: dict[str, dict[str, Any]] = {
@@ -69,6 +70,7 @@ PROVIDER_CLI_SPECS: dict[str, dict[str, Any]] = {
     "copilot": COPILOT_CLI_TOOL_SPEC,
     "antigravity": ANTIGRAVITY_CLI_TOOL_SPEC,
     "grok": GROK_CLI_TOOL_SPEC,
+    "kimi": KIMI_CLI_TOOL_SPEC,
 }
 
 PROVIDER_AUTH_ENV_NAMES: dict[str, tuple[str, ...]] = {
@@ -94,6 +96,7 @@ PROVIDER_CONFIG_PATHS: dict[str, tuple[str, ...]] = {
     "copilot": (".copilot",),
     "antigravity": (".gemini/antigravity-cli",),
     "grok": (".grok",),
+    "kimi": (".kimi-code",),
 }
 
 

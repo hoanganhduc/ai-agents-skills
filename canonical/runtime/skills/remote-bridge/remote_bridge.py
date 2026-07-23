@@ -33,6 +33,7 @@ SUPPORTED_PROVIDERS = (
     "opencode",
     "copilot",
     "antigravity",
+    "kimi",
 )
 DEFAULT_NOTIFY_EVENTS = frozenset(
     {"iteration_ok", "iteration_failed", "quota_wait", "drive_stop", "notify", "approve_tool"}

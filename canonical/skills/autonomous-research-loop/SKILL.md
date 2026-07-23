@@ -218,7 +218,7 @@ headless agent session per iteration against the on-disk loop files and owns
 the stop conditions:
 
 ```bash
-... run_autonomous_research_loop.sh drive --dir <loop_dir> --provider <claude|codex|deepseek|opencode|copilot|antigravity>
+... run_autonomous_research_loop.sh drive --dir <loop_dir> --provider <claude|codex|deepseek|opencode|copilot|antigravity|grok|kimi>
 # notify defaults to --notify auto (remote-bridge when secrets configured)
 # silence with --notify off or AAS_AUTOLOOP_NOTIFY=off
 ```

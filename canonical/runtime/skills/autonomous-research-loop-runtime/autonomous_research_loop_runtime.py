@@ -1243,6 +1243,32 @@ GROK_BINARY_CANDIDATES: dict[str, list[str]] = {
     for platform in GROK_BARE_BINARY_CANDIDATES
 }
 
+# Keep in sync with installer/ai_agents_skills/kimi.py KIMI_BARE_CLI_TOOL_SPEC.
+KIMI_BINARY_CANDIDATES: dict[str, list[str]] = {
+    "linux": [
+        "kimi",
+        "~/.local/bin/kimi",
+        "~/.kimi-code/bin/kimi",
+    ],
+    "macos": [
+        "kimi",
+        "~/.local/bin/kimi",
+        "~/.kimi-code/bin/kimi",
+        "/opt/homebrew/bin/kimi",
+        "/usr/local/bin/kimi",
+    ],
+    "wsl": [
+        "kimi",
+        "~/.local/bin/kimi",
+        "~/.kimi-code/bin/kimi",
+    ],
+    "windows": [
+        "%USERPROFILE%\\.kimi-code\\bin\\kimi.exe",
+        "kimi.exe",
+        "kimi",
+    ],
+}
+
 PROVIDER_SPECS: dict[str, dict[str, Any]] = {
     "claude": {
         "binaries": ["claude"],
@@ -1284,6 +1310,18 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
             "override AAS_AUTOLOOP_BIN_GROK or AAS_GROK"
         ),
         "platform_candidates": GROK_BINARY_CANDIDATES,
+    },
+    "kimi": {
+        "binaries": ["kimi"],
+        "args": ["-p", "{prompt}", "--auto"],
+        "consent_note": (
+            "--auto is fully autonomous permission mode for unattended loops; "
+            "override AAS_AUTOLOOP_BIN_KIMI or AAS_KIMI; "
+            "do not force --yolo unless the operator opts in"
+        ),
+        "platform_candidates": KIMI_BINARY_CANDIDATES,
+        "model_env": "AAS_KIMI_LATEST_MODEL",
+        "model_flag": "-m",
     },
 }
 
@@ -1942,6 +1980,14 @@ def resolve_provider_binary_details(
             else None
         )
         return (resolved if ok else override), ok, tried, selection
+    # Short alias AAS_<PROVIDER> for non-Grok providers (e.g. AAS_KIMI). Grok uses the
+    # dedicated path below so model-gated remote fallback stays isolated.
+    if provider != "grok":
+        aas_alias = env.get(f"AAS_{key}")
+        if aas_alias:
+            tried.append(aas_alias)
+            ok, resolved = candidate_is_usable(aas_alias, env)
+            return (resolved if ok else aas_alias), ok, tried, None
     if provider == "grok":
         aas_grok = env.get("AAS_GROK")
         if aas_grok:
@@ -2141,6 +2187,18 @@ def resolve_provider_command(
     template = shlex.split(args_raw) if args_raw else list(spec["args"])
     if provider == "grok" and not args_raw and env.get("AAS_GROK_LATEST_MODEL"):
         template.extend(["-m", env["AAS_GROK_LATEST_MODEL"]])
+    # Generic model pin for providers that declare model_env/model_flag (e.g. kimi).
+    # Raw AAS_AUTOLOOP_ARGS_* overrides disable this auto pin (same as Grok).
+    model_env_name = spec.get("model_env")
+    model_flag = spec.get("model_flag")
+    if (
+        model_env_name
+        and model_flag
+        and not args_raw
+        and provider != "grok"
+        and env.get(str(model_env_name))
+    ):
+        template.extend([str(model_flag), str(env[str(model_env_name)])])
     argv = [str(binary)] + [
         arg.replace("{prompt}", prompt).replace("{dir}", str(run_dir))
         for arg in template

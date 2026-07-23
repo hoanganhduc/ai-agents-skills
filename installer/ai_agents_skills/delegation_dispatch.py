@@ -19,10 +19,15 @@ from .grok import (
     GROK_REMOTE_CLI_TOOL_SPEC,
     probe_grok_model_membership,
 )
+from .kimi import KIMI_MODEL_ID_RE
 from .state import now_run_id, preflight_state_path, sha256_text, state_dir, write_text_atomic
 
 
-EXTERNAL_PROVIDERS = {"claude", "deepseek", "copilot", "antigravity", "grok"}
+EXTERNAL_PROVIDERS = {"claude", "deepseek", "copilot", "antigravity", "grok", "kimi"}
+# Runtime-argv prompt transport: run_command appends -p <prompt> after the prompt is known.
+KIMI_RUNTIME_ARGV_TRANSPORT = "runtime_argv_prompt"
+# Windows CreateProcess command-line budget is well below dispatcher MAX_TASK_CHARS.
+KIMI_MAX_PROMPT_CHARS = 24_000
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
 GROK_REMOTE_EXECUTABLES = {"grok-remote", "grok-remote.cmd"}
@@ -181,12 +186,16 @@ def validate_resolved_model_syntax_before_prechecks(
     resolved_model: str | None,
     env: dict[str, str],
 ) -> None:
-    """Reject an invalid effective Grok model before any CLI discovery."""
-    if not {"auto", "grok"}.intersection(requested):
-        return
-    model = resolved_model or env.get("AAS_GROK_LATEST_MODEL")
-    if model and GROK_MODEL_ID_RE.fullmatch(model) is None:
-        raise ValueError("resolved Grok model ID is invalid")
+    """Reject invalid effective model IDs before any CLI discovery."""
+    providers = set(requested)
+    if {"auto", "grok"}.intersection(providers):
+        model = resolved_model or env.get("AAS_GROK_LATEST_MODEL")
+        if model and GROK_MODEL_ID_RE.fullmatch(model) is None:
+            raise ValueError("resolved Grok model ID is invalid")
+    if {"auto", "kimi"}.intersection(providers):
+        model = resolved_model or env.get("AAS_KIMI_LATEST_MODEL")
+        if model and KIMI_MODEL_ID_RE.fullmatch(model) is None:
+            raise ValueError("resolved Kimi model ID is invalid")
 
 
 def read_task_text(task: str | None, task_file: Path | None) -> str:
@@ -412,6 +421,7 @@ def build_provider_dispatch_plan(
             }
     command = render_model_placeholders(command_template, model_profile)
     spec = delegation["providers"][provider]
+    transport = KIMI_RUNTIME_ARGV_TRANSPORT if provider == "kimi" else "stdin"
     item = {
         "provider": provider,
         "status": "ready",
@@ -420,7 +430,8 @@ def build_provider_dispatch_plan(
         "default_role_family": spec["default_role_family"],
         "command_shape": redacted_command(command),
         "command": command,
-        "transport": "stdin",
+        "transport": transport,
+        "input_transport": transport,
         "output_contract": "json-envelope-final-marker",
         "research_model_policy": model_profile,
     }
@@ -639,6 +650,11 @@ def default_dispatch_command(provider: str, command: str) -> str:
         # grok-remote's active managed profile owns routing and multi-session mode; preserve the
         # discovered command without adding provider or route selectors here.
         return f"{command} --prompt-file /dev/stdin"
+    if provider == "kimi":
+        # Kimi Code uses -p/--prompt <value> (no --prompt-file). run_command appends
+        # -p <prompt> at execution time (runtime_argv_prompt). The template is the
+        # bare command prefix only.
+        return command
     return command
 
 
@@ -835,6 +851,12 @@ def run_external_participant(
     write_json(root, run_dir / "profiles" / f"{participant_id}.json", profile)
 
     cmd_env = {**env, **provider_env_defaults(plan["provider"], env)}
+    resolved_model = None
+    model_profile = plan.get("research_model_policy") or {}
+    if isinstance(model_profile, dict):
+        candidate = model_profile.get("resolved_model")
+        if candidate and candidate != "not-specified":
+            resolved_model = str(candidate)
     smoke_marker = f"AAS_FINAL_MARKER_{participant_id}_SMOKE"
     smoke = run_command(
         plan["command"],
@@ -843,6 +865,7 @@ def run_external_participant(
         env=cmd_env,
         final_marker=smoke_marker,
         provider=plan["provider"],
+        resolved_model=resolved_model,
     )
     write_probe(root, run_dir, participant_id, "smoke", smoke)
     smoke_validation = validate_command_output(smoke, smoke_marker)
@@ -866,6 +889,7 @@ def run_external_participant(
         env=cmd_env,
         final_marker=task_marker,
         provider=plan["provider"],
+        resolved_model=resolved_model,
     )
     write_raw(root, run_dir, participant_id, completed, plan["command_shape"])
     parsed = parse_result_json(completed.stdout)
@@ -885,6 +909,17 @@ def run_external_participant(
 
 def build_capability_profile(plan: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
+    transport = plan.get("input_transport") or (
+        KIMI_RUNTIME_ARGV_TRANSPORT if plan.get("provider") == "kimi" else "stdin"
+    )
+    if transport == KIMI_RUNTIME_ARGV_TRANSPORT:
+        cwd_assumptions = "selected root or caller cwd; task input is delivered as kimi -p argv after the prompt is known"
+        transports = [KIMI_RUNTIME_ARGV_TRANSPORT]
+        capabilities = [KIMI_RUNTIME_ARGV_TRANSPORT, "json-envelope-final-marker"]
+    else:
+        cwd_assumptions = "selected root or caller cwd; task input is transported over stdin"
+        transports = ["stdin"]
+        capabilities = ["stdin", "json-envelope-final-marker"]
     profile = {
         "profile_id": f"{plan['provider']}-{now.strftime('%Y%m%d%H%M%S')}",
         "provider": plan["provider"],
@@ -893,19 +928,20 @@ def build_capability_profile(plan: dict[str, Any]) -> dict[str, Any]:
         "profile_source": "live-dispatch",
         "observed_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=24)).isoformat(),
-        "cwd_assumptions": "selected root or caller cwd; task input is transported over stdin",
+        "cwd_assumptions": cwd_assumptions,
         "auth_status": "not_checked",
         "config_status": "not_checked",
-        "input_transports_tested": ["stdin"],
+        "input_transports_tested": transports,
         "output_modes_tested": ["json-envelope-final-marker"],
         "file_read_fidelity": "not_needed",
         "timeout_behavior": "checked",
         "truncation_status": "not_checked",
-        "validated_capabilities": ["stdin", "json-envelope-final-marker"],
+        "validated_capabilities": capabilities,
         "blocked_capabilities": [],
         "limitations": ["profile is valid only for this run and command shape"],
         "command_shape": plan["command_shape"],
         "research_model_policy": plan["research_model_policy"],
+        "input_transport": transport,
     }
     if "grok_profile_status" in plan:
         profile["grok_profile_status"] = dict(plan["grok_profile_status"])
@@ -1117,6 +1153,7 @@ def run_command(
     env: dict[str, str],
     final_marker: str,
     provider: str | None = None,
+    resolved_model: str | None = None,
 ) -> CompletedCommand:
     rendered = render_command_template(command, final_marker)
     try:
@@ -1125,12 +1162,32 @@ def run_command(
         raise ValueError(f"invalid dispatch command: {exc}") from exc
     if not parts:
         raise ValueError("empty dispatch command")
+    stdin_prompt = prompt
+    if provider == "kimi":
+        if len(prompt) > KIMI_MAX_PROMPT_CHARS:
+            raise ValueError(
+                f"kimi prompt exceeds safe argv budget of {KIMI_MAX_PROMPT_CHARS} characters "
+                "(shell_argument_limit)"
+            )
+        # runtime_argv_prompt: deliver after prompt is known; do not rely on stdin.
+        if "{prompt}" in rendered:
+            # Operator template requested explicit placeholder substitution.
+            rendered = rendered.replace("{prompt}", prompt)
+            parts = split_dispatch_command(rendered)
+        else:
+            parts = [*parts, "-p", prompt]
+        model = resolved_model or env.get("AAS_KIMI_LATEST_MODEL")
+        if model:
+            if KIMI_MODEL_ID_RE.fullmatch(model) is None:
+                raise ValueError("resolved Kimi model ID is invalid")
+            parts.extend(["-m", model])
+        stdin_prompt = ""
     command_env = dict(env)
     command_env["AAS_DELEGATION_FINAL_MARKER"] = final_marker
     try:
         completed = subprocess.run(
             parts,
-            input=prompt,
+            input=stdin_prompt,
             text=True,
             capture_output=True,
             timeout=timeout,
