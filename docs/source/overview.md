@@ -25,7 +25,13 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
 
 ## Main Ideas
 
-- Canonical skills live under `canonical/skills/`.
+- Canonical skills live under `canonical/skills/`. Runtime helpers live under
+  `canonical/runtime/`. Agent homes and `~/.openclaw/workspace/skills/*` are
+  **install products** — edit the checkout first, then install or publish.
+- OpenClaw dual-route `/aas` for remote-bridge is published from
+  `canonical/runtime/skills/remote-bridge/` via `publish_openclaw_adapter.py`
+  into `~/.openclaw/workspace/skills/aas-remote-bridge/` (not a managed
+  `openclaw-target-*` skill-file install).
 - Profiles in `manifest/profiles.yaml` select useful skill bundles.
 - Optional artifacts add templates, personas, instruction docs, entrypoint
   aliases, and management notices outside normal skill directories.

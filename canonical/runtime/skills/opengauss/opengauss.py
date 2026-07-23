@@ -41,6 +41,49 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("smoke")
     sub.add_parser("selftest")
 
+    lp = sub.add_parser(
+        "live-preflight",
+        help="Opt-in live readiness: resolve gauss/claude/lake/project without /prove",
+    )
+    lp.add_argument(
+        "--project-root",
+        default="",
+        help="Lean project root with .gauss/project.yaml (optional)",
+    )
+    lp.add_argument(
+        "--run-gauss-doctor",
+        action="store_true",
+        help="Execute `gauss doctor` (no LLM prove). Still local tooling only.",
+    )
+
+    lps = sub.add_parser(
+        "live-prove-smoke",
+        help="Opt-in live prove-path smoke (requires AAS_OPENGAUSS_LIVE_PROVE=1; never default CI)",
+    )
+    lps.add_argument("--project-root", required=True, help="Lean project root")
+    lps.add_argument(
+        "--backend",
+        default="claude-code",
+        choices=["claude-code", "codex"],
+        help="Managed prove backend preference for the smoke",
+    )
+    lps.add_argument(
+        "--timeout-sec",
+        type=int,
+        default=180,
+        help="Wall timeout for backend ping / optional prove probe (default 180)",
+    )
+    lps.add_argument(
+        "--attempt-prove",
+        action="store_true",
+        help="Also try a short non-interactive gauss chat probe (still not claim-support)",
+    )
+    lps.add_argument(
+        "--work-dir",
+        default="",
+        help="Directory for live_prove_smoke.json report (default: project .gauss/runtime)",
+    )
+
     sp = sub.add_parser("spike")
     sp.add_argument("--work-dir", required=True, help="Directory for spike report JSON")
     sp.add_argument(
@@ -84,6 +127,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in {"smoke", "selftest"}:
         emit(smoke_payload())
         return 0
+    if args.command == "live-preflight":
+        return cmd_live_preflight(args)
+    if args.command == "live-prove-smoke":
+        return cmd_live_prove_smoke(args)
     if args.command == "spike":
         return cmd_spike(args)
     if args.command == "preflight":
@@ -131,6 +178,8 @@ def doctor_payload() -> dict[str, Any]:
             "platform": plat,
             "tool_status": {
                 "gauss": tool_status("gauss", env_keys=("AAS_GAUSS", "GAUSS_CLI")),
+                "claude": tool_status("claude", env_keys=("AAS_CLAUDE", "CLAUDE_CLI")),
+                "codex": tool_status("codex", env_keys=("AAS_CODEX", "CODEX_CLI")),
                 "uv": tool_status("uv"),
                 "uvx": tool_status("uvx"),
                 "rg": tool_status("rg"),
@@ -148,11 +197,13 @@ def doctor_payload() -> dict[str, Any]:
             "manual_live_use": manual_live_use(),
             "evidence_policy": evidence_policy(),
             "adapter_policy": adapter_policy(),
+            "live_test_policy": live_test_policy(),
             "limitations": [
                 "doctor is offline and never invokes gauss, lake, lean, or backend CLIs",
                 "native Windows live OpenGauss is unsupported; use WSL2 or Morph",
                 "missing OpenGauss is not failed theorem evidence",
                 "auto-launch requires headless_qualified spike report in work-dir",
+                "live-prove-smoke is opt-in (AAS_OPENGAUSS_LIVE_PROVE=1) and never default CI",
             ],
         }
     )
@@ -668,6 +719,356 @@ def adapter_policy() -> dict[str, Any]:
         "usd_enforcement": "advisory_unless_measurable",
         "launch_without_driver": "always_refused",
     }
+
+
+def live_test_policy() -> dict[str, Any]:
+    return {
+        "offline_smoke": "default CI — never launches gauss or LLM",
+        "live_preflight": "local readiness: PATH/tool resolution; optional gauss doctor",
+        "live_prove_smoke": {
+            "default_ci": "skipped",
+            "enable_env": "AAS_OPENGAUSS_LIVE_PROVE=1",
+            "purpose": "backend ping + optional short gauss chat probe; provenance only",
+            "not_claim_support": True,
+            "not_formal_check": True,
+        },
+        "path_requirement": [
+            "~/.local/bin (gauss, claude symlink)",
+            "~/.npm-global/bin (claude-code install)",
+        ],
+    }
+
+
+def project_preflight(project_root: str | None) -> dict[str, Any]:
+    if not project_root:
+        return {"checked": False, "status": "skipped", "reason": "no_project_root"}
+    root = Path(project_root).expanduser().resolve()
+    yaml_path = root / ".gauss" / "project.yaml"
+    basic = root / "ExampleProject" / "Basic.lean"
+    if not basic.is_file():
+        # generic Lake layouts
+        candidates = list(root.glob("**/Basic.lean"))[:5]
+        basic_status = {
+            "path": str(basic),
+            "status": "missing_default",
+            "other_basic_lean": [str(p) for p in candidates],
+        }
+    else:
+        basic_status = {"path": str(basic), "status": "present"}
+    return {
+        "checked": True,
+        "root": str(root),
+        "exists": root.is_dir(),
+        "project_yaml": {
+            "path": str(yaml_path),
+            "status": "present" if yaml_path.is_file() else "missing",
+        },
+        "lean_skeleton": basic_status,
+        "status": "ok" if root.is_dir() and yaml_path.is_file() else "incomplete",
+    }
+
+
+def cmd_live_preflight(args: argparse.Namespace) -> int:
+    """Resolve live tools/paths. Does not run /prove or bank math."""
+    # Prefer standard user bins so managed agents with thin PATH still find claude.
+    path_extra = []
+    home = Path.home()
+    for extra in (home / ".local" / "bin", home / ".npm-global" / "bin", home / ".elan" / "bin"):
+        if extra.is_dir():
+            path_extra.append(str(extra))
+    merged_path = os.pathsep.join([*path_extra, os.environ.get("PATH", "")])
+    env = {**os.environ, "PATH": merged_path}
+
+    tools = {
+        "gauss": _which_status("gauss", env),
+        "claude": _which_status("claude", env),
+        "codex": _which_status("codex", env),
+        "lake": _which_status("lake", env),
+        "lean": _which_status("lean", env),
+    }
+    project = project_preflight(getattr(args, "project_root", "") or None)
+    gauss_doctor: dict[str, Any] = {"ran": False}
+    if getattr(args, "run_gauss_doctor", False) and tools["gauss"]["status"] == "available":
+        gauss_doctor = _run_capture(
+            [tools["gauss"]["path"], "doctor"],
+            env=env,
+            timeout_sec=60,
+            cwd=project.get("root") if project.get("exists") else None,
+        )
+        gauss_doctor["ran"] = True
+
+    claude_ok = tools["claude"]["status"] == "available"
+    gauss_ok = tools["gauss"]["status"] == "available"
+    ok = gauss_ok and (claude_ok or tools["codex"]["status"] == "available")
+    payload = {
+        **base_payload("ok" if ok else "degraded"),
+        "command": "live-preflight",
+        "ok": ok,
+        "path_augmented": path_extra,
+        "tools": tools,
+        "project": project,
+        "gauss_doctor": gauss_doctor,
+        "ready_for_claude_backend": bool(gauss_ok and claude_ok),
+        "ready_for_codex_backend": bool(gauss_ok and tools["codex"]["status"] == "available"),
+        "live_api_attempted": False,
+        "evidence_policy": evidence_policy(),
+        "live_test_policy": live_test_policy(),
+        "notes": [
+            "live-preflight does not run /prove and is not formal_check",
+            "if claude is missing: ensure ~/.local/bin/claude symlink and PATH",
+        ],
+    }
+    emit(payload)
+    return 0 if ok else 2
+
+
+def cmd_live_prove_smoke(args: argparse.Namespace) -> int:
+    """Opt-in live prove-path smoke. Never claim-support; default CI must not enable."""
+    if os.environ.get("AAS_OPENGAUSS_LIVE_PROVE", "").strip() != "1":
+        emit(
+            {
+                **base_payload("refused"),
+                "command": "live-prove-smoke",
+                "ok": False,
+                "error_code": "live_prove_disabled",
+                "message": (
+                    "Refusing live prove smoke. Set AAS_OPENGAUSS_LIVE_PROVE=1 explicitly. "
+                    "Never enable this in default CI."
+                ),
+                "gauss_launched": False,
+                "live_api_attempted": False,
+                "live_test_policy": live_test_policy(),
+            }
+        )
+        return 2
+
+    # Reuse preflight with PATH fix.
+    class _NS:
+        project_root = args.project_root
+        run_gauss_doctor = True
+
+    # Build preflight inline (avoid double emit).
+    home = Path.home()
+    path_extra = [
+        str(p)
+        for p in (home / ".local" / "bin", home / ".npm-global" / "bin", home / ".elan" / "bin")
+        if p.is_dir()
+    ]
+    env = {**os.environ, "PATH": os.pathsep.join([*path_extra, os.environ.get("PATH", "")])}
+    tools = {
+        "gauss": _which_status("gauss", env),
+        "claude": _which_status("claude", env),
+        "codex": _which_status("codex", env),
+        "lake": _which_status("lake", env),
+        "lean": _which_status("lean", env),
+    }
+    project = project_preflight(args.project_root)
+    backend = args.backend
+    timeout = max(30, int(args.timeout_sec))
+
+    backend_ping: dict[str, Any] = {"backend": backend, "ran": False}
+    live_api = False
+    if backend == "claude-code":
+        if tools["claude"]["status"] != "available":
+            payload = {
+                **base_payload("failed"),
+                "command": "live-prove-smoke",
+                "ok": False,
+                "error_code": "claude_cli_missing",
+                "message": "claude CLI not on PATH after augmenting ~/.local/bin and ~/.npm-global/bin",
+                "tools": tools,
+                "project": project,
+                "gauss_launched": False,
+                "live_api_attempted": False,
+            }
+            emit(payload)
+            return 2
+        live_api = True
+        backend_ping = _run_capture(
+            [
+                tools["claude"]["path"],
+                "-p",
+                "Reply with exactly OPENGAUSS_LIVE_BACKEND_OK and nothing else.",
+            ],
+            env=env,
+            timeout_sec=min(timeout, 120),
+            cwd=project.get("root") if project.get("exists") else None,
+        )
+        backend_ping["backend"] = "claude-code"
+        backend_ping["marker_ok"] = "OPENGAUSS_LIVE_BACKEND_OK" in (
+            (backend_ping.get("stdout") or "") + (backend_ping.get("stderr") or "")
+        )
+    else:
+        if tools["codex"]["status"] != "available":
+            emit(
+                {
+                    **base_payload("failed"),
+                    "command": "live-prove-smoke",
+                    "ok": False,
+                    "error_code": "codex_cli_missing",
+                    "tools": tools,
+                    "gauss_launched": False,
+                    "live_api_attempted": False,
+                }
+            )
+            return 2
+        live_api = True
+        backend_ping = _run_capture(
+            [
+                tools["codex"]["path"],
+                "exec",
+                "--sandbox",
+                "read-only",
+                "Reply with exactly OPENGAUSS_LIVE_BACKEND_OK and nothing else.",
+            ],
+            env=env,
+            timeout_sec=min(timeout, 120),
+            cwd=project.get("root") if project.get("exists") else None,
+        )
+        backend_ping["backend"] = "codex"
+        backend_ping["marker_ok"] = "OPENGAUSS_LIVE_BACKEND_OK" in (
+            (backend_ping.get("stdout") or "") + (backend_ping.get("stderr") or "")
+        )
+
+    prove_probe: dict[str, Any] = {"ran": False, "attempted": False}
+    if args.attempt_prove and tools["gauss"]["status"] == "available" and project.get("exists"):
+        prove_probe["attempted"] = True
+        live_api = True
+        # Short non-interactive chat probe — not a full /prove REPL driver.
+        query = (
+            f"Project root: {project['root']}. "
+            "Do not edit any files. Confirm you can see this Lean project context and "
+            "reply with exactly OPENGAUSS_LIVE_PROVE_PATH_OK."
+        )
+        prove_probe = _run_capture(
+            [tools["gauss"]["path"], "chat", "-Q", "-q", query, "--yolo"],
+            env=env,
+            timeout_sec=timeout,
+            cwd=project["root"],
+        )
+        prove_probe["ran"] = True
+        prove_probe["marker_ok"] = "OPENGAUSS_LIVE_PROVE_PATH_OK" in (
+            (prove_probe.get("stdout") or "") + (prove_probe.get("stderr") or "")
+        )
+
+    backend_ok = bool(backend_ping.get("ok") and backend_ping.get("marker_ok"))
+    prove_ok = (not prove_probe.get("attempted")) or bool(prove_probe.get("marker_ok"))
+    ok = backend_ok and prove_ok and project.get("status") == "ok"
+
+    report = {
+        **base_payload("ok" if ok else "failed"),
+        "command": "live-prove-smoke",
+        "ok": ok,
+        "schema": "opengauss.live_prove_smoke.v1",
+        "backend": backend,
+        "tools": tools,
+        "project": project,
+        "backend_ping": _redact_run(backend_ping),
+        "prove_probe": _redact_run(prove_probe),
+        "live_api_attempted": live_api,
+        "gauss_launched": bool(prove_probe.get("ran")),
+        "claim_support": False,
+        "formal_check": False,
+        "evidence_policy": evidence_policy(),
+        "live_test_policy": live_test_policy(),
+        "notes": [
+            "Success means backend path responded; not that F5 (or any theorem) is proved",
+            "Record as opengauss_run provenance only",
+        ],
+    }
+
+    work = Path(args.work_dir).expanduser() if args.work_dir else None
+    if work is None and project.get("exists"):
+        work = Path(project["root"]) / ".gauss" / "runtime"
+    if work is not None:
+        try:
+            work.mkdir(parents=True, exist_ok=True)
+            out = work / "live_prove_smoke.json"
+            out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            report["report_path"] = str(out)
+        except OSError as exc:
+            report["report_write_error"] = str(exc)
+
+    emit(report)
+    return 0 if ok else 1
+
+
+def _which_status(name: str, env: dict[str, str]) -> dict[str, Any]:
+    path = shutil.which(name, path=env.get("PATH"))
+    return {
+        "name": name,
+        "status": "available" if path else "tool_unavailable",
+        "path": path,
+        "executed": False,
+        "checked_by": "shutil.which",
+    }
+
+
+def _run_capture(
+    argv: list[str],
+    *,
+    env: dict[str, str],
+    timeout_sec: int,
+    cwd: str | None,
+) -> dict[str, Any]:
+    import subprocess
+
+    started = time.time()
+    try:
+        completed = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=cwd,
+            timeout=timeout_sec,
+            check=False,
+        )
+        return {
+            "ok": completed.returncode == 0,
+            "returncode": completed.returncode,
+            "argv0": argv[0],
+            "argv_tail": argv[1:6],
+            "stdout": (completed.stdout or "")[-4000:],
+            "stderr": (completed.stderr or "")[-2000:],
+            "duration_ms": int((time.time() - started) * 1000),
+            "timeout": False,
+        }
+    except subprocess.TimeoutExpired as exc:
+        raw_out = exc.stdout or ""
+        if isinstance(raw_out, (bytes, bytearray)):
+            raw_out = raw_out.decode("utf-8", errors="replace")
+        return {
+            "ok": False,
+            "returncode": 124,
+            "argv0": argv[0],
+            "argv_tail": argv[1:6],
+            "stdout": str(raw_out)[-4000:],
+            "stderr": "timeout",
+            "duration_ms": int((time.time() - started) * 1000),
+            "timeout": True,
+        }
+    except OSError as exc:
+        return {
+            "ok": False,
+            "returncode": 127,
+            "argv0": argv[0],
+            "error": str(exc),
+            "duration_ms": int((time.time() - started) * 1000),
+            "timeout": False,
+        }
+
+
+def _redact_run(run: dict[str, Any]) -> dict[str, Any]:
+    """Drop bulky/noisy fields for stable reports while keeping markers."""
+    if not run:
+        return run
+    out = dict(run)
+    for key in ("stdout", "stderr"):
+        text = out.get(key)
+        if isinstance(text, str) and len(text) > 800:
+            out[key] = text[:400] + "\n…\n" + text[-400:]
+    return out
 
 
 def emit(payload: dict[str, Any]) -> None:

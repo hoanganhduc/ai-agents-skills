@@ -1606,6 +1606,14 @@ Implemented fail-closed behavior:
 - support files are skipped unless backed by
   `manifest/schema/openclaw/target-support-file.schema.json` metadata
 
+**Out of band from managed skill-file installs:** the dual-route `/aas`
+adapter under `~/.openclaw/workspace/skills/aas-remote-bridge/` is published
+from `canonical/runtime/skills/remote-bridge/` via
+`publish_openclaw_adapter.py`. It is not authorized by `openclaw-target-*`
+manifests. Edit canonical first; refresh the workspace copy with the publisher.
+Host↔workspace secrets/state sync is part of that runtime
+(`sync_remote_bridge_paths.py`).
+
 ## Scope And Evidence
 
 Scope:
@@ -3339,6 +3347,23 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | Antigravity | `~/.gemini/antigravity-cli` | `~/.gemini/antigravity-cli/skills/<skill>.md` | `~/.gemini/GEMINI.md` |
 | Grok | `~/.grok` | `~/.grok/skills/<skill>/` | `~/.grok/AGENTS.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
+
+**Source of truth vs install products.** Reusable skill and runtime logic is
+edited under `canonical/` (and installed into
+`~/.local/share/ai-agents-skills/runtime/`). Agent skill homes and OpenClaw
+workspace trees are install products. Do not invent durable skill behavior only
+under `~/.openclaw`.
+
+**OpenClaw dual-route `/aas` adapter (workspace, not managed skill install).**
+Messages that start with `/aas` may be routed to remote-bridge from an OpenClaw
+sandbox via a published adapter. Source:
+`canonical/runtime/skills/remote-bridge/` (including `dispatch_aas.py`,
+`sync_remote_bridge_paths.py`, `publish_openclaw_adapter.py`, and
+`openclaw-adapter/`). Published tree:
+`~/.openclaw/workspace/skills/aas-remote-bridge/`. Secrets/state are mirrored
+host↔workspace (newer-wins); disable with `AAS_REMOTE_BRIDGE_SYNC=0`. See
+`targets/openclaw/README.md` and
+`canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
 
 Optional or compatibility skill locations:
 

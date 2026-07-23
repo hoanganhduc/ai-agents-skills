@@ -55,6 +55,33 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/opengauss/run_opengauss.sh smoke
 ```
 
+### Live readiness / prove-path smoke (opt-in)
+
+Offline CI stays on `smoke` / `doctor`. Live coverage is **explicit**:
+
+```bash
+# 1) Tool/PATH/project readiness (no /prove, no claim-support)
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/opengauss/run_opengauss.sh live-preflight \
+  --project-root /path/to/lean-project \
+  --run-gauss-doctor
+
+# 2) Backend ping + optional short gauss chat probe (LLM; costs quota)
+# NEVER set this in default CI.
+export AAS_OPENGAUSS_LIVE_PROVE=1
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/opengauss/run_opengauss.sh live-prove-smoke \
+  --project-root /path/to/lean-project \
+  --backend claude-code \
+  --timeout-sec 180
+# optional: --attempt-prove
+```
+
+Success of `live-prove-smoke` means the **backend path responded**, not that a theorem is proved.
+Record as `opengauss_run` provenance only; still require Lake + strict Lean gate for formal claims.
+
+PATH must include `~/.local/bin` (and preferably `~/.npm-global/bin`) so OpenGauss can find `claude`.
+
 ## When to use in research
 
 | Situation | Action |

@@ -68,6 +68,37 @@ Env overrides: `REMOTE_BRIDGE_SECRETS_FILE`, `ZULIP_*`, `TELEGRAM_BOT_TOKEN`,
 **Do not** auto-read `~/.openclaw`. Prefer a **dedicated** Zulip bot user and a
 **dedicated** Telegram bot (not OpenClaw’s).
 
+### Host ↔ OpenClaw workspace secrets/state sync
+
+OpenClaw sandbox cannot bind-mount `~/.config`. When a dual-route OpenClaw
+adapter is present, secrets and mailbox state are mirrored (newer-wins) between:
+
+| Side | Secrets | State |
+|------|---------|-------|
+| Host | `~/.config/remote-bridge/secrets.json` | `~/.local/share/ai-agents-skills/remote-bridge` |
+| Workspace | `~/.openclaw/workspace/secrets/remote-bridge/secrets.json` | `~/.openclaw/workspace/.remote-bridge-state` |
+
+- Auto: `dispatch_aas.py` before `/aas`; host `remote_bridge.py` before/after
+  send/arm/handle/etc.
+- Manual: `aas-remote-bridge-sync` or
+  `python3 …/sync_remote_bridge_paths.py --json`
+- Disable: `AAS_REMOTE_BRIDGE_SYNC=0`
+- Engine: `canonical/runtime/skills/remote-bridge/sync_remote_bridge_paths.py`
+
+## Source of truth and OpenClaw dual-route
+
+Reusable logic lives in **`~/ai-agents-skills`** (this skill +
+`canonical/runtime/skills/remote-bridge/`). Agent homes and
+`~/.openclaw/workspace/skills/aas-remote-bridge/` are **install products**.
+
+For `/aas` inside OpenClaw, publish the dual-route adapter from canonical:
+
+```bash
+python3 canonical/runtime/skills/remote-bridge/publish_openclaw_adapter.py
+```
+
+See `canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
+
 ## Commands
 
 | Command | Purpose |
@@ -107,7 +138,7 @@ without an extra flag. Prefer:
 Optional job id for topic routing / channel override:
 
 ```bash
-export AAS_REMOTE_JOB_ID=clawfree
+export AAS_REMOTE_JOB_ID=example-job
 # default when secrets present: Zulip primary, Telegram only if Zulip fails
 # export AAS_AUTOLOOP_NOTIFY=zulip     # same as default primary
 # export AAS_AUTOLOOP_NOTIFY=telegram  # Telegram only

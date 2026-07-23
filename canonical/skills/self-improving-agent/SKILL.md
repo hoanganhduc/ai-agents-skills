@@ -43,10 +43,15 @@ Canonical integration targets:
   landing pages
 - `tests/` for focused regression coverage
 
-Codex, Claude, DeepSeek, Copilot, and other agent homes are runtime install
-targets, not the primary place for reusable
-fixes. Update them through the installer after the canonical repo change is
-planned, reviewed, and verified.
+Codex, Claude, DeepSeek, Copilot, Grok, and other agent homes are runtime
+install targets, not the primary place for reusable fixes. Update them through
+the installer after the canonical repo change is planned, reviewed, and
+verified.
+
+`~/.openclaw/workspace/skills/*` (including dual-route adapters such as
+`aas-remote-bridge`) is also an install product. Edit
+`canonical/skills/` and `canonical/runtime/` first, then publish or install.
+Never land durable skill logic only under OpenClaw.
 
 ## Install-target model
 

@@ -188,6 +188,99 @@ class RemoteBridgeMailbox(unittest.TestCase):
         self.assertEqual(json.loads(res.stdout).get("error_code"), "truncated_input")
 
 
+
+
+class RemoteBridgePathSync(unittest.TestCase):
+    def test_secrets_newer_wins(self) -> None:
+        import importlib.util
+        import time
+
+        sync_py = REPO / "canonical" / "runtime" / "skills" / "remote-bridge" / "sync_remote_bridge_paths.py"
+        spec = importlib.util.spec_from_file_location("rb_sync_test", sync_py)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            host = root / "host_secrets.json"
+            ws = root / "ws_secrets.json"
+            host.write_text('{"token":"host"}\n', encoding="utf-8")
+            time.sleep(0.02)
+            ws.write_text('{"token":"ws"}\n', encoding="utf-8")
+            # ws is newer
+            out = mod.sync_secrets_file(host, ws)
+            self.assertEqual(out.get("direction"), "b_to_a")
+            self.assertEqual(host.read_text(encoding="utf-8"), '{"token":"ws"}\n')
+
+    def test_disabled_by_env(self) -> None:
+        import importlib.util
+
+        sync_py = REPO / "canonical" / "runtime" / "skills" / "remote-bridge" / "sync_remote_bridge_paths.py"
+        spec = importlib.util.spec_from_file_location("rb_sync_test2", sync_py)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        env_key = "AAS_REMOTE_BRIDGE_SYNC"
+        old = os.environ.get(env_key)
+        try:
+            os.environ[env_key] = "0"
+            out = mod.sync_once(quiet=True)
+            self.assertTrue(out.get("skipped"))
+        finally:
+            if old is None:
+                os.environ.pop(env_key, None)
+            else:
+                os.environ[env_key] = old
+
+
+class RemoteBridgeOpenClawPublish(unittest.TestCase):
+    def test_publish_dry_run_and_apply(self) -> None:
+        pub = REPO / "canonical" / "runtime" / "skills" / "remote-bridge" / "publish_openclaw_adapter.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "aas-remote-bridge"
+            res = subprocess.run(
+                [sys.executable, "-B", str(pub), "--dest", str(dest), "--dry-run", "--json"],
+                capture_output=True,
+                text=True,
+                env=_subprocess_env(),
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            data = json.loads(res.stdout)
+            self.assertTrue(data.get("ok"))
+            self.assertTrue(data.get("dry_run"))
+            self.assertFalse(dest.exists())
+
+            res = subprocess.run(
+                [sys.executable, "-B", str(pub), "--dest", str(dest), "--json"],
+                capture_output=True,
+                text=True,
+                env=_subprocess_env(),
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            data = json.loads(res.stdout)
+            self.assertTrue(data.get("ok"))
+            self.assertTrue((dest / "SKILL.md").is_file())
+            self.assertTrue((dest / "scripts" / "dispatch_aas.py").is_file())
+            self.assertTrue((dest / "scripts" / "sync_remote_bridge_paths.py").is_file())
+            self.assertTrue((dest / "vendor" / "remote_bridge.py").is_file())
+            self.assertTrue((dest / ".aas-published.json").is_file())
+
+            # second apply is noop
+            res = subprocess.run(
+                [sys.executable, "-B", str(pub), "--dest", str(dest), "--json"],
+                capture_output=True,
+                text=True,
+                env=_subprocess_env(),
+                check=False,
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            actions = json.loads(res.stdout).get("actions") or []
+            self.assertTrue(all(a.get("action") == "noop" for a in actions))
+
+
 class RemoteBridgeDigest(unittest.TestCase):
     def test_digest_stable(self) -> None:
         import importlib.util

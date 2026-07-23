@@ -98,6 +98,40 @@ class OpenGaussRuntimeTests(unittest.TestCase):
         checks = validate_smoke_output({}, "opengauss", res, ["smoke"])
         self.assertTrue(all(c["ok"] for c in checks), checks)
 
+    def test_live_prove_smoke_refuses_without_opt_in(self) -> None:
+        env = os.environ.copy()
+        env.pop("AAS_OPENGAUSS_LIVE_PROVE", None)
+        res = _run(
+            "live-prove-smoke",
+            "--project-root",
+            "/tmp/no-such-lean-project",
+            env=env,
+        )
+        self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+        data = json.loads(res.stdout)
+        self.assertEqual(data.get("error_code"), "live_prove_disabled")
+        self.assertFalse(data.get("live_api_attempted"))
+        self.assertFalse(data.get("gauss_launched"))
+
+    def test_live_preflight_reports_tools(self) -> None:
+        res = _run("live-preflight")
+        self.assertIn(res.returncode, (0, 2), res.stdout + res.stderr)
+        data = json.loads(res.stdout)
+        self.assertEqual(data.get("command"), "live-preflight")
+        self.assertIn("tools", data)
+        self.assertIn("claude", data["tools"])
+        self.assertIn("gauss", data["tools"])
+        self.assertFalse(data.get("live_api_attempted"))
+        self.assertIn("live_test_policy", data)
+
+    def test_doctor_lists_claude_discovery(self) -> None:
+        res = _run("doctor")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        data = json.loads(res.stdout)
+        tools = data.get("tool_status") or {}
+        self.assertIn("claude", tools)
+        self.assertFalse(tools["claude"].get("executed"))
+
     def test_spike_and_fail_closed_launch(self) -> None:
         import tempfile
 
