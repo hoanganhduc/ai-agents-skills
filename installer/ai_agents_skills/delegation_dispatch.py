@@ -12,6 +12,13 @@ from typing import Any
 from .delegation import PROVIDER_CLI_SPECS, build_external_agent_prechecks, redacted_command
 from .delegation_packets import RESULT_SCHEMA_VERSION, TASK_SCHEMA_VERSION, validate_result
 from .discovery import current_platform, discover_tool
+from .grok import (
+    GROK_BARE_CLI_TOOL_SPEC,
+    GROK_MODEL_ID_RE,
+    GROK_MODEL_PROBE_SCHEMA,
+    GROK_REMOTE_CLI_TOOL_SPEC,
+    probe_grok_model_membership,
+)
 from .state import now_run_id, preflight_state_path, sha256_text, state_dir, write_text_atomic
 
 
@@ -40,7 +47,7 @@ GROK_PROFILE_NAME = "default"
 GROK_PROFILE_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 GROK_PROFILE_GROK_RELEASE_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 GROK_PROFILE_RELEASE_RE = re.compile(r"^[A-Za-z0-9._:+/@-]{1,128}$")
-GROK_PROFILE_MODEL_RE = re.compile(r"^[A-Za-z0-9._:+/@-]{1,128}$")
+GROK_PROFILE_MODEL_RE = GROK_MODEL_ID_RE
 GROK_PROFILE_RUNG_RE = re.compile(
     r"^(?:direct|vpn|home:[A-Za-z0-9._:+@-]+|ios:[a-z0-9][a-z0-9._-]{0,63})$"
 )
@@ -66,6 +73,13 @@ GROK_PROFILE_REDACTED_BLOCKED_REASONS = {
 }
 
 
+def provider_subprocess_options(provider: str | None) -> dict[str, int]:
+    """Return provider-scoped subprocess hardening without changing Windows."""
+    if provider == "grok" and os.name == "posix":
+        return {"umask": 0o077}
+    return {}
+
+
 def provider_env_defaults(provider: str, env: dict[str, str]) -> dict[str, str]:
     """Non-secret endpoint defaults injected into the child env at dispatch time.
 
@@ -86,6 +100,11 @@ def dispatch_external_agents(args: Any, manifests: dict[str, Any]) -> dict[str, 
     env = dict(os.environ)
     task_text = read_task_text(args.task, args.task_file)
     requested = requested_providers(args)
+    validate_resolved_model_syntax_before_prechecks(
+        requested,
+        args.resolved_model,
+        env,
+    )
     run_id = now_run_id()
     run_dir = resolve_run_dir(args.root, args.run_dir, run_id)
     prechecks = build_external_agent_prechecks(args.root, platform, manifests["delegation"], env=env)
@@ -155,6 +174,19 @@ def requested_providers(args: Any) -> list[str]:
     if args.providers:
         return [item.strip() for item in args.providers.split(",") if item.strip()]
     return [args.provider]
+
+
+def validate_resolved_model_syntax_before_prechecks(
+    requested: list[str],
+    resolved_model: str | None,
+    env: dict[str, str],
+) -> None:
+    """Reject an invalid effective Grok model before any CLI discovery."""
+    if not {"auto", "grok"}.intersection(requested):
+        return
+    model = resolved_model or env.get("AAS_GROK_LATEST_MODEL")
+    if model and GROK_MODEL_ID_RE.fullmatch(model) is None:
+        raise ValueError("resolved Grok model ID is invalid")
 
 
 def read_task_text(task: str | None, task_file: Path | None) -> str:
@@ -307,9 +339,6 @@ def build_provider_dispatch_plan(
     if check["configured_status"] != "active":
         return {"provider": provider, "status": "blocked", "reason": "provider is not active"}
 
-    command_template = dispatch_command(provider, root, platform, env)
-    if command_template is None:
-        return {"provider": provider, "status": "blocked", "reason": "dispatch CLI command missing"}
     model_profile = resolve_model_profile(provider, research, resolved_model, resolved_thinking, env)
     if model_profile["status"] != "ok":
         return {
@@ -318,7 +347,34 @@ def build_provider_dispatch_plan(
             "reason": model_profile["reason"],
             "research_model_policy": model_profile,
         }
-    if research and not env.get(dispatch_command_env_name(provider)):
+    grok_selection: dict[str, Any] | None = None
+    if provider == "grok":
+        requested_model = model_profile["resolved_model"]
+        grok_selection = resolve_grok_dispatch_command(
+            root,
+            platform,
+            env,
+            None if requested_model == "not-specified" else requested_model,
+        )
+        if grok_selection["status"] != "ok":
+            return {
+                "provider": provider,
+                "status": "blocked",
+                "reason": grok_selection["reason"],
+                "research_model_policy": model_profile,
+                "grok_selection": public_grok_selection(grok_selection),
+            }
+        command_template = str(grok_selection["command"])
+        if (
+            requested_model != "not-specified"
+            and grok_selection.get("source") != "explicit-dispatch-command"
+        ):
+            command_template = f"{command_template} --model {{model}}"
+    else:
+        command_template = dispatch_command(provider, root, platform, env)
+    if command_template is None:
+        return {"provider": provider, "status": "blocked", "reason": "dispatch CLI command missing"}
+    if research and provider != "grok" and not env.get(dispatch_command_env_name(provider)):
         return {
             "provider": provider,
             "status": "blocked",
@@ -337,6 +393,8 @@ def build_provider_dispatch_plan(
             }
             if grok_profile_status is not None:
                 blocked["grok_profile_status"] = grok_profile_status
+            if grok_selection is not None:
+                blocked["grok_selection"] = public_grok_selection(grok_selection)
             return blocked
         requested_model = model_profile["resolved_model"]
         if (
@@ -350,6 +408,7 @@ def build_provider_dispatch_plan(
                 "reason": "grok-remote profile model does not match the resolved model",
                 "research_model_policy": model_profile,
                 "grok_profile_status": grok_profile_status,
+                "grok_selection": public_grok_selection(grok_selection or {}),
             }
     command = render_model_placeholders(command_template, model_profile)
     spec = delegation["providers"][provider]
@@ -367,10 +426,17 @@ def build_provider_dispatch_plan(
     }
     if grok_profile_status is not None:
         item["grok_profile_status"] = grok_profile_status
+    if grok_selection is not None:
+        item["grok_selection"] = public_grok_selection(grok_selection)
     return item
 
 
 def dispatch_command(provider: str, root: Path, platform: str, env: dict[str, str]) -> str | None:
+    if provider == "grok":
+        selection = resolve_grok_dispatch_command(root, platform, env, None)
+        if selection["status"] != "ok":
+            return None
+        return str(selection["command"])
     configured = env.get(dispatch_command_env_name(provider))
     if configured:
         return configured
@@ -381,6 +447,183 @@ def dispatch_command(provider: str, root: Path, platform: str, env: dict[str, st
     if not command:
         return None
     return default_dispatch_command(provider, str(command))
+
+
+def resolve_grok_dispatch_command(
+    root: Path,
+    platform: str,
+    env: dict[str, str],
+    resolved_model: str | None,
+) -> dict[str, Any]:
+    """Resolve Grok with bare-first, exact-model, remote-fallback semantics.
+
+    Operator dispatch/binary overrides are authoritative: a failed bare-model
+    probe blocks that explicit choice instead of silently substituting the
+    proxy. Automatic proxy fallback is authorized only when an exact resolved
+    model exists and bare Grok cannot confirm it.
+    """
+    if resolved_model is not None and GROK_MODEL_ID_RE.fullmatch(resolved_model) is None:
+        return {
+            "status": "blocked",
+            "source": "resolved-model-validation",
+            "reason": "resolved Grok model ID is invalid",
+            "model_probe": {
+                "schema_version": GROK_MODEL_PROBE_SCHEMA,
+                "status": "not-confirmed",
+                "resolved_model": resolved_model,
+                "available_models": [],
+                "reason_code": "resolved_model_invalid",
+            },
+        }
+    configured = env.get(dispatch_command_env_name("grok"))
+    if configured:
+        return evaluate_grok_selection(
+            configured,
+            source="explicit-dispatch-command",
+            resolved_model=resolved_model,
+            env=env,
+        )
+
+    explicit_binary = env.get("AAS_GROK")
+    if explicit_binary:
+        discovered = discover_tool(
+            "grok-cli",
+            {"candidates": {platform: [explicit_binary]}},
+            platform,
+            root,
+        )
+        if discovered.get("status") not in {"ok", "degraded"} or not discovered.get("command"):
+            return {
+                "status": "blocked",
+                "source": "explicit-binary-override",
+                "reason": "AAS_GROK does not resolve to an executable command",
+            }
+        return evaluate_grok_selection(
+            default_dispatch_command("grok", str(discovered["command"])),
+            source="explicit-binary-override",
+            resolved_model=resolved_model,
+            env=env,
+        )
+
+    bare = discover_tool("grok-cli", GROK_BARE_CLI_TOOL_SPEC, platform, root)
+    bare_command = bare.get("command") if bare.get("status") in {"ok", "degraded"} else None
+    if resolved_model is None:
+        if bare_command:
+            return {
+                "status": "ok",
+                "source": "bare-default-no-resolved-model",
+                "command": default_dispatch_command("grok", str(bare_command)),
+                "model_probe": {
+                    "schema_version": GROK_MODEL_PROBE_SCHEMA,
+                    "status": "not-performed",
+                    "resolved_model": None,
+                    "available_models": [],
+                    "reason_code": "resolved_model_not_provided",
+                },
+            }
+        return {
+            "status": "blocked",
+            "source": "bare-default-no-resolved-model",
+            "reason": (
+                "bare Grok CLI is unavailable; grok-remote fallback requires an exact resolved model"
+            ),
+            "model_probe": {
+                "schema_version": GROK_MODEL_PROBE_SCHEMA,
+                "status": "not-performed",
+                "resolved_model": None,
+                "available_models": [],
+                "reason_code": "resolved_model_not_provided",
+            },
+        }
+
+    if bare_command:
+        model_probe = probe_grok_model_membership(str(bare_command), resolved_model, env)
+        if model_probe["status"] == "confirmed":
+            return {
+                "status": "ok",
+                "source": "bare-model-confirmed",
+                "command": default_dispatch_command("grok", str(bare_command)),
+                "model_probe": model_probe,
+            }
+    else:
+        model_probe = {
+            "schema_version": GROK_MODEL_PROBE_SCHEMA,
+            "status": "not-confirmed",
+            "resolved_model": resolved_model,
+            "available_models": [],
+            "reason_code": "bare_cli_missing",
+        }
+
+    remote = discover_tool("grok-cli", GROK_REMOTE_CLI_TOOL_SPEC, platform, root)
+    remote_command = remote.get("command") if remote.get("status") in {"ok", "degraded"} else None
+    if remote_command:
+        return {
+            "status": "ok",
+            "source": "remote-fallback-after-bare-nonconfirmation",
+            "command": default_dispatch_command("grok", str(remote_command)),
+            "model_probe": model_probe,
+        }
+    return {
+        "status": "blocked",
+        "source": "remote-fallback-after-bare-nonconfirmation",
+        "reason": (
+            "bare Grok did not confirm the resolved model and grok-remote fallback is unavailable"
+        ),
+        "model_probe": model_probe,
+    }
+
+
+def evaluate_grok_selection(
+    command: str,
+    *,
+    source: str,
+    resolved_model: str | None,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    if grok_command_is_remote(command):
+        return {"status": "ok", "source": source, "command": command}
+    if resolved_model is None:
+        return {
+            "status": "ok",
+            "source": source,
+            "command": command,
+            "model_probe": {
+                "schema_version": GROK_MODEL_PROBE_SCHEMA,
+                "status": "not-performed",
+                "resolved_model": None,
+                "available_models": [],
+                "reason_code": "resolved_model_not_provided",
+            },
+        }
+    probe = probe_grok_model_membership(command, resolved_model, env)
+    if probe["status"] != "confirmed":
+        return {
+            "status": "blocked",
+            "source": source,
+            "reason": "explicit bare Grok command did not confirm the resolved model",
+            "model_probe": probe,
+        }
+    return {
+        "status": "ok",
+        "source": source,
+        "command": command,
+        "model_probe": probe,
+    }
+
+
+def grok_command_is_remote(command: str) -> bool:
+    try:
+        parts = split_dispatch_command(command)
+    except ValueError:
+        return False
+    if not parts:
+        return False
+    executable_name = re.split(r"[\\/]", parts[0])[-1].lower()
+    return executable_name in GROK_REMOTE_EXECUTABLES
+
+
+def public_grok_selection(selection: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in selection.items() if key != "command"}
 
 
 def default_dispatch_command(provider: str, command: str) -> str:
@@ -416,6 +659,7 @@ def probe_grok_remote_profile(
     executable_name = re.split(r"[\\/]", executable)[-1].lower()
     if executable_name not in GROK_REMOTE_EXECUTABLES:
         return None, None
+    private_umask = provider_subprocess_options("grok")
     try:
         help_result = subprocess.run(
             [executable, "--help"],
@@ -424,6 +668,7 @@ def probe_grok_remote_profile(
             timeout=timeout,
             env=env,
             check=False,
+            **private_umask,
         )
     except subprocess.TimeoutExpired:
         return None, "grok-remote managed-profile support check timed out"
@@ -439,6 +684,7 @@ def probe_grok_remote_profile(
             timeout=timeout,
             env=env,
             check=False,
+            **private_umask,
         )
     except subprocess.TimeoutExpired:
         return None, "grok-remote profile readiness probe timed out"
@@ -546,6 +792,15 @@ def resolve_model_profile(
 ) -> dict[str, Any]:
     model = resolved_model or env.get(f"AAS_{provider.upper()}_LATEST_MODEL")
     thinking = resolved_thinking or env.get(f"AAS_{provider.upper()}_HIGHEST_THINKING")
+    if provider == "grok" and model and GROK_MODEL_ID_RE.fullmatch(model) is None:
+        return {
+            "status": "blocked",
+            "policy": "latest_model_highest_reasoning_required" if research else "not-required",
+            "reason": "resolved Grok model ID is invalid",
+            "resolved_model": model,
+            "resolved_thinking": thinking or "not-specified",
+            "source": "argument-or-env",
+        }
     if research and (not model or not thinking):
         return {
             "status": "blocked",
@@ -581,7 +836,14 @@ def run_external_participant(
 
     cmd_env = {**env, **provider_env_defaults(plan["provider"], env)}
     smoke_marker = f"AAS_FINAL_MARKER_{participant_id}_SMOKE"
-    smoke = run_command(plan["command"], smoke_prompt(smoke_marker), timeout=timeout, env=cmd_env, final_marker=smoke_marker)
+    smoke = run_command(
+        plan["command"],
+        smoke_prompt(smoke_marker),
+        timeout=timeout,
+        env=cmd_env,
+        final_marker=smoke_marker,
+        provider=plan["provider"],
+    )
     write_probe(root, run_dir, participant_id, "smoke", smoke)
     smoke_validation = validate_command_output(smoke, smoke_marker)
     if smoke_validation["status"] != "ok":
@@ -597,7 +859,14 @@ def run_external_participant(
         final_marker=task_marker,
         model_profile=plan["research_model_policy"],
     )
-    completed = run_command(plan["command"], prompt, timeout=timeout, env=cmd_env, final_marker=task_marker)
+    completed = run_command(
+        plan["command"],
+        prompt,
+        timeout=timeout,
+        env=cmd_env,
+        final_marker=task_marker,
+        provider=plan["provider"],
+    )
     write_raw(root, run_dir, participant_id, completed, plan["command_shape"])
     parsed = parse_result_json(completed.stdout)
     write_json(root, run_dir / "parsed" / f"{participant_id}.json", parsed)
@@ -640,6 +909,8 @@ def build_capability_profile(plan: dict[str, Any]) -> dict[str, Any]:
     }
     if "grok_profile_status" in plan:
         profile["grok_profile_status"] = dict(plan["grok_profile_status"])
+    if "grok_selection" in plan:
+        profile["grok_selection"] = dict(plan["grok_selection"])
     return profile
 
 
@@ -838,7 +1109,15 @@ class CompletedCommand:
         self.timed_out = timed_out
 
 
-def run_command(command: str, prompt: str, *, timeout: int, env: dict[str, str], final_marker: str) -> CompletedCommand:
+def run_command(
+    command: str,
+    prompt: str,
+    *,
+    timeout: int,
+    env: dict[str, str],
+    final_marker: str,
+    provider: str | None = None,
+) -> CompletedCommand:
     rendered = render_command_template(command, final_marker)
     try:
         parts = split_dispatch_command(rendered)
@@ -857,6 +1136,7 @@ def run_command(command: str, prompt: str, *, timeout: int, env: dict[str, str],
             timeout=timeout,
             env=command_env,
             check=False,
+            **provider_subprocess_options(provider),
         )
     except subprocess.TimeoutExpired as exc:
         return CompletedCommand(

@@ -108,13 +108,22 @@ themselves.
 ## Delegation
 
 Grok is also a cross-agent delegation provider. Live dispatch is CLI-based
-through `grok --prompt-file /dev/stdin`; on hosts with the region-correct
-`grok-remote` proxy it is preferred automatically. The parent dispatcher sets
-no multi-session environment override and adds no route flags. A bare proxy
-command relies on its active managed profile; explicit caller-supplied route or
-profile flags are preserved. Concurrent participants must use the same ready
-profile and concrete model/release identities. The dispatcher checks
-`grok-remote doctor --json`, accepts only an exact
+through `grok --prompt-file /dev/stdin`. With a resolved model, automatic
+selection first runs bare `grok models` and accepts only an exact anchored
+available-model row (`* <model>` with an optional `(default)` suffix). Exact
+membership selects bare Grok and pins `--model`; on POSIX, model probes, remote
+readiness checks, and actual Grok children use umask `0077` so any Grok-created
+cache stays private. Missing, failed, timed-out, or
+non-matching membership permits the `grok-remote` fallback tier. Without a
+resolved model, automatic selection uses bare Grok only and does not authorize
+the proxy. Generic provider prechecks are bare-only and never version-probe an
+automatically discovered proxy. The parent dispatcher sets no multi-session
+environment override and adds no route flags. Explicit `AAS_GROK` and
+`AAS_GROK_DISPATCH_COMMAND`
+overrides remain authoritative and are not silently replaced. A selected proxy
+relies on its active managed profile; concurrent proxy participants must use
+the same ready profile and concrete model/release identities. The dispatcher
+checks `grok-remote doctor --json`, accepts only an exact
 `grok-remote.profile-status.v1` result in `ready` or `degraded` state, and
 requires its `model_id` to match the resolved model. Invalid or non-ready
 results fail closed, and private topology is not recorded. The dispatcher first
@@ -127,7 +136,8 @@ the repo
 ## Autonomous research loop force-continue (driver)
 
 **Provider id is always `grok`.** There is no `grok-remote` provider. The on-disk
-CLI may resolve to `grok-remote` (region proxy) or bare `grok` / `grok.exe`.
+CLI may resolve to bare `grok` / `grok.exe` or to a model-gated `grok-remote`
+fallback.
 
 ### What enforces force-continue
 
@@ -143,15 +153,29 @@ headless driver, not a single chat session.
 
 ### Binary resolution (drive / `agent-cmd --provider grok`)
 
-Preference (first usable wins), aligned with installer `GROK_CLI_TOOL_SPEC`:
+Preference, aligned with installer `GROK_CLI_TOOL_SPEC`:
 
 1. `AAS_AUTOLOOP_CMD_GROK` (full shell template)
 2. `AAS_AUTOLOOP_BIN_GROK` (explicit binary path)
 3. `AAS_GROK` (same override as installer/delegation)
-4. Platform candidates — prefer **`grok-remote`** then bare **`grok`**
-   - Linux/WSL: `grok-remote`, `~/grok-proxy/grok-remote`, `grok`, `~/.local/bin/grok`, `~/.grok/bin/grok`
+4. Bare platform candidates:
+   - Linux/WSL: `grok`, `~/.local/bin/grok`, `~/.grok/bin/grok`
    - macOS: same plus `/opt/homebrew/bin/grok`, `/usr/local/bin/grok`
-   - Windows: `grok-remote.cmd`, `grok-remote`, `%USERPROFILE%\.grok\bin\grok.exe`, `grok.exe`, `grok`
+   - Windows: `%USERPROFILE%\.grok\bin\grok.exe`, `grok.exe`, `grok`
+5. When `AAS_GROK_LATEST_MODEL` is set, the resolver probes distinct bare
+   executables with `grok models`. On POSIX, every selected Grok subprocess,
+   including remote readiness checks and the actual drive child, uses umask
+   `0077`. Exact
+   membership selects bare Grok and adds `-m <model>`; non-confirmation authorizes the platform proxy candidates
+   (`grok-remote`, `~/grok-proxy/grok-remote`, or `grok-remote.cmd`). Duplicate
+   candidate paths resolving to the same executable are probed only once. An
+   automatic proxy fallback is returned only after `--help` advertises
+   `grok-remote doctor --json` and that exact doctor contract reports `ready` or
+   `degraded` with the same resolved model; blocked, mismatched, malformed, and
+   inconsistent results fail closed.
+
+When `AAS_GROK_LATEST_MODEL` is unset, the driver uses bare Grok, records that
+latest-model verification was not performed, and never auto-invokes the proxy.
 
 Native smoke and prechecks still resolve **bare `grok` only** (never open the
 proxy tunnel). Do not point `AAS_GROK` at `grok-remote` for diagnostic smoke

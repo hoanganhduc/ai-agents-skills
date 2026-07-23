@@ -129,19 +129,48 @@ export AAS_ANTIGRAVITY_HIGHEST_THINKING='high'
 The dispatcher does not use `ANTIGRAVITY_LS_ADDRESS`; that variable belongs to
 language-server integrations outside this CLI subprocess adapter.
 
-For Grok, the managed fallback dispatch shape is `grok --prompt-file /dev/stdin`.
+For Grok, the managed dispatch shape is `grok --prompt-file /dev/stdin`.
 The dispatcher delivers the prompt on stdin, and grok's `-p`/`--single` requires
 the prompt as an argv value (it does not read stdin), so the prompt is passed as a
 file read from fd 0; a bare `grok --single` here exits 2 with the prompt never
-sent. On hosts with the region-correct `grok-remote` proxy it is preferred
-automatically (first-found discovery), and elsewhere resolution falls through to a
-bare `grok`. The dispatcher invokes `grok-remote` route-neutrally: it neither
-sets `GROK_MULTI_SESSION` nor adds `--vpn`, `--host`, `--iphone`, or `--ios`.
-A bare proxy command delegates route selection to its active managed profile;
-caller-supplied route or profile flags in `AAS_GROK_DISPATCH_COMMAND` are
-preserved verbatim. Concurrent Grok participants must resolve the same ready
-profile and concrete model. Research runs should still configure the command
-explicitly, for example:
+sent.
+
+Automatic Grok selection is bare-first and model-gated:
+
+1. When a concrete latest model is resolved, run bare `grok models` and parse
+   only exact anchored available-model rows of the form `* <model>` or
+   `* <model> (default)`. Prose, the `Default model:` header, substrings,
+   non-zero exits, timeouts, and unrecognized output do not confirm membership.
+   On POSIX, invoke model probes, remote readiness checks, and actual Grok
+   children with umask `0077` so Grok-created cache files are private even when
+   the caller's ambient umask is permissive.
+2. If the exact resolved model is listed, dispatch through bare Grok and add
+   `--model <resolved-model>`.
+3. Only when bare Grok is missing or that exact membership probe is not
+   confirmed may automatic selection consider `grok-remote`. The proxy must
+   then pass its managed-profile readiness probe and report the same model.
+4. Without a resolved model, automatic selection uses bare Grok only, records
+   the model probe as not performed, and does not authorize proxy fallback.
+
+Generic provider prechecks are bare-only. They do not discover, version-probe,
+or execute `grok-remote`; proxy discovery exists only inside step 3 after a
+valid exact model has already authorized fallback.
+
+The dispatcher invokes an automatically selected `grok-remote` route-neutrally:
+it neither sets `GROK_MULTI_SESSION` nor adds `--vpn`, `--host`, `--iphone`, or
+`--ios`. A bare proxy command delegates route selection to its active managed
+profile. Concurrent Grok participants must resolve the same ready profile and
+concrete model. Unlike other research providers, Grok does not require an
+explicit dispatch-command variable because its automatic route is resolved and
+model-pinned by these probes; latest-model and highest-thinking values remain
+mandatory.
+
+Operator overrides remain authoritative. `AAS_GROK_DISPATCH_COMMAND` is
+preserved verbatim, and `AAS_GROK` selects its exact binary. An explicit bare
+command with a resolved model must pass the same membership probe but is never
+silently replaced with the proxy. An explicit proxy command still requires its
+managed-profile readiness/model check. For example, this deliberately forces
+the proxy and disables automatic bare-first selection:
 
 ```bash
 export AAS_GROK_DISPATCH_COMMAND='grok-remote --prompt-file /dev/stdin --model {model}'
@@ -156,7 +185,8 @@ shape:
 grok-remote -m <concrete-model> --prompt-file <path>
 ```
 
-Before dispatch, the parent runs `grok-remote doctor --json`, requires the
+For proxy fallback or an explicit proxy command, the parent runs
+`grok-remote doctor --json`, requires the
 `grok-remote.profile-status.v1` contract to report `ready` or `degraded`, and
 checks its `model_id` against the resolved model. `blocked`, `unconfigured`,
 invalid, inconsistent, or timed-out results fail closed. Only the contract's

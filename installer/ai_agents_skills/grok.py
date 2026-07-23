@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -11,23 +12,28 @@ from .discovery import current_platform, discover_tool, split_command
 from .state import load_state
 
 
-# Delegation resolves this spec: on hosts where the region-correct ``grok-remote``
-# proxy exists it wins (first-found), and elsewhere resolution falls through to a
-# bare ``grok``. ``${AAS_GROK}`` / ``%AAS_GROK%`` forces either explicitly.
-GROK_CLI_TOOL_SPEC: dict[str, Any] = {
+GROK_MODEL_PROBE_SCHEMA = "grok-model-membership.v1"
+GROK_MODEL_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9._:+/@-]{0,127}"
+GROK_MODEL_ID_RE = re.compile(rf"^{GROK_MODEL_ID_PATTERN}$")
+GROK_AVAILABLE_MODEL_LINE_RE = re.compile(
+    rf"^\s*\*\s+(?P<model>{GROK_MODEL_ID_PATTERN})(?:\s+\(default\))?\s*$"
+)
+
+
+# Bare Grok and the managed region proxy are separate discovery tiers. Generic
+# discovery and prechecks use only the bare tier. Automatic dispatch may consult
+# the remote tier only inside the exact-model fallback resolver after an already
+# resolved, valid model is not confirmed by ``grok models``. ``AAS_GROK`` is
+# handled explicitly by the dispatch resolver, outside generic discovery, and
+# is never silently replaced by fallback.
+GROK_BARE_CLI_TOOL_SPEC: dict[str, Any] = {
     "candidates": {
         "linux": [
-            "${AAS_GROK}",
-            "grok-remote",
-            "~/grok-proxy/grok-remote",
             "grok",
             "~/.local/bin/grok",
             "~/.grok/bin/grok",
         ],
         "macos": [
-            "${AAS_GROK}",
-            "grok-remote",
-            "~/grok-proxy/grok-remote",
             "grok",
             "~/.local/bin/grok",
             "~/.grok/bin/grok",
@@ -35,58 +41,137 @@ GROK_CLI_TOOL_SPEC: dict[str, Any] = {
             "/usr/local/bin/grok",
         ],
         "wsl": [
-            "${AAS_GROK}",
-            "grok-remote",
-            "~/grok-proxy/grok-remote",
             "grok",
             "~/.local/bin/grok",
             "~/.grok/bin/grok",
         ],
         "windows": [
-            "%AAS_GROK%",
+            "%USERPROFILE%\\.grok\\bin\\grok.exe",
+            "grok.exe",
+            "grok",
+        ],
+    }
+}
+
+
+GROK_REMOTE_CLI_TOOL_SPEC: dict[str, Any] = {
+    "candidates": {
+        "linux": [
+            "grok-remote",
+            "~/grok-proxy/grok-remote",
+        ],
+        "macos": [
+            "grok-remote",
+            "~/grok-proxy/grok-remote",
+        ],
+        "wsl": [
+            "grok-remote",
+            "~/grok-proxy/grok-remote",
+        ],
+        "windows": [
             "grok-remote.cmd",
             "grok-remote",
-            "%USERPROFILE%\\.grok\\bin\\grok.exe",
-            "grok.exe",
-            "grok",
         ],
     }
 }
 
 
-# The precheck and native smoke run local read-only subcommands (``grok inspect``)
-# that must never bring up the ``grok-remote`` SOCKS tunnel, so they resolve BARE
-# ``grok`` only and omit the proxy candidate.
+GROK_CLI_TOOL_SPEC: dict[str, Any] = {
+    "candidates": {
+        platform: list(candidates)
+        for platform, candidates in GROK_BARE_CLI_TOOL_SPEC["candidates"].items()
+    }
+}
+
+
+# Native smoke runs the local read-only ``grok inspect`` subcommand. Keep the
+# explicit override for operator control, then use only the bare automatic tier.
+# Prechecks do not use this override-bearing spec; they use the bare tier above.
 GROK_DIAGNOSTIC_CLI_TOOL_SPEC: dict[str, Any] = {
     "candidates": {
-        "linux": [
-            "${AAS_GROK}",
-            "grok",
-            "~/.grok/bin/grok",
-            "~/.local/bin/grok",
-        ],
-        "macos": [
-            "${AAS_GROK}",
-            "grok",
-            "~/.grok/bin/grok",
-            "~/.local/bin/grok",
-            "/opt/homebrew/bin/grok",
-            "/usr/local/bin/grok",
-        ],
-        "wsl": [
-            "${AAS_GROK}",
-            "grok",
-            "~/.grok/bin/grok",
-            "~/.local/bin/grok",
-        ],
-        "windows": [
-            "%AAS_GROK%",
-            "%USERPROFILE%\\.grok\\bin\\grok.exe",
-            "grok.exe",
-            "grok",
-        ],
+        "linux": ["${AAS_GROK}", *GROK_BARE_CLI_TOOL_SPEC["candidates"]["linux"]],
+        "macos": ["${AAS_GROK}", *GROK_BARE_CLI_TOOL_SPEC["candidates"]["macos"]],
+        "wsl": ["${AAS_GROK}", *GROK_BARE_CLI_TOOL_SPEC["candidates"]["wsl"]],
+        "windows": ["%AAS_GROK%", *GROK_BARE_CLI_TOOL_SPEC["candidates"]["windows"]],
     }
 }
+
+
+def parse_grok_available_models(output: str) -> list[str]:
+    """Parse only exact ``grok models`` available-model rows.
+
+    The anchored grammar intentionally ignores prose such as ``Default model:``
+    and rejects substring matches. A CLI output-format change therefore fails
+    closed instead of accidentally confirming the requested model.
+    """
+    models: list[str] = []
+    for line in output.splitlines():
+        match = GROK_AVAILABLE_MODEL_LINE_RE.fullmatch(line)
+        if match is not None and match.group("model") not in models:
+            models.append(match.group("model"))
+    return models
+
+
+def probe_grok_model_membership(
+    command: str,
+    resolved_model: str,
+    env: dict[str, str],
+    *,
+    timeout: int = 10,
+) -> dict[str, Any]:
+    """Confirm an exact resolved-model membership row from bare ``grok models``."""
+    result: dict[str, Any] = {
+        "schema_version": GROK_MODEL_PROBE_SCHEMA,
+        "status": "not-confirmed",
+        "resolved_model": resolved_model,
+        "available_models": [],
+        "reason_code": "probe_failed",
+    }
+    if GROK_MODEL_ID_RE.fullmatch(resolved_model) is None:
+        result["reason_code"] = "resolved_model_invalid"
+        return result
+    try:
+        parts = split_command(command)
+    except ValueError:
+        result["reason_code"] = "command_invalid"
+        return result
+    if not parts:
+        result["reason_code"] = "command_empty"
+        return result
+    probe_env = dict(env)
+    probe_env.setdefault("NO_COLOR", "1")
+    probe_env.setdefault("TERM", "dumb")
+    private_umask = {"umask": 0o077} if os.name == "posix" else {}
+    try:
+        completed = subprocess.run(
+            [parts[0], "models"],
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            env=probe_env,
+            check=False,
+            **private_umask,
+        )
+    except subprocess.TimeoutExpired:
+        result["reason_code"] = "probe_timed_out"
+        return result
+    except OSError:
+        result["reason_code"] = "probe_could_not_execute"
+        return result
+    models = parse_grok_available_models(completed.stdout)
+    result["available_models"] = models
+    if completed.returncode != 0:
+        result["reason_code"] = "probe_exit_nonzero"
+        return result
+    if not models:
+        result["reason_code"] = "available_model_rows_missing"
+        return result
+    if resolved_model not in models:
+        result["reason_code"] = "resolved_model_not_listed"
+        return result
+    result["status"] = "confirmed"
+    result["reason_code"] = "resolved_model_listed"
+    return result
 
 
 def build_grok_precheck(
