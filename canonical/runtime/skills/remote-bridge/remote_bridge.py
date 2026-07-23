@@ -1305,7 +1305,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     jobs = mb.list_jobs()
     pending = mb.pending_requests()
     focus = _resolve_focus_job(mb)
-    # Optional single-job filter: /aas status clawfree
+    # Optional single-job filter: /aas status example-job
     want = None
     extra_args = getattr(args, "args", None)
     if isinstance(extra_args, list) and extra_args:
@@ -1570,7 +1570,7 @@ def cmd_handle_command(args: argparse.Namespace) -> int:
                     "handle-command",
                     "missing_job",
                     "provide job id or focus a job",
-                    human_reply="Missing job id. Example: `/aas pause clawfree`",
+                    human_reply="Missing job id. Example: `/aas pause example-job`",
                 )
             job = mb.read_json(mb.job_dir(jid) / "job.json") or {}
             loop = job.get("loop_dir")
@@ -1600,7 +1600,7 @@ def cmd_handle_command(args: argparse.Namespace) -> int:
                     "handle-command",
                     "missing_job",
                     "usage: /aas focus <job>",
-                    human_reply="Usage: `/aas focus clawfree`",
+                    human_reply="Usage: `/aas focus example-job`",
                 )
             focus_path = mb.bridge_dir / "focus.json"
             mb.write_json(
@@ -1770,13 +1770,78 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _maybe_sync_openclaw_workspace_paths() -> None:
+    """Best-effort sync of secrets/state with OpenClaw workspace copies.
+
+    Host ARL notify writes ~/.config + ~/.local/share; sandbox uses
+    ~/.openclaw/workspace/…. Keep both sides aligned without printing secrets.
+    Disable with AAS_REMOTE_BRIDGE_SYNC=0.
+    """
+    if os.environ.get("AAS_REMOTE_BRIDGE_SYNC", "1").strip().lower() in {
+        "0",
+        "false",
+        "off",
+        "no",
+    }:
+        return
+    candidates = [
+        Path(__file__).resolve().parent / "sync_remote_bridge_paths.py",
+        Path.home()
+        / ".local"
+        / "share"
+        / "ai-agents-skills"
+        / "runtime"
+        / "workspace"
+        / "skills"
+        / "remote-bridge"
+        / "sync_remote_bridge_paths.py",
+        Path.home()
+        / ".openclaw"
+        / "workspace"
+        / "skills"
+        / "aas-remote-bridge"
+        / "scripts"
+        / "sync_remote_bridge_paths.py",
+    ]
+    for sync_py in candidates:
+        if not sync_py.is_file():
+            continue
+        try:
+            import importlib.util
+
+            spec = importlib.util.spec_from_file_location("remote_bridge_path_sync", sync_py)
+            if spec is None or spec.loader is None:
+                continue
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "sync_once"):
+                mod.sync_once(quiet=True)
+            return
+        except Exception:  # noqa: BLE001
+            return
+
+
 def main(argv: list[str] | None = None) -> int:
+    # Sync before send/arm/handle so sandbox and host share secrets/mailbox.
+    _maybe_sync_openclaw_workspace_paths()
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        return int(args.func(args))
+        rc = int(args.func(args))
     except Exception as exc:  # noqa: BLE001
         return _fail(getattr(args, "command", "remote-bridge"), "error", str(exc))
+    # After mutating commands, push host updates to workspace again.
+    if getattr(args, "command", "") in {
+        "send",
+        "arm",
+        "instruct",
+        "request-approval",
+        "handle-command",
+        "format-inbox",
+        "check-approval",
+    }:
+        _maybe_sync_openclaw_workspace_paths()
+    return rc
 
 
 if __name__ == "__main__":

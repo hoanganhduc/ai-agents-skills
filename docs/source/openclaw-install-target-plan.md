@@ -42,6 +42,14 @@ Implemented fail-closed behavior:
 - support files are skipped unless backed by
   `manifest/schema/openclaw/target-support-file.schema.json` metadata
 
+**Out of band from managed skill-file installs:** the dual-route `/aas`
+adapter under `~/.openclaw/workspace/skills/aas-remote-bridge/` is published
+from `canonical/runtime/skills/remote-bridge/` via
+`publish_openclaw_adapter.py`. It is not authorized by `openclaw-target-*`
+manifests. Edit canonical first; refresh the workspace copy with the publisher.
+Host↔workspace secrets/state sync is part of that runtime
+(`sync_remote_bridge_paths.py`).
+
 ## Scope And Evidence
 
 Scope:

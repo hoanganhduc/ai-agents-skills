@@ -28,3 +28,20 @@ OpenClaw is fake-root-only for normal flows and has no built-in autonomous-loop
 enforcement surface here. Loop stop-conditions remain policy-based via the
 installed `autonomous-loop-enforcement` rule. See the repo
 [Architecture](../../docs/architecture.md) for the full per-target matrix.
+
+## Dual-route `/aas` adapter (workspace, not managed skill install)
+
+OpenClaw sandbox agents may need to route messages that start with `/aas` to
+**remote-bridge** instead of the OpenClaw LLM. That dual-route adapter is **not**
+installed by normal `openclaw-target-*` skill copies.
+
+| Role | Location |
+|------|----------|
+| Source of truth | `canonical/runtime/skills/remote-bridge/` in this repo |
+| Publish command | `python3 …/publish_openclaw_adapter.py` |
+| Published tree | `~/.openclaw/workspace/skills/aas-remote-bridge/` |
+| Secrets/state sync | `sync_remote_bridge_paths.py` (host ↔ workspace mirrors) |
+
+**Do not invent skill logic only under `~/.openclaw`.** Edit
+`~/ai-agents-skills`, install/runtime-sync as needed, then publish the adapter.
+See `canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.

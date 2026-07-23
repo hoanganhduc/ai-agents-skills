@@ -259,11 +259,16 @@
       "runtime_dir": "remote-bridge",
       "smoke_coverage": {
         "status": "offline-smoke",
-        "reason": "Selftest exercises mailbox arm/CAS/approval single-use, inbox claim/consume, /aas parser boundaries, and config redaction with no network or real secrets."
+        "reason": "Selftest exercises mailbox arm/CAS/approval single-use, inbox claim/consume, /aas parser boundaries, config redaction, and host↔OpenClaw secrets/state path-sync (no network or real secrets)."
       },
       "files": [
         {"source": "skills/remote-bridge/remote_bridge.py", "target": "workspace/skills/remote-bridge/remote_bridge.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/remote-bridge/remote-bridge.example.json", "target": "workspace/skills/remote-bridge/remote-bridge.example.json", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
+        {"source": "skills/remote-bridge/sync_remote_bridge_paths.py", "target": "workspace/skills/remote-bridge/sync_remote_bridge_paths.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
+        {"source": "skills/remote-bridge/dispatch_aas.py", "target": "workspace/skills/remote-bridge/dispatch_aas.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
+        {"source": "skills/remote-bridge/publish_openclaw_adapter.py", "target": "workspace/skills/remote-bridge/publish_openclaw_adapter.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
+        {"source": "skills/remote-bridge/openclaw-adapter/SKILL.md", "target": "workspace/skills/remote-bridge/openclaw-adapter/SKILL.md", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
+        {"source": "skills/remote-bridge/openclaw-adapter/README.md", "target": "workspace/skills/remote-bridge/openclaw-adapter/README.md", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
         {"source": "skills/remote-bridge/run_remote_bridge.sh", "target": "workspace/skills/remote-bridge/run_remote_bridge.sh", "platforms": ["linux", "macos", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
         {"source": "skills/remote-bridge/run_remote_bridge.bat", "target": "workspace/skills/remote-bridge/run_remote_bridge.bat", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
         {"source": "skills/remote-bridge/run_remote_bridge.ps1", "target": "workspace/skills/remote-bridge/run_remote_bridge.ps1", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},

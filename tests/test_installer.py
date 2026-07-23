@@ -16,7 +16,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
-from installer.ai_agents_skills.agents import target_for
+from installer.ai_agents_skills.agents import KNOWN_AGENT_NAMES, target_for
 from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main, resolve_install_selection
 from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS
 from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
@@ -736,7 +736,12 @@ class PlanInstallVerifyTests(unittest.TestCase):
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, [])
             self.assertEqual(plan["actions"], [])
-            self.assertEqual(len(plan["skipped_agents"]), 8)
+            # All known install targets are skipped when none are detected.
+            self.assertEqual(len(plan["skipped_agents"]), len(KNOWN_AGENT_NAMES))
+            self.assertEqual(
+                {item["agent"] for item in plan["skipped_agents"]},
+                set(KNOWN_AGENT_NAMES),
+            )
 
     def test_symlinked_agent_home_is_skipped_without_writing_target(self) -> None:
         manifests = load_manifests()
