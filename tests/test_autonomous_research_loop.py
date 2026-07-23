@@ -1892,15 +1892,25 @@ class NotifyPolicyTests(unittest.TestCase):
 
     def test_auto_uses_secrets_when_configured(self) -> None:
         mod = self._mod()
-        with mock.patch.object(mod, "auto_notify_channel_from_secrets", return_value="both"):
+        # Default secrets pick is Zulip-primary (not dual "both").
+        with mock.patch.object(mod, "auto_notify_channel_from_secrets", return_value="zulip"):
             self.assertEqual(
                 mod.resolve_notify_channel(explicit="auto", run_dir=None, default_auto=True),
-                "both",
+                "zulip",
             )
             self.assertEqual(
                 mod.resolve_notify_channel(explicit=None, run_dir=None, default_auto=True),
-                "both",
+                "zulip",
             )
+
+    def test_auto_notify_prefers_zulip_over_telegram(self) -> None:
+        mod = self._mod()
+        with mock.patch.object(
+            mod, "detect_configured_notify_channels", return_value=["zulip", "telegram"]
+        ):
+            self.assertEqual(mod.auto_notify_channel_from_secrets(), "zulip")
+        with mock.patch.object(mod, "detect_configured_notify_channels", return_value=["telegram"]):
+            self.assertEqual(mod.auto_notify_channel_from_secrets(), "telegram")
 
     def test_auto_none_when_unconfigured(self) -> None:
         mod = self._mod()
