@@ -21,9 +21,9 @@ optional skill, artifact-directory, install-mode, and read-policy metadata; the
 values remain paths inspected from the current host/root. Target prechecks do
 not read target file contents; known auth-token sources are reported by
 presence only rather than value. `external_agent_prechecks` reports sanitized
-Claude, DeepSeek, Copilot, Antigravity, Grok, and reference-only OpenClaw delegation readiness,
-including latest-model/highest-thinking probe requirements and nested-worker
-capability status. Copilot extends the base precheck with CLI
+Claude, DeepSeek, Copilot, Antigravity, Grok, Kimi, and reference-only OpenClaw
+delegation readiness, including latest-model/highest-thinking probe requirements
+and nested-worker capability status. Copilot extends the base precheck with CLI
 detection, the `.copilot` directory shape, redacted auth-source presence,
 provider/model probe status, delegation authority metadata, and a separate
 `copilot_status` field for CLI/account/model readiness; command arguments and
@@ -67,6 +67,10 @@ Grok prechecks report the user-global `~/.grok` target, its `skills/`,
 GROK_HOME-pinned native smoke expectations without reading config contents or
 credentials; `~/.grok/settings.json` is not reported because Grok does not read
 it for hooks.
+Kimi prechecks report the user-global `~/.kimi-code` target, its `skills/` and
+`agents/` children, `AGENTS.md`, copy-mode default, bare `kimi` CLI discovery
+status, and `KIMI_CODE_HOME`-pinned native smoke expectations without opening
+`config.toml` for secrets. Relocated `KIMI_CODE_HOME` installs are unsupported.
 `audit-system` is read-only and compares the selected repo profile with the
 current agent homes, managed state, legacy aliases, unmanaged files, dependency
 status, and install-plan summaries.

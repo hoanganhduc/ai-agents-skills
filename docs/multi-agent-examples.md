@@ -24,7 +24,7 @@ round protocol for manual or sequential execution.
 
 True cross-provider delegation is parent-owned by `agent-group-discuss`.
 `manifest/delegation.yaml` sets the default policy: include Codex as the parent
-and spawned-subagent provider; prefer Claude, DeepSeek, Copilot, Antigravity, and Grok when fresh
+and spawned-subagent provider; prefer Claude, DeepSeek, Copilot, Antigravity, Grok, and Kimi when fresh
 probes pass; keep OpenClaw reference-only; fall back to Codex-only when
 configured; and require latest-model plus highest-thinking for research roles.
 This policy is general across supported target-agent installs. External CLI
