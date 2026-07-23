@@ -335,7 +335,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
     def test_submission_venue_selector_installs_runtime_files_for_supported_agents(self) -> None:
         manifests = load_manifests()
-        for agent in ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok"):
+        for agent in ("codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "kimi"):
             for platform in ("linux", "macos", "wsl", "windows"):
                 with self.subTest(agent=agent, platform=platform):
                     with tempfile.TemporaryDirectory() as tmp:

@@ -14,6 +14,7 @@ from .capabilities import (
 from .copilot import COPILOT_CLI_TOOL_SPEC, build_copilot_precheck
 from .discovery import discover_tool
 from .grok import GROK_BARE_CLI_TOOL_SPEC, build_grok_precheck
+from .kimi import KIMI_BARE_CLI_TOOL_SPEC, build_kimi_precheck
 from .openclaw_target_gate import openclaw_target_decision
 
 
@@ -64,6 +65,14 @@ def _build_target_precheck(root: Path, platform: str, target: AgentTarget) -> di
         grok["base"] = base
         grok["grok_status"] = grok_status
         return grok
+    if target.name == "kimi":
+        cli_result = discover_tool("kimi-cli", KIMI_BARE_CLI_TOOL_SPEC, platform, root)
+        kimi = build_kimi_precheck(root, platform, cli_result)
+        kimi_status = kimi["status"]
+        kimi.update(base)
+        kimi["base"] = base
+        kimi["kimi_status"] = kimi_status
+        return kimi
     if target.name != "copilot":
         return base
 
@@ -160,6 +169,15 @@ def target_notes(target: AgentTarget) -> list[str]:
             "Instruction blocks use ~/.grok/AGENTS.md; the optional autoloop hook installs as ~/.grok/hooks/ai-agents-skills-autoloop.json, never ~/.grok/settings.json.",
             "A managed [compat.claude] block is merged into ~/.grok/config.toml so the native install presents a single self-contained view.",
             "Native smoke runs grok inspect --json in a GROK_HOME-pinned isolated env when the grok CLI is available.",
+        ]
+    if target.name == "kimi":
+        return [
+            "Kimi participates in default detection when ~/.kimi-code exists.",
+            "Kimi auto mode copies directory-layout SKILL.md files under ~/.kimi-code/skills/<skill>/.",
+            "Instruction blocks use ~/.kimi-code/AGENTS.md; entrypoint aliases and discrete hook files are not installed.",
+            "Autoloop force-continue is ARL drive --provider kimi; optional [[hooks]] Stop snippets are documented, not auto-merged into config.toml in v1.",
+            "Native smoke runs kimi doctor in a KIMI_CODE_HOME-pinned isolated env when the kimi CLI is available; config.toml is never opened for secrets.",
+            "KIMI_CODE_HOME relocated installs are unsupported for real-system apply.",
         ]
     if target.name == "codex":
         return [

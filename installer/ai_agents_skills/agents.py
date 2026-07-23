@@ -9,10 +9,10 @@ from .capabilities import looks_like_real_system_root, resolved_path_within
 from .openclaw_target_gate import openclaw_target_capabilities, openclaw_target_decision
 
 
-DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "openclaw"]
+DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "kimi", "openclaw"]
 KNOWN_AGENT_NAMES = list(DEFAULT_AGENT_NAMES)
 PORTABLE_MANIFEST_AGENT_NAMES = {"codex", "claude", "deepseek"}
-ADAPTER_AGENT_NAMES = {"copilot", "opencode", "antigravity", "grok", "openclaw"}
+ADAPTER_AGENT_NAMES = {"copilot", "opencode", "antigravity", "grok", "kimi", "openclaw"}
 
 
 @dataclass(frozen=True)
@@ -163,6 +163,23 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             skill_file_layout="directory",
             instruction_blocks_enabled=True,
         )
+    if agent == "kimi":
+        home = kimi_home(root)
+        return AgentTarget(
+            name="kimi",
+            home=home,
+            skills_dir=home / "skills",
+            instructions_file=home / "AGENTS.md",
+            optional_skills_dirs=(root / ".agents" / "skills",),
+            artifact_dirs={
+                "agent-persona": home / "agents",
+                "template": home / "templates",
+                "instruction-doc": home / "instructions",
+                "tool-shim": home / "tools",
+            },
+            skill_file_layout="directory",
+            instruction_blocks_enabled=True,
+        )
     if agent == "openclaw":
         return AgentTarget(
             name="openclaw",
@@ -183,6 +200,24 @@ def opencode_home(root: Path) -> Path:
 
 def antigravity_home(root: Path) -> Path:
     return root / ".gemini" / "antigravity-cli"
+
+
+def kimi_home(root: Path) -> Path:
+    """Resolve the Kimi Code data root under the selected install root.
+
+    Default is ``root/.kimi-code``. When ``KIMI_CODE_HOME`` is set and resolves
+    *inside* the selected root (fake-root or intentional relocation), that path
+    is used. Relocated homes outside the selected root are unsupported for
+    real-system installs; callers keep the default and prechecks may warn.
+    """
+    configured = os.environ.get("KIMI_CODE_HOME")
+    if configured:
+        candidate = Path(configured).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        if resolved_path_within(root, candidate):
+            return candidate
+    return root / ".kimi-code"
 
 
 def contained_xdg_config_home(root: Path) -> Path:

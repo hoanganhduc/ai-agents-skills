@@ -3,7 +3,7 @@
   "policy": {
     "mode": "prefer",
     "min_distinct_providers": 2,
-    "active_providers": ["codex", "claude", "deepseek", "copilot", "antigravity", "grok"],
+    "active_providers": ["codex", "claude", "deepseek", "copilot", "antigravity", "grok", "kimi"],
     "reference_only_providers": ["openclaw"],
     "fallback_to_codex_only": true,
     "require_parent_confirmation_for_external_cli": true,
@@ -47,6 +47,11 @@
       "status": "active",
       "recipient_profile": "grok-like-code-reviewer",
       "default_role_family": "Grok CLI code and research workflow review"
+    },
+    "kimi": {
+      "status": "active",
+      "recipient_profile": "kimi-like-code-reviewer",
+      "default_role_family": "Kimi Code CLI code and research workflow review"
     },
     "openclaw": {
       "status": "reference_only",

@@ -46,6 +46,14 @@ OpenClaw source/import evidence and OpenClaw install-target behavior are separat
 | `grok` | `tool-shim` | `supported` | `copy` | inert managed tool storage | `installer-convention` | Tool shims copy to ~/.grok/tools/ as inert support storage referenced by skill relative paths; not a Grok-loaded surface. |
 | `grok` | `native-hook-file` | `supported` | `hook-config` | discrete managed ~/.grok/hooks/ai-agents-skills-autoloop.json | `official-docs` | The optional autoloop Stop hook installs as a fully-owned native hook file under ~/.grok/hooks/ (10-hooks.md); ~/.grok/settings.json is never written. |
 | `grok` | `config-compat` | `supported` | `toml-merge` | managed [compat.claude] block merged into ~/.grok/config.toml | `official-docs` | A managed [compat.claude] block (skills/agents/rules/hooks = false) is idempotently merged into ~/.grok/config.toml so Grok presents a single self-contained view; the block is removed on uninstall and user-authored TOML is preserved. |
+| `kimi` | `skill-file` | `supported` | `copy` | Kimi Code directory-layout SKILL.md with copied support files | `official-docs` | Auto mode writes ~/.kimi-code/skills/<skill>/SKILL.md with the full canonical body (directory form; name and description required). |
+| `kimi` | `entrypoint-alias` | `unsupported` | `unsupported` | not installed | `planner` | Kimi has no commands/ loader; skills are invoked as /skill:<name>. Planner rejects entrypoint-alias so adapter inheritance does not create stray skill files. |
+| `kimi` | `runtime-file` | `supported` | `runtime-copy` | root-scoped managed runtime helpers | `runtime-manifest` | Runtime files use the neutral shared ai-agents-skills runtime root, not a Kimi-specific runtime path. |
+| `kimi` | `agent-persona` | `supported` | `copy` | Kimi custom agent Markdown definition | `official-docs` | Personas install under ~/.kimi-code/agents/ as name/description Markdown; unknown frontmatter fields are ignored by Kimi. |
+| `kimi` | `instruction-block` | `supported` | `instruction-block` | managed block in ~/.kimi-code/AGENTS.md | `official-docs` | Skill and repo-management instruction blocks use the documented Kimi home-scope AGENTS.md file. |
+| `kimi` | `instruction-doc` | `supported` | `copy` | inert managed instruction storage | `installer-convention` | Instruction docs copy to ~/.kimi-code/instructions/ as inert support storage; not a documented Kimi-loaded surface. |
+| `kimi` | `template` | `supported` | `copy` | inert managed template storage | `installer-convention` | Templates copy to ~/.kimi-code/templates/ as inert support storage referenced by skill relative paths. |
+| `kimi` | `tool-shim` | `supported` | `copy` | inert managed tool storage | `installer-convention` | Tool shims copy to ~/.kimi-code/tools/ as inert support storage referenced by skill relative paths. |
 
 Claim levels used here:
 

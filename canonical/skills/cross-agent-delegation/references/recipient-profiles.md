@@ -133,6 +133,31 @@ exact `grok-remote.profile-status.v1` field set and matching `model_id` permits
 dispatch. Invalid, `blocked`, or `unconfigured` results fail closed; private
 topology does not enter capability metadata.
 
+### kimi-like-code-reviewer
+
+- intended recipient family: Kimi Code CLI code, repository, or research workflow
+  reviewer
+- supported packet versions: `cross-agent-delegation.task.v1`,
+  `cross-agent-delegation.result.v1`
+- accepted inputs: inert repository, file, diff, issue, excerpt, claim, and
+  source-summary refs
+- expected outputs: evidence-grounded result packet with findings, limitations,
+  warnings, and blocked checks
+- unsupported task classes: direct repo mutation, command execution, credential
+  use, external posting, provider probing, or approval handling
+- symbolic credential requirements: none in V1
+- endpoint requirement: none; live dispatch is CLI-based with
+  **runtime argv prompt** transport (`kimi -p <prompt>` appended after the prompt
+  is known). Research runs require `AAS_KIMI_DISPATCH_COMMAND` and a resolved
+  model. Credentials live in `~/.kimi-code/config.toml` / `credentials/` and must
+  never enter packets
+- confirmation requirements: parent-owned, outside packet content
+
+This packet profile does not claim Kimi runtime availability. A parent workflow
+must verify Kimi CLI availability, auth/config status (path existence only),
+output contract, and file-read fidelity before using a live Kimi-like
+participant.
+
 ### model-only-api-reviewer
 
 - intended recipient family: generic model-only reviewer

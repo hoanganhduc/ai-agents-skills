@@ -40,6 +40,11 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "default_mode": "copy",
         "reason": "Grok native ~/.grok/skills SKILL.md files; copy keeps the install self-contained and toggle-independent; symlink loading is unverified and Windows-privilege-gated.",
     },
+    "kimi": {
+        "symlink_skill_file": False,
+        "default_mode": "copy",
+        "reason": "Kimi Code native ~/.kimi-code/skills directory-layout SKILL.md files; copy keeps the install self-contained; symlink loading is unverified and Windows-privilege-gated.",
+    },
     "openclaw": {
         "symlink_skill_file": False,
         "default_mode": "copy",

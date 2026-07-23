@@ -191,6 +191,8 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
             checks.append({"name": "antigravity-persona-frontmatter", "ok": text.lstrip().startswith("---") and "target: antigravity" in text})
         if artifact.get("agent") == "grok":
             checks.append({"name": "grok-persona-frontmatter", "ok": text.lstrip().startswith("---")})
+        if artifact.get("agent") == "kimi":
+            checks.append({"name": "kimi-persona-frontmatter", "ok": text.lstrip().startswith("---")})
     return {
         "agent": artifact.get("agent"),
         "skill": artifact.get("skill"),

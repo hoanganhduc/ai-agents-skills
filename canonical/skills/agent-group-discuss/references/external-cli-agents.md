@@ -41,7 +41,7 @@ Required profile fields:
 ```json
 {
   "profile_id": "provider-or-cli-profile-slug",
-  "provider": "claude | deepseek | copilot | antigravity | grok | other",
+  "provider": "claude | deepseek | copilot | antigravity | grok | kimi | other",
   "cli_name": "string",
   "cli_version": "string or unknown",
   "profile_source": "probe artifact ref",
@@ -50,7 +50,7 @@ Required profile fields:
   "cwd_assumptions": "string",
   "auth_status": "available | missing | unknown | not_checked",
   "config_status": "available | missing | unknown | not_checked",
-  "input_transports_tested": ["stdin", "prompt_file", "file_read", "inline_excerpt"],
+  "input_transports_tested": ["stdin", "prompt_file", "runtime_argv_prompt", "file_read", "inline_excerpt"],
   "output_modes_tested": ["json", "text", "parseable_envelope"],
   "file_read_fidelity": "passed | failed | not_needed | not_checked",
   "timeout_behavior": "completed | timed_out | not_checked",
@@ -199,6 +199,22 @@ Grok authenticates through an interactive OIDC session rather than an API-key
 environment variable, so the dispatcher does not read a Grok token from the
 environment. Local read-only diagnostics (`grok inspect`) resolve a bare `grok`
 so they never bring up the `grok-remote` tunnel.
+
+For Kimi Code CLI, the managed dispatch shape is **runtime argv prompt**:
+`kimi -p <prompt>` is appended by the dispatcher after the prompt is known
+(Kimi has no `--prompt-file`). Capability profiles must record
+`runtime_argv_prompt`, not `stdin`. Research runs require
+`AAS_KIMI_DISPATCH_COMMAND` plus resolved model metadata
+(`AAS_KIMI_LATEST_MODEL`). Auth is config/credentials under `~/.kimi-code` and
+must never enter packets. Long prompts should respect the dispatcher's argv
+budget (`shell_argument_limit`); do not invent temp prompt files without a
+verified Kimi file-based flag.
+
+```bash
+export AAS_KIMI_DISPATCH_COMMAND='kimi'
+export AAS_KIMI_LATEST_MODEL='<model-alias>'
+export AAS_KIMI_HIGHEST_THINKING='high'
+```
 
 Do not hardcode provider model names into shared templates unless a specific
 target system has just probed and recorded that model as current.

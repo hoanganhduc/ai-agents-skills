@@ -691,7 +691,8 @@
         "deepseek",
         "opencode",
         "antigravity",
-        "grok"
+        "grok",
+        "kimi"
       ],
       "required_dependencies": [
         "python-runtime",
@@ -1218,7 +1219,8 @@
         "deepseek",
         "opencode",
         "antigravity",
-        "grok"
+        "grok",
+        "kimi"
       ],
       "required_dependencies": [
         "python-runtime"
@@ -1248,7 +1250,8 @@
         "deepseek",
         "opencode",
         "antigravity",
-        "grok"
+        "grok",
+        "kimi"
       ],
       "required_dependencies": [
         "python-runtime"
@@ -1278,7 +1281,8 @@
         "deepseek",
         "opencode",
         "antigravity",
-        "grok"
+        "grok",
+        "kimi"
       ],
       "required_dependencies": [
         "python-runtime"
@@ -1485,7 +1489,8 @@
         "copilot",
         "opencode",
         "antigravity",
-        "grok"
+        "grok",
+        "kimi"
       ],
       "required_dependencies": [
         "python-runtime"

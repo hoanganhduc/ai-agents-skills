@@ -282,6 +282,15 @@ def render_persona(name: str, spec: dict[str, Any], agent: str, body: str) -> st
             f"{instructions}\n"
         )
         return add_managed_support_header(content, agent, f"agent-persona:{name}.md")
+    if agent == "kimi":
+        content = (
+            f"---\n"
+            f"name: {yaml_scalar(name)}\n"
+            f"description: {yaml_scalar(str(spec['description']))}\n"
+            f"---\n\n"
+            f"{instructions}\n"
+        )
+        return add_managed_support_header(content, agent, f"agent-persona:{name}.md")
     content = dedent(
         f"""\
         # {name}

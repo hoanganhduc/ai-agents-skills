@@ -215,6 +215,9 @@ jobs:
       - name: Run Antigravity-only lifecycle smoke
         run: make lifecycle-test ARGS="--scenario antigravity-only-auto --platform-shape macos"
 
+      - name: Run Kimi-only lifecycle smoke
+        run: make lifecycle-test ARGS="--scenario kimi-only-auto --platform-shape macos"
+
   windows:
     runs-on: windows-latest
     timeout-minutes: 20
@@ -273,3 +276,7 @@ jobs:
       - name: Run Antigravity-only lifecycle smoke
         shell: cmd
         run: make.bat lifecycle-test --scenario antigravity-only-auto --platform-shape windows
+
+      - name: Run Kimi-only lifecycle smoke
+        shell: cmd
+        run: make.bat lifecycle-test --scenario kimi-only-auto --platform-shape windows

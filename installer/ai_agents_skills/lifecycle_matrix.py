@@ -160,6 +160,11 @@ STRESS_EXTRA_SCENARIOS: tuple[LifecycleScenario, ...] = (
         agent_subset=("grok",),
     ),
     LifecycleScenario(
+        name="kimi-only-auto",
+        description="clean auto-mode install for Kimi only",
+        agent_subset=("kimi",),
+    ),
+    LifecycleScenario(
         name="special-path-clean-auto",
         description="clean auto-mode install under a path with spaces and punctuation",
         path_variant="spaces",
@@ -555,8 +560,11 @@ def installed_root(
     base = Path(tempfile.mkdtemp(prefix=f"aas-{shape}-state-stress-"))
     root = fake_root_for_shape(base, shape)
     root.mkdir(parents=True, exist_ok=True)
+    from .agents import target_for
+
     for agent in requested_agents:
-        (root / f".{agent}").mkdir(parents=True, exist_ok=True)
+        # Use target_for so non-dot-name homes (e.g. kimi -> .kimi-code) work.
+        target_for(root, agent).home.mkdir(parents=True, exist_ok=True)
     agents = detect_agents(root, requested_agents)
     scenario = LifecycleScenario(name="state-stress", description="state stress helper", install_mode=install_mode)
     plan = build_plan(

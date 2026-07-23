@@ -299,8 +299,8 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
         axle_skill = manifests["skills"]["skills"]["axiom-axle-mcp"]
         lean_explore_skill = manifests["skills"]["skills"]["lean-explore-mcp"]
 
-        self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot", "antigravity", "grok"})
-        self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot", "antigravity", "grok"})
+        self.assertEqual(EXTERNAL_PROVIDERS, {"claude", "deepseek", "copilot", "antigravity", "grok", "kimi"})
+        self.assertEqual(set(PROVIDER_CLI_SPECS), {"claude", "deepseek", "copilot", "antigravity", "grok", "kimi"})
         self.assertFalse(active.intersection({"axiom-axle-mcp", "axle", "lean-explore-mcp", "lean-explore", "mcp", "openclaw"}))
         self.assertEqual(reference_only, {"openclaw"})
         self.assertEqual(set(axle_skill["profiles"]), {"formal-research-remote", "full-research"})
@@ -312,7 +312,7 @@ class CrossAgentDelegationManifestTests(unittest.TestCase):
             root = Path(tmp)
             prechecks = build_external_agent_prechecks(root, "linux", delegation, env={})
             auto_providers = expand_auto_providers(["auto"], prechecks, max_providers=10)
-            self.assertEqual(auto_providers, ["claude", "deepseek", "copilot", "antigravity", "grok"])
+            self.assertEqual(auto_providers, ["claude", "deepseek", "copilot", "antigravity", "grok", "kimi"])
 
             explicit_plan = build_dispatch_plan(
                 root,
