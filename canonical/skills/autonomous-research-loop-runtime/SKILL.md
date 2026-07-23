@@ -108,6 +108,41 @@ Driver behavior:
   (full shell template; `{prompt}` is inserted shell-quoted and also exported as
   `AUTOLOOP_PROMPT`).
 
+### Host-owned multi-agent panel (hybrid model)
+
+```bash
+# Opt-in host panel around each drive iteration (parent-owned; top-level CLIs)
+… drive --dir <loop> --provider codex --panel on
+
+# auto: enable only if panel.json / standing_orders.panel / AAS_AUTOLOOP_PANEL=on
+… drive --dir <loop> --provider codex --panel auto
+
+# Standalone smoke / phase (does not start drive)
+… panel --smoke --root <project>
+… panel --dir <loop> --root <project> --phase target_advice
+```
+
+When `--panel on` (or auto-enabled), each cycle is:
+
+1. `target_advice` via `panel_parent` → `iterations/iterNNN/panel/01_target_advice/`
+2. primary agent (math only; prompt forbids nested panel CLIs)
+3. after ledger advances: `result_review` → `panel/03_result_review/`
+
+Config (`<loop>/panel.json` or `loop_state.standing_orders.panel`):
+
+```json
+{
+  "enabled": true,
+  "providers": ["claude", "codex", "codewhale", "kimi"],
+  "timeouts": {"target_advice": 600, "result_review": 900},
+  "require_different_family": true,
+  "anti_deadlock_math_without_panel": true
+}
+```
+
+Env: `AAS_AUTOLOOP_PANEL=on|off`, `AAS_AUTOLOOP_PANEL_PROVIDERS=claude,codex,…`.
+Notify remains orthogonal. Banking still requires host evidence gates.
+
 The default flag sets grant the agent full tool autonomy, which unattended
 research requires; run loops only in workspaces you trust the agent to modify,
 and prefer a dedicated project root. Interactive forcing is separate: on Claude
@@ -169,7 +204,10 @@ The helper:
   call Codex, Claude, Copilot, DeepSeek, or other provider CLIs; only `drive`
   executes the iteration command the operator selected (via `--cmd` or
   `--provider`), which is the entire point of the headless driver
-- does not spawn subagents itself (agents launched by `drive` may)
+- when `--panel` is enabled, `drive` and the `panel` subcommand may also invoke
+  configured panel provider CLIs as **top-level** host-parent processes (not
+  nested under the primary agent sandbox)
+- does not spawn unbounded recursive multi-agent trees
 
 Use the canonical `autonomous-research-loop` skill for orchestration policy and
 this helper only for local ledger mechanics. This helper validates that an

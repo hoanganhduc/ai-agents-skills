@@ -18,6 +18,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Sibling module: parent-owned multi-agent panel (hybrid model).
+try:
+    from panel_parent import (  # type: ignore  # noqa: I001 — same-dir runtime import
+        ensure_iter_dir,
+        load_panel_config,
+        panel_prompt_addon,
+        resolve_panel_mode,
+        run_panel_phase_for_drive,
+        smoke as panel_smoke,
+    )
+except ImportError:  # pragma: no cover - package-style import during tests
+    from .panel_parent import (  # type: ignore
+        ensure_iter_dir,
+        load_panel_config,
+        panel_prompt_addon,
+        resolve_panel_mode,
+        run_panel_phase_for_drive,
+        smoke as panel_smoke,
+    )
+
 
 SCHEMA_VERSION = "1.0"
 DEFAULT_PLATEAU_RULE = "stop after three consecutive iterations with no new evidence or reduced uncertainty"
@@ -1417,11 +1437,18 @@ def finalize_remote_inbox_claim(
         return
 
 
-def iteration_prompt(run_dir: Path, *, inbox_block: str | None = None) -> str:
+def iteration_prompt(
+    run_dir: Path,
+    *,
+    inbox_block: str | None = None,
+    panel_enabled: bool = False,
+    panel_iter_dir: Path | None = None,
+) -> str:
     """The standard one-iteration contract handed to a headless agent.
 
     Pure by default: does **not** claim/consume remote-bridge inbox.
     Drive sets AAS_DRIVE_INBOX_BLOCK (or pass inbox_block) after exclusive claim.
+    When host panel is enabled, appends the hybrid-model ban on nested panel CLIs.
     """
     base = (
         "You are one iteration of a bounded autonomous research loop governed by "
@@ -1443,6 +1470,8 @@ def iteration_prompt(run_dir: Path, *, inbox_block: str | None = None) -> str:
         "conditions. If you hit a credit or quota error, exit nonzero with the "
         "provider's error text visible in your output."
     )
+    if panel_enabled:
+        base = base + panel_prompt_addon(run_dir, panel_iter_dir)
     block = inbox_block if inbox_block is not None else os.environ.get("AAS_DRIVE_INBOX_BLOCK")
     if block:
         return base + "\n\n" + block
@@ -2143,7 +2172,12 @@ def resolve_provider_binary(
 
 
 def resolve_provider_command(
-    provider: str, run_dir: Path, environ: dict[str, str] | None = None
+    provider: str,
+    run_dir: Path,
+    environ: dict[str, str] | None = None,
+    *,
+    panel_enabled: bool = False,
+    panel_iter_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Build the headless one-iteration command for a provider (no execution)."""
     env = os.environ if environ is None else environ
@@ -2151,7 +2185,11 @@ def resolve_provider_command(
         raise ValueError(f"unknown provider: {provider}")
     spec = PROVIDER_SPECS[provider]
     key = provider_env_key(provider)
-    prompt = iteration_prompt(run_dir)
+    prompt = iteration_prompt(
+        run_dir,
+        panel_enabled=panel_enabled,
+        panel_iter_dir=panel_iter_dir,
+    )
     full = env.get(f"AAS_AUTOLOOP_CMD_{key}")
     invalid_grok_model = (
         provider == "grok"
@@ -2932,7 +2970,18 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     iterations_run = 0
     reason = "unknown"
     was_paused = False
-    _progress("drive_start", source="drive", provider=provider or "", drive_pid=os.getpid())
+    panel_mode = getattr(args, "panel", None) or "auto"
+    panel_enabled = resolve_panel_mode(panel_mode, run_dir)
+    if provider:
+        os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = str(provider)
+    _progress(
+        "drive_start",
+        source="drive",
+        provider=provider or "",
+        drive_pid=os.getpid(),
+        panel=panel_mode,
+        panel_enabled=panel_enabled,
+    )
     try:
         while True:
             try:
@@ -2950,6 +2999,8 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 time.sleep(poll)
                 continue
             was_paused = False
+            # Re-resolve each cycle so loop_state/panel.json can opt in mid-run.
+            panel_enabled = resolve_panel_mode(panel_mode, run_dir)
             refresh_heartbeat(reg, run_id)
             # Transactional remote-bridge claim (drive only; agent-cmd uses peek).
             remote_job = os.environ.get("AAS_REMOTE_JOB_ID")
@@ -2960,9 +3011,47 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 os.environ["AAS_DRIVE_INBOX_BLOCK"] = inbox_block
             else:
                 os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+
+            panel_iter_dir: Path | None = None
+            if panel_enabled:
+                try:
+                    panel_iter_dir = ensure_iter_dir(run_dir)
+                    _progress(
+                        "panel_target_start",
+                        source="drive",
+                        drive_cycle=iterations_run + 1,
+                        iter_dir=str(panel_iter_dir),
+                    )
+                    target_summary = run_panel_phase_for_drive(
+                        run_dir,
+                        root,
+                        "target_advice",
+                        iter_dir=panel_iter_dir,
+                    )
+                    _progress(
+                        "panel_target_ok" if target_summary.get("panel_content_pass") else "panel_target_fail",
+                        source="drive",
+                        drive_cycle=iterations_run + 1,
+                        usable_providers=target_summary.get("usable_providers") or [],
+                        iter_dir=str(panel_iter_dir),
+                    )
+                except Exception as exc:  # noqa: BLE001 - panel must not kill drive
+                    sys.stderr.write(f"autoloop-driver: panel target_advice failed: {exc}\n")
+                    _progress(
+                        "panel_target_fail",
+                        source="drive",
+                        drive_cycle=iterations_run + 1,
+                        error=str(exc)[:200],
+                    )
+
             if provider:
                 try:
-                    spec = resolve_provider_command(provider, run_dir)
+                    spec = resolve_provider_command(
+                        provider,
+                        run_dir,
+                        panel_enabled=panel_enabled,
+                        panel_iter_dir=panel_iter_dir,
+                    )
                 except ValueError:
                     finalize_remote_inbox_claim(
                         remote_job or "",
@@ -3004,7 +3093,11 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 run_args = cmd
                 use_shell = True
-                prompt = iteration_prompt(run_dir)
+                prompt = iteration_prompt(
+                    run_dir,
+                    panel_enabled=panel_enabled,
+                    panel_iter_dir=panel_iter_dir,
+                )
             child_env = dict(
                 os.environ,
                 AUTOLOOP_DRIVER="1",
@@ -3012,6 +3105,10 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 AUTOLOOP_ROOT=str(root),
                 AUTOLOOP_PROMPT=prompt,
             )
+            if panel_enabled:
+                child_env["AAS_AUTOLOOP_PANEL"] = "on"
+                if panel_iter_dir is not None:
+                    child_env["AAS_AUTOLOOP_PANEL_ITER_DIR"] = str(panel_iter_dir)
             iterations_run += 1
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
             log_path = log_dir / f"iter_{stamp}_{iterations_run:04d}.log"
@@ -3021,6 +3118,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 drive_cycle=iterations_run,
                 log_path=str(log_path),
                 provider=provider or "",
+                panel_enabled=panel_enabled,
             )
             pre_spent = 0
             try:
@@ -3124,6 +3222,47 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     rc=0,
                     log_path=str(log_path),
                 )
+                # Host-owned result review after a successful ledger-advancing iter.
+                if panel_enabled and ledger_advanced:
+                    try:
+                        review_dir = panel_iter_dir
+                        if review_dir is None or not review_dir.is_dir():
+                            # Prefer the spent iteration number's directory.
+                            try:
+                                review_dir = ensure_iter_dir(run_dir, iteration=post_spent)
+                            except Exception:  # noqa: BLE001
+                                review_dir = ensure_iter_dir(run_dir)
+                        _progress(
+                            "panel_review_start",
+                            source="drive",
+                            drive_cycle=iterations_run,
+                            iter_dir=str(review_dir),
+                        )
+                        review_summary = run_panel_phase_for_drive(
+                            run_dir,
+                            root,
+                            "result_review",
+                            iter_dir=review_dir,
+                        )
+                        _progress(
+                            "panel_review_ok"
+                            if review_summary.get("panel_content_pass")
+                            else "panel_review_fail",
+                            source="drive",
+                            drive_cycle=iterations_run,
+                            usable_providers=review_summary.get("usable_providers") or [],
+                            iter_dir=str(review_dir),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        sys.stderr.write(
+                            f"autoloop-driver: panel result_review failed: {exc}\n"
+                        )
+                        _progress(
+                            "panel_review_fail",
+                            source="drive",
+                            drive_cycle=iterations_run,
+                            error=str(exc)[:200],
+                        )
     finally:
         disarm_ns = argparse.Namespace(
             dir=str(run_dir), run_id=None, registry_dir=getattr(args, "registry_dir", None)
@@ -3390,9 +3529,100 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="disable LIVE_STATUS.md / progress.jsonl / stderr progress lines",
     )
+    drive.add_argument(
+        "--panel",
+        default="auto",
+        choices=["auto", "on", "off"],
+        help=(
+            "host-owned multi-agent panel phases around each iteration "
+            "(auto = panel.json / loop_state.standing_orders.panel / AAS_AUTOLOOP_PANEL; "
+            "on = always; off = never). Primary agent must not nest panel CLIs."
+        ),
+    )
     add_registry_args(drive)
     drive.set_defaults(func=drive_command)
+
+    panel = subparsers.add_parser(
+        "panel",
+        help="host-owned multi-agent panel dispatch (hybrid parent; offline smoke or phase run)",
+    )
+    panel.add_argument("--dir", default=None, help="loop directory (for config + iter layout)")
+    panel.add_argument("--root", default=None, help="project root for child cwd (default: --dir or cwd)")
+    panel.add_argument(
+        "--phase",
+        choices=["target_advice", "result_review", "smoke"],
+        default=None,
+        help="panel phase (or use --smoke)",
+    )
+    panel.add_argument("--smoke", action="store_true", help="ping configured providers")
+    panel.add_argument("--iter-dir", default=None, help="iterations/iterNNN directory")
+    panel.add_argument("--prompt-file", default=None, help="prompt file (optional; auto-built if omitted)")
+    panel.add_argument("--prompt", default="", help="inline prompt")
+    panel.add_argument(
+        "--providers",
+        default=None,
+        help="comma-separated providers (default from panel.json / standing orders)",
+    )
+    panel.add_argument("--timeout", type=int, default=0, help="per-provider timeout seconds")
+    panel.set_defaults(func=panel_command)
     return parser
+
+
+def panel_command(args: argparse.Namespace) -> dict[str, Any]:
+    """CLI entry for host-owned panel dispatch (does not start drive)."""
+    root = Path(args.root).expanduser().resolve() if args.root else None
+    run_dir = Path(args.dir).expanduser().resolve() if args.dir else None
+    if root is None:
+        root = run_dir if run_dir is not None else Path.cwd().resolve()
+    if run_dir is None:
+        run_dir = root
+    cfg = load_panel_config(run_dir)
+    providers = (
+        [p.strip() for p in args.providers.split(",") if p.strip()]
+        if args.providers
+        else list(cfg.get("providers") or ["claude", "codex", "codewhale", "kimi"])
+    )
+    if args.smoke or args.phase == "smoke":
+        timeout = args.timeout or int((cfg.get("timeouts") or {}).get("smoke", 120))
+        summary = panel_smoke(root, providers=providers, timeout_s=timeout)
+        return {
+            "status": "ok" if summary.get("all_invited_usable") or summary.get("panel_content_pass") else "failed",
+            "action": "panel_smoke",
+            "usable_providers": summary.get("usable_providers"),
+            "results": {
+                p: (summary.get("results") or {}).get(p, {}).get("status")
+                for p in providers
+            },
+            "summary": summary,
+        }
+    phase = args.phase
+    if not phase:
+        return {
+            "status": "failed",
+            "action": "panel",
+            "error": "provide --phase target_advice|result_review or --smoke",
+        }
+    prompt = args.prompt or ""
+    if args.prompt_file:
+        prompt = Path(args.prompt_file).expanduser().read_text(encoding="utf-8")
+    iter_dir = Path(args.iter_dir).expanduser().resolve() if args.iter_dir else None
+    timeout = args.timeout or None
+    summary = run_panel_phase_for_drive(
+        run_dir,
+        root,
+        phase,
+        iter_dir=iter_dir,
+        prompt=prompt or None,
+        providers=providers,
+        timeout_s=timeout,
+    )
+    return {
+        "status": "ok" if summary.get("panel_content_pass") else "failed",
+        "action": f"panel_{phase}",
+        "usable_providers": summary.get("usable_providers"),
+        "iter_dir": summary.get("iter_dir"),
+        "summary": summary,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

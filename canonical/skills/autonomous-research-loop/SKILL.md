@@ -182,17 +182,37 @@ If a gate fails, record the failure in `iterations.jsonl` and choose one of:
 
 ## Multi-Agent Use
 
-When using subagents:
+### Recommended hybrid (parent-owned panel + single-path worker)
+
+For unattended loops that need multi-agent advice/review, prefer the **host
+parent** model owned by `autonomous-research-loop-runtime`:
+
+1. **Driver panel (target advice)** — top-level CLIs (Claude / Codex / CodeWhale /
+   Kimi, configurable) write `iterations/iterNNN/panel/01_target_advice/`.
+2. **Drive primary** — exactly one provider runs single-path math; it reads panel
+   artifacts and **must not** nest panel CLIs under its sandbox.
+3. **Driver panel (result review)** — same roster reviews new artifacts.
+4. **Host gates** — bank only after independent machine/logic verification.
+5. **Notify** (optional) — progress messaging only; orthogonal to panel.
+
+Enable with `drive --panel on|auto|off`, `panel.json`, `loop_state.standing_orders.panel`,
+or `AAS_AUTOLOOP_PANEL=on`. Run `… panel --smoke` to probe providers.
+
+Do **not** treat nested “primary agent shells out to four CLIs” as the architecture
+(that failed under Codex `workspace-write` sandboxes). For heavy strategy pauses,
+use `agent-group-discuss` instead of per-iteration AGD.
+
+When using subagents outside that driver path:
 
 1. Create bounded task packets with objective, evidence required, exclusions,
    and expected output.
 2. Limit child workers to the budget in `budget.json`.
 3. Require each child result to report inspected and uninspected evidence.
 4. Synthesize child outputs before making decisions.
-5. Do not let child agents recursively start unbounded loops.
+5. Do not let child agents recursively start unbounded cross-provider trees.
 
-For panel-style discussion, pair this skill with `agent-group-discuss` or
-`prose` when available.
+For panel-style discussion outside ARL drive, pair this skill with
+`agent-group-discuss` or `prose` when available.
 
 ## Recovery
 
