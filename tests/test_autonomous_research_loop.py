@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from installer.ai_agents_skills.agents import detect_agents, target_for
@@ -1084,6 +1085,57 @@ class RuntimeDriveTests(unittest.TestCase):
             self.assertEqual(res.returncode, 0)
             self.assertEqual((loop / "env").read_text(), "1")
 
+    @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
+    def test_drive_private_umask_is_grok_provider_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            observed_modes: dict[str, int] = {}
+            for mode in ("grok", "claude", "cmd"):
+                reg = base / f"reg-{mode}"
+                loop = base / f"loop-{mode}"
+                _init_loop(loop, reg, max_iterations=5)
+                cache_name = f"{mode}-cache"
+                command = _py_iteration(
+                    "import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); "
+                    f"(d/'{cache_name}').write_text('x'); "
+                    "(d/'STOP_REQUESTED').write_text('x')"
+                )
+                env = {
+                    key: value
+                    for key, value in os.environ.items()
+                    if not key.startswith("AAS_AUTOLOOP_") and not key.startswith("AAS_GROK")
+                }
+                env["AAS_AUTOLOOP_REGISTRY"] = str(reg)
+                argv = [
+                    sys.executable,
+                    str(HELPER),
+                    "drive",
+                    "--dir",
+                    str(loop),
+                    "--root",
+                    str(loop),
+                ]
+                if mode == "cmd":
+                    argv.extend(["--cmd", command])
+                else:
+                    env[f"AAS_AUTOLOOP_CMD_{mode.upper()}"] = command
+                    argv.extend(["--provider", mode])
+                previous_umask = os.umask(0o002)
+                try:
+                    completed = subprocess.run(
+                        argv,
+                        capture_output=True,
+                        text=True,
+                        timeout=40,
+                        env=env,
+                        check=False,
+                    )
+                finally:
+                    os.umask(previous_umask)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                observed_modes[mode] = (loop / cache_name).stat().st_mode & 0o777
+            self.assertEqual(observed_modes, {"grok": 0o600, "claude": 0o664, "cmd": 0o664})
+
     def test_pause_blocks_iterations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
@@ -1144,6 +1196,77 @@ def _fake_cli(bindir: Path, name: str, body: str | None = None) -> Path:
     return path
 
 
+def _fake_grok_models_cli(bindir: Path, model: str) -> Path:
+    if os.name == "nt":
+        body = (
+            "@echo off\r\n"
+            "if \"%~1\"==\"models\" (\r\n"
+            f"  echo Default model: {model}\r\n"
+            "  echo Available models:\r\n"
+            f"  echo * {model} ^(default^)\r\n"
+            ")\r\n"
+        )
+    else:
+        body = (
+            "#!/bin/sh\n"
+            "if [ \"$1\" = models ]; then\n"
+            f"  printf '%s\\n' 'Default model: {model}' 'Available models:' '* {model} (default)'\n"
+            "fi\n"
+        )
+    return _fake_cli(bindir, "grok", body)
+
+
+def _grok_profile_payload(status: str = "ready", model_id: str = "grok-4.5") -> dict[str, Any]:
+    configured = status in {"ready", "degraded"}
+    return {
+        "schema_version": "grok-remote.profile-status.v1",
+        "status": status,
+        "profile_name": "default" if configured else None,
+        "profile_sha256": "a" * 64 if configured else None,
+        "release_id": "b" * 64 if configured else None,
+        "grok_release_id": "sha256:" + "c" * 64 if configured else None,
+        "model_id": model_id if configured else None,
+        "eligible_rungs": ["vpn"] if configured else [],
+        "missing_rungs": ["home:windows"] if status == "degraded" else [],
+        "reason_code": {
+            "ready": "ready",
+            "degraded": "ready_with_missing_optional_rungs",
+            "blocked": "active_profile_invalid",
+            "unconfigured": "no_active_profile",
+        }[status],
+    }
+
+
+def _fake_grok_remote_profile_cli(bindir: Path) -> Path:
+    if os.name == "nt":
+        body = (
+            "@echo off\r\n"
+            "if \"%~1\"==\"--help\" (\r\n"
+            "  echo   grok-remote doctor --json   report managed profile readiness\r\n"
+            "  exit /b 0\r\n"
+            ")\r\n"
+            "if \"%~1\"==\"doctor\" if \"%~2\"==\"--json\" (\r\n"
+            "  echo %AAS_TEST_GROK_PROFILE_JSON%\r\n"
+            "  exit /b %AAS_TEST_GROK_PROFILE_EXIT%\r\n"
+            ")\r\n"
+            "exit /b 97\r\n"
+        )
+    else:
+        body = (
+            "#!/bin/sh\n"
+            "if [ \"$1\" = --help ]; then\n"
+            "  printf '%s\\n' '  grok-remote doctor --json   report managed profile readiness'\n"
+            "  exit 0\n"
+            "fi\n"
+            "if [ \"$1\" = doctor ] && [ \"$2\" = --json ]; then\n"
+            "  printf '%s\\n' \"$AAS_TEST_GROK_PROFILE_JSON\"\n"
+            "  exit \"$AAS_TEST_GROK_PROFILE_EXIT\"\n"
+            "fi\n"
+            "exit 97\n"
+        )
+    return _fake_cli(bindir, "grok-remote", body)
+
+
 class GrokProviderResolveTests(unittest.TestCase):
     """Platform-aware grok binary resolution (provider id always 'grok')."""
 
@@ -1155,7 +1278,7 @@ class GrokProviderResolveTests(unittest.TestCase):
         self.assertIn("grok", self.mod.PROVIDER_SPECS)
         self.assertNotIn("grok-remote", self.mod.PROVIDER_SPECS)
 
-    def test_prefers_grok_remote_when_on_path(self) -> None:
+    def test_prefers_bare_grok_without_resolved_model(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bindir = Path(tmp)
             remote = _fake_cli(bindir, "grok-remote")
@@ -1165,19 +1288,249 @@ class GrokProviderResolveTests(unittest.TestCase):
                 "HOME": str(bindir),
                 "USERPROFILE": str(bindir),
             }
-            binary, found, tried = self.mod.resolve_provider_binary(
+            with mock.patch.object(self.mod, "probe_grok_remote_profile") as remote_probe:
+                binary, found, tried = self.mod.resolve_provider_binary(
+                    "grok", environ=env, platform=self.plat
+                )
+            self.assertTrue(found, tried)
+            self.assertEqual(Path(binary).resolve(), bare.resolve())
+            self.assertFalse(any(t.startswith("grok-remote") for t in tried), tried)
+            self.assertTrue(remote.exists() and bare.exists())
+            remote_probe.assert_not_called()
+
+    def test_prefers_bare_grok_when_resolved_model_is_confirmed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            _fake_cli(bindir, "grok-remote")
+            bare = _fake_grok_models_cli(bindir, "grok-4.5")
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+                "AAS_GROK_LATEST_MODEL": "grok-4.5",
+            }
+            with mock.patch.object(self.mod, "probe_grok_remote_profile") as remote_probe:
+                binary, found, tried = self.mod.resolve_provider_binary(
+                    "grok", environ=env, platform=self.plat
+                )
+            self.assertTrue(found, tried)
+            self.assertEqual(Path(binary).resolve(), bare.resolve())
+            self.assertFalse(any(t.startswith("grok-remote") for t in tried), tried)
+            remote_probe.assert_not_called()
+
+    def test_uses_remote_only_after_bare_model_nonconfirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            remote = _fake_grok_remote_profile_cli(bindir)
+            _fake_grok_models_cli(bindir, "grok-4.4")
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+                "AAS_GROK_LATEST_MODEL": "grok-4.5",
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(_grok_profile_payload()),
+                "AAS_TEST_GROK_PROFILE_EXIT": "0",
+            }
+            binary, found, tried, selection = self.mod.resolve_provider_binary_details(
                 "grok", environ=env, platform=self.plat
             )
             self.assertTrue(found, tried)
-            self.assertTrue(
-                Path(binary).name.startswith("grok-remote"),
-                binary,
+            self.assertEqual(Path(binary).resolve(), remote.resolve())
+            self.assertTrue(any(t.startswith("grok-remote") for t in tried), tried)
+            self.assertEqual(selection["grok_profile_status"]["model_id"], "grok-4.5")
+
+    def test_does_not_authorize_remote_without_resolved_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            _fake_cli(bindir, "grok-remote")
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+            }
+            _binary, found, tried = self.mod.resolve_provider_binary(
+                "grok", environ=env, platform=self.plat
             )
-            self.assertTrue(
-                any(t.startswith("grok-remote") for t in tried),
-                tried,
+            self.assertFalse(found, tried)
+            self.assertFalse(any(t.startswith("grok-remote") for t in tried), tried)
+
+    def test_deduplicates_resolved_bare_executable_before_model_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            _fake_cli(bindir, "grok")
+            remote = _fake_grok_remote_profile_cli(bindir)
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+                "AAS_GROK_LATEST_MODEL": "grok-4.5",
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(_grok_profile_payload()),
+                "AAS_TEST_GROK_PROFILE_EXIT": "0",
+            }
+            not_confirmed = {
+                "schema_version": self.mod.GROK_MODEL_PROBE_SCHEMA,
+                "status": "not-confirmed",
+                "resolved_model": "grok-4.5",
+                "available_models": ["grok-4.4"],
+                "reason_code": "resolved_model_not_listed",
+            }
+            platform_candidates = {
+                **self.mod.GROK_BARE_BINARY_CANDIDATES,
+                self.plat: ["grok", "grok"],
+            }
+            with (
+                mock.patch.object(self.mod, "GROK_BARE_BINARY_CANDIDATES", platform_candidates),
+                mock.patch.object(
+                    self.mod,
+                    "probe_grok_model_membership",
+                    return_value=not_confirmed,
+                ) as probe,
+            ):
+                binary, found, tried = self.mod.resolve_provider_binary(
+                    "grok", environ=env, platform=self.plat
+                )
+            self.assertTrue(found, tried)
+            self.assertEqual(Path(binary).resolve(), remote.resolve())
+            probe.assert_called_once()
+
+    def test_invalid_model_blocks_before_bare_or_remote_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            bare = _fake_grok_models_cli(bindir, "grok-4.5")
+            _fake_grok_remote_profile_cli(bindir)
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+                "AAS_GROK_LATEST_MODEL": "_invalid",
+                "AAS_AUTOLOOP_BIN_GROK": str(bare),
+            }
+            _binary, found, tried, selection = self.mod.resolve_provider_binary_details(
+                "grok", environ=env, platform=self.plat
             )
-            self.assertTrue(remote.exists() and bare.exists())
+            self.assertFalse(found)
+            self.assertEqual(tried, [])
+            self.assertEqual(selection["reason_code"], "resolved_model_invalid")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
+    def test_bare_model_probe_uses_private_posix_umask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            bare = _fake_cli(
+                root,
+                "grok",
+                (
+                    "#!/bin/sh\n"
+                    "mkdir -p \"$HOME/.grok\"\n"
+                    ": > \"$HOME/.grok/models_cache.json\"\n"
+                    "printf '%s\\n' '* grok-4.5 (default)'\n"
+                ),
+            )
+            previous_umask = os.umask(0o002)
+            try:
+                probe = self.mod.probe_grok_model_membership(
+                    str(bare),
+                    "grok-4.5",
+                    {**os.environ, "HOME": str(home)},
+                )
+            finally:
+                os.umask(previous_umask)
+            cache = home / ".grok" / "models_cache.json"
+            self.assertEqual(probe["status"], "confirmed")
+            self.assertEqual(cache.stat().st_mode & 0o777, 0o600)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
+    def test_remote_help_and_doctor_use_private_posix_umask(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache_dir = root / "cache"
+            cache_dir.mkdir()
+            remote = _fake_cli(
+                root,
+                "grok-remote",
+                (
+                    "#!/bin/sh\n"
+                    "if [ \"$1\" = --help ]; then\n"
+                    "  : > \"$AAS_TEST_CACHE_DIR/help-cache\"\n"
+                    "  printf '%s\\n' 'grok-remote doctor --json'\n"
+                    "  exit 0\n"
+                    "fi\n"
+                    "if [ \"$1\" = doctor ] && [ \"$2\" = --json ]; then\n"
+                    "  : > \"$AAS_TEST_CACHE_DIR/doctor-cache\"\n"
+                    "  printf '%s\\n' \"$AAS_TEST_GROK_PROFILE_JSON\"\n"
+                    "  exit 0\n"
+                    "fi\n"
+                    "exit 97\n"
+                ),
+            )
+            payload = _grok_profile_payload()
+            env = {
+                **os.environ,
+                "AAS_TEST_CACHE_DIR": str(cache_dir),
+                "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
+            }
+            previous_umask = os.umask(0o002)
+            try:
+                observed, error = self.mod.probe_grok_remote_profile(
+                    str(remote),
+                    "grok-4.5",
+                    env,
+                )
+            finally:
+                os.umask(previous_umask)
+            self.assertIsNone(error)
+            self.assertEqual(observed, payload)
+            self.assertEqual((cache_dir / "help-cache").stat().st_mode & 0o777, 0o600)
+            self.assertEqual((cache_dir / "doctor-cache").stat().st_mode & 0o777, 0o600)
+
+    def test_invalid_model_blocks_full_command_override_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            loop.mkdir()
+            env = {
+                "AAS_GROK_LATEST_MODEL": "_invalid",
+                "AAS_AUTOLOOP_CMD_GROK": "printf should-not-run",
+            }
+            entry = self.mod.resolve_provider_command("grok", loop, environ=env)
+            self.assertEqual(entry["mode"], "argv")
+            self.assertFalse(entry["binary_found"])
+            self.assertEqual(entry["tried"], [])
+            self.assertEqual(entry["grok_selection"]["reason_code"], "resolved_model_invalid")
+
+    def test_remote_fallback_rejects_nonready_mismatch_and_invalid_output(self) -> None:
+        cases = []
+        cases.append(("blocked", _grok_profile_payload("blocked"), "2", "managed_profile_not_ready"))
+        cases.append(
+            (
+                "mismatch",
+                _grok_profile_payload(model_id="grok-4.6"),
+                "0",
+                "managed_profile_model_mismatch",
+            )
+        )
+        invalid = _grok_profile_payload()
+        invalid["endpoint"] = "private.example"
+        cases.append(("invalid", invalid, "0", "managed_profile_output_invalid"))
+        for name, payload, exit_code, expected_reason in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                bindir = Path(tmp)
+                _fake_grok_models_cli(bindir, "grok-4.4")
+                _fake_grok_remote_profile_cli(bindir)
+                env = {
+                    "PATH": str(bindir),
+                    "HOME": str(bindir),
+                    "USERPROFILE": str(bindir),
+                    "AAS_GROK_LATEST_MODEL": "grok-4.5",
+                    "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
+                    "AAS_TEST_GROK_PROFILE_EXIT": exit_code,
+                }
+                _binary, found, _tried, selection = self.mod.resolve_provider_binary_details(
+                    "grok", environ=env, platform=self.plat
+                )
+                self.assertFalse(found, selection)
+                self.assertTrue(selection["reason_code"].startswith(expected_reason), selection)
 
     def test_falls_back_to_grok(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1234,12 +1587,17 @@ class GrokProviderResolveTests(unittest.TestCase):
         cands = self.mod.provider_binary_candidates("grok", platform="windows")
         self.assertIn("grok-remote.cmd", cands)
         self.assertIn("grok.exe", cands)
-        self.assertEqual(cands[0], "grok-remote.cmd")
+        self.assertEqual(cands[0], "%USERPROFILE%\\.grok\\bin\\grok.exe")
+
+    def test_provider_subprocess_options_preserve_windows_behavior(self) -> None:
+        self.assertEqual(self.mod.provider_subprocess_options("claude"), {})
+        with mock.patch.object(self.mod.os, "name", "nt"):
+            self.assertEqual(self.mod.provider_subprocess_options("grok"), {})
 
     def test_macos_candidates_include_homebrew(self) -> None:
         cands = self.mod.provider_binary_candidates("grok", platform="macos")
         self.assertIn("/opt/homebrew/bin/grok", cands)
-        self.assertEqual(cands[0], "grok-remote")
+        self.assertEqual(cands[0], "grok")
 
     def test_resolve_provider_command_grok_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1263,6 +1621,24 @@ class GrokProviderResolveTests(unittest.TestCase):
             self.assertEqual(entry["mode"], "argv")
             self.assertIn("-p", entry["argv"])
             self.assertIn("--yolo", entry["argv"])
+            self.assertEqual(entry["grok_selection"]["status"], "not-performed")
+
+    def test_resolve_provider_command_pins_resolved_grok_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            _fake_grok_models_cli(bindir, "grok-4.5")
+            loop = bindir / "loop"
+            loop.mkdir()
+            env = {
+                "PATH": str(bindir),
+                "HOME": str(bindir),
+                "USERPROFILE": str(bindir),
+                "AAS_GROK_LATEST_MODEL": "grok-4.5",
+            }
+            entry = self.mod.resolve_provider_command("grok", loop, environ=env)
+            self.assertTrue(entry["binary_found"], entry)
+            self.assertEqual(entry["grok_selection"]["source"], "bare-model-confirmed")
+            self.assertEqual(entry["argv"][-2:], ["-m", "grok-4.5"])
 
 
 class HookCheckWorkspaceRootTests(unittest.TestCase):
@@ -1449,3 +1825,80 @@ class DriveProviderGrokTests(unittest.TestCase):
             self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
             self.assertEqual((loop / "c").read_text().strip(), "2")
             self.assertEqual(Path((loop / "cwd_1").read_text().strip()).resolve(), root.resolve())
+
+
+class NotifyPolicyTests(unittest.TestCase):
+    def _mod(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("arl_rt_notify", HELPER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_normalize_and_resolve_off(self) -> None:
+        mod = self._mod()
+        self.assertEqual(mod.normalize_notify_token("OFF"), "off")
+        self.assertEqual(mod.normalize_notify_token("both"), "both")
+        with mock.patch.dict(os.environ, {"AAS_AUTOLOOP_NOTIFY": "off"}, clear=False):
+            self.assertIsNone(
+                mod.resolve_notify_channel(explicit=None, run_dir=None, default_auto=True)
+            )
+
+    def test_explicit_beats_env(self) -> None:
+        mod = self._mod()
+        with mock.patch.dict(os.environ, {"AAS_AUTOLOOP_NOTIFY": "telegram"}, clear=False):
+            self.assertEqual(
+                mod.resolve_notify_channel(explicit="zulip", run_dir=None, default_auto=True),
+                "zulip",
+            )
+            self.assertIsNone(
+                mod.resolve_notify_channel(explicit="off", run_dir=None, default_auto=True)
+            )
+
+    def test_auto_uses_secrets_when_configured(self) -> None:
+        mod = self._mod()
+        with mock.patch.object(mod, "auto_notify_channel_from_secrets", return_value="both"):
+            self.assertEqual(
+                mod.resolve_notify_channel(explicit="auto", run_dir=None, default_auto=True),
+                "both",
+            )
+            self.assertEqual(
+                mod.resolve_notify_channel(explicit=None, run_dir=None, default_auto=True),
+                "both",
+            )
+
+    def test_auto_none_when_unconfigured(self) -> None:
+        mod = self._mod()
+        with mock.patch.object(mod, "auto_notify_channel_from_secrets", return_value=None):
+            self.assertIsNone(
+                mod.resolve_notify_channel(explicit="auto", run_dir=None, default_auto=True)
+            )
+
+    def test_arm_persists_notify_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            init_loop(loop, max_iterations=3)
+            res = run_helper(
+                "arm",
+                "--dir",
+                str(loop),
+                "--root",
+                str(loop),
+                "--notify",
+                "off",
+                "--registry-dir",
+                str(reg),
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            payload = json.loads(res.stdout)
+            self.assertEqual(payload.get("notify_channel"), "off")
+            state = json.loads((loop / "loop_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state.get("notify_channel"), "off")
+            # registry files live under active.d/
+            entries = list((reg / "active.d").glob("*.json"))
+            self.assertTrue(entries)
+            entry = json.loads(entries[0].read_text(encoding="utf-8"))
+            self.assertEqual(entry.get("notify_channel"), "off")
