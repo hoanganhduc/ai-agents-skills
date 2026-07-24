@@ -3810,7 +3810,7 @@ def panel_command(args: argparse.Namespace) -> dict[str, Any]:
     providers = (
         [p.strip() for p in args.providers.split(",") if p.strip()]
         if args.providers
-        else list(cfg.get("providers") or ["claude", "codex", "codewhale", "kimi"])
+        else list(cfg.get("providers") or ["claude", "codex", "codewhale", "kimi", "grok"])
     )
     if args.smoke or args.phase == "smoke":
         timeout = args.timeout or int((cfg.get("timeouts") or {}).get("smoke", 120))

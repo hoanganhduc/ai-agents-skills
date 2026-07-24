@@ -138,7 +138,7 @@ Config (`<loop>/panel.json` or `loop_state.standing_orders.panel`):
 ```json
 {
   "enabled": true,
-  "providers": ["claude", "codex", "codewhale", "kimi"],
+  "providers": ["claude", "codex", "codewhale", "kimi", "grok"],
   "exclude_until_credit": [],
   "timeout_mode": "adaptive",
   "timeouts": {"target_advice": 600, "result_review": 900},
