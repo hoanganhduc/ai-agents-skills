@@ -849,6 +849,66 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             self.assertIn("Autonomous loop live status", body)
             self.assertIn("drive_stop", body)
 
+
+    def test_progress_event_failure_labels_next_after_banked(self) -> None:
+        """iteration_failed must not look like the last banked iteration failed."""
+        import sys
+        runtime = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "autonomous-research-loop-runtime"
+        )
+        sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg, "--max-iterations", "10")
+            self._run(
+                "append-iteration",
+                "--dir",
+                str(loop),
+                "--mode",
+                "bounded-research",
+                "--objective",
+                "banked-work",
+                "--evidence-id",
+                "e1",
+                "--action-taken",
+                "a1",
+                "--output",
+                "PROVED something banked",
+                "--decision",
+                "continue",
+                registry=reg,
+            )
+            # Mark next path so attempt events prefer it over last objective.
+            state = json.loads((loop / "loop_state.json").read_text(encoding="utf-8"))
+            state["next_preferred_path"] = "SINGLE PATH: do next work"
+            (loop / "loop_state.json").write_text(json.dumps(state), encoding="utf-8")
+
+            failed = arl.build_progress_event(loop, "iteration_failed")
+            self.assertEqual(failed["last_completed_iteration"], 1)
+            self.assertEqual(failed["next_iteration"], 2)
+            self.assertEqual(failed["iteration"], 2)
+            self.assertIn("attempting", failed["text"].lower())
+            self.assertIn("banked", failed["text"].lower())
+            self.assertIn("Failed starting next after banked 1", failed["text"])
+            self.assertIn("SINGLE PATH: do next work", failed["text"])
+            # Must not present banked PROVED as the failure result body only.
+            self.assertNotIn("PROVED something banked", failed.get("output_preview") or "")
+
+            started = arl.build_progress_event(loop, "iteration_start")
+            self.assertEqual(started["iteration"], 2)
+            self.assertIn("attempting *2*", started["text"])
+
+            ok = arl.build_progress_event(loop, "iteration_ok")
+            self.assertEqual(ok["iteration"], 1)
+            self.assertIn("PROVED something banked", ok.get("output_preview") or "")
+
     def test_hook_check_allows_unrelated_root_and_missing_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

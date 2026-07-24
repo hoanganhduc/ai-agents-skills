@@ -2375,6 +2375,20 @@ _NOTIFY_EVENT_MARKERS: dict[str, str] = {
 }
 
 
+# Events about launching or failing the *next* iteration after the banked tip.
+# For these, progress text must not look like the last banked iteration failed.
+_ATTEMPT_PROGRESS_EVENTS = frozenset(
+    {
+        "iteration_start",
+        "iteration_failed",
+        "quota_wait",
+        "panel_target_start",
+        "panel_target_ok",
+        "panel_target_fail",
+    }
+)
+
+
 def format_progress_notify_text(
     *,
     loop_name: str,
@@ -2387,17 +2401,37 @@ def format_progress_notify_text(
     objective: str,
     output: str,
     timestamp: str = "",
+    last_completed: int | None = None,
+    next_iteration: int | None = None,
+    progress_note: str = "",
 ) -> str:
     """Human-readable multi-line notify body for Zulip/Telegram."""
     marker = _NOTIFY_EVENT_MARKERS.get(event, "•")
-    prog = f"{iteration}/{max_iter}" if max_iter else str(iteration or "?")
-    rem = f"{remaining} left" if max_iter else ""
-    progress_line = f"Progress: *{prog}*" + (f" ({rem})" if rem else "")
+    if (
+        event in _ATTEMPT_PROGRESS_EVENTS
+        and last_completed is not None
+        and next_iteration is not None
+    ):
+        if max_iter:
+            progress_line = (
+                f"Progress: banked *{last_completed}/{max_iter}* · "
+                f"attempting *{next_iteration}* ({remaining} left after banked)"
+            )
+        else:
+            progress_line = (
+                f"Progress: banked *{last_completed}* · attempting *{next_iteration}*"
+            )
+    else:
+        prog = f"{iteration}/{max_iter}" if max_iter else str(iteration or "?")
+        rem = f"{remaining} left" if max_iter else ""
+        progress_line = f"Progress: *{prog}*" + (f" ({rem})" if rem else "")
     lines = [
         f"{marker} *{loop_name}* — `{event}`",
         progress_line,
         f"Decision: `{decision}` · Status: `{status or 'n/a'}`",
     ]
+    if progress_note:
+        lines.append(progress_note.strip())
     if timestamp:
         lines.append(f"Time: {timestamp}")
     obj = (objective or "").strip()
@@ -2426,6 +2460,9 @@ def format_progress_notify_telegram_html(
     objective: str,
     output: str,
     timestamp: str = "",
+    last_completed: int | None = None,
+    next_iteration: int | None = None,
+    progress_note: str = "",
 ) -> str:
     """Telegram HTML body (parse_mode=HTML)."""
 
@@ -2438,14 +2475,33 @@ def format_progress_notify_telegram_html(
         )
 
     marker = _NOTIFY_EVENT_MARKERS.get(event, "•")
-    prog = f"{iteration}/{max_iter}" if max_iter else str(iteration or "?")
-    rem = f"{remaining} left" if max_iter else ""
-    progress_line = f"Progress: <b>{esc(prog)}</b>" + (f" ({esc(rem)})" if rem else "")
+    if (
+        event in _ATTEMPT_PROGRESS_EVENTS
+        and last_completed is not None
+        and next_iteration is not None
+    ):
+        if max_iter:
+            progress_line = (
+                f"Progress: banked <b>{esc(str(last_completed))}/{esc(str(max_iter))}</b> · "
+                f"attempting <b>{esc(str(next_iteration))}</b> "
+                f"({esc(str(remaining))} left after banked)"
+            )
+        else:
+            progress_line = (
+                f"Progress: banked <b>{esc(str(last_completed))}</b> · "
+                f"attempting <b>{esc(str(next_iteration))}</b>"
+            )
+    else:
+        prog = f"{iteration}/{max_iter}" if max_iter else str(iteration or "?")
+        rem = f"{remaining} left" if max_iter else ""
+        progress_line = f"Progress: <b>{esc(prog)}</b>" + (f" ({esc(rem)})" if rem else "")
     lines = [
         f"{marker} <b>{esc(loop_name)}</b> — <code>{esc(event)}</code>",
         progress_line,
         f"Decision: <code>{esc(decision)}</code> · Status: <code>{esc(status or 'n/a')}</code>",
     ]
+    if progress_note:
+        lines.append(esc(progress_note.strip()))
     if timestamp:
         lines.append(f"Time: {esc(timestamp)}")
     obj = (objective or "").strip()
@@ -2482,21 +2538,85 @@ def build_progress_event(
             budget = read_json(paths["budget"])
     except (OSError, ValueError, json.JSONDecodeError):
         budget = {}
-    iteration = int(record.get("iteration") or state.get("last_iteration") or 0)
-    spent = int(budget.get("spent_iterations") or iteration or 0)
+    last_completed = int(record.get("iteration") or state.get("last_iteration") or 0)
+    spent = int(budget.get("spent_iterations") or last_completed or 0)
+    if spent < last_completed:
+        spent = last_completed
     max_iter = int(budget.get("max_iterations") or 0)
     decision = str(record.get("decision") or state.get("status") or "?")
-    objective = str(record.get("objective") or "")
-    output = str(record.get("output") or "")
+    last_objective = str(record.get("objective") or "")
+    last_output = str(record.get("output") or "")
     remaining = max(0, max_iter - spent) if max_iter else 0
     status = str(state.get("status") or "")
     ts = utc_now()
+
+    # Next ledger index the driver is (or was) trying to append.
+    if max_iter and spent >= max_iter:
+        next_iteration = spent
+    else:
+        next_iteration = spent + 1 if spent >= 0 else 1
+
+    attempt_event = event in _ATTEMPT_PROGRESS_EVENTS
+    if attempt_event:
+        # Do not present the last banked row as the failed/started attempt.
+        iteration = next_iteration
+        npp = str(state.get("next_preferred_path") or "").strip()
+        if npp:
+            objective = npp
+        elif last_completed:
+            objective = (
+                f"Start iteration {next_iteration} (next after banked {last_completed})"
+            )
+        else:
+            objective = f"Start iteration {next_iteration}"
+        if event == "iteration_failed":
+            progress_note = (
+                f"Failed starting next after banked {last_completed} "
+                f"(attempting {next_iteration}); banked work is unchanged."
+            )
+            output = (
+                f"(No new ledger row.) Last banked iter {last_completed} remains "
+                f"successful if present; this notify is only about the next driver attempt."
+            )
+        elif event == "quota_wait":
+            progress_note = (
+                f"Provider quota/credit while attempting {next_iteration} "
+                f"(after banked {last_completed})."
+            )
+            output = ""
+        elif event.startswith("panel_target"):
+            progress_note = (
+                f"Panel target phase for upcoming iter {next_iteration} "
+                f"(banked {last_completed})."
+            )
+            output = ""
+        else:
+            # iteration_start
+            progress_note = (
+                f"Starting iter {next_iteration} after banked {last_completed}."
+                if last_completed
+                else f"Starting iter {next_iteration}."
+            )
+            output = ""
+    else:
+        iteration = last_completed
+        objective = last_objective
+        output = last_output
+        progress_note = ""
+
     # Compact one-liner for logs / LIVE_STATUS summaries.
-    compact = (
-        f"autoloop {run_dir.name}: [{event}] iter {iteration}/{max_iter or '?'} "
-        f"({decision}) — {objective[:160]}"
-        + (f" | {output[:240]}" if output else "")
-    )
+    if attempt_event:
+        compact = (
+            f"autoloop {run_dir.name}: [{event}] banked {last_completed}/"
+            f"{max_iter or '?'} attempting {next_iteration} "
+            f"({decision}) — {objective[:160]}"
+        )
+    else:
+        compact = (
+            f"autoloop {run_dir.name}: [{event}] iter {iteration}/{max_iter or '?'} "
+            f"({decision}) — {objective[:160]}"
+            + (f" | {output[:240]}" if output else "")
+        )
     text = format_progress_notify_text(
         loop_name=run_dir.name,
         event=event,
@@ -2508,6 +2628,9 @@ def build_progress_event(
         objective=objective,
         output=output,
         timestamp=ts,
+        last_completed=last_completed if attempt_event else None,
+        next_iteration=next_iteration if attempt_event else None,
+        progress_note=progress_note,
     )
     text_html = format_progress_notify_telegram_html(
         loop_name=run_dir.name,
@@ -2520,6 +2643,9 @@ def build_progress_event(
         objective=objective,
         output=output,
         timestamp=ts,
+        last_completed=last_completed if attempt_event else None,
+        next_iteration=next_iteration if attempt_event else None,
+        progress_note=progress_note,
     )
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -2527,6 +2653,8 @@ def build_progress_event(
         "event": event,
         "dir": str(run_dir),
         "iteration": iteration,
+        "last_completed_iteration": last_completed,
+        "next_iteration": next_iteration,
         "spent_iterations": spent,
         "max_iterations": max_iter,
         "remaining_iterations": remaining,
@@ -2538,6 +2666,8 @@ def build_progress_event(
         "text_compact": compact,
         "text_html": text_html,
     }
+    if progress_note:
+        payload["progress_note"] = progress_note
     if extra:
         for key, value in extra.items():
             if value is None or key == "text_override":
@@ -2578,7 +2708,24 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
                 ),
                 f"- Loop status: `{payload.get('status') or '?'}`",
                 f"- Last decision: `{payload.get('decision') or '?'}`",
-                f"- Last iteration: **{payload.get('iteration', '?')}**",
+                f"- Last banked iteration: **{payload.get('last_completed_iteration', payload.get('iteration', '?'))}**",
+                (
+                    f"- Display iteration: **{payload.get('iteration', '?')}**"
+                    + (
+                        f" (attempting next={payload.get('next_iteration')})"
+                        if payload.get("next_iteration") is not None
+                        and payload.get("event")
+                        in (
+                            "iteration_start",
+                            "iteration_failed",
+                            "quota_wait",
+                            "panel_target_start",
+                            "panel_target_ok",
+                            "panel_target_fail",
+                        )
+                        else ""
+                    )
+                ),
                 f"- Objective: {payload.get('objective') or '(none yet)'}",
                 f"- Output preview: {payload.get('output_preview') or '(none yet)'}",
                 f"- Summary: {payload.get('text') or ''}",
