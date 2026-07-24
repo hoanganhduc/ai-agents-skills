@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-DEFAULT_PROVIDERS = ("claude", "codex", "codewhale", "kimi")
+DEFAULT_PROVIDERS = ("claude", "codex", "codewhale", "kimi", "grok")
 
 DEFAULT_TIMEOUT_S = {
     "target_advice": 600,
@@ -39,6 +39,7 @@ DEFAULT_PROVIDER_MULT: dict[str, float] = {
     "kimi": 1.5,
     "claude": 1.15,
     "codex": 1.1,
+    "grok": 1.15,
     "codewhale": 1.0,
 }
 DEFAULT_TIMEOUT_CALC: dict[str, Any] = {
@@ -124,6 +125,13 @@ def build_cmd(
         kimi_home = prepare_writable_home_overlay("kimi", real, work)
         env["KIMI_CODE_HOME"] = str(kimi_home)
         return [bin_, "-p", prompt], env
+
+    if provider == "grok":
+        # Concurrent panel + primary is common when drive --provider grok
+        # and panel also invites grok; multi-session avoids single-session lock.
+        bin_ = which("grok") or "grok"
+        env["GROK_MULTI_SESSION"] = "1"
+        return [bin_, "-p", prompt, "--yolo"], env
 
     raise ValueError(f"unknown provider {provider}")
 
@@ -536,7 +544,7 @@ def dispatch_phase(
         "panel_content_pass": len(usable) >= 1,
         "all_invited_usable": set(usable) >= set(providers),
         "different_family_logic_available": different_family
-        or any(p in usable for p in ("claude", "kimi", "codewhale")),
+        or any(p in usable for p in ("claude", "kimi", "codewhale", "grok")),
         "timeout_mode": (next(iter(budgets.values()), {}) or {}).get("timeout_mode"),
         "provider_timeouts": {p: budgets[p]["timeout_s"] for p in providers if p in budgets},
         "results": results,
