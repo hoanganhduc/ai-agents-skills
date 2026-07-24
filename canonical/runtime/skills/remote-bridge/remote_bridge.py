@@ -1822,6 +1822,14 @@ def _maybe_sync_openclaw_workspace_paths() -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Force UTF-8 stdio: chat API responses embed non-ASCII (e.g. a recipient's
+    # name), and json.dumps(ensure_ascii=False) would otherwise crash emitting
+    # them on a legacy Windows cp1252 console.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
     # Sync before send/arm/handle so sandbox and host share secrets/mailbox.
     _maybe_sync_openclaw_workspace_paths()
     parser = build_parser()

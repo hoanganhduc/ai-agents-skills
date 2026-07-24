@@ -1196,10 +1196,21 @@ class AutoloopDriverShimTests(unittest.TestCase):
 
 
 def _load_arl_runtime():
-    spec = importlib.util.spec_from_file_location("arl_runtime_under_test", HELPER)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    # The runtime imports its sibling panel_parent / goal_priority helpers by
+    # bare name (they are co-located at run time). Put the runtime dir on
+    # sys.path so those imports resolve when loaded as a standalone module.
+    helper_dir = str(HELPER.parent)
+    added = helper_dir not in sys.path
+    if added:
+        sys.path.insert(0, helper_dir)
+    try:
+        spec = importlib.util.spec_from_file_location("arl_runtime_under_test", HELPER)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        if added:
+            sys.path.remove(helper_dir)
     return mod
 
 
@@ -1664,6 +1675,60 @@ class GrokProviderResolveTests(unittest.TestCase):
             self.assertTrue(entry["binary_found"], entry)
             self.assertEqual(entry["grok_selection"]["source"], "bare-model-confirmed")
             self.assertEqual(entry["argv"][-2:], ["-m", "grok-4.5"])
+
+
+class AntigravityProviderResolveTests(unittest.TestCase):
+    """Antigravity resolves the Google Antigravity CLI `agy` (agy -p ...
+    --dangerously-skip-permissions), with the standalone `gemini` CLI as a
+    per-binary-args fallback (`gemini --yolo -p ...`)."""
+
+    def setUp(self) -> None:
+        self.mod = _load_arl_runtime()
+
+    def _resolve(self, bindir: Path, loop: Path) -> dict[str, Any]:
+        cleaned = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("AAS_AUTOLOOP_") and not k.startswith("AAS_ANTIGRAVITY")
+        }
+        cleaned.update({"PATH": str(bindir), "HOME": str(bindir), "USERPROFILE": str(bindir)})
+        return self.mod.resolve_provider_command("antigravity", loop, environ=cleaned)
+
+    def test_resolves_agy_with_skip_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            _fake_cli(bindir, "agy")
+            loop = bindir / "loop"
+            loop.mkdir()
+            entry = self._resolve(bindir, loop)
+            self.assertTrue(entry["binary_found"], entry)
+            self.assertIn("agy", os.path.basename(entry["binary"]).lower())
+            self.assertIn("-p", entry["argv"])
+            self.assertIn("--dangerously-skip-permissions", entry["argv"])
+            self.assertNotIn("--yolo", entry["argv"])
+
+    def test_falls_back_to_gemini_with_yolo_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            _fake_cli(bindir, "gemini")  # no agy on PATH
+            loop = bindir / "loop"
+            loop.mkdir()
+            entry = self._resolve(bindir, loop)
+            self.assertTrue(entry["binary_found"], entry)
+            self.assertIn("gemini", os.path.basename(entry["binary"]).lower())
+            self.assertIn("--yolo", entry["argv"])
+            self.assertNotIn("--dangerously-skip-permissions", entry["argv"])
+
+    def test_prefers_agy_over_gemini_when_both_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bindir = Path(tmp)
+            _fake_cli(bindir, "agy")
+            _fake_cli(bindir, "gemini")
+            loop = bindir / "loop"
+            loop.mkdir()
+            entry = self._resolve(bindir, loop)
+            self.assertIn("agy", os.path.basename(entry["binary"]).lower())
+            self.assertIn("--dangerously-skip-permissions", entry["argv"])
 
 
 class HookCheckWorkspaceRootTests(unittest.TestCase):

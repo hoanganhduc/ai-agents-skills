@@ -77,6 +77,19 @@ def runtime_runner_needed(artifacts: list[Any], runtime_skills: set[str]) -> boo
     )
 
 
+_MARKER_TEXT_SUFFIXES = frozenset({".md", ".sh", ".py", ".yaml", ".yml", ".sage", ".toml", ".ps1"})
+
+
+def managed_marker_applies(path: Path) -> bool:
+    """Whether the installer embeds an inline managed-marker in this file type.
+
+    Mirrors ``render.add_managed_support_header``: Markdown and comment-bearing
+    code files get an inline marker; formats without a comment syntax (e.g.
+    ``.json``) are written verbatim and rely on ``installed-signature-match``.
+    """
+    return path.suffix.lower() in _MARKER_TEXT_SUFFIXES
+
+
 def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
     path = Path(artifact["artifact"])
     checks: list[dict[str, Any]] = []
@@ -161,7 +174,11 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         })
     if artifact.get("artifact_type") in {"template", "instruction-doc", "entrypoint-alias"} and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
-        checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
+        # Only comment-bearing formats carry an inline managed-marker (see
+        # render.add_managed_support_header). Marker-less formats such as .json
+        # are written verbatim and verified by installed-signature-match above.
+        if managed_marker_applies(path):
+            checks.append({"name": "managed-marker", "ok": MANAGED_MARKER in text})
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
         if artifact.get("agent") == "antigravity" and artifact.get("artifact_type") == "entrypoint-alias":
             checks.append({"name": "antigravity-skill-frontmatter", "ok": skill_metadata_valid(text, str(artifact.get("artifact_name")))})

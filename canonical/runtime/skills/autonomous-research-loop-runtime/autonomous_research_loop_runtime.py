@@ -1356,9 +1356,16 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
         "consent_note": "--allow-all-tools grants full tool autonomy",
     },
     "antigravity": {
-        "binaries": ["gemini"],
-        "args": ["--yolo", "-p", "{prompt}"],
-        "consent_note": "--yolo auto-approves all actions",
+        # Google Antigravity CLI is `agy` (headless: `agy -p "<prompt>" --dangerously-skip-permissions`),
+        # matching the `agy --print` dispatch the cross-agent-delegation / agent-group-discuss skills use.
+        # `gemini` is kept as an alternate binary (standalone Gemini CLI); args differ per binary.
+        "binaries": ["agy", "gemini"],
+        "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
+        "binary_args": {
+            "agy": ["-p", "{prompt}", "--dangerously-skip-permissions"],
+            "gemini": ["--yolo", "-p", "{prompt}"],
+        },
+        "consent_note": "agy --dangerously-skip-permissions (or gemini --yolo) auto-approves all actions",
     },
     "grok": {
         # Short display list for error messages; full platform lists in GROK_BINARY_CANDIDATES.
@@ -2265,6 +2272,15 @@ def resolve_provider_command(
     )
     args_raw = env.get(f"AAS_AUTOLOOP_ARGS_{key}")
     template = shlex.split(args_raw) if args_raw else list(spec["args"])
+    # Per-binary arg templates: a spec may declare different flags per resolved
+    # binary (e.g. antigravity: `agy -p ... --dangerously-skip-permissions` vs
+    # `gemini --yolo -p ...`). An explicit AAS_AUTOLOOP_ARGS_* override wins.
+    binary_args = spec.get("binary_args")
+    if binary_args and not args_raw:
+        base = os.path.basename(str(binary)).lower()
+        base = re.sub(r"\.(exe|cmd|bat|ps1)$", "", base)
+        if base in binary_args:
+            template = list(binary_args[base])
     if provider == "grok" and not args_raw and env.get("AAS_GROK_LATEST_MODEL"):
         template.extend(["-m", env["AAS_GROK_LATEST_MODEL"]])
     # Generic model pin for providers that declare model_env/model_flag (e.g. kimi).
@@ -3693,6 +3709,13 @@ def panel_command(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Force UTF-8 stdio so non-ASCII payloads (e.g. research text, provider
+    # output) never crash JSON emission under a legacy Windows cp1252 console.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, ValueError, OSError):
+            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     command = getattr(args, "command", None)
