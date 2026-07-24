@@ -55,7 +55,7 @@ Optional loop config (`panel.json` or `loop_state.standing_orders.panel`):
 ```json
 {
   "enabled": true,
-  "providers": ["claude", "codex", "codewhale", "kimi"],
+  "providers": ["claude", "codex", "codewhale", "kimi", "grok"],
   "timeouts": {"target_advice": 600, "result_review": 900}
 }
 ```
