@@ -146,6 +146,8 @@ def probe_grok_model_membership(
         completed = subprocess.run(
             [parts[0], "models"],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
             env=probe_env,
@@ -359,6 +361,8 @@ def run_grok_command(
         result = subprocess.run(
             command,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,

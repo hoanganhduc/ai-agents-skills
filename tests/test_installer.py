@@ -5032,5 +5032,40 @@ class CopilotTargetTests(unittest.TestCase):
             self.assertIn("symlinked skill loading has not been verified", action["reason"])
 
 
+class VerifyManagedMarkerTests(unittest.TestCase):
+    """Marker-less template formats (e.g. .json) verify via signature instead of
+    an inline managed-marker comment they cannot carry."""
+
+    def test_json_template_skips_managed_marker(self) -> None:
+        from installer.ai_agents_skills.verify import managed_marker_applies, verify_artifact
+
+        with tempfile.TemporaryDirectory() as tmp:
+            jpath = Path(tmp) / "goal-priority.example.json"
+            jpath.write_text(
+                '{"schema_version": "goal_priority.v1", "enabled": false}\n', encoding="utf-8"
+            )
+            self.assertFalse(managed_marker_applies(jpath))
+            res = verify_artifact(
+                {"artifact": str(jpath), "artifact_type": "template", "agent": "claude", "skill": "arl"}
+            )
+            names = [c["name"] for c in res["checks"]]
+            self.assertNotIn("managed-marker", names, res)
+            self.assertEqual(res["status"], "ok", res)
+
+    def test_markdown_template_still_requires_marker(self) -> None:
+        from installer.ai_agents_skills.verify import managed_marker_applies, verify_artifact
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mpath = Path(tmp) / "note.md"
+            mpath.write_text("# heading\nno marker here\n", encoding="utf-8")
+            self.assertTrue(managed_marker_applies(mpath))
+            res = verify_artifact(
+                {"artifact": str(mpath), "artifact_type": "template", "agent": "claude", "skill": "arl"}
+            )
+            names = [c["name"] for c in res["checks"]]
+            self.assertIn("managed-marker", names, res)
+            self.assertEqual(res["status"], "failed", res)
+
+
 if __name__ == "__main__":
     unittest.main()

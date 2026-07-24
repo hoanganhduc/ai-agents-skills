@@ -71,7 +71,7 @@ one-iteration invocation for that install target:
 | `deepseek` | `codewhale exec --auto "<prompt>"` (falls back to `codewhale-tui`, `deepseek`) |
 | `opencode` | `opencode run "<prompt>"` |
 | `copilot` | `copilot -p "<prompt>" --allow-all-tools` |
-| `antigravity` | `gemini --yolo -p "<prompt>"` |
+| `antigravity` | `agy -p "<prompt>" --dangerously-skip-permissions` (falls back to `gemini --yolo -p "<prompt>"`) |
 
 `<prompt>` is the standard one-iteration contract: read `recovery.md` and the
 ledger, execute the single recorded next action under the loop policy, verify

@@ -128,6 +128,8 @@ def run_opencode_command(
         result = subprocess.run(
             command,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
@@ -136,7 +138,7 @@ def run_opencode_command(
         )
     except Exception as exc:
         return {"name": name, "ok": False, "status": "error", "error": str(exc)}
-    stdout = result.stdout.strip()
+    stdout = (result.stdout or "").strip()
     stdout_preview = "<output-redacted>" if name in {"debug-skill", "agent-list"} and stdout else stdout[:500]
     return {
         "name": name,
@@ -145,7 +147,7 @@ def run_opencode_command(
         "returncode": result.returncode,
         "stdout_preview": stdout_preview,
         "stdout": stdout,
-        "stderr_preview": result.stderr.strip()[:500],
+        "stderr_preview": (result.stderr or "").strip()[:500],
     }
 
 
