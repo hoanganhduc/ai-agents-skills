@@ -97,6 +97,11 @@ Driver behavior:
   pauses `--quota-backoff` seconds (default 900) and retries, honoring the
   pause-and-wait-for-credits policy. `--max-quota-waits N` caps consecutive
   waits (default 0 = wait indefinitely).
+- **Operator policy when a primary is known exhausted:** do not rely on infinite
+  `quota_wait` if another funded provider can run. Update
+  `panel.json` / `standing_orders.panel` with `exclude_until_credit`, stop the
+  drive process, and restart with `--provider <funded>`. Full policy:
+  instruction `provider-credit-quota.md`.
 - Genuine failures stop the run after `--max-failures` consecutive occurrences.
 - Stop conditions are re-checked every cycle by the `done` arbiter: iteration
   cap, wall/token/USD budgets, terminal ledger status, `STOP_REQUESTED` and
@@ -134,6 +139,7 @@ Config (`<loop>/panel.json` or `loop_state.standing_orders.panel`):
 {
   "enabled": true,
   "providers": ["claude", "codex", "codewhale", "kimi"],
+  "exclude_until_credit": [],
   "timeout_mode": "adaptive",
   "timeouts": {"target_advice": 600, "result_review": 900},
   "timeouts_by_provider": {"kimi": {"mult": 1.5}},
@@ -149,6 +155,12 @@ recent successful `elapsed_s` under the loop dir, then clamp to
 `timeout_calc.min_s` / `max_s`. CLI `panel --timeout N` with adaptive mode
 raises the phase **base floor** (`base = max(base, N)`), not a hard exclusive
 cap. Panel budgets are independent of drive `--iteration-timeout`.
+
+`exclude_until_credit` (and alias `exclude_providers`) names providers the host
+panel **must not invite**. Use when a CLI is usage-limit / credit exhausted so
+dispatch does not thrash it every cycle. Env
+`AAS_AUTOLOOP_PANEL_PROVIDERS=claude,codewhale` still overrides the invite list
+for a session.
 
 Env: `AAS_AUTOLOOP_PANEL=on|off`, `AAS_AUTOLOOP_PANEL_PROVIDERS=claude,codex,…`.
 Notify remains orthogonal. Banking still requires host evidence gates.

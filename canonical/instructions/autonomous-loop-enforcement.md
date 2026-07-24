@@ -19,7 +19,9 @@ loop only when one of these is true:
 
 1. the required number of loops is reached (if no count was set, this never
    fires);
-2. credit or quota runs out, or a user-set spend cap is hit;
+2. credit or quota runs out, or a user-set spend cap is hit
+   (**loop budget / user spend cap** — not a single agent CLI usage limit; see
+   `provider-credit-quota.md` for provider-level outages);
 3. the loop's stated goal is fully resolved, confirmed by a machine-checkable
    success check, not by the agent's opinion;
 4. the user sends a message asking to stop, pause, or switch tasks.

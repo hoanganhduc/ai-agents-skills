@@ -242,6 +242,19 @@ Panel provider budgets use **adaptive timeouts** by default (prompt size,
 provider multipliers, recent elapsed history, hard max); set
 `"timeout_mode": "fixed"` in `panel.json` for legacy flat caps.
 
+### Provider credit / usage limits
+
+Agent CLI credit exhaustion (Codex/Claude/Kimi usage limits, rate limits) is
+**operational**, not a research stop. Follow instruction
+`provider-credit-quota.md`:
+
+- Set `exclude_until_credit` (or shrink `providers`) in `panel.json` /
+  `standing_orders.panel` so exhausted providers are not re-invited.
+- If the **drive primary** is exhausted, restart `drive --provider <funded>`
+  rather than leaving `quota_wait` spinning when a fallback primary exists.
+- Cross-agent packets: parent re-targets the recipient; do not embed billing
+  recovery (see `cross-agent-delegation`).
+
 Do **not** treat nested “primary agent shells out to four CLIs” as the architecture
 (that failed under Codex `workspace-write` sandboxes). For heavy strategy pauses,
 use `agent-group-discuss` instead of per-iteration AGD.

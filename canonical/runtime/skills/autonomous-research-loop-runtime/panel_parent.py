@@ -553,11 +553,42 @@ def dispatch_phase(
     return summary
 
 
+def _normalize_name_list(raw: object) -> list[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        return [p.strip().lower() for p in raw.split(",") if p.strip()]
+    if isinstance(raw, (list, tuple)):
+        out: list[str] = []
+        for item in raw:
+            s = str(item).strip().lower()
+            if s:
+                out.append(s)
+        return out
+    return []
+
+
+def filter_panel_providers(cfg: dict[str, Any]) -> list[str]:
+    """Return invite list after exclude_until_credit / exclude_providers.
+
+    Env AAS_AUTOLOOP_PANEL_PROVIDERS already overrides providers before this
+    runs (see load_panel_config). Exclusions still apply unless the env list
+    was the only source and the operator intentionally re-listed someone.
+    """
+    providers = [str(p).strip() for p in (cfg.get("providers") or DEFAULT_PROVIDERS) if str(p).strip()]
+    excluded = set(_normalize_name_list(cfg.get("exclude_until_credit")))
+    excluded |= set(_normalize_name_list(cfg.get("exclude_providers")))
+    if not excluded:
+        return providers
+    return [p for p in providers if p.strip().lower() not in excluded]
+
+
 def load_panel_config(run_dir: Path) -> dict[str, Any]:
     """Load panel config from panel.json and/or loop_state standing_orders.panel."""
     cfg: dict[str, Any] = {
         "enabled": False,
         "providers": list(DEFAULT_PROVIDERS),
+        "exclude_until_credit": [],
         "timeouts": dict(DEFAULT_TIMEOUT_S),
         "timeout_mode": "adaptive",
         "require_different_family": True,
@@ -592,6 +623,9 @@ def load_panel_config(run_dir: Path) -> dict[str, Any]:
     env_prov = os.environ.get("AAS_AUTOLOOP_PANEL_PROVIDERS", "").strip()
     if env_prov:
         cfg["providers"] = [p.strip() for p in env_prov.split(",") if p.strip()]
+    # Normalize invite list after merges so dispatch never sees excluded names.
+    cfg["providers"] = filter_panel_providers(cfg)
+    cfg["exclude_until_credit"] = _normalize_name_list(cfg.get("exclude_until_credit"))
     return cfg
 
 

@@ -73,7 +73,8 @@
         "instruction-doc:compute-offload-routing",
         "instruction-doc:scrapling-integration",
         "instruction-doc:language-style-rules",
-        "instruction-doc:autonomous-loop-enforcement"
+        "instruction-doc:autonomous-loop-enforcement",
+        "instruction-doc:provider-credit-quota"
       ]
     },
     "review-personas": {
@@ -119,6 +120,7 @@
       "description": "Templates and guidance for true cross-provider delegation runs.",
       "artifacts": [
         "instruction-doc:cross-provider-delegation",
+        "instruction-doc:provider-credit-quota",
         "template:cross-provider-research-panel",
         "template:manager-worker-research-review",
         "template:repo-comparison-research",
@@ -462,6 +464,12 @@
         "source": "autonomous-loop-enforcement.md",
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["autonomous-research-loop"]
+      },
+      "provider-credit-quota": {
+        "description": "How to classify and handle agent-provider credit/usage/rate-limit exhaustion across drive, panel, AGD, and cross-agent delegation: exclude exhausted providers, fail over primary before infinite wait, never treat CLI credits as a research stop.",
+        "source": "provider-credit-quota.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity", "grok", "kimi"],
+        "depends_on_skills": ["autonomous-research-loop", "cross-agent-delegation", "agent-group-discuss", "model-router"]
       }
     },
     "agent-persona": {
