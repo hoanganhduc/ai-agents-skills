@@ -96,6 +96,19 @@ duplicates across both fields, and reject `parent_budget_owner=<actor>`.
 shell expression, query string, whitespace-bearing string, or environment
 variable reference.
 
+## Provider credit outages during research handoffs
+
+When a live recipient fails with usage limit / rate limit / out-of-credits (see
+instruction `provider-credit-quota.md`):
+
+- Treat it as a **parent re-target**, not a research stop and not a packet
+  contract failure.
+- Record the outage in the parent runbook or loop standing orders (for example
+  `exclude_until_credit`).
+- Choose another recipient profile family, defer the handoff, or continue
+  single-path host work when the parent policy allows.
+- Do not put billing recovery or credentials into packets.
+
 ## Nested Delegation
 
 Delegated agents may request bounded sub-tasks only as advisory packet content.

@@ -22,6 +22,11 @@ confirmation.
 - Prefer installed templates for repeatable delegation plans.
 - Fall back to Codex-only only when the configured mode allows it, and disclose
   the fallback reason.
+- **Provider credit/usage exhaustion is operational, not a research stop.**
+  Exclude exhausted providers from the active roster, re-target CAD recipients
+  or switch the ARL drive primary to a funded family when alternatives exist,
+  and do not thrash invite lists on a known dead CLI. Full policy:
+  `provider-credit-quota.md`.
 
 ## Required Probes
 
@@ -41,6 +46,9 @@ for the current run:
   available-model rows; when that probe does not confirm the model and selects
   `grok-remote`, active managed-profile readiness plus its concrete model and
   proxy/Grok release identities
+- credit/quota class when a prior dispatch failed: `quota_or_credit` vs
+  `transport` vs `empty_or_unusable` (see `provider-credit-quota.md`); do not
+  re-invite a confirmed credit-exhausted provider without operator restore
 
 Do not store raw provider commands, credentials, stdout, stderr, provider
 config, session IDs, or raw prompts in cross-agent packets.

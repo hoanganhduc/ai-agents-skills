@@ -83,6 +83,21 @@ environment. Most providers also require an explicit dispatch command. Grok may
 use its probe-gated automatic bare-first/remote-fallback resolver instead. Use
 dry-run first to see the selected providers and blocked reasons.
 
+### Provider credit and usage limits
+
+When an external CLI returns a host-verified usage limit, rate limit, or out-of-
+credits error (class `quota_or_credit` in instruction `provider-credit-quota.md`):
+
+1. Mark that provider **excluded for the rest of the run** (or until the operator
+   restores credits). Do not re-invite it every round.
+2. Continue with remaining funded providers when the template still has enough
+   different-family coverage; otherwise fail closed on the multi-agent gate and
+   surface an operational deferral — do **not** invent panel consensus.
+3. Do not treat the outage as a research finding or as a terminal stop under
+   autonomous-loop enforcement (unless a user spend **cap** is also exhausted).
+4. Prefer switching the drive primary or AGD external roster over infinite
+   pause-and-retry on a known dead provider when alternatives exist.
+
 ### Parent-Owned Artifacts and Evidence Mapping
 
 Every `external_cli` run is parent-owned. The parent creates the run directory,

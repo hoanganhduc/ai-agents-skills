@@ -74,6 +74,36 @@ class PanelParentUnitTests(unittest.TestCase):
             cfg = pp.load_panel_config(run_dir)
             self.assertEqual(cfg["providers"], ["claude"])
 
+    def test_exclude_until_credit_filters_providers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            (run_dir / "panel.json").write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "providers": ["claude", "codex", "codewhale", "kimi"],
+                        "exclude_until_credit": ["codex", "kimi"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg = pp.load_panel_config(run_dir)
+            self.assertEqual(cfg["providers"], ["claude", "codewhale"])
+            self.assertEqual(set(cfg["exclude_until_credit"]), {"codex", "kimi"})
+            # Alias exclude_providers also works
+            (run_dir / "panel.json").write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "providers": ["claude", "codex"],
+                        "exclude_providers": ["codex"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            cfg2 = pp.load_panel_config(run_dir)
+            self.assertEqual(cfg2["providers"], ["claude"])
+
     def test_host_synthesis_and_prompt_addon(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             iter_dir = Path(tmp) / "iter001"

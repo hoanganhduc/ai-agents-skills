@@ -56,3 +56,22 @@ V1 makes unsafe handoffs visible before execution exists.
 - Generated examples use inert placeholders only and avoid realistic fake
   API-key-shaped strings, JWT-looking strings, auth headers, or environment
   dumps.
+
+## Provider credit and quota (parent re-target)
+
+Live provider usage limits are **outside** the packet contract. See
+`provider-credit-quota.md` (instruction) and `cross-provider-delegation.md`.
+
+- A recipient CLI that returns usage limit / rate limit / out-of-credits is an
+  **operational outage**, not a task-packet schema failure and not proof that
+  the research objective failed.
+- The **parent** (not the child) must re-target: choose another
+  `intended_recipient` family, defer the handoff, or continue single-path host
+  work when standing orders allow.
+- Do **not** put billing recovery steps, API keys, account cookies, or "buy
+  more credits" workflows into task or result packets.
+- Result packets may report a limitation such as `provider_quota_or_credit` in
+  free-text limitations only as untrusted evidence; the parent still validates.
+- Do not thrash the same exhausted recipient every cycle: record exclude-until-
+  credit (or equivalent) in the parent run's standing config when the outage is
+  confirmed from host-verified provider text.
