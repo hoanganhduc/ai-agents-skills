@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,21 @@ CONTRIBUTION_VOCABULARY = frozenset(
 
 DISCIPLINE_MODES = frozenset({"soft", "advise", "hard"})
 
+# Contributions that count as real residual/goal progress for host streak (advise/hard).
+PROGRESS_CONTRIBUTIONS = frozenset(
+    {
+        "eliminate",
+        "construct",
+        "scope_lift",
+        "bridge",
+        "separate",
+        "replan",
+        "formalize",
+    }
+)
+# Low-value labels: same residual_id + these can count as local in advise/hard.
+LOW_VALUE_CONTRIBUTIONS = frozenset({"advance", "verify_trust", "operational", ""})
+
 _ENV_ON = frozenset({"1", "on", "true", "yes"})
 _ENV_OFF = frozenset({"0", "off", "false", "no"})
 
@@ -50,8 +66,8 @@ _ENV_OFF = frozenset({"0", "off", "false", "no"})
 def default_goal_priority_config() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
-        "enabled": True,
-        "discipline_mode": "advise",
+        "enabled": False,
+        "discipline_mode": "soft",
         "primary_campaign": "",
         "primary_objective": "",
         "campaign_registry": {},
@@ -328,12 +344,39 @@ def _has_goal_field(row: dict[str, Any]) -> bool:
     return False
 
 
-def _counts_as_local(row: dict[str, Any], *, require: bool) -> bool:
+def _counts_as_local(
+    row: dict[str, Any],
+    *,
+    require: bool,
+    mode: str = "soft",
+    newer_row: dict[str, Any] | None = None,
+) -> bool:
+    """Whether a ledger row counts as local-without-goal-delta for streak.
+
+    soft: explicit flag or missing contribution (when require).
+    advise/hard: also bare advance / low-value labels continuing the same residual_id.
+    """
     flagged = row.get("local_without_goal_delta") is True
     if flagged:
         return True
-    if require:
-        return not str(row.get("goal_contribution") or "").strip()
+    gc = str(row.get("goal_contribution") or "").strip().lower()
+    if require and not gc:
+        return True
+    if mode in {"advise", "hard"}:
+        if gc in PROGRESS_CONTRIBUTIONS:
+            return False
+        rid = str(row.get("residual_id") or "").strip()
+        # Low-value on same residual as the more-recent row (walking reverse).
+        if newer_row is not None:
+            nrid = str(newer_row.get("residual_id") or "").strip()
+            if rid and nrid and rid == nrid and gc in LOW_VALUE_CONTRIBUTIONS:
+                return True
+        # Bare advance / operational with no residual_id: local risk in advise/hard.
+        if not rid and gc in LOW_VALUE_CONTRIBUTIONS:
+            return True
+        # Same residual_id with only advance (no newer row to compare): still local.
+        if rid and gc in LOW_VALUE_CONTRIBUTIONS:
+            return True
     return False
 
 
@@ -341,7 +384,8 @@ def local_without_goal_delta_streak(run_dir: Path, cfg: dict[str, Any] | None = 
     """Count consecutive tail iterations that count as local-without-goal-delta.
 
     Activation boundary: first record containing any of goal_contribution,
-    campaign_id, or local_without_goal_delta. All subsequent records count.
+    campaign_id, or local_without_goal_delta. Pre-epoch rows stop the reverse
+    count (do not extend streak into history before host_signal_epoch_iteration).
     """
     cfg = cfg or load_goal_priority(run_dir)
     if not cfg.get("_active"):
@@ -357,10 +401,24 @@ def local_without_goal_delta_streak(run_dir: Path, cfg: dict[str, Any] | None = 
     if start is None:
         return 0
     require = bool(cfg.get("require_goal_contribution_in_ledger", True))
+    mode = discipline_mode(cfg)
+    epoch = cfg.get("host_signal_epoch_iteration")
     streak = 0
+    newer: dict[str, Any] | None = None
     for row in reversed(rows[start:]):
-        if _counts_as_local(row, require=require):
+        try:
+            n = int(row.get("iteration") or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if epoch is not None:
+            try:
+                if n < int(epoch):
+                    break
+            except (TypeError, ValueError):
+                pass
+        if _counts_as_local(row, require=require, mode=mode, newer_row=newer):
             streak += 1
+            newer = row
         else:
             break
     return streak
@@ -371,8 +429,293 @@ def replan_required(run_dir: Path, cfg: dict[str, Any] | None = None) -> bool:
     if not cfg.get("_active"):
         return False
     cap, _ = _safe_int(cfg.get("max_consecutive_local_without_goal_delta"), 3, minimum=1)
-    return local_without_goal_delta_streak(run_dir, cfg) >= cap
+    if local_without_goal_delta_streak(run_dir, cfg) >= cap:
+        return True
+    # Hard: also replan when the committed path still targets only closed leaves
+    # while open residual leaves remain.
+    if discipline_mode(cfg) == "hard" and path_targets_closed_residual(run_dir, cfg):
+        return True
+    return False
 
+
+def path_targets_closed_residual(
+    run_dir: Path, cfg: dict[str, Any] | None = None
+) -> bool:
+    """True when recovery/next path cites closed residual ids but open leaves exist."""
+    cfg = cfg or load_goal_priority(run_dir)
+    open_leaves = open_residual_leaves(run_dir, cfg)
+    if not open_leaves:
+        return False
+    inv = cfg.get("_residual_inventory") or load_residual_inventory(run_dir)
+    closed_ids: set[str] = set()
+    open_ids: set[str] = set()
+    for leaf in inv.get("leaves") or []:
+        if not isinstance(leaf, dict):
+            continue
+        lid = str(leaf.get("id") or "").strip()
+        if not lid:
+            continue
+        status = str(leaf.get("status") or "open").lower()
+        aliases = {lid}
+        for a in leaf.get("recovery_aliases") or []:
+            if str(a).strip():
+                aliases.add(str(a).strip())
+        if status == "closed":
+            closed_ids |= aliases
+        elif status == "open":
+            open_ids |= aliases
+    path_text = _current_path_text(run_dir).lower()
+    if not path_text:
+        return False
+    cites_open = any(oid.lower() in path_text for oid in open_ids)
+    cites_closed = any(cid.lower() in path_text for cid in closed_ids)
+    # Steer if path still pushes closed strata and does not prioritize an open leaf.
+    return cites_closed and not cites_open
+
+
+def _current_path_text(run_dir: Path) -> str:
+    parts: list[str] = []
+    sp = Path(run_dir) / "loop_state.json"
+    if sp.is_file():
+        try:
+            state = json.loads(sp.read_text(encoding="utf-8"))
+            parts.append(str(state.get("next_preferred_path") or ""))
+        except (OSError, json.JSONDecodeError):
+            pass
+    rp = Path(run_dir) / "recovery.md"
+    if rp.is_file():
+        try:
+            for line in rp.read_text(encoding="utf-8").splitlines():
+                if "Next safe action" in line or "next safe action" in line.lower():
+                    parts.append(line)
+        except OSError:
+            pass
+    return "\n".join(parts)
+
+
+def _next_iteration_number(run_dir: Path) -> int:
+    rows = read_iterations_jsonl(run_dir)
+    last = 0
+    for row in rows:
+        try:
+            last = max(last, int(row.get("iteration") or 0))
+        except (TypeError, ValueError):
+            continue
+    sp = Path(run_dir) / "loop_state.json"
+    if sp.is_file():
+        try:
+            state = json.loads(sp.read_text(encoding="utf-8"))
+            last = max(last, int(state.get("last_iteration") or 0))
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    return last + 1
+
+
+def propose_hard_replan_path(
+    run_dir: Path, cfg: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Propose next_preferred_path text for hard mode (does not write)."""
+    cfg = cfg or load_goal_priority(run_dir)
+    nxt = _next_iteration_number(run_dir)
+    open_leaves = open_residual_leaves(run_dir, cfg)
+    # Prefer open leaves with higher goal_ev, then stable id order.
+    ev_rank = {"high": 0, "medium": 1, "low": 2, "none": 3, "": 4}
+
+    def leaf_key(leaf: dict[str, Any]) -> tuple[int, str]:
+        return (
+            ev_rank.get(str(leaf.get("goal_ev") or "").lower(), 4),
+            str(leaf.get("id") or ""),
+        )
+
+    if open_leaves:
+        leaf = sorted(open_leaves, key=leaf_key)[0]
+        lid = str(leaf.get("id") or "open-leaf")
+        camp = str(leaf.get("campaign_id") or cfg.get("primary_campaign") or "primary")
+        desc = str(leaf.get("description") or lid)[:240]
+        scope = str(leaf.get("scope_lock") or "encoding_only")
+        path = (
+            f"SINGLE PATH (iteration {nxt}, hard replan): execute residual leaf "
+            f"`{lid}` under campaign `{camp}` — {desc}. "
+            f"Scope lock: `{scope}` (encoding progress ≠ full GOAL-SC unless bridge). "
+            f"Do not treat closed residual strata as sole primary. "
+            f"Keep banked regressions. Do not ambient hosts, M3 waterfall, "
+            f"random gadgets, or OpenGauss-primary."
+        )
+        return {
+            "kind": "open_leaf",
+            "residual_id": lid,
+            "campaign_id": camp,
+            "scope_lock": scope,
+            "path": path,
+            "reason": "open_residual_leaf_priority",
+        }
+
+    # No open leaves: pivot to next campaign after primary if available.
+    primary = str(cfg.get("primary_campaign") or "").strip()
+    ordered = [str(x).strip() for x in (cfg.get("next_campaigns_ordered") or []) if str(x).strip()]
+    pick = ""
+    for cid in ordered:
+        if cid != primary:
+            pick = cid
+            break
+    if not pick and ordered:
+        pick = ordered[0]
+    if not pick:
+        pick = primary or "main"
+    obj = _campaign_objective(cfg, pick) or str(cfg.get("primary_objective") or "")
+    path = (
+        f"SINGLE PATH (iteration {nxt}, hard replan): residual inventory has no "
+        f"open leaves. Pivot to campaign `{pick}` — {obj[:200] or 'advance loop goal'}. "
+        f"Do not restart closed encoding residual as sole primary without a new "
+        f"mechanism. Keep regressions. No ambient hosts / M3 waterfall / OpenGauss-primary."
+    )
+    return {
+        "kind": "campaign_pivot",
+        "residual_id": "",
+        "campaign_id": pick,
+        "scope_lock": "",
+        "path": path,
+        "reason": "no_open_leaves_campaign_pivot",
+    }
+
+
+def apply_hard_path_discipline(run_dir: Path) -> dict[str, Any]:
+    """Hard mode: rewrite next_preferred_path + recovery next-action when replan is required.
+
+    Never writes loop_state.status, goal, success_criteria, or budget.
+    Never fail-closes the loop. Soft/advise modes return applied=False.
+    """
+    run_dir = Path(run_dir)
+    cfg = load_goal_priority(run_dir)
+    result: dict[str, Any] = {
+        "applied": False,
+        "mode": discipline_mode(cfg),
+        "replan_required": False,
+        "reason": "",
+        "path": "",
+    }
+    if not cfg.get("_active"):
+        result["reason"] = "inactive"
+        return result
+    if discipline_mode(cfg) != "hard":
+        result["reason"] = "not_hard_mode"
+        return result
+    need = replan_required(run_dir, cfg)
+    result["replan_required"] = need
+    if not need:
+        result["reason"] = "replan_not_required"
+        return result
+
+    proposal = propose_hard_replan_path(run_dir, cfg)
+    new_path = str(proposal.get("path") or "").strip()
+    if not new_path:
+        result["reason"] = "empty_proposal"
+        return result
+
+    # --- loop_state.next_preferred_path only ---
+    state_path = run_dir / "loop_state.json"
+    old_path = ""
+    if state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                result["reason"] = "loop_state_not_object"
+                return result
+            old_path = str(state.get("next_preferred_path") or "")
+            # Never touch status / goal / success_criteria / budget fields.
+            state["next_preferred_path"] = new_path
+            # optional stamp for audit
+            so = state.get("standing_orders")
+            if not isinstance(so, dict):
+                so = {}
+                state["standing_orders"] = so
+            gp_so = so.get("goal_priority")
+            if not isinstance(gp_so, dict):
+                gp_so = {}
+                so["goal_priority"] = gp_so
+            gp_so["last_hard_replan_path"] = new_path[:500]
+            gp_so["last_hard_replan_reason"] = str(proposal.get("reason") or "")
+            state["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            state_path.write_text(
+                json.dumps(state, indent=2) + "\n", encoding="utf-8"
+            )
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            result["reason"] = f"loop_state_write_failed:{exc}"
+            return result
+
+    # --- recovery.md Next safe action bullet only ---
+    recovery_path = run_dir / "recovery.md"
+    if recovery_path.is_file():
+        try:
+            lines = recovery_path.read_text(encoding="utf-8").splitlines()
+            replaced = False
+            new_lines: list[str] = []
+            bullet = f"- **Next safe action:** {new_path}"
+            for line in lines:
+                if line.lstrip().startswith("- **Next safe action:**") or (
+                    "Next safe action:" in line and line.lstrip().startswith("-")
+                ):
+                    new_lines.append(bullet)
+                    replaced = True
+                else:
+                    new_lines.append(line)
+            if not replaced:
+                # Insert after Status / Last completed if possible
+                inserted = False
+                out2: list[str] = []
+                for line in new_lines:
+                    out2.append(line)
+                    if not inserted and line.lstrip().startswith(
+                        "- **Last completed iteration:**"
+                    ):
+                        out2.append(bullet)
+                        inserted = True
+                if not inserted:
+                    out2.append(bullet)
+                new_lines = out2
+            recovery_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            result["reason"] = f"recovery_write_failed:{exc}"
+            # path was already updated in loop_state; still report partial
+            result["applied"] = True
+            result["path"] = new_path
+            result["old_path"] = old_path[:300]
+            result["partial"] = True
+            return result
+
+    # Audit log under driver_logs (best-effort)
+    try:
+        log_dir = run_dir / "driver_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        audit = {
+            "schema_version": "goal_priority_hard_replan.v1",
+            "applied": True,
+            "reason": proposal.get("reason"),
+            "kind": proposal.get("kind"),
+            "residual_id": proposal.get("residual_id"),
+            "campaign_id": proposal.get("campaign_id"),
+            "path": new_path,
+            "old_path": old_path[:500],
+            "streak": local_without_goal_delta_streak(run_dir, cfg),
+        }
+        (log_dir / "goal_priority_hard_replan.json").write_text(
+            json.dumps(audit, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+    result.update(
+        {
+            "applied": True,
+            "reason": str(proposal.get("reason") or "hard_replan"),
+            "path": new_path,
+            "old_path": old_path[:300],
+            "kind": proposal.get("kind"),
+            "residual_id": proposal.get("residual_id"),
+            "campaign_id": proposal.get("campaign_id"),
+        }
+    )
+    return result
 
 def closed_forbid_ids(cfg: dict[str, Any]) -> list[str]:
     out: list[str] = []
@@ -421,7 +764,14 @@ def goal_priority_prompt_addon(run_dir: Path, cfg: dict[str, Any] | None = None)
         "Prefer primary paths that advance the loop goal / success criteria.",
         "Favor outcomes that kill, bridge, construct, verify trust, or replan",
         "over unbounded local samples that do not reduce goal uncertainty.",
-        f"- Discipline mode: `{mode}` (soft default; does not write loop_state.status).",
+        f"- Discipline mode: `{mode}`"
+        + (
+            " — **hard path steering active**: host may rewrite "
+            "`next_preferred_path` / recovery next-action on REPLAN_REQUIRED "
+            "(never writes loop_state.status)."
+            if mode == "hard"
+            else " (does not write loop_state.status)."
+        ),
         f"- Goal: {goal or '(see loop_state.goal)'}",
         f"- Success criteria: {success or '(see loop_state.success_criteria)'}",
         f"- Primary campaign: `{primary or '(unset)'}` — {primary_obj or '(see campaign_registry)'}",
@@ -595,8 +945,8 @@ def collect_goal_priority_warnings(
 def example_goal_priority_json() -> str:
     example = {
         "schema_version": SCHEMA_VERSION,
-        "enabled": True,
-        "discipline_mode": "advise",
+        "enabled": False,
+        "discipline_mode": "soft",
         "primary_campaign": "main",
         "primary_objective": "State what this campaign must produce for loop_state.goal",
         "campaign_registry": {

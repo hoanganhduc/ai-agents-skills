@@ -29,6 +29,7 @@ try:
         smoke as panel_smoke,
     )
     from goal_priority import (  # type: ignore
+        apply_hard_path_discipline,
         collect_goal_priority_warnings,
         example_goal_priority_json,
         goal_priority_prompt_addon,
@@ -45,6 +46,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
         smoke as panel_smoke,
     )
     from .goal_priority import (  # type: ignore
+        apply_hard_path_discipline,
         collect_goal_priority_warnings,
         example_goal_priority_json,
         goal_priority_prompt_addon,
@@ -3106,6 +3108,7 @@ _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
         "paused",
         "terminal",
         "driver_dead",
+        "goal_priority_hard_replan",
     }
 )
 
@@ -3537,6 +3540,23 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             # Re-resolve each cycle so loop_state/panel.json can opt in mid-run.
             panel_enabled = resolve_panel_mode(panel_mode, run_dir)
             refresh_heartbeat(reg, run_id)
+            # Hard goal_priority: steer next_preferred_path + recovery next-action
+            # before panel/primary when REPLAN_REQUIRED (never writes status).
+            try:
+                steer = apply_hard_path_discipline(run_dir)
+                if steer.get("applied"):
+                    _progress(
+                        "goal_priority_hard_replan",
+                        source="drive",
+                        reason=str(steer.get("reason") or "")[:200],
+                        residual_id=str(steer.get("residual_id") or ""),
+                        campaign_id=str(steer.get("campaign_id") or ""),
+                        path_preview=str(steer.get("path") or "")[:300],
+                    )
+            except Exception as exc:  # noqa: BLE001 - steering must not kill drive
+                sys.stderr.write(
+                    f"autoloop-driver: goal_priority hard replan failed: {exc}\n"
+                )
             # Transactional remote-bridge claim (drive only; agent-cmd uses peek).
             remote_job = os.environ.get("AAS_REMOTE_JOB_ID")
             inbox_block, claim_ids, claim_fences, claimer = claim_remote_inbox_for_drive(
