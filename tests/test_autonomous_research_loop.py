@@ -42,10 +42,23 @@ def _subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     # Keep host Telegram/Zulip secrets from auto-notifying (or suppressing watch
-    # JSON) during unit tests unless a test explicitly opts in.
-    env.setdefault("AAS_AUTOLOOP_NOTIFY", "off")
+    # JSON) during unit tests unless a test explicitly opts in via *extra*.
+    # Assigned, not setdefault: an inherited AAS_AUTOLOOP_NOTIFY=zulip would
+    # otherwise post every drive/watch event of the suite to a real chat.
+    env["AAS_AUTOLOOP_NOTIFY"] = "off"
     if extra:
         env.update(extra)
+    return env
+
+
+def _no_notify(env: dict[str, str]) -> dict[str, str]:
+    """Restore the notify guard on an env built by filtering ``AAS_AUTOLOOP_*``.
+
+    Tests that clear the whole prefix to isolate provider-command lookups drop
+    the guard by name; without this the run resolves ``--notify auto`` against
+    the host secrets and posts to a real chat.
+    """
+    env["AAS_AUTOLOOP_NOTIFY"] = "off"
     return env
 
 
@@ -1301,11 +1314,14 @@ class RuntimeDriveTests(unittest.TestCase):
                     f"(d/'{cache_name}').write_text('x'); "
                     "(d/'STOP_REQUESTED').write_text('x')"
                 )
-                env = {
-                    key: value
-                    for key, value in os.environ.items()
-                    if not key.startswith("AAS_AUTOLOOP_") and not key.startswith("AAS_GROK")
-                }
+                env = _no_notify(
+                    {
+                        key: value
+                        for key, value in os.environ.items()
+                        if not key.startswith("AAS_AUTOLOOP_")
+                        and not key.startswith("AAS_GROK")
+                    }
+                )
                 env["PYTHONDONTWRITEBYTECODE"] = "1"
                 env["AAS_AUTOLOOP_REGISTRY"] = str(reg)
                 argv = [
@@ -2138,6 +2154,41 @@ class NotifyPolicyTests(unittest.TestCase):
             self.assertIsNone(
                 mod.resolve_notify_channel(explicit="off", run_dir=None, default_auto=True)
             )
+
+    def test_auto_defers_to_env_and_loop_state(self) -> None:
+        """``auto`` must not outrank the sources documented below it.
+
+        drive/watch default ``--notify`` to ``auto``, so treating that token as
+        decisive silently strands the env and loop_state levels: a suite that
+        exports AAS_AUTOLOOP_NOTIFY=off would still post every event to a real
+        chat whenever host secrets happened to be configured.
+        """
+        mod = self._mod()
+        with mock.patch.object(mod, "auto_notify_channel_from_secrets", return_value="zulip"):
+            with mock.patch.dict(os.environ, {"AAS_AUTOLOOP_NOTIFY": "off"}, clear=False):
+                self.assertIsNone(
+                    mod.resolve_notify_channel(explicit="auto", run_dir=None, default_auto=True)
+                )
+            with mock.patch.dict(os.environ, {"AAS_AUTOLOOP_NOTIFY": "telegram"}, clear=False):
+                self.assertEqual(
+                    mod.resolve_notify_channel(explicit="auto", run_dir=None, default_auto=True),
+                    "telegram",
+                )
+            # loop_state is below env but still above the secrets fallback.
+            with tempfile.TemporaryDirectory() as tmp:
+                run_dir = Path(tmp) / "loop"
+                run_dir.mkdir()
+                (run_dir / "loop_state.json").write_text(
+                    json.dumps({"notify_channel": "off"}), encoding="utf-8"
+                )
+                with mock.patch.dict(os.environ, {}, clear=False):
+                    os.environ.pop("AAS_AUTOLOOP_NOTIFY", None)
+                    os.environ.pop("AAS_REMOTE_NOTIFY", None)
+                    self.assertIsNone(
+                        mod.resolve_notify_channel(
+                            explicit="auto", run_dir=run_dir, default_auto=True
+                        )
+                    )
 
     def test_auto_uses_secrets_when_configured(self) -> None:
         mod = self._mod()

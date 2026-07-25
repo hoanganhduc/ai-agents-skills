@@ -1702,11 +1702,19 @@ def resolve_notify_channel(
     """Resolve effective notify channel for drive/watch/arm.
 
     Order (first decisive wins):
-      1. explicit CLI token (including off/auto)
+      1. explicit CLI token (off or a concrete channel)
       2. AAS_AUTOLOOP_NOTIFY / AAS_REMOTE_NOTIFY env
       3. loop_state.json notify_channel
       4. armed registry entry notify_channel
-      5. if default_auto: secrets-backed auto channel (or None if unconfigured)
+      5. if auto was requested, or nothing decided and default_auto:
+         secrets-backed auto channel (or None if unconfigured)
+
+    ``auto`` is not decisive at any level: it means "I have no opinion, ask the
+    next source, and fall back to secrets". ``drive``/``watch`` default their
+    ``--notify`` flag to ``auto``, so a decisive token would make that default
+    outrank every later source and strand levels 2-4 as dead code -- which is
+    how an ``AAS_AUTOLOOP_NOTIFY=off`` guard could be set and still not silence
+    a run whose secrets happened to be configured.
 
     Returns a concrete channel (zulip|telegram|both) or None when disabled/unavailable.
     Never raises.
@@ -1728,8 +1736,9 @@ def resolve_notify_channel(
         if token == "off":
             return None
         if token == "auto":
+            # Remember, but keep scanning: a later source may be decisive.
             chosen = "auto"
-            break
+            continue
         if token in {"zulip", "telegram", "both"}:
             return token
 
