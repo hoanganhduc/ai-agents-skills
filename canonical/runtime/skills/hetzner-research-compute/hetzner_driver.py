@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -137,8 +138,29 @@ def _server_name(job_id: str) -> str:
     return f"{MANAGED_BY}-{job_id}"
 
 
+# Hetzner requires a server name to be a valid hostname (RFC 1123 label rules), so an
+# underscore -- ordinary in a job id -- is rejected at create time.
+_SERVER_NAME_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\Z")
+
+
+def _check_server_name(job_id: str) -> None:
+    """Refuse a job id that cannot name a server, before anything is spent on it.
+
+    Hetzner rejects the create with `invalid input in field 'name'`, which costs nothing
+    by itself -- but the budget gate has already reserved the worst case by then, and a
+    reservation is released only when a server is destroyed. No server, no release: the
+    reservation holds part of the daily cap for good."""
+    name = _server_name(job_id)
+    if len(name) > 63 or not _SERVER_NAME_RE.match(name):
+        raise HetznerDriverError(
+            f"job_id {job_id!r} cannot name a Hetzner server ({name!r}): the name must be a "
+            f"valid hostname of at most 63 characters -- letters, digits, dots and hyphens "
+            f"only, starting and ending alphanumeric. Use hyphens instead of underscores.")
+
+
 def _new_job_id() -> str:
-    return f"hz_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+    # Hyphens, not underscores: this id names a server (see _check_server_name).
+    return f"hz-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
 
 
 # --- manifest + estimate ------------------------------------------------------
@@ -386,7 +408,15 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
     worst_case = hetzner_backend.worst_case_eur(spec, max_hours) if spec else 0.0
     within_auto_approve = bool(spec) and worst_case <= per_job
 
-    if spec is None:
+    try:
+        _check_server_name(str(manifest.get("job_id") or _new_job_id()))
+        nameable = True
+    except HetznerDriverError as exc:
+        nameable, name_reason = False, str(exc)
+
+    if not nameable:
+        verdict = "invalid_job_id"
+    elif spec is None:
         verdict = "no_orderable_server"
     elif not probe["available"]:
         verdict = "blocked"
@@ -405,15 +435,33 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
         "est_cost_eur": round(est_cost, 4),
         "worst_case_eur": round(worst_case, 4),
         "adequate": spec is not None,
-        "available": bool(probe["available"] and spec is not None),
+        "available": bool(probe["available"] and spec is not None and nameable),
         "within_auto_approve": within_auto_approve,
         "budget_verdict": verdict,
-        "reason": place_reason if spec is None else probe["reason"],
+        "reason": name_reason if not nameable else (place_reason if spec is None else probe["reason"]),
         "provisioned": False,
     }
 
 
 # --- lifecycle verbs (may hold a paid server) ---------------------------------
+
+def _release_reservation_if_no_server(state_root: Path, job_id: str) -> bool:
+    """Release this job's worst-case reservation when its create left no server behind.
+
+    `hcloud` can also fail *after* the server exists (a timeout reading the response, say),
+    so the release is conditional: a job that still has a server keeps its reservation,
+    because that machine is billing. Anything unexpected -- an unreadable server list, a
+    ledger write error -- also keeps it, since over-reserving only costs headroom while
+    under-reserving lets the daily cap be overspent."""
+    try:
+        result = run_hcloud(["server", "list", "--selector", f"job-id={job_id}", "-o", "json"])
+        if json.loads(result["stdout"] or "[]"):
+            return False
+        budget_ledger.reconcile(Path(state_root), "hetzner", job_id)
+        return True
+    except Exception:  # noqa: BLE001 - never mask the create failure being handled
+        return False
+
 
 def up(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = False,
        dry_run: bool = False, image: str | None = None, location: str | None = None,
@@ -425,6 +473,7 @@ def up(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = Fa
     allow-list on a stock-out. An operator --location pins the region."""
     manifest = _read_manifest(job_dir)
     job_id = str(manifest.get("job_id") or _new_job_id())
+    _check_server_name(job_id)  # before the gate: an unnameable job must reserve nothing
     estimate = estimate_from_manifest(manifest)
     spec, adequacy_reason = hetzner_backend.select_server_spec(estimate, config)
     if spec is None:
@@ -508,6 +557,12 @@ def up(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = Fa
         create_args += ["--user-data-from-file", user_data_path]
     try:
         result = run_hcloud(create_args)
+    except BaseException:
+        # The reservation bought a server that may not exist. Releasing it is what keeps a
+        # failed create from eroding the daily cap for good, since the only other release
+        # path runs per destroyed server.
+        _release_reservation_if_no_server(Path(state_root), job_id)
+        raise
     finally:
         # Never leave the rendered cloud-init lying around (it carries no secret, but tidy).
         if temp_cloud_init is not None:
