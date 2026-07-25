@@ -28,6 +28,7 @@ AUDIT_FILENAME = "hetzner-audit.jsonl"
 
 # Event types (closed set; keep in sync with the driver + reaper call sites).
 EVENT_PROVISION = "provision"
+EVENT_FETCH = "fetch"
 EVENT_DESTROY = "destroy"
 EVENT_REAP = "reap"
 EVENT_KILL = "kill_switch"

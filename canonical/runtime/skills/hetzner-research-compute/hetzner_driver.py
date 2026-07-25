@@ -564,9 +564,13 @@ def wait(*, job_id: str, config: Any, timeout: float | None = None, interval: fl
 
 
 def fetch(*, job_id: str, config: Any, dest: str | Path | None = None,
-          salvage: bool = False) -> dict[str, Any]:
+          salvage: bool = False, state_root: Path | None = None) -> dict[str, Any]:
     """Copy results (and the resumable out/ tree) back and verify they are well formed.
-    On failure/timeout paths, `salvage=True` fetches checkpoints before teardown."""
+    On failure/timeout paths, `salvage=True` fetches checkpoints before teardown.
+
+    Records a `fetch` audit event on success, which is what `down` consults before it
+    destroys a job's server. The record is written only after the `out/` copy returns,
+    so a collection that failed leaves no record and the teardown interlock still bites."""
     dest_dir = Path(dest).expanduser() if dest else Path.cwd() / "hetzner-results" / job_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     ip = _server_ip(job_id)
@@ -581,16 +585,41 @@ def fetch(*, job_id: str, config: Any, dest: str | Path | None = None,
     except (HetznerDriverError, json.JSONDecodeError):
         if not salvage:
             raise
+    _audit(state_root, {
+        "event": hetzner_audit.EVENT_FETCH, "job_id": job_id, "dest": str(dest_dir),
+        "results_present": result_ok, "salvage": salvage,
+    })
     return {"job_id": job_id, "fetched_to": str(dest_dir), "results_present": result_ok,
             "salvage": salvage}
 
 
+def _fetch_recorded(state_root: Path, job_id: str) -> bool:
+    """Has `fetch` successfully copied this job's results back at least once?
+
+    An unreadable audit log counts as "no fetch": the interlock fails closed toward
+    keeping the data, because both the explicit override and the billing kill switches
+    stay open regardless, and the cloud-init dead-man's-switch still caps the server."""
+    try:
+        records = hetzner_audit.read(Path(state_root))
+    except Exception:  # noqa: BLE001 - a corrupt log must never crash teardown
+        return False
+    return any(r.get("event") == hetzner_audit.EVENT_FETCH and str(r.get("job_id")) == str(job_id)
+               for r in records)
+
+
 def down(*, config: Any, state_root: Path | None = None, job_id: str | None = None,
          server_id: str | None = None, all_tagged: bool = False, orphans: bool = False,
-         confirm: bool = False, dry_run: bool = False) -> dict[str, Any]:
+         confirm: bool = False, dry_run: bool = False,
+         allow_unfetched: bool = False) -> dict[str, Any]:
     """DESTROY servers -- the only thing that stops Hetzner billing. Selects by job-id, by
     server-id, `--all` (kill switch: every managed server), or `--orphans` (managed servers
-    the reaper predicate would collect; the precise TTL/heartbeat filter is a later phase)."""
+    the reaper predicate would collect; the precise TTL/heartbeat filter is a later phase).
+
+    Job-id teardown additionally requires that the job's results were fetched, because the
+    server holds the only copy and deletion is irreversible. `allow_unfetched` overrides it.
+    The exemptions are deliberate: `--all`, `--orphans`, `--server-id`, and any call without
+    a `state_root` are never blocked, since a guard that can strand a paid server billing
+    forever would be a worse defect than the data loss it prevents."""
     if all_tagged or orphans:
         selector = f"managed-by={MANAGED_BY}"
         mode = "all" if all_tagged else "orphans"
@@ -614,6 +643,13 @@ def down(*, config: Any, state_root: Path | None = None, job_id: str | None = No
         raise HetznerDriverError("refusing to destroy: HCLOUD_TOKEN is not set")
     if not confirm:
         raise HetznerDriverError("refusing to destroy: explicit confirm is required")
+    if mode == "job" and not allow_unfetched and state_root is not None \
+            and not _fetch_recorded(Path(state_root), str(job_id)):
+        raise HetznerDriverError(
+            f"refusing to destroy job {job_id}: no successful fetch is recorded, so this "
+            f"would delete the only copy of the results. Run `fetch {job_id}` first (or "
+            f"`oneshot`, which fetches before it tears down), or pass --allow-unfetched "
+            f"to destroy anyway. Use --orphans/--all to stop billing unconditionally.")
 
     records: list[dict[str, Any]] = []
     if selector is None:
@@ -710,7 +746,10 @@ def oneshot(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool
         if torn_down["done"]:
             return torn_down["result"]
         torn_down["done"] = True
-        torn_down["result"] = down(config=config, state_root=state_root, job_id=job_id, confirm=True)
+        # allow_unfetched: teardown here is guaranteed by contract, and the fetch/salvage
+        # step above already ran. The interlock guards hand-composed teardowns, not this one.
+        torn_down["result"] = down(config=config, state_root=state_root, job_id=job_id,
+                                   confirm=True, allow_unfetched=True)
         return torn_down["result"]
 
     installed = _install_teardown_signals(_teardown)
@@ -720,13 +759,14 @@ def oneshot(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool
         steps["push"] = push(job_id=job_id, job_dir=job_dir, config=config, confirm=True)
         steps["run"] = run(job_id=job_id, config=config, confirm=True)
         steps["wait"] = wait(job_id=job_id, config=config, timeout=timeout)
-        steps["fetch"] = fetch(job_id=job_id, config=config, dest=dest,
+        steps["fetch"] = fetch(job_id=job_id, config=config, dest=dest, state_root=state_root,
                                salvage=steps["wait"].get("status") != "completed")
         outcome = "completed" if steps["wait"].get("status") == "completed" else steps["wait"].get("status")
     except BaseException:
         # Salvage checkpoints before the guaranteed teardown, best-effort.
         try:
-            steps["fetch"] = fetch(job_id=job_id, config=config, dest=dest, salvage=True)
+            steps["fetch"] = fetch(job_id=job_id, config=config, dest=dest, salvage=True,
+                                   state_root=state_root)
         except Exception:  # noqa: BLE001
             pass
         raise
@@ -790,6 +830,9 @@ def build_parser() -> argparse.ArgumentParser:
     down_p.add_argument("--orphans", action="store_true")
     down_p.add_argument("--confirm", action="store_true")
     down_p.add_argument("--dry-run", action="store_true")
+    down_p.add_argument("--allow-unfetched", action="store_true",
+                        help="destroy a job's server even though no fetch is recorded "
+                             "(discards the only copy of the results)")
 
     one_p = sub.add_parser("oneshot", help="up->push->run->wait->fetch->down, teardown guaranteed")
     one_p.add_argument("--job", required=True)
@@ -840,11 +883,13 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "wait":
                 result = wait(job_id=args.job_id, config=config, timeout=args.timeout)
             elif args.command == "fetch":
-                result = fetch(job_id=args.job_id, config=config, dest=args.dest)
+                result = fetch(job_id=args.job_id, config=config, dest=args.dest,
+                               state_root=Path(state_root))
             elif args.command == "down":
                 result = down(config=config, state_root=Path(state_root), job_id=args.job_id,
                               server_id=args.server_id, all_tagged=args.all_tagged,
-                              orphans=args.orphans, confirm=args.confirm, dry_run=args.dry_run)
+                              orphans=args.orphans, confirm=args.confirm, dry_run=args.dry_run,
+                              allow_unfetched=args.allow_unfetched)
             elif args.command == "oneshot":
                 result = oneshot(job_dir=args.job, config=config, state_root=Path(state_root),
                                  confirm=args.confirm, dry_run=args.dry_run, dest=args.dest,
