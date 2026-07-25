@@ -903,7 +903,11 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
 
             started = arl.build_progress_event(loop, "iteration_start")
             self.assertEqual(started["iteration"], 2)
-            self.assertIn("attempting *2*", started["text"])
+            self.assertTrue(
+                "attempting **2**" in started["text"]
+                or "attempting *2*" in started["text"],
+                started["text"],
+            )
 
             ok = arl.build_progress_event(loop, "iteration_ok")
             self.assertEqual(ok["iteration"], 1)
@@ -991,8 +995,8 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
                 preview.strip(),
                 "research/autonomous-kge3/iterations/iteration-0093/a11-caseB/certificate.json",
             )
-            self.assertIn("*Why*", ok["text"])
-            self.assertIn("*Where (goal)*", ok["text"])
+            self.assertIn("**Why**", ok["text"])
+            self.assertIn("**Where (goal)**", ok["text"])
             self.assertIn("a11-deficit-two-residual", ok["text"])
             self.assertIn("I100 multi kills banked", ok["text"])
             self.assertIn("pure wt2 open", ok["text"])
@@ -1007,6 +1011,21 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
                     "Case B empty; floor D>=15; multi still open"
                 )
             )
+
+            # Unicode math + itemize list formatting
+            mathy = arl.normalize_math_unicode(
+                "beta=2; D>=25; delta=8; residual empty"
+            )
+            self.assertIn("β=2", mathy)
+            self.assertIn("D≥25", mathy)
+            self.assertIn("δ=8", mathy)
+            listed = arl.format_notify_body_block(
+                "First clause here is long enough; Second clause also long enough; "
+                "Third clause also long enough",
+                style="markdown",
+            )
+            self.assertIn("• ", listed)
+            self.assertGreaterEqual(listed.count("•"), 2)
 
     def test_hook_check_allows_unrelated_root_and_missing_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
