@@ -36,7 +36,7 @@ and require `HCLOUD_TOKEN` plus an explicit confirm.
 - `doctor` -- offline readiness: lane enabled, token present, `hcloud` installed, configured caps and server types. No network call.
 - `preflight --job DIR [--json]` -- the plan the router consumes: server type, region, estimated wall hours, estimated EUR, arch, and the budget verdict. No provisioning.
 - `up` -- create one labelled server from a cloud-init image, budget-gated. Refuses without token and confirm.
-- `push` -- copy the bundle to the server (rsync or git over SSH).
+- `push` -- copy the bundle to the server (rsync or git over SSH), after waiting for sshd.
 - `run` -- detached, full-core execution on the server.
 - `status` -- server and job state.
 - `wait` -- poll until the run finishes or the wall-clock cap is hit.
@@ -76,6 +76,7 @@ and timeout paths fetch checkpoints before destroy, so a run is always resumable
 
 - **Token** -- `HCLOUD_TOKEN` from the environment, injected into the `hcloud` subprocess env, never on argv (`/proc/<pid>/cmdline` is world-readable), never logged, never on a server, never in an `hcloud context` file. A redaction filter covers all agent-readable output.
 - **Labels** -- every server carries `managed-by`, `job-id`, `owner`, and `ttl` labels so the reaper and `down --orphans` can identify and delete managed servers.
+- **Root SSH** -- `up` attaches the project's SSH keys to the create and refuses to provision when there are none, since the stock image has no password login and a keyless server is a paid box nothing can reach. `HCLOUD_SSH_KEYS` pins the names to use on a shared project. `push` then waits for sshd before it copies: `hcloud` reports `running` before cloud-init has started it, and an immediate rsync loses that race.
 - **Budget** -- a fail-closed gate reserves the pessimistic worst case (`rate x ceil(max_server_hours) x count + IPv4`) in the shared append-only ledger before any create. It refuses above the per-job cap (the auto-approve envelope), above the concurrent-server cap, or when it would push the day past the daily cap.
 - **Confirm** -- `preflight` is free and emits the plan; lifecycle verbs refuse without an explicit confirm. Spend above the auto-approve envelope needs out-of-band human confirmation the agent cannot mint.
 - **Teardown** -- a powered-off server still bills; only DELETE stops it. `oneshot` guarantees teardown on every exit path (the code wraps the lifecycle in a finally block plus signal handlers, the equivalent of `trap 'down' EXIT INT TERM HUP`). `down --orphans` is the manual kill switch.
