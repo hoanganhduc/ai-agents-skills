@@ -36,6 +36,7 @@ try:
         is_goal_priority_active,
         load_goal_priority,
     )
+    from compute_policy import compute_policy_addon  # type: ignore
 except ImportError:  # pragma: no cover - package-style import during tests
     from .panel_parent import (  # type: ignore
         ensure_iter_dir,
@@ -53,6 +54,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
         is_goal_priority_active,
         load_goal_priority,
     )
+    from .compute_policy import compute_policy_addon  # type: ignore
 
 
 SCHEMA_VERSION = "1.0"
@@ -1531,6 +1533,7 @@ def iteration_prompt(
         "conditions. If you hit a credit or quota error, exit nonzero with the "
         "provider's error text visible in your output."
     )
+    base = base + compute_policy_addon(run_dir)
     if panel_enabled:
         base = base + panel_prompt_addon(run_dir, panel_iter_dir)
     if is_goal_priority_active(run_dir):

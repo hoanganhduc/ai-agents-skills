@@ -26,6 +26,19 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+# Panel briefs are the only channel a panel agent has: it does not read the
+# skill body, the loop's own context file, or AAS_AUTOLOOP_CMD_<PROVIDER>.
+# Degrade to a no-op block rather than failing if the sibling module is absent
+# (installed runtimes are synced separately from canonical).
+try:
+    from compute_policy import compute_policy_block  # type: ignore  # noqa: I001 — same-dir runtime import
+except ImportError:  # pragma: no cover - package-style import during tests
+    try:
+        from .compute_policy import compute_policy_block  # type: ignore
+    except ImportError:
+        def compute_policy_block(run_dir: Any = None) -> str:  # type: ignore[misc]
+            return ""
+
 DEFAULT_PROVIDERS = ("claude", "codex", "codewhale", "kimi", "grok")
 
 DEFAULT_TIMEOUT_S = {
@@ -717,6 +730,10 @@ def build_target_brief(run_dir: Path, *, max_chars: int = 12000) -> str:
         parts.append("")
         parts.append(text[:8000])
         parts.append("")
+    policy = compute_policy_block(run_dir)
+    if policy.strip():
+        parts.append(policy.rstrip())
+        parts.append("")
     parts.append("## Required output")
     parts.append("")
     parts.append(
@@ -749,6 +766,13 @@ def build_review_brief(run_dir: Path, iter_dir: Path, *, max_chars: int = 12000)
         "Do not bank uncertified numeric tallies or manuscript theorems without independent checks.",
         "",
     ]
+    # Early, before the iteration-file dump: this brief is truncated at
+    # max_chars, and reviewers re-run computations to check claims, so the
+    # compute rules must survive truncation.
+    policy = compute_policy_block(run_dir)
+    if policy.strip():
+        parts.append(policy.rstrip())
+        parts.append("")
     try:
         from goal_priority import campaign_match_line  # type: ignore
 
