@@ -696,6 +696,12 @@ def build_target_brief(run_dir: Path, *, max_chars: int = 12000) -> str:
         "Label encoding-scoped vs manuscript claims carefully.",
         "",
     ]
+    # (0) Compute policy before everything variable-length: a real loop's
+    # recovery excerpt alone can reach max_chars, and these rules are binding.
+    policy = compute_policy_block(run_dir)
+    if policy.strip():
+        parts.append(policy.rstrip())
+        parts.append("")
     # (1) Goal / replan block first so truncation cannot drop it
     try:
         from goal_priority import goal_priority_brief_block  # type: ignore
@@ -729,10 +735,6 @@ def build_target_brief(run_dir: Path, *, max_chars: int = 12000) -> str:
         parts.append("## recovery.md (excerpt)")
         parts.append("")
         parts.append(text[:8000])
-        parts.append("")
-    policy = compute_policy_block(run_dir)
-    if policy.strip():
-        parts.append(policy.rstrip())
         parts.append("")
     parts.append("## Required output")
     parts.append("")
