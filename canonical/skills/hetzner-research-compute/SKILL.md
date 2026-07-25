@@ -76,6 +76,7 @@ run status  <job_id>
 run wait    <job_id>
 run fetch   <job_id> --dest /path/to/output
 run down    <job_id> --confirm                  # DESTROY (the only thing that stops billing)
+run down    <job_id> --confirm --allow-unfetched # ... even though the results were never fetched
 run down    --orphans --confirm                 # kill-switch cleanup of stale/expired servers
 run oneshot --job /path/to/jobdir --confirm     # up -> push -> run -> wait -> fetch -> down, teardown guaranteed on any exit
 ```
@@ -109,6 +110,7 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 - Within the auto-approve envelope (worst case at or below `max_eur_per_job`, at or below `max_concurrent_servers`, allow-listed types) the agent may submit alone; a larger spend needs out-of-band human confirmation the agent cannot mint.
 - Teardown must run on every terminal path (success, failure, timeout, boot-fail, push-fail, crash). Failure and timeout paths fetch checkpoints before destroy so work is resumable. A detached reaper (systemd timer or cron, never a session child) is the durable billing-stopper: deploy it from `references/reaper-deployment.md`. `oneshot` and `down --orphans` are the in-session teardown, and every `up` auto-attaches a cloud-init dead-man's-switch that caps compute even if the driver dies.
 - Billing-safety guardrails are on by default: a reconcile-before-create runaway-loop guard aborts `up` if live tagged servers would exceed `max_concurrent_servers`, and every provision/destroy/reap/kill is written to a redacted append-only audit log (`hetzner-audit.jsonl`). The standalone kill switch is `hetzner_reaper kill` (peer of `down --all`).
+- Do not hand-roll the collection step. Use `fetch` or `oneshot`: they create the destination directory, verify `RESULTS.json` parses, and record the fetch in the audit log. `down <job_id>` then refuses to destroy a server whose results were never fetched, since deletion discards the only copy — override with `--allow-unfetched`. The refusal is scoped to job-id teardown: `--all`, `--orphans`, `--server-id`, and the reaper are never blocked, because stopping billing must always be possible.
 - CPU-heavy or high-memory combinatorial workloads are the target. GPU work is out of scope in v1, so the router skips Hetzner and continues to the next GPU-capable lane.
 - `doctor` and `preflight` work without a token or a server. `up`, `push`, `run`, `wait`, `fetch`, and `down` need the host to be Hetzner-ready (the `hcloud` CLI installed and `HCLOUD_TOKEN` set).
 - One-time per machine, run `bootstrap`: it checks the `hcloud` CLI and token presence and reports `doctor`. It never provisions.

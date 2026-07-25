@@ -2183,7 +2183,9 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(dry["selector"], "job-id=jobX")
         self.assertEqual(runner.calls, [])
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        out = hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX", confirm=True)
+        # allow_unfetched: this covers the delete plumbing, not the results interlock.
+        out = hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX",
+                                  confirm=True, allow_unfetched=True)
         self.assertTrue(out["destroyed"])
         self.assertTrue(any("delete" in c["joined"] for c in runner.calls))
 
@@ -2192,6 +2194,79 @@ class HetznerDriverTests(unittest.TestCase):
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_driver.HetznerDriverError):
             hetzner_driver.down(config=self.config, job_id="jobX", confirm=False)
+
+    # -- unfetched-results interlock ------------------------------------------
+
+    def test_down_refuses_a_job_whose_results_were_never_fetched(self) -> None:
+        """Destroying is the only copy: a job teardown with no recorded fetch must abort.
+
+        This is the observed loss. An agent hand-rolled its own `scp`, sent it to a
+        relative path that did not exist (`scp: local mkdir "results/iter003/": No such
+        file or directory`), logged `fetched 0 unit files`, and then called this verb --
+        which destroyed the server and with it a completed 28-unit run.
+        """
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
+            hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX", confirm=True)
+        self.assertIn("fetch", str(ctx.exception))
+        # Fail-closed: it aborted BEFORE issuing the irreversible delete.
+        self.assertTrue(all("delete" not in c["joined"] for c in runner.calls))
+
+    def test_down_proceeds_once_a_fetch_is_recorded(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        hetzner_driver.fetch(job_id="jobX", config=self.config, dest=self.tmp / "out",
+                             state_root=self.state)
+        out = hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX", confirm=True)
+        self.assertTrue(out["destroyed"])
+        self.assertTrue(any("delete" in c["joined"] for c in runner.calls))
+
+    def test_down_allow_unfetched_is_an_explicit_override(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        out = hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX",
+                                  confirm=True, allow_unfetched=True)
+        self.assertTrue(out["destroyed"])
+
+    def test_kill_switches_are_never_blocked_by_the_interlock(self) -> None:
+        """`--all` and `--orphans` stop billing and must never be gated on data safety.
+
+        An interlock that can strand a paid server running forever is a worse defect than
+        the one it prevents, so the exemption is part of the contract, not an oversight.
+        """
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        for kwargs in ({"all_tagged": True}, {"orphans": True}):
+            runner = _FakeRunner()
+            hetzner_driver.COMMAND_RUNNER = runner
+            out = hetzner_driver.down(config=self.config, state_root=self.state, confirm=True, **kwargs)
+            self.assertTrue(out["destroyed"], kwargs)
+            self.assertTrue(any("delete" in c["joined"] for c in runner.calls), kwargs)
+
+    def test_fetch_writes_an_audit_record_only_after_results_arrive(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        hetzner_driver.fetch(job_id="jobX", config=self.config, dest=self.tmp / "out",
+                             state_root=self.state)
+        fetched = [r for r in hetzner_audit.read(self.state) if r["event"] == "fetch"]
+        self.assertEqual(len(fetched), 1)
+        self.assertEqual(fetched[0]["job_id"], "jobX")
+        self.assertEqual(fetched[0]["dest"], str(self.tmp / "out"))
+
+    def test_failed_fetch_records_nothing_so_the_interlock_still_bites(self) -> None:
+        """A fetch that could not copy `out/` back must not satisfy the interlock."""
+        hetzner_driver.COMMAND_RUNNER = _FakeRunner(fail_on="out")
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with self.assertRaises(hetzner_driver.HetznerDriverError):
+            hetzner_driver.fetch(job_id="jobX", config=self.config, dest=self.tmp / "out",
+                                 state_root=self.state)
+        self.assertEqual([r for r in hetzner_audit.read(self.state) if r["event"] == "fetch"], [])
+        with self.assertRaises(hetzner_driver.HetznerDriverError):
+            hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX", confirm=True)
 
     def test_oneshot_dry_run_shows_full_sequence_without_calls(self) -> None:
         runner = _FakeRunner()
@@ -2282,7 +2357,8 @@ class HetznerDriverTests(unittest.TestCase):
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX", confirm=True)
+        hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX",
+                            confirm=True, allow_unfetched=True)
         records = hetzner_audit.read(self.state)
         self.assertTrue(any(r["event"] == "destroy" for r in records))
 
