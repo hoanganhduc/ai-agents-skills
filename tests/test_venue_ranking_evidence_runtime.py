@@ -438,6 +438,8 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
         self.assertFalse(sources["conference-ranks"]["may_claim_latest"])
         self.assertTrue(sources["icore"]["live_lookup_supported"])
         self.assertTrue(sources["icore"]["proof_supported"])
+        self.assertTrue(sources["doaj"]["live_lookup_supported"])
+        self.assertFalse(sources["doaj"]["proof_supported"])
         self.assertFalse(sources["scimago"]["live_lookup_supported"])
         self.assertFalse(sources["scimago"]["proof_supported"])
 
@@ -1835,6 +1837,332 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
             result = payload(run_runtime("verify", "--dir", str(run_dir), check=False).stdout)
             self.assertEqual(result["status"], "not-ready")
             self.assertTrue(any("hash" in finding.lower() for finding in result["findings"]))
+
+    def test_delivery_matrix_blocks_ready_when_requested_source_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "run"
+            result = payload(
+                run_runtime(
+                    "lookup",
+                    "--dir",
+                    str(run_dir),
+                    "--query",
+                    "SIGCOMM",
+                    "--source",
+                    "icore",
+                    "--source",
+                    "scimago",
+                    "--offline",
+                ).stdout
+            )
+            delivery = json.loads((run_dir / "delivery.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "not-ready")
+            self.assertTrue(result["incomplete_analysis"])
+            self.assertIn("scimago", [row["source_id"] for row in delivery["missing_or_blocked"]])
+            self.assertEqual(delivery["source_coverage_status"], "empty")
+            report = (run_dir / "report.md").read_text(encoding="utf-8")
+            self.assertIn("## Coverage", report)
+            self.assertIn("Missing / blocked", report)
+
+    def test_unique_exact_alias_resolves_despite_fuzzy_tail(self) -> None:
+        module = load_runtime_module()
+        matches = [
+            {
+                "venue_id": "icore-isaac",
+                "match_method": "exact-alias",
+                "score": 1.0,
+                "query": "ISAAC",
+            },
+            {
+                "venue_id": "icore-issac",
+                "match_method": "fuzzy",
+                "score": 0.8,
+                "query": "ISAAC",
+            },
+            {
+                "venue_id": "icore-other",
+                "match_method": "fuzzy",
+                "score": 0.7,
+                "query": "ISAAC",
+            },
+        ]
+        resolution = module.classify_match_resolution("ISAAC", matches)
+        self.assertEqual(resolution["match_status"], "matched")
+        self.assertEqual(resolution["resolved_venue_id"], "icore-isaac")
+        self.assertFalse(resolution["ambiguity_requires_selection"])
+
+    def test_short_acronym_fuzzy_only_is_ambiguous(self) -> None:
+        module = load_runtime_module()
+        matches = [
+            {"venue_id": "a", "match_method": "fuzzy", "score": 0.67, "query": "JIP"},
+            {"venue_id": "b", "match_method": "fuzzy", "score": 0.67, "query": "JIP"},
+        ]
+        resolution = module.classify_match_resolution("JIP", matches)
+        self.assertEqual(resolution["match_status"], "ambiguous")
+        self.assertTrue(resolution["ambiguity_requires_selection"])
+
+    def test_records_ready_for_unique_identifier_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            records = write_records(root / "records.json")
+            run_dir = root / "run"
+            result = payload(
+                run_runtime(
+                    "lookup",
+                    "--dir",
+                    str(run_dir),
+                    "--query",
+                    "0304-3975",
+                    "--records-file",
+                    str(records),
+                    "--offline",
+                ).stdout
+            )
+            delivery = json.loads((run_dir / "delivery.json").read_text(encoding="utf-8"))
+            self.assertEqual(result["match_count"], 1)
+            self.assertEqual(result["match_status"], "matched")
+            self.assertEqual(result["status"], "ready")
+            self.assertFalse(delivery["incomplete_analysis"])
+
+    def test_matches_jsonl_retains_all_when_display_capped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            records = {
+                "schema_version": "venue-ranking-records.v1",
+                "synthetic": True,
+                "venues": [
+                    {
+                        "venue_id": f"venue-{index}",
+                        "canonical_title": f"Synthetic Venue {index}",
+                        "venue_type": "conference",
+                        "aliases": ["SV"],
+                        "identifiers": {},
+                    }
+                    for index in range(20)
+                ],
+                "observations": [
+                    {
+                        "observation_id": f"obs-{index}",
+                        "venue_id": f"venue-{index}",
+                        "source_id": "scimago",
+                        "assertion_kind": "quartile",
+                        "scheme": "sjr",
+                        "value": "Q2",
+                        "official_url": "https://www.scimagojr.com/example",
+                    }
+                    for index in range(20)
+                ],
+            }
+            records_path = root / "records.json"
+            records_path.write_text(json.dumps(records), encoding="utf-8")
+            run_dir = root / "run"
+            result = payload(
+                run_runtime(
+                    "lookup",
+                    "--dir",
+                    str(run_dir),
+                    "--query",
+                    "SV",
+                    "--records-file",
+                    str(records_path),
+                    "--max-candidates",
+                    "5",
+                    "--offline",
+                ).stdout
+            )
+            matches = [
+                json.loads(line)
+                for line in (run_dir / "matches.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            delivery = json.loads((run_dir / "delivery.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(matches), 20)
+            self.assertEqual(result["total_candidates"], 20)
+            self.assertEqual(result["displayed_candidates"], 5)
+            self.assertEqual(delivery["displayed_candidates"], 5)
+            report = (run_dir / "report.md").read_text(encoding="utf-8")
+            self.assertIn("showing top 5", report)
+            self.assertIn("matches.jsonl", report)
+
+    def test_journal_path_warning_for_journal_title(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "run"
+            result = payload(
+                run_runtime(
+                    "lookup",
+                    "--dir",
+                    str(run_dir),
+                    "--query",
+                    "Journal of Information Processing",
+                    "--source",
+                    "icore",
+                    "--offline",
+                ).stdout
+            )
+            self.assertTrue(
+                any(str(item).startswith("journal-path:") for item in result["warnings"])
+            )
+            self.assertEqual(result["status"], "not-ready")
+
+    def test_doaj_parse_fixture_and_data_file_lookup(self) -> None:
+        module = load_runtime_module()
+        csv_text = (
+            "Journal title,Journal ISSN (print version),Journal EISSN (online version),"
+            "URL in DOAJ,Added on Date\n"
+            "Open Algorithms Journal,1111-2222,3333-4444,"
+            "https://doaj.org/toc/open-algorithms,2024-01-15\n"
+        )
+        venues, observations = module.parse_doaj(csv_text.encode("utf-8"), "https://doaj.org/csv")
+        self.assertEqual(len(venues), 1)
+        self.assertEqual(venues[0]["venue_type"], "journal")
+        self.assertEqual(observations[0]["assertion_kind"], "index-membership")
+        self.assertEqual(observations[0]["freshness_status"], "currentness-unconfirmed")
+        self.assertIs(observations[0]["proof_eligible"], False)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "doaj.csv"
+            data.write_text(csv_text, encoding="utf-8")
+            run_dir = root / "run"
+            result = payload(
+                run_runtime(
+                    "lookup",
+                    "--dir",
+                    str(run_dir),
+                    "--query",
+                    "Open Algorithms Journal",
+                    "--data-file",
+                    f"doaj={data}",
+                    "--offline",
+                ).stdout
+            )
+            self.assertEqual(result["match_status"], "matched")
+            self.assertEqual(result["status"], "ready")
+            self.assertIn("doaj", result["satisfied_sources"])
+            obs = [
+                json.loads(line)
+                for line in (run_dir / "observations.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(obs[0]["source_id"], "doaj")
+            self.assertEqual(obs[0]["value"], "included")
+
+    def test_doaj_success_does_not_ready_when_other_source_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "doaj.csv"
+            data.write_text(
+                "Journal title,Journal ISSN (print version),Journal EISSN (online version),"
+                "URL in DOAJ,Added on Date\n"
+                "Open Algorithms Journal,1111-2222,3333-4444,"
+                "https://doaj.org/toc/open-algorithms,2024-01-15\n",
+                encoding="utf-8",
+            )
+            run_dir = root / "run"
+            result = payload(
+                run_runtime(
+                    "lookup",
+                    "--dir",
+                    str(run_dir),
+                    "--query",
+                    "Open Algorithms Journal",
+                    "--source",
+                    "scopus",
+                    "--data-file",
+                    f"doaj={data}",
+                    "--offline",
+                ).stdout
+            )
+            self.assertEqual(result["status"], "not-ready")
+            self.assertEqual(result["source_coverage_status"], "partial")
+            missing_ids = [row["source_id"] for row in result["missing_or_blocked"]]
+            self.assertIn("scopus", missing_ids)
+
+    def test_doaj_live_requires_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            result = run_runtime(
+                "lookup",
+                "--dir",
+                str(run_dir),
+                "--query",
+                "anything",
+                "--source",
+                "doaj",
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--allow-network", result.stderr)
+
+    def test_venue_type_filter_and_sources_check_preflight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            records = write_records(root / "records.json")
+            run_dir = root / "run"
+            result = payload(
+                run_runtime(
+                    "lookup",
+                    "--dir",
+                    str(run_dir),
+                    "--query",
+                    "TCS",
+                    "--records-file",
+                    str(records),
+                    "--venue-type",
+                    "journal",
+                    "--offline",
+                ).stdout
+            )
+            self.assertEqual(result["match_count"], 2)
+            venues = [
+                json.loads(line)
+                for line in (run_dir / "venues.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertTrue(all(row["venue_type"] == "journal" for row in venues))
+
+            csv_path = root / "sample.csv"
+            csv_path.write_text(
+                "canonical_title,value,venue_type,aliases,issn,assertion_kind,scheme,official_url\n"
+                "Sample Venue,Q1,journal,SV,1234-5678,quartile,SJR,https://www.scimagojr.com/x\n",
+                encoding="utf-8",
+            )
+            check = payload(
+                run_runtime(
+                    "sources",
+                    "check",
+                    "--source",
+                    "scimago",
+                    "--data-file",
+                    f"scimago={csv_path}",
+                ).stdout
+            )
+            scimago = next(row for row in check["sources"] if row["source_id"] == "scimago")
+            self.assertEqual(scimago["data_file_status"], "ok")
+            self.assertEqual(scimago["normalized_row_count"], 1)
+            self.assertIn("deferred_public_live_candidates", check)
+
+    def test_collision_warning_for_isaac_confusable(self) -> None:
+        module = load_runtime_module()
+        warnings = module.collision_warnings(
+            "ISAAC",
+            [
+                {"venue_id": "a", "match_method": "exact-alias"},
+                {"venue_id": "b", "match_method": "fuzzy"},
+            ],
+            [
+                {
+                    "venue_id": "a",
+                    "canonical_title": "International Symposium on Algorithms and Computation",
+                    "aliases": ["ISAAC"],
+                },
+                {
+                    "venue_id": "b",
+                    "canonical_title": "International Symposium on Symbolic and Algebraic Computation",
+                    "aliases": ["ISSAC"],
+                },
+            ],
+        )
+        self.assertTrue(any("collision:" in item for item in warnings))
 
 
 if __name__ == "__main__":

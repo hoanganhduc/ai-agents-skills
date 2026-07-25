@@ -26,7 +26,17 @@ assertion/freshness values, unsafe paths, and unsupported delivery claims.
   rebinding the final URLs and actual sidecar metadata to the observation and
   rerunning artifact, completeness, association, and marker checks.
 - `delivery.json`: aggregate readiness without upgrading blocked observations.
-- `report.md`: human-readable rendering of the validated artifacts.
+  Additive fields (same `venue-ranking-delivery.v1`):
+  - `match_status` (`matched` | `ambiguous` | `unmatched`)
+  - `source_coverage_status` (`complete` | `partial` | `empty` | `not-requested`)
+  - `incomplete_analysis` (boolean)
+  - `requested_sources`, `satisfied_sources`, `missing_or_blocked`
+  - `resolved_venue_id`, `total_candidates`, `displayed_candidates`
+  - `ambiguity_requires_selection`
+  - optional deferred-source hint lists for agents
+  Top-level `status` is `ready` only when identity is resolved, requested source
+  coverage is complete or not-requested, and analysis is not incomplete.
+- `report.md`: human-readable rendering with coverage/match summary banners.
 
 Store paths relative to the run directory. Write private files atomically and
 do not follow symlinks. Never persist credentials, cookies, auth headers,

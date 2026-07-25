@@ -179,6 +179,21 @@ ARTIFACT_FILES = (
     "delivery.json",
     "report.md",
 )
+BUILTIN_COLLISIONS = RUNTIME_DIR / "registry" / "collisions.json"
+EXACT_MATCH_METHODS = frozenset({"exact-identifier", "exact-title", "exact-alias"})
+LIVE_LOOKUP_ADAPTERS = frozenset({"icore-csv", "doaj-csv"})
+SHORT_ACRONYM_MAX_LEN = 5
+DEFAULT_FANOUT_SOFT_CAP = 12
+JOURNAL_QUERY_TOKENS = (
+    "journal",
+    "transactions",
+    "trans ",
+    " letters",
+    "review",
+    "proceedings of the ieee",
+)
+DEFERRED_PUBLIC_LIVE_CANDIDATES = ("jufo", "norwegian-register")
+DEFERRED_LICENSED_API_CANDIDATES = ("scopus", "clarivate-jcr", "wos-mjl")
 
 
 class VenueError(RuntimeError):
@@ -860,7 +875,26 @@ def import_declarative_data(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     lookup = source.get("lookup", {})
     adapter = lookup.get("adapter", lookup.get("format"))
-    if adapter in {"user-export", "user-export-or-api"}:
+    if adapter == "doaj-csv":
+        payload = read_bounded_local(path)
+        venues, observations = parse_doaj(payload, f"file:{path.name}")
+        for observation in observations:
+            observation["proof_eligible"] = False
+            observation["freshness_status"] = "currentness-unconfirmed"
+        access = {
+            "schema_version": "venue-ranking-source-access.v1",
+            "source_id": str(source["source_id"]),
+            "endpoint_class": "user-supplied-declarative-export",
+            "file_name": path.name,
+            "response_sha256": sha256_bytes(payload),
+            "response_bytes": len(payload),
+            "retrieved_at": utc_now(),
+            "freshness_status": "currentness-unconfirmed",
+            "cache_status": "user-supplied",
+            "status": "ok",
+        }
+        return venues, observations, access
+    if adapter in {"user-export", "user-export-or-api", "icore-csv"}:
         adapter = "json" if path.suffix.casefold() == ".json" else "csv"
     if adapter not in {"csv", "json"}:
         raise VenueError(
@@ -1068,6 +1102,7 @@ def import_declarative_data(
         "retrieved_at": utc_now(),
         "freshness_status": "currentness-unconfirmed",
         "cache_status": "user-supplied",
+        "status": "ok",
     }
     return list(venue_by_id.values()), observations, source_access
 
@@ -1141,6 +1176,416 @@ def match_venues(query: str, venues: list[dict[str, Any]]) -> list[dict[str, Any
     for row in ordered:
         row["ambiguity_group"] = group if len(ordered) > 1 else None
     return ordered
+
+
+
+
+def load_collisions() -> list[dict[str, Any]]:
+    if not BUILTIN_COLLISIONS.is_file():
+        return []
+    raw = read_json(BUILTIN_COLLISIONS)
+    if not isinstance(raw, dict) or raw.get("schema_version") != "venue-ranking-collision.v1":
+        raise VenueError("invalid collisions registry schema")
+    entries = raw.get("entries", [])
+    if not isinstance(entries, list):
+        raise VenueError("collisions.entries must be a list")
+    return [row for row in entries if isinstance(row, dict)]
+
+
+def classify_match_resolution(query: str, matches: list[dict[str, Any]]) -> dict[str, Any]:
+    """Resolve identity using exact tiers; retain fuzzy tails without silent auto-pick."""
+
+    total = len(matches)
+    exact_ids = [
+        str(row["venue_id"])
+        for row in matches
+        if row.get("match_method") in EXACT_MATCH_METHODS
+    ]
+    unique_exact = list(dict.fromkeys(exact_ids))
+    q_compact = compact(query)
+    short = len(q_compact) <= SHORT_ACRONYM_MAX_LEN
+
+    if total == 0:
+        return {
+            "match_status": "unmatched",
+            "resolved_venue_id": None,
+            "ambiguity_requires_selection": False,
+            "total_candidates": 0,
+        }
+    if len(unique_exact) == 1:
+        return {
+            "match_status": "matched",
+            "resolved_venue_id": unique_exact[0],
+            "ambiguity_requires_selection": False,
+            "total_candidates": total,
+        }
+    if len(unique_exact) > 1:
+        return {
+            "match_status": "ambiguous",
+            "resolved_venue_id": None,
+            "ambiguity_requires_selection": True,
+            "total_candidates": total,
+        }
+    # Fuzzy / weaker tiers only
+    if total == 1 and not short:
+        return {
+            "match_status": "matched",
+            "resolved_venue_id": str(matches[0]["venue_id"]),
+            "ambiguity_requires_selection": False,
+            "total_candidates": total,
+        }
+    return {
+        "match_status": "ambiguous",
+        "resolved_venue_id": None,
+        "ambiguity_requires_selection": True,
+        "total_candidates": total,
+    }
+
+
+def access_row_blocked(access: dict[str, Any]) -> bool:
+    status = str(access.get("status") or "")
+    freshness = str(access.get("freshness_status") or "")
+    if freshness == "blocked":
+        return True
+    if status.startswith("blocked"):
+        return True
+    return False
+
+
+def compute_source_coverage(
+    requested: list[str],
+    source_access: list[dict[str, Any]],
+    matched_observations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not requested:
+        return {
+            "source_coverage_status": "not-requested",
+            "satisfied_sources": [],
+            "missing_or_blocked": [],
+        }
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    for row in source_access:
+        sid = str(row.get("source_id") or "")
+        if sid:
+            by_source.setdefault(sid, []).append(row)
+    obs_sources = {
+        str(row.get("source_id") or "")
+        for row in matched_observations
+        if row.get("source_id")
+    }
+    satisfied: list[str] = []
+    missing: list[dict[str, Any]] = []
+    for source_id in requested:
+        rows = by_source.get(source_id, [])
+        if not rows:
+            if source_id in obs_sources:
+                satisfied.append(source_id)
+            else:
+                missing.append(
+                    {
+                        "source_id": source_id,
+                        "status": "no-access-record",
+                        "freshness_status": "blocked",
+                    }
+                )
+            continue
+        access = rows[-1]
+        if access_row_blocked(access):
+            missing.append(
+                {
+                    "source_id": source_id,
+                    "status": str(access.get("status") or "blocked"),
+                    "freshness_status": str(access.get("freshness_status") or "blocked"),
+                }
+            )
+        else:
+            satisfied.append(source_id)
+    if not satisfied and missing:
+        coverage = "empty"
+    elif missing:
+        coverage = "partial"
+    else:
+        coverage = "complete"
+    return {
+        "source_coverage_status": coverage,
+        "satisfied_sources": satisfied,
+        "missing_or_blocked": missing,
+    }
+
+
+def journal_like_query(query: str) -> bool:
+    norm = normalize(query)
+    if "journal" in norm:
+        return True
+    return any(token in norm for token in JOURNAL_QUERY_TOKENS if token.strip())
+
+
+def journal_path_warnings(
+    query: str,
+    matches: list[dict[str, Any]],
+    venues: list[dict[str, Any]],
+    selected: list[str],
+    resolution: dict[str, Any],
+    matched_observations: list[dict[str, Any]] | None = None,
+) -> list[str]:
+    warnings: list[str] = []
+    venue_by_id = {str(row.get("venue_id")): row for row in venues}
+    exact_conference = False
+    exact_journal = False
+    for row in matches:
+        if row.get("match_method") not in EXACT_MATCH_METHODS:
+            continue
+        venue = venue_by_id.get(str(row.get("venue_id")), {})
+        vtype = str(venue.get("venue_type", "")).casefold()
+        if vtype == "conference":
+            exact_conference = True
+        if vtype == "journal":
+            exact_journal = True
+    if exact_conference:
+        return warnings
+    # Journal observations from any non-ICORE source satisfy the journal path.
+    journal_sources = {
+        str(row.get("source_id") or "")
+        for row in (matched_observations or [])
+        if str(row.get("source_id") or "") not in {"", "icore"}
+    }
+    if exact_journal and journal_sources:
+        return warnings
+    looks_journal = journal_like_query(query)
+    no_exact = resolution.get("match_status") in {"unmatched", "ambiguous"} and not any(
+        row.get("match_method") in EXACT_MATCH_METHODS for row in matches
+    )
+    needs_hint = False
+    if looks_journal and not journal_sources:
+        needs_hint = True
+    if no_exact and selected and set(selected) <= {"icore"} and (not matches or looks_journal):
+        needs_hint = True
+    if needs_hint:
+        warnings.append(
+            "journal-path: no built-in journal live ranking path for this query; "
+            "provide authorized --data-file for ccf/scimago/scopus/wos-mjl/clarivate-jcr/jufo "
+            "or use --source doaj / --data-file doaj=...; ICORE is conference-only"
+        )
+    return warnings
+
+
+def collision_warnings(query: str, matches: list[dict[str, Any]], venues: list[dict[str, Any]]) -> list[str]:
+    entries = load_collisions()
+    if not entries:
+        return []
+    q_norm = normalize(query)
+    q_compact = compact(query)
+    venue_by_id = {str(row.get("venue_id")): row for row in venues}
+    candidate_aliases: set[str] = set()
+    for match in matches:
+        venue = venue_by_id.get(str(match.get("venue_id")), {})
+        for alias in venue.get("aliases", []) or []:
+            candidate_aliases.add(normalize(str(alias)))
+            candidate_aliases.add(compact(str(alias)))
+    warnings: list[str] = []
+    for entry in entries:
+        alias = str(entry.get("query_alias") or "")
+        if not alias:
+            continue
+        if normalize(alias) != q_norm and compact(alias) != q_compact:
+            continue
+        for bad in entry.get("not") or []:
+            if normalize(str(bad)) in candidate_aliases or compact(str(bad)) in candidate_aliases:
+                note = entry.get("prefer_note") or f"{alias} should not resolve to {bad}"
+                warnings.append(f"collision: {note}")
+        confusable = [str(item) for item in (entry.get("confusable") or [])]
+        present = [
+            item
+            for item in confusable
+            if normalize(item) in candidate_aliases or compact(item) in candidate_aliases
+        ]
+        if present:
+            note = entry.get("prefer_note") or f"{alias} confusable with {', '.join(present)}"
+            warnings.append(f"collision: {note} (also matched aliases: {', '.join(present)})")
+    # de-dupe preserve order
+    return list(dict.fromkeys(warnings))
+
+
+def filter_venues_by_types(
+    venues: list[dict[str, Any]], venue_types: list[str] | None
+) -> list[dict[str, Any]]:
+    if not venue_types:
+        return venues
+    allowed = {normalize(value) for value in venue_types if value.strip()}
+    if not allowed:
+        return venues
+    return [
+        row
+        for row in venues
+        if normalize(str(row.get("venue_type", "unknown"))) in allowed
+    ]
+
+
+def build_delivery(
+    *,
+    query: str,
+    status: str,
+    warnings: list[str],
+    synthetic: bool,
+    matches: list[dict[str, Any]],
+    matched_observations: list[dict[str, Any]],
+    requested_sources: list[str],
+    source_access: list[dict[str, Any]],
+    resolution: dict[str, Any],
+    displayed_candidates: int,
+    incomplete_analysis: bool,
+    journal_path_gap: bool,
+) -> dict[str, Any]:
+    coverage = compute_source_coverage(
+        requested_sources, source_access, matched_observations
+    )
+    match_status = str(resolution["match_status"])
+    incomplete = bool(
+        coverage["source_coverage_status"] in {"partial", "empty"}
+        or match_status == "ambiguous"
+        or journal_path_gap
+        or incomplete_analysis
+    )
+    coverage_ok = coverage["source_coverage_status"] in {"complete", "not-requested"}
+    has_evidence = bool(matches) and (
+        bool(matched_observations) or not requested_sources or synthetic
+    )
+    top_status = (
+        "ready"
+        if match_status == "matched" and coverage_ok and not incomplete and has_evidence
+        else "not-ready"
+    )
+    return {
+        "schema_version": "venue-ranking-delivery.v1",
+        "status": top_status,
+        "match_status": match_status,
+        "source_coverage_status": coverage["source_coverage_status"],
+        "incomplete_analysis": incomplete or top_status != "ready",
+        "requested_sources": list(requested_sources),
+        "satisfied_sources": coverage["satisfied_sources"],
+        "missing_or_blocked": coverage["missing_or_blocked"],
+        "resolved_venue_id": resolution.get("resolved_venue_id"),
+        "match_count": len(matches),
+        "total_candidates": int(resolution.get("total_candidates") or len(matches)),
+        "displayed_candidates": displayed_candidates,
+        "ambiguity_requires_selection": bool(resolution.get("ambiguity_requires_selection")),
+        "query": query,
+        "observation_count": len(matched_observations),
+        "synthetic": synthetic,
+        "warnings": warnings,
+        "generated_at": utc_now(),
+        "deferred_public_live_candidates": list(DEFERRED_PUBLIC_LIVE_CANDIDATES),
+        "deferred_licensed_api_candidates": list(DEFERRED_LICENSED_API_CANDIDATES),
+    }
+
+
+
+def parse_doaj(payload: bytes, final_url: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    text = payload.decode("utf-8-sig", errors="replace")
+    rows = list(csv.DictReader(text.splitlines()))
+    if not rows:
+        raise VenueError("DOAJ export contained no rows")
+    required_title_keys = ("Journal title", "journal title", "Title")
+    title_key = next((key for key in required_title_keys if key in (rows[0] or {})), None)
+    if title_key is None:
+        # try case-insensitive
+        lower_map = {str(key).casefold(): key for key in (rows[0] or {})}
+        title_key = lower_map.get("journal title") or lower_map.get("title")
+    if title_key is None:
+        raise VenueError("DOAJ export missing Journal title column")
+    lower_map = {str(key).casefold(): key for key in (rows[0] or {})}
+
+    def col(*names: str) -> str | None:
+        for name in names:
+            if name in lower_map:
+                return lower_map[name]
+        return None
+
+    issn_key = col("journal issn (print version)", "issn", "pissn")
+    eissn_key = col("journal eissn (online version)", "eissn", "issn (online)")
+    url_key = col("url in doaj", "journal url", "url")
+    added_key = col("added on date", "last updated date")
+
+    venues: list[dict[str, Any]] = []
+    observations: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, row in enumerate(rows, 1):
+        title = str(row.get(title_key) or "").strip()
+        if not title:
+            continue
+        issn = str(row.get(issn_key) or "").strip() if issn_key else ""
+        eissn = str(row.get(eissn_key) or "").strip() if eissn_key else ""
+        official = str(row.get(url_key) or "").strip() if url_key else ""
+        if official and not official.startswith("https://"):
+            official = ""
+        seed = f"doaj\0{normalize(title)}\0{compact(issn)}\0{compact(eissn)}"
+        venue_id = f"doaj-{sha256_bytes(seed.encode())[:20]}"
+        if venue_id in seen:
+            continue
+        seen.add(venue_id)
+        identifiers: dict[str, list[str]] = {}
+        if issn:
+            identifiers["issn"] = [issn]
+        if eissn:
+            identifiers["eissn"] = [eissn]
+        venues.append(
+            {
+                "schema_version": "venue-ranking-venue.v1",
+                "venue_id": venue_id,
+                "canonical_title": title,
+                "venue_type": "journal",
+                "aliases": [],
+                "identifiers": identifiers,
+                "official_url": official or None,
+            }
+        )
+        edition = str(row.get(added_key) or "").strip() if added_key else None
+        observations.append(
+            {
+                "schema_version": "venue-ranking-observation.v1",
+                "observation_id": f"obs-{venue_id}-membership",
+                "venue_id": venue_id,
+                "source_id": "doaj",
+                "assertion_kind": "index-membership",
+                "scheme": "DOAJ open-access index",
+                "category": None,
+                "collection": "DOAJ",
+                "value": "included",
+                "edition": edition or None,
+                "metric_year": None,
+                "freshness_status": "currentness-unconfirmed",
+                "official_url": official or None,
+                "retrieved_at": utc_now(),
+                "parser": "builtin-doaj-csv-v1",
+                "response_sha256": sha256_bytes(payload),
+                "proof_eligible": False,
+            }
+        )
+    if not venues:
+        raise VenueError("DOAJ export contained no recognized journal rows")
+    return venues, observations
+
+
+def fetch_doaj(source: dict[str, Any]) -> tuple[bytes, str, dict[str, Any]]:
+    export_url = source.get("lookup", {}).get("export_url")
+    if not isinstance(export_url, str) or not export_url:
+        raise VenueError("DOAJ source is missing lookup.export_url")
+    payload, final = fetch_url(export_url, source)
+    access = {
+        "schema_version": "venue-ranking-source-access.v1",
+        "source_id": "doaj",
+        "endpoint_class": "official-csv-export",
+        "requested_domain": urllib.parse.urlsplit(export_url).hostname,
+        "final_domain": urllib.parse.urlsplit(final).hostname,
+        "final_url": final,
+        "retrieved_at": utc_now(),
+        "response_sha256": sha256_bytes(payload),
+        "response_bytes": len(payload),
+        "freshness_status": "currentness-unconfirmed",
+        "cache_status": "live",
+        "status": "ok",
+    }
+    return payload, final, access
 
 
 def token_prefix_match(normalized_query: str, candidate: str) -> bool:
@@ -1587,6 +2032,47 @@ def render_report(run_dir: Path) -> str:
     ]
     if isinstance(delivery, dict) and delivery:
         lines.extend([f"Delivery status: **{report_text(delivery.get('status', 'unknown'))}**", ""])
+        lines.extend(
+            [
+                "## Coverage",
+                "",
+                f"- Requested: {report_text(', '.join(str(item) for item in delivery.get('requested_sources', []) or ['—']))}",
+                f"- Satisfied: {report_text(', '.join(str(item) for item in delivery.get('satisfied_sources', []) or ['—']))}",
+            ]
+        )
+        missing = delivery.get("missing_or_blocked") or []
+        if isinstance(missing, list) and missing:
+            rendered = []
+            for row in missing:
+                if isinstance(row, dict):
+                    rendered.append(
+                        f"{row.get('source_id', '?')} ({row.get('status', 'blocked')})"
+                    )
+                else:
+                    rendered.append(str(row))
+            lines.append(f"- Missing / blocked: {report_text(', '.join(rendered))}")
+        else:
+            lines.append("- Missing / blocked: —")
+        lines.append(
+            f"- Incomplete analysis: {report_text('yes' if delivery.get('incomplete_analysis') else 'no')}"
+        )
+        lines.append(
+            f"- Source coverage: {report_text(delivery.get('source_coverage_status', 'unknown'))}"
+        )
+        lines.extend(["", "## Match summary", ""])
+        total = delivery.get("total_candidates", len(matches))
+        displayed = delivery.get("displayed_candidates", len(matches))
+        lines.append(f"- Match status: {report_text(delivery.get('match_status', 'unknown'))}")
+        lines.append(
+            f"- Total candidates: {report_text(total)}"
+            + (f" (showing top {displayed})" if int(total or 0) != int(displayed or 0) else "")
+        )
+        if delivery.get("resolved_venue_id"):
+            lines.append(f"- Resolved venue ID: {report_text(delivery.get('resolved_venue_id'))}")
+        lines.append(
+            f"- Selection required before proof: {report_text('yes' if delivery.get('ambiguity_requires_selection') else 'no')}"
+        )
+        lines.append("")
         warnings = delivery.get("warnings", [])
         warnings = warnings if isinstance(warnings, list) else ["invalid warning data"]
         for warning in warnings:
@@ -1595,7 +2081,14 @@ def render_report(run_dir: Path) -> str:
             lines.append("")
     if not matches:
         lines.extend(["No matching venues were found.", ""])
-    for number, match in enumerate(matches, 1):
+    display_limit = None
+    if isinstance(delivery, dict) and delivery.get("displayed_candidates") is not None:
+        try:
+            display_limit = int(delivery.get("displayed_candidates"))
+        except (TypeError, ValueError):
+            display_limit = None
+    shown = matches if display_limit is None else matches[: max(display_limit, 0)]
+    for number, match in enumerate(shown, 1):
         venue = venues.get(match["venue_id"], {})
         lines.extend(
             [
@@ -1627,16 +2120,20 @@ def render_report(run_dir: Path) -> str:
                     year = f"{edition} / {metric_year}"
                 else:
                     year = edition or metric_year or "—"
+                source_id = str(row.get("source_id", ""))
+                value = row.get("value", row.get("status", ""))
+                if source_id == "conference-ranks":
+                    value = f"{value} (secondary-legacy; cannot establish current official ranking)"
                 lines.append(
                     "| "
                     + " | ".join(
                         report_text(item)
                         for item in (
-                            row.get("source_id", ""),
+                            source_id,
                             row.get("assertion_kind", ""),
                             row.get("scheme", ""),
                             category,
-                            row.get("value", row.get("status", "")),
+                            value,
                             year,
                             row.get("freshness_status", "unknown"),
                             row.get("official_url") or "—",
@@ -1657,6 +2154,14 @@ def render_report(run_dir: Path) -> str:
                     f"PDF {report_text(proof.get('pdf_path'))}, PNG {report_text(proof.get('png_path'))}"
                 )
             lines.append("")
+    if display_limit is not None and len(matches) > display_limit:
+        lines.extend(
+            [
+                f"_… {len(matches) - display_limit} additional candidates omitted from report display; "
+                "full list is in matches.jsonl._",
+                "",
+            ]
+        )
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -1669,24 +2174,49 @@ def artifact_hashes(run_dir: Path) -> dict[str, str]:
     return hashes
 
 
-def finalize_run(run_dir: Path, *, query: str, status: str, warnings: list[str], synthetic: bool) -> None:
+def finalize_run(
+    run_dir: Path,
+    *,
+    query: str,
+    status: str,
+    warnings: list[str],
+    synthetic: bool,
+    delivery: dict[str, Any] | None = None,
+) -> None:
     matches = read_jsonl(run_dir / "matches.jsonl")
     observations = read_jsonl(run_dir / "observations.jsonl")
-    delivery = {
-        "schema_version": "venue-ranking-delivery.v1",
-        "status": status,
-        "query": query,
-        "match_count": len(matches),
-        "observation_count": len(observations),
-        "synthetic": synthetic,
-        "warnings": warnings,
-        "generated_at": utc_now(),
-    }
+    if delivery is None:
+        delivery = {
+            "schema_version": "venue-ranking-delivery.v1",
+            "status": status,
+            "query": query,
+            "match_count": len(matches),
+            "observation_count": len(observations),
+            "synthetic": synthetic,
+            "warnings": warnings,
+            "generated_at": utc_now(),
+            "match_status": "matched" if len(matches) == 1 else ("ambiguous" if matches else "unmatched"),
+            "source_coverage_status": "not-requested",
+            "incomplete_analysis": status != "ready",
+            "requested_sources": [],
+            "satisfied_sources": [],
+            "missing_or_blocked": [],
+            "total_candidates": len(matches),
+            "displayed_candidates": len(matches),
+            "ambiguity_requires_selection": len(matches) > 1,
+        }
+    else:
+        delivery = dict(delivery)
+        delivery["status"] = status or delivery.get("status")
+        delivery["warnings"] = warnings
+        delivery["synthetic"] = synthetic
+        delivery["query"] = query
+        delivery["generated_at"] = utc_now()
     write_json(run_dir / "delivery.json", delivery)
     write_atomic(run_dir / "report.md", render_report(run_dir))
     state = {
         "schema_version": SCHEMA_RUN,
-        "status": status,
+        "status": delivery.get("status", status),
         "query": query,
         "generated_at": utc_now(),
         "artifact_hashes": artifact_hashes(run_dir),
@@ -1741,6 +2271,12 @@ def cmd_lookup(args: argparse.Namespace) -> int:
             if adapter == "icore-csv":
                 edition, payload, final, access = discover_icore(source)
                 source_venues, source_observations = parse_icore(payload, final, edition)
+                venues.extend(source_venues)
+                observations.extend(source_observations)
+                source_access.append(access)
+            elif adapter == "doaj-csv":
+                payload, final, access = fetch_doaj(source)
+                source_venues, source_observations = parse_doaj(payload, final)
                 venues.extend(source_venues)
                 observations.extend(source_observations)
                 source_access.append(access)
@@ -1804,20 +2340,94 @@ def cmd_lookup(args: argparse.Namespace) -> int:
     venues, observations, identity_warnings = coalesce_venues(venues, observations)
     warnings.extend(identity_warnings)
 
+    venue_types = list(getattr(args, "venue_type", None) or [])
+    venues = filter_venues_by_types(venues, venue_types)
+    if venue_types:
+        allowed = {normalize(value) for value in venue_types}
+        observations = [
+            row
+            for row in observations
+            if any(
+                normalize(str(venue.get("venue_type", "unknown"))) in allowed
+                and str(venue.get("venue_id")) == str(row.get("venue_id"))
+                for venue in venues
+            )
+            or str(row.get("venue_id")) in {str(v.get("venue_id")) for v in venues}
+        ]
+
     matches = match_venues(args.query, venues)
+    resolution = classify_match_resolution(args.query, matches)
+    warnings.extend(collision_warnings(args.query, matches, venues))
+
     matched_ids = {row["venue_id"] for row in matches}
     matched_venues = [row for row in venues if row.get("venue_id") in matched_ids]
     matched_observations = [row for row in observations if row.get("venue_id") in matched_ids]
+    journal_warnings = journal_path_warnings(
+        args.query,
+        matches,
+        venues,
+        selected,
+        resolution,
+        matched_observations=matched_observations,
+    )
+    warnings.extend(journal_warnings)
+    journal_path_gap = any(item.startswith("journal-path:") for item in journal_warnings)
+
+    max_candidates = getattr(args, "max_candidates", None)
+    if max_candidates is None:
+        max_candidates = DEFAULT_FANOUT_SOFT_CAP
+    include_all = bool(getattr(args, "include_all_candidates", False))
+    if include_all:
+        displayed_candidates = len(matches)
+    else:
+        displayed_candidates = min(len(matches), max(0, int(max_candidates)))
+
+    # Enrich source_access for imports with status ok
+    for access in source_access:
+        if "status" not in access and not access_row_blocked(access):
+            access["status"] = "ok"
+
+    delivery = build_delivery(
+        query=args.query,
+        status="not-ready",
+        warnings=warnings,
+        synthetic=synthetic,
+        matches=matches,
+        matched_observations=matched_observations,
+        requested_sources=selected,
+        source_access=source_access,
+        resolution=resolution,
+        displayed_candidates=displayed_candidates,
+        incomplete_analysis=False,
+        journal_path_gap=journal_path_gap,
+    )
+    status = str(delivery["status"])
+    if resolution.get("match_status") == "ambiguous":
+        warnings.append(
+            "ambiguous query: all candidates are retained in matches.jsonl; "
+            "select one with --venue-id before proof"
+        )
+        delivery["warnings"] = warnings
+    if journal_path_gap:
+        delivery["incomplete_analysis"] = True
+        if status == "ready":
+            status = "not-ready"
+            delivery["status"] = status
+
     write_json(run_dir / "source_registry_snapshot.json", registry_snapshot(registry, set(selected) or None))
     write_jsonl(run_dir / "venues.jsonl", matched_venues)
     write_jsonl(run_dir / "matches.jsonl", matches)
     write_jsonl(run_dir / "observations.jsonl", matched_observations)
     write_jsonl(run_dir / "sources.jsonl", source_access)
     write_jsonl(run_dir / "proofs.jsonl", [])
-    status = "ready" if matches and (matched_observations or not selected) else "not-ready"
-    if len(matches) > 1:
-        warnings.append("ambiguous query: all candidates are retained; select one before proof")
-    finalize_run(run_dir, query=args.query, status=status, warnings=warnings, synthetic=synthetic)
+    finalize_run(
+        run_dir,
+        query=args.query,
+        status=status,
+        warnings=warnings,
+        synthetic=synthetic,
+        delivery=delivery,
+    )
     print(
         json.dumps(
             {
@@ -1825,14 +2435,25 @@ def cmd_lookup(args: argparse.Namespace) -> int:
                 "run_dir": str(run_dir),
                 "query": args.query,
                 "match_count": len(matches),
+                "total_candidates": delivery.get("total_candidates"),
+                "displayed_candidates": displayed_candidates,
                 "observation_count": len(matched_observations),
-                "ambiguous": len(matches) > 1,
+                "match_status": delivery.get("match_status"),
+                "source_coverage_status": delivery.get("source_coverage_status"),
+                "incomplete_analysis": delivery.get("incomplete_analysis"),
+                "requested_sources": delivery.get("requested_sources"),
+                "satisfied_sources": delivery.get("satisfied_sources"),
+                "missing_or_blocked": delivery.get("missing_or_blocked"),
+                "resolved_venue_id": delivery.get("resolved_venue_id"),
+                "ambiguity_requires_selection": delivery.get("ambiguity_requires_selection"),
+                "ambiguous": delivery.get("match_status") == "ambiguous",
                 "warnings": warnings,
             },
             sort_keys=True,
         )
     )
     return 0
+
 
 
 def source_summary(value: dict[str, Any]) -> dict[str, Any]:
@@ -1849,7 +2470,7 @@ def source_summary(value: dict[str, Any]) -> dict[str, Any]:
             "assertion_kinds",
         )
     }
-    summary["live_lookup_supported"] = value.get("lookup", {}).get("adapter") == "icore-csv"
+    summary["live_lookup_supported"] = value.get("lookup", {}).get("adapter") in LIVE_LOOKUP_ADAPTERS
     summary["proof_supported"] = (
         value.get("access_class") == "public"
         and value.get("proof", {}).get("association_adapter")
@@ -1900,7 +2521,55 @@ def cmd_sources(args: argparse.Namespace) -> int:
         )
         return 0
     if args.sources_command == "check":
-        print(json.dumps({"status": "ok", "validated_sources": len(registry), "registry": str(BUILTIN_REGISTRY)}, sort_keys=True))
+        data_files: dict[str, Path] = {}
+        for spec in getattr(args, "data_file", None) or []:
+            source_id, path = parse_data_file_spec(spec)
+            if source_id in data_files:
+                raise VenueError(f"duplicate --data-file source: {source_id}")
+            data_files[source_id] = path
+        selected = list(dict.fromkeys([*(getattr(args, "source", None) or []), *data_files]))
+        rows: list[dict[str, Any]] = []
+        targets = selected or sorted(registry)
+        for source_id in targets:
+            if source_id not in registry:
+                raise VenueError(f"unknown source: {source_id}")
+            source = registry[source_id]
+            summary = source_summary(source)
+            entry: dict[str, Any] = {
+                "source_id": source_id,
+                "live_lookup_supported": summary["live_lookup_supported"],
+                "proof_supported": summary["proof_supported"],
+                "access_class": source.get("access_class"),
+                "provenance_class": source.get("provenance_class"),
+                "data_file": str(data_files[source_id]) if source_id in data_files else None,
+                "data_file_status": "not-provided",
+                "normalized_row_count": None,
+            }
+            if source_id in data_files:
+                try:
+                    imported_venues, imported_observations, access = import_declarative_data(
+                        source, data_files[source_id]
+                    )
+                    entry["data_file_status"] = "ok"
+                    entry["normalized_row_count"] = len(imported_observations)
+                    entry["response_sha256"] = access.get("response_sha256")
+                except VenueError as exc:
+                    entry["data_file_status"] = "invalid"
+                    entry["error"] = str(exc)
+            rows.append(entry)
+        print(
+            json.dumps(
+                {
+                    "status": "ok",
+                    "validated_sources": len(registry),
+                    "registry": str(BUILTIN_REGISTRY),
+                    "sources": rows,
+                    "deferred_public_live_candidates": list(DEFERRED_PUBLIC_LIVE_CANDIDATES),
+                    "deferred_licensed_api_candidates": list(DEFERRED_LICENSED_API_CANDIDATES),
+                },
+                sort_keys=True,
+            )
+        )
         return 0
     raise VenueError("unknown sources command")
 
@@ -2290,7 +2959,13 @@ def cmd_proof(args: argparse.Namespace) -> int:
     observations = read_jsonl(run_dir / "observations.jsonl")
     matches = read_jsonl(run_dir / "matches.jsonl")
     if len(matches) > 1 and not args.venue_id:
-        raise VenueError("ambiguous lookup: provide --venue-id before proof")
+        resolved = delivery.get("resolved_venue_id") if isinstance(delivery, dict) else None
+        if delivery.get("match_status") == "matched" and resolved:
+            args.venue_id = str(resolved)
+        elif delivery.get("ambiguity_requires_selection"):
+            raise VenueError("ambiguous lookup: provide --venue-id before proof")
+        else:
+            raise VenueError("ambiguous lookup: provide --venue-id before proof")
     selected = [row for row in observations if row.get("observation_id") == args.observation_id]
     if args.venue_id:
         selected = [row for row in selected if row.get("venue_id") == args.venue_id]
@@ -3352,6 +4027,14 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("list", "check"):
         child = source_commands.add_parser(name)
         child.add_argument("--registry-dir")
+        if name == "check":
+            child.add_argument(
+                "--data-file",
+                action="append",
+                default=[],
+                metavar="SOURCE_ID=PATH",
+            )
+            child.add_argument("--source", action="append", default=[])
     show = source_commands.add_parser("show")
     show.add_argument("source_id")
     show.add_argument("--registry-dir")
@@ -3372,6 +4055,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="authorized declarative CSV/JSON export for a registered source",
     )
     lookup.add_argument("--source", action="append", default=[])
+    lookup.add_argument(
+        "--venue-type",
+        action="append",
+        default=[],
+        help="filter candidates by venue type (repeatable)",
+    )
+    lookup.add_argument(
+        "--max-candidates",
+        type=int,
+        default=DEFAULT_FANOUT_SOFT_CAP,
+        help="max candidates shown in report/stdout summary (artifacts retain all)",
+    )
+    lookup.add_argument(
+        "--include-all-candidates",
+        action="store_true",
+        help="show all candidates in report (matches.jsonl always retains all)",
+    )
     lookup.add_argument("--registry-dir")
     lookup.add_argument("--cache-dir")
     lookup.add_argument("--offline", action="store_true")

@@ -40,20 +40,24 @@ SJR quartile, CiteScore quartile, JIF quartile, or JUFO level.
 | `clarivate-jcr` | official JIF/JCI category ranks and quartiles | authorized normalized CSV/JSON import only; subscription applies | no built-in live query, latest verifier, or proof |
 | `jufo` | official national classification level | authorized normalized CSV/JSON import only | no built-in live query, latest verifier, or proof |
 | `norwegian-register` | official national publication-channel level | authorized normalized CSV/JSON import only | no built-in live query, latest verifier, or proof |
-| `doaj` | official open-access index membership | authorized normalized CSV/JSON import only | no built-in live query, latest verifier, or proof |
+| `doaj` | official open-access index membership | public live CSV export (`doaj-csv`) and/or authorized local export | live or import always `currentness-unconfirmed`; no proof; not a rank |
 | `conference-ranks` | secondary-legacy historical aggregator display | authorized normalized CSV/JSON import only | never latest; no built-in live query, latest verifier, or proof |
 
 For ICORE's built-in live path, discover the edition at runtime. Do not hardcode
 a previously observed edition or treat an offline cache as permanently latest.
 
-Only `icore` has a reviewed built-in live bulk parser, edition-freshness
-adapter, and proof association adapter. For the other nine built-in IDs, the
-registry is an authority/access contract: lookup accepts a normalized,
-authorized CSV/JSON interchange, not an arbitrary raw provider export. Every
-such import remains `currentness-unconfirmed`, even when the descriptor says
-`may_claim_latest: true`. Raw layouts require a reviewed declarative descriptor
-and explicit field mapping. Report `incomplete analysis` when a requested source
+`icore` has a reviewed live bulk parser, edition-freshness path, and proof
+association adapter. `doaj` has a reviewed public CSV live/import parser only;
+live DOAJ rows stay `currentness-unconfirmed` and proof-ineligible. For the
+remaining built-in IDs, the registry is an authority/access contract: lookup
+accepts a normalized, authorized CSV/JSON interchange (or DOAJ-native CSV for
+`doaj`). Imports remain `currentness-unconfirmed` even when the descriptor says
+`may_claim_latest: true`. Report `incomplete analysis` when a requested source
 was not actually imported or queried.
+
+Deferred (not implemented): additional public machine-readable lives for JUFO /
+Norwegian Register, and licensed API designs for Scopus / JCR / WoS MJL. See
+`deferred-roadmap.md`. Never scrape licensed HTML.
 
 ## Freshness
 
@@ -70,9 +74,9 @@ Allowed delivery states are `verified-current`, `verified-historical`, `stale`,
 
 ## Live access
 
-Built-in live network access currently exists only for ICORE. The other nine
-source IDs require an authorized normalized `--data-file`; network/source gates
-do not create a live adapter for them.
+Built-in live network access exists for ICORE and DOAJ. Other source IDs require
+an authorized normalized `--data-file`; network/source gates do not invent live
+adapters for them.
 
 Require `--allow-network` and each `--allow-source`. Apply official-domain
 allowlists, HTTPS, bounded time/bytes/pages, conservative retries, and explicit

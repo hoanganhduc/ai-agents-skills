@@ -30,5 +30,32 @@ comparison. Preserve the source spelling in artifacts and reports.
 Return `matched_field`, `match_method`, score, confidence, and ambiguity group
 for every candidate. Fuzzy scores order candidates; they do not prove identity.
 
-When multiple candidates remain, present a numbered list. Require the selected
-candidate or observation ID before proof capture.
+### Identity resolution (delivery)
+
+- **Unique exact-identifier, exact-title, or exact-alias** → `match_status=matched`
+  and `resolved_venue_id` set, even if weaker fuzzy candidates remain.
+- **Two or more distinct exact-tier venue IDs** → `ambiguous`.
+- **Fuzzy-only multi-match**, or short acronym (compact length ≤ 5) with only
+  fuzzy hits → `ambiguous` (never auto-pick).
+- **Full candidate list** is always written to `matches.jsonl`. Report/stdout
+  may show only top-K (`--max-candidates`, default 12) unless
+  `--include-all-candidates`.
+
+### Venue type filter
+
+`--venue-type` (repeatable) filters loaded venues before matching (e.g.
+`journal`, `conference`).
+
+### Collision table
+
+Built-in `registry/collisions.json` emits warnings for known confusable
+acronyms (ISAAC/ISSAC/ISCA, JIP vs ITP/ILP). Warnings do not drop candidates.
+
+### Journal path
+
+ICORE is conference-only. Journal-shaped queries without non-ICORE journal
+observations emit a `journal-path:` warning and mark incomplete analysis.
+
+When multiple candidates remain without unique exact-tier resolution, present a
+numbered list. Require `--venue-id` before proof capture unless delivery already
+resolved a unique exact-tier venue.
