@@ -2400,6 +2400,136 @@ _ATTEMPT_PROGRESS_EVENTS = frozenset(
     }
 )
 
+_ARTIFACT_PATH_RE = re.compile(
+    r"(?i)^[\w./\\-]+(?:/|\\)[\w./\\-]+\.(?:json|md|txt|pdf)$"
+)
+
+
+def looks_like_artifact_path(value: str) -> bool:
+    """True when *value* is a single path-like token (not human prose)."""
+    text = (value or "").strip()
+    if not text or "\n" in text or " " in text:
+        return False
+    normalized = text.replace("\\", "/")
+    if _ARTIFACT_PATH_RE.match(normalized):
+        return True
+    if "/iterations/" in normalized and re.search(
+        r"(?i)\.(json|md|txt|pdf)$", normalized
+    ):
+        return True
+    return False
+
+
+def resolve_progress_result_text(record: dict[str, Any]) -> str:
+    """Prefer human Result text; never surface a bare certificate path alone.
+
+    Agents sometimes put ``iterations/.../certificate.json`` in ledger ``output``.
+    Notify should show goal_contribution (and optional detail) instead, with the
+    basename only as a parenthetical artifact pointer.
+    """
+    output = str(record.get("output") or "").strip()
+    contrib = str(record.get("goal_contribution") or "").strip()
+    detail = str(
+        record.get("goal_contribution_detail") or record.get("contribution_detail") or ""
+    ).strip()
+    if output and not looks_like_artifact_path(output):
+        return output[:700]
+    if contrib:
+        text = contrib
+        if detail:
+            text = f"{contrib} — {detail}"
+        if output and looks_like_artifact_path(output):
+            text = f"{text} (artifact: {Path(output).name})"
+        return text[:700]
+    if output and looks_like_artifact_path(output):
+        return f"Banked artifact `{Path(output).name}`"[:700]
+    return output[:700]
+
+
+def parse_recovery_table_field(recovery_md: str, field_name: str) -> str:
+    """Extract a ``| Field | value |`` cell from recovery.md (best-effort)."""
+    target = field_name.strip().lower()
+    for line in (recovery_md or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        if cells[0].strip().lower() == target:
+            return cells[1].strip()
+    return ""
+
+
+def build_progress_why_where(
+    run_dir: Path,
+    record: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    attempt_event: bool,
+) -> tuple[str, str]:
+    """Return (why, where) research-context lines for notify.
+
+    Populated when goal_priority is active (or recovery has usable fields).
+    Empty strings when nothing useful is available.
+    """
+    why = ""
+    where = ""
+    recovery_text = ""
+    try:
+        rec_path = Path(run_dir) / "recovery.md"
+        if rec_path.is_file():
+            recovery_text = rec_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        recovery_text = ""
+
+    next_safe = parse_recovery_table_field(recovery_text, "Next safe action")
+    gaps = parse_recovery_table_field(recovery_text, "Remaining gaps")
+    last_node = parse_recovery_table_field(recovery_text, "Last valid node")
+    goal_focus = parse_recovery_table_field(recovery_text, "Goal focus")
+
+    campaign = ""
+    primary_obj = ""
+    try:
+        if is_goal_priority_active(run_dir):
+            cfg = load_goal_priority(run_dir)
+            campaign = str(cfg.get("primary_campaign") or "").strip()
+            primary_obj = str(cfg.get("primary_objective") or "").strip()
+    except Exception:  # noqa: BLE001 — notify must never fail
+        pass
+
+    npp = str(state.get("next_preferred_path") or "").strip()
+    if attempt_event:
+        if npp:
+            why = npp
+        elif next_safe:
+            why = next_safe
+        elif campaign:
+            why = f"Campaign `{campaign}`" + (f": {primary_obj}" if primary_obj else "")
+    else:
+        # Completed bank: why this objective was on-path.
+        if campaign and primary_obj:
+            why = f"Campaign `{campaign}`: {primary_obj}"
+        elif campaign:
+            why = f"Campaign `{campaign}` (goal_priority)"
+        elif goal_focus:
+            why = goal_focus
+        elif next_safe:
+            why = next_safe
+
+    where_parts: list[str] = []
+    if campaign:
+        where_parts.append(f"Campaign `{campaign}`")
+    if last_node:
+        where_parts.append(last_node)
+    elif primary_obj:
+        where_parts.append(primary_obj)
+    if gaps:
+        where_parts.append(f"Open: {gaps}")
+    where = " · ".join(where_parts)
+
+    return why[:500].strip(), where[:700].strip()
+
 
 def format_progress_notify_text(
     *,
@@ -2416,6 +2546,8 @@ def format_progress_notify_text(
     last_completed: int | None = None,
     next_iteration: int | None = None,
     progress_note: str = "",
+    why: str = "",
+    where: str = "",
 ) -> str:
     """Human-readable multi-line notify body for Zulip/Telegram."""
     marker = _NOTIFY_EVENT_MARKERS.get(event, "•")
@@ -2446,6 +2578,16 @@ def format_progress_notify_text(
         lines.append(progress_note.strip())
     if timestamp:
         lines.append(f"Time: {timestamp}")
+    why_s = (why or "").strip()
+    if why_s:
+        lines.append("")
+        lines.append("*Why*")
+        lines.append(why_s[:500])
+    where_s = (where or "").strip()
+    if where_s:
+        lines.append("")
+        lines.append("*Where (goal)*")
+        lines.append(where_s[:700])
     obj = (objective or "").strip()
     if obj:
         lines.append("")
@@ -2475,6 +2617,8 @@ def format_progress_notify_telegram_html(
     last_completed: int | None = None,
     next_iteration: int | None = None,
     progress_note: str = "",
+    why: str = "",
+    where: str = "",
 ) -> str:
     """Telegram HTML body (parse_mode=HTML)."""
 
@@ -2516,6 +2660,16 @@ def format_progress_notify_telegram_html(
         lines.append(esc(progress_note.strip()))
     if timestamp:
         lines.append(f"Time: {esc(timestamp)}")
+    why_s = (why or "").strip()
+    if why_s:
+        lines.append("")
+        lines.append("<b>Why</b>")
+        lines.append(esc(why_s[:500]))
+    where_s = (where or "").strip()
+    if where_s:
+        lines.append("")
+        lines.append("<b>Where (goal)</b>")
+        lines.append(esc(where_s[:700]))
     obj = (objective or "").strip()
     if obj:
         lines.append("")
@@ -2557,7 +2711,6 @@ def build_progress_event(
     max_iter = int(budget.get("max_iterations") or 0)
     decision = str(record.get("decision") or state.get("status") or "?")
     last_objective = str(record.get("objective") or "")
-    last_output = str(record.get("output") or "")
     remaining = max(0, max_iter - spent) if max_iter else 0
     status = str(state.get("status") or "")
     ts = utc_now()
@@ -2613,8 +2766,12 @@ def build_progress_event(
     else:
         iteration = last_completed
         objective = last_objective
-        output = last_output
+        output = resolve_progress_result_text(record)
         progress_note = ""
+
+    why, where = build_progress_why_where(
+        run_dir, record, state, attempt_event=attempt_event
+    )
 
     # Compact one-liner for logs / LIVE_STATUS summaries.
     if attempt_event:
@@ -2643,6 +2800,8 @@ def build_progress_event(
         last_completed=last_completed if attempt_event else None,
         next_iteration=next_iteration if attempt_event else None,
         progress_note=progress_note,
+        why=why,
+        where=where,
     )
     text_html = format_progress_notify_telegram_html(
         loop_name=run_dir.name,
@@ -2658,6 +2817,8 @@ def build_progress_event(
         last_completed=last_completed if attempt_event else None,
         next_iteration=next_iteration if attempt_event else None,
         progress_note=progress_note,
+        why=why,
+        where=where,
     )
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -2674,6 +2835,8 @@ def build_progress_event(
         "status": status,
         "objective": objective[:400],
         "output_preview": output[:500],
+        "why": why[:500] if why else "",
+        "where": where[:700] if where else "",
         "text": text,
         "text_compact": compact,
         "text_html": text_html,

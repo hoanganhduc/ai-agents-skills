@@ -165,6 +165,22 @@ for a session.
 Env: `AAS_AUTOLOOP_PANEL=on|off`, `AAS_AUTOLOOP_PANEL_PROVIDERS=claude,codex,…`.
 Notify remains orthogonal. Banking still requires host evidence gates.
 
+### Progress notify body (drive / watch)
+
+Zulip/Telegram progress events are built by `build_progress_event` →
+`format_progress_notify_text` / `format_progress_notify_telegram_html`:
+
+| Block | When | Source |
+|---|---|---|
+| Progress | always | banked N · attempting N+1 on start/fail/panel-target; else `iter N/max` |
+| **Why** | when recoverable | `next_preferred_path`, recovery “Next safe action”, or active campaign |
+| **Where (goal)** | when recoverable | campaign id + recovery “Last valid node” + “Remaining gaps” |
+| **Objective** | when set | ledger `objective` (or next-path text on attempt events) |
+| **Result** | on banked events | human prose from `output`, or **`goal_contribution`** if `output` is a bare artifact path (`iterations/.../certificate.json`) |
+
+Agents should put a short prose summary in `--output`. Paths alone are accepted
+as ledger artifacts but are **not** shown as the sole Result line in notify.
+
 ### Goal priority (path discipline)
 
 File `{loop}/goal_priority.json` or `loop_state.standing_orders.goal_priority`.

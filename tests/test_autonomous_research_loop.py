@@ -909,6 +909,105 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             self.assertEqual(ok["iteration"], 1)
             self.assertIn("PROVED something banked", ok.get("output_preview") or "")
 
+    def test_progress_result_prefers_contribution_over_certificate_path(self) -> None:
+        """Bare certificate paths must not become the notify Result body."""
+        import sys
+
+        runtime = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "autonomous-research-loop-runtime"
+        )
+        sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            reg, loop = base / "reg", base / "loop"
+            self._init(loop, reg, "--max-iterations", "10")
+            self._run(
+                "append-iteration",
+                "--dir",
+                str(loop),
+                "--mode",
+                "bounded-research",
+                "--objective",
+                "Kill residual Case B multi",
+                "--evidence-id",
+                "e1",
+                "--action-taken",
+                "proved multi empty",
+                "--output",
+                "research/autonomous-kge3/iterations/iteration-0093/a11-caseB/certificate.json",
+                "--goal-contribution",
+                "eliminate: Case B multi empty under beta=2",
+                "--campaign-id",
+                "a11-deficit-two-residual",
+                "--decision",
+                "revise",
+                registry=reg,
+            )
+            (loop / "goal_priority.json").write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "discipline_mode": "advise",
+                        "primary_campaign": "a11-deficit-two-residual",
+                        "primary_objective": "Close residual e=1 Case B under beta=2",
+                        "campaign_registry": {
+                            "a11-deficit-two-residual": {
+                                "objective": "Close residual e=1 Case B under beta=2"
+                            }
+                        },
+                        "next_campaigns_ordered": ["a11-deficit-two-residual"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (loop / "recovery.md").write_text(
+                "\n".join(
+                    [
+                        "# Recovery",
+                        "",
+                        "| Field | Current state |",
+                        "|---|---|",
+                        "| Next safe action | Attack pure wt2 at D>=25 |",
+                        "| Last valid node | I100 multi kills banked |",
+                        "| Remaining gaps | pure wt2 open; e=0 ray |",
+                        "",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            ok = arl.build_progress_event(loop, "iteration_ok")
+            preview = ok.get("output_preview") or ""
+            self.assertIn("eliminate: Case B multi empty", preview)
+            self.assertIn("certificate.json", preview)
+            self.assertNotEqual(
+                preview.strip(),
+                "research/autonomous-kge3/iterations/iteration-0093/a11-caseB/certificate.json",
+            )
+            self.assertIn("*Why*", ok["text"])
+            self.assertIn("*Where (goal)*", ok["text"])
+            self.assertIn("a11-deficit-two-residual", ok["text"])
+            self.assertIn("I100 multi kills banked", ok["text"])
+            self.assertIn("pure wt2 open", ok["text"])
+
+            self.assertTrue(
+                arl.looks_like_artifact_path(
+                    "research/autonomous-kge3/iterations/iteration-0093/a11/certificate.json"
+                )
+            )
+            self.assertFalse(
+                arl.looks_like_artifact_path(
+                    "Case B empty; floor D>=15; multi still open"
+                )
+            )
+
     def test_hook_check_allows_unrelated_root_and_missing_registry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
