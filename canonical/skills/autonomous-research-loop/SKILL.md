@@ -197,9 +197,10 @@ inside this skill directory so OpenClaw can install the policy SKILL.md):
 - after install: workflow template `goal-priority` when the templates profile
   is present; or `init --goal-priority-template`
 
-When `goal_priority` is **active** (merged config has JSON boolean
-`"enabled": true`, or a config object exists and
-`AAS_AUTOLOOP_GOAL_PRIORITY=on`):
+When `goal_priority` is **active** (default: merged `"enabled": true` and
+`"discipline_mode": "advise"`; opt out with `"enabled": false` or
+`AAS_AUTOLOOP_GOAL_PRIORITY=off`; env `on` forces enable when a config object
+exists):
 
 - Host panel target advice ranks candidates by **goal EV** (unless
   `panel_rank_by_goal_ev: false`).
@@ -207,9 +208,9 @@ When `goal_priority` is **active** (merged config has JSON boolean
   `REPLAN_REQUIRED` text.
 - Use `append-iteration --goal-contribution … --campaign-id …` (and optional
   `--local-without-goal-delta`).
-- **Soft v1:** warnings and prompt injection only — does **not** stop the loop
-  (see `autonomous-loop-enforcement.md`). Residual-chasing can still happen if
-  agents ignore prompts.
+- **Default discipline `advise`:** warnings and prompt injection only — does
+  **not** stop the loop (see `autonomous-loop-enforcement.md`). Residual-chasing
+  can still happen if agents ignore prompts.
 
 When a campaign or sampling stratum is **closed** with `forbid_as_sole_primary`,
 prefer not to continue it as the sole primary (e.g. “next host in the same
@@ -371,4 +372,4 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
-- `goal-priority` -- Optional goal_priority.v1 reference (soft path discipline; does not change stop conditions).
+- `goal-priority` -- goal_priority.v1 reference (default enabled, discipline_mode advise; does not change stop conditions).
