@@ -3564,7 +3564,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument(
         "--goal-priority-template",
         action="store_true",
-        help="also write goal_priority.json example with enabled:false",
+        help="also write goal_priority.json example (default enabled:true, discipline_mode:advise)",
     )
     init.set_defaults(func=init_loop)
 

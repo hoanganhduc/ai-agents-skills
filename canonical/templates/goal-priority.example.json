@@ -1,7 +1,7 @@
 {
   "schema_version": "goal_priority.v1",
-  "enabled": false,
-  "discipline_mode": "soft",
+  "enabled": true,
+  "discipline_mode": "advise",
   "primary_campaign": "main",
   "primary_objective": "State what this campaign must produce for loop_state.goal",
   "campaign_registry": {

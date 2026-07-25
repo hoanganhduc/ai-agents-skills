@@ -75,13 +75,30 @@ class GoalPriorityTests(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.pop("AAS_AUTOLOOP_GOAL_PRIORITY", None)
 
-    def test_missing_enabled_inactive(self) -> None:
+    def test_missing_enabled_uses_default_enabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _init_loop(Path(tmp))
             _write_gp(run_dir, {"primary_campaign": "A1"})
             cfg = gp.load_goal_priority(run_dir)
-            self.assertFalse(cfg["_active"])
+            # Defaults are enabled:true / discipline_mode:advise
+            self.assertTrue(cfg["_active"])
+            self.assertEqual(cfg["discipline_mode"], "advise")
             self.assertTrue(any("enabled" in w for w in cfg["_warnings"]))
+
+    def test_no_config_defaults_enabled_advise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            cfg = gp.load_goal_priority(run_dir)
+            self.assertTrue(cfg["_active"])
+            self.assertEqual(cfg["discipline_mode"], "advise")
+            self.assertTrue(cfg.get("enabled") is True)
+
+    def test_explicit_enabled_false_opts_out(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(run_dir, {"enabled": False, "primary_campaign": "A1"})
+            cfg = gp.load_goal_priority(run_dir)
+            self.assertFalse(cfg["_active"])
 
     def test_explicit_enabled_true(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -231,7 +248,8 @@ class GoalPriorityTests(unittest.TestCase):
             path = run_dir / "goal_priority.json"
             self.assertTrue(path.is_file())
             data = json.loads(path.read_text(encoding="utf-8"))
-            self.assertIs(data["enabled"], False)
+            self.assertIs(data["enabled"], True)
+            self.assertEqual(data["discipline_mode"], "advise")
 
     def test_example_json_matches_template_file(self) -> None:
         template = REPO_ROOT / "canonical" / "templates" / "goal-priority.example.json"

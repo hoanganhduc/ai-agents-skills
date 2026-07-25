@@ -50,8 +50,8 @@ _ENV_OFF = frozenset({"0", "off", "false", "no"})
 def default_goal_priority_config() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
-        "enabled": False,
-        "discipline_mode": "soft",
+        "enabled": True,
+        "discipline_mode": "advise",
         "primary_campaign": "",
         "primary_objective": "",
         "campaign_registry": {},
@@ -165,12 +165,12 @@ def load_goal_priority(run_dir: Path) -> dict[str, Any]:
     if not isinstance(cfg.get("local_without_goal_delta_tags"), list):
         cfg["local_without_goal_delta_tags"] = list(GENERIC_LOCAL_TAGS)
 
-    mode = str(cfg.get("discipline_mode") or "soft").strip().lower()
+    mode = str(cfg.get("discipline_mode") or "advise").strip().lower()
     if mode not in DISCIPLINE_MODES:
         warnings.append(
-            f"goal_priority discipline_mode {mode!r} invalid; using soft"
+            f"goal_priority discipline_mode {mode!r} invalid; using advise"
         )
-        mode = "soft"
+        mode = "advise"
     cfg["discipline_mode"] = mode
 
     epoch_raw = cfg.get("host_signal_epoch_iteration")
@@ -292,8 +292,8 @@ def open_residual_leaves(run_dir: Path, cfg: dict[str, Any] | None = None) -> li
 
 
 def discipline_mode(cfg: dict[str, Any]) -> str:
-    mode = str(cfg.get("discipline_mode") or "soft").strip().lower()
-    return mode if mode in DISCIPLINE_MODES else "soft"
+    mode = str(cfg.get("discipline_mode") or "advise").strip().lower()
+    return mode if mode in DISCIPLINE_MODES else "advise"
 
 
 def contribution_is_generic_advance(value: Any) -> bool:
@@ -595,8 +595,8 @@ def collect_goal_priority_warnings(
 def example_goal_priority_json() -> str:
     example = {
         "schema_version": SCHEMA_VERSION,
-        "enabled": False,
-        "discipline_mode": "soft",
+        "enabled": True,
+        "discipline_mode": "advise",
         "primary_campaign": "main",
         "primary_objective": "State what this campaign must produce for loop_state.goal",
         "campaign_registry": {

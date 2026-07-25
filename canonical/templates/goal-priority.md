@@ -12,8 +12,9 @@ so OpenClaw can still install the ARL policy `SKILL.md`.
 
 ## Enable
 
-Active only after merge when `"enabled"` is **JSON boolean `true`**, or when a
-config object exists and `AAS_AUTOLOOP_GOAL_PRIORITY=on` forces enable.
+Active when the merged config has `"enabled": true` (the **default**), or when a
+config object exists and `AAS_AUTOLOOP_GOAL_PRIORITY=on` forces enable. Set
+`"enabled": false` or `AAS_AUTOLOOP_GOAL_PRIORITY=off` to opt out.
 
 - File: `{loop_dir}/goal_priority.json`
 - Or: `loop_state.standing_orders.goal_priority`
@@ -25,11 +26,13 @@ Merge order: defaults → file → standing_orders (standing wins) → env (enab
 
 | Mode | Behavior |
 |------|----------|
-| `soft` (default) | v1 soft text + optional fields; no advance-deprecation warn |
-| `advise` | + host warnings for bare `advance`; REPLAN text with open leaves |
+| `soft` | v1 soft text + optional fields; no advance-deprecation warn |
+| `advise` (**default**) | + host warnings for bare `advance`; REPLAN text with open leaves |
 | `hard` (future) | may rewrite path only; **must not** refuse append or set status |
 
 Set `"discipline_mode": "soft"|"advise"|"hard"` in `goal_priority.json`.
+Runtime and template defaults use `"enabled": true` and `"discipline_mode": "advise"`.
+Loops may still set `"enabled": false` to opt out.
 
 ## Soft ledger fields
 
