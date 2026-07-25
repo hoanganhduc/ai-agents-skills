@@ -1924,7 +1924,7 @@ class _FakeRunner:
 
     def __init__(self, ip: str = "203.0.113.9", fail_on: str | None = None, echo_token: bool = False,
                  datacenters: list | None = None, server_types: list | None = None,
-                 ssh_keys: list | None = None):
+                 ssh_keys: list | None = None, servers: list | None = None):
         self.calls: list[dict] = []
         self.ip = ip
         self.fail_on = fail_on
@@ -1934,6 +1934,8 @@ class _FakeRunner:
         # Project SSH keys, as `hcloud ssh-key list` prints them (one name per line);
         # pass [] for a project that has none.
         self.ssh_keys = ["research-key"] if ssh_keys is None else list(ssh_keys)
+        # What `server list` returns; pass [] for "this job has no server".
+        self.servers = servers
 
     def __call__(self, argv, *, env, timeout):
         joined = " ".join(argv)
@@ -1948,8 +1950,9 @@ class _FakeRunner:
         if "server-type" in argv and "list" in argv:
             return {"returncode": 0, "stdout": json.dumps(self.server_types), "stderr": ""}
         if "server" in argv and "list" in argv:
-            servers = [{"id": 4242, "name": "ai-agents-skills-jobX", "status": "running",
-                        "public_net": {"ipv4": {"ip": self.ip}}}]
+            servers = self.servers if self.servers is not None else [
+                {"id": 4242, "name": "ai-agents-skills-jobX", "status": "running",
+                 "public_net": {"ipv4": {"ip": self.ip}}}]
             return {"returncode": 0, "stdout": json.dumps(servers), "stderr": ""}
         stdout = f"leaked {env.get('HCLOUD_TOKEN')} value" if self.echo_token else "ok"
         return {"returncode": 0, "stdout": stdout, "stderr": ""}
@@ -2273,6 +2276,72 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual([r for r in hetzner_audit.read(self.state) if r["event"] == "fetch"], [])
         with self.assertRaises(hetzner_driver.HetznerDriverError):
             hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX", confirm=True)
+
+    # -- unnameable job ids + reservations that outlive a failed create -------
+
+    def test_up_refuses_a_job_id_hetzner_cannot_use_as_a_server_name(self) -> None:
+        """The observed leak. Two dispatches carried underscored job ids; the budget gate
+        reserved EUR 0.94 each, then Hetzner refused the create with `invalid input in
+        field 'name' ... must be a valid hostname`. Nothing was created, so nothing was ever
+        destroyed, so `reconcile` -- reachable only from `down`'s per-server loop -- could
+        never run, and EUR 1.88 of the EUR 3/day cap stayed committed forever."""
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        bundle = self._bundle(job_id="tsgham_iter002_lace_b")
+        with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
+            hetzner_driver.up(job_dir=bundle, config=self.config, state_root=self.state, confirm=True)
+        self.assertIn("tsgham_iter002_lace_b", str(ctx.exception))
+        self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # nothing committed
+        self.assertTrue(all("create" not in c["joined"] for c in runner.calls))
+
+    def test_preflight_flags_an_unnameable_job_id(self) -> None:
+        """preflight is free, so the cheapest place to catch this is before any lifecycle verb."""
+        hetzner_driver.COMMAND_RUNNER = _FakeRunner()
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        out = hetzner_driver.preflight(job_dir=self._bundle(job_id="bad_name"), config=self.config,
+                                       state_root=self.state)
+        self.assertEqual(out["budget_verdict"], "invalid_job_id")
+        self.assertFalse(out["available"])
+        self.assertFalse(out["provisioned"])
+
+    def test_generated_job_ids_can_name_a_server(self) -> None:
+        """The fallback id is used whenever a bundle omits `job_id`, so it must satisfy the
+        same rule it is now checked against."""
+        hetzner_driver._check_server_name(hetzner_driver._new_job_id())
+
+    def test_server_name_rule_matches_hetzner(self) -> None:
+        """What Hetzner validates is the rendered server name, not the job id, so a leading
+        hyphen is harmless here -- the managed-by prefix always precedes it."""
+        for job_id in ("jobX", "tsgham-iter002-lace-b", "a", "job.1", "-leading"):
+            hetzner_driver._check_server_name(job_id)  # accepted
+        for job_id in ("has_underscore", "trailing-", "has space", "", "x" * 64):
+            with self.assertRaises(hetzner_driver.HetznerDriverError, msg=job_id):
+                hetzner_driver._check_server_name(job_id)
+
+    def test_a_failed_create_releases_the_reservation(self) -> None:
+        """A reservation buys a server that now does not exist: hold it and the daily cap
+        erodes with every failure."""
+        runner = _FakeRunner(fail_on="server create", servers=[])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with self.assertRaises(hetzner_driver.HetznerDriverError):
+            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        self.assertEqual(budget_ledger.outstanding(self.state, "hetzner"), 0.0)
+        rows = [json.loads(line) for line in
+                (self.state / "hetzner-reservations.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+        self.assertEqual([r["state"] for r in rows], ["reconciled"])
+
+    def test_a_failed_create_keeps_the_reservation_when_a_server_may_exist(self) -> None:
+        """`hcloud` can fail after the server was created (a timeout on the response, say).
+        Releasing then would uncommit budget for a machine that is billing, so the release
+        is conditional on the job having no server -- fail-closed toward the cap."""
+        runner = _FakeRunner(fail_on="server create")  # canned list: a server carries this job-id
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with self.assertRaises(hetzner_driver.HetznerDriverError):
+            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        self.assertGreater(budget_ledger.outstanding(self.state, "hetzner"), 0.0)
 
     # -- root SSH access + the cloud-init boot race ---------------------------
 
