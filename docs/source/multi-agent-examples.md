@@ -91,7 +91,9 @@ Actual launch requires `--allow-external-cli`. Research launch also requires a
 resolved latest-model and highest-thinking setting. Most providers also require
 an explicit dispatch command, for example `AAS_CLAUDE_DISPATCH_COMMAND`,
 `AAS_CLAUDE_LATEST_MODEL`, and `AAS_CLAUDE_HIGHEST_THINKING`. Antigravity
-dispatch is CLI-based through `agy --print`; it does not require
+dispatch is CLI-based through `agy -p "<prompt>" --dangerously-skip-permissions`
+(never put flags between `-p` and the prompt; `agy` does not read the user
+prompt from stdin); it does not require
 `ANTIGRAVITY_LS_ADDRESS`. Grok dispatch is CLI-based through
 `grok --prompt-file /dev/stdin` (the prompt is delivered on stdin; grok's
 `--single` needs an argv value and does not read stdin) and uses an interactive

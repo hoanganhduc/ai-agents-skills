@@ -1,6 +1,7 @@
 {
   "schema_version": "goal_priority.v1",
   "enabled": false,
+  "discipline_mode": "soft",
   "primary_campaign": "main",
   "primary_objective": "State what this campaign must produce for loop_state.goal",
   "campaign_registry": {
@@ -27,5 +28,6 @@
     "closed_campaign_sample"
   ],
   "require_goal_contribution_in_ledger": true,
-  "panel_rank_by_goal_ev": true
+  "panel_rank_by_goal_ev": true,
+  "host_signal_epoch_iteration": null
 }

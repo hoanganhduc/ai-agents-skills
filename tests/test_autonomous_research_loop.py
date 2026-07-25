@@ -1766,6 +1766,12 @@ class AntigravityProviderResolveTests(unittest.TestCase):
             self.assertIn("-p", entry["argv"])
             self.assertIn("--dangerously-skip-permissions", entry["argv"])
             self.assertNotIn("--yolo", entry["argv"])
+            # Order lock: -p, prompt, then --dangerously-skip-permissions
+            # (flags between -p and prompt become the prompt text).
+            p_idx = entry["argv"].index("-p")
+            skip_idx = entry["argv"].index("--dangerously-skip-permissions")
+            self.assertEqual(skip_idx, p_idx + 2, entry["argv"])
+            self.assertNotEqual(entry["argv"][p_idx + 1], "--dangerously-skip-permissions")
 
     def test_falls_back_to_gemini_with_yolo_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

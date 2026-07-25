@@ -1,13 +1,14 @@
-# Goal priority (`goal_priority.v1`)
+# Goal priority (`goal_priority.v1` + soft v2 fields)
 
 Optional loop-local discipline so each primary path advances `loop_state.goal`
 and `success_criteria`, instead of unbounded local residual sampling.
 
 **Does not change stop conditions.** See `autonomous-loop-enforcement.md`.
+**Never** writes `loop_state.status`. **Never** fail-closes `append-iteration`
+for vocabulary (hard mode may warn/coerce only).
 
 This file lives under **`canonical/templates/`** (not the policy skill directory)
-so OpenClaw can still install the ARL policy `SKILL.md`. After install, look for
-workflow templates or the source repo copy.
+so OpenClaw can still install the ARL policy `SKILL.md`.
 
 ## Enable
 
@@ -16,61 +17,91 @@ config object exists and `AAS_AUTOLOOP_GOAL_PRIORITY=on` forces enable.
 
 - File: `{loop_dir}/goal_priority.json`
 - Or: `loop_state.standing_orders.goal_priority`
-- Env: `AAS_AUTOLOOP_GOAL_PRIORITY=on|off|1|0|true|false|yes|no`  
-  (`on` without config is inert + warn; `on` with config activates even if
-  `enabled` was missing or false)
+- Env: `AAS_AUTOLOOP_GOAL_PRIORITY=on|off|1|0|true|false|yes|no`
 
-Merge order: defaults → file → standing_orders (standing wins; lists/maps
-replaced wholesale) → env (enabled only).
+Merge order: defaults → file → standing_orders (standing wins) → env (enabled only).
+
+## Discipline modes
+
+| Mode | Behavior |
+|------|----------|
+| `soft` (default) | v1 soft text + optional fields; no advance-deprecation warn |
+| `advise` | + host warnings for bare `advance`; REPLAN text with open leaves |
+| `hard` (future) | may rewrite path only; **must not** refuse append or set status |
+
+Set `"discipline_mode": "soft"|"advise"|"hard"` in `goal_priority.json`.
 
 ## Soft ledger fields
 
 `append-iteration` optional flags:
 
-- `--goal-contribution` (open string; see vocabulary below)
+- `--goal-contribution` (recommended vocabulary below)
+- `--goal-contribution-detail`
 - `--campaign-id`
+- `--residual-id`
+- `--scope-lock` (`encoding_only` | `goal_sc` | `manuscript` | `mixed`)
 - `--local-without-goal-delta`
 - `--local-without-goal-delta-tag`
 
-When active and `require_goal_contribution_in_ledger` is true (default), omission
-of `goal_contribution` counts toward the local-without-goal-delta streak
-(warn-only). Set it to `false` for self-report mode (only explicit local flags
-count).
+## Recommended `goal_contribution` vocabulary
+
+- `eliminate` — kill a candidate / no-go
+- `construct` — new witness / lock / gadget
+- `scope_lift` — strictly larger class closed
+- `bridge` / `separate` — encoding ↔ goal membership
+- `verify_trust` — dual-engine / independent audit
+- `replan` — campaign/path change
+- `formalize` — Lean/formal gate progress
+- `operational` — infra only
+- `advance` — allowed; discouraged as sole label in advise+
+
+## Residual inventory (optional)
+
+File: `{loop_dir}/residual_inventory.json`
+
+```json
+{
+  "schema_version": "residual_inventory.v1",
+  "host_signal_epoch_iteration": 248,
+  "leaves": [
+    {
+      "id": "k2_lr",
+      "campaign_id": "A2",
+      "status": "open",
+      "scope_lock": "encoding_only",
+      "max_iterations_before_replan": null,
+      "recovery_aliases": ["k2_lr"]
+    }
+  ]
+}
+```
+
+- `host_signal_epoch_iteration`: rows before this iteration are not host-counted.
+- Open leaves are listed in the drive/panel prompt when present.
+- Machine campaign order source remains **`goal_priority.json` only**.
+  Markdown (OPEN_QUESTION, APPROACH_REGISTRY) is advisory if injected later.
+
+## Scope: encoding vs goal
+
+After an encoding/GOAL separation, residual work with
+`scope_lock: encoding_only` is **campaign** progress, not full goal resolution.
+
+## Stop safety
+
+REPLAN_REQUIRED text must never authorize `--decision stop|blocked`. The
+headless driver owns stop conditions. Goal priority must not write
+`loop_state.status`.
 
 ## Activation boundary (streak)
 
 Streak counting starts at the first ledger record that sets any of
-`goal_contribution`, `campaign_id`, or `local_without_goal_delta`. All later
-records count. Hitting the cap injects `REPLAN_REQUIRED` text; it does **not**
-stop the loop.
-
-## Recommended `goal_contribution` vocabulary
-
-Open strings. Suggested:
-
-- `advance` — progress toward the exact claim
-- `eliminate` — kill a candidate approach / hypothesis
-- `verify` — trust / independence / dual-check
-- `replan` — change campaign after closed stratum or streak
-- `operational` — infra only (panel/broker); not sole long-run primary
-- Research examples: `bridge`, `hardness`, `algorithm`, `counterexample`, `trust_gate`
-
-## Recommended `local_without_goal_delta` tags
-
-Advisory vocabulary (unknown tags warn only):
-
-- `finite_sample_only`
-- `bookkeeping`
-- `special_case_only`
-- `uncertified_counterexample`
-- `elegant_reduction`
-- `local_refinement_only`
-- `closed_campaign_sample`
+`goal_contribution`, `campaign_id`, or `local_without_goal_delta`. Hitting the
+cap injects `REPLAN_REQUIRED` text; it does **not** stop the loop.
 
 ## Soft vs strict
 
-v1 injects prompt/panel text and validate **warnings**. It does not stop the
-loop or hard-fail append. Strict mode is out of scope for this delivery.
+v1/v2 soft injects prompt/panel text and validate **warnings**. It does not stop
+the loop or hard-fail append.
 
 ## Example
 
