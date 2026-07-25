@@ -2528,7 +2528,164 @@ def build_progress_why_where(
         where_parts.append(f"Open: {gaps}")
     where = " · ".join(where_parts)
 
-    return why[:500].strip(), where[:700].strip()
+    return why[:900].strip(), where[:1100].strip()
+
+
+# --- Notify prose formatting (unicode math, lists) --------------------------------
+
+# Ordered longest-first so multi-char operators win.
+_ASCII_MATH_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("<=>", "⇔"),
+    ("=>", "⇒"),
+    ("<=", "≤"),
+    (">=", "≥"),
+    ("!=", "≠"),
+    ("~=", "≈"),
+    ("->", "→"),
+    ("<-", "←"),
+    ("...", "…"),
+)
+
+# Word-ish Greek / symbol names used in this research loop (case-sensitive ids).
+_WORD_MATH_REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bbeta\b"), "β"),
+    (re.compile(r"\bBeta\b"), "Β"),
+    (re.compile(r"\bdelta\b"), "δ"),
+    (re.compile(r"\bDelta\b"), "Δ"),
+    (re.compile(r"\balpha\b"), "α"),
+    (re.compile(r"\bgamma\b"), "γ"),
+    (re.compile(r"\brho\b"), "ρ"),
+    (re.compile(r"\bsigma\b"), "σ"),
+    (re.compile(r"\bphi\b"), "φ"),
+    (re.compile(r"\bPhi\b"), "Φ"),
+    (re.compile(r"\btheta\b"), "θ"),
+    (re.compile(r"\binfty\b"), "∞"),
+    (re.compile(r"\bapprox\b"), "≈"),
+)
+
+
+def normalize_math_unicode(text: str) -> str:
+    """Map common ASCII math and Greek word tokens to Unicode symbols.
+
+    Leaves existing Unicode intact. Does not interpret full LaTeX.
+    """
+    if not text:
+        return ""
+    out = text
+    # Protect fenced code / backticks so we do not rewrite paths inside them.
+    chunks: list[str] = []
+    parts = re.split(r"(`[^`]*`)", out)
+    for part in parts:
+        if part.startswith("`") and part.endswith("`") and len(part) >= 2:
+            chunks.append(part)
+            continue
+        s = part
+        for ascii_op, uni in _ASCII_MATH_REPLACEMENTS:
+            s = s.replace(ascii_op, uni)
+        for pat, uni in _WORD_MATH_REPLACEMENTS:
+            s = pat.sub(uni, s)
+        # Compact D>=25 already handled; also D = 25 style stays.
+        # Superscripts for common small integers after ^ when simple.
+        s = re.sub(r"\^(\d)", lambda m: _SUPERSCRIPT.get(m.group(1), m.group(0)), s)
+        chunks.append(s)
+    return "".join(chunks)
+
+
+_SUPERSCRIPT = {
+    "0": "⁰",
+    "1": "¹",
+    "2": "²",
+    "3": "³",
+    "4": "⁴",
+    "5": "⁵",
+    "6": "⁶",
+    "7": "⁷",
+    "8": "⁸",
+    "9": "⁹",
+}
+
+
+def split_notify_items(text: str, *, max_items: int = 10) -> list[str]:
+    """Split prose into list items when it is clearly multi-clause.
+
+    Prefer existing newlines/bullets; else split on ``;`` or middot ``·`` when
+    that yields several substantive clauses.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    # Already a list (markdown or unicode bullets).
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    if len(lines) >= 2 and all(
+        re.match(r"^([-*•‣▪◦]|\d+[.)])\s+", ln) for ln in lines
+    ):
+        cleaned: list[str] = []
+        for ln in lines:
+            cleaned.append(re.sub(r"^([-*•‣▪◦]|\d+[.)])\s+", "", ln).strip())
+        return [c for c in cleaned if c][:max_items]
+
+    if len(lines) >= 2:
+        # Multi-line prose without bullets: keep as separate items if short lines.
+        if all(len(ln) <= 220 for ln in lines) and len(lines) <= max_items:
+            return lines[:max_items]
+
+    # Semicolon / middot enumeration (common in recovery and contributions).
+    for sep in (";", " · ", " • "):
+        if sep in raw:
+            parts = [p.strip(" \t-–—") for p in raw.split(sep)]
+            parts = [p for p in parts if p]
+            if len(parts) >= 2 and all(len(p) >= 8 for p in parts[:3]):
+                return parts[:max_items]
+
+    # Comma-separated only when many short tags (avoid splitting math commas).
+    if raw.count(",") >= 3 and len(raw) < 400:
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if len(parts) >= 4 and all(len(p) <= 80 for p in parts):
+            return parts[:max_items]
+
+    return [raw]
+
+
+def format_notify_body_block(
+    text: str,
+    *,
+    style: str = "markdown",
+    max_chars: int = 900,
+    max_items: int = 10,
+) -> str:
+    """Normalize math Unicode and render as a bullet list when multi-item.
+
+    *style*: ``markdown`` (Zulip) or ``plain`` (Telegram after HTML-escape of
+    each line by the caller).
+    """
+    normalized = normalize_math_unicode((text or "").strip())
+    if not normalized:
+        return ""
+    items = split_notify_items(normalized, max_items=max_items)
+    if len(items) == 1:
+        body = items[0]
+        if len(body) > max_chars:
+            body = body[: max_chars - 1].rstrip() + "…"
+        return body
+
+    bullet = "•"
+    rendered: list[str] = []
+    used = 0
+    for item in items:
+        # Each bullet gets a share of the budget.
+        piece = item
+        room = max_chars - used - (len(rendered) + 1) * 3
+        if room < 24:
+            break
+        if len(piece) > room:
+            piece = piece[: room - 1].rstrip() + "…"
+        if style == "markdown":
+            rendered.append(f"{bullet} {piece}")
+        else:
+            rendered.append(f"{bullet} {piece}")
+        used += len(piece)
+    return "\n".join(rendered)
 
 
 def format_progress_notify_text(
@@ -2549,7 +2706,7 @@ def format_progress_notify_text(
     why: str = "",
     where: str = "",
 ) -> str:
-    """Human-readable multi-line notify body for Zulip/Telegram."""
+    """Human-readable multi-line notify body for Zulip (Markdown + Unicode)."""
     marker = _NOTIFY_EVENT_MARKERS.get(event, "•")
     if (
         event in _ATTEMPT_PROGRESS_EVENTS
@@ -2558,47 +2715,45 @@ def format_progress_notify_text(
     ):
         if max_iter:
             progress_line = (
-                f"Progress: banked *{last_completed}/{max_iter}* · "
-                f"attempting *{next_iteration}* ({remaining} left after banked)"
+                f"📊 Progress: banked **{last_completed}/{max_iter}** · "
+                f"attempting **{next_iteration}** ({remaining} left after banked)"
             )
         else:
             progress_line = (
-                f"Progress: banked *{last_completed}* · attempting *{next_iteration}*"
+                f"📊 Progress: banked **{last_completed}** · "
+                f"attempting **{next_iteration}**"
             )
     else:
         prog = f"{iteration}/{max_iter}" if max_iter else str(iteration or "?")
         rem = f"{remaining} left" if max_iter else ""
-        progress_line = f"Progress: *{prog}*" + (f" ({rem})" if rem else "")
+        progress_line = f"📊 Progress: **{prog}**" + (f" ({rem})" if rem else "")
+    decision_u = normalize_math_unicode(decision or "?")
+    status_u = normalize_math_unicode(status or "n/a")
     lines = [
-        f"{marker} *{loop_name}* — `{event}`",
+        f"{marker} **{loop_name}** — `{event}`",
         progress_line,
-        f"Decision: `{decision}` · Status: `{status or 'n/a'}`",
+        f"🏷 Decision: `{decision_u}` · Status: `{status_u}`",
     ]
-    if progress_note:
-        lines.append(progress_note.strip())
+    note = normalize_math_unicode((progress_note or "").strip())
+    if note:
+        lines.append(f"ℹ️ {note}")
     if timestamp:
-        lines.append(f"Time: {timestamp}")
-    why_s = (why or "").strip()
-    if why_s:
+        lines.append(f"🕒 {timestamp}")
+
+    def _section(title: str, body: str, *, max_chars: int) -> None:
+        block = format_notify_body_block(
+            body, style="markdown", max_chars=max_chars
+        )
+        if not block:
+            return
         lines.append("")
-        lines.append("*Why*")
-        lines.append(why_s[:500])
-    where_s = (where or "").strip()
-    if where_s:
-        lines.append("")
-        lines.append("*Where (goal)*")
-        lines.append(where_s[:700])
-    obj = (objective or "").strip()
-    if obj:
-        lines.append("")
-        lines.append("*Objective*")
-        lines.append(obj[:500])
-    out = (output or "").strip()
-    if out:
-        lines.append("")
-        lines.append("*Result*")
-        lines.append(out[:700])
-    # One-line compact fallback also kept as first non-marker summary for logs.
+        lines.append(f"**{title}**")
+        lines.append(block)
+
+    _section("Why", why, max_chars=600)
+    _section("Where (goal)", where, max_chars=800)
+    _section("Objective", objective, max_chars=600)
+    _section("Result", output, max_chars=800)
     return "\n".join(lines).strip()
 
 
@@ -2620,7 +2775,7 @@ def format_progress_notify_telegram_html(
     why: str = "",
     where: str = "",
 ) -> str:
-    """Telegram HTML body (parse_mode=HTML)."""
+    """Telegram HTML body (parse_mode=HTML); preserves Unicode math symbols."""
 
     def esc(s: str) -> str:
         return (
@@ -2638,48 +2793,48 @@ def format_progress_notify_telegram_html(
     ):
         if max_iter:
             progress_line = (
-                f"Progress: banked <b>{esc(str(last_completed))}/{esc(str(max_iter))}</b> · "
+                f"📊 Progress: banked <b>{esc(str(last_completed))}/{esc(str(max_iter))}</b> · "
                 f"attempting <b>{esc(str(next_iteration))}</b> "
                 f"({esc(str(remaining))} left after banked)"
             )
         else:
             progress_line = (
-                f"Progress: banked <b>{esc(str(last_completed))}</b> · "
+                f"📊 Progress: banked <b>{esc(str(last_completed))}</b> · "
                 f"attempting <b>{esc(str(next_iteration))}</b>"
             )
     else:
         prog = f"{iteration}/{max_iter}" if max_iter else str(iteration or "?")
         rem = f"{remaining} left" if max_iter else ""
-        progress_line = f"Progress: <b>{esc(prog)}</b>" + (f" ({esc(rem)})" if rem else "")
+        progress_line = f"📊 Progress: <b>{esc(prog)}</b>" + (
+            f" ({esc(rem)})" if rem else ""
+        )
+    decision_u = normalize_math_unicode(decision or "?")
+    status_u = normalize_math_unicode(status or "n/a")
     lines = [
         f"{marker} <b>{esc(loop_name)}</b> — <code>{esc(event)}</code>",
         progress_line,
-        f"Decision: <code>{esc(decision)}</code> · Status: <code>{esc(status or 'n/a')}</code>",
+        f"🏷 Decision: <code>{esc(decision_u)}</code> · Status: <code>{esc(status_u)}</code>",
     ]
-    if progress_note:
-        lines.append(esc(progress_note.strip()))
+    note = normalize_math_unicode((progress_note or "").strip())
+    if note:
+        lines.append(f"ℹ️ {esc(note)}")
     if timestamp:
-        lines.append(f"Time: {esc(timestamp)}")
-    why_s = (why or "").strip()
-    if why_s:
+        lines.append(f"🕒 {esc(timestamp)}")
+
+    def _section(title: str, body: str, *, max_chars: int) -> None:
+        block = format_notify_body_block(body, style="plain", max_chars=max_chars)
+        if not block:
+            return
         lines.append("")
-        lines.append("<b>Why</b>")
-        lines.append(esc(why_s[:500]))
-    where_s = (where or "").strip()
-    if where_s:
-        lines.append("")
-        lines.append("<b>Where (goal)</b>")
-        lines.append(esc(where_s[:700]))
-    obj = (objective or "").strip()
-    if obj:
-        lines.append("")
-        lines.append("<b>Objective</b>")
-        lines.append(esc(obj[:500]))
-    out = (output or "").strip()
-    if out:
-        lines.append("")
-        lines.append("<b>Result</b>")
-        lines.append(esc(out[:700]))
+        lines.append(f"<b>{esc(title)}</b>")
+        # Escape each line; bullets and Unicode math remain visible.
+        for ln in block.splitlines():
+            lines.append(esc(ln))
+
+    _section("Why", why, max_chars=600)
+    _section("Where (goal)", where, max_chars=800)
+    _section("Objective", objective, max_chars=600)
+    _section("Result", output, max_chars=800)
     return "\n".join(lines).strip()
 
 
