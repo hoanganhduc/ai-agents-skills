@@ -2,12 +2,13 @@
 
 - Use public exports or documented APIs when available; do not scrape licensed
   product HTML.
-- Scopus, JCR, Master Journal List, and every other non-ICORE built-in are
-  authorized normalized import-only in the current runtime. Their imports do
-  not establish latest status. Do not automate their UIs or proof capture. A
-  future authenticated implementation would require an explicit licensed-
-  session design and policy review; the current runtime never reuses a browser
-  profile.
+- Scopus, JCR, Master Journal List, CCF, SCImago, JUFO, Norwegian Register, and
+  Conference Ranks remain authorized normalized import-only in the current
+  runtime (no UI automation, no proof capture). DOAJ may use its **public** CSV
+  export live or as a local file; that path still does not establish
+  `verified-current` or enable proof. A future authenticated/licensed API
+  implementation would require an explicit licensed-session design and policy
+  review; the current runtime never reuses a browser profile.
 - Never store, copy, print, log, or forward credentials, cookies, auth headers,
   session identifiers, private browser profiles, or API keys.
 - Reject credential-like URL query/path fields and allow only source-reviewed

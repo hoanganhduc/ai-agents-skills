@@ -1,0 +1,20 @@
+{
+  "schema_version": "venue-ranking-collision.v1",
+  "entries": [
+    {
+      "query_alias": "JIP",
+      "not": ["ITP", "ILP"],
+      "prefer_note": "Journal of Information Processing is a journal; not an ICORE conference acronym match"
+    },
+    {
+      "query_alias": "ISAAC",
+      "confusable": ["ISSAC", "ISCA", "ISARC"],
+      "prefer_note": "ISAAC is International Symposium on Algorithms and Computation; not ISSAC/ISCA"
+    },
+    {
+      "query_alias": "ISSAC",
+      "confusable": ["ISAAC", "ISCA"],
+      "prefer_note": "ISSAC is Symbolic and Algebraic Computation; not ISAAC"
+    }
+  ]
+}
