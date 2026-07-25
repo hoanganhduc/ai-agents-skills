@@ -823,14 +823,16 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(plan[0]["status"], "ready")
             self.assertEqual(plan[0]["provider"], "antigravity")
             # Bare prefix only; -p <prompt> --dangerously-skip-permissions added at run time.
+            # On Windows write_test_cli creates agy.cmd; PATH may surface as agy.CMD.
+            cmd = plan[0]["command"].rstrip()
+            cmd_base = Path(cmd).name.lower()
             self.assertTrue(
-                plan[0]["command"].rstrip().endswith("agy")
-                or plan[0]["command"].rstrip().endswith("agy.exe")
-                or plan[0]["command"].endswith("/agy")
-                or plan[0]["command"].endswith("\\agy")
-                or plan[0]["command"] == "agy"
-                or plan[0]["command"].endswith("agy"),
-                plan[0]["command"],
+                cmd_base in {"agy", "agy.exe", "agy.cmd"}
+                or cmd_base.startswith("agy.")
+                or cmd.lower().endswith(("\\agy", "/agy", "\\agy.cmd", "/agy.cmd", "\\agy.exe", "/agy.exe"))
+                or cmd == "agy"
+                or cmd.lower().endswith("agy"),
+                cmd,
             )
             self.assertNotIn("--print", plan[0]["command"])
             self.assertNotIn("ANTIGRAVITY_LS_ADDRESS", json.dumps(plan[0]))
