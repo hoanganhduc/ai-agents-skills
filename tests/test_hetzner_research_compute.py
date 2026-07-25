@@ -1923,13 +1923,17 @@ class _FakeRunner:
                     "server_types": {"available": [22, 62, 63], "supported": [22, 62, 63]}}]
 
     def __init__(self, ip: str = "203.0.113.9", fail_on: str | None = None, echo_token: bool = False,
-                 datacenters: list | None = None, server_types: list | None = None):
+                 datacenters: list | None = None, server_types: list | None = None,
+                 ssh_keys: list | None = None):
         self.calls: list[dict] = []
         self.ip = ip
         self.fail_on = fail_on
         self.echo_token = echo_token
         self.datacenters = self.DATACENTERS if datacenters is None else datacenters
         self.server_types = self.SERVER_TYPES if server_types is None else server_types
+        # Project SSH keys, as `hcloud ssh-key list` prints them (one name per line);
+        # pass [] for a project that has none.
+        self.ssh_keys = ["research-key"] if ssh_keys is None else list(ssh_keys)
 
     def __call__(self, argv, *, env, timeout):
         joined = " ".join(argv)
@@ -1937,6 +1941,8 @@ class _FakeRunner:
                            "env_has_token": bool(env.get("HCLOUD_TOKEN"))})
         if self.fail_on and self.fail_on in joined:
             return {"returncode": 1, "stdout": "", "stderr": "simulated failure"}
+        if "ssh-key" in argv and "list" in argv:
+            return {"returncode": 0, "stdout": "\n".join(self.ssh_keys), "stderr": ""}
         if "datacenter" in argv and "list" in argv:
             return {"returncode": 0, "stdout": json.dumps(self.datacenters), "stderr": ""}
         if "server-type" in argv and "list" in argv:
@@ -2267,6 +2273,91 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual([r for r in hetzner_audit.read(self.state) if r["event"] == "fetch"], [])
         with self.assertRaises(hetzner_driver.HetznerDriverError):
             hetzner_driver.down(config=self.config, state_root=self.state, job_id="jobX", confirm=True)
+
+    # -- root SSH access + the cloud-init boot race ---------------------------
+
+    def test_up_attaches_a_project_ssh_key_to_the_create(self) -> None:
+        """A create with no `--ssh-key` yields a server whose root login the stock Ubuntu
+        image rejects (`Permission denied (publickey)`), so every later verb -- push, run,
+        fetch -- fails against a server that still bills. The keys are looked up read-only."""
+        runner = _FakeRunner(ssh_keys=["research-key", "laptop"])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        create = next(c for c in runner.calls if "create" in c["joined"])
+        self.assertIn("--ssh-key research-key", create["joined"])
+        self.assertIn("--ssh-key laptop", create["joined"])
+
+    def test_up_refuses_when_the_project_has_no_ssh_key(self) -> None:
+        """Provisioning an unreachable server is pure cost, so `up` aborts before spending."""
+        runner = _FakeRunner(ssh_keys=[])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
+            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        self.assertIn("SSH key", str(ctx.exception))
+        # Fail-closed: no create, and no budget reserved for a server that was never made.
+        self.assertTrue(all("create" not in c["joined"] for c in runner.calls))
+        self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())
+
+    def test_up_reports_a_failed_key_lookup_as_a_lookup_failure(self) -> None:
+        """"The project has no keys" and "the key query failed" need different fixes, so the
+        refusal must not blame an empty project for an hcloud error."""
+        hetzner_driver.COMMAND_RUNNER = _FakeRunner(fail_on="ssh-key list")
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
+            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        self.assertIn("could not list", str(ctx.exception))
+        self.assertNotIn("no SSH key", str(ctx.exception))
+
+    def test_ssh_key_names_can_be_pinned_by_env(self) -> None:
+        """A shared project may hold keys this agent must not use; the env pin wins and
+        skips the live query entirely."""
+        runner = _FakeRunner(ssh_keys=["someone-elses-key"])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with mock.patch.dict(os.environ, {"HCLOUD_SSH_KEYS": "research-key, second-key"}):
+            self.assertEqual(hetzner_driver.list_ssh_key_names(), ["research-key", "second-key"])
+        self.assertEqual(runner.calls, [])  # pinned: no hcloud call at all
+
+    def test_push_waits_for_sshd_before_rsync(self) -> None:
+        """hcloud reports `running` as soon as the VM boots, well before cloud-init starts
+        sshd, so an immediate rsync loses the race and the bundle never lands."""
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        hetzner_driver.push(job_id="jobX", job_dir=self._bundle(), config=self.config, confirm=True)
+        kinds = [c["argv"][0] for c in runner.calls]
+        probe = next(i for i, c in enumerate(runner.calls)
+                     if c["argv"][0] == "ssh" and c["argv"][-1] == "true")
+        self.assertLess(probe, kinds.index("rsync"))  # probed first, then copied
+
+    def test_push_does_not_rsync_into_a_server_whose_sshd_never_came_up(self) -> None:
+        runner = _FakeRunner(fail_on="root@")
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with mock.patch.object(hetzner_driver, "SSH_READY_TIMEOUT", 0.05), \
+                mock.patch.object(hetzner_driver, "SSH_READY_INTERVAL", 0.01):
+            with self.assertRaises(hetzner_driver.HetznerDriverError):
+                hetzner_driver.push(job_id="jobX", job_dir=self._bundle(), config=self.config, confirm=True)
+        self.assertTrue(all(c["argv"][0] != "rsync" for c in runner.calls))
+
+    def test_wait_for_ssh_gives_up_with_a_diagnosable_error(self) -> None:
+        hetzner_driver.COMMAND_RUNNER = _FakeRunner(fail_on="root@")
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
+            hetzner_driver.wait_for_ssh("203.0.113.9", timeout=0.05, interval=0.01)
+        self.assertIn("203.0.113.9", str(ctx.exception))
+        self.assertIn("simulated failure", str(ctx.exception))  # carries the last transport error
+
+    def test_ssh_opts_tolerate_a_recycled_address(self) -> None:
+        """Disposable servers recycle IPv4 addresses, so a remembered host key for a
+        destroyed server would block the next job on a changed-key error; the lane must not
+        persist host keys. `BatchMode` keeps a missing key from hanging on a prompt, and
+        `ConnectTimeout` bounds a black-holed address."""
+        self.assertIn("UserKnownHostsFile=/dev/null", hetzner_driver.SSH_OPTS)
+        self.assertIn("BatchMode=yes", hetzner_driver.SSH_OPTS)
+        self.assertTrue(any(o.startswith("ConnectTimeout=") for o in hetzner_driver.SSH_OPTS))
 
     def test_oneshot_dry_run_shows_full_sequence_without_calls(self) -> None:
         runner = _FakeRunner()

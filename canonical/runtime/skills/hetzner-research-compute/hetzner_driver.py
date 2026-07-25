@@ -32,6 +32,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -42,7 +43,14 @@ from research_compute.config import default_config_path, load_config, workspace_
 
 MANAGED_BY = "ai-agents-skills"
 REMOTE_DIR = "/root/job-bundle"
-SSH_OPTS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes"]
+# Servers here are disposable and their IPv4 addresses are recycled, so a remembered host key
+# would block the next job on a changed-key error: accept the new key and keep none.
+# BatchMode refuses to prompt (no interactive terminal), ConnectTimeout bounds a black-holed IP.
+SSH_OPTS = ["-o", "StrictHostKeyChecking=accept-new", "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "BatchMode=yes", "-o", "ConnectTimeout=30"]
+# How long push waits for cloud-init to finish starting sshd (module-level so tests can shorten it).
+SSH_READY_TIMEOUT = 240.0
+SSH_READY_INTERVAL = 5.0
 
 
 class HetznerDriverError(RuntimeError):
@@ -140,6 +148,27 @@ def _read_manifest(job_dir: str | Path) -> dict[str, Any]:
     if not path.is_file():
         raise HetznerDriverError(f"job bundle manifest not found: {path}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+# --- root SSH access ----------------------------------------------------------
+
+def list_ssh_key_names() -> list[str]:
+    """Names of the SSH keys to attach to the create (`--ssh-key`), never key material.
+
+    The stock Ubuntu image has no password login, so a server created without a key
+    rejects root SSH with `Permission denied (publickey)` and every later verb fails
+    against a box that still bills. `HCLOUD_SSH_KEYS` (or `HETZNER_SSH_KEYS`) pins an
+    explicit comma-separated list for a shared project; otherwise every project key is
+    used. A failed lookup raises rather than reporting an empty project, because the two
+    need different fixes."""
+    pinned = os.environ.get("HCLOUD_SSH_KEYS") or os.environ.get("HETZNER_SSH_KEYS") or ""
+    if pinned.strip():
+        return [name.strip() for name in pinned.split(",") if name.strip()]
+    try:
+        result = run_hcloud(["ssh-key", "list", "-o", "noheader", "-o", "columns=name"], timeout=30.0)
+    except HetznerDriverError as exc:
+        raise HetznerDriverError(f"could not list the project SSH keys: {exc}") from exc
+    return [line.strip() for line in (result.get("stdout") or "").splitlines() if line.strip()]
 
 
 def estimate_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -407,10 +436,13 @@ def up(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = Fa
     labels = server_labels(job_id, ttl_hours)
     name = _server_name(job_id)
 
-    def _create_args(chosen_spec: dict[str, Any], chosen_location: str | None) -> list[str]:
+    def _create_args(chosen_spec: dict[str, Any], chosen_location: str | None,
+                     ssh_keys: list[str] | None = None) -> list[str]:
         create = ["server", "create", "--name", name, "--type", chosen_spec["name"], "--image", image]
         if chosen_location:
             create += ["--location", chosen_location]
+        for key_name in ssh_keys or []:
+            create += ["--ssh-key", key_name]
         return create + _label_args(labels)
 
     # Dead-man's-switch (plan section 6, Arm 1): every server gets a boot-relative shutdown
@@ -452,6 +484,15 @@ def up(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = Fa
         raise HetznerDriverError(f"no orderable Hetzner server for this job: {place_reason}")
     _check_allowlists(spec, location, config)
 
+    # Root SSH access, resolved BEFORE the reservation: a keyless server is unreachable, so
+    # refusing here costs nothing, while refusing after the gate would strand a reservation.
+    ssh_keys = list_ssh_key_names()
+    if not ssh_keys:
+        raise HetznerDriverError(
+            "refusing to provision: the Hetzner project has no SSH key, so root login on the "
+            "new server would be refused (add one with `hcloud ssh-key create`, or pin the "
+            "names to use with HCLOUD_SSH_KEYS)")
+
     # Fail-closed budget gate + worst-case reservation BEFORE any create (with the resolved spec).
     reservation = hetzner_backend.budget_gate(
         job_id=job_id, server_spec=spec, config=config, state_root=Path(state_root)
@@ -462,7 +503,7 @@ def up(*, job_dir: str | Path, config: Any, state_root: Path, confirm: bool = Fa
     if arm_dead_mans_switch:
         temp_cloud_init = _write_temp_cloud_init(render_cloud_init(config, ttl_hours))
         user_data_path = temp_cloud_init
-    create_args = _create_args(spec, location)
+    create_args = _create_args(spec, location, ssh_keys=ssh_keys)
     if user_data_path:
         create_args += ["--user-data-from-file", user_data_path]
     try:
@@ -503,6 +544,27 @@ def _server_ip(job_id: str) -> str:
     raise HetznerDriverError(f"no running server found for job-id={job_id}")
 
 
+def wait_for_ssh(ip: str, *, timeout: float | None = None, interval: float | None = None) -> None:
+    """Poll until root SSH is accepted, losing no work to the cloud-init boot race.
+
+    hcloud reports a server as `running` as soon as the VM boots, which is well before
+    cloud-init has started sshd; a push issued at that moment fails with connection
+    refused and, under `oneshot`, takes the whole run down with it."""
+    timeout = SSH_READY_TIMEOUT if timeout is None else timeout
+    interval = SSH_READY_INTERVAL if interval is None else interval
+    deadline = time.monotonic() + timeout
+    last: Exception | None = None
+    while True:
+        try:
+            _run(["ssh", *SSH_OPTS, f"root@{ip}", "true"], timeout=25.0)
+            return
+        except Exception as exc:  # noqa: BLE001 - any transport failure is worth retrying
+            last = exc
+        if time.monotonic() >= deadline:
+            raise HetznerDriverError(f"SSH not ready on {ip} within {timeout:.0f}s: {last}")
+        time.sleep(interval)
+
+
 def push(*, job_id: str, job_dir: str | Path, config: Any, confirm: bool = False,
          dry_run: bool = False) -> dict[str, Any]:
     """Copy the job bundle to the server (rsync over SSH)."""
@@ -514,6 +576,7 @@ def push(*, job_id: str, job_dir: str | Path, config: Any, confirm: bool = False
     if not confirm:
         raise HetznerDriverError("refusing to push: explicit confirm is required")
     ip = _server_ip(job_id)
+    wait_for_ssh(ip)
     argv = ["rsync", "-az", "-e", "ssh " + " ".join(SSH_OPTS), local, f"root@{ip}:{REMOTE_DIR}/"]
     _run(argv, timeout=600.0)
     return {"job_id": job_id, "pushed_to": f"{REMOTE_DIR}/", "server_ip_known": True}
