@@ -391,7 +391,7 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
         "decision": args.decision,
         "stop_reason": args.stop_reason,
     }
-    # Optional goal_priority.v1 soft fields (open vocabulary).
+    # Optional goal_priority soft fields (open vocabulary; advise+ may warn).
     goal_contrib = getattr(args, "goal_contribution", None) or ""
     campaign_id = getattr(args, "campaign_id", None) or ""
     if str(goal_contrib).strip():
@@ -403,6 +403,15 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
     tag = getattr(args, "local_without_goal_delta_tag", None) or ""
     if str(tag).strip():
         record["local_without_goal_delta_tag"] = str(tag).strip()
+    residual_id = getattr(args, "residual_id", None) or ""
+    if str(residual_id).strip():
+        record["residual_id"] = str(residual_id).strip()
+    scope_lock = getattr(args, "scope_lock", None) or ""
+    if str(scope_lock).strip():
+        record["scope_lock"] = str(scope_lock).strip()
+    detail = getattr(args, "goal_contribution_detail", None) or ""
+    if str(detail).strip():
+        record["goal_contribution_detail"] = str(detail).strip()
     append_jsonl(paths["iterations"], record)
 
     state["last_iteration"] = number
@@ -1356,9 +1365,12 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
         "consent_note": "--allow-all-tools grants full tool autonomy",
     },
     "antigravity": {
-        # Google Antigravity CLI is `agy` (headless: `agy -p "<prompt>" --dangerously-skip-permissions`),
-        # matching the `agy --print` dispatch the cross-agent-delegation / agent-group-discuss skills use.
-        # `gemini` is kept as an alternate binary (standalone Gemini CLI); args differ per binary.
+        # Google Antigravity CLI is `agy`.
+        # REQUIRED order: -p, then prompt value, then autonomy flags.
+        # -p/--print consumes the NEXT argv as the prompt — never put
+        # --dangerously-skip-permissions (or any flag) between -p and the prompt.
+        # agy does not read the user prompt from stdin (host-proved 2026-07-25).
+        # `gemini` is an alternate binary (standalone Gemini CLI); args differ.
         "binaries": ["agy", "gemini"],
         "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
         "binary_args": {
@@ -3592,6 +3604,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--local-without-goal-delta-tag",
         default="",
         help="optional advisory tag for local-without-goal-delta",
+    )
+    append.add_argument(
+        "--residual-id",
+        default="",
+        help="optional residual inventory leaf id for this iteration",
+    )
+    append.add_argument(
+        "--scope-lock",
+        default="",
+        help="optional scope lock (encoding_only|goal_sc|manuscript|mixed)",
+    )
+    append.add_argument(
+        "--goal-contribution-detail",
+        default="",
+        help="optional free-text detail for goal_contribution",
     )
     append.set_defaults(func=append_iteration)
 

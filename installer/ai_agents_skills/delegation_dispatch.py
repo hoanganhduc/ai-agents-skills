@@ -26,6 +26,9 @@ from .state import now_run_id, preflight_state_path, sha256_text, state_dir, wri
 EXTERNAL_PROVIDERS = {"claude", "deepseek", "copilot", "antigravity", "grok", "kimi"}
 # Runtime-argv prompt transport: run_command appends -p <prompt> after the prompt is known.
 KIMI_RUNTIME_ARGV_TRANSPORT = "runtime_argv_prompt"
+# Antigravity uses the same argv transport: -p consumes the next token as the prompt
+# and does not read the user prompt from stdin (host-proved 2026-07-25).
+ANTIGRAVITY_RUNTIME_ARGV_TRANSPORT = "runtime_argv_prompt"
 # Windows CreateProcess command-line budget is well below dispatcher MAX_TASK_CHARS.
 KIMI_MAX_PROMPT_CHARS = 24_000
 
@@ -639,7 +642,14 @@ def public_grok_selection(selection: dict[str, Any]) -> dict[str, Any]:
 
 def default_dispatch_command(provider: str, command: str) -> str:
     if provider == "antigravity":
-        return f"{command} --print"
+        # Antigravity CLI (`agy`): -p/--print CONSUMES the next argv as the prompt.
+        # It does NOT read the user prompt from stdin. Managed dispatch therefore
+        # keeps a bare command prefix here and run_command appends
+        # `-p <prompt> --dangerously-skip-permissions` after the prompt is known
+        # (same runtime_argv_prompt pattern as Kimi). Never return
+        # `agy --print --dangerously-skip-permissions` — that makes the flag the
+        # prompt string. See agent-group-discuss external-cli-agents.md Antigravity section.
+        return command
     if provider == "grok":
         # grok's -p/--single takes the prompt as an argv VALUE and does NOT read stdin, but the
         # dispatcher delivers the prompt on stdin (run_command uses input=prompt). `--prompt-file
@@ -1163,6 +1173,39 @@ def run_command(
     if not parts:
         raise ValueError("empty dispatch command")
     stdin_prompt = prompt
+    if provider == "antigravity":
+        # runtime_argv_prompt: -p <prompt> then autonomy flags. Never put flags
+        # between -p and the prompt (they become the prompt text).
+        if "{prompt}" in rendered:
+            rendered = rendered.replace("{prompt}", prompt)
+            parts = split_dispatch_command(rendered)
+        else:
+            # Strip accidental --print/-p from operator prefix so we do not double -p.
+            filtered = [parts[0]]
+            skip_next = False
+            for idx, tok in enumerate(parts[1:], start=1):
+                if skip_next:
+                    skip_next = False
+                    continue
+                if tok in {"-p", "--print", "--prompt"}:
+                    # Drop flag; if next looks like a stale prompt placeholder, drop it too.
+                    if idx + 1 < len(parts) and not parts[idx + 1].startswith("-"):
+                        skip_next = True
+                    continue
+                if tok.startswith("--print=") or tok.startswith("--prompt="):
+                    continue
+                filtered.append(tok)
+            parts = filtered
+            parts.extend(["-p", prompt, "--dangerously-skip-permissions"])
+        # If operator used {prompt} but omitted skip-permissions, add it when missing.
+        if "--dangerously-skip-permissions" not in parts:
+            parts.append("--dangerously-skip-permissions")
+        model = resolved_model or env.get("AAS_ANTIGRAVITY_LATEST_MODEL")
+        if model and "--model" not in parts and not any(
+            p.startswith("--model=") for p in parts
+        ):
+            parts.extend(["--model", model])
+        stdin_prompt = ""
     if provider == "kimi":
         if len(prompt) > KIMI_MAX_PROMPT_CHARS:
             raise ValueError(

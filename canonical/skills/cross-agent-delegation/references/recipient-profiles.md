@@ -90,14 +90,35 @@ and file-read fidelity before using a live Copilot-like participant.
   use, external posting, provider probing, approval handling, or direct language
   server attachment
 - symbolic credential requirements: none in V1
-- endpoint requirement: none; live dispatch is CLI-based through `agy --print`
-  and does not require `ANTIGRAVITY_LS_ADDRESS`
+- endpoint requirement: none; live dispatch is CLI-based through the Antigravity
+  CLI binary `agy` and does not require `ANTIGRAVITY_LS_ADDRESS`
 - confirmation requirements: parent-owned, outside packet content
 
 This packet profile does not claim Antigravity runtime availability. A parent
 workflow must verify `agy` CLI availability, auth/config status, model
 selection, output contract, and file-read fidelity before using a live
 Antigravity-like participant.
+
+**Parent-owned live dispatch (not packet fields):**
+
+Canonical headless shape (ARL / managed `delegate-agent`):
+
+```bash
+agy -p "<prompt>" --dangerously-skip-permissions
+```
+
+Critical argv rule: `-p` / `--print` **consumes the next argv token as the
+prompt**. Never place another flag between `-p` and the prompt text.
+
+| Correct | Wrong (prompt becomes the flag name) |
+|---------|----------------------------------------|
+| `agy -p "$PROMPT" --dangerously-skip-permissions` | `agy --print --dangerously-skip-permissions "$PROMPT"` |
+| `agy -p "$PROMPT" --dangerously-skip-permissions --print-timeout=40m0s` | `agy --print --effort high "$PROMPT"` |
+
+`agy` does **not** read the user prompt from stdin. Headless file tools need
+`--dangerously-skip-permissions` **after** the prompt (or explicit
+`permissions.allow` in settings). Full failure taxonomy and parent checklist:
+`agent-group-discuss/references/external-cli-agents.md` § Antigravity.
 
 ### grok-like-code-reviewer
 

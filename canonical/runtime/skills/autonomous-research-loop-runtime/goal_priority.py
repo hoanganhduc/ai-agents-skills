@@ -1,11 +1,13 @@
-"""Goal-priority (goal_priority.v1) — opt-in path discipline for ARL loops.
+"""Goal-priority (goal_priority.v1 / soft v2 fields) — opt-in path discipline.
 
 Template docs: canonical/templates/goal-priority.md
 Does not change loop stop conditions (enforcement.md).
+Never writes loop_state.status. Never fail-closes append for vocabulary.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -23,6 +25,24 @@ GENERIC_LOCAL_TAGS = [
     "closed_campaign_sample",
 ]
 
+# Closed vocabulary for advise+ validation (soft still accepts open strings).
+CONTRIBUTION_VOCABULARY = frozenset(
+    {
+        "eliminate",
+        "construct",
+        "scope_lift",
+        "bridge",
+        "separate",
+        "verify_trust",
+        "replan",
+        "formalize",
+        "operational",
+        "advance",
+    }
+)
+
+DISCIPLINE_MODES = frozenset({"soft", "advise", "hard"})
+
 _ENV_ON = frozenset({"1", "on", "true", "yes"})
 _ENV_OFF = frozenset({"0", "off", "false", "no"})
 
@@ -31,6 +51,7 @@ def default_goal_priority_config() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "enabled": False,
+        "discipline_mode": "soft",
         "primary_campaign": "",
         "primary_objective": "",
         "campaign_registry": {},
@@ -40,6 +61,7 @@ def default_goal_priority_config() -> dict[str, Any]:
         "local_without_goal_delta_tags": list(GENERIC_LOCAL_TAGS),
         "require_goal_contribution_in_ledger": True,
         "panel_rank_by_goal_ev": True,
+        "host_signal_epoch_iteration": None,
     }
 
 
@@ -143,6 +165,33 @@ def load_goal_priority(run_dir: Path) -> dict[str, Any]:
     if not isinstance(cfg.get("local_without_goal_delta_tags"), list):
         cfg["local_without_goal_delta_tags"] = list(GENERIC_LOCAL_TAGS)
 
+    mode = str(cfg.get("discipline_mode") or "soft").strip().lower()
+    if mode not in DISCIPLINE_MODES:
+        warnings.append(
+            f"goal_priority discipline_mode {mode!r} invalid; using soft"
+        )
+        mode = "soft"
+    cfg["discipline_mode"] = mode
+
+    epoch_raw = cfg.get("host_signal_epoch_iteration")
+    if epoch_raw is not None and epoch_raw != "":
+        epoch_n, epoch_ok = _safe_int(epoch_raw, 0, minimum=0)
+        if not epoch_ok:
+            warnings.append(
+                "goal_priority host_signal_epoch_iteration invalid; ignoring"
+            )
+            cfg["host_signal_epoch_iteration"] = None
+        else:
+            cfg["host_signal_epoch_iteration"] = epoch_n
+
+    # residual_inventory.json may supply epoch if config omitted
+    inv = load_residual_inventory(Path(run_dir))
+    cfg["_residual_inventory"] = inv
+    if cfg.get("host_signal_epoch_iteration") is None and inv.get(
+        "host_signal_epoch_iteration"
+    ) is not None:
+        cfg["host_signal_epoch_iteration"] = inv.get("host_signal_epoch_iteration")
+
     env_flag = os.environ.get("AAS_AUTOLOOP_GOAL_PRIORITY", "").strip().lower()
     env_forced_on = False
     if env_flag in _ENV_ON:
@@ -187,6 +236,68 @@ def load_goal_priority(run_dir: Path) -> dict[str, Any]:
 
 def is_goal_priority_active(run_dir: Path) -> bool:
     return bool(load_goal_priority(run_dir).get("_active"))
+
+
+def load_residual_inventory(run_dir: Path) -> dict[str, Any]:
+    """Load optional residual_inventory.json (Ship 1). Malformed → empty + warning."""
+    path = Path(run_dir) / "residual_inventory.json"
+    out: dict[str, Any] = {
+        "schema_version": "residual_inventory.v1",
+        "host_signal_epoch_iteration": None,
+        "leaves": [],
+        "_warnings": [],
+        "_present": False,
+        "_hash": "",
+    }
+    if not path.is_file():
+        return out
+    out["_present"] = True
+    try:
+        raw = path.read_text(encoding="utf-8")
+        out["_hash"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        out["_warnings"].append(f"residual_inventory.json unreadable: {exc}")
+        return out
+    if not isinstance(data, dict):
+        out["_warnings"].append("residual_inventory.json is not a JSON object")
+        return out
+    if "host_signal_epoch_iteration" in data:
+        n, ok = _safe_int(data.get("host_signal_epoch_iteration"), 0, minimum=0)
+        out["host_signal_epoch_iteration"] = n if ok else None
+    leaves = data.get("leaves")
+    if leaves is None:
+        leaves = []
+    if not isinstance(leaves, list):
+        out["_warnings"].append("residual_inventory leaves is not a list")
+        leaves = []
+    cleaned: list[dict[str, Any]] = []
+    for item in leaves:
+        if isinstance(item, dict) and str(item.get("id") or "").strip():
+            cleaned.append(item)
+    out["leaves"] = cleaned
+    if data.get("schema_version"):
+        out["schema_version"] = str(data.get("schema_version"))
+    return out
+
+
+def open_residual_leaves(run_dir: Path, cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    cfg = cfg or load_goal_priority(run_dir)
+    inv = cfg.get("_residual_inventory") or load_residual_inventory(run_dir)
+    return [
+        leaf
+        for leaf in (inv.get("leaves") or [])
+        if str(leaf.get("status") or "open").lower() == "open"
+    ]
+
+
+def discipline_mode(cfg: dict[str, Any]) -> str:
+    mode = str(cfg.get("discipline_mode") or "soft").strip().lower()
+    return mode if mode in DISCIPLINE_MODES else "soft"
+
+
+def contribution_is_generic_advance(value: Any) -> bool:
+    return str(value or "").strip().lower() == "advance"
 
 
 def read_iterations_jsonl(run_dir: Path) -> list[dict[str, Any]]:
@@ -303,12 +414,14 @@ def goal_priority_prompt_addon(run_dir: Path, cfg: dict[str, Any] | None = None)
     next_ids = [str(x) for x in (cfg.get("next_campaigns_ordered") or []) if str(x).strip()]
     streak = local_without_goal_delta_streak(run_dir, cfg)
     cap, _ = _safe_int(cfg.get("max_consecutive_local_without_goal_delta"), 3, minimum=1)
+    mode = discipline_mode(cfg)
     lines = [
         "",
         "## Goal-focused path discipline (goal_priority.v1 — active)",
         "Prefer primary paths that advance the loop goal / success criteria.",
         "Favor outcomes that kill, bridge, construct, verify trust, or replan",
         "over unbounded local samples that do not reduce goal uncertainty.",
+        f"- Discipline mode: `{mode}` (soft default; does not write loop_state.status).",
         f"- Goal: {goal or '(see loop_state.goal)'}",
         f"- Success criteria: {success or '(see loop_state.success_criteria)'}",
         f"- Primary campaign: `{primary or '(unset)'}` — {primary_obj or '(see campaign_registry)'}",
@@ -323,10 +436,30 @@ def goal_priority_prompt_addon(run_dir: Path, cfg: dict[str, Any] | None = None)
             obj = _campaign_objective(cfg, cid)
             bits.append(f"`{cid}`" + (f" ({obj[:80]})" if obj else ""))
         lines.append("- Next campaigns ordered: " + ", ".join(bits))
+    open_leaves = open_residual_leaves(run_dir, cfg)
+    if open_leaves:
+        leaf_bits = []
+        for leaf in open_leaves[:12]:
+            lid = str(leaf.get("id") or "")
+            sl = str(leaf.get("scope_lock") or "")
+            leaf_bits.append(f"`{lid}`" + (f" [{sl}]" if sl else ""))
+        lines.append("- Open residual leaves: " + ", ".join(leaf_bits))
+    epoch = cfg.get("host_signal_epoch_iteration")
+    if epoch is not None:
+        lines.append(
+            f"- Host-signal epoch iteration: {epoch} "
+            "(rows before epoch are not host-counted toward local streak)."
+        )
     lines.append(
         "- When appending, prefer ledger fields: "
-        "`--goal-contribution`, `--campaign-id`, and if applicable "
+        "`--goal-contribution` (prefer eliminate/construct/scope_lift/bridge/"
+        "separate/verify_trust/replan over bare advance), `--campaign-id`, "
+        "optional `--residual-id` / `--scope-lock`, and if applicable "
         "`--local-without-goal-delta` / `--local-without-goal-delta-tag`."
+    )
+    lines.append(
+        "- Scope note: `encoding_only` residual work is campaign progress, not "
+        "full goal resolution, until bridge/transfer obligations are discharged."
     )
     lines.append(f"- Local-without-goal-delta streak: {streak}/{cap}.")
     if replan_required(run_dir, cfg):
@@ -338,10 +471,19 @@ def goal_priority_prompt_addon(run_dir: Path, cfg: dict[str, Any] | None = None)
                 "Prefer not to continue the same local residual as sole primary.",
                 "Replan to `next_campaigns_ordered` / primary_campaign objective, or update",
                 "`goal_priority` / `next_preferred_path` with a goal-advancing path.",
+                "**Never** use REPLAN_REQUIRED as authority for `--decision stop|blocked`;",
+                "the headless driver owns stop conditions.",
             ]
         )
+        if open_leaves:
+            ids = ", ".join(f"`{leaf.get('id')}`" for leaf in open_leaves[:8])
+            lines.append(f"Concrete open leaves to consider: {ids}.")
     lines.append(
         "This does **not** stop the loop (enforcement unchanged). Soft discipline only."
+    )
+    lines.append(
+        "REPLAN_REQUIRED / goal_priority never authorizes `--decision stop|blocked`; "
+        "the headless driver owns stop conditions."
     )
     lines.append("")
     return "\n".join(lines)
@@ -403,14 +545,31 @@ def collect_goal_priority_warnings(
     """Warnings for validate / append (never flip validate status by themselves)."""
     cfg = load_goal_priority(run_dir)
     warnings = list(cfg.get("_warnings") or [])
+    inv = cfg.get("_residual_inventory") or {}
+    warnings.extend(list(inv.get("_warnings") or []))
     if not cfg.get("_active"):
         return warnings
+    mode = discipline_mode(cfg)
     if latest_record is not None and cfg.get("require_goal_contribution_in_ledger", True):
         if not str(latest_record.get("goal_contribution") or "").strip():
             warnings.append(
                 "goal_priority active: latest iteration missing goal_contribution "
                 "(use --goal-contribution)"
             )
+        elif mode in {"advise", "hard"}:
+            gc = str(latest_record.get("goal_contribution") or "").strip()
+            if contribution_is_generic_advance(gc):
+                warnings.append(
+                    "goal_priority advise+: bare goal_contribution 'advance' is "
+                    "discouraged; prefer eliminate/construct/scope_lift/bridge/"
+                    "separate/verify_trust/replan when accurate"
+                )
+            elif gc and gc not in CONTRIBUTION_VOCABULARY:
+                # Soft open vocabulary still allowed; advise+ notes unknown labels.
+                warnings.append(
+                    f"goal_priority advise+: goal_contribution {gc!r} not in "
+                    "recommended vocabulary (ok, still accepted; hard mode coerces)"
+                )
     tag = None
     if latest_record is not None:
         tag = latest_record.get("local_without_goal_delta_tag")
@@ -437,6 +596,7 @@ def example_goal_priority_json() -> str:
     example = {
         "schema_version": SCHEMA_VERSION,
         "enabled": False,
+        "discipline_mode": "soft",
         "primary_campaign": "main",
         "primary_objective": "State what this campaign must produce for loop_state.goal",
         "campaign_registry": {
@@ -452,5 +612,28 @@ def example_goal_priority_json() -> str:
         "local_without_goal_delta_tags": list(GENERIC_LOCAL_TAGS),
         "require_goal_contribution_in_ledger": True,
         "panel_rank_by_goal_ev": True,
+        "host_signal_epoch_iteration": None,
+    }
+    return json.dumps(example, indent=2) + "\n"
+
+
+def example_residual_inventory_json() -> str:
+    example = {
+        "schema_version": "residual_inventory.v1",
+        "host_signal_epoch_iteration": None,
+        "leaves": [
+            {
+                "id": "example-leaf",
+                "campaign_id": "main",
+                "description": "Replace with a real open residual leaf",
+                "status": "open",
+                "scope_lock": "encoding_only",
+                "goal_ev": "medium",
+                "max_iterations_before_replan": None,
+                "recovery_aliases": ["example-leaf"],
+                "evidence_refs": [],
+                "closed_by_iteration": None,
+            }
+        ],
     }
     return json.dumps(example, indent=2) + "\n"

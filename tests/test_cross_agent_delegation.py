@@ -777,7 +777,9 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
         )
 
     def test_antigravity_dispatch_uses_agy_print_without_ls_address(self):
-        self.assertEqual(default_dispatch_command("antigravity", "agy"), "agy --print")
+        # Bare prefix: run_command appends -p <prompt> --dangerously-skip-permissions
+        # (agy does not read the user prompt from stdin; -p consumes next argv).
+        self.assertEqual(default_dispatch_command("antigravity", "agy"), "agy")
 
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -820,7 +822,17 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
 
             self.assertEqual(plan[0]["status"], "ready")
             self.assertEqual(plan[0]["provider"], "antigravity")
-            self.assertIn("--print", plan[0]["command"])
+            # Bare prefix only; -p <prompt> --dangerously-skip-permissions added at run time.
+            self.assertTrue(
+                plan[0]["command"].rstrip().endswith("agy")
+                or plan[0]["command"].rstrip().endswith("agy.exe")
+                or plan[0]["command"].endswith("/agy")
+                or plan[0]["command"].endswith("\\agy")
+                or plan[0]["command"] == "agy"
+                or plan[0]["command"].endswith("agy"),
+                plan[0]["command"],
+            )
+            self.assertNotIn("--print", plan[0]["command"])
             self.assertNotIn("ANTIGRAVITY_LS_ADDRESS", json.dumps(plan[0]))
 
     def test_grok_dispatch_uses_prompt_file_and_oidc_session(self):

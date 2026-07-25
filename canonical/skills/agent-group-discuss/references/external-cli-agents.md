@@ -117,17 +117,77 @@ export AAS_CLAUDE_LATEST_MODEL='<current-latest-model>'
 export AAS_CLAUDE_HIGHEST_THINKING='xhigh'
 ```
 
-For Antigravity, the managed fallback dispatch shape is `agy --print`.
-Research runs should still configure the command explicitly, for example:
+For Antigravity, managed dispatch uses **runtime argv prompt** transport (like
+Kimi), not stdin. The default prefix is the bare `agy` binary; `run_command`
+appends `-p <prompt> --dangerously-skip-permissions` after the prompt is known.
+
+Research runs may configure:
 
 ```bash
-export AAS_ANTIGRAVITY_DISPATCH_COMMAND='agy --print --model {model}'
+# Prefix only — do NOT put -p/--print or --dangerously-skip-permissions here
+# (managed path appends them in the correct order).
+export AAS_ANTIGRAVITY_DISPATCH_COMMAND='agy'
 export AAS_ANTIGRAVITY_LATEST_MODEL='<current-latest-model>'
 export AAS_ANTIGRAVITY_HIGHEST_THINKING='high'
 ```
 
+Or an explicit template with a prompt placeholder (prompt must follow `-p`
+immediately):
+
+```bash
+export AAS_ANTIGRAVITY_DISPATCH_COMMAND='agy -p {prompt} --dangerously-skip-permissions --model {model}'
+```
+
 The dispatcher does not use `ANTIGRAVITY_LS_ADDRESS`; that variable belongs to
 language-server integrations outside this CLI subprocess adapter.
+
+#### Antigravity one-shot / AGD panel rules (host-proved 2026-07-25)
+
+1. **`-p` / `--print` consumes the next argv as the prompt.**  
+   Treat it like a value-taking flag. Never put another flag between `-p` and
+   the prompt string.
+
+   | Correct | Wrong |
+   |---------|--------|
+   | `agy -p "$PROMPT" --dangerously-skip-permissions` | `agy --print --dangerously-skip-permissions "$PROMPT"` |
+   | `agy -p "$PROMPT" --dangerously-skip-permissions --print-timeout=40m0s` | `agy --print --effort high --print-timeout=40m0s "$PROMPT"` |
+
+   Wrong order makes the model answer *about the flag name* (meta help) with
+   exit 0 — treat that as **mis-invoked argv**, not usable review content.
+
+2. **`agy` does not read the user prompt from stdin.**  
+   Piping the prompt into `agy --print` does not deliver the task. Always pass
+   the prompt as the `-p` value (managed dispatch does this).
+
+3. **Headless tool use needs skip-permissions after the prompt.**  
+   Default settings often have `permissions=<nil>` /
+   `toolPermission=request-review`. Without
+   `--dangerously-skip-permissions` (placed **after** the prompt), headless
+   `read_file` fails with jetski permission denial.
+
+4. **Timeouts and models.**  
+   Default `--print-timeout` is 5m — raise for long reviews
+   (`--print-timeout=40m0s`, after the prompt). List models with `agy models`.
+   Optional `--model <id>` and `--effort low|medium|high` also go **after** the
+   prompt.
+
+5. **Path-ref briefs.**  
+   Prefer short prompts that open files under `--add-dir` rather than multi-KB
+   inline plans on argv.
+
+6. **Stdout contract.**  
+   - Flag-meta / “what is --effort?” prose → reject, fix argv, retry once.  
+   - Empty stdout + permission jetski message → missing skip-permissions.  
+   - Exit 0 + required markers (`VERDICT`, final marker) → usable.
+
+7. **Capability profile.**  
+   Record `input_transports_tested: ["runtime_argv_prompt"]` (not bare
+   `stdin` for the user prompt). Probe smoke:
+   `agy -p 'AGY_OK' --dangerously-skip-permissions`.
+
+Diagnostic codes: reuse `input_transport_failed` for stdin-mistaken launches;
+`output_parse_failed` for flag-meta bodies; `file_read_fidelity_failed` when
+tools are denied without skip-permissions.
 
 For Grok, the managed dispatch shape is `grok --prompt-file /dev/stdin`.
 The dispatcher delivers the prompt on stdin, and grok's `-p`/`--single` requires

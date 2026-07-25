@@ -269,3 +269,130 @@ class GoalPriorityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GoalPriorityV2Ship1Tests(unittest.TestCase):
+    def tearDown(self) -> None:
+        os.environ.pop("AAS_AUTOLOOP_GOAL_PRIORITY", None)
+
+    def test_residual_inventory_open_leaves_in_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(
+                run_dir,
+                {
+                    "schema_version": "goal_priority.v1",
+                    "enabled": True,
+                    "discipline_mode": "soft",
+                    "primary_campaign": "A2",
+                    "require_goal_contribution_in_ledger": True,
+                },
+            )
+            (run_dir / "residual_inventory.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "residual_inventory.v1",
+                        "host_signal_epoch_iteration": 10,
+                        "leaves": [
+                            {
+                                "id": "k2_lr",
+                                "status": "open",
+                                "scope_lock": "encoding_only",
+                            },
+                            {"id": "done_leaf", "status": "closed"},
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            addon = gp.goal_priority_prompt_addon(run_dir)
+            self.assertIn("k2_lr", addon)
+            self.assertNotIn("done_leaf", addon)
+            self.assertIn("Host-signal epoch iteration: 10", addon)
+            self.assertIn("never authorizes", addon)
+            self.assertIn("does **not** stop the loop", addon)
+
+    def test_soft_mode_no_advance_deprecation_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(
+                run_dir,
+                {
+                    "enabled": True,
+                    "discipline_mode": "soft",
+                    "require_goal_contribution_in_ledger": True,
+                },
+            )
+            warns = gp.collect_goal_priority_warnings(
+                run_dir, latest_record={"goal_contribution": "advance", "campaign_id": "A2"}
+            )
+            self.assertFalse(any("bare goal_contribution" in w for w in warns), warns)
+
+    def test_advise_mode_warns_on_bare_advance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(
+                run_dir,
+                {
+                    "enabled": True,
+                    "discipline_mode": "advise",
+                    "require_goal_contribution_in_ledger": True,
+                },
+            )
+            warns = gp.collect_goal_priority_warnings(
+                run_dir, latest_record={"goal_contribution": "advance", "campaign_id": "A2"}
+            )
+            self.assertTrue(any("bare goal_contribution" in w for w in warns), warns)
+
+    def test_malformed_inventory_degrades(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(run_dir, {"enabled": True})
+            (run_dir / "residual_inventory.json").write_text("{not json", encoding="utf-8")
+            cfg = gp.load_goal_priority(run_dir)
+            self.assertTrue(cfg.get("_active"))
+            inv = cfg.get("_residual_inventory") or {}
+            self.assertTrue(inv.get("_warnings"))
+            # prompt still works
+            self.assertIn("goal_priority", gp.goal_priority_prompt_addon(run_dir, cfg))
+
+    def test_append_residual_id_and_scope_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(run_dir, {"enabled": True, "discipline_mode": "soft"})
+            args = type(
+                "A",
+                (),
+                {
+                    "dir": str(run_dir),
+                    "mode": "bounded-research",
+                    "objective": "close leaf",
+                    "decision": "continue",
+                    "input_ref": None,
+                    "source_id": None,
+                    "claim_id": None,
+                    "evidence_id": None,
+                    "guard_ref": None,
+                    "action_taken": None,
+                    "output": "ok",
+                    "remaining_gap": None,
+                    "tokens": 0,
+                    "usd": 0.0,
+                    "wall_time_seconds": 0,
+                    "stop_reason": "",
+                    "goal_contribution": "eliminate",
+                    "campaign_id": "A2",
+                    "local_without_goal_delta": False,
+                    "local_without_goal_delta_tag": "",
+                    "residual_id": "k2_lr",
+                    "scope_lock": "encoding_only",
+                    "goal_contribution_detail": "no lock word",
+                },
+            )()
+            out = rt.append_iteration(args)
+            self.assertEqual(out["status"], "ok")
+            rows = gp.read_iterations_jsonl(run_dir)
+            self.assertEqual(rows[-1].get("residual_id"), "k2_lr")
+            self.assertEqual(rows[-1].get("scope_lock"), "encoding_only")
+            self.assertEqual(rows[-1].get("goal_contribution_detail"), "no lock word")
