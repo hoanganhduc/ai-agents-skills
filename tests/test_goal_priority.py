@@ -75,23 +75,23 @@ class GoalPriorityTests(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.pop("AAS_AUTOLOOP_GOAL_PRIORITY", None)
 
-    def test_missing_enabled_uses_default_enabled(self) -> None:
+    def test_missing_enabled_key_inactive_with_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _init_loop(Path(tmp))
             _write_gp(run_dir, {"primary_campaign": "A1"})
             cfg = gp.load_goal_priority(run_dir)
-            # Defaults are enabled:true / discipline_mode:advise
-            self.assertTrue(cfg["_active"])
-            self.assertEqual(cfg["discipline_mode"], "advise")
+            # Opt-in: missing enabled is not active; default discipline soft.
+            self.assertFalse(cfg["_active"])
+            self.assertEqual(cfg["discipline_mode"], "soft")
             self.assertTrue(any("enabled" in w for w in cfg["_warnings"]))
 
     def test_no_config_defaults_enabled_advise(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _init_loop(Path(tmp))
             cfg = gp.load_goal_priority(run_dir)
-            self.assertTrue(cfg["_active"])
-            self.assertEqual(cfg["discipline_mode"], "advise")
-            self.assertTrue(cfg.get("enabled") is True)
+            self.assertFalse(cfg["_active"])
+            self.assertEqual(cfg["discipline_mode"], "soft")
+            self.assertTrue(cfg.get("enabled") is False)
 
     def test_explicit_enabled_false_opts_out(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -248,8 +248,8 @@ class GoalPriorityTests(unittest.TestCase):
             path = run_dir / "goal_priority.json"
             self.assertTrue(path.is_file())
             data = json.loads(path.read_text(encoding="utf-8"))
-            self.assertIs(data["enabled"], True)
-            self.assertEqual(data["discipline_mode"], "advise")
+            self.assertIs(data["enabled"], False)
+            self.assertEqual(data["discipline_mode"], "soft")
 
     def test_example_json_matches_template_file(self) -> None:
         template = REPO_ROOT / "canonical" / "templates" / "goal-priority.example.json"
@@ -414,3 +414,193 @@ class GoalPriorityV2Ship1Tests(unittest.TestCase):
             self.assertEqual(rows[-1].get("residual_id"), "k2_lr")
             self.assertEqual(rows[-1].get("scope_lock"), "encoding_only")
             self.assertEqual(rows[-1].get("goal_contribution_detail"), "no lock word")
+
+
+class GoalPriorityHardSteerTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        os.environ.pop("AAS_AUTOLOOP_GOAL_PRIORITY", None)
+
+    def test_hard_replan_rewrites_path_not_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(
+                run_dir,
+                {
+                    "enabled": True,
+                    "discipline_mode": "hard",
+                    "primary_campaign": "A2",
+                    "next_campaigns_ordered": ["A2", "A3"],
+                    "campaign_registry": {
+                        "A2": {"objective": "encoding residual"},
+                        "A3": {"objective": "hardness premise pack"},
+                    },
+                    "require_goal_contribution_in_ledger": True,
+                    "max_consecutive_local_without_goal_delta": 3,
+                    "host_signal_epoch_iteration": 1,
+                },
+            )
+            (run_dir / "residual_inventory.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "residual_inventory.v1",
+                        "host_signal_epoch_iteration": 1,
+                        "leaves": [
+                            {
+                                "id": "k2_lr",
+                                "status": "closed",
+                                "campaign_id": "A2",
+                                "scope_lock": "encoding_only",
+                                "recovery_aliases": ["k2_lr"],
+                            },
+                            {
+                                "id": "k3",
+                                "status": "open",
+                                "campaign_id": "A2",
+                                "goal_ev": "high",
+                                "scope_lock": "encoding_only",
+                                "description": "T3 k=3 residual",
+                                "recovery_aliases": ["k3"],
+                            },
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            # Path targets closed leaf only
+            state = json.loads((run_dir / "loop_state.json").read_text(encoding="utf-8"))
+            state["status"] = "running"
+            state["next_preferred_path"] = (
+                "SINGLE PATH: continue k2_lr residual only; ignore k3"
+            )
+            state["last_iteration"] = 5
+            (run_dir / "loop_state.json").write_text(
+                json.dumps(state, indent=2) + "\n", encoding="utf-8"
+            )
+            (run_dir / "recovery.md").write_text(
+                "\n".join(
+                    [
+                        "# Recovery",
+                        "- **Status:** running.",
+                        "- **Last completed iteration:** 5",
+                        "- **Next safe action:** continue k2_lr residual only",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            # Three low-value advances on same residual -> replan by streak too
+            _append_rows(
+                run_dir,
+                [
+                    {
+                        "iteration": 3,
+                        "goal_contribution": "advance",
+                        "campaign_id": "A2",
+                        "residual_id": "k2_lr",
+                    },
+                    {
+                        "iteration": 4,
+                        "goal_contribution": "advance",
+                        "campaign_id": "A2",
+                        "residual_id": "k2_lr",
+                    },
+                    {
+                        "iteration": 5,
+                        "goal_contribution": "advance",
+                        "campaign_id": "A2",
+                        "residual_id": "k2_lr",
+                    },
+                ],
+            )
+            self.assertTrue(gp.replan_required(run_dir))
+            out = gp.apply_hard_path_discipline(run_dir)
+            self.assertTrue(out.get("applied"), out)
+            state2 = json.loads((run_dir / "loop_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state2.get("status"), "running")  # never rewritten
+            self.assertIn("k3", state2.get("next_preferred_path", ""))
+            self.assertIn("hard replan", state2.get("next_preferred_path", ""))
+            rec = (run_dir / "recovery.md").read_text(encoding="utf-8")
+            self.assertIn("k3", rec)
+            self.assertIn("Next safe action", rec)
+
+    def test_soft_mode_does_not_rewrite_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(
+                run_dir,
+                {
+                    "enabled": True,
+                    "discipline_mode": "soft",
+                    "require_goal_contribution_in_ledger": True,
+                    "max_consecutive_local_without_goal_delta": 2,
+                    "host_signal_epoch_iteration": 1,
+                },
+            )
+            _append_rows(
+                run_dir,
+                [
+                    {"iteration": 1, "campaign_id": "A2"},
+                    {"iteration": 2, "campaign_id": "A2"},
+                ],
+            )
+            state = json.loads((run_dir / "loop_state.json").read_text(encoding="utf-8"))
+            old = "KEEP THIS PATH"
+            state["next_preferred_path"] = old
+            (run_dir / "loop_state.json").write_text(
+                json.dumps(state, indent=2) + "\n", encoding="utf-8"
+            )
+            out = gp.apply_hard_path_discipline(run_dir)
+            self.assertFalse(out.get("applied"))
+            state2 = json.loads((run_dir / "loop_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state2.get("next_preferred_path"), old)
+
+    def test_path_targets_closed_triggers_replan_hard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = _init_loop(Path(tmp))
+            _write_gp(
+                run_dir,
+                {
+                    "enabled": True,
+                    "discipline_mode": "hard",
+                    "primary_campaign": "A2",
+                    "host_signal_epoch_iteration": 1,
+                },
+            )
+            (run_dir / "residual_inventory.json").write_text(
+                json.dumps(
+                    {
+                        "leaves": [
+                            {
+                                "id": "k2_lr",
+                                "status": "closed",
+                                "recovery_aliases": ["k2_lr"],
+                            },
+                            {
+                                "id": "k3",
+                                "status": "open",
+                                "goal_ev": "high",
+                                "description": "k3 residual",
+                                "recovery_aliases": ["k3"],
+                            },
+                        ]
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = json.loads((run_dir / "loop_state.json").read_text(encoding="utf-8"))
+            state["next_preferred_path"] = "continue k2_lr residual only"
+            state["last_iteration"] = 1
+            (run_dir / "loop_state.json").write_text(
+                json.dumps(state, indent=2) + "\n", encoding="utf-8"
+            )
+            (run_dir / "recovery.md").write_text(
+                "- **Next safe action:** continue k2_lr residual only\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(gp.path_targets_closed_residual(run_dir))
+            self.assertTrue(gp.replan_required(run_dir))
+            out = gp.apply_hard_path_discipline(run_dir)
+            self.assertTrue(out.get("applied"), out)
+            self.assertIn("k3", out.get("path", ""))

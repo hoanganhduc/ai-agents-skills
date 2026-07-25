@@ -26,13 +26,12 @@ Merge order: defaults → file → standing_orders (standing wins) → env (enab
 
 | Mode | Behavior |
 |------|----------|
-| `soft` | v1 soft text + optional fields; no advance-deprecation warn |
-| `advise` (**default**) | + host warnings for bare `advance`; REPLAN text with open leaves |
-| `hard` (future) | may rewrite path only; **must not** refuse append or set status |
+| `soft` (default) | v1 soft text + optional fields; no advance-deprecation warn |
+| `advise` | + host warnings for bare `advance`; host local streak; REPLAN text |
+| `hard` | advise + **rewrites** `next_preferred_path` and recovery **Next safe action** when REPLAN_REQUIRED (closed residual targeted, or local streak at cap). **Must not** refuse append or write `loop_state.status` |
 
 Set `"discipline_mode": "soft"|"advise"|"hard"` in `goal_priority.json`.
-Runtime and template defaults use `"enabled": true` and `"discipline_mode": "advise"`.
-Loops may still set `"enabled": false` to opt out.
+Defaults are opt-in: `"enabled": false`, `"discipline_mode": "soft"`.
 
 ## Soft ledger fields
 
