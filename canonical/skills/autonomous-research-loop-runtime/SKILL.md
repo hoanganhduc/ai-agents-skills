@@ -178,6 +178,12 @@ Zulip/Telegram progress events are built by `build_progress_event` →
 | **Objective** | when set | ledger `objective` (or next-path text on attempt events) |
 | **Result** | on banked events | human prose from `output`, or **`goal_contribution`** if `output` is a bare artifact path (`iterations/.../certificate.json`) |
 
+**Formatting:** bodies run through Unicode math normalization (`>=`→`≥`,
+`beta`→`β`, `delta`→`δ`, …) and multi-clause prose (`;` / `·` / existing
+bullets) is rendered as a bullet list. Telegram uses HTML escape of `<>&`
+only — Unicode math is preserved. Zulip uses Markdown-friendly `**bold**`
+and `•` bullets.
+
 Agents should put a short prose summary in `--output`. Paths alone are accepted
 as ledger artifacts but are **not** shown as the sole Result line in notify.
 
