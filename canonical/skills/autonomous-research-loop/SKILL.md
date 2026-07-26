@@ -155,10 +155,18 @@ while an allowlist is active (see `canonical/instructions/compute-offload-routin
 § User-requested compute resources).
 
 Let the broker's adequacy and self-preservation policy decide among **permitted**
-lanes. Use `run plan` as the decision boundary. Execute a selected Kaggle or
-Hetzner lane through its corresponding lane skill; `run submit` dispatches only
-Modal/GitHub Actions. When the broker is unavailable **and** the user did not
-forbid local, use the throttled local queue defined in
+lanes. Use `run plan` as the **routing** decision boundary. Execute a selected
+Kaggle or Hetzner lane through its corresponding lane skill (`preflight`, then
+Hetzner `oneshot --confirm` or Kaggle `run --confirm`); `run submit` dispatches
+only Modal/GitHub Actions. Ensure lane credentials are in the process
+environment before lifecycle verbs (Hetzner: `HCLOUD_TOKEN` in env only — never
+print or argv). If a strict allowlist reports all lanes exhausted, re-run
+**same-bundle lane preflight** with credentials loaded and record
+`available`/`budget_verdict`/`reason` before banking a multi-iteration
+infrastructure blocker; that recheck is diagnostic and does not widen the
+allowlist. See `skills/hetzner-research-compute/references/agent-loop-integration.md`.
+When the broker is unavailable **and** the user did not forbid local, use the
+throttled local queue defined in
 `skills/modal-research-compute/references/local-compute-throttle.md`
 (cross-platform: lockfile singleton, idle priority, chunked resumable
 checkpoints, load guards). Never launch ad-hoc unthrottled heavy processes. Record run
@@ -190,6 +198,51 @@ If a gate fails, record the failure in `iterations.jsonl` and choose one of:
 - delegate a bounded check
 - revise the scope
 - stop as blocked
+
+## Formal tools (optional Lean assist)
+
+Lean formalization is **opt-in** via `formal_policy` (default **off**). When
+enabled, formal skills assist **stable lemmas** on a formal-track path; they are
+not the default discovery primary under single-path recovery.
+
+| Policy | Effect |
+|--------|--------|
+| `off` | No formal prompt injection (default). |
+| `mention-only` | Short optional blurb. |
+| `auto` | Checklist only when a stable formal candidate or formal-track path exists. |
+| `on` | Binding F1–F7 block when path formal / stable; else short parked note. |
+| `force` | Binding + optional host `formal_force_tick` after ok iterations (hygiene credits; **never** stops the ARL loop). |
+
+**Do not confuse** headless **force-driven ARL** (`drive` unattended) with
+`formal_policy=force` (host formal hygiene tick).
+
+Wire with:
+
+```bash
+… init --dir <loop> --goal "…" --success-criteria "…" --formal-policy on
+… drive --dir <loop> --provider <p> --formal-policy on
+# aggressive host hygiene (scan-first; no OpenGauss auto-spawn):
+… drive … --formal-policy force --formal-force-after-iteration
+```
+
+Env: `AAS_AUTOLOOP_FORMAL_POLICY`, `AAS_AUTOLOOP_FORMAL_PROJECT`,
+`AAS_AUTOLOOP_FORMAL_FORCE`, `AAS_AUTOLOOP_FORMAL_TYPECHECK`. File:
+`<loop>/formal/formal_policy.json` or `loop_state.standing_orders.formal`.
+
+When the committed path is **formal-track**, use positions F1–F7 from
+`informal-to-lean-formalization-runbook` (intake → Explore → skeleton → fill →
+optional interactive OpenGauss only → strict gate → fresh review → acceptance).
+Evidence labels (`lean_declaration_search`, `opengauss_run`, `formal_scan`,
+`formal_typecheck`) never alone set claim-support. Host force tick reports are
+hygiene only (`claim_support_status=not_evaluated`).
+
+Thin sample for existing supervisors:
+`canonical/templates/sample-arl-headless-driver-with-formal/`
+(`formal_env.inc.sh` — no forked driver). Instruction:
+`canonical/instructions/autonomous-loop-formal-policy.md`.
+
+Co-install the `formal-research` profile (or the individual Lean skills) for
+Explore / gate / skeleton tooling; `serious-research` alone is insufficient.
 
 ## Goal-focused single path
 
@@ -384,3 +437,5 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `goal-priority` -- goal_priority.v1 reference (default enabled, discipline_mode advise; does not change stop conditions).
+- `informal-to-lean-formalization-runbook` -- F1–F7 formalization positions when path is formal-track under `formal_policy`.
+- `sample-arl-headless-driver-with-formal` -- thin env fragment + example JSON for force-driven ARL with formal tools (not a forked supervisor).

@@ -1,0 +1,19 @@
+{
+  "schema_version": "formal_policy.v1",
+  "policy": "on",
+  "project": "formal/",
+  "force_credits": 3,
+  "allow_path_steal": false,
+  "typecheck": false,
+  "force_after_iteration": false,
+  "allow_create_skeleton": false,
+  "notes": [
+    "Sample formal_policy for headless ARL. Copy to <loop>/formal/formal_policy.json or merge into loop_state.standing_orders.formal."
+  ],
+  "status": {
+    "phase": "",
+    "lake_build": "",
+    "sorry_count": null,
+    "updated_at": ""
+  }
+}
