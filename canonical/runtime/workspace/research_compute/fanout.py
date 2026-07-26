@@ -919,6 +919,9 @@ def plan_fanout(
     backend_override, backend_override_error = planner.backend_override_value(policy)
     if backend_override_error:
         return rejected(backend_override_error, "invalid_backend_override")
+    backends_allowlist, backends_allowlist_error = planner.backends_allowlist_value(policy)
+    if backends_allowlist_error:
+        return rejected(backends_allowlist_error, "invalid_backends_allowlist")
     if backend_override and backend_override not in planner.SUPPORTED_BACKENDS:
         return rejected(
             f"Unsupported policy.backend '{backend_override}'.",
@@ -934,6 +937,18 @@ def plan_fanout(
             f"Secret-locality data cannot use the explicit remote backend '{backend_override}'.",
             "secret_remote_override_forbidden",
         )
+    if backends_allowlist is not None:
+        remotes = [b for b in backends_allowlist if b != "local"]
+        if remotes and not allow_remote:
+            return rejected(
+                f"policy.backends={backends_allowlist} conflicts with allow_remote=false.",
+                "remote_override_forbidden",
+            )
+        if remotes and data_locality == "secret":
+            return rejected(
+                f"Secret-locality data cannot use remote backends {remotes}.",
+                "secret_remote_override_forbidden",
+            )
     if backend_override == "hetzner" and gpu_requested:
         return rejected(
             "Hetzner Cloud has no on-demand GPU lane.",
@@ -950,7 +965,10 @@ def plan_fanout(
         )
 
     configured_order_raw = getattr(config, "routing_order", list(_LANE_ORDER))
-    if backend_override:
+    if backends_allowlist is not None:
+        # Strict user allowlist: only these lanes (may omit local).
+        effective_order = list(backends_allowlist)
+    elif backend_override:
         effective_order = [backend_override]
     else:
         order_error = planner.routing_order_error(configured_order_raw)

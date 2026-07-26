@@ -142,12 +142,23 @@ Route heavy computation (exhaustive enumeration, certificate suites, censuses)
 through the unified broker exposed by `modal-research-compute`. The recommended
 order is `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom order
 keeps local first and may reorder or omit unique remote lanes, while explicit
-backend overrides are hard pins that still pass lane safety gates. Let the broker's adequacy and
-self-preservation policy decide whether work stays local or falls through to an
-available remote lane. Use `run plan` as the decision boundary. Execute a selected
-Kaggle or Hetzner lane through its corresponding lane skill; `run submit` dispatches
-only Modal/GitHub Actions. When the broker is unavailable, use the throttled local
-queue defined in
+backend overrides are hard pins that still pass lane safety gates.
+
+**User-named compute resources are strict.** If the user asks for specific lanes
+(e.g. "use Hetzner and Kaggle", "no local dual residual"), encode that on the job as
+`policy.backends: ["kaggle", "hetzner"]` (or a single `policy.backend`) and **only**
+use listed lanes. Do not fall back to local or other unlisted backends while any
+requested lane is still available; only after **all** requested lanes are out of
+credits/resources/guards may you block, defer, or ask the user — never silently
+expand the set. Do **not** bypass the broker with ad-hoc heavy local processes
+while an allowlist is active (see `canonical/instructions/compute-offload-routing.md`
+§ User-requested compute resources).
+
+Let the broker's adequacy and self-preservation policy decide among **permitted**
+lanes. Use `run plan` as the decision boundary. Execute a selected Kaggle or
+Hetzner lane through its corresponding lane skill; `run submit` dispatches only
+Modal/GitHub Actions. When the broker is unavailable **and** the user did not
+forbid local, use the throttled local queue defined in
 `skills/modal-research-compute/references/local-compute-throttle.md`
 (cross-platform: lockfile singleton, idle priority, chunked resumable
 checkpoints, load guards). Never launch ad-hoc unthrottled heavy processes. Record run

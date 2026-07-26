@@ -225,17 +225,25 @@ def units_done(out_dir: Path, glob: str = DEFAULT_CHECKPOINT_GLOB) -> int:
 # --- kernel packaging ---------------------------------------------------------
 
 def _thin_runner(job_id: str, round_idx: int, chunk_idx: int, num_chunks: int) -> str:
-    """The kernel's code_file: a thin runner that executes the bundle's run.sh at the kernel's
-    cores over this chunk's slice, resuming from any attached checkpoints, and leaves the
-    completed-unit checkpoints in the kernel working dir for `kaggle kernels output`."""
+    """Thin Python runner that shells out to bundle/run.sh.
+
+    Kaggle kernel metadata only accepts language in {python, r, rmarkdown};
+    language=bash is rejected by the API. Keep the portable bundle's run.sh as
+    the real entrypoint.
+    """
     return (
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
+        "#!/usr/bin/env python3\n"
         f"# {MANAGED_BY} kernel runner: job={job_id} round={round_idx} "
         f"chunk={chunk_idx}/{num_chunks}\n"
-        f"cd {KERNEL_WORKDIR}\n"
-        "CORES=$(nproc)\n"
-        f"CHUNK_IDX={chunk_idx} NUM_CHUNKS={num_chunks} CORES=\"$CORES\" bash bundle/run.sh\n"
+        "import os, subprocess, sys\n"
+        f"os.chdir({KERNEL_WORKDIR!r})\n"
+        "cores = str(os.cpu_count() or 1)\n"
+        "env = os.environ.copy()\n"
+        f"env['CHUNK_IDX'] = str({chunk_idx})\n"
+        f"env['NUM_CHUNKS'] = str({num_chunks})\n"
+        "env['CORES'] = cores\n"
+        "rc = subprocess.call(['bash', 'bundle/run.sh'], env=env)\n"
+        "sys.exit(rc)\n"
     )
 
 
@@ -253,7 +261,7 @@ def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_
         shutil.rmtree(bundle_dst)
     shutil.copytree(Path(job_dir).expanduser(), bundle_dst)
 
-    code_file = f"run-r{round_idx}-c{chunk_idx}.sh"
+    code_file = f"run-r{round_idx}-c{chunk_idx}.py"
     (dest / code_file).write_text(
         _thin_runner(job_id, round_idx, chunk_idx, num_chunks), encoding="utf-8")
 
@@ -267,7 +275,7 @@ def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_
         "id": kernel_ref(job_id, round_idx, chunk_idx, username=username),
         "title": f"{MANAGED_BY} {job_id} r{round_idx} c{chunk_idx}",
         "code_file": code_file,
-        "language": "bash",
+        "language": "python",
         "kernel_type": "script",
         "is_private": True,
         "enable_gpu": bool(gpu),

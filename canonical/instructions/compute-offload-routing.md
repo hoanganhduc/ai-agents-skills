@@ -54,6 +54,31 @@ only control is the worker count.
 4. **Hetzner** -- the next offload tier after Modal, for CPU / high-memory work, when `HCLOUD_TOKEN` is present and the budget allows. A disposable server runs the portable bundle at full cores, then is destroyed. Hetzner Cloud has no on-demand GPU, so GPU-requested jobs skip it (see GPU policy below).
 5. **GitHub Actions** -- the last automatic lane: a private research repo's own committed experiment code, budget-gated on included minutes, proportionate, never a general compute pool.
 
+
+## User-requested compute resources (strict allowlist)
+
+When the user **specifically names** compute resources (for example "use Hetzner and
+Kaggle", "only Modal", "no local residual"), the agent and broker must treat that as a
+**hard allowlist**, not a soft preference:
+
+1. **Encode the request** on the job as either:
+   - `policy.backend = "<one>"` — single hard pin (existing), or
+   - `policy.backends = ["kaggle", "hetzner", ...]` — ordered multi-backend allowlist
+     (alias: `policy.preferred_backends`).
+2. **Only admit listed lanes.** Unlisted backends — including **local** when omitted —
+   must not be used as a silent fallthrough while any listed lane might still be
+   available. Parallel fan-out may use several listed lanes at once, but not unlisted ones.
+3. **Exhaustion before expansion.** If every listed lane is unavailable, inadequate,
+   over budget, or out of credits/quota, the plan is **rejected** (or the loop path is
+   blocked / deferred). Do **not** invent another resource the user did not name.
+4. **Do not bypass the broker.** Agents must not launch ad-hoc heavy local processes
+   (`python … residual …`, unthrottled multi-core sweeps) while a user allowlist or
+   offload path is active. Local light work (merge, pin checks, smoke) is fine.
+5. **Mutual exclusion.** `policy.backend` and `policy.backends` must not both be set.
+
+This is stronger than the default `routing_order` walk (which still starts with `local`
+for automatic routing). User-named resources win until they are all exhausted.
+
 ## GPU policy (router-wide)
 
 GPU is enabled on every backend that supports on-demand GPU, and is used when either the
