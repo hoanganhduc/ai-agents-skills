@@ -415,6 +415,19 @@
           "mode": "0644"
         },
         {
+          "source": "skills/autonomous-research-loop-runtime/formal_policy.py",
+          "target": "workspace/skills/autonomous-research-loop-runtime/formal_policy.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/autonomous-research-loop-runtime/autoloop_stop_hook.sh",
           "target": "workspace/skills/autonomous-research-loop-runtime/autoloop_stop_hook.sh",
           "platforms": [
