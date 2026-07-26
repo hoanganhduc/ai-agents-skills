@@ -19,6 +19,12 @@ default_archive_backend = "local"
 # GPU quota, so a CPU job that fits Kaggle's constraints is preferred over the
 # paid/quota'd lanes (Modal, Hetzner, GHA).
 routing_order = ["local", "kaggle", "modal", "hetzner", "gha"]
+
+# Per-job user allowlist (strict): set on the job, not here.
+#   policy.backends = ["kaggle", "hetzner"]   # only these lanes; no silent local/modal fallthrough
+#   policy.backend  = "hetzner"               # single hard pin (mutually exclusive with backends)
+# When the user names specific compute resources, agents MUST encode that allowlist and
+# must not launch ad-hoc local heavy work while any listed lane is still available.
 # Router-wide GPU policy (plan §5.1). A job is GPU-requested when the estimate
 # auto-signals GPU (a GPU task-family/type marker or an explicit gpu resource_class)
 # OR the job explicitly requests it (policy.gpu / constraints.gpu) -- an explicit

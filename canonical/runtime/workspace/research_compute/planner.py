@@ -113,6 +113,53 @@ def backend_override_value(policy: dict[str, Any]) -> tuple[str, str | None]:
     return normalized, None
 
 
+def backends_allowlist_value(policy: dict[str, Any]) -> tuple[list[str] | None, str | None]:
+    """Return a strict multi-backend allowlist from user-requested compute resources.
+
+    Accepts ``policy.backends`` or the alias ``policy.preferred_backends``: a non-empty
+    array of backend names. When set, the broker may only admit lanes in that list
+    (in list order). Unlisted lanes — including local — are never used as a silent
+    fallthrough. If every listed lane is unavailable or inadequate, the plan is
+    rejected rather than expanded to the global routing_order.
+
+    Mutually exclusive with single-lane ``policy.backend``.
+    """
+    key = None
+    if "backends" in policy:
+        key = "backends"
+    elif "preferred_backends" in policy:
+        key = "preferred_backends"
+    if key is None:
+        return None, None
+    if "backend" in policy:
+        return None, (
+            "policy.backend and policy.backends (or preferred_backends) are mutually "
+            "exclusive; use backend for a single hard pin, or backends for a strict "
+            "user-requested allowlist"
+        )
+    value = policy[key]
+    if not isinstance(value, (list, tuple)):
+        return None, f"policy.{key} must be an array of backend-name strings"
+    if not value:
+        return None, f"policy.{key} must not be empty"
+    if any(not isinstance(item, str) for item in value):
+        return None, f"policy.{key} entries must be backend-name strings"
+    normalized: list[str] = []
+    for item in value:
+        name = item.strip().lower()
+        if not name:
+            return None, f"policy.{key} entries must be non-empty backend-name strings"
+        if name not in SUPPORTED_BACKENDS:
+            return None, (
+                f"Unsupported policy.{key} entry '{name}'; expected one of "
+                f"{list(DEFAULT_ROUTING_ORDER)}"
+            )
+        if name in normalized:
+            return None, f"policy.{key} must not contain duplicate backends"
+        normalized.append(name)
+    return normalized, None
+
+
 def normalize_job(job: dict[str, Any], *, config: Any) -> dict[str, Any]:
     normalized = dict(job)
     normalized.setdefault("job_id", make_job_id())
@@ -333,8 +380,9 @@ def plan_job(
     risk_flags: list[str] = []
     reasoning: list[str] = []
 
-    # --- backend routing: explicit override > configured automatic order ---
+    # --- backend routing: user allowlist / explicit override > automatic order ---
     backend_override, backend_override_error = backend_override_value(policy)
+    backends_allowlist, backends_allowlist_error = backends_allowlist_value(policy)
     gha_target = str(job.get("gha_target", "") or template or "")
     gha_repos = dict(getattr(config, "gha_repos", {}) or {})
     gha_registered = bool(getattr(config, "gha_enabled", False)) and gha_target in gha_repos
@@ -392,6 +440,18 @@ def plan_job(
             risk_flags=["invalid_backend_override"],
             required_policy_exceptions=[],
             reasoning_summary=backend_override_error,
+        )
+
+    if backends_allowlist_error:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["invalid_backends_allowlist"],
+            required_policy_exceptions=[],
+            reasoning_summary=backends_allowlist_error,
         )
 
     local_estimate = build_estimate(
@@ -578,6 +638,40 @@ def plan_job(
             ),
         )
 
+    if data_locality == "secret" and backends_allowlist is not None:
+        remote_listed = [b for b in backends_allowlist if b != "local"]
+        if remote_listed:
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=["secret_remote_override_forbidden"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    "Secret-locality data cannot use remote backends in "
+                    f"policy.backends {remote_listed}."
+                ),
+            )
+
+    if not allow_remote and backends_allowlist is not None:
+        remote_listed = [b for b in backends_allowlist if b != "local"]
+        if remote_listed:
+            return finalize_plan(
+                decision="rejected",
+                execution_primitive=execution_primitive,
+                accepted=False,
+                estimated_cost_usd=0.0,
+                estimated_runtime_sec=runtime_sec,
+                risk_flags=["remote_override_forbidden"],
+                required_policy_exceptions=[],
+                reasoning_summary=(
+                    f"policy.backends={backends_allowlist} conflicts with allow_remote=false "
+                    f"(remote entries: {remote_listed})."
+                ),
+            )
+
     def gha_ok() -> tuple[bool, str]:
         # Lazy for automatic routing; explicit GHA calls it immediately. The usage check is
         # part of lane admission, not merely a submit-time accounting reservation.
@@ -734,11 +828,17 @@ def plan_job(
     # it; GPU on GHA is opt-in (gha.gpu_enabled, off by default).
     configured_order = getattr(config, "routing_order", DEFAULT_ROUTING_ORDER)
     configured_order_error = routing_order_error(configured_order)
-    order = (
-        list(configured_order)
-        if not configured_order_error
-        else []
-    )
+    # User-requested multi-backend allowlist is a hard set: walk only those lanes
+    # (order = preference). Local is optional and included only if listed.
+    if backends_allowlist is not None:
+        order = list(backends_allowlist)
+        configured_order_error = None  # allowlist supersedes global routing_order shape
+    else:
+        order = (
+            list(configured_order)
+            if not configured_order_error
+            else []
+        )
     estimate = build_estimate(
         parameters=parameters,
         constraints=constraints,
@@ -898,7 +998,15 @@ def plan_job(
     hetzner_in_order = "hetzner" in order
     kaggle_in_order = "kaggle" in order
     modal_in_order = "modal" in order
-    automatic_routing = not backend_override
+    # Cascade mode: automatic routing_order walk OR a multi-backend user allowlist.
+    # Single policy.backend stays on the hard-pin branches below.
+    allowlist_mode = backends_allowlist is not None
+    automatic_routing = (not backend_override) or allowlist_mode
+    if allowlist_mode:
+        reasoning.append(
+            "User-requested compute allowlist is active (strict): only "
+            f"{list(order)}; no silent fallthrough to unlisted lanes."
+        )
     hz = {"backend": "hetzner", "available": False, "adequate": False,
           "server_spec": None, "est_cost": 0.0, "est_wall_h": 0.0,
           "within_auto_approve": False, "reason": "hetzner_not_in_routing_order"}
@@ -1049,11 +1157,18 @@ def plan_job(
         routing_trail.extend(gpu_trail)
         if chosen is None:
             decision = "rejected"
-            risk_flags.append("no_gpu_lane_available")
-            reasoning.append("GPU was requested but no GPU-capable lane is available: the "
-                             "local box has no GPU, Kaggle is unavailable or its weekly GPU-hour "
-                             "cap is exhausted, Modal is unavailable, Hetzner has no on-demand "
-                             "GPU, and GitHub Actions GPU is disabled.")
+            if allowlist_mode:
+                risk_flags.append("backends_allowlist_exhausted")
+                reasoning.append(
+                    "GPU was requested but no GPU-capable lane in the user-requested "
+                    f"allowlist is available: allowlist={list(order)}."
+                )
+            else:
+                risk_flags.append("no_gpu_lane_available")
+                reasoning.append("GPU was requested but no GPU-capable lane is available: the "
+                                 "local box has no GPU, Kaggle is unavailable or its weekly GPU-hour "
+                                 "cap is exhausted, Modal is unavailable, Hetzner has no on-demand "
+                                 "GPU, and GitHub Actions GPU is disabled.")
         elif backend_name == "local":
             decision = chosen
             routing_extra.update({"backend": "local", "gpu": True})
@@ -1072,20 +1187,12 @@ def plan_job(
             decision = chosen
             reasoning.append("GPU routing: offloading to Modal GPU.")
     elif not backend_override and decision == "local_cpu":
-        veto = local_self_preservation_probe(estimate, config=config, resources=resources)
-        routing_trail.append({k: veto[k] for k in
-                              ("backend", "available", "adequate", "w_safe", "w_needed", "w_eff", "reason")})
-        if veto["adequate"]:
-            routing_extra.update({"backend": "local", "local_workers": veto["w_eff"],
-                                  "w_safe": veto["w_safe"], "w_needed": veto["w_needed"]})
-            reasoning.append(veto["reason"])
-        else:
-            # Local is load-unsafe: fall through per routing_order, EXCLUDING local.
-            risk_flags.append("local_self_preservation_veto")
-            reasoning.append(veto["reason"])
-            # This fallthrough is CPU-only: gpu_requested jobs are handled by the GPU
-            # cascade above and never reach the local veto. Secret-locality jobs return at
-            # the global trust-boundary gate before any remote probe.
+        # User-requested allowlist without local: never use local; walk only listed remotes.
+        if allowlist_mode and "local" not in order:
+            reasoning.append(
+                "User-requested compute allowlist omits local; walking only "
+                f"{list(order)}."
+            )
             modal_decision = "modal_cpu"
             chosen, backend_name, cascade_trail = select_remote_lane(
                 order=order, modal_decision=modal_decision, gpu_signal=gpu_requested,
@@ -1093,22 +1200,65 @@ def plan_job(
                 kg=get_kaggle, kg_in_order=kaggle_in_order,
                 modal_ok=get_modal, gha_ok=gha_ok)
             routing_trail.extend(cascade_trail)
-            fell = _apply_lane(chosen, backend_name,
-                               context="Local vetoed for self-preservation")
+            fell = _apply_lane(chosen, backend_name, context="User compute allowlist")
             if not fell:
-                if veto["w_safe"] >= 1:
-                    # Safe (throttled) but over the wall budget: run local rather than gamble.
-                    decision = "local_cpu"
-                    routing_extra.update({"backend": "local", "local_workers": veto["w_safe"],
-                                          "w_safe": veto["w_safe"], "w_needed": veto["w_needed"]})
-                    risk_flags.append("local_over_wall_budget")
-                    reasoning.append(f"No remote backend available; running throttled-local at "
-                                     f"{veto['w_safe']} worker(s), beyond the wall budget.")
-                else:
-                    decision = "rejected"
-                    risk_flags.append("no_safe_backend")
-                    reasoning.append("No safe backend: local is load-unsafe and no remote lane "
-                                     "is available.")
+                decision = "rejected"
+                risk_flags.append("backends_allowlist_exhausted")
+                reasoning.append(
+                    "Every backend in the user-requested allowlist is unavailable or "
+                    f"inadequate; refusing unlisted lanes. allowlist={list(order)}."
+                )
+        else:
+            veto = local_self_preservation_probe(estimate, config=config, resources=resources)
+            routing_trail.append({k: veto[k] for k in
+                                  ("backend", "available", "adequate", "w_safe", "w_needed", "w_eff", "reason")})
+            if veto["adequate"]:
+                routing_extra.update({"backend": "local", "local_workers": veto["w_eff"],
+                                      "w_safe": veto["w_safe"], "w_needed": veto["w_needed"]})
+                reasoning.append(veto["reason"])
+                if allowlist_mode:
+                    reasoning.append(
+                        f"User compute allowlist admits local; running local within {list(order)}."
+                    )
+            else:
+                # Local is load-unsafe: fall through per order, EXCLUDING local.
+                risk_flags.append("local_self_preservation_veto")
+                reasoning.append(veto["reason"])
+                # This fallthrough is CPU-only: gpu_requested jobs are handled by the GPU
+                # cascade above and never reach the local veto. Secret-locality jobs return at
+                # the global trust-boundary gate before any remote probe.
+                modal_decision = "modal_cpu"
+                chosen, backend_name, cascade_trail = select_remote_lane(
+                    order=order, modal_decision=modal_decision, gpu_signal=gpu_requested,
+                    hz=get_hetzner, hz_in_order=hetzner_in_order,
+                    kg=get_kaggle, kg_in_order=kaggle_in_order,
+                    modal_ok=get_modal, gha_ok=gha_ok)
+                routing_trail.extend(cascade_trail)
+                fell = _apply_lane(chosen, backend_name,
+                                   context="Local vetoed for self-preservation")
+                if not fell:
+                    # Under a user allowlist that still lists local, throttled-local is ok;
+                    # if local is not listed, never expand beyond the allowlist.
+                    if allowlist_mode and "local" not in order:
+                        decision = "rejected"
+                        risk_flags.append("backends_allowlist_exhausted")
+                        reasoning.append(
+                            "User compute allowlist exhausted and local is not listed; "
+                            f"refusing unlisted lanes. allowlist={list(order)}."
+                        )
+                    elif veto["w_safe"] >= 1 and (not allowlist_mode or "local" in order):
+                        # Safe (throttled) but over the wall budget: run local rather than gamble.
+                        decision = "local_cpu"
+                        routing_extra.update({"backend": "local", "local_workers": veto["w_safe"],
+                                              "w_safe": veto["w_safe"], "w_needed": veto["w_needed"]})
+                        risk_flags.append("local_over_wall_budget")
+                        reasoning.append(f"No remote backend available; running throttled-local at "
+                                         f"{veto['w_safe']} worker(s), beyond the wall budget.")
+                    else:
+                        decision = "rejected"
+                        risk_flags.append("no_safe_backend")
+                        reasoning.append("No safe backend: local is load-unsafe and no remote lane "
+                                         "is available.")
     elif not backend_override and decision.startswith("modal_"):
         # The job is too heavy for local. Walk routing_order for the first available lane:
         # Kaggle (free CPU) is tried first, then Modal (if ready + account-usable) keeps the
@@ -1149,16 +1299,26 @@ def plan_job(
             )
         else:
             decision = "rejected"
-            risk_flags.append("no_remote_lane_available")
-            reasoning.append(
-                "No configured remote lane is both available and adequate; rejecting "
-                "instead of retaining the seeded Modal decision."
-            )
+            if allowlist_mode:
+                risk_flags.append("backends_allowlist_exhausted")
+                reasoning.append(
+                    "No backend in the user-requested allowlist is both available and "
+                    f"adequate; refusing unlisted lanes. allowlist={list(order)}."
+                )
+            else:
+                risk_flags.append("no_remote_lane_available")
+                reasoning.append(
+                    "No configured remote lane is both available and adequate; rejecting "
+                    "instead of retaining the seeded Modal decision."
+                )
 
     if execution_primitive == "sandbox" and decision.startswith("modal_"):
         decision = "modal_sandbox_experimental"
         reasoning.append("The job explicitly requested sandbox execution.")
 
+    if allowlist_mode:
+        routing_extra["user_backends_allowlist"] = list(order)
+        routing_extra["strict_backends_allowlist"] = True
     if routing_trail:
         routing_extra["routing_trail"] = routing_trail
 
