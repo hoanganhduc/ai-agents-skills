@@ -187,6 +187,40 @@ and `•` bullets.
 Agents should put a short prose summary in `--output`. Paths alone are accepted
 as ledger artifacts but are **not** shown as the sole Result line in notify.
 
+### Formal policy (optional Lean assist)
+
+Default **off** (no formal headings in `iteration_prompt`). Opt in with CLI,
+env, `formal/formal_policy.json`, or `loop_state.standing_orders.formal`.
+
+```bash
+… init --dir <loop> --goal "…" --success-criteria "…" --formal-policy on --formal-project formal/
+… drive --dir <loop> --provider codex --formal-policy on
+# host hygiene tick after each ok iteration (non-terminal; scan-first; no OpenGauss spawn):
+… drive … --formal-policy force --formal-force-after-iteration
+```
+
+| Flag / env | Role |
+|---|---|
+| `--formal-policy` / `AAS_AUTOLOOP_FORMAL_POLICY` | `off\|mention-only\|auto\|on\|force` |
+| `--formal-project` / `AAS_AUTOLOOP_FORMAL_PROJECT` | Lake project path (default `formal/`) |
+| `--formal-force-after-iteration` / `AAS_AUTOLOOP_FORMAL_FORCE=1` | enable host tick when policy is `force` |
+| `--formal-typecheck` / `AAS_AUTOLOOP_FORMAL_TYPECHECK=1` | opt-in Lake typecheck inside host tick |
+| `--formal-force-credits` | credit budget for force tick (default 3) |
+
+At **drive start**, the host resolves policy, writes `formal/host_policy.pin.json`,
+persists privileged keys into `standing_orders.formal`, and exports
+`AAS_AUTOLOOP_FORMAL_*` into the child env. Prompt order:
+`compute_policy` → panel (if) → `goal_priority` → `formal_policy` (empty when off).
+
+**`formal_force_tick`** (after `iteration_ok`, only `force` + flag): writes
+`formal/force_loop_reports/*`; never sets loop `blocked`/`stopped`; never
+launches OpenGauss; never sets `claim_support_status=supported`. Missing Lake
+→ `tool_unavailable`; drive continues.
+
+**Glossary:** headless force-driven ARL ≠ `formal_policy=force`. Thin sample:
+`canonical/templates/sample-arl-headless-driver-with-formal/`. Instruction:
+`canonical/instructions/autonomous-loop-formal-policy.md`.
+
 ### Goal priority (path discipline)
 
 File `{loop}/goal_priority.json` or `loop_state.standing_orders.goal_priority`.
@@ -289,3 +323,5 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `goal-priority` -- goal_priority.v1 reference (default enabled, discipline_mode advise).
+- `sample-arl-headless-driver-with-formal` -- thin env fragment for force-driven ARL + formal_policy (not a forked supervisor).
+- `informal-to-lean-formalization-runbook` -- F1–F7 positions when formal-track.

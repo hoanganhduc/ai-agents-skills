@@ -713,6 +713,17 @@ def build_target_brief(run_dir: Path, *, max_chars: int = 12000) -> str:
     except Exception:  # noqa: BLE001 — panel works without goal_priority module
         pass
 
+    # (1b) Formal policy after goal (subordinate); empty when off
+    try:
+        from formal_policy import formal_policy_panel_addon  # type: ignore
+
+        formal_block = formal_policy_panel_addon(run_dir)
+        if formal_block.strip():
+            parts.append(formal_block.strip())
+            parts.append("")
+    except Exception:  # noqa: BLE001 — panel works without formal_policy module
+        pass
+
     # (2) next_preferred_path / committed path
     state_path = run_dir / "loop_state.json"
     if state_path.is_file():
@@ -783,6 +794,15 @@ def build_review_brief(run_dir: Path, iter_dir: Path, *, max_chars: int = 12000)
             parts.append("## Goal / campaign")
             parts.append("")
             parts.append(match.rstrip())
+            parts.append("")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from formal_policy import formal_policy_panel_addon  # type: ignore
+
+        formal_block = formal_policy_panel_addon(run_dir)
+        if formal_block.strip():
+            parts.append(formal_block.strip())
             parts.append("")
     except Exception:  # noqa: BLE001
         pass

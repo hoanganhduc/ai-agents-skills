@@ -37,6 +37,16 @@ try:
         load_goal_priority,
     )
     from compute_policy import compute_policy_addon  # type: ignore
+    from formal_policy import (  # type: ignore
+        export_formal_env,
+        formal_force_tick,
+        formal_policy_prompt_addon,
+        is_force_tick_enabled,
+        load_formal_policy,
+        merge_standing_orders_formal,
+        pin_privileged_policy,
+        write_host_pin,
+    )
 except ImportError:  # pragma: no cover - package-style import during tests
     from .panel_parent import (  # type: ignore
         ensure_iter_dir,
@@ -55,6 +65,16 @@ except ImportError:  # pragma: no cover - package-style import during tests
         load_goal_priority,
     )
     from .compute_policy import compute_policy_addon  # type: ignore
+    from .formal_policy import (  # type: ignore
+        export_formal_env,
+        formal_force_tick,
+        formal_policy_prompt_addon,
+        is_force_tick_enabled,
+        load_formal_policy,
+        merge_standing_orders_formal,
+        pin_privileged_policy,
+        write_host_pin,
+    )
 
 
 SCHEMA_VERSION = "1.0"
@@ -314,6 +334,51 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
             )
         gp_path.write_text(example_goal_priority_json(), encoding="utf-8", newline="\n")
         files_out["goal_priority"] = str(gp_path)
+
+    # Optional formal policy (merge into standing_orders.formal; never wipe other keys)
+    formal_policy_arg = getattr(args, "formal_policy", None)
+    if formal_policy_arg is not None or getattr(args, "formal_project", None):
+        try:
+            from formal_policy import (  # type: ignore
+                default_formal_config,
+                merge_standing_orders_formal,
+            )
+        except Exception:  # noqa: BLE001
+            try:
+                from .formal_policy import (  # type: ignore
+                    default_formal_config,
+                    merge_standing_orders_formal,
+                )
+            except Exception:  # noqa: BLE001
+                default_formal_config = None  # type: ignore
+                merge_standing_orders_formal = None  # type: ignore
+        if merge_standing_orders_formal is not None:
+            updates: dict[str, Any] = {}
+            if formal_policy_arg is not None:
+                updates["policy"] = str(formal_policy_arg)
+            if getattr(args, "formal_project", None):
+                updates["project"] = str(args.formal_project)
+            if getattr(args, "formal_force_credits", None) is not None:
+                updates["force_credits"] = int(args.formal_force_credits)
+            if bool(getattr(args, "formal_allow_path_steal", False)):
+                updates["allow_path_steal"] = True
+            if bool(getattr(args, "formal_typecheck", False)):
+                updates["typecheck"] = True
+            if bool(getattr(args, "formal_force_after_iteration", False)):
+                updates["force_after_iteration"] = True
+            merge_standing_orders_formal(run_dir, updates=updates)
+            # optional mirror file
+            try:
+                formal_dir = run_dir / "formal"
+                formal_dir.mkdir(parents=True, exist_ok=True)
+                mirror = default_formal_config() if default_formal_config else {}
+                mirror.update(updates)
+                (formal_dir / "formal_policy.json").write_text(
+                    json.dumps(mirror, indent=2) + "\n", encoding="utf-8", newline="\n"
+                )
+                files_out["formal_policy"] = str(formal_dir / "formal_policy.json")
+            except OSError:
+                pass
     return {
         "status": "ok",
         "action": "init",
@@ -621,6 +686,13 @@ def selftest_init_args(run_dir: Path, max_iterations: int) -> argparse.Namespace
         max_depth=1,
         max_hops=1,
         max_child_workers=0,
+        goal_priority_template=False,
+        formal_policy=None,
+        formal_project=None,
+        formal_force_credits=None,
+        formal_allow_path_steal=False,
+        formal_typecheck=False,
+        formal_force_after_iteration=False,
     )
 
 
@@ -640,7 +712,85 @@ def selftest_drive_args(run_dir: Path, registry: Path, stub_cmd: str) -> argpars
         notify_cmd=None,
         no_progress=False,
         registry_dir=str(registry),
+        panel="off",
+        formal_policy=None,
+        formal_project=None,
+        formal_force_credits=None,
+        formal_allow_path_steal=False,
+        formal_typecheck=False,
+        formal_force_after_iteration=False,
     )
+
+
+def _formal_cli_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    """Build formal_policy CLI overlay from argparse Namespace (drive/init)."""
+    cli: dict[str, Any] = {}
+    if getattr(args, "formal_policy", None) is not None:
+        cli["policy"] = str(args.formal_policy)
+    if getattr(args, "formal_project", None):
+        cli["project"] = str(args.formal_project)
+    if getattr(args, "formal_force_credits", None) is not None:
+        cli["force_credits"] = int(args.formal_force_credits)
+    if bool(getattr(args, "formal_allow_path_steal", False)):
+        cli["allow_path_steal"] = True
+    if bool(getattr(args, "formal_typecheck", False)):
+        cli["typecheck"] = True
+    if bool(getattr(args, "formal_force_after_iteration", False)):
+        cli["force_after_iteration"] = True
+    return cli
+
+
+def _apply_formal_drive_start(
+    run_dir: Path,
+    args: argparse.Namespace,
+) -> tuple[Any, dict[str, Any]]:
+    """Resolve formal policy at drive start: pin, persist, export env. Never raises."""
+    try:
+        formal_cli = _formal_cli_from_args(args)
+        pol = load_formal_policy(run_dir, cli=formal_cli or None)
+        pin = pin_privileged_policy(pol)
+        write_host_pin(run_dir, pin)
+        # Persist when host explicitly set CLI/env or non-off policy so nested tools see it.
+        env_set = any(
+            os.environ.get(k)
+            for k in (
+                "AAS_AUTOLOOP_FORMAL_POLICY",
+                "AAS_AUTOLOOP_FORMAL_PROJECT",
+                "AAS_AUTOLOOP_FORMAL_FORCE",
+                "AAS_AUTOLOOP_FORMAL_TYPECHECK",
+            )
+        )
+        if formal_cli or env_set or pol.policy != "off":
+            merge_standing_orders_formal(
+                run_dir,
+                updates={
+                    "policy": pol.policy,
+                    "project": pol.project,
+                    "force_credits": pol.force_credits,
+                    "allow_path_steal": pol.allow_path_steal,
+                    "typecheck": pol.typecheck,
+                    "force_after_iteration": pol.force_after_iteration,
+                    "allow_create_skeleton": pol.allow_create_skeleton,
+                },
+            )
+            # Mirror for operators (best-effort)
+            try:
+                formal_dir = run_dir / "formal"
+                formal_dir.mkdir(parents=True, exist_ok=True)
+                mirror_path = formal_dir / "formal_policy.json"
+                if not mirror_path.is_file() or formal_cli or env_set:
+                    mirror_path.write_text(
+                        json.dumps(pol.as_dict(), indent=2) + "\n",
+                        encoding="utf-8",
+                        newline="\n",
+                    )
+            except OSError:
+                pass
+        for key, value in export_formal_env(pol).items():
+            os.environ[key] = value
+        return pol, pin
+    except Exception:  # noqa: BLE001
+        return None, {}
 
 
 STUB_ITERATION_SNIPPET = (
@@ -1538,6 +1688,11 @@ def iteration_prompt(
         base = base + panel_prompt_addon(run_dir, panel_iter_dir)
     if is_goal_priority_active(run_dir):
         base = base + goal_priority_prompt_addon(run_dir)
+    # Formal after goal_priority (subordinate to single-path + hard replan); empty when off.
+    try:
+        base = base + formal_policy_prompt_addon(run_dir)
+    except Exception:  # noqa: BLE001 — prompt construction must never fail
+        pass
     block = inbox_block if inbox_block is not None else os.environ.get("AAS_DRIVE_INBOX_BLOCK")
     if block:
         return base + "\n\n" + block
@@ -3522,6 +3677,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     was_paused = False
     panel_mode = getattr(args, "panel", None) or "auto"
     panel_enabled = resolve_panel_mode(panel_mode, run_dir)
+    formal_pol, formal_pin = _apply_formal_drive_start(run_dir, args)
     if provider:
         os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = str(provider)
     _progress(
@@ -3531,6 +3687,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         drive_pid=os.getpid(),
         panel=panel_mode,
         panel_enabled=panel_enabled,
+        formal_policy=(formal_pol.policy if formal_pol is not None else "off"),
     )
     try:
         while True:
@@ -3672,6 +3829,8 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 AUTOLOOP_ROOT=str(root),
                 AUTOLOOP_PROMPT=prompt,
             )
+            if formal_pol is not None:
+                child_env.update(export_formal_env(formal_pol))
             if panel_enabled:
                 child_env["AAS_AUTOLOOP_PANEL"] = "on"
                 if panel_iter_dir is not None:
@@ -3830,6 +3989,38 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             drive_cycle=iterations_run,
                             error=str(exc)[:200],
                         )
+                # Host formal hygiene tick (policy=force + flag only). Non-terminal;
+                # never OpenGauss; never claim_support=supported; never loop stop.
+                if formal_pol is not None and is_force_tick_enabled(formal_pol):
+                    try:
+                        _progress(
+                            "formal_force_tick_start",
+                            source="drive",
+                            drive_cycle=iterations_run,
+                        )
+                        force_report = formal_force_tick(
+                            run_dir,
+                            root=root,
+                            policy=formal_pol,
+                            pin=formal_pin,
+                        )
+                        _progress(
+                            "formal_force_tick_done",
+                            source="drive",
+                            drive_cycle=iterations_run,
+                            terminal=force_report.get("terminal"),
+                            hygiene_status=force_report.get("hygiene_status"),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        sys.stderr.write(
+                            f"autoloop-driver: formal_force_tick failed: {exc}\n"
+                        )
+                        _progress(
+                            "formal_force_tick_fail",
+                            source="drive",
+                            drive_cycle=iterations_run,
+                            error=str(exc)[:200],
+                        )
     finally:
         disarm_ns = argparse.Namespace(
             dir=str(run_dir), run_id=None, registry_dir=getattr(args, "registry_dir", None)
@@ -3876,6 +4067,53 @@ def nonnegative_float(value: str) -> float:
     return parsed
 
 
+def add_formal_policy_args(sub: argparse.ArgumentParser) -> None:
+    """Shared init/drive formal_policy CLI (default-off; opt-in Lean assist)."""
+    sub.add_argument(
+        "--formal-policy",
+        default=None,
+        choices=["off", "mention-only", "auto", "on", "force"],
+        help=(
+            "Lean formalization assist policy (default off / file / env "
+            "AAS_AUTOLOOP_FORMAL_POLICY). off = no prompt injection; force = "
+            "hygiene host tick when also --formal-force-after-iteration. "
+            "Not the same as headless force-driven ARL."
+        ),
+    )
+    sub.add_argument(
+        "--formal-project",
+        default=None,
+        help="relative Lake project path under the loop/root (default formal/)",
+    )
+    sub.add_argument(
+        "--formal-force-credits",
+        type=positive_int,
+        default=None,
+        help="host formal_force_tick credit budget when policy=force (default 3)",
+    )
+    sub.add_argument(
+        "--formal-allow-path-steal",
+        action="store_true",
+        help=(
+            "reserved: allow host to propose formal-track path when policy=force "
+            "(MVP still refuses path steal writes; default false)"
+        ),
+    )
+    sub.add_argument(
+        "--formal-typecheck",
+        action="store_true",
+        help="opt-in Lake typecheck inside host formal_force_tick (default scan-only)",
+    )
+    sub.add_argument(
+        "--formal-force-after-iteration",
+        action="store_true",
+        help=(
+            "run non-terminal formal_force_tick after each successful iteration "
+            "when --formal-policy force (or standing/env force). Never stops the loop."
+        ),
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Offline autonomous research loop ledger helper")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -3916,6 +4154,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also write goal_priority.json example (default enabled:true, discipline_mode:advise)",
     )
+    add_formal_policy_args(init)
     init.set_defaults(func=init_loop)
 
     append = subparsers.add_parser("append-iteration", help="append one iteration record")
@@ -4146,6 +4385,7 @@ def build_parser() -> argparse.ArgumentParser:
             "on = always; off = never). Primary agent must not nest panel CLIs."
         ),
     )
+    add_formal_policy_args(drive)
     add_registry_args(drive)
     drive.set_defaults(func=drive_command)
 
