@@ -1,13 +1,20 @@
 """Strict user-requested multi-backend allowlist (policy.backends)."""
 from __future__ import annotations
 
-import json
-import tempfile
+import sys
+
+sys.dont_write_bytecode = True  # never write __pycache__ into the canonical runtime tree
+
 import unittest
 from pathlib import Path
 
-from research_compute import planner
-from research_compute.planner import backends_allowlist_value, plan_job
+from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
+
+WORKSPACE = RUNTIME_SOURCE_ROOT / "workspace"
+if str(WORKSPACE) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE))
+
+from research_compute.planner import backends_allowlist_value, plan_job  # noqa: E402
 
 
 class BackendsAllowlistUnitTests(unittest.TestCase):
