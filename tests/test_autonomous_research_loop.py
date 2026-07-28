@@ -1286,6 +1286,40 @@ class RuntimeDriveTests(unittest.TestCase):
             self.assertEqual(res.returncode, 3)
             self.assertEqual((loop / "c").read_text(), "3")
 
+    def test_grok_402_balance_exhaustion_uses_three_quota_tries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            _init_loop(loop, reg, max_iterations=5)
+            cmd = _py_iteration(
+                "import os,pathlib,sys; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); "
+                "p=d/'c'; c=(int(p.read_text()) if p.exists() else 0)+1; "
+                "p.write_text(str(c)); "
+                "print('API error (status 402 Payment Required): Grok Build usage balance exhausted'); "
+                "sys.exit(1)"
+            )
+            res = self._drive(
+                loop,
+                reg,
+                cmd,
+                "--max-quota-waits",
+                "3",
+                "--quota-backoff",
+                "1",
+            )
+            self.assertEqual(res.returncode, 5, res.stderr)
+            self.assertEqual((loop / "c").read_text(), "3")
+
+    def test_failover_defaults_cap_driver_at_three(self) -> None:
+        config = json.loads(
+            (HELPER.parent / "failover.example.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(config["drive_defaults"]["max_failures"], 3)
+        supervisor = (HELPER.parent / "arl_drive_supervisor.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("dd.get('max_failures', 3)", supervisor)
+        self.assertNotIn("dd.get('max_failures', 10)", supervisor)
+
     def test_exports_driver_env_so_hook_stands_down(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"

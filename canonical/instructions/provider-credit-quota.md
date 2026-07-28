@@ -17,7 +17,7 @@ infer credit exhaustion from a silent hang or empty reply alone.
 
 | Class | Examples | Treat as |
 |-------|----------|----------|
-| **quota_or_credit** | usage limit, rate limit, 429, out of credits, anchored `quota exceeded|limit|…`, insufficient credit | Pause that **provider**, not the research goal (`quota_wait`; exit **5** after wait cap) |
+| **quota_or_credit** | usage/weekly/monthly limit, “hit your weekly limit · resets …”, HTTP 402 / “usage balance exhausted”, rate limit, 429, out of credits, anchored `quota exceeded|limit|…`, insufficient credit | Pause that **provider**, not the research goal. With `--max-quota-waits N` (recommend **3**): after **N** consecutive signals exit **5**; outer supervisor session-excludes as temporary credit and switches to the first available primary |
 | **auth_or_session** | 401 Unauthorized, token_invalidated, refresh_token revoked, sign in again | Re-auth offline or rotate primary; **not** a credit pause (drive exit **7**) |
 | **transport** | DNS, network disconnect, ENOTIMP, connection refused | Retry same primary / different-family fallback; not a credit stop |
 | **empty_or_unusable** | exit 0 with preamble-only / no verdict | Mark unusable; do not count as credit |

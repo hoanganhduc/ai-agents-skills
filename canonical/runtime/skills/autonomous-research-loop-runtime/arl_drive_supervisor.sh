@@ -99,7 +99,7 @@ lines = [
     f"PANEL={shlex.quote(str(dd.get('panel', 'on')))}",
     f"NOTIFY={shlex.quote(str(dd.get('notify', 'auto')))}",
     f"ITERATION_TIMEOUT={int(dd.get('iteration_timeout', 7200))}",
-    f"MAX_FAILURES={int(dd.get('max_failures', 10))}",
+    f"MAX_FAILURES={int(dd.get('max_failures', 3))}",
     f"RESEARCH_TITLE={shlex.quote(title)}",
 ]
 out.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -265,8 +265,10 @@ while :; do
       consecutive_failures=0
       ;;
     5|6|7)
+      # Exit 5 = quota_wait_exhausted after N consecutive quota signals (default N=3):
+      # treat as temporary quota_or_credit exclude, then first available primary.
       case "$rc" in
-        5) notify "quota/credit exhausted for $provider; exclude and use first available in list." ;;
+        5) notify "quota/credit exhausted for $provider (N consecutive); exclude as quota_or_credit and switch to first available." ;;
         6) notify "provider $provider unavailable; exclude and use first available in list." ;;
         7) notify "auth/session dead for $provider; exclude and use first available in list." ;;
       esac
@@ -274,11 +276,19 @@ while :; do
       consecutive_failures=0
       sleep "$ROTATE_COOLDOWN_S"
       ;;
-    3|4)
+    3)
+      # Drive already hit max-failures (default 3 consecutive non-quota fails).
+      # Treat as temporary exclude and switch immediately (one drive death = streak done).
+      notify "driver max-failures under $provider (exit 3); exclude temporarily and switch to first available."
+      session_exclude "$provider"
+      consecutive_failures=0
+      sleep "$ROTATE_COOLDOWN_S"
+      ;;
+    4)
       consecutive_failures=$((consecutive_failures + 1))
       notify "driver exit $rc under $provider (failure $consecutive_failures/$FAILURES_BEFORE_ROTATE)."
       if [[ "$consecutive_failures" -ge "$FAILURES_BEFORE_ROTATE" ]]; then
-        notify "too many failures under $provider; exclude and use first available in list."
+        notify "too many runtime errors under $provider; exclude and use first available in list."
         session_exclude "$provider"
         consecutive_failures=0
         sleep "$ROTATE_COOLDOWN_S"

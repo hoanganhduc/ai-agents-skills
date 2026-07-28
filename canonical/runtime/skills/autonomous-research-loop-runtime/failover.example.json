@@ -24,6 +24,6 @@
     "panel": "on",
     "notify": "auto",
     "iteration_timeout": 7200,
-    "max_failures": 10
+    "max_failures": 3
   }
 }

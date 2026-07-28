@@ -45,9 +45,22 @@ Default example **drive** order (`failover.example.json`):
 `claude → codex → grok → opencode → antigravity → copilot → kimi → deepseek`
 
 **Failover rule:** always drive with the **first available** name in that list
-(not session-excluded). On hard failure (exit 5/6/7) or a soft-failure streak
-(exit 3/4 after `failures_before_rotate`), the current primary is session-excluded
-and the next cycle picks the new first available entry. When none remain → exit 11.
+(not session-excluded).
+
+| Drive exit | Meaning | Supervisor |
+|------------|---------|------------|
+| **5** | `quota_wait_exhausted` after **N** consecutive quota signals (`max_quota_waits`, default **3**), including weekly/usage limits | Session-exclude as temporary **quota_or_credit** (+ panel `exclude_until_credit`); switch to first available |
+| **6** | provider binary unavailable | Session-exclude; switch |
+| **7** | auth/session dead | Session-exclude; switch |
+| **3** | `max_failures` (drive already saw N consecutive non-quota fails, default 3) | Session-exclude immediately; switch |
+| **4** | runtime error | After `failures_before_rotate` streak; exclude and switch |
+
+When none remain → exit 11.
+
+The shipped supervisor and `failover.example.json` pass
+`drive_defaults.max_failures=3`. Host panel dispatch separately persists a
+three-attempt cap per phase and pending iteration, so restarting or rotating a
+primary does not restart panel calls indefinitely.
 
 Default **panel** invite order (when loop config omits `providers`):
 

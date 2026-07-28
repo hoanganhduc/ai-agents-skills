@@ -99,10 +99,13 @@ Driver behavior:
   credits, usage limit, anchored `quota exceeded|limit|…`) →
   `quota_wait` pause; else hard failure. Patterns match provider-error text,
   not bare prompt word `quota`.
-- Credit/quota outages pause `--quota-backoff` seconds (default 900; interruptible
-  for `STOP_REQUESTED`/`PAUSE`) and retry. `--max-quota-waits N` caps consecutive
-  waits (default 0 = wait indefinitely). With `N>0`, exit 5 fires when
-  `quota_waits > N` (so `N=3` allows three sleeps, exits on the fourth signal).
+- Credit/quota outages (including Claude **weekly limit** / “resets …” phrasing)
+  pause and retry. `--max-quota-waits N` caps consecutive quota signals (default
+  0 = wait indefinitely). With `N>0`, exit **5** fires when
+  `quota_waits >= N` (so **`N=3` means three consecutive quota fails then switch**).
+  Hard caps (weekly/monthly/out-of-credits) use a short backoff (~15s) between
+  those N signals when a max is set. Outer supervisor treats exit 5 as temporary
+  `quota_or_credit` exclude and picks the first available primary.
 - **Multi-provider unattended:** stock `drive` stays single `--provider`. Prefer
   the outer supervisor pack (`arl_drive_supervisor.sh` /
   `LAUNCH_supervisor.sh` + `{loop}/failover.json`) which rotates on exit 5/6/7
@@ -112,6 +115,8 @@ Driver behavior:
   leave `max-quota-waits 0` spinning; stop and restart with `--provider <funded>`,
   and set `exclude_until_credit` on the panel roster.
 - Genuine failures stop the run after `--max-failures` consecutive occurrences.
+  The default and recommended cap is **3**; supervisor configs must not widen it
+  to 10.
 - Stop conditions are re-checked every cycle by the `done` arbiter: iteration
   cap, wall/token/USD budgets, terminal ledger status, `STOP_REQUESTED` and
   `PAUSE` sentinels, and `require_user_stop_only`.
@@ -124,6 +129,11 @@ Driver behavior:
   `AUTOLOOP_PROMPT`).
 
 ### Host-owned multi-agent panel (hybrid model)
+
+Panel dispatch is capped persistently at **3 attempts per phase per pending
+iteration**. Configure `max_attempts` in `panel.json` or
+`standing_orders.panel`; the default is 3. Provider rotation reuses the last
+panel artifacts after the cap instead of restarting panel calls.
 
 ```bash
 # Opt-in host panel around each drive iteration (parent-owned; top-level CLIs)
