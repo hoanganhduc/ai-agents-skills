@@ -17,10 +17,11 @@ infer credit exhaustion from a silent hang or empty reply alone.
 
 | Class | Examples | Treat as |
 |-------|----------|----------|
-| **quota_or_credit** | usage limit, rate limit, 429, out of credits, billing, insufficient credit | Pause that **provider**, not the research goal |
-| **transport** | DNS, network disconnect, ENOTIMP, connection refused | Retry or different-family fallback; not a credit stop |
+| **quota_or_credit** | usage limit, rate limit, 429, out of credits, anchored `quota exceeded|limit|…`, insufficient credit | Pause that **provider**, not the research goal (`quota_wait`; exit **5** after wait cap) |
+| **auth_or_session** | 401 Unauthorized, token_invalidated, refresh_token revoked, sign in again | Re-auth offline or rotate primary; **not** a credit pause (drive exit **7**) |
+| **transport** | DNS, network disconnect, ENOTIMP, connection refused | Retry same primary / different-family fallback; not a credit stop |
 | **empty_or_unusable** | exit 0 with preamble-only / no verdict | Mark unusable; do not count as credit |
-| **binary_missing** | provider CLI not on PATH | `provider_unavailable`; fix install or exclude |
+| **binary_missing** | provider CLI not on PATH | `provider_unavailable` (exit **6**); fix install or exclude |
 
 ## Policy (strict)
 
@@ -35,10 +36,18 @@ infer credit exhaustion from a silent hang or empty reply alone.
 3. **Primary failover before infinite wait.** For ARL `drive`:
    - Prefer switching `--provider` to a still-funded family (or an operator
      ordered fallback list) over waiting forever on the same exhausted primary.
+   - **Preferred unattended mechanism:** outer supervisor pack
+     (`arl_drive_supervisor.sh` + `{loop}/failover.json` `primary_order` /
+     alias `primary_fallback`). The supervisor is the sole consumer of that
+     order; stock `drive` stays single-provider. On exit 5/6/7 it
+     **session-excludes** the dead primary (exclude, do not thrash) and may
+     sync `exclude_until_credit` on the panel.
    - `quota_wait` / pause-and-retry is correct **only** when no alternate
      primary is configured or remaining, or the operator explicitly chose
-     wait-only (`--max-quota-waits 0` with no fallback).
-   - When waiting, re-check `STOP_REQUESTED` / `PAUSE` / `done` each cycle.
+     wait-only (`--max-quota-waits 0` with a single primary). Multi-primary +
+     waits 0 is refused by the supervisor.
+   - When waiting, re-check `STOP_REQUESTED` / `PAUSE` / `done` each cycle
+     (interruptible sleep).
 4. **Panel and multi-agent rosters.** Host panel (`panel.json` /
    `standing_orders.panel`) and AGD invite lists should set
    `exclude_until_credit` (or an equivalent exclude list) for exhausted
@@ -61,18 +70,34 @@ Preferred loop-local fields (any one is enough if documented for the run):
 
 ```json
 {
-  "providers": ["claude", "codewhale"],
-  "exclude_until_credit": ["codex", "kimi"],
+  "providers": ["codex", "claude", "grok", "opencode", "antigravity", "copilot", "kimi", "deepseek"],
+  "exclude_until_credit": [],
   "primary_provider": "claude",
-  "primary_fallback": ["claude", "codewhale"]
+  "primary_order": [
+    "claude",
+    "codex",
+    "grok",
+    "opencode",
+    "antigravity",
+    "copilot",
+    "kimi",
+    "deepseek"
+  ]
 }
 ```
 
+- `providers`: host panel invite list (default:
+  `codex, claude, grok, opencode, antigravity, copilot, kimi, deepseek`).
 - `exclude_until_credit`: providers skipped by panel dispatch and recommended
   for AGD/CAD recipient choice until the operator removes them.
-- `primary_provider` / `primary_fallback`: operator guidance for `drive`
-  restart; runtime may document but need not auto-restart mid-process.
-- Env (panel providers only): `AAS_AUTOLOOP_PANEL_PROVIDERS=claude,codewhale`
+- `primary_provider` / `primary_fallback` / `primary_order`: preferred list for
+  the **outer supervisor** (`failover.json`). Default example order:
+  `claude, codex, grok, opencode, antigravity, copilot, kimi, deepseek`.
+  Stock `drive` ignores these fields until an optional future in-process
+  `--provider-order` lands. (`primary_fallback` is an alias of `primary_order`.)
+- `research_title` / `job_slug` (same file or `notify.json`): research-topic
+  notify identity for Zulip/Telegram (not generic “loop”).
+- Env (panel providers only): `AAS_AUTOLOOP_PANEL_PROVIDERS=codex,claude,grok`
   overrides the invite list for a session without editing files.
 
 ## Operator checklist when credits run out

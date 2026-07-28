@@ -50,13 +50,22 @@ class PanelParentUnitTests(unittest.TestCase):
                 iter_dir=iter_dir,
                 phase="target_advice",
                 prompt="Reply PANEL_SMOKE_OK",
-                providers=["claude", "codex", "codewhale", "kimi", "grok"],
+                providers=[
+                    "codex",
+                    "claude",
+                    "grok",
+                    "opencode",
+                    "antigravity",
+                    "copilot",
+                    "kimi",
+                    "deepseek",
+                ],
                 timeout_s=5,
                 root=root,
                 runner=runner,
             )
             self.assertTrue(summary["panel_content_pass"])
-            self.assertEqual(len(summary["usable_providers"]), 5)
+            self.assertEqual(len(summary["usable_providers"]), 8)
             self.assertTrue((iter_dir / "panel" / "01_target_advice" / "claude.md").is_file())
             self.assertTrue((iter_dir / "data" / "panel_dispatch_target_advice.json").is_file())
 
@@ -81,14 +90,26 @@ class PanelParentUnitTests(unittest.TestCase):
                 json.dumps(
                     {
                         "enabled": True,
-                        "providers": ["claude", "codex", "codewhale", "kimi", "grok"],
+                        "providers": [
+                            "codex",
+                            "claude",
+                            "grok",
+                            "opencode",
+                            "antigravity",
+                            "copilot",
+                            "kimi",
+                            "deepseek",
+                        ],
                         "exclude_until_credit": ["codex", "kimi"],
                     }
                 ),
                 encoding="utf-8",
             )
             cfg = pp.load_panel_config(run_dir)
-            self.assertEqual(cfg["providers"], ["claude", "codewhale", "grok"])
+            self.assertEqual(
+                cfg["providers"],
+                ["claude", "grok", "opencode", "antigravity", "copilot", "deepseek"],
+            )
             self.assertEqual(set(cfg["exclude_until_credit"]), {"codex", "kimi"})
             # Alias exclude_providers also works
             (run_dir / "panel.json").write_text(

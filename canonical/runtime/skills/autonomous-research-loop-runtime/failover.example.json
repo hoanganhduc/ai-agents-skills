@@ -1,0 +1,29 @@
+{
+  "schema_version": "failover.v1",
+  "research_title": "Short research topic for Zulip/Telegram titles",
+  "job_slug": "optional-stable-zulip-topic-id",
+  "primary_order": [
+    "claude",
+    "codex",
+    "grok",
+    "opencode",
+    "antigravity",
+    "copilot",
+    "kimi",
+    "deepseek"
+  ],
+  "max_quota_waits_per_primary": 3,
+  "max_restarts": 50,
+  "failures_before_rotate": 3,
+  "retry_sleep_s": 300,
+  "rotate_cooldown_s": 30,
+  "write_active_primary_path": "driver/PRIMARY",
+  "session_exclude_path": "driver/EXCLUDED",
+  "sync_panel_exclude_until_credit": true,
+  "drive_defaults": {
+    "panel": "on",
+    "notify": "auto",
+    "iteration_timeout": 7200,
+    "max_failures": 10
+  }
+}

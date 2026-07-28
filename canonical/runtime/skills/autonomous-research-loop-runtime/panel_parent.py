@@ -39,7 +39,30 @@ except ImportError:  # pragma: no cover - package-style import during tests
         def compute_policy_block(run_dir: Any = None) -> str:  # type: ignore[misc]
             return ""
 
-DEFAULT_PROVIDERS = ("claude", "codex", "codewhale", "kimi", "grok")
+# Host panel invite default (review/advice roster). Drive primary order is
+# separate (see failover.example.json primary_order).
+DEFAULT_PROVIDERS = (
+    "codex",
+    "claude",
+    "grok",
+    "opencode",
+    "antigravity",
+    "copilot",
+    "kimi",
+    "deepseek",
+)
+
+# Default drive primary failover order (documented; supervisor reads failover.json).
+DEFAULT_PRIMARY_ORDER = (
+    "claude",
+    "codex",
+    "grok",
+    "opencode",
+    "antigravity",
+    "copilot",
+    "kimi",
+    "deepseek",
+)
 
 DEFAULT_TIMEOUT_S = {
     "target_advice": 600,
@@ -54,6 +77,10 @@ DEFAULT_PROVIDER_MULT: dict[str, float] = {
     "codex": 1.1,
     "grok": 1.15,
     "codewhale": 1.0,
+    "deepseek": 1.0,
+    "opencode": 1.1,
+    "antigravity": 1.1,
+    "copilot": 1.1,
 }
 DEFAULT_TIMEOUT_CALC: dict[str, Any] = {
     "min_s": 120,
@@ -128,8 +155,9 @@ def build_cmd(
         ]
         return cmd, env
 
-    if provider == "codewhale":
-        bin_ = which("codewhale") or "codewhale"
+    if provider in ("codewhale", "deepseek"):
+        # deepseek is the drive --provider id; panel historically used codewhale.
+        bin_ = which("codewhale") or which("codewhale-tui") or which("deepseek") or "codewhale"
         return [bin_, "exec", prompt], env
 
     if provider == "kimi":
@@ -145,6 +173,19 @@ def build_cmd(
         bin_ = which("grok") or "grok"
         env["GROK_MULTI_SESSION"] = "1"
         return [bin_, "-p", prompt, "--yolo"], env
+
+    if provider == "opencode":
+        bin_ = which("opencode") or "opencode"
+        return [bin_, "run", prompt], env
+
+    if provider in ("antigravity", "antigravity-cli"):
+        bin_ = which("agy") or which("antigravity") or "agy"
+        # -p consumes the next argv as the prompt; flags must follow the prompt.
+        return [bin_, "-p", prompt, "--dangerously-skip-permissions"], env
+
+    if provider == "copilot":
+        bin_ = which("copilot") or "copilot"
+        return [bin_, "-p", prompt, "--allow-all-tools"], env
 
     raise ValueError(f"unknown provider {provider}")
 
@@ -557,7 +598,20 @@ def dispatch_phase(
         "panel_content_pass": len(usable) >= 1,
         "all_invited_usable": set(usable) >= set(providers),
         "different_family_logic_available": different_family
-        or any(p in usable for p in ("claude", "kimi", "codewhale", "grok")),
+        or any(
+            p in usable
+            for p in (
+                "claude",
+                "kimi",
+                "codewhale",
+                "deepseek",
+                "grok",
+                "opencode",
+                "codex",
+                "antigravity",
+                "copilot",
+            )
+        ),
         "timeout_mode": (next(iter(budgets.values()), {}) or {}).get("timeout_mode"),
         "provider_timeouts": {p: budgets[p]["timeout_s"] for p in providers if p in budgets},
         "results": results,
