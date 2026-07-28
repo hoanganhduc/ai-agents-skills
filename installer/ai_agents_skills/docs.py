@@ -2342,7 +2342,7 @@ Optional loop config (`panel.json` or `loop_state.standing_orders.panel`):
 ```json
 {
   "enabled": true,
-  "providers": ["claude", "codex", "codewhale", "kimi", "grok"],
+  "providers": ["codex", "claude", "grok", "opencode", "antigravity", "copilot", "kimi", "deepseek"],
   "timeouts": {"target_advice": 600, "result_review": 900}
 }
 ```

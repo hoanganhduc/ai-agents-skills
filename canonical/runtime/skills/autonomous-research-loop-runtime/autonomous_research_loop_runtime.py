@@ -801,6 +801,13 @@ STUB_ITERATION_SNIPPET = (
     "    open(marker, 'w').write('seen')\n"
     "    print('provider error: HTTP 429 Too Many Requests')\n"
     "    sys.exit(1)\n"
+    "if '--auth-fail' in sys.argv:\n"
+    "    print('ERROR: refresh_token_invalidated')\n"
+    "    print('401 Unauthorized: Please try signing in again.')\n"
+    "    sys.exit(1)\n"
+    "if '--generic-fail' in sys.argv:\n"
+    "    print('tool crashed: assertion failed')\n"
+    "    sys.exit(1)\n"
     "budget_path = os.path.join(run_dir, 'budget.json')\n"
     "budget = json.load(open(budget_path))\n"
     "budget['spent_iterations'] = int(budget.get('spent_iterations', 0)) + 1\n"
@@ -887,18 +894,100 @@ def selftest_driver_checks() -> dict[str, Any]:
         spec = resolve_provider_command("claude", base / "loop", environ=override_env)
         if spec["mode"] != "shell" or str(base / "loop") not in spec["shell"]:
             errors.append("claude: AAS_AUTOLOOP_CMD override not honored")
-        # 2. Quota-signal detection.
+        # 2. Quota-signal detection (provider-shaped; no bare "quota").
         for text in (
             "HTTP 429 Too Many Requests",
             "insufficient credit balance",
             "usage limit reached, resets 5pm",
             "You have run out of credits",
             "rate limit exceeded",
+            "quota exceeded for this account",
         ):
             if not QUOTA_PATTERN.search(text):
                 errors.append(f"quota pattern missed: {text!r}")
         if QUOTA_PATTERN.search("all checks passed cleanly"):
             errors.append("quota pattern false-positive on benign text")
+        # Bare "quota" alone (as in the host prompt) must not match.
+        if QUOTA_PATTERN.search("If you hit a credit or quota error, exit nonzero"):
+            errors.append("quota pattern false-positive on host prompt phrase")
+        # 2b. Classification: AUTH before QUOTA; prompt dual-match → auth.
+        host_prompt = (
+            "You are one iteration of a bounded autonomous research loop. "
+            "If you hit a credit or quota error, exit nonzero with the provider's error text."
+        )
+        auth_body = (
+            "ERROR codex: 401 Unauthorized: Your authentication token has been "
+            "invalidated. refresh_token_invalidated. Please try signing in again."
+        )
+        dual = host_prompt + "\n" + HOST_PROMPT_SENTINEL + "\n" + auth_body
+        if classify_iteration_failure(dual, prompt=host_prompt) != "auth":
+            errors.append("dual-match prompt+auth did not classify as auth")
+        if classify_iteration_failure(
+            host_prompt + "\n" + HOST_PROMPT_SENTINEL + "\ntool crashed",
+            prompt=host_prompt,
+        ) == "quota":
+            errors.append("prompt-only residual classified as quota")
+        skill_dump = (
+            host_prompt
+            + "\n"
+            + HOST_PROMPT_SENTINEL
+            + "\n"
+            + "Skill says: Credit/quota outages (rate limit, 429, out of credits, "
+            "usage limit, billing) detected in a FAILED iteration's output.\n"
+            + "actual error: TypeError: bad operand\n"
+        )
+        # After strip, skill dump may still match strong signals; require that a
+        # pure skill-prose line without HTTP/provider shape is not enough alone
+        # when combined with an obvious non-quota crash and no 429 line.
+        # Prefer classify as failure when crash is present and no real 429 line.
+        if classify_iteration_failure(
+            host_prompt + "\n" + HOST_PROMPT_SENTINEL + "\nTypeError: boom\n",
+            prompt=host_prompt,
+        ) != "failure":
+            errors.append("generic fail after prompt strip not failure")
+        if AUTH_PATTERN.search("401 total cells examined"):
+            # bare 401 without Unauthorized must not match (no \b401\b alone)
+            pass
+        if classify_iteration_failure(
+            "401 total polarities examined\nno auth issue\n", prompt=""
+        ) == "auth":
+            errors.append("weak 401 count classified as auth")
+        # 2c. Notify identity: banned generic dir + goal → research title.
+        loop_notify = base / "research_loop"
+        loop_notify.mkdir(parents=True, exist_ok=True)
+        init_loop(
+            selftest_init_args(loop_notify, max_iterations=1)
+        )
+        # Override goal for title derivation.
+        try:
+            st = read_json(loop_notify / "loop_state.json")
+            st["goal"] = (
+                "Characterize TS_k(H) acyclicity for finite simple H and k >= 3."
+            )
+            write_json(loop_notify / "loop_state.json", st)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"notify identity fixture setup failed: {exc}")
+        else:
+            ident = resolve_loop_notify_identity(loop_notify)
+            if ident.get("title", "").lower() in {
+                "research_loop",
+                "loop",
+                "research",
+            }:
+                errors.append(
+                    f"notify title stayed generic for research_loop dir: {ident}"
+                )
+            if ident.get("slug", "").lower() in {"research-loop", "loop", "research"}:
+                errors.append(
+                    f"notify slug stayed generic for research_loop dir: {ident}"
+                )
+            (loop_notify / "failover.json").write_text(
+                json.dumps({"research_title": "Explicit Title Only"}),
+                encoding="utf-8",
+            )
+            ident2 = resolve_loop_notify_identity(loop_notify)
+            if ident2.get("title") != "Explicit Title Only":
+                errors.append(f"explicit research_title not preferred: {ident2}")
         # 3. Drive to completion on a stub command (budget cap = 2 iterations).
         loop_a = base / "loop-a"
         init_loop(selftest_init_args(loop_a, max_iterations=2))
@@ -922,13 +1011,29 @@ def selftest_driver_checks() -> dict[str, Any]:
         loop_b = base / "loop-b"
         init_loop(selftest_init_args(loop_b, max_iterations=1))
         quota_cmd = f'"{sys.executable}" "{stub}" --quota-first'
-        result_b = drive_command(selftest_drive_args(loop_b, base / "reg", quota_cmd))
+        # Short backoff so selftest stays fast.
+        result_b = drive_command(
+            selftest_drive_args(loop_b, base / "reg", quota_cmd)
+        )
         if (
             result_b.get("reason") != "done"
             or result_b.get("quota_waits_total") != 1
             or int(read_json(loop_b / "budget.json").get("spent_iterations", 0)) != 1
         ):
             errors.append(f"drive quota pause-and-resume misbehaved: {result_b}")
+        # 5. Auth fail → exit 7, no quota waits.
+        loop_c = base / "loop-c"
+        init_loop(selftest_init_args(loop_c, max_iterations=3))
+        auth_cmd = f'"{sys.executable}" "{stub}" --auth-fail'
+        args_c = selftest_drive_args(loop_c, base / "reg", auth_cmd)
+        args_c.max_failures = 5
+        result_c = drive_command(args_c)
+        if (
+            result_c.get("reason") != "auth_or_session_dead"
+            or int(result_c.get("exit_code") or 0) != 7
+            or int(result_c.get("quota_waits_total") or 0) != 0
+        ):
+            errors.append(f"drive auth fail did not exit 7: {result_c}")
     return {
         "ok": not errors,
         "errors": errors,
@@ -1558,15 +1663,109 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
     },
 }
 
-# Scanned only over the output of FAILED iteration commands: a match means
-# "provider credit/quota outage - pause and retry" instead of a hard failure.
-QUOTA_PATTERN = re.compile(
-    r"rate.?limit|quota|credit ?balance|insufficient[ _-]?(?:credit|funds|quota)|"
-    r"usage ?limit|out of credits?|credits? (?:has |have |is |are )?(?:been )?"
-    r"(?:run out|exhausted|depleted)|limit (?:reached|exceeded)|"
-    r"too many requests|\b429\b|overloaded|billing",
+# Written into iteration logs after the host prompt so classification can strip
+# host text before matching provider failure signals.
+HOST_PROMPT_SENTINEL = "# --- END HOST PROMPT ---"
+
+# Auth/session death: rotate or stop; never treat as credit wait.
+# Prefer multi-token phrases; avoid bare \b401\b (hex / counts false positives).
+AUTH_PATTERN = re.compile(
+    r"token_invalidated|refresh_token_invalidated|"
+    r"authentication token has been invalidated|"
+    r"access token could not be refreshed|"
+    r"Your access token could not be refreshed|"
+    r"refresh token was revoked|"
+    r"Please log out and sign in again|"
+    r"Please try signing in again|"
+    r"\b401 Unauthorized\b|HTTP\s*401\b",
     re.IGNORECASE,
 )
+
+# Provider credit/quota outage → pause-and-retry (not a hard failure).
+# No bare "quota" (matches the fixed iteration prompt and skill dumps).
+# No bare "billing"/"overloaded" (common in policy prose dumps).
+QUOTA_PATTERN = re.compile(
+    r"HTTP\s*429|\b429\b\s*Too Many|"
+    r"rate.?limit(?:ed|s)?|"
+    r"quota[ _-]?(?:exceeded|limit|reached|exhausted)|"
+    r"credit ?balance|"
+    r"insufficient[ _-]?(?:credit|funds|quota)|"
+    r"usage ?limit|"
+    r"out of credits?|"
+    r"credits? (?:has |have |is |are )?(?:been )?"
+    r"(?:run out|exhausted|depleted)|"
+    r"limit (?:reached|exceeded)|"
+    r"too many requests",
+    re.IGNORECASE,
+)
+
+# Directory / label names that must not be used as the sole notify identity
+# when a research goal or explicit title is available.
+_BANNED_NOTIFY_GENERIC_NAMES = frozenset(
+    {
+        "loop",
+        "research",
+        "research_loop",
+        "research-loop",
+        "researchloop",
+        "autonomous",
+        "autoloop",
+        "autonomous_loop",
+        "autonomous-loop",
+        "run",
+        "driver",
+        "arl",
+    }
+)
+
+
+def build_classification_text(log_tail: str, prompt: str | None = None) -> str:
+    """Strip host prompt / sentinel so failure patterns match provider output."""
+    text = log_tail or ""
+    if prompt:
+        text = text.replace(prompt, "\n")
+    if HOST_PROMPT_SENTINEL in text:
+        text = text.rsplit(HOST_PROMPT_SENTINEL, 1)[-1]
+    # Drop residual host-prompt anchor lines even when the full prompt object
+    # is unavailable or drifted slightly.
+    drop_anchors = (
+        "If you hit a credit or quota error, exit nonzero",
+        "You are one iteration of a bounded autonomous research loop",
+        "the headless driver owns the stop conditions",
+    )
+    kept: list[str] = []
+    for line in text.splitlines():
+        if any(anchor in line for anchor in drop_anchors):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def classify_iteration_failure(
+    log_tail: str, prompt: str | None = None
+) -> str:
+    """Return 'auth' | 'quota' | 'failure' for a nonzero iteration exit."""
+    text = build_classification_text(log_tail, prompt)
+    if AUTH_PATTERN.search(text):
+        return "auth"
+    if QUOTA_PATTERN.search(text):
+        return "quota"
+    return "failure"
+
+
+def interruptible_sleep(seconds: float, run_dir: Path, *, slice_s: float = 5.0) -> bool:
+    """Sleep in short slices. Return True if STOP_REQUESTED or PAUSE appears."""
+    deadline = time.time() + max(0.0, float(seconds))
+    stop = run_dir / "STOP_REQUESTED"
+    pause = run_dir / "PAUSE"
+    while time.time() < deadline:
+        if stop.is_file() or pause.is_file():
+            return True
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(float(slice_s), remaining))
+    return stop.is_file() or pause.is_file()
 
 
 def _load_remote_bridge_mod() -> Any | None:
@@ -2549,6 +2748,7 @@ _NOTIFY_EVENT_MARKERS: dict[str, str] = {
     "iteration_failed": "❌",
     "iteration": "📌",
     "quota_wait": "⏳",
+    "auth_failure": "🔐",
     "paused": "⏸️",
     "terminal": "🛑",
     "driver_dead": "💀",
@@ -2563,6 +2763,7 @@ _ATTEMPT_PROGRESS_EVENTS = frozenset(
         "iteration_start",
         "iteration_failed",
         "quota_wait",
+        "auth_failure",
         "panel_target_start",
         "panel_target_ok",
         "panel_target_fail",
@@ -3073,6 +3274,12 @@ def build_progress_event(
                 f"(after banked {last_completed})."
             )
             output = ""
+        elif event == "auth_failure":
+            progress_note = (
+                f"Provider auth/session failure while attempting {next_iteration} "
+                f"(after banked {last_completed}); not a credit wait."
+            )
+            output = ""
         elif event.startswith("panel_target"):
             progress_note = (
                 f"Panel target phase for upcoming iter {next_iteration} "
@@ -3097,21 +3304,33 @@ def build_progress_event(
         run_dir, record, state, attempt_event=attempt_event
     )
 
+    # Research-topic title for notify identity (not bare "loop" / dir only).
+    try:
+        notify_ident = resolve_loop_notify_identity(run_dir)
+    except Exception:  # noqa: BLE001
+        notify_ident = {"title": run_dir.name, "slug": run_dir.name}
+    research_title = str(notify_ident.get("title") or run_dir.name).strip() or run_dir.name
+    # Compact line: prefer research title; append dir when it adds disambiguation.
+    if run_dir.name and run_dir.name != research_title and len(research_title) < 60:
+        compact_name = f"{research_title} ({run_dir.name})"
+    else:
+        compact_name = research_title
+
     # Compact one-liner for logs / LIVE_STATUS summaries.
     if attempt_event:
         compact = (
-            f"autoloop {run_dir.name}: [{event}] banked {last_completed}/"
+            f"autoloop {compact_name}: [{event}] banked {last_completed}/"
             f"{max_iter or '?'} attempting {next_iteration} "
             f"({decision}) — {objective[:160]}"
         )
     else:
         compact = (
-            f"autoloop {run_dir.name}: [{event}] iter {iteration}/{max_iter or '?'} "
+            f"autoloop {compact_name}: [{event}] iter {iteration}/{max_iter or '?'} "
             f"({decision}) — {objective[:160]}"
             + (f" | {output[:240]}" if output else "")
         )
     text = format_progress_notify_text(
-        loop_name=run_dir.name,
+        loop_name=research_title,
         event=event,
         iteration=iteration,
         max_iter=max_iter,
@@ -3128,7 +3347,7 @@ def build_progress_event(
         where=where,
     )
     text_html = format_progress_notify_telegram_html(
-        loop_name=run_dir.name,
+        loop_name=research_title,
         event=event,
         iteration=iteration,
         max_iter=max_iter,
@@ -3272,6 +3491,7 @@ _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
         "iteration_ok",
         "iteration_failed",
         "quota_wait",
+        "auth_failure",
         "paused",
         "terminal",
         "driver_dead",
@@ -3363,12 +3583,149 @@ def _remote_notify_remember(
     _remote_notify_store_disk(run_dir, disk)
 
 
+def _slugify_notify_id(text: str, *, max_len: int = 48) -> str:
+    raw = (text or "").strip().lower()
+    if not raw:
+        return ""
+    out: list[str] = []
+    prev_dash = False
+    for ch in raw:
+        if ch.isalnum():
+            out.append(ch)
+            prev_dash = False
+        elif ch in {" ", "_", "-", ".", "/"}:
+            if not prev_dash and out:
+                out.append("-")
+                prev_dash = True
+    slug = "".join(out).strip("-")
+    if len(slug) > max_len:
+        slug = slug[:max_len].rstrip("-")
+    return slug
+
+
+def _is_banned_notify_generic(name: str) -> bool:
+    cleaned = (name or "").strip().lower().replace(" ", "_")
+    if not cleaned:
+        return True
+    if cleaned in _BANNED_NOTIFY_GENERIC_NAMES:
+        return True
+    # "autonomous-kge3" is specific enough; bare "autonomous" is not.
+    return False
+
+
+def _short_title_from_goal(goal: str, *, max_len: int = 80) -> str:
+    g = " ".join((goal or "").split())
+    if not g:
+        return ""
+    # Prefer first sentence / clause.
+    for sep in (". ", "; ", " — ", " - "):
+        if sep in g:
+            g = g.split(sep, 1)[0].strip()
+            break
+    if len(g) > max_len:
+        cut = g[: max_len - 1].rsplit(" ", 1)[0]
+        g = (cut or g[: max_len - 1]).rstrip(" ,;:") + "…"
+    return g
+
+
+def resolve_loop_notify_identity(run_dir: Path | None = None) -> dict[str, str]:
+    """Research-topic title + Zulip job slug for progress notify.
+
+    Resolution for *title* (human):
+      1. failover.json / notify.json / standing_orders.notify research_title
+         (aliases: notify_title, display_name)
+      2. env AAS_AUTOLOOP_RESEARCH_TITLE / AAS_REMOTE_JOB_TITLE
+      3. short form of loop_state.goal
+      4. directory name if not a banned generic
+
+    Resolution for *slug* (Zulip topic / job id):
+      1. AAS_REMOTE_JOB_ID or explicit job_slug in config
+      2. slugify(title)
+      3. directory name if not banned-generic
+    """
+    title = ""
+    job_slug = ""
+    dir_name = ""
+    goal = ""
+    if run_dir is not None:
+        rd = Path(run_dir).expanduser().resolve()
+        dir_name = rd.name.strip()
+        # Explicit config files / standing orders.
+        for rel in ("failover.json", "notify.json"):
+            path = rd / rel
+            if not path.is_file():
+                continue
+            try:
+                data = read_json(path)
+            except Exception:  # noqa: BLE001
+                data = {}
+            if not isinstance(data, dict):
+                continue
+            for key in ("research_title", "notify_title", "display_name"):
+                val = str(data.get(key) or "").strip()
+                if val and not title:
+                    title = val
+            for key in ("job_slug", "remote_job_id"):
+                val = str(data.get(key) or "").strip()
+                if val and not job_slug:
+                    job_slug = val
+        try:
+            state_path = rd / "loop_state.json"
+            if state_path.is_file():
+                state = read_json(state_path)
+                if isinstance(state, dict):
+                    goal = str(state.get("goal") or "").strip()
+                    so = state.get("standing_orders")
+                    if isinstance(so, dict):
+                        notify_so = so.get("notify")
+                        if isinstance(notify_so, dict):
+                            for key in (
+                                "research_title",
+                                "notify_title",
+                                "display_name",
+                            ):
+                                val = str(notify_so.get(key) or "").strip()
+                                if val and not title:
+                                    title = val
+                            for key in ("job_slug", "remote_job_id"):
+                                val = str(notify_so.get(key) or "").strip()
+                                if val and not job_slug:
+                                    job_slug = val
+        except Exception:  # noqa: BLE001
+            pass
+    for env_key in ("AAS_AUTOLOOP_RESEARCH_TITLE", "AAS_REMOTE_JOB_TITLE"):
+        env_title = (os.environ.get(env_key) or "").strip()
+        if env_title:
+            title = env_title
+            break
+    env_job = (os.environ.get("AAS_REMOTE_JOB_ID") or "").strip()
+    if env_job:
+        job_slug = env_job
+    if not title and goal:
+        title = _short_title_from_goal(goal)
+    if not title and dir_name and not _is_banned_notify_generic(dir_name):
+        title = dir_name
+    if not title:
+        title = dir_name or "research"
+    if not job_slug:
+        job_slug = _slugify_notify_id(title)
+    if not job_slug and dir_name and not _is_banned_notify_generic(dir_name):
+        job_slug = _slugify_notify_id(dir_name) or dir_name
+    if not job_slug:
+        job_slug = _slugify_notify_id(dir_name) or "research"
+    return {"title": title, "slug": job_slug, "dir_name": dir_name}
+
+
 def resolve_remote_job_id(run_dir: Path | None = None) -> str | None:
-    """Topic id for remote-bridge: env first, else loop directory name."""
+    """Topic id for remote-bridge: explicit env/config, else research-topic slug."""
     env_id = (os.environ.get("AAS_REMOTE_JOB_ID") or "").strip()
     if env_id:
         return env_id
     if run_dir is not None:
+        ident = resolve_loop_notify_identity(run_dir)
+        slug = (ident.get("slug") or "").strip()
+        if slug:
+            return slug
         name = Path(run_dir).expanduser().resolve().name.strip()
         if name:
             return name
@@ -3585,6 +3942,7 @@ DRIVE_EXIT_CODES = {
     "runtime_error": 4,
     "quota_wait_exhausted": 5,
     "provider_unavailable": 6,
+    "auth_or_session_dead": 7,
     "bad_arguments": 2,
 }
 
@@ -3855,6 +4213,16 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 pre_spent = 0
             try:
                 with log_path.open("w", encoding="utf-8", errors="replace") as log_fh:
+                    # Host prompt + sentinel first so classification can strip
+                    # host text even when the agent re-echoes the prompt.
+                    try:
+                        log_fh.write(str(prompt or ""))
+                        log_fh.write("\n")
+                        log_fh.write(HOST_PROMPT_SENTINEL)
+                        log_fh.write("\n")
+                        log_fh.flush()
+                    except Exception:  # noqa: BLE001
+                        pass
                     # Always run the iteration agent with project root as cwd so
                     # headless CLIs (including grok -p) see the correct workspace
                     # even when the driver was started from another directory.
@@ -3894,7 +4262,28 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
             if rc != 0:
                 tail = read_log_tail(log_path)
-                if QUOTA_PATTERN.search(tail):
+                failure_class = classify_iteration_failure(
+                    tail, prompt=str(prompt or "")
+                )
+                if failure_class == "auth":
+                    # Auth/session death is not a credit wait: exit immediately
+                    # so an outer supervisor can rotate (exit 7).
+                    reason = "auth_or_session_dead"
+                    _progress(
+                        "auth_failure",
+                        source="drive",
+                        drive_cycle=iterations_run,
+                        rc=rc,
+                        log_path=str(log_path),
+                        failure_class="auth",
+                    )
+                    sys.stderr.write(
+                        f"autoloop-driver: provider auth/session failure (rc={rc}); "
+                        f"exiting with auth_or_session_dead "
+                        f"(log: {log_path})\n"
+                    )
+                    break
+                if failure_class == "quota":
                     # Credit/quota outage: honor the pause-and-wait policy instead
                     # of counting a failure. `done` re-checks budget caps and the
                     # STOP_REQUESTED sentinel on every cycle, so a paused run
@@ -3919,7 +4308,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         + (f"/{max_quota_waits}" if max_quota_waits else "")
                         + f", log: {log_path})\n"
                     )
-                    time.sleep(quota_backoff)
+                    if interruptible_sleep(quota_backoff, run_dir):
+                        # STOP/PAUSE during wait: re-check done path next loop.
+                        continue
                     continue
                 failures += 1
                 _progress(
@@ -4427,7 +4818,19 @@ def panel_command(args: argparse.Namespace) -> dict[str, Any]:
     providers = (
         [p.strip() for p in args.providers.split(",") if p.strip()]
         if args.providers
-        else list(cfg.get("providers") or ["claude", "codex", "codewhale", "kimi", "grok"])
+        else list(
+            cfg.get("providers")
+            or [
+                "codex",
+                "claude",
+                "grok",
+                "opencode",
+                "antigravity",
+                "copilot",
+                "kimi",
+                "deepseek",
+            ]
+        )
     )
     if args.smoke or args.phase == "smoke":
         timeout = args.timeout or int((cfg.get("timeouts") or {}).get("smoke", 120))

@@ -102,10 +102,19 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
   doctor
 ```
 
+## Agent-loop integration
+
+For autonomous research loops and multi-iteration agents (token inheritance,
+broker plan vs `oneshot`, preflight field semantics, allowlist-exhaust
+diagnostics, dual-lane with Kaggle), see
+`references/agent-loop-integration.md`. That reference is the portable
+operational contract; this page remains the skill entrypoint and lifecycle
+reference.
+
 ## Operational notes
 
-- The broker is the decision boundary. Provision on Hetzner only when the router chose this lane.
-- `HCLOUD_TOKEN` is read from the environment at runtime (env-injection, never argv, never logged). Do not write an `hcloud context` file and never place the token on a server. Use a dedicated, least-privilege Hetzner project with a project server-limit.
+- The broker is the decision boundary for **routing**. Provision on Hetzner only when the router chose this lane (or the loop’s allowlist permits it and plan/preflight agree). Execution is this skill’s `preflight` / `oneshot` (or up/push/run/wait/fetch/down).
+- `HCLOUD_TOKEN` is read from the environment at runtime (env-injection, never argv, never logged). Do not write an `hcloud context` file and never place the token on a server. Use a dedicated, least-privilege Hetzner project with a project server-limit. Drive supervisors that spawn child agents should export the token before spawn so children inherit it.
 - The project needs at least one SSH key (`hcloud ssh-key create`). `up` attaches the project keys to the create and refuses to provision without one, because the stock image has no password login and a keyless server bills while nothing can log into it. Set `HCLOUD_SSH_KEYS` to a comma-separated list of key names to pin which keys are used on a shared project.
 - Budget caps live under `[hetzner]` in `research-compute.toml`: `max_eur_per_job`, `max_eur_per_day`, `max_server_hours`, `max_concurrent_servers`, and `allowed_locations` / `allowed server types` allow-lists. The gate reserves the pessimistic worst case (`rate x ceil(max_server_hours) x count + IPv4`) before any create, so concurrent submits cannot collectively overspend.
 - A `job_id` names the server, so it must be a valid hostname: letters, digits, dots and hyphens, no underscores. `preflight` reports an unnameable id as `invalid_job_id` and `up` refuses before the gate reserves anything. When a create fails anyway, the reservation is released only if no server carries the job-id label, so a machine that may be billing keeps its budget.

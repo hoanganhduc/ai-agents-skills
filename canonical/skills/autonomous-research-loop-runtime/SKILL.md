@@ -91,23 +91,33 @@ Wrap with `nohup`, `systemd-run`, or Task Scheduler for multi-day runs.
 
 Driver behavior:
 
-- Each iteration's output is captured under `<loop>/driver_logs/`.
-- Credit/quota outages (rate limit, 429, out of credits, usage limit, billing)
-  detected in a FAILED iteration's output do not count as failures: the driver
-  pauses `--quota-backoff` seconds (default 900) and retries, honoring the
-  pause-and-wait-for-credits policy. `--max-quota-waits N` caps consecutive
-  waits (default 0 = wait indefinitely).
-- **Operator policy when a primary is known exhausted:** do not rely on infinite
-  `quota_wait` if another funded provider can run. Update
-  `panel.json` / `standing_orders.panel` with `exclude_until_credit`, stop the
-  drive process, and restart with `--provider <funded>`. Full policy:
-  instruction `provider-credit-quota.md`.
+- Each iteration's output is captured under `<loop>/driver_logs/` (host prompt +
+  `# --- END HOST PROMPT ---` sentinel first, then agent stdout/stderr).
+- Failure classification on nonzero exit (after stripping the host prompt):
+  **AUTH** (token invalidated / 401 Unauthorized / sign-in-again) → immediate
+  exit **7** `auth_or_session_dead` (no 900s sleep); **QUOTA** (429, out of
+  credits, usage limit, anchored `quota exceeded|limit|…`) →
+  `quota_wait` pause; else hard failure. Patterns match provider-error text,
+  not bare prompt word `quota`.
+- Credit/quota outages pause `--quota-backoff` seconds (default 900; interruptible
+  for `STOP_REQUESTED`/`PAUSE`) and retry. `--max-quota-waits N` caps consecutive
+  waits (default 0 = wait indefinitely). With `N>0`, exit 5 fires when
+  `quota_waits > N` (so `N=3` allows three sleeps, exits on the fourth signal).
+- **Multi-provider unattended:** stock `drive` stays single `--provider`. Prefer
+  the outer supervisor pack (`arl_drive_supervisor.sh` /
+  `LAUNCH_supervisor.sh` + `{loop}/failover.json`) which rotates on exit 5/6/7
+  and session-excludes dead primaries. See `supervisor_README.md` in this runtime
+  skill. Full policy: instruction `provider-credit-quota.md`.
+- **Operator policy when a primary is known exhausted and no supervisor:** do not
+  leave `max-quota-waits 0` spinning; stop and restart with `--provider <funded>`,
+  and set `exclude_until_credit` on the panel roster.
 - Genuine failures stop the run after `--max-failures` consecutive occurrences.
 - Stop conditions are re-checked every cycle by the `done` arbiter: iteration
   cap, wall/token/USD budgets, terminal ledger status, `STOP_REQUESTED` and
   `PAUSE` sentinels, and `require_user_stop_only`.
-- Exit codes: 0 stopped cleanly (`done`), 3 max failures, 4 runtime error,
-  5 quota waits exhausted, 6 provider binary unavailable.
+- Exit codes: 0 stopped cleanly (`done`), 2 bad arguments, 3 max failures,
+  4 runtime error, 5 quota waits exhausted, 6 provider binary unavailable,
+  7 auth/session dead.
 - Overrides: `AAS_AUTOLOOP_BIN_<PROVIDER>` (binary), `AAS_AUTOLOOP_ARGS_<PROVIDER>`
   (argument template; `{prompt}`/`{dir}` placeholders), `AAS_AUTOLOOP_CMD_<PROVIDER>`
   (full shell template; `{prompt}` is inserted shell-quoted and also exported as
@@ -138,7 +148,7 @@ Config (`<loop>/panel.json` or `loop_state.standing_orders.panel`):
 ```json
 {
   "enabled": true,
-  "providers": ["claude", "codex", "codewhale", "kimi", "grok"],
+  "providers": ["codex", "claude", "grok", "opencode", "antigravity", "copilot", "kimi", "deepseek"],
   "exclude_until_credit": [],
   "timeout_mode": "adaptive",
   "timeouts": {"target_advice": 600, "result_review": 900},
@@ -148,6 +158,11 @@ Config (`<loop>/panel.json` or `loop_state.standing_orders.panel`):
   "anti_deadlock_math_without_panel": true
 }
 ```
+
+Default panel invite order (when `providers` is omitted):  
+`codex, claude, grok, opencode, antigravity, copilot, kimi, deepseek`.  
+(`deepseek` is accepted as the panel id for the CodeWhale/DeepSeek CLI;
+`antigravity` uses `agy`.)
 
 `timeout_mode` is `adaptive` (default) or `fixed` (legacy: same cap for every
 provider). Adaptive budgets scale by prompt size, provider multiplier, and
@@ -168,10 +183,25 @@ Notify remains orthogonal. Banking still requires host evidence gates.
 ### Progress notify body (drive / watch)
 
 Zulip/Telegram progress events are built by `build_progress_event` →
-`format_progress_notify_text` / `format_progress_notify_telegram_html`:
+`format_progress_notify_text` / `format_progress_notify_telegram_html`.
+
+**Research-topic title (not generic “loop”):** the bold lead line and Zulip
+topic prefer a research identity from
+`resolve_loop_notify_identity`:
+
+1. `{loop}/failover.json` or `notify.json` / `standing_orders.notify`:
+   `research_title` (aliases `notify_title`, `display_name`)
+2. env `AAS_AUTOLOOP_RESEARCH_TITLE` / `AAS_REMOTE_JOB_TITLE`
+3. short form of `loop_state.goal` (≤80 chars)
+4. directory name only if it is not a banned generic (`loop`, `research_loop`, …)
+
+Zulip **topic** uses `job/{slug}` where slug is `AAS_REMOTE_JOB_ID` or
+`job_slug`, else a slugify of the research title (never default to bare
+`research_loop` when a goal/title exists).
 
 | Block | When | Source |
 |---|---|---|
+| Title | always | research title above — **not** only “loop” / bare dir when avoidable |
 | Progress | always | banked N · attempting N+1 on start/fail/panel-target; else `iter N/max` |
 | **Why** | when recoverable | `next_preferred_path`, recovery “Next safe action”, or active campaign |
 | **Where (goal)** | when recoverable | campaign id + recovery “Last valid node” + “Remaining gaps” |
@@ -186,6 +216,28 @@ and `•` bullets.
 
 Agents should put a short prose summary in `--output`. Paths alone are accepted
 as ledger artifacts but are **not** shown as the sole Result line in notify.
+
+### Primary failover supervisor (optional pack)
+
+For multi-day multi-provider runs, use the runtime support files (installed with
+this skill):
+
+- `supervisor_README.md` — full compose notes
+- `LAUNCH_supervisor.sh start|replace` — flock (`start` refuses if held → exit 10;
+  `replace` stops prior supervisor+drive then starts)
+- `arl_drive_supervisor.sh` — rotates on drive exit 5/6/7; session-excludes;
+  empty order → exit 11; restart cap → exit 12
+- `{loop}/failover.json` from `failover.example.json` (`primary_order`,
+  `research_title`, `max_quota_waits_per_primary`; multi-primary + waits 0 refused)
+
+Default example `primary_order` (drive failover):  
+`claude, codex, grok, opencode, antigravity, copilot, kimi, deepseek`.
+
+**Failover rule:** the supervisor always uses the **first available** provider in
+`primary_order` (skipping session-excluded names). A failed primary is excluded
+for the rest of the run; the next start is again the first remaining entry.
+
+Stock `drive` does **not** read `primary_order`; only the supervisor does.
 
 ### Formal policy (optional Lean assist)
 
