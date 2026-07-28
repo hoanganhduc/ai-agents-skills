@@ -37,6 +37,14 @@ class PanelParentUnitTests(unittest.TestCase):
             "read_only_filesystem",
         )
         self.assertEqual(pp.classify_error("rate limit exceeded", 1), "quota_or_credit")
+        self.assertEqual(
+            pp.classify_error(
+                "API error (status 402 Payment Required): "
+                "Grok Build usage balance exhausted",
+                1,
+            ),
+            "quota_or_credit",
+        )
 
     def test_dispatch_phase_with_fake_runner(self) -> None:
         def runner(cmd, env, cwd, timeout_s):  # noqa: ANN001
@@ -68,6 +76,43 @@ class PanelParentUnitTests(unittest.TestCase):
             self.assertEqual(len(summary["usable_providers"]), 8)
             self.assertTrue((iter_dir / "panel" / "01_target_advice" / "claude.md").is_file())
             self.assertTrue((iter_dir / "data" / "panel_dispatch_target_advice.json").is_file())
+
+    def test_dispatch_phase_caps_attempts_at_three(self) -> None:
+        calls = 0
+
+        def runner(cmd, env, cwd, timeout_s):  # noqa: ANN001
+            nonlocal calls
+            calls += 1
+            return 0, "PANEL_SMOKE_OK\n", ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            iter_dir = root / "iterations" / "iter001"
+            summaries = [
+                pp.dispatch_phase(
+                    iter_dir=iter_dir,
+                    phase="target_advice",
+                    prompt="Reply PANEL_SMOKE_OK",
+                    providers=["codex"],
+                    timeout_s=5,
+                    root=root,
+                    runner=runner,
+                    panel_cfg={
+                        "max_attempts": 3,
+                        "timeout_mode": "fixed",
+                        "timeouts": {"target_advice": 5},
+                        "timeout_calc": {"min_s": 1, "max_s": 5},
+                    },
+                )
+                for _ in range(4)
+            ]
+            self.assertEqual(calls, 3)
+            self.assertEqual(
+                [summary["attempt_number"] for summary in summaries],
+                [1, 2, 3, 3],
+            )
+            self.assertTrue(summaries[-1]["attempt_cap_reached"])
+            self.assertTrue(summaries[-1]["panel_content_pass"])
 
     def test_resolve_panel_mode_auto(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

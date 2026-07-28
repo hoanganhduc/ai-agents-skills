@@ -93,6 +93,7 @@ DEFAULT_TIMEOUT_CALC: dict[str, Any] = {
 }
 
 MIN_USABLE_CHARS = 8
+DEFAULT_MAX_ATTEMPTS = 3
 
 # Optional injectable runner for unit tests: (cmd, env, cwd, timeout_s) -> (rc, stdout, stderr)
 Runner = Callable[[list[str], dict[str, str], str, int], tuple[int, str, str]]
@@ -196,7 +197,15 @@ def classify_error(stderr: str, exit_code: int) -> str:
         return "timeout"
     if "read-only file system" in s or "erofs" in s or "os error 30" in s:
         return "read_only_filesystem"
-    if "quota" in s or "credit" in s or "rate limit" in s or "429" in s:
+    if (
+        "quota" in s
+        or "credit" in s
+        or "rate limit" in s
+        or "429" in s
+        or "http 402" in s
+        or "402 payment required" in s
+        or "usage balance exhausted" in s
+    ):
         return "quota_or_credit"
     if "enotimp" in s:
         return "network_enotimp"
@@ -510,11 +519,42 @@ def dispatch_phase(
     run_dir: Path | None = None,
 ) -> dict[str, Any]:
     out_dir, raw_dir = phase_dirs(iter_dir, phase)
+    cfg = panel_cfg if panel_cfg is not None else {}
+    try:
+        max_attempts = max(1, int(cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS)))
+    except (TypeError, ValueError):
+        max_attempts = DEFAULT_MAX_ATTEMPTS
+    attempt_number, attempt_allowed = reserve_panel_attempt(
+        iter_dir, phase, max_attempts=max_attempts
+    )
+    if not attempt_allowed:
+        previous_path = iter_dir / "data" / f"panel_dispatch_{phase}.json"
+        previous: dict[str, Any] = {}
+        try:
+            loaded = json.loads(previous_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                previous = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+        previous.update(
+            {
+                "schema_version": "panel_parent.v1",
+                "phase": phase,
+                "iter_dir": str(iter_dir),
+                "attempt_number": attempt_number,
+                "max_attempts": max_attempts,
+                "attempt_cap_reached": True,
+                "dispatch_skipped": True,
+            }
+        )
+        previous.setdefault("providers_invited", list(providers))
+        previous.setdefault("usable_providers", [])
+        previous.setdefault("panel_content_pass", False)
+        return previous
     (out_dir / "prompt.md").write_text(
         prompt if prompt.endswith("\n") else prompt + "\n", encoding="utf-8"
     )
 
-    cfg = panel_cfg if panel_cfg is not None else {}
     history_root = run_dir
     if history_root is None:
         # iter_dir is often <loop>/iterations/iterNNN
@@ -614,6 +654,10 @@ def dispatch_phase(
         ),
         "timeout_mode": (next(iter(budgets.values()), {}) or {}).get("timeout_mode"),
         "provider_timeouts": {p: budgets[p]["timeout_s"] for p in providers if p in budgets},
+        "attempt_number": attempt_number,
+        "max_attempts": max_attempts,
+        "attempt_cap_reached": False,
+        "dispatch_skipped": False,
         "results": results,
         "generated_unix": time.time(),
     }
@@ -626,6 +670,44 @@ def dispatch_phase(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
     )
     return summary
+
+
+def reserve_panel_attempt(
+    iter_dir: Path, phase: str, *, max_attempts: int = DEFAULT_MAX_ATTEMPTS
+) -> tuple[int, bool]:
+    """Reserve one persistent panel-phase attempt for a pending iteration.
+
+    A drive process can restart or rotate providers while the same iteration is
+    pending. Persisting this count prevents each fresh process from restarting
+    panel dispatch indefinitely.
+    """
+    limit = max(1, int(max_attempts))
+    data_dir = iter_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    path = data_dir / "panel_attempts.json"
+    state: dict[str, Any] = {"schema_version": "panel_attempts.v1", "phases": {}}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            state.update(loaded)
+    except (OSError, json.JSONDecodeError):
+        pass
+    phases = state.get("phases")
+    if not isinstance(phases, dict):
+        phases = {}
+        state["phases"] = phases
+    try:
+        count = max(0, int(phases.get(phase, 0)))
+    except (TypeError, ValueError):
+        count = 0
+    if count >= limit:
+        return limit, False
+    count += 1
+    phases[phase] = count
+    tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return count, True
 
 
 def _normalize_name_list(raw: object) -> list[str]:
@@ -668,6 +750,7 @@ def load_panel_config(run_dir: Path) -> dict[str, Any]:
         "timeout_mode": "adaptive",
         "require_different_family": True,
         "anti_deadlock_math_without_panel": True,
+        "max_attempts": DEFAULT_MAX_ATTEMPTS,
     }
     panel_json = run_dir / "panel.json"
     if panel_json.is_file():
@@ -701,6 +784,12 @@ def load_panel_config(run_dir: Path) -> dict[str, Any]:
     # Normalize invite list after merges so dispatch never sees excluded names.
     cfg["providers"] = filter_panel_providers(cfg)
     cfg["exclude_until_credit"] = _normalize_name_list(cfg.get("exclude_until_credit"))
+    try:
+        cfg["max_attempts"] = max(
+            1, int(cfg.get("max_attempts", DEFAULT_MAX_ATTEMPTS))
+        )
+    except (TypeError, ValueError):
+        cfg["max_attempts"] = DEFAULT_MAX_ATTEMPTS
     return cfg
 
 

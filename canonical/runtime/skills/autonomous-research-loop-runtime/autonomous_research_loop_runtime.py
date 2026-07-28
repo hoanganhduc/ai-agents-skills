@@ -805,6 +805,9 @@ STUB_ITERATION_SNIPPET = (
     "    print('ERROR: refresh_token_invalidated')\n"
     "    print('401 Unauthorized: Please try signing in again.')\n"
     "    sys.exit(1)\n"
+    "if '--weekly-limit' in sys.argv:\n"
+    "    print(\"You've hit your weekly limit · resets 4am (Asia/Ho_Chi_Minh)\")\n"
+    "    sys.exit(1)\n"
     "if '--generic-fail' in sys.argv:\n"
     "    print('tool crashed: assertion failed')\n"
     "    sys.exit(1)\n"
@@ -902,6 +905,9 @@ def selftest_driver_checks() -> dict[str, Any]:
             "You have run out of credits",
             "rate limit exceeded",
             "quota exceeded for this account",
+            "You've hit your weekly limit · resets 4am (Asia/Ho_Chi_Minh)",
+            "You have hit your weekly limit",
+            "API error (status 402 Payment Required): Grok Build usage balance exhausted",
         ):
             if not QUOTA_PATTERN.search(text):
                 errors.append(f"quota pattern missed: {text!r}")
@@ -910,6 +916,11 @@ def selftest_driver_checks() -> dict[str, Any]:
         # Bare "quota" alone (as in the host prompt) must not match.
         if QUOTA_PATTERN.search("If you hit a credit or quota error, exit nonzero"):
             errors.append("quota pattern false-positive on host prompt phrase")
+        weekly = (
+            "You've hit your weekly limit · resets 4am (Asia/Ho_Chi_Minh)\n"
+        )
+        if classify_iteration_failure(weekly, prompt="") != "quota":
+            errors.append("weekly limit phrase did not classify as quota")
         # 2b. Classification: AUTH before QUOTA; prompt dual-match → auth.
         host_prompt = (
             "You are one iteration of a bounded autonomous research loop. "
@@ -1034,6 +1045,23 @@ def selftest_driver_checks() -> dict[str, Any]:
             or int(result_c.get("quota_waits_total") or 0) != 0
         ):
             errors.append(f"drive auth fail did not exit 7: {result_c}")
+        # 6. Weekly limit ×3 with max_quota_waits=3 → exit 5 (switch signal).
+        loop_d = base / "loop-d"
+        init_loop(selftest_init_args(loop_d, max_iterations=10))
+        weekly_cmd = f'"{sys.executable}" "{stub}" --weekly-limit'
+        args_d = selftest_drive_args(loop_d, base / "reg", weekly_cmd)
+        args_d.max_quota_waits = 3
+        args_d.quota_backoff = 0
+        args_d.max_failures = 3
+        result_d = drive_command(args_d)
+        if (
+            result_d.get("reason") != "quota_wait_exhausted"
+            or int(result_d.get("exit_code") or 0) != 5
+            or int(result_d.get("quota_waits_total") or 0) != 3
+        ):
+            errors.append(
+                f"drive weekly-limit×3 did not exit 5 after 3 waits: {result_d}"
+            )
     return {
         "ok": not errors,
         "errors": errors,
@@ -1684,20 +1712,43 @@ AUTH_PATTERN = re.compile(
 # Provider credit/quota outage → pause-and-retry (not a hard failure).
 # No bare "quota" (matches the fixed iteration prompt and skill dumps).
 # No bare "billing"/"overloaded" (common in policy prose dumps).
+# Includes Claude/Anthropic weekly caps: "You've hit your weekly limit · resets …"
 QUOTA_PATTERN = re.compile(
+    r"HTTP\s*402|\b402\b\s*Payment Required|"
     r"HTTP\s*429|\b429\b\s*Too Many|"
     r"rate.?limit(?:ed|s)?|"
     r"quota[ _-]?(?:exceeded|limit|reached|exhausted)|"
     r"credit ?balance|"
     r"insufficient[ _-]?(?:credit|funds|quota)|"
     r"usage ?limit|"
+    r"usage ?balance(?: (?:exhausted|depleted))?|"
+    r"weekly ?limit|"
+    r"monthly ?limit|"
+    r"hit your (?:weekly |monthly |usage )?limit|"
+    r"you(?:'|’)ve hit your (?:weekly |monthly |usage )?limit|"
     r"out of credits?|"
     r"credits? (?:has |have |is |are )?(?:been )?"
     r"(?:run out|exhausted|depleted)|"
     r"limit (?:reached|exceeded)|"
-    r"too many requests",
+    r"too many requests|"
+    r"resets?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?",
     re.IGNORECASE,
 )
+
+# Hard caps that will not clear in a few minutes: use a short backoff between the
+# N consecutive quota signals, then exit 5 so the supervisor can switch primary.
+QUOTA_SHORT_BACKOFF_PATTERN = re.compile(
+    r"HTTP\s*402|\b402\b\s*Payment Required|"
+    r"usage ?balance(?: (?:exhausted|depleted))?|"
+    r"weekly ?limit|monthly ?limit|"
+    r"hit your (?:weekly |monthly |usage )?limit|"
+    r"you(?:'|’)ve hit your (?:weekly |monthly |usage )?limit|"
+    r"resets?\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|"
+    r"out of credits?|"
+    r"insufficient[ _-]?(?:credit|funds|quota)",
+    re.IGNORECASE,
+)
+QUOTA_SHORT_BACKOFF_S = 15
 
 # Directory / label names that must not be used as the sole notify identity
 # when a research goal or explicit title is available.
@@ -4284,12 +4335,21 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     break
                 if failure_class == "quota":
-                    # Credit/quota outage: honor the pause-and-wait policy instead
-                    # of counting a failure. `done` re-checks budget caps and the
-                    # STOP_REQUESTED sentinel on every cycle, so a paused run
-                    # still stops the moment a real stop condition fires.
+                    # Credit/quota outage: pause-and-retry, or after N consecutive
+                    # quota signals (default operator policy: N=3) exit 5 so an
+                    # outer supervisor can session-exclude as quota_or_credit and
+                    # switch to the first available primary.
                     quota_waits += 1
                     quota_waits_total += 1
+                    class_text = build_classification_text(
+                        tail, prompt=str(prompt or "")
+                    )
+                    short_cap = bool(QUOTA_SHORT_BACKOFF_PATTERN.search(class_text))
+                    wait_s = (
+                        min(int(quota_backoff), QUOTA_SHORT_BACKOFF_S)
+                        if short_cap and max_quota_waits
+                        else int(quota_backoff)
+                    )
                     _progress(
                         "quota_wait",
                         source="drive",
@@ -4297,18 +4357,27 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         rc=rc,
                         log_path=str(log_path),
                         quota_waits=quota_waits,
+                        short_cap=short_cap,
                     )
-                    if max_quota_waits and quota_waits > max_quota_waits:
+                    # N means switch after the N-th consecutive quota failure
+                    # (was `>` which required N+1 signals).
+                    if max_quota_waits and quota_waits >= max_quota_waits:
                         reason = "quota_wait_exhausted"
+                        sys.stderr.write(
+                            f"autoloop-driver: provider credit/quota exhausted after "
+                            f"{quota_waits} consecutive signal(s) "
+                            f"(max-quota-waits={max_quota_waits}); "
+                            f"exiting quota_wait_exhausted (log: {log_path})\n"
+                        )
                         break
                     sys.stderr.write(
                         f"autoloop-driver: provider credit/quota signal (rc={rc}); "
-                        f"waiting {quota_backoff}s before retry "
+                        f"waiting {wait_s}s before retry "
                         f"(consecutive waits: {quota_waits}"
                         + (f"/{max_quota_waits}" if max_quota_waits else "")
                         + f", log: {log_path})\n"
                     )
-                    if interruptible_sleep(quota_backoff, run_dir):
+                    if interruptible_sleep(wait_s, run_dir):
                         # STOP/PAUSE during wait: re-check done path next loop.
                         continue
                     continue
