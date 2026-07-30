@@ -1076,7 +1076,10 @@ class GoalFocusContractsTests(_AttestedGoalFocusTestCase):
             state = json.loads((root / "loop_state.json").read_text())
             self.assertEqual(state["next_preferred_path"], gf.render_current_path(plan))
             self.assertEqual(state["goal_focus_projection"]["plan_revision"], plan["plan_revision"])
-            self.assertIn(gf.render_current_path(plan), (root / "recovery.md").read_text())
+            self.assertIn(
+                gf.render_current_path(plan),
+                (root / "recovery.md").read_text(encoding="utf-8"),
+            )
             decisions = gf.load_direction_decisions(root)
             self.assertEqual(decisions[-1]["decision_type"], "select_direction")
             validation = gf.validate_goal_focus(root, require_enabled=True)

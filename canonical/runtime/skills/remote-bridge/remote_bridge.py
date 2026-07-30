@@ -1537,12 +1537,24 @@ class NotificationDeliveryLock:
                 os.close(pinned_parent_fd)
                 raise
             try:
-                lock_fd = os.open(
-                    self.path.name,
-                    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-                    0o600,
-                    dir_fd=pinned_parent_fd,
-                )
+                # macOS quirk: O_NOFOLLOW combined with O_CREAT fails with
+                # ENOENT when the leaf does not exist yet, which loses every
+                # create race on this lock. Create exclusively first (O_EXCL
+                # rejects any existing path, including a planted symlink),
+                # then open the now-present leaf with O_NOFOLLOW.
+                try:
+                    lock_fd = os.open(
+                        self.path.name,
+                        os.O_RDWR | os.O_CREAT | os.O_EXCL,
+                        0o600,
+                        dir_fd=pinned_parent_fd,
+                    )
+                except FileExistsError:
+                    lock_fd = os.open(
+                        self.path.name,
+                        os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+                        dir_fd=pinned_parent_fd,
+                    )
             finally:
                 os.close(pinned_parent_fd)
             info = os.fstat(lock_fd)
