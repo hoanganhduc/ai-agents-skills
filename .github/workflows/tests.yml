@@ -39,6 +39,18 @@ on:
 permissions:
   contents: read
 
+# One matrix per branch at a time. A push that lands while the previous matrix
+# is still running makes that matrix answer a question nobody is asking any
+# more, and the Windows job alone holds a runner for a quarter of an hour, so
+# the superseded run is cancelled instead of finishing. ``head_ref`` collapses a
+# pull request onto the branch that opened it, which would otherwise run the
+# same commits twice. The default branch is exempt: its result is the published
+# status of the repository, and a later push must not erase the answer for an
+# earlier one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   linux:
     runs-on: ubuntu-latest
