@@ -18,7 +18,8 @@ import tempfile
 import time
 import unittest
 from pathlib import Path, PurePosixPath
-from typing import Mapping
+from typing import Mapping, Sequence
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -597,6 +598,66 @@ Path(sys.argv[1]).write_text("survived", encoding="utf-8")
             self.assertIsNone(pr.cleanup_resource_scope(scope_unit))
             time.sleep(3)
             self.assertFalse(marker.exists())
+
+
+class _StubSystemctl:
+    """Answer the cleanup path's ``systemctl`` calls from a scripted transcript.
+
+    The window this stub stages is owned by systemd: the scope can finish
+    deactivating between the inspection and the kill, and no live scope can be
+    held in that state on demand.  Each ``show`` returns the next scripted unit
+    state and repeats the last one once the script runs out, so a poll that
+    keeps observing the same state stays on the final entry.
+    """
+
+    def __init__(self, *, kill_returncode: int, states: Sequence[str]) -> None:
+        self.kill_returncode = kill_returncode
+        self.states = list(states)
+        self.commands: list[list[str]] = []
+
+    def __call__(self, command: Sequence[str], **_kwargs: object):
+        argv = [str(item) for item in command]
+        self.commands.append(argv)
+        if "kill" in argv:
+            return subprocess.CompletedProcess(argv, self.kill_returncode, "", "")
+        state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+        load_state = "not-found" if state == "not-found" else "loaded"
+        active_state = "inactive" if state == "not-found" else state
+        return subprocess.CompletedProcess(
+            argv, 0, f"LoadState={load_state}\nActiveState={active_state}\n", ""
+        )
+
+
+class ProviderResourceScopeCleanupRaceTests(unittest.TestCase):
+    """A scope torn down under the cleanup call is cleaned up, not a failure."""
+
+    SCOPE_UNIT = "aas-arl-panel-4242-0123456789ab.scope"
+
+    def _cleanup_with(self, stub: _StubSystemctl) -> str | None:
+        with mock.patch.object(
+            pr, "_trusted_host_binary", return_value="/usr/bin/systemctl"
+        ), mock.patch.object(pr.subprocess, "run", stub):
+            return pr.cleanup_resource_scope(self.SCOPE_UNIT)
+
+    def test_kill_that_loses_the_teardown_race_is_clean(self) -> None:
+        stub = _StubSystemctl(kill_returncode=1, states=["active", "not-found"])
+
+        self.assertIsNone(self._cleanup_with(stub))
+        self.assertTrue(any("kill" in argv for argv in stub.commands))
+
+    def test_kill_refused_while_the_scope_runs_still_fails_closed(self) -> None:
+        stub = _StubSystemctl(kill_returncode=1, states=["active"])
+
+        self.assertEqual(
+            self._cleanup_with(stub), "provider resource scope cleanup failed"
+        )
+
+    def test_accepted_kill_that_leaves_the_scope_running_reports_survival(self) -> None:
+        stub = _StubSystemctl(kill_returncode=0, states=["active"])
+
+        self.assertEqual(
+            self._cleanup_with(stub), "provider resource scope survived cleanup"
+        )
 
 
 if __name__ == "__main__":
