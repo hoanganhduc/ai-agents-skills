@@ -48,11 +48,11 @@ def _sha256(path: Path) -> str:
 class _VanishingLockDirectory:
     """Remove the run directory just before the lock file is opened.
 
-    ``O_CREAT`` recreates a removed lock file, so only a missing parent
-    directory can make the kernel raise ``ENOENT`` for the lock open. Dropping
-    the directory under the already-open directory descriptor therefore
-    reproduces the concurrent-cleanup race with a real kernel error instead of
-    a synthetic exception.
+    ``O_CREAT`` recreates a removed lock file, so a missing parent directory is
+    the one cause of ``ENOENT`` a test can stage without patching the kernel.
+    Dropping the directory under the already-open directory descriptor
+    reproduces that race with a real kernel error instead of a synthetic
+    exception.
     """
 
     def __init__(self, run_dir: Path, *, every_attempt: bool = False) -> None:

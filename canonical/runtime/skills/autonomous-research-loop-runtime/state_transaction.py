@@ -409,10 +409,13 @@ class LoopLock:
                 self._handle = self._open_lock_handle(path)
                 break
             except FileNotFoundError as exc:
-                # Another writer can drop the directory that holds the lock
-                # between the chain walk and the open, and ``O_CREAT`` cannot
-                # rebuild a missing parent.  Only this vanished-path race is
-                # retried; every other failure still fails closed.
+                # ``O_CREAT`` makes this open succeed whether or not the lock
+                # file exists, so a missing path means the chain was in flux:
+                # the directory holding the lock went away between the walk and
+                # the open, or the platform failed the create while a second
+                # writer created the same lock.  macOS reports the second case
+                # when two writers contend on one revision.  Only a missing
+                # path is retried; every other failure still fails closed.
                 if time.monotonic() >= deadline:
                     raise LockTimeout(f"timed out opening loop lock: {path}") from exc
                 time.sleep(0.025)
