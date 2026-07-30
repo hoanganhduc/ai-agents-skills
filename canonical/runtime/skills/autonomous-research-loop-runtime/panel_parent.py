@@ -309,9 +309,17 @@ PANEL_PII_CONTENT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "phone",
+        # Only phone-shaped digit groups count: a leading +country code, a
+        # parenthesized area code, or separators around the middle group.
+        # Bare digit runs stay unflagged — research payloads are full of
+        # counts, seeds, and timing floats that a looser pattern rejects,
+        # which blocked review prompts and redacted provider diagnostics.
         re.compile(
-            r"(?<![A-Za-z0-9])(?:\+?\d{1,3}[ .-]?)?(?:\(?\d{2,4}\)?[ .-]?)"
-            r"\d{3}[ .-]?\d{4}(?![A-Za-z0-9])"
+            r"(?<![A-Za-z0-9])(?:"
+            r"\+\d{1,3}[ .-]?\(?\d{2,4}\)?[ .-]?\d{3}[ .-]?\d{4}"
+            r"|\(\d{2,4}\)[ .-]?\d{3}[ .-]?\d{4}"
+            r"|\d{2,4}[ .-]\d{3}[ .-]\d{4}"
+            r")(?![A-Za-z0-9])"
         ),
     ),
     (
@@ -1459,6 +1467,42 @@ def validate_strategy_advice(data: Any) -> list[str]:
     return errors
 
 
+CLAIM_REVIEW_STATUS_SYNONYMS = {
+    "accepted": "supported",
+    "confirmed": "supported",
+    "verified": "supported",
+    "refuted": "disputed",
+    "contested": "disputed",
+    "not_run": "not_checked",
+    "skipped": "not_checked",
+    "unchecked": "not_checked",
+}
+
+
+def normalize_result_review_statuses(data: Any) -> list[str]:
+    """Map unambiguous claim-status synonyms onto the canonical enum.
+
+    Reviewer models sometimes paraphrase the enum (``accepted`` for
+    ``supported``); each mapping preserves meaning and every applied rewrite
+    is reported so host artifacts keep the reviewer's original wording.
+    """
+    if not isinstance(data, dict):
+        return []
+    reviews = data.get("claim_reviews")
+    if not isinstance(reviews, list):
+        return []
+    notes: list[str] = []
+    for index, review in enumerate(reviews):
+        if not isinstance(review, dict):
+            continue
+        status = str(review.get("status") or "").strip().lower()
+        replacement = CLAIM_REVIEW_STATUS_SYNONYMS.get(status)
+        if replacement and review.get("status") != replacement:
+            review["status"] = replacement
+            notes.append(f"claim_reviews[{index}].status: {status} -> {replacement}")
+    return notes
+
+
 def validate_result_review(data: Any) -> list[str]:
     """Validate one ``result_review.v1`` response and banking invariants."""
     if not isinstance(data, dict):
@@ -1616,16 +1660,19 @@ def parse_panel_response(phase: str, text: str) -> dict[str, Any]:
             "errors": [] if usable_stdout(text) else ["stdout is empty or non-substantive"],
         }
     data, errors = _decode_json_response(text)
+    normalized: list[str] = []
     if not errors:
         if expected == "strategy_advice.v1":
             errors = validate_strategy_advice(data)
         else:
+            normalized = normalize_result_review_statuses(data)
             errors = validate_result_review(data)
     return {
         "required_schema": expected,
         "valid": not errors,
         "payload": data if not errors else None,
         "errors": errors,
+        "normalized": normalized,
     }
 
 

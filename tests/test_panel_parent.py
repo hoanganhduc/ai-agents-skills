@@ -2014,5 +2014,61 @@ class PanelParentUnitTests(unittest.TestCase):
             self.assertIn("PATH-A", brief)
 
 
+class PanelPiiPhonePatternTests(unittest.TestCase):
+    """The phone detector must not fire on bare research digit runs."""
+
+    def test_research_numbers_do_not_fire_phone(self) -> None:
+        for payload in (
+            "elapsed 1.99658203125 seconds on 96 seeds",
+            "address_space_bytes 68719476736 and 4294967296",
+            "state count 99658203125 within cap",
+            "timestamp 2026-07-30T05:16:06Z window 14/14",
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(pp.panel_payload_pii_findings(payload), [])
+
+    def test_formatted_phone_numbers_still_fire(self) -> None:
+        for payload in (
+            "call +1 (202) 555-0187 now",
+            "hotline (090) 123-4567",
+            "dial 090-123-4567 today",
+            "intl +84 90 123 4567",
+        ):
+            with self.subTest(payload=payload):
+                self.assertEqual(
+                    pp.panel_payload_pii_findings(payload), ["pii:phone"]
+                )
+
+
+class ResultReviewStatusNormalizationTests(unittest.TestCase):
+    """Unambiguous claim-status synonyms normalize; others stay invalid."""
+
+    def test_synonyms_normalize_and_are_reported(self) -> None:
+        data = {
+            "claim_reviews": [
+                {"claim_id": "c1", "status": "accepted", "reason": "ok"},
+                {"claim_id": "c2", "status": "not_run", "reason": "skipped"},
+                {"claim_id": "c3", "status": "supported", "reason": "ok"},
+            ]
+        }
+        notes = pp.normalize_result_review_statuses(data)
+        self.assertEqual(
+            [review["status"] for review in data["claim_reviews"]],
+            ["supported", "not_checked", "supported"],
+        )
+        self.assertEqual(len(notes), 2)
+        self.assertIn("accepted -> supported", notes[0])
+
+    def test_ambiguous_status_stays_and_fails_validation(self) -> None:
+        data = {
+            "claim_reviews": [
+                {"claim_id": "c1", "status": "maybe", "reason": "unsure"}
+            ]
+        }
+        self.assertEqual(pp.normalize_result_review_statuses(data), [])
+        self.assertEqual(data["claim_reviews"][0]["status"], "maybe")
+
+
+
 if __name__ == "__main__":
     unittest.main()
