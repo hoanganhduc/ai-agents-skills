@@ -1884,5 +1884,104 @@ class RemoteBridgeNotifyDirectoryChain(unittest.TestCase):
             self.assertEqual(probe, reopened)
 
 
+class _MissingLockLeaf:
+    """Report the lock leaf as missing for the first ``failures`` opens.
+
+    Two senders that race to create one lock leaf can be told the leaf does not
+    exist even though ``O_CREAT`` was requested; macOS does this when a retry
+    and its original delivery run at the same moment. That schedule cannot be
+    forced from a test, so the injector raises the same ``ENOENT`` the lock has
+    to survive and leaves every other open alone.
+    """
+
+    def __init__(self, leaf_name: str, *, failures: int) -> None:
+        self.leaf_name = leaf_name
+        self.remaining = failures
+        self.attempts = 0
+        self._real_open = os.open
+
+    def __call__(self, path: object, *args: object, **kwargs: object) -> int:
+        if os.path.basename(str(path)) == self.leaf_name:
+            self.attempts += 1
+            if self.remaining > 0:
+                self.remaining -= 1
+                raise FileNotFoundError(2, "No such file or directory", str(path))
+        return self._real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+
+class RemoteBridgeNotificationLockRetry(unittest.TestCase):
+    """The delivery lock survives a leaf that transiently reports ENOENT."""
+
+    def _mod(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("aas_remote_bridge_lock", RB)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _lock(self, mod, root: Path):
+        return mod.NotificationDeliveryLock("a" * 64, mod.Mailbox(root))
+
+    def test_transient_missing_leaf_is_retried_until_the_lock_is_held(self) -> None:
+        from unittest import mock
+
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = self._lock(mod, Path(tmp))
+            injector = _MissingLockLeaf(lock.path.name, failures=3)
+            with mock.patch.object(mod.os, "open", injector):
+                with lock:
+                    pass
+            self.assertEqual(injector.attempts, 4)
+            self.assertTrue(lock.path.is_file())
+
+    def test_persistently_missing_leaf_fails_closed_without_leaking(self) -> None:
+        from unittest import mock
+
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = self._lock(mod, Path(tmp))
+            injector = _MissingLockLeaf(lock.path.name, failures=10**6)
+            probe = os.open(os.devnull, os.O_RDONLY)
+            os.close(probe)
+            with mock.patch.object(mod, "NOTIFY_LOCK_OPEN_TIMEOUT_SECONDS", 0.1):
+                with mock.patch.object(mod.os, "open", injector):
+                    with self.assertRaisesRegex(
+                        OSError, "timed out opening notification lock"
+                    ):
+                        with lock:
+                            pass
+            self.assertGreater(injector.attempts, 1)
+            reopened = os.open(os.devnull, os.O_RDONLY)
+            os.close(reopened)
+            # A pinned parent left open by a failed attempt would shift this.
+            self.assertEqual(probe, reopened)
+
+    def test_other_open_failures_are_not_retried(self) -> None:
+        from unittest import mock
+
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = self._lock(mod, Path(tmp))
+            attempts = 0
+            real_open = os.open
+
+            def refuse(path: object, *args: object, **kwargs: object) -> int:
+                nonlocal attempts
+                if os.path.basename(str(path)) == lock.path.name:
+                    attempts += 1
+                    raise PermissionError(13, "Permission denied", str(path))
+                return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+            with mock.patch.object(mod.os, "open", refuse):
+                with self.assertRaises(PermissionError):
+                    with lock:
+                        pass
+            self.assertEqual(attempts, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

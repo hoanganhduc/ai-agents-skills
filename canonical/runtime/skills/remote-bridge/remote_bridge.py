@@ -49,6 +49,7 @@ EVENT_JSON_MAX_BYTES = 1024 * 1024
 CONTROL_TEXT_MAX_BYTES = 64 * 1024
 TELEGRAM_CHUNK_LIMIT = 3500
 NOTIFY_RETRY_DEDUPE_SECONDS = 120.0
+NOTIFY_LOCK_OPEN_TIMEOUT_SECONDS = 2.0
 _NOTIFY_V2_MODULE: Any | None = None
 
 
@@ -1478,7 +1479,13 @@ class NotificationDeliveryLock:
         self.path = self.mailbox.bridge_dir / "notify_locks" / f"{name}.lock"
         self.handle: Any = None
 
-    def __enter__(self) -> Mailbox:
+    def _open_lock_handle(self) -> Any:
+        """Open and validate the lock file, returning a buffered handle.
+
+        A fresh directory chain is built on every call because the caller
+        retries this step while the lock path keeps coming back missing.
+        """
+
         if os.name == "nt":  # pragma: no cover - exercised on Windows CI
             # Windows cannot pin the parent with a descriptor, so the chain is
             # validated by lstat and the leaf is opened by absolute path.
@@ -1511,7 +1518,7 @@ class NotificationDeliveryLock:
             except BaseException:
                 os.close(lock_fd)
                 raise
-            self.handle = os.fdopen(lock_fd, "a+b")
+            return os.fdopen(lock_fd, "a+b")
         else:
             pinned_parent_fd = _open_notify_directory_nofollow(
                 self.path.parent, create=True
@@ -1554,7 +1561,28 @@ class NotificationDeliveryLock:
             ):
                 os.close(lock_fd)
                 raise OSError(f"notification lock path is unsafe: {self.path}")
-            self.handle = os.fdopen(lock_fd, "a+b")
+            return os.fdopen(lock_fd, "a+b")
+
+    def __enter__(self) -> Mailbox:
+        deadline = time.monotonic() + NOTIFY_LOCK_OPEN_TIMEOUT_SECONDS
+        while True:
+            try:
+                self.handle = self._open_lock_handle()
+                break
+            except FileNotFoundError as exc:
+                # ``O_CREAT`` makes this open succeed whether or not the leaf
+                # exists, so a missing path here means the chain was in flux:
+                # either the pinned parent went away between the walk and the
+                # open, or the platform failed the create while a second
+                # sender created the same leaf. macOS reports the second case
+                # when two deliveries of one retry fingerprint race. Neither is
+                # this process misbehaving, so rebuild the chain and try again
+                # until the window closes; every other failure fails closed.
+                if time.monotonic() >= deadline:
+                    raise OSError(
+                        f"timed out opening notification lock: {self.path}"
+                    ) from exc
+                time.sleep(0.025)
         self.handle.seek(0, os.SEEK_END)
         if self.handle.tell() == 0:
             self.handle.write(b"0")
