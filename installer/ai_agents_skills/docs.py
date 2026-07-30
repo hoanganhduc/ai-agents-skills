@@ -1611,13 +1611,15 @@ Implemented fail-closed behavior:
 - support files are skipped unless backed by
   `manifest/schema/openclaw/target-support-file.schema.json` metadata
 
-**Out of band from managed skill-file installs:** the dual-route `/aas`
-adapter under `~/.openclaw/workspace/skills/aas-remote-bridge/` is published
-from `canonical/runtime/skills/remote-bridge/` via
-`publish_openclaw_adapter.py`. It is not authorized by `openclaw-target-*`
-manifests. Edit canonical first; refresh the workspace copy with the publisher.
-Host↔workspace secrets/state sync is part of that runtime
-(`sync_remote_bridge_paths.py`).
+**Out of band from managed skill-file installs:** the legacy dual-route `/aas`
+adapter may exist under `~/.openclaw/workspace/skills/aas-remote-bridge/`, but
+publishing is currently disabled. `publish_openclaw_adapter.py` is an inert
+no-write revocation stub. It and the retired sync filename remain installed for
+one compatibility release. Replacing older managed runtime copies requires an
+explicitly reviewed backup-and-replace upgrade that preserves recovery data;
+default installation does not overwrite divergent copies. The blocked publisher
+cannot replace or clean up already-published OpenClaw workspace copies. Host and
+workspace secrets/state are independent; automatic/bidirectional sync is not supported.
 
 ## Scope And Evidence
 
@@ -3433,13 +3435,16 @@ workspace trees are install products. Do not invent durable skill behavior only
 under `~/.openclaw`.
 
 **OpenClaw dual-route `/aas` adapter (workspace, not managed skill install).**
-Messages that start with `/aas` may be routed to remote-bridge from an OpenClaw
-sandbox via a published adapter. Source:
-`canonical/runtime/skills/remote-bridge/` (including `dispatch_aas.py`,
-`sync_remote_bridge_paths.py`, `publish_openclaw_adapter.py`, and
-`openclaw-adapter/`). Published tree:
-`~/.openclaw/workspace/skills/aas-remote-bridge/`. Secrets/state are mirrored
-host↔workspace (newer-wins); disable with `AAS_REMOTE_BRIDGE_SYNC=0`. See
+Messages that start with `/aas` may be routed to remote-bridge from a legacy
+OpenClaw workspace adapter. Canonical source lives under
+`canonical/runtime/skills/remote-bridge/`, but publisher use is blocked until
+its destination boundary is hardened. Host and workspace
+secrets/state remain independently owned: normal host and adapter commands do
+not synchronize them. The runtime carries only inert no-write stubs under the
+legacy sync/publisher filenames. Replacing older managed runtime copies requires
+an explicitly reviewed backup-and-replace upgrade with preserved recovery data;
+default installation does not overwrite divergent copies, and the blocked
+publisher cannot replace or clean up existing workspace copies. See
 `targets/openclaw/README.md` and
 `canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
 

@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -158,9 +159,27 @@ def _shallow_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, A
     return out
 
 
+def _read_regular_text(
+    path: Path, *, errors: str = "strict", max_bytes: int = 4_000_000
+) -> str:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            raise OSError(f"formal-policy input is unsafe or oversized: {path}")
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            payload = handle.read(max_bytes + 1)
+        if len(payload) > max_bytes:
+            raise OSError(f"formal-policy input exceeds {max_bytes} bytes: {path}")
+        return payload.decode("utf-8", errors=errors)
+    finally:
+        os.close(fd)
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_read_regular_text(path))
     except (OSError, json.JSONDecodeError, ValueError, TypeError):
         return None
     return data if isinstance(data, dict) else None
@@ -347,7 +366,9 @@ def is_formal_track(run_dir: Path | str | None) -> bool:
         npp = str(state.get("next_preferred_path") or "")
         if _FORMAL_TRACK_RE.search(npp) or _FORMAL_PATH_SEG_RE.search(npp):
             return True
-        rec = (run_path / "recovery.md").read_text(encoding="utf-8", errors="replace")
+        rec = _read_regular_text(
+            run_path / "recovery.md", errors="replace"
+        )
         for line in rec.splitlines():
             if "next safe action" in line.lower() or line.strip().startswith("- **Next"):
                 if _FORMAL_TRACK_RE.search(line) or _FORMAL_PATH_SEG_RE.search(line):
@@ -380,7 +401,7 @@ def _read_candidates(run_dir: Path) -> list[dict[str, Any]]:
     path = run_dir / "formal" / "candidates.jsonl"
     rows: list[dict[str, Any]] = []
     try:
-        text = path.read_text(encoding="utf-8")
+        text = _read_regular_text(path)
     except OSError:
         return rows
     for line in text.splitlines():

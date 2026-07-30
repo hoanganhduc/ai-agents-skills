@@ -141,6 +141,44 @@ class ManifestTests(unittest.TestCase):
         args.profile = "media"
         self.assertIn("manim-math-animation", resolve_skills(args, manifests))
 
+    def test_autonomous_loop_runtime_installs_provider_resource_helper(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        runtime_skill = manifests["runtime"]["skills"][
+            "autonomous-research-loop-runtime"
+        ]
+        target = (
+            "workspace/skills/autonomous-research-loop-runtime/"
+            "provider_resources.py"
+        )
+        self.assertIn(target, {entry["target"] for entry in runtime_skill["files"]})
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            args = Args()
+            args.skills = "autonomous-research-loop-runtime"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["codex"]),
+                runtime_profile="auto",
+                platform="linux",
+                requested_agents=["codex"],
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            installed = root / ".codex" / "runtime" / target
+            self.assertTrue(installed.is_file())
+            self.assertIn(
+                "class ProviderResourceError",
+                installed.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(verify(root)["status"], "ok")
+
     def test_getscipapers_requester_capability_and_runtime_registered(self) -> None:
         manifests = load_manifests()
         skills = manifests["skills"]["skills"]
@@ -282,6 +320,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(skills["autonomous-research-loop"]["recommended_templates"],
                          ["autonomous-research-loop-runbook",
                           "autonomous-research-loop-portfolio-runbook",
+                          "goal-focus",
                           "goal-priority"])
         for name, spec in skills.items():
             for slug in spec.get("recommended_templates", []):
@@ -3917,7 +3956,7 @@ class DocsAndLauncherTests(unittest.TestCase):
                 "--platform-shape",
                 "linux",
             ])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 0, stream.getvalue())
         payload = json.loads(stream.getvalue())
         self.assertEqual(payload["status"], "ok")
         self.assertGreaterEqual(payload["scenario_count"], 18)

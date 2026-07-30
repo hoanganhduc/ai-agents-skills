@@ -31,6 +31,7 @@
       "recommended_templates": [
         "autonomous-research-loop-runbook",
         "autonomous-research-loop-portfolio-runbook",
+        "goal-focus",
         "goal-priority"
       ],
       "verification": [

@@ -53,6 +53,10 @@ For a research workspace, keep these files in the active research directory:
 - `iterations.jsonl`: append-only record of each loop iteration.
 - `recovery.md`: latest resume point, blockers, next safe action, and evidence gaps.
 
+These remain the base ARL ledger and compatibility surface. Goal Focus v2 adds
+its four authoritative strategy files described below; it does not replace the
+budget or append-only iteration ledger.
+
 If a runtime helper is available, prefer the companion
 `autonomous-research-loop-runtime` skill to initialize and validate these files.
 If it is not available, create the files manually in the same structure.
@@ -244,46 +248,217 @@ Thin sample for existing supervisors:
 Co-install the `formal-research` profile (or the individual Lean skills) for
 Explore / gate / skeleton tooling; `serious-research` alone is insufficient.
 
-## Goal-focused single path
+## Goal Focus v2: reviewed single-path control
 
-When the research goal is an open problem or long-horizon claim, prefer that
-every primary path state how it advances `loop_state.goal` / `success_criteria`.
-Favor outcomes that kill a hypothesis, bridge two formulations, construct a
-hardness or algorithm artifact, verify trust, or replan — not unbounded local
-samples that leave the goal unchanged.
+> **Current deployment status:** the state/migration/review contracts and an
+> explicit trusted-local execution profile are implemented. Set
+> `AAS_AUTOLOOP_PROVIDER_TRANSPORT=trusted-local` only for operator-approved
+> provider CLIs in a dedicated project. The runtime then applies mandatory
+> cgroup/POSIX resource limits, timeouts, bounded output, and descendant cleanup
+> while retaining Goal-Focus staging and independent review. Omission or
+> `strict-isolated` remains fail-closed; trusted-local does not claim credential,
+> filesystem, or network isolation from a hostile provider process.
 
-Optional machine-readable campaign discipline: `{loop_dir}/goal_priority.json`
-(or `loop_state.standing_orders.goal_priority`). Contract template (not shipped
-inside this skill directory so OpenClaw can install the policy SKILL.md):
+Trusted-local is also fail-closed until each enabled provider has exact
+`AAS_AUTOLOOP_ATTESTED_BIN_<PROVIDER>`, `...SHA256_...`,
+`...UPSTREAM_...`, and `...MODEL_...` pins. Resolve launcher symlinks before
+hashing; use upstream `anthropic` for Claude, `openai` for Codex, and `deepseek`
+for CodeWhale. Re-pin after provider updates. The runtime companion documents
+the optional dependency-root pin, validated `AAS_AUTOLOOP_RESOURCE_*`
+overrides, default limits, and the pre-exec cgroup/RLIMIT attestation gate.
 
-- source repo: `canonical/templates/goal-priority.md`
-- example: `canonical/templates/goal-priority.example.json`
-- after install: workflow template `goal-priority` when the templates profile
-  is present; or `init --goal-priority-template`
+For an open problem or long-horizon claim, use Goal Focus v2 when the runtime
+companion is available. It turns the main goal, obligation structure, approach
+portfolio, and selected next action into revisioned control state instead of
+letting stale campaign prose decide what runs next.
 
-When `goal_priority` is **active** (default: merged `"enabled": true` and
-`"discipline_mode": "advise"`; opt out with `"enabled": false` or
-`AAS_AUTOLOOP_GOAL_PRIORITY=off`; env `on` forces enable when a config object
-exists):
+### Authoritative files and projections
 
-- Host panel target advice ranks candidates by **goal EV** (unless
-  `panel_rank_by_goal_ev: false`).
-- The iteration prompt injects campaign / closed-campaign forbids / streak
-  `REPLAN_REQUIRED` text.
-- Use `append-iteration --goal-contribution … --campaign-id …` (and optional
-  `--local-without-goal-delta`).
-- **Default discipline `advise`:** warnings and prompt injection only — does
-  **not** stop the loop (see `autonomous-loop-enforcement.md`). Residual-chasing
-  can still happen if agents ignore prompts.
+Goal Focus v2 has four authoritative files in the loop directory:
 
-When a campaign or sampling stratum is **closed** with `forbid_as_sole_primary`,
-prefer not to continue it as the sole primary (e.g. “next host in the same
-sample”). Use `decision-doubt-loop` when closing or switching campaigns if the
-decision is load-bearing.
+| File | Authority |
+|---|---|
+| `goal_contract.json` | Main goal, success criteria, scope, insufficient-result rules, and evidence-backed obligation DAG. |
+| `approach_registry.json` | Campaigns, approaches, estimates, dependencies, blockers, and reopen conditions. |
+| `current_plan.json` | The one active campaign/approach, bounded next action, target obligations, scope lock, falsifier, compute policy, and revision pins. |
+| `direction_decisions.jsonl` | Append-only initialization, migration, selection, revision, and outcome provenance. |
 
-Align with the portfolio runbook **insufficient results** list: special cases,
-elegant reductions, finite samples, and uncertified counterexamples are
-progress to record, not success stops.
+`loop_state.goal`, `loop_state.success_criteria`,
+`loop_state.next_preferred_path`, `loop_state.goal_focus_projection`, and the
+Goal Focus managed block in `recovery.md` are compatibility views. Reconcile
+them from the authoritative files; never use them to override `current_plan`.
+
+Modes are:
+
+- `off`: v2 does not govern dispatch; legacy behavior remains available.
+- `monitor`: report drift and replan signals without enforcing an active-plan
+  or review-before-bank gate. It preserves legacy dispatch/banking behavior and
+  is observational only.
+- `enforce`: require coherent, reviewed, unexpired state before dispatch. A
+  pending candidate or unresolved replan trigger prevents new primary work.
+
+New goal-focused v2 loops use `enforce`. Existing v1 loops do not change mode
+merely because the runtime is upgraded; migrate them explicitly.
+
+### Pre-dispatch selection and replanning
+
+Before an enforce-mode primary action, the host runtime must:
+
+1. recover any interrupted state transaction;
+2. regenerate stale compatibility projections;
+3. validate goal, registry, plan, ledger, and revision agreement;
+4. block on a pending result review; and
+5. run a structured strategy review if the plan is missing, stale, ineligible,
+   expired, tripped, disputed, or stalled.
+
+Strategy reviewers return `strategy_advice.v1`, including inspected and
+uninspected evidence, interval estimates, falsifiers, strongest objections, and
+one bounded next action. They receive the complete goal contract, registry, and
+current plan so they can assess switching cost and stale state against the
+exact bound authority. The prompt gives the incumbent no presumption or
+tie-break advantage; list order, active status, and sunk effort are not positive
+evidence. The host filters ineligible approaches and scores the rest
+conservatively:
+
+```text
++5 goal resolution +3 information gain +2 option value +1 diversity
+-2 execution cost -2 verification cost -4 bridge debt
+-3 dependency risk -1 correlated redundancy
+```
+
+Select a dominant exploitation path only when its conservative lower bound
+exceeds every competitor's optimistic upper bound. Otherwise choose a bounded
+discriminating experiment from at most three mechanism-diverse live
+approaches. A reviewed selection commits exactly one plan revision, and every
+direction commit—including retention or a campaign/approach switch—requires a
+genuinely different-family review. The strategy review is bound to the complete
+goal/registry/plan objects, their semantic fingerprints, and their exact source
+hashes; even a same-revision mutation invalidates the commit.
+
+The guarantee is “best-supported registered direction under the current
+evidence, budget, and policy,” not “objectively best direction.” Panel votes are
+advice, not mathematical evidence.
+
+### Stage, independently review, then finalize
+
+A provider exit does not bank a research result. In enforce mode the primary
+proposes one iteration record, and the runtime stages it as
+`iteration_candidate.json`, pinned to the dispatched `plan_revision`.
+
+Before launch, the host writes `iteration_dispatch.json`, binding the candidate
+id, known executor family, and canonical full-object fingerprints/revisions of
+the plan, goal contract, and approach registry. Enforce-mode staging requires
+and atomically consumes that exact live intent. A driver-family failover
+forces fresh strategy review; `--cmd`, provider command/argument/binary
+overrides, and unverified routing gateways are not valid enforce-mode
+primaries. Standard model/reasoning pins remain supported. If a host dies before staging, inspect the
+in-flight id with `goal-focus recover-dispatch` and cancel it only after the
+original worker is confirmed gone.
+
+If a provider directly staged a candidate but the host completion gate later
+failed (including timeout, capture/output rejection, or cleanup failure), the
+runtime moves it behind a fixed quarantine marker and the supervisor stops
+without review, banking, retry, or failover. Inspect with `goal-focus
+recover-quarantine --dir <loop>` and release only with the exact reported
+candidate fingerprint; the released quarantine is retained under
+`.goal_focus/quarantined_candidates/` for audit.
+
+The host then requests a strict `result_review.v1` from a provider family
+different from the primary executor. CodeWhale and DeepSeek are the same family
+for this gate and are launched with an explicit DeepSeek upstream pin; Codex
+ignores configurable provider defaults and pins the OpenAI provider. Kimi,
+unknown routes, and multi-family gateways are unverified until the host can
+attest their resolved upstream family. Every material staged result needs a
+unique claim id and safe loop-relative evidence path. The host no-follow reads
+and size-bounds each regular UTF-8 artifact, then embeds its complete content,
+path, size, and digest in the immutable candidate; an identifier by itself is
+not evidence. Every review binds the canonical hash of the complete candidate.
+A passing review must identify inspected paths, support every banked claim
+using matching staged evidence that it actually inspected, accept each exact
+proposed obligation target with at least one matching staged evidence id, and
+contain no failed machine check. Every passing reviewer must cover the complete exact
+claim and obligation set; disjoint partial coverage cannot be combined into a
+pass. If review is unavailable, leave the candidate pending
+without charging a finalized-attempt budget, and launch no new primary
+iteration. Only a substantive failed/rejected review finalizes rejected work.
+
+Finalization is one recoverable compare-and-swap transaction: append the final
+ledger row, update control and budget post-images, archive the candidate, and
+remove the pending file. Interrupted transactions are recovered idempotently;
+candidate or same-revision authority mutation fails rather than merging
+incompatible inputs.
+
+Trusted-local real panels are available only through the explicit transport
+opt-in described above. Their provider-native prompt-only flags disable shell,
+filesystem, MCP, browser, memory, custom-instruction, and subagent tools, while
+the host applies executable attestation, resource limits, bounded capture, and
+review-schema validation. This profile still trusts the local CLI and its host
+view. The stronger strict-isolated design additionally requires an allowlisted
+runtime/provider filesystem, immutable interpreter closure, credential
+blindness, and endpoint-constrained egress; because that complete boundary is
+not yet implemented, strict-isolated/default real panels fail closed before
+spawn. Injected runners remain available only for offline contract tests.
+
+Rejected work remains auditable: its real iteration, token, and USD deltas count
+against budget, while its duration, executor, and compute provenance remain on
+the rejected ledger row. It banks no claim, clears obligation transitions,
+records `campaign_delta: none` and `global_delta: none`, and moves the default
+plan to `needs_replan`. Never describe a rejected candidate as a completed
+research result.
+
+For accepted work, record two separate deltas:
+
+- `campaign_delta`: `none | incremental | substantial | closed`
+- `global_delta`: `none | reduced | satisfied`
+
+Global progress requires evidence-backed reduction of a named bridge or
+terminal obligation. Work under `scope_lock: encoding_only` remains
+campaign-local unless it discharges such an obligation. Special cases, elegant
+reductions, finite samples, and uncertified counterexamples are progress to
+record, not success stops.
+
+The obligation DAG is enforced: transitions cannot skip open dependencies, and
+all success-criterion obligations must be satisfied/closed before the host
+declares the goal satisfied. Criterion ids are unique, and a pre-completed node
+counts only when it has evidence and completed dependency closure. The host,
+not the worker's requested decision,
+derives successful termination from that reviewed post-state. Reported compute
+services must satisfy `current_plan.compute_policy`; with an active restriction,
+unreported provenance cannot be banked. A host-derived early success remains
+subject to the loop's machine-checkable proof-artifact gate.
+
+### Migration and legacy compatibility
+
+Use the runtime's `goal-focus migrate --dry-run` before `--apply`. The dry run
+compares dynamic campaign signals from the current path, recovery, latest
+finalized ledger, and hard-replan audit. If those signals disagree, migration
+must report ambiguity and refuse to guess. Apply may preserve the disagreement
+as an unselected `needs_replan` plan, but enforce mode cannot dispatch until
+structured strategy review or an explicit reviewed active-campaign choice
+resolves the direction.
+
+Apply creates a timestamped `.goal_focus_backups/` copy of the legacy control
+files before transactionally creating v2 state, then reconciles and validates
+the compatibility views. Apply refuses when the loop registry identifies a live
+owning driver. Its proposal, backup postimages, and commit share one exact
+snapshot of every legacy input (including the hard-replan audit); hash/absence
+compare-and-swap rejects concurrent mutation with no partial v2 state. Pause a
+live loop at an iteration boundary before migration.
+
+Unmigrated `goal_priority.v1` remains supported through
+`{loop_dir}/goal_priority.json` or
+`loop_state.standing_orders.goal_priority`. Its executable defaults are
+`enabled: false` and `discipline_mode: soft`. When explicitly enabled, it adds
+goal-EV advice, campaign prompt text, and warnings, but does not provide v2's
+dispatch or review-before-bank guarantees. Opt out with `"enabled": false` or
+`AAS_AUTOLOOP_GOAL_PRIORITY=off`; env `on` forces enable only when a v1 config
+object exists.
+
+The v1 contract remains available as `canonical/templates/goal-priority.md`
+and `canonical/templates/goal-priority.example.json`. The v2 contract is
+`canonical/templates/goal-focus.md`. Use `decision-doubt-loop` for a
+load-bearing close, reopen, or switch decision outside the host strategy-review
+path.
 
 ## Multi-Agent Use
 
@@ -292,13 +467,17 @@ progress to record, not success stops.
 For unattended loops that need multi-agent advice/review, prefer the **host
 parent** model owned by `autonomous-research-loop-runtime`:
 
-1. **Driver panel (target advice)** — top-level CLIs (Claude / Codex / CodeWhale /
-   Kimi, configurable) write `iterations/iterNNN/panel/01_target_advice/`.
-2. **Drive primary** — exactly one provider runs single-path math; it reads panel
-   artifacts and **must not** nest panel CLIs under its sandbox.
-3. **Driver panel (result review)** — same roster reviews new artifacts.
-4. **Host gates** — bank only after independent machine/logic verification.
-5. **Notify** (optional) — progress messaging only; orthogonal to panel.
+1. **Goal Focus strategy review** — when v2 requires a plan, top-level provider
+   CLIs return structured `strategy_advice.v1`; legacy loops continue to use
+   `target_advice`.
+2. **Drive primary** — exactly one provider runs the reviewed bounded action; it
+   must not nest panel CLIs under its sandbox.
+3. **Stage** — successful primary output becomes a pending candidate, not a
+   banked ledger row.
+4. **Different-family result review** — a host-owned reviewer returns strict
+   `result_review.v1` for that candidate.
+5. **Atomic host finalize** — accept or reject through the transaction layer,
+   then notify from finalized state.
 
 Enable with `drive --panel on|auto|off`, `panel.json`, `loop_state.standing_orders.panel`,
 or `AAS_AUTOLOOP_PANEL=on`. Run `… panel --smoke` to probe providers. When
@@ -362,6 +541,7 @@ the stop conditions:
 ```bash
 ... run_autonomous_research_loop.sh drive --dir <loop_dir> --provider <claude|codex|deepseek|opencode|copilot|antigravity|grok|kimi>
 # notify defaults to --notify auto (remote-bridge when secrets configured)
+# enforce-mode external delivery also requires AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS=allow
 # silence with --notify off or AAS_AUTOLOOP_NOTIFY=off
 ```
 
@@ -377,6 +557,63 @@ armed (`arm --dir <loop_dir> --root <project_root>`): the hook blocks turn-end
 until a real stop condition fires. Kill switches in both modes:
 `touch <loop_dir>/STOP_REQUESTED`, `touch <loop_dir>/PAUSE`,
 `AUTOLOOP_DISABLE=1`, or `disarm`.
+
+For an enforce-mode loop, finding configured credentials does not itself grant
+network egress. `AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS=allow` is required before
+the host sends a notification; without it the runtime records only the local
+notification audit/result. External strategy/result panels likewise require
+`AAS_AUTOLOOP_EXTERNAL_PANEL_EGRESS=allow`. Enabling panel egress authorizes the
+complete bounded authority brief and staged evidence snapshot to leave the
+host for each selected reviewer.
+
+## Notify v2 operator contract
+
+Progress notifications are operational summaries, not evidence and not a
+substitute for result review. New structured events use
+`aas.autoloop.notify.v2` and must make the research state understandable without
+opening the ledger:
+
+- **Goal** — what main problem the loop is solving.
+- **Completed** — what was actually finalized, or an explicit statement that
+  nothing was banked.
+- **Current** — where the research stands now and the event's plain-language
+  outcome.
+- **Plan** — the next bounded action or why the loop is waiting.
+
+Every rendering also carries a research-specific title/topic, iteration/review/
+loop status, iteration-budget and goal-progress summary, executor, structured
+driver/panel/other-agent provenance, structured compute provenance, and finish
+time/duration for terminal iteration events. Panel provenance lists agents that
+actually returned usable work, not the configured invite list. For every agent
+group, an explicit empty list means none was used; `reported: false` means
+legacy/unreported.
+Compute is explicit: an empty reported run list means none was used;
+`reported: false` means legacy/unreported. Do not infer Hetzner, Kaggle, Modal,
+GitHub Actions, local, or another service from prose or paths.
+
+Before delivery, dry-run output, transport results, fingerprinting, or dedupe
+persistence, configured transport secrets and common credential forms are
+redacted recursively from every string value in the event envelope, including
+extension fields and event ids. A redacted event id is replaced by a stable
+opaque digest-derived id. Redaction retains provider/model/family/role and
+compute service/status provenance when those values are non-sensitive.
+Common explicit PII forms (email, phone, government id, address/DOB, and
+labeled participant/patient/subject data) are likewise redacted. This is a
+last-mile guard, not a complete personal-data classifier.
+
+The runtime keeps flat compatibility fields while structured consumers migrate.
+Markdown, plain, bounded Telegram HTML, and compact renderings all retain the
+mandatory fields. Notification delivery is best-effort and never changes loop
+truth. Timestamp-rebuilt but materially equivalent retries share a short-lived
+semantic identity and a cross-process check-send-remember lock; materially
+changed status, content, agent, or compute fields do not. The runtime records
+delivery state only after the selected transport reports success.
+Remote endpoints require HTTPS, reject URL credentials and redirects, and
+permit localhost HTTP only with its separate explicit development opt-in.
+External panel prompts are not silently rewritten because that could change
+evidence meaning: detected PII instead blocks the call unless the operator has
+approved the SHA-256 of those exact outbound bytes via
+`AAS_AUTOLOOP_EXTERNAL_PII_APPROVAL_SHA256`.
 
 ## Stop Rules
 
@@ -436,6 +673,7 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
-- `goal-priority` -- goal_priority.v1 reference (default enabled, discipline_mode advise; does not change stop conditions).
+- `goal-focus` -- Goal Focus v2 authoritative-state, selection, review-before-bank, migration, and notification contract.
+- `goal-priority` -- legacy `goal_priority.v1` reference (defaults disabled/soft; does not change stop conditions).
 - `informal-to-lean-formalization-runbook` -- F1–F7 formalization positions when path is formal-track under `formal_policy`.
 - `sample-arl-headless-driver-with-formal` -- thin env fragment + example JSON for force-driven ARL with formal tools (not a forked supervisor).

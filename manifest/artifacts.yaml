@@ -337,6 +337,12 @@
         "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
         "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime"]
       },
+      "goal-focus": {
+        "description": "Goal Focus v2 reference for revisioned goals, approach portfolios, evidence-based direction selection, reviewed plans, and transactional migration from goal_priority.v1.",
+        "source": "goal-focus.md",
+        "supported_agents": ["codex", "claude", "deepseek", "opencode", "antigravity"],
+        "depends_on_skills": ["autonomous-research-loop", "autonomous-research-loop-runtime", "agent-group-discuss", "decision-doubt-loop"]
+      },
       "engineering-delivery-loop-runbook": {
         "description": "Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and five-lane broker-routed heavy-compute offload with per-lane safety gates.",
         "source": "engineering-delivery-loop-runbook.md",

@@ -31,6 +31,8 @@ degrades to the standing rules alone.
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -85,18 +87,27 @@ STANDING_RULES = (
 )
 
 
-def _standing_orders_compute(run_dir: Path) -> str:
-    """Free-text compute standing orders a loop declares once in loop_state.
+def _read_regular_text(path: Path, *, max_bytes: int = 2_000_000) -> str:
+    """Read one regular file without following a leaf symlink."""
 
-    Read from ``standing_orders.compute``; accepts a string or a list of
-    strings. This is the general form of a per-loop CLAUDE.md workaround: the
-    loop names its lanes once and every agent, primary and panel, sees them.
-    """
-    state_path = Path(run_dir) / "loop_state.json"
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
     try:
-        state: Any = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
-        return ""
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            raise OSError(f"unsafe or oversized compute-policy input: {path}")
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            payload = handle.read(max_bytes + 1)
+        if len(payload) > max_bytes:
+            raise OSError(f"oversized compute-policy input: {path}")
+        return payload.decode("utf-8")
+    finally:
+        os.close(fd)
+
+
+def _standing_orders_compute_from_state(state: Any) -> str:
+    """Render compute standing orders from an already trusted document."""
+
     if not isinstance(state, dict):
         return ""
     orders = state.get("standing_orders")
@@ -107,9 +118,62 @@ def _standing_orders_compute(run_dir: Path) -> str:
         text = value.strip()
     elif isinstance(value, (list, tuple)):
         text = "\n".join(f"- {str(v).strip()}" for v in value if str(v).strip())
+    elif isinstance(value, dict):
+        allowed = value.get("allowed_services") or value.get("backends") or []
+        forbidden = value.get("forbidden_services") or []
+        if isinstance(allowed, str):
+            allowed = [allowed]
+        if isinstance(forbidden, str):
+            forbidden = [forbidden]
+        text = (
+            "Structured allowlist: "
+            + (", ".join(str(item) for item in allowed if str(item)) or "none specified")
+            + "; forbidden: "
+            + (", ".join(str(item) for item in forbidden if str(item)) or "none")
+            + "."
+        )
     else:
         return ""
     return text[:2000]
+
+
+def _goal_focus_compute_policy_from_plan(value: Any) -> str:
+    """Render the canonical reviewed plan policy from a trusted document."""
+
+    if not isinstance(value, dict) or not isinstance(value.get("compute_policy"), dict):
+        return ""
+    policy = value["compute_policy"]
+    allowed = policy.get("allowed_services") or []
+    forbidden = policy.get("forbidden_services") or []
+    if isinstance(allowed, str):
+        allowed = [allowed]
+    if isinstance(forbidden, str):
+        forbidden = [forbidden]
+    return (
+        "Authoritative current_plan allowlist: "
+        + (", ".join(str(item) for item in allowed if str(item)) or "no plan-specific restriction")
+        + "; forbidden: "
+        + (", ".join(str(item) for item in forbidden if str(item)) or "none")
+        + ". Report each actual service in the staged record, or explicitly report no compute."
+    )[:2000]
+
+
+def compute_policy_block_from_documents(
+    loop_state: Any = None, current_plan: Any = None
+) -> str:
+    """Render a panel-safe compute block from host-opened documents."""
+
+    parts = [STANDING_RULES]
+    goal_focus_policy = _goal_focus_compute_policy_from_plan(current_plan)
+    orders = _standing_orders_compute_from_state(loop_state)
+    if goal_focus_policy:
+        parts.append("### Goal-Focus compute policy\n\n" + goal_focus_policy)
+    if orders:
+        parts.append(
+            "### Standing orders for this loop (loop_state.standing_orders.compute)"
+            "\n\n" + orders
+        )
+    return "\n\n".join(parts)
 
 
 def compute_policy_block(run_dir: Path | str | None = None) -> str:
@@ -118,18 +182,21 @@ def compute_policy_block(run_dir: Path | str | None = None) -> str:
     Returns a leading-newline-separated section, or the standing rules alone
     when no loop-specific orders exist. Safe to concatenate unconditionally.
     """
-    parts = [STANDING_RULES]
     if run_dir is not None:
+        state: Any = None
+        plan: Any = None
         try:
-            orders = _standing_orders_compute(Path(run_dir))
+            state_path = Path(run_dir) / "loop_state.json"
+            state = json.loads(_read_regular_text(state_path))
         except Exception:  # noqa: BLE001 — prompt construction must never fail
-            orders = ""
-        if orders:
-            parts.append(
-                "### Standing orders for this loop (loop_state.standing_orders.compute)"
-                "\n\n" + orders
-            )
-    return "\n\n".join(parts)
+            state = None
+        try:
+            plan_path = Path(run_dir) / "current_plan.json"
+            plan = json.loads(_read_regular_text(plan_path))
+        except Exception:  # noqa: BLE001 — prompt construction must never fail
+            plan = None
+        return compute_policy_block_from_documents(state, plan)
+    return compute_policy_block_from_documents()
 
 
 def compute_policy_addon(run_dir: Path | str | None = None) -> str:

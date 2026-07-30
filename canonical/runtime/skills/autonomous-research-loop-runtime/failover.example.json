@@ -1,7 +1,7 @@
 {
   "schema_version": "failover.v1",
   "research_title": "Short research topic for Zulip/Telegram titles",
-  "job_slug": "optional-stable-zulip-topic-id",
+  "job_slug": "short-research-topic",
   "primary_order": [
     "claude",
     "codex",
