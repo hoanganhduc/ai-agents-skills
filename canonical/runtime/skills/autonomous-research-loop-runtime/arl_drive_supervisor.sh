@@ -12,6 +12,9 @@
 #  10  lock held (start refused) — set by LAUNCH_supervisor.sh
 #  11  all_primaries_exhausted
 #  12  restart_cap_reached
+#  13  resource_cleanup_unverified (non-retryable safety stop)
+#  14  candidate_quarantined (non-retryable safety stop)
+#  15  quarantine_persistence_unverified (non-retryable safety stop)
 set -uo pipefail
 
 SUPERVISOR_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,7 +63,7 @@ fi
 _CFG_OUT="$(mktemp)"
 if ! python3 - "$FAILOVER_JSON" "$LOOP_DIR" "$_CFG_OUT" <<'PY'
 import json, shlex, sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 path = Path(sys.argv[1])
 loop = Path(sys.argv[2])
 out = Path(sys.argv[3])
@@ -86,6 +89,40 @@ dd = data.get("drive_defaults") if isinstance(data.get("drive_defaults"), dict) 
 title = str(data.get("research_title") or data.get("notify_title") or data.get("display_name") or "").strip()
 if not title:
     title = loop.name
+
+def safe_state_path(value, approved):
+    raw = str(value or approved)
+    if (
+        not raw
+        or len(raw) > 240
+        or raw.startswith("/")
+        or "\\" in raw
+        or any(ord(char) < 32 or ord(char) == 127 for char in raw)
+    ):
+        raise ValueError(f"unsafe supervisor state path: {raw!r}")
+    path = PurePosixPath(raw)
+    if path.is_absolute() or not path.parts or any(
+        part in {"", ".", ".."} or len(part) > 96 for part in path.parts
+    ):
+        raise ValueError(f"unsafe supervisor state path: {raw!r}")
+    if any(
+        not all(char.isascii() and (char.isalnum() or char in "._-") for char in part)
+        for part in path.parts
+    ):
+        raise ValueError(f"unsafe supervisor state path: {raw!r}")
+    normalized = str(path)
+    if normalized != approved:
+        raise ValueError(
+            f"supervisor state path must be the sanctioned path {approved!r}"
+        )
+    return normalized
+
+try:
+    primary_path = safe_state_path(data.get('write_active_primary_path'), 'driver/PRIMARY')
+    excluded_path = safe_state_path(data.get('session_exclude_path'), 'driver/EXCLUDED')
+except ValueError as exc:
+    print(f"supervisor: {exc}", file=sys.stderr)
+    sys.exit(2)
 lines = [
     f"PRIMARY_ORDER=({' '.join(shlex.quote(x) for x in order)})",
     f"MAX_QUOTA_WAITS={max_waits}",
@@ -93,8 +130,8 @@ lines = [
     f"FAILURES_BEFORE_ROTATE={int(data.get('failures_before_rotate', 3))}",
     f"RETRY_SLEEP_S={int(data.get('retry_sleep_s', 300))}",
     f"ROTATE_COOLDOWN_S={int(data.get('rotate_cooldown_s', 30))}",
-    f"PRIMARY_PATH={shlex.quote(str(data.get('write_active_primary_path') or 'driver/PRIMARY'))}",
-    f"EXCLUDED_PATH={shlex.quote(str(data.get('session_exclude_path') or 'driver/EXCLUDED'))}",
+    f"PRIMARY_PATH={shlex.quote(primary_path)}",
+    f"EXCLUDED_PATH={shlex.quote(excluded_path)}",
     f"SYNC_PANEL={'1' if data.get('sync_panel_exclude_until_credit', True) else '0'}",
     f"PANEL={shlex.quote(str(dd.get('panel', 'on')))}",
     f"NOTIFY={shlex.quote(str(dd.get('notify', 'auto')))}",
@@ -112,16 +149,157 @@ fi
 source "$_CFG_OUT"
 rm -f "$_CFG_OUT"
 
-mkdir -p "$LOOP_DIR/driver" "$LOOP_DIR/driver_logs"
+safe_state_file() {
+  local action="$1"
+  local relative_path="$2"
+  shift 2
+  python3 - "$LOOP_DIR" "$relative_path" "$action" "$@" <<'PY'
+import os, secrets, stat, sys
+from pathlib import Path, PurePosixPath
+
+loop = Path(sys.argv[1])
+raw_relative = sys.argv[2]
+action = sys.argv[3]
+values = sys.argv[4:]
+
+if not loop.is_absolute() or loop == Path(loop.anchor or os.sep):
+    raise SystemExit("supervisor: loop directory must be an absolute non-root path")
+
+relative = PurePosixPath(raw_relative)
+if (
+    not raw_relative
+    or len(raw_relative) > 240
+    or raw_relative.startswith("/")
+    or "\\" in raw_relative
+    or relative.is_absolute()
+    or not relative.parts
+    or any(part in {"", ".", ".."} or len(part) > 96 for part in relative.parts)
+    or any(ord(char) < 32 or ord(char) == 127 for char in raw_relative)
+):
+    raise SystemExit("supervisor: unsafe state path")
+if raw_relative not in {"driver/PRIMARY", "driver/EXCLUDED"}:
+    raise SystemExit("supervisor: state path is not sanctioned")
+if (
+    (action == "write-raw" and raw_relative != "driver/PRIMARY")
+    or (action in {"read", "write-lines"} and raw_relative != "driver/EXCLUDED")
+):
+    raise SystemExit("supervisor: state action/path combination is not sanctioned")
+
+dir_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+fd = os.open(loop.anchor or os.sep, dir_flags)
+try:
+    for component in loop.parts[1:]:
+        next_fd = os.open(component, dir_flags, dir_fd=fd)
+        os.close(fd)
+        fd = next_fd
+
+    loop_info = os.fstat(fd)
+    if not stat.S_ISDIR(loop_info.st_mode) or loop_info.st_uid != os.geteuid():
+        raise OSError("supervisor loop directory has an unexpected owner or type")
+    for component in relative.parts[:-1]:
+        try:
+            next_fd = os.open(component, dir_flags, dir_fd=fd)
+        except FileNotFoundError:
+            if action == "read":
+                raise SystemExit(0)
+            os.mkdir(component, 0o700, dir_fd=fd)
+            next_fd = os.open(component, dir_flags, dir_fd=fd)
+        os.close(fd)
+        fd = next_fd
+
+    leaf = relative.parts[-1]
+    if action == "read":
+        try:
+            file_fd = os.open(
+                leaf,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=fd,
+            )
+        except FileNotFoundError:
+            raise SystemExit(0)
+        try:
+            info = os.fstat(file_fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != loop_info.st_uid
+                or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                or info.st_size > 1_000_000
+            ):
+                raise OSError("supervisor state input is unsafe or oversized")
+            payload = os.read(file_fd, 1_000_001)
+            if len(payload) > 1_000_000:
+                raise OSError("supervisor state input is oversized")
+        finally:
+            os.close(file_fd)
+        sys.stdout.buffer.write(payload)
+        raise SystemExit(0)
+
+    if action == "write-raw":
+        payload = (values[0] if values else "").encode("utf-8")
+    elif action == "write-lines":
+        payload = (("\n".join(values) + "\n") if values else "").encode("utf-8")
+    else:
+        raise OSError(f"unsupported state action: {action}")
+    try:
+        existing = os.stat(leaf, dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        if (
+            stat.S_ISLNK(existing.st_mode)
+            or not stat.S_ISREG(existing.st_mode)
+            or existing.st_nlink != 1
+            or existing.st_uid != loop_info.st_uid
+            or existing.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise OSError("supervisor state destination is not a regular file")
+    temp = f".{leaf}.{os.getpid()}.{secrets.token_hex(12)}.tmp"
+    temp_fd = os.open(
+        temp,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+        dir_fd=fd,
+    )
+    try:
+        with os.fdopen(temp_fd, "wb", closefd=False) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        os.close(temp_fd)
+    try:
+        os.replace(temp, leaf, src_dir_fd=fd, dst_dir_fd=fd)
+        os.fsync(fd)
+    finally:
+        try:
+            os.unlink(temp, dir_fd=fd)
+        except FileNotFoundError:
+            pass
+finally:
+    os.close(fd)
+PY
+}
 
 notify() {
-  local msg="[$RESEARCH_TITLE] $1"
-  printf '%s supervisor: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$msg" >&2
-  # Best-effort remote-bridge when available; never fail the supervisor.
-  if [[ -n "${AAS_RUNTIME_ROOT:-}" && -x "${AAS_RUNTIME_ROOT}/workspace/skills/remote-bridge/run_remote_bridge.sh" ]]; then
-    bash "${AAS_RUNTIME_ROOT}/workspace/skills/remote-bridge/run_remote_bridge.sh" \
-      send --channel both --text "$msg" >/dev/null 2>&1 || true
-  fi
+  # Do not echo the user-controlled title or message before Notify v2 has
+  # applied recursive secret/PII redaction. Service logs receive only a fixed
+  # operational marker.
+  printf '%s supervisor: structured notification emitted\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+  # Best-effort structured notification. The runtime resolves the stable title
+  # and topic and always renders Goal / Completed / Current / Plan.
+  python3 "$RUNTIME_PY" notify-event \
+    --dir "$LOOP_DIR" \
+    --event supervisor \
+    --completed "$1" \
+    --current "$1" \
+    --plan "Continue under the supervisor's active failover and loop-control policy." \
+    --iteration-status not_applicable \
+    --provider "${provider:-}" \
+    --driver-agent "${provider:-}" \
+    --notify "$NOTIFY" \
+    --quiet >/dev/null 2>&1 || true
 }
 
 loop_is_done() {
@@ -130,33 +308,31 @@ loop_is_done() {
 
 write_primary() {
   local p="$1"
-  local path="$LOOP_DIR/$PRIMARY_PATH"
-  mkdir -p "$(dirname "$path")"
-  local tmp
-  tmp="$(mktemp "${path}.XXXXXX")"
-  printf '%s' "$p" >"$tmp"
-  mv -f "$tmp" "$path"
+  safe_state_file write-raw "$PRIMARY_PATH" "$p" || {
+    echo "supervisor: could not safely write active-primary state" >&2
+    exit 2
+  }
 }
 
 load_excluded() {
   EXCLUDED=()
-  local path="$LOOP_DIR/$EXCLUDED_PATH"
-  if [[ -f "$path" ]]; then
-    while IFS= read -r line || [[ -n "$line" ]]; do
-      line="${line//$'\r'/}"
-      [[ -z "$line" ]] && continue
-      EXCLUDED+=("$line")
-    done <"$path"
-  fi
+  local content line
+  content="$(safe_state_file read "$EXCLUDED_PATH")" || {
+    echo "supervisor: could not safely read session-exclude state" >&2
+    exit 2
+  }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line//$'\r'/}"
+    [[ -z "$line" ]] && continue
+    EXCLUDED+=("$line")
+  done <<<"$content"
 }
 
 save_excluded() {
-  local path="$LOOP_DIR/$EXCLUDED_PATH"
-  mkdir -p "$(dirname "$path")"
-  local tmp
-  tmp="$(mktemp "${path}.XXXXXX")"
-  printf '%s\n' "${EXCLUDED[@]:-}" >"$tmp"
-  mv -f "$tmp" "$path"
+  safe_state_file write-lines "$EXCLUDED_PATH" "${EXCLUDED[@]}" || {
+    echo "supervisor: could not safely write session-exclude state" >&2
+    exit 2
+  }
 }
 
 is_excluded() {
@@ -299,6 +475,18 @@ while :; do
     2)
       notify "driver configuration error (exit 2). Supervisor exiting."
       exit 2
+      ;;
+    8)
+      notify "provider resource cleanup could not be verified; supervisor is stopping without retry or failover."
+      exit 13
+      ;;
+    9)
+      notify "a failed provider completion was quarantined; supervisor is stopping for explicit inspection."
+      exit 14
+      ;;
+    10)
+      notify "failed-completion quarantine could not be persisted; supervisor is stopping without retry or failover."
+      exit 15
       ;;
     *)
       notify "driver exited $rc under $provider (unclassified); retrying in ${RETRY_SLEEP_S}s."

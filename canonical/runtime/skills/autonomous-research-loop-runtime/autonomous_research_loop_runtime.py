@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import math
 import os
 import re
+import signal
+import stat
 import shlex
 import shutil
 import subprocess
@@ -16,16 +20,40 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping, NamedTuple
 
 # Sibling modules: hybrid panel + optional goal_priority.v1.
 try:
     from panel_parent import (  # type: ignore  # noqa: I001 — same-dir runtime import
+        PanelIsolationError,
+        ProviderResourceError,
+        ProviderResourceCleanupError,
+        STRICT_ISOLATED_TRANSPORT,
+        TRUSTED_LOCAL_TRANSPORT,
+        assert_panel_prompt_safe,
+        attest_provider_executable,
+        cleanup_resource_scope,
+        interpreter_bound_provider_command,
         ensure_iter_dir,
         load_panel_config,
         panel_prompt_addon,
+        panel_payload_sensitive_findings,
+        panel_prompt_secret_findings,
+        preflight_resource_backend,
+        prepare_provider_sandbox_mounts,
+        provider_resource_limits,
+        provider_transport_mode,
+        public_resource_limits,
+        provider_sandbox_resolver_mounts,
+        provider_family,
+        revalidate_provider_executable_attestation,
         resolve_panel_mode,
+        resource_control_environment,
+        resource_limited_command,
+        run_bounded_resource_process,
+        trusted_local_containment_command,
         run_panel_phase_for_drive,
+        cleanup_provider_sandbox_vault,
         smoke as panel_smoke,
     )
     from goal_priority import (  # type: ignore
@@ -37,6 +65,9 @@ try:
         load_goal_priority,
     )
     from compute_policy import compute_policy_addon  # type: ignore
+    import goal_focus as goal_focus_v2  # type: ignore
+    import notify_v2  # type: ignore
+    from state_transaction import LoopLock  # type: ignore
     from formal_policy import (  # type: ignore
         export_formal_env,
         formal_force_tick,
@@ -49,11 +80,35 @@ try:
     )
 except ImportError:  # pragma: no cover - package-style import during tests
     from .panel_parent import (  # type: ignore
+        PanelIsolationError,
+        ProviderResourceError,
+        ProviderResourceCleanupError,
+        STRICT_ISOLATED_TRANSPORT,
+        TRUSTED_LOCAL_TRANSPORT,
+        assert_panel_prompt_safe,
+        attest_provider_executable,
+        cleanup_resource_scope,
+        interpreter_bound_provider_command,
         ensure_iter_dir,
         load_panel_config,
         panel_prompt_addon,
+        panel_payload_sensitive_findings,
+        panel_prompt_secret_findings,
+        preflight_resource_backend,
+        prepare_provider_sandbox_mounts,
+        provider_resource_limits,
+        provider_transport_mode,
+        public_resource_limits,
+        provider_sandbox_resolver_mounts,
+        provider_family,
+        revalidate_provider_executable_attestation,
         resolve_panel_mode,
+        resource_control_environment,
+        resource_limited_command,
+        run_bounded_resource_process,
+        trusted_local_containment_command,
         run_panel_phase_for_drive,
+        cleanup_provider_sandbox_vault,
         smoke as panel_smoke,
     )
     from .goal_priority import (  # type: ignore
@@ -65,6 +120,9 @@ except ImportError:  # pragma: no cover - package-style import during tests
         load_goal_priority,
     )
     from .compute_policy import compute_policy_addon  # type: ignore
+    from . import goal_focus as goal_focus_v2  # type: ignore
+    from . import notify_v2  # type: ignore
+    from .state_transaction import LoopLock  # type: ignore
     from .formal_policy import (  # type: ignore
         export_formal_env,
         formal_force_tick,
@@ -83,6 +141,7 @@ VALID_DECISIONS = {"continue", "revise", "delegate", "stop", "blocked"}
 TERMINAL_DECISIONS = {"stop", "blocked"}
 TERMINAL_STATUSES = {"stopped", "blocked"}
 SUCCESS_STOP_REASONS = {"success", "success_criteria_met", "proof", "proof_found", "found_proof", "proved"}
+HOST_REVIEWED_GOAL_SUCCESS_REASON = "goal_obligations_satisfied_after_review"
 PROOF_ARTIFACT_DIRNAME = "proof_artifacts"
 PROOF_ARTIFACT_TYPES = {"lean", "coq", "isabelle", "agda", "sagemath", "python-verifier", "external-verifier"}
 SAFE_EVIDENCE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -93,15 +152,198 @@ VALID_MODES = {
     "panel-loop",
     "recovery",
 }
+GOAL_FOCUS_MODES = {"off", "monitor", "enforce"}
+COMPUTE_SERVICE_ALIASES = {
+    "gha": "github-actions",
+    "github_actions": "github-actions",
+    "github-actions": "github-actions",
+    "hetzner": "hetzner",
+    "kaggle": "kaggle",
+    "local": "local",
+    "modal": "modal",
+}
+COMPUTE_RUN_STATUSES = {"succeeded", "failed", "cancelled", "unknown"}
+ITERATION_SUBMISSION_SCHEMA = "iteration_submission.v1"
+ITERATION_SUBMISSION_FILENAME = ".iteration_submission.json"
+ITERATION_SUBMISSION_MAX_BYTES = 1_000_000
+ITERATION_SUBMISSION_ARG_FIELDS = (
+    "mode",
+    "objective",
+    "decision",
+    "input_ref",
+    "source_id",
+    "claim_id",
+    "evidence_id",
+    "guard_ref",
+    "action_taken",
+    "output",
+    "remaining_gap",
+    "tokens",
+    "usd",
+    "wall_time_seconds",
+    "stop_reason",
+    "goal_contribution",
+    "campaign_id",
+    "local_without_goal_delta",
+    "local_without_goal_delta_tag",
+    "residual_id",
+    "scope_lock",
+    "goal_contribution_detail",
+    "completed_summary",
+    "current_summary",
+    "next_action",
+    "campaign_delta",
+    "global_delta",
+    "obligation_id",
+    "compute_run",
+    "compute_none",
+    "executor_provider",
+)
+ITERATION_SUBMISSION_LIST_FIELDS = frozenset(
+    {
+        "input_ref",
+        "source_id",
+        "claim_id",
+        "evidence_id",
+        "guard_ref",
+        "action_taken",
+        "remaining_gap",
+        "obligation_id",
+        "compute_run",
+    }
+)
+ITERATION_SUBMISSION_BOOL_FIELDS = frozenset(
+    {"local_without_goal_delta", "compute_none"}
+)
+ITERATION_SUBMISSION_INT_FIELDS = frozenset(
+    {"tokens", "wall_time_seconds"}
+)
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def _open_directory_nofollow(path: Path) -> int:
+    """Open every POSIX directory component without following symlinks."""
+
+    absolute = Path(os.path.abspath(path))
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    anchor = absolute.anchor or os.sep
+    fd = os.open(anchor, flags)
+    try:
+        for component in absolute.parts[1:]:
+            next_fd = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _read_regular_text(
+    path: Path, *, errors: str = "strict", max_bytes: int = 16_000_000
+) -> str:
+    """Read one bounded regular runtime file without following a leaf link."""
+
+    absolute = Path(os.path.abspath(path))
+    if os.name == "nt":
+        info = os.lstat(absolute)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise OSError(f"runtime input is not a regular file: {absolute}")
+        payload = absolute.read_bytes()
+    else:
+        dir_fd = _open_directory_nofollow(absolute.parent)
+        try:
+            fd = os.open(
+                absolute.name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=dir_fd,
+            )
+        finally:
+            os.close(dir_fd)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+                raise OSError(f"runtime input is unsafe or oversized: {absolute}")
+            with os.fdopen(fd, "rb", closefd=False) as handle:
+                payload = handle.read(max_bytes + 1)
+        finally:
+            os.close(fd)
+    if len(payload) > max_bytes:
+        raise OSError(f"runtime input exceeds {max_bytes} bytes: {absolute}")
+    return payload.decode("utf-8", errors=errors)
+
+
+def _read_contained_regular_text(
+    root: Path,
+    path: Path,
+    *,
+    errors: str = "strict",
+    max_bytes: int = 16_000_000,
+) -> str:
+    """Read a bounded regular file lexically contained beneath ``root``.
+
+    On POSIX, each directory and the leaf are opened relative to no-follow
+    descriptors so a planted symlink cannot redirect the read outside the
+    allowed panel input boundary.
+    """
+
+    base = Path(os.path.abspath(root))
+    supplied = Path(path).expanduser()
+    candidate = Path(
+        os.path.abspath(supplied if supplied.is_absolute() else base / supplied)
+    )
+    try:
+        relative = candidate.relative_to(base)
+    except ValueError as exc:
+        raise OSError(
+            f"runtime input escapes the allowed root: {candidate} (root {base})"
+        ) from exc
+    if not relative.parts:
+        raise OSError(f"runtime input must name a file beneath the allowed root: {candidate}")
+    if os.name == "nt":
+        for component in [*reversed(candidate.parent.parents), candidate.parent]:
+            info = os.lstat(component)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise OSError(f"runtime input directory is unsafe: {component}")
+        return _read_regular_text(candidate, errors=errors, max_bytes=max_bytes)
+
+    directory_fd = _open_directory_nofollow(base)
+    try:
+        for component in relative.parts[:-1]:
+            next_fd = os.open(
+                component,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_fd = os.open(
+            relative.parts[-1],
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+    finally:
+        os.close(directory_fd)
+    try:
+        info = os.fstat(file_fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+            raise OSError(f"runtime input is unsafe or oversized: {candidate}")
+        with os.fdopen(file_fd, "rb", closefd=False) as handle:
+            payload = handle.read(max_bytes + 1)
+    finally:
+        os.close(file_fd)
+    if len(payload) > max_bytes:
+        raise OSError(f"runtime input exceeds {max_bytes} bytes: {candidate}")
+    return payload.decode("utf-8", errors=errors)
+
+
 def read_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    data = json.loads(_read_regular_text(path))
     if not isinstance(data, dict):
         raise ValueError(f"{path.name} must contain a JSON object")
     return data
@@ -112,7 +354,9 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     # truncate the destination and lose loop state.
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data, indent=2, sort_keys=True) + "\n"
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(payload)
@@ -127,34 +371,511 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
+def _atomic_write_runtime_text(
+    path: Path,
+    text: str,
+    *,
+    mode: int = 0o600,
+) -> None:
+    """Atomically replace one host-owned runtime leaf without following links."""
+
+    absolute = Path(os.path.abspath(path))
+    directory = _ensure_real_directory(absolute.parent)
+    name = absolute.name
+    if not name or name in {".", ".."} or Path(name).name != name:
+        raise OSError(f"invalid runtime output name: {name!r}")
+    payload = text.encode("utf-8")
+
+    def _validate_existing(info: os.stat_result) -> None:
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise OSError(f"runtime output is not a regular file: {absolute}")
+        if getattr(info, "st_nlink", 1) != 1:
+            raise OSError(f"runtime output has multiple hard links: {absolute}")
+        if os.name == "posix" and info.st_uid != os.geteuid():
+            raise OSError(f"runtime output is not current-user owned: {absolute}")
+
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        try:
+            _validate_existing(os.lstat(absolute))
+        except FileNotFoundError:
+            pass
+        temp_path = directory / f".runtime-write-{uuid.uuid4().hex}-{name}"
+        fd = os.open(
+            temp_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+            mode,
+        )
+        try:
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise OSError("could not write runtime output")
+                remaining = remaining[written:]
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            try:
+                _validate_existing(os.lstat(absolute))
+            except FileNotFoundError:
+                pass
+            os.replace(temp_path, absolute)
+        finally:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
+        return
+
+    directory_fd = _open_directory_nofollow(directory)
+    temp_name = f".runtime-write-{uuid.uuid4().hex}-{name}"
+    fd = -1
+    try:
+        directory_info = os.fstat(directory_fd)
+        if (
+            directory_info.st_uid != os.geteuid()
+            or directory_info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise OSError("runtime output directory is not private and host-owned")
+        try:
+            _validate_existing(
+                os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            )
+        except FileNotFoundError:
+            pass
+        fd = os.open(
+            temp_name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            mode,
+            dir_fd=directory_fd,
+        )
+        os.fchmod(fd, mode)
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(fd, remaining)
+            if written <= 0:
+                raise OSError("could not write runtime output")
+            remaining = remaining[written:]
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        try:
+            _validate_existing(
+                os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            )
+        except FileNotFoundError:
+            pass
+        os.replace(
+            temp_name,
+            name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        os.fsync(directory_fd)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(temp_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        os.close(directory_fd)
+
+
+def safe_registry_run_id(value: object) -> str:
+    """Validate the sole filename component used by active.d registry rows."""
+
+    run_id = str(value or "")
+    if (
+        not run_id
+        or len(run_id) > 128
+        or run_id in {".", ".."}
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id) is None
+    ):
+        raise ValueError("run_id must be one bounded safe registry filename component")
+    return run_id
+
+
+def _write_registry_json_snapshot(
+    reg: Path,
+    run_id: object,
+    data: dict[str, Any],
+    *,
+    expected: RegistryEntrySnapshot | None = None,
+) -> RegistryEntrySnapshot:
+    """Install one row with no-overwrite linking and exact replacement CAS."""
+
+    safe_id = safe_registry_run_id(run_id)
+    directory = _ensure_real_directory(reg)
+    name = f"{safe_id}.json"
+    path = directory / name
+    payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        if expected is None:
+            try:
+                expected = _read_registry_snapshot_at(directory, name)
+            except FileNotFoundError:
+                pass
+        elif expected.path.name != name:
+            raise RegistrySafetyError("registry replacement snapshot has the wrong name")
+        temp_path = directory / f".registry-write-{uuid.uuid4().hex}-{name}"
+        quarantine_path = directory / f".registry-replaced-{uuid.uuid4().hex}-{name}"
+        fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "wb", closefd=False) as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            os.close(fd)
+        moved: RegistryEntrySnapshot | None = None
+        try:
+            if expected is not None:
+                current = _read_registry_snapshot_at(directory, name)
+                if not _same_registry_snapshot(current, expected):
+                    raise RegistrySafetyError(
+                        f"registry entry changed before replacement: {path}"
+                    )
+                os.replace(path, quarantine_path)
+                moved = _read_registry_snapshot_at(directory, quarantine_path.name)
+                if not _same_registry_snapshot(
+                    moved, expected._replace(path=quarantine_path)
+                ):
+                    raise RegistrySafetyError(
+                        f"registry entry changed during replacement: {quarantine_path}"
+                    )
+            try:
+                os.link(temp_path, path)
+            except FileExistsError as exc:
+                raise RegistrySafetyError(
+                    f"registry destination appeared during replacement: {path}"
+                ) from exc
+            os.unlink(temp_path)
+            installed = _read_registry_snapshot_at(directory, name)
+            if installed.payload != payload:
+                raise RegistrySafetyError(
+                    f"registry entry changed while being installed: {path}"
+                )
+            if moved is not None:
+                delete_registry_snapshot(moved)
+            return installed
+        finally:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
+
+    directory_fd = _open_trusted_registry_directory(directory)
+    _lock_registry_descriptor(directory_fd, exclusive=True)
+    temp_name = f".registry-write-{uuid.uuid4().hex}-{name}"
+    quarantine_name = f".registry-replaced-{uuid.uuid4().hex}-{name}"
+    temp_fd = -1
+    moved: RegistryEntrySnapshot | None = None
+    try:
+        if expected is None:
+            try:
+                expected = _read_registry_snapshot_at(
+                    directory, name, directory_fd=directory_fd
+                )
+            except FileNotFoundError:
+                pass
+        elif expected.path.name != name:
+            raise RegistrySafetyError("registry replacement snapshot has the wrong name")
+
+        temp_fd = os.open(
+            temp_name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        with os.fdopen(temp_fd, "wb", closefd=False) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.close(temp_fd)
+        temp_fd = -1
+
+        if expected is not None:
+            current = _read_registry_snapshot_at(
+                directory, name, directory_fd=directory_fd
+            )
+            if not _same_registry_snapshot(current, expected):
+                raise RegistrySafetyError(
+                    f"registry entry changed before replacement: {path}"
+                )
+            os.rename(
+                name,
+                quarantine_name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+            moved = _read_registry_snapshot_at(
+                directory, quarantine_name, directory_fd=directory_fd
+            )
+            if not _same_registry_snapshot(
+                moved, expected._replace(path=directory / quarantine_name)
+            ):
+                raise RegistrySafetyError(
+                    f"registry entry changed during replacement: {directory / quarantine_name}"
+                )
+
+        try:
+            os.link(
+                temp_name,
+                name,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError as exc:
+            raise RegistrySafetyError(
+                f"registry destination appeared during replacement: {path}"
+            ) from exc
+        os.unlink(temp_name, dir_fd=directory_fd)
+        installed = _read_registry_snapshot_at(
+            directory, name, directory_fd=directory_fd
+        )
+        if installed.payload != payload:
+            raise RegistrySafetyError(
+                f"registry entry changed while being installed: {path}"
+            )
+        os.fsync(directory_fd)
+    finally:
+        if temp_fd >= 0:
+            os.close(temp_fd)
+        try:
+            os.unlink(temp_name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        os.close(directory_fd)
+    if moved is not None:
+        delete_registry_snapshot(moved)
+    return installed
+
+
+def write_registry_json(reg: Path, run_id: object, data: dict[str, Any]) -> Path:
+    """Atomically replace exactly one observed registry row, or create it."""
+
+    return _write_registry_json_snapshot(reg, run_id, data).path
+
+
+def _ensure_real_directory(path: Path) -> Path:
+    """Create/open a directory chain component-wise without following links."""
+
+    absolute = Path(os.path.abspath(path))
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        for component in [*reversed(absolute.parents), absolute]:
+            try:
+                info = os.lstat(component)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, 0o700)
+                except FileExistsError:
+                    info = os.lstat(component)
+                else:
+                    continue
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise OSError(f"driver directory is not a real directory: {component}")
+        return absolute
+
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(absolute.anchor or os.sep, flags)
+    try:
+        for component in absolute.parts[1:]:
+            try:
+                next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, 0o700, dir_fd=descriptor)
+                except FileExistsError:
+                    pass
+                next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+    finally:
+        os.close(descriptor)
+    return absolute
+
+
+def _open_exclusive_driver_log(path: Path):  # noqa: ANN202 - TextIO inferred
+    """Create a new private streaming log without following a planted link."""
+
+    directory = _ensure_real_directory(path.parent)
+    name = path.name
+    if not name or name in {".", ".."} or Path(name).name != name:
+        raise OSError(f"invalid driver log name: {name!r}")
+    if os.name == "nt":
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+    else:
+        dir_fd = _open_directory_nofollow(directory)
+        try:
+            fd = os.open(
+                name,
+                os.O_RDWR
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=dir_fd,
+            )
+        finally:
+            os.close(dir_fd)
+    return os.fdopen(fd, "w+", encoding="utf-8", errors="replace", newline="\n")
+
+
 def read_iterations(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     records: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for index, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"iterations.jsonl line {index} is invalid JSON: {exc}") from exc
-            if not isinstance(record, dict):
-                raise ValueError(f"iterations.jsonl line {index} must contain a JSON object")
-            records.append(record)
+    for index, raw_line in enumerate(_read_regular_text(path).splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"iterations.jsonl line {index} is invalid JSON: {exc}") from exc
+        if not isinstance(record, dict):
+            raise ValueError(f"iterations.jsonl line {index} must contain a JSON object")
+        records.append(record)
     return records
 
 
 def append_jsonl(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(data, sort_keys=True))
-        handle.write("\n")
+    """Append one line through pinned parents and a private no-follow leaf."""
+
+    directory = _ensure_real_directory(path.parent)
+    name = path.name
+    if not name or name in {".", ".."} or Path(name).name != name:
+        raise OSError(f"invalid JSONL destination name: {name!r}")
+    payload = (json.dumps(data, sort_keys=True) + "\n").encode("utf-8")
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
+        file_fd = os.open(directory / name, flags, 0o600)
+        try:
+            info = os.fstat(file_fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise OSError("JSONL destination is not a single-link regular file")
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(file_fd, remaining)
+                if written <= 0:
+                    raise OSError("could not append JSONL record")
+                remaining = remaining[written:]
+            os.fsync(file_fd)
+        finally:
+            os.close(file_fd)
+        return
+
+    directory_fd = _open_directory_nofollow(directory)
+    try:
+        directory_info = os.fstat(directory_fd)
+        if (
+            directory_info.st_uid != os.geteuid()
+            or directory_info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise OSError("JSONL parent directory is not host-controlled")
+        file_fd = os.open(
+            name,
+            os.O_WRONLY
+            | os.O_APPEND
+            | os.O_CREAT
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            import fcntl
+
+            fcntl.flock(file_fd, fcntl.LOCK_EX)
+            info = os.fstat(file_fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) & 0o077
+            ):
+                raise OSError("JSONL destination is not a private host-owned file")
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(file_fd, remaining)
+                if written <= 0:
+                    raise OSError("could not append JSONL record")
+                remaining = remaining[written:]
+            os.fsync(file_fd)
+        finally:
+            os.close(file_fd)
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def parse_many(values: list[str] | None) -> list[str]:
     return [value for value in values or [] if value]
+
+
+def parse_json_or_file(value: str) -> Any:
+    """Parse JSON text or ``@path`` without guessing from arbitrary prose."""
+    raw = str(value or "").strip()
+    if raw.startswith("@"):
+        path = Path(raw[1:]).expanduser()
+        return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(raw)
+
+
+def parse_compute_runs(values: list[str] | None, *, explicit_none: bool = False) -> dict[str, Any]:
+    if explicit_none and values:
+        raise ValueError("--compute-none is mutually exclusive with --compute-run")
+    if explicit_none:
+        return {"recording_status": "explicit", "usage": "none", "services": []}
+    if not values:
+        return {"recording_status": "unreported", "usage": "unknown", "services": []}
+    services: list[dict[str, Any]] = []
+    for raw in values:
+        item = parse_json_or_file(raw)
+        if not isinstance(item, dict):
+            raise ValueError("each --compute-run value must be a JSON object")
+        token = str(item.get("service") or "").strip().lower()
+        service = COMPUTE_SERVICE_ALIASES.get(token, token)
+        if service.startswith("other:"):
+            slug = service.split(":", 1)[1]
+            if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,47}", slug) is None:
+                raise ValueError(f"invalid custom compute service {service!r}")
+        elif service not in set(COMPUTE_SERVICE_ALIASES.values()):
+            raise ValueError(
+                "compute service must be local, hetzner, kaggle, modal, "
+                "github-actions, or other:<safe-slug>"
+            )
+        status = str(item.get("status") or "unknown").strip().lower()
+        if status not in COMPUTE_RUN_STATUSES:
+            raise ValueError(f"compute run status must be one of {sorted(COMPUTE_RUN_STATUSES)}")
+        normalized: dict[str, Any] = {"service": service, "status": status}
+        for key in ("job_ref", "detail", "started_at", "finished_at", "duration_seconds"):
+            value = item.get(key)
+            if value not in (None, ""):
+                if key == "job_ref" and re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}", str(value)
+                ) is None:
+                    raise ValueError("compute job_ref must be a safe non-secret identifier")
+                normalized[key] = value
+        services.append(normalized)
+    return {
+        "recording_status": "explicit",
+        "usage": "mixed" if len({s["service"] for s in services}) > 1 else services[0]["service"],
+        "services": services,
+    }
 
 
 def normalized_stop_reason(reason: object) -> str:
@@ -256,11 +977,144 @@ def loop_paths(run_dir: Path) -> dict[str, Path]:
     }
 
 
+def goal_focus_runtime_mode(run_dir: Path) -> str:
+    """Return v2 mode; malformed v2 state must never silently disable enforcement."""
+    return str(goal_focus_v2.goal_focus_mode(Path(run_dir)) or "off")
+
+
+def goal_focus_is_enforced(run_dir: Path) -> bool:
+    return goal_focus_runtime_mode(run_dir) == "enforce"
+
+
+def goal_focus_is_enabled(run_dir: Path) -> bool:
+    return goal_focus_runtime_mode(run_dir) in {"monitor", "enforce"}
+
+
+def goal_focus_state_present(run_dir: Path) -> bool:
+    return any(
+        (Path(run_dir) / name).exists()
+        for name in (
+            goal_focus_v2.GOAL_CONTRACT_FILE,
+            goal_focus_v2.APPROACH_REGISTRY_FILE,
+            goal_focus_v2.CURRENT_PLAN_FILE,
+        )
+    )
+
+
+def _preflight_init_leaf(path: Path) -> None:
+    """Reject an unsafe pre-existing direct init output without mutating it."""
+
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise OSError(f"init output must be absent or a regular file: {path}")
+    if getattr(info, "st_nlink", 1) != 1:
+        raise OSError(f"init output must have exactly one hard link: {path}")
+    if os.name == "posix" and info.st_uid != os.geteuid():
+        raise OSError(f"init output must be current-user owned: {path}")
+
+
+def _preflight_init_directory(path: Path) -> None:
+    """Reject a planted link/non-directory at a direct init directory."""
+
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"init directory must be a real directory: {path}")
+    if os.name == "posix":
+        if info.st_uid != os.geteuid():
+            raise OSError(f"init directory must be current-user owned: {path}")
+
+
+def _init_run_directory(raw_path: object) -> Path:
+    """Normalize an init target without resolving any existing path link."""
+
+    absolute = Path(os.path.abspath(Path(str(raw_path)).expanduser()))
+    current = Path(absolute.anchor or os.sep)
+    for component in absolute.parts[1:]:
+        current = current / component
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError:
+            break
+        if stat.S_ISLNK(info.st_mode):
+            raise OSError(f"init loop path must not contain a symlink: {current}")
+        if current != absolute and not stat.S_ISDIR(info.st_mode):
+            raise OSError(f"init loop parent must be a real directory: {current}")
+    return absolute
+
+
 def init_loop(args: argparse.Namespace) -> dict[str, Any]:
-    run_dir = Path(args.dir).expanduser().resolve()
+    run_dir = _init_run_directory(args.dir)
+    if not math.isfinite(float(args.max_usd)) or float(args.max_usd) < 0:
+        raise ValueError("max_usd must be a finite non-negative number")
     paths = loop_paths(run_dir)
+    # Validate all destructive/pre-existing-state conditions before writing a
+    # single control file. ``--force`` is a legacy-loop reset switch; it must
+    # never partially overwrite an existing Goal-Focus authority.
+    goal_focus_mode = str(getattr(args, "goal_focus_mode", "off") or "off")
+    if goal_focus_mode not in GOAL_FOCUS_MODES:
+        raise ValueError(f"goal_focus_mode must be one of {sorted(GOAL_FOCUS_MODES)}")
+    if goal_focus_state_present(run_dir):
+        raise ValueError(
+            f"{run_dir} already contains Goal-Focus v2 authority; init --force cannot overwrite it"
+        )
     if run_dir.exists() and any(path.exists() for path in paths.values()) and not args.force:
         raise ValueError(f"{run_dir} already contains loop files; pass --force to overwrite")
+    gp_path = run_dir / "goal_priority.json"
+    if bool(getattr(args, "goal_priority_template", False)) and gp_path.exists() and not args.force:
+        raise ValueError(
+            f"{gp_path} already exists; pass --force to overwrite goal_priority template"
+        )
+
+    formal_requested = bool(
+        getattr(args, "formal_policy", None) is not None
+        or getattr(args, "formal_project", None)
+    )
+    default_formal_config = None
+    if formal_requested:
+        try:
+            from formal_policy import default_formal_config  # type: ignore
+        except Exception:  # noqa: BLE001
+            try:
+                from .formal_policy import default_formal_config  # type: ignore
+            except Exception:  # noqa: BLE001
+                default_formal_config = None  # type: ignore
+
+    try:
+        run_info = os.lstat(run_dir)
+    except FileNotFoundError:
+        _ensure_real_directory(run_dir)
+        run_info = os.lstat(run_dir)
+    if os.name == "posix":
+        if (
+            stat.S_ISLNK(run_info.st_mode)
+            or not stat.S_ISDIR(run_info.st_mode)
+            or run_info.st_uid != os.geteuid()
+        ):
+            raise OSError("loop directory must be a real current-user-owned directory")
+    # Check every output owned directly by init before changing any of them.
+    # Atomic replacement below prevents a later leaf-link race from reaching
+    # the link target; these checks additionally fail visibly on planted state.
+    for output_path in paths.values():
+        _preflight_init_leaf(output_path)
+    if bool(getattr(args, "goal_priority_template", False)):
+        _preflight_init_leaf(gp_path)
+    _preflight_init_directory(proof_artifacts_dir(run_dir))
+    if formal_requested and default_formal_config is not None:
+        formal_dir = run_dir / "formal"
+        _preflight_init_directory(formal_dir)
+        _preflight_init_leaf(formal_dir / "formal_policy.json")
+
+    if os.name == "posix":
+        # Runtime-owned authority and journals assume their parent cannot be
+        # replaced or edited by group/other principals.  Apply this invariant
+        # at creation rather than asking callers to compensate for their umask.
+        os.chmod(run_dir, 0o700, follow_symlinks=False)
 
     now = utc_now()
     state = {
@@ -302,12 +1156,37 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
         "updated_at": now,
     }
 
-    write_json(paths["state"], state)
-    write_json(paths["budget"], budget)
-    paths["iterations"].parent.mkdir(parents=True, exist_ok=True)
-    paths["iterations"].write_text("", encoding="utf-8", newline="\n")
-    proof_artifacts_dir(run_dir).mkdir(parents=True, exist_ok=True)
-    paths["recovery"].write_text(
+    formal_mirror: dict[str, Any] | None = None
+    if formal_requested and default_formal_config is not None:
+        formal_updates: dict[str, Any] = {}
+        if getattr(args, "formal_policy", None) is not None:
+            formal_updates["policy"] = str(args.formal_policy)
+        if getattr(args, "formal_project", None):
+            formal_updates["project"] = str(args.formal_project)
+        if getattr(args, "formal_force_credits", None) is not None:
+            formal_updates["force_credits"] = int(args.formal_force_credits)
+        if bool(getattr(args, "formal_allow_path_steal", False)):
+            formal_updates["allow_path_steal"] = True
+        if bool(getattr(args, "formal_typecheck", False)):
+            formal_updates["typecheck"] = True
+        if bool(getattr(args, "formal_force_after_iteration", False)):
+            formal_updates["force_after_iteration"] = True
+        formal_mirror = dict(default_formal_config())
+        formal_mirror.update(formal_updates)
+        state["standing_orders"] = {"formal": copy.deepcopy(formal_mirror)}
+
+    _atomic_write_runtime_text(
+        paths["state"], json.dumps(state, indent=2, sort_keys=True) + "\n"
+    )
+    _atomic_write_runtime_text(
+        paths["budget"], json.dumps(budget, indent=2, sort_keys=True) + "\n"
+    )
+    _atomic_write_runtime_text(paths["iterations"], "")
+    proof_dir = _ensure_real_directory(proof_artifacts_dir(run_dir))
+    if os.name == "posix":
+        os.chmod(proof_dir, 0o700, follow_symlinks=False)
+    _atomic_write_runtime_text(
+        paths["recovery"],
         "\n".join(
             [
                 "# Autonomous Research Loop Recovery",
@@ -322,63 +1201,38 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
                 "",
             ]
         ),
-        encoding="utf-8",
-        newline="\n",
     )
     files_out = {name: str(path) for name, path in paths.items()}
     if bool(getattr(args, "goal_priority_template", False)):
-        gp_path = run_dir / "goal_priority.json"
-        if gp_path.exists() and not args.force:
-            raise ValueError(
-                f"{gp_path} already exists; pass --force to overwrite goal_priority template"
-            )
-        gp_path.write_text(example_goal_priority_json(), encoding="utf-8", newline="\n")
+        _atomic_write_runtime_text(gp_path, example_goal_priority_json())
         files_out["goal_priority"] = str(gp_path)
 
-    # Optional formal policy (merge into standing_orders.formal; never wipe other keys)
-    formal_policy_arg = getattr(args, "formal_policy", None)
-    if formal_policy_arg is not None or getattr(args, "formal_project", None):
-        try:
-            from formal_policy import (  # type: ignore
-                default_formal_config,
-                merge_standing_orders_formal,
-            )
-        except Exception:  # noqa: BLE001
-            try:
-                from .formal_policy import (  # type: ignore
-                    default_formal_config,
-                    merge_standing_orders_formal,
-                )
-            except Exception:  # noqa: BLE001
-                default_formal_config = None  # type: ignore
-                merge_standing_orders_formal = None  # type: ignore
-        if merge_standing_orders_formal is not None:
-            updates: dict[str, Any] = {}
-            if formal_policy_arg is not None:
-                updates["policy"] = str(formal_policy_arg)
-            if getattr(args, "formal_project", None):
-                updates["project"] = str(args.formal_project)
-            if getattr(args, "formal_force_credits", None) is not None:
-                updates["force_credits"] = int(args.formal_force_credits)
-            if bool(getattr(args, "formal_allow_path_steal", False)):
-                updates["allow_path_steal"] = True
-            if bool(getattr(args, "formal_typecheck", False)):
-                updates["typecheck"] = True
-            if bool(getattr(args, "formal_force_after_iteration", False)):
-                updates["force_after_iteration"] = True
-            merge_standing_orders_formal(run_dir, updates=updates)
-            # optional mirror file
-            try:
-                formal_dir = run_dir / "formal"
-                formal_dir.mkdir(parents=True, exist_ok=True)
-                mirror = default_formal_config() if default_formal_config else {}
-                mirror.update(updates)
-                (formal_dir / "formal_policy.json").write_text(
-                    json.dumps(mirror, indent=2) + "\n", encoding="utf-8", newline="\n"
-                )
-                files_out["formal_policy"] = str(formal_dir / "formal_policy.json")
-            except OSError:
-                pass
+    # Direct Python callers from the v1 runtime do not carry this new field;
+    # preserve their legacy behavior. The CLI parser below deliberately defaults
+    # new command-line loops to enforce.
+    if goal_focus_mode != "off":
+        gf = goal_focus_v2.initialize_goal_focus(
+            run_dir,
+            goal=str(args.goal),
+            success_criteria=str(args.success_criteria),
+            mode=goal_focus_mode,
+        )
+        for name, path in (gf.get("paths") or gf.get("files") or {}).items():
+            files_out[f"goal_focus_{name}"] = str(path)
+
+    # Optional mirror is written through the same no-follow atomic boundary as
+    # the core init files. The standing-order copy was included in the initial
+    # loop_state write above, so no later direct rewrite can follow a planted
+    # state-file link.
+    if formal_mirror is not None:
+        formal_dir = _ensure_real_directory(run_dir / "formal")
+        if os.name == "posix":
+            os.chmod(formal_dir, 0o700, follow_symlinks=False)
+        mirror_path = formal_dir / "formal_policy.json"
+        _atomic_write_runtime_text(
+            mirror_path, json.dumps(formal_mirror, indent=2) + "\n"
+        )
+        files_out["formal_policy"] = str(mirror_path)
     return {
         "status": "ok",
         "action": "init",
@@ -388,12 +1242,401 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
+def _validated_iteration_submission_request(
+    request: object,
+) -> dict[str, Any]:
+    """Validate the exact untrusted worker-to-host request schema."""
+
+    if not isinstance(request, dict):
+        raise ValueError("iteration submission request must be a JSON object")
+    expected = set(ITERATION_SUBMISSION_ARG_FIELDS)
+    if set(request) != expected:
+        raise ValueError("iteration submission request has unexpected or missing fields")
+    validated: dict[str, Any] = {}
+    for name in ITERATION_SUBMISSION_ARG_FIELDS:
+        value = request[name]
+        if name in ITERATION_SUBMISSION_LIST_FIELDS:
+            if value is not None and (
+                not isinstance(value, list)
+                or any(not isinstance(item, str) for item in value)
+            ):
+                raise ValueError(
+                    f"iteration submission field {name} must be null or a string list"
+                )
+        elif name in ITERATION_SUBMISSION_BOOL_FIELDS:
+            if not isinstance(value, bool):
+                raise ValueError(
+                    f"iteration submission field {name} must be a boolean"
+                )
+        elif name in ITERATION_SUBMISSION_INT_FIELDS:
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"iteration submission field {name} must be a non-negative integer"
+                )
+        elif name == "usd":
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("iteration submission field usd must be numeric")
+            amount = float(value)
+            if not math.isfinite(amount) or amount < 0:
+                raise ValueError(
+                    "iteration submission field usd must be finite and non-negative"
+                )
+        elif not isinstance(value, str):
+            raise ValueError(
+                f"iteration submission field {name} must be a string"
+            )
+        validated[name] = copy.deepcopy(value)
+    evidence_ids = parse_many(validated.get("evidence_id"))
+    if ITERATION_SUBMISSION_FILENAME in evidence_ids:
+        raise ValueError("the reserved iteration submission cannot be used as evidence")
+    return validated
+
+
+def _iteration_submission_payload(args: argparse.Namespace) -> dict[str, Any]:
+    request = {
+        name: copy.deepcopy(getattr(args, name, None))
+        for name in ITERATION_SUBMISSION_ARG_FIELDS
+    }
+    request = _validated_iteration_submission_request(request)
+    run_id = safe_registry_run_id(os.environ.get("AAS_AUTOLOOP_RUN_ID"))
+    dispatch_id = safe_registry_run_id(
+        os.environ.get("AAS_AUTOLOOP_DISPATCH_ID")
+    )
+    candidate_id = safe_registry_run_id(
+        os.environ.get("AAS_AUTOLOOP_CANDIDATE_ID")
+    )
+    provider = str(os.environ.get("AAS_AUTOLOOP_PRIMARY_PROVIDER") or "").strip()
+    if provider not in PROVIDER_SPECS:
+        raise ValueError("host-mediated submission requires a known primary provider")
+    return {
+        "schema_version": ITERATION_SUBMISSION_SCHEMA,
+        "run_id": run_id,
+        "dispatch_id": dispatch_id,
+        "candidate_id": candidate_id,
+        "executor_provider": provider,
+        "request": request,
+    }
+
+
+def _write_worker_iteration_submission(args: argparse.Namespace) -> dict[str, Any]:
+    """Write the only enforce-mode worker output accepted by the host."""
+
+    raw_evidence_dir = str(
+        os.environ.get("AAS_AUTOLOOP_EVIDENCE_DIR") or ""
+    ).strip()
+    raw_evidence_root = str(
+        os.environ.get("AAS_AUTOLOOP_EVIDENCE_ROOT") or ""
+    ).strip()
+    if (
+        not raw_evidence_dir
+        or raw_evidence_dir != raw_evidence_root
+        or not Path(raw_evidence_dir).is_absolute()
+    ):
+        raise ValueError(
+            "host-mediated submission requires one exact absolute evidence directory"
+        )
+    evidence_dir = Path(os.path.abspath(raw_evidence_dir))
+    payload_object = _iteration_submission_payload(args)
+    payload = (
+        json.dumps(
+            payload_object,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    if len(payload) > ITERATION_SUBMISSION_MAX_BYTES:
+        raise ValueError("iteration submission is oversized")
+
+    directory_fd = _open_directory_nofollow(evidence_dir)
+    try:
+        directory_info = os.fstat(directory_fd)
+        if not stat.S_ISDIR(directory_info.st_mode):
+            raise OSError("candidate evidence root is not a directory")
+        if os.name == "posix" and (
+            directory_info.st_uid != os.geteuid()
+            or directory_info.st_mode & 0o077
+        ):
+            raise OSError("candidate evidence root is not host-private")
+        file_fd = os.open(
+            ITERATION_SUBMISSION_FILENAME,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(file_fd, remaining)
+                if written <= 0:
+                    raise OSError("could not write iteration submission")
+                remaining = remaining[written:]
+            os.fsync(file_fd)
+        finally:
+            os.close(file_fd)
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+    return {
+        "status": "ok",
+        "action": "submit-iteration",
+        "candidate_id": payload_object["candidate_id"],
+        "submission": str(evidence_dir / ITERATION_SUBMISSION_FILENAME),
+    }
+
+
+def _validate_iteration_submission_payload(
+    payload: bytes,
+    *,
+    expected_run_id: str,
+    expected_dispatch_id: str,
+    expected_candidate_id: str,
+    expected_provider: str,
+) -> dict[str, Any]:
+    if len(payload) > ITERATION_SUBMISSION_MAX_BYTES:
+        raise ValueError("iteration submission is oversized")
+    text_payload = payload.decode("utf-8")
+    findings = panel_prompt_secret_findings(text_payload)
+    if findings:
+        raise ValueError(
+            "iteration submission contains credential-like content "
+            f"({', '.join(findings)})"
+        )
+    value = json.loads(text_payload)
+    if not isinstance(value, dict) or set(value) != {
+        "schema_version",
+        "run_id",
+        "dispatch_id",
+        "candidate_id",
+        "executor_provider",
+        "request",
+    }:
+        raise ValueError("iteration submission has an invalid top-level schema")
+    if value.get("schema_version") != ITERATION_SUBMISSION_SCHEMA:
+        raise ValueError("iteration submission schema_version is invalid")
+    expected_identity = {
+        "run_id": expected_run_id,
+        "dispatch_id": expected_dispatch_id,
+        "candidate_id": expected_candidate_id,
+        "executor_provider": expected_provider,
+    }
+    for field, expected in expected_identity.items():
+        if value.get(field) != expected:
+            raise ValueError(
+                f"iteration submission {field} does not match host dispatch"
+            )
+    value["request"] = _validated_iteration_submission_request(value["request"])
+    return value
+
+
+def consume_iteration_submission(
+    run_dir: Path,
+    evidence_dir: Path,
+    *,
+    expected_run_id: str,
+    expected_dispatch_id: str,
+    expected_candidate_id: str,
+    expected_provider: str,
+    iteration_started_at: str,
+    resource_attestation: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Claim one exact worker submission, validate it, then stage it as host."""
+
+    directory_fd = _open_directory_nofollow(evidence_dir)
+    quarantine = f".host-submission-{uuid.uuid4().hex}"
+    original_fd = -1
+    moved_fd = -1
+    original_identity: tuple[int, int, int, int] | None = None
+    original_payload = b""
+    try:
+        directory_info = os.fstat(directory_fd)
+        if os.name == "posix" and (
+            directory_info.st_uid != os.geteuid()
+            or directory_info.st_mode & 0o077
+        ):
+            raise OSError("candidate evidence root is not host-private")
+        original_fd = os.open(
+            ITERATION_SUBMISSION_FILENAME,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+        before = os.fstat(original_fd)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+            or before.st_size > ITERATION_SUBMISSION_MAX_BYTES
+            or (
+                os.name == "posix"
+                and (
+                    before.st_uid != directory_info.st_uid
+                    or before.st_mode & 0o077
+                )
+            )
+        ):
+            raise OSError("iteration submission is not a private single-link file")
+        with os.fdopen(original_fd, "rb", closefd=False) as handle:
+            original_payload = handle.read(ITERATION_SUBMISSION_MAX_BYTES + 1)
+        after = os.fstat(original_fd)
+        original_identity = (
+            int(before.st_dev),
+            int(before.st_ino),
+            int(before.st_size),
+            int(before.st_mtime_ns),
+        )
+        if original_identity != (
+            int(after.st_dev),
+            int(after.st_ino),
+            int(after.st_size),
+            int(after.st_mtime_ns),
+        ):
+            raise OSError("iteration submission changed while being read")
+        submission = _validate_iteration_submission_payload(
+            original_payload,
+            expected_run_id=expected_run_id,
+            expected_dispatch_id=expected_dispatch_id,
+            expected_candidate_id=expected_candidate_id,
+            expected_provider=expected_provider,
+        )
+        os.rename(
+            ITERATION_SUBMISSION_FILENAME,
+            quarantine,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+        )
+        moved_fd = os.open(
+            quarantine,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+        moved = os.fstat(moved_fd)
+        with os.fdopen(moved_fd, "rb", closefd=False) as handle:
+            moved_payload = handle.read(ITERATION_SUBMISSION_MAX_BYTES + 1)
+        moved_identity = (
+            int(moved.st_dev),
+            int(moved.st_ino),
+            int(moved.st_size),
+            int(moved.st_mtime_ns),
+        )
+        if moved_identity != original_identity or moved_payload != original_payload:
+            raise OSError(
+                "iteration submission changed during host claim and was retained"
+            )
+        try:
+            os.stat(
+                ITERATION_SUBMISSION_FILENAME,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            raise OSError(
+                "another iteration submission appeared during host claim"
+            )
+
+        host_args = argparse.Namespace(
+            dir=str(run_dir), **copy.deepcopy(submission["request"])
+        )
+        host_control = {
+            "AAS_AUTOLOOP_DISPATCH_ID": expected_dispatch_id,
+            "AAS_AUTOLOOP_CANDIDATE_ID": expected_candidate_id,
+            "AAS_AUTOLOOP_PRIMARY_PROVIDER": expected_provider,
+            "AAS_AUTOLOOP_ITERATION_STARTED_AT": iteration_started_at,
+            "AAS_AUTOLOOP_RESOURCE_ATTESTATION": copy.deepcopy(
+                dict(resource_attestation or {})
+            ),
+        }
+        result = append_iteration(host_args, _host_control=host_control)
+
+        # Delete only the exact claimed inode/content.  A raced replacement is
+        # retained for inspection and never mistaken for this submission.
+        check_fd = os.open(
+            quarantine,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+        try:
+            check = os.fstat(check_fd)
+            with os.fdopen(check_fd, "rb", closefd=False) as handle:
+                check_payload = handle.read(ITERATION_SUBMISSION_MAX_BYTES + 1)
+        finally:
+            os.close(check_fd)
+        if (
+            (
+                int(check.st_dev),
+                int(check.st_ino),
+                int(check.st_size),
+                int(check.st_mtime_ns),
+            )
+            != original_identity
+            or check_payload != original_payload
+        ):
+            raise OSError(
+                "claimed iteration submission changed after staging and was retained"
+            )
+        os.unlink(quarantine, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+        return result
+    finally:
+        if original_fd >= 0:
+            os.close(original_fd)
+        if moved_fd >= 0:
+            os.close(moved_fd)
+        os.close(directory_fd)
+
+
+def append_iteration(
+    args: argparse.Namespace,
+    *,
+    _host_control: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if (
+        _host_control is None
+        and os.environ.get("AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION") == "1"
+    ):
+        return _write_worker_iteration_submission(args)
+    control = os.environ if _host_control is None else _host_control
     run_dir = Path(args.dir).expanduser().resolve()
+    if not math.isfinite(float(args.usd)) or float(args.usd) < 0:
+        raise ValueError("usd must be a finite non-negative number")
     paths = loop_paths(run_dir)
     errors = validate_loop_dir(run_dir)["errors"]
     if errors:
         raise ValueError("cannot append iteration before validation passes: " + "; ".join(errors))
+    enforced_goal_focus = goal_focus_is_enforced(run_dir)
+    if goal_focus_state_present(run_dir) and enforced_goal_focus:
+        strict_goal_focus = goal_focus_v2.validate_goal_focus(
+            run_dir, require_enabled=True
+        )
+        if strict_goal_focus.get("errors"):
+            raise ValueError(
+                "cannot append against invalid Goal-Focus authority: "
+                + "; ".join(strict_goal_focus.get("errors") or [])
+            )
+    dispatch = goal_focus_v2.load_iteration_dispatch(run_dir)
+    expected_dispatch_id = str(
+        control.get("AAS_AUTOLOOP_DISPATCH_ID") or ""
+    ).strip()
+    if enforced_goal_focus:
+        if not dispatch:
+            raise ValueError(
+                "Goal-Focus enforce mode requires a live host dispatch intent"
+            )
+        if not expected_dispatch_id:
+            raise ValueError(
+                "Goal-Focus enforce mode requires the exact host dispatch id"
+            )
+        goal_focus_v2.validate_iteration_dispatch(
+            run_dir,
+            dispatch,
+            expected_dispatch_id=expected_dispatch_id,
+        )
+    elif dispatch:
+        raise ValueError("an in-flight enforce dispatch cannot append through legacy mode")
     if args.decision not in VALID_DECISIONS:
         raise ValueError(f"decision must be one of {sorted(VALID_DECISIONS)}")
     if args.mode not in VALID_MODES:
@@ -420,7 +1663,22 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
             "record the blocker and continue with decision revise or delegate"
         )
     claim_ids = parse_many(args.claim_id)
+    if enforced_goal_focus:
+        if not claim_ids:
+            raise ValueError(
+                "Goal-Focus enforce mode requires at least one explicit --claim-id "
+                "covering every material result in the staged output"
+            )
+        if len(set(claim_ids)) != len(claim_ids) or any(
+            SAFE_EVIDENCE_ID.fullmatch(claim_id) is None for claim_id in claim_ids
+        ):
+            raise ValueError("Goal-Focus claim ids must be unique safe identifiers")
     evidence_ids = parse_many(args.evidence_id)
+    if enforced_goal_focus and claim_ids and not evidence_ids:
+        raise ValueError(
+            "Goal-Focus enforce mode requires at least one staged --evidence-id "
+            "for material claim review"
+        )
     if args.decision == "stop" and remaining_after_append > 0:
         if not is_success_stop_reason(args.stop_reason):
             raise ValueError("early stop before max_iterations requires a success/proof stop_reason")
@@ -441,6 +1699,10 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
         "timestamp": now,
         "mode": args.mode,
         "objective": args.objective,
+        "candidate_id": str(
+            control.get("AAS_AUTOLOOP_CANDIDATE_ID") or ""
+        ).strip(),
+        "claim_ids": claim_ids,
         "input_refs": parse_many(args.input_ref),
         "evidence_checked": {
             "source_ids": parse_many(args.source_id),
@@ -481,6 +1743,115 @@ def append_iteration(args: argparse.Namespace) -> dict[str, Any]:
     detail = getattr(args, "goal_contribution_detail", None) or ""
     if str(detail).strip():
         record["goal_contribution_detail"] = str(detail).strip()
+
+    completed_summary = str(getattr(args, "completed_summary", None) or args.output or "").strip()
+    current_summary = str(getattr(args, "current_summary", None) or "").strip()
+    next_action = str(getattr(args, "next_action", None) or "").strip()
+    if completed_summary:
+        record["completed_summary"] = completed_summary
+    if current_summary:
+        record["current_summary"] = current_summary
+    if next_action:
+        record["proposed_next_action"] = next_action
+    campaign_delta = str(getattr(args, "campaign_delta", None) or "none").strip().lower()
+    global_delta = str(getattr(args, "global_delta", None) or "none").strip().lower()
+    if campaign_delta not in {"none", "incremental", "substantial", "closed"}:
+        raise ValueError("campaign_delta must be none, incremental, substantial, or closed")
+    if global_delta not in {"none", "reduced", "satisfied"}:
+        raise ValueError("global_delta must be none, reduced, or satisfied")
+    if (
+        enforced_goal_focus
+        and global_delta == "satisfied"
+        and args.decision != "stop"
+        and remaining_after_append > 0
+    ):
+        valid_terminal_evidence = valid_proof_artifact_evidence_ids(
+            run_dir, evidence_ids
+        )
+        if not valid_terminal_evidence:
+            raise ValueError(
+                "an early Goal-Focus global_delta=satisfied claim requires at least "
+                "one staged evidence_id with a valid proof artifact"
+            )
+    record["progress_assessment"] = {
+        "campaign_delta": campaign_delta,
+        "global_delta": global_delta,
+        "obligation_ids": parse_many(getattr(args, "obligation_id", None)),
+    }
+    claimed_executor = str(getattr(args, "executor_provider", None) or "").strip()
+    host_executor = str(control.get("AAS_AUTOLOOP_PRIMARY_PROVIDER") or "").strip()
+    if enforced_goal_focus and host_executor:
+        if claimed_executor and claimed_executor != host_executor:
+            raise ValueError(
+                "--executor-provider conflicts with the host-selected Goal-Focus driver"
+            )
+        executor_provider = host_executor
+    else:
+        executor_provider = claimed_executor or host_executor
+    compute_execution = parse_compute_runs(
+        getattr(args, "compute_run", None),
+        explicit_none=bool(getattr(args, "compute_none", False)),
+    )
+    if enforced_goal_focus:
+        goal_focus_v2.validate_compute_execution(run_dir, compute_execution)
+    record["execution"] = {
+        "executor_provider": executor_provider,
+        "started_at": str(
+            getattr(args, "iteration_started_at", None)
+            or control.get("AAS_AUTOLOOP_ITERATION_STARTED_AT")
+            or ""
+        ).strip(),
+        "work_finished_at": now,
+        "compute": compute_execution,
+    }
+
+    if goal_focus_is_enabled(run_dir):
+        plan = goal_focus_v2.load_current_plan(
+            run_dir, required=goal_focus_is_enforced(run_dir)
+        )
+        plan = plan if isinstance(plan, dict) else {}
+        record["goal_focus"] = {
+            "plan_id": str(plan.get("plan_id") or ""),
+            "plan_revision": int(plan.get("plan_revision") or 0),
+            "direction_id": str(plan.get("decision_id") or ""),
+            "approach_id": str(plan.get("approach_id") or ""),
+            "campaign_id": str(plan.get("campaign_id") or campaign_id),
+            "scope_lock": str(plan.get("scope_lock") or scope_lock),
+        }
+        if not current_summary:
+            record["current_summary"] = str(
+                plan.get("current_summary")
+                or plan.get("objective")
+                or "Active plan remains unresolved."
+            )
+        if not next_action:
+            record["proposed_next_action"] = str(plan.get("next_action") or "")
+        if enforced_goal_focus:
+            staged = goal_focus_v2.stage_iteration_candidate(
+                run_dir,
+                record,
+                expected_plan_revision=int(plan.get("plan_revision") or 0),
+                expected_dispatch_id=expected_dispatch_id,
+                host_resource_attestation=(
+                    control.get("AAS_AUTOLOOP_RESOURCE_ATTESTATION")
+                    if isinstance(
+                        control.get("AAS_AUTOLOOP_RESOURCE_ATTESTATION"), Mapping
+                    )
+                    else None
+                ),
+            )
+            return {
+                # CLI success must remain exit 0. Expose the workflow state in
+                # a separate field so the driver can proceed to host review.
+                "status": "ok",
+                "staging_status": "staged",
+                "action": "stage-iteration",
+                "dir": str(run_dir),
+                "iteration": number,
+                "decision": args.decision,
+                "candidate": staged,
+                "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
+            }
     append_jsonl(paths["iterations"], record)
 
     state["last_iteration"] = number
@@ -576,6 +1947,18 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
                     errors.append("budget.json spent_iterations must equal iterations.jsonl record count")
                 if state and state.get("status") == "running" and remaining_iterations == 0:
                     errors.append("loop_state.json status cannot be running when iteration budget is exhausted")
+        for field in ("max_usd", "spent_usd"):
+            raw = budget.get(field, 0.0)
+            if isinstance(raw, bool):
+                errors.append(f"budget.json {field} must be a finite non-negative number")
+                continue
+            try:
+                amount = float(raw)
+            except (TypeError, ValueError):
+                errors.append(f"budget.json {field} must be a finite non-negative number")
+                continue
+            if not math.isfinite(amount) or amount < 0:
+                errors.append(f"budget.json {field} must be a finite non-negative number")
 
     expected = 1
     for record in iterations:
@@ -587,6 +1970,17 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
             errors.append(f"iteration {expected} has invalid mode")
         if "objective" not in record:
             errors.append(f"iteration {expected} missing objective")
+        delta = record.get("budget_delta")
+        if isinstance(delta, dict):
+            raw_usd = delta.get("usd", 0.0)
+            try:
+                usd = float(raw_usd)
+            except (TypeError, ValueError):
+                usd = float("nan")
+            if isinstance(raw_usd, bool) or not math.isfinite(usd) or usd < 0:
+                errors.append(
+                    f"iteration {expected} budget_delta.usd must be a finite non-negative number"
+                )
         expected += 1
     if budget and iterations:
         max_iterations = budget.get("max_iterations")
@@ -598,11 +1992,24 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
                 errors.append("latest iteration cannot have a continuing decision when iteration budget is exhausted")
             for record in iterations:
                 iteration_number = record.get("iteration")
+                host_reviewed_goal_success = (
+                    normalized_stop_reason(record.get("stop_reason"))
+                    == HOST_REVIEWED_GOAL_SUCCESS_REASON
+                )
+                if host_reviewed_goal_success:
+                    errors.extend(
+                        f"iteration {iteration_number}: {error}"
+                        for error in goal_focus_v2.validate_host_finalized_goal_success(
+                            run_dir, record
+                        )
+                    )
                 if (
                     record.get("decision") == "stop"
                     and isinstance(iteration_number, int)
                     and iteration_number < max_iterations
                 ):
+                    if host_reviewed_goal_success:
+                        continue
                     if not is_success_stop_reason(record.get("stop_reason")):
                         errors.append(
                             f"iteration {iteration_number} early stop before max_iterations must use a success/proof stop_reason"
@@ -624,6 +2031,23 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
 
     latest = iterations[-1] if iterations else None
     warnings = collect_goal_priority_warnings(run_dir, latest_record=latest)
+    goal_focus_checked: dict[str, Any] | None = None
+    if goal_focus_state_present(run_dir):
+        try:
+            checked_mode = goal_focus_runtime_mode(run_dir)
+            goal_focus_checked = goal_focus_v2.validate_goal_focus(
+                run_dir, require_enabled=checked_mode in {"monitor", "enforce"}
+            )
+            gf_errors = list(goal_focus_checked.get("errors") or [])
+            gf_warnings = list(goal_focus_checked.get("warnings") or [])
+            if checked_mode == "enforce":
+                errors.extend(f"goal_focus: {item}" for item in gf_errors)
+            else:
+                warnings.extend(f"goal_focus: {item}" for item in gf_errors)
+            warnings.extend(f"goal_focus: {item}" for item in gf_warnings)
+        except Exception as exc:  # noqa: BLE001 - surface a deterministic validation finding
+            message = f"goal_focus validation failed: {exc}"
+            errors.append(message)
     return {
         "status": "failed" if errors else "ok",
         "errors": errors,
@@ -632,6 +2056,7 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
             "dir": str(run_dir),
             "files": {name: path.exists() for name, path in paths.items()},
             "iterations": len(iterations),
+            "goal_focus": goal_focus_checked,
         },
     }
 
@@ -687,6 +2112,7 @@ def selftest_init_args(run_dir: Path, max_iterations: int) -> argparse.Namespace
         max_hops=1,
         max_child_workers=0,
         goal_priority_template=False,
+        goal_focus_mode="off",
         formal_policy=None,
         formal_project=None,
         formal_force_credits=None,
@@ -867,6 +2293,458 @@ def provider_subprocess_options(provider: str | None) -> dict[str, int]:
     if provider == "grok" and os.name == "posix":
         return {"umask": 0o077}
     return {}
+
+
+def _posix_process_group_exists(group_id: int) -> bool:
+    try:
+        os.killpg(group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _terminate_posix_process_group(
+    group_id: int, leader: subprocess.Popen[Any] | None = None
+) -> str | None:
+    """Terminate and observe disappearance of one isolated process group."""
+
+    if not _posix_process_group_exists(group_id):
+        return None
+    try:
+        os.killpg(group_id, signal.SIGTERM)
+    except ProcessLookupError:
+        return None
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        if leader is not None:
+            leader.poll()
+        if not _posix_process_group_exists(group_id):
+            return None
+        time.sleep(0.02)
+    try:
+        os.killpg(group_id, signal.SIGKILL)
+    except ProcessLookupError:
+        return None
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if leader is not None:
+            leader.poll()
+        if not _posix_process_group_exists(group_id):
+            return None
+        time.sleep(0.02)
+    return f"primary process group {group_id} survived SIGKILL"
+
+
+def _create_windows_kill_on_close_job() -> tuple[Any, Callable[[], None]]:
+    """Create a Windows Job Object whose close kills every assigned process."""
+
+    import ctypes
+    from ctypes import wintypes
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_job = kernel32.CreateJobObjectW
+    create_job.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    create_job.restype = wintypes.HANDLE
+    set_information = kernel32.SetInformationJobObject
+    set_information.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    set_information.restype = wintypes.BOOL
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = [wintypes.HANDLE]
+    close_handle.restype = wintypes.BOOL
+    job = create_job(None, None)
+    if not job:
+        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+    limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+    limits.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+    if not set_information(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+        error = ctypes.get_last_error()
+        close_handle(job)
+        raise OSError(error, "SetInformationJobObject failed")
+
+    def close() -> None:
+        if not close_handle(job):
+            raise OSError(ctypes.get_last_error(), "CloseHandle(job) failed")
+
+    return (job, close)
+
+
+def _assign_windows_job(job: Any, process: subprocess.Popen[Any]) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    assign = kernel32.AssignProcessToJobObject
+    assign.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    assign.restype = wintypes.BOOL
+    if not assign(job, wintypes.HANDLE(int(process._handle))):  # type: ignore[attr-defined]
+        raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
+
+
+def prepare_primary_private_prompt_transport(
+    provider: str, run_args: list[str], prompt: str
+) -> tuple[list[str], str]:
+    """Remove exact primary prompt bytes from argv and deliver once on stdin."""
+
+    if not prompt:
+        raise ValueError("primary prompt must be non-empty")
+    matches = [index for index, value in enumerate(run_args) if value == prompt]
+    if len(matches) != 1 or any(
+        prompt in value
+        for index, value in enumerate(run_args)
+        if index not in matches
+    ):
+        raise ValueError(
+            "primary prompt is not isolated as one exact command argument"
+        )
+    index = matches[0]
+    if provider == "claude":
+        secured = [*run_args[:index], *run_args[index + 1 :]]
+    elif provider == "codex":
+        secured = [*run_args]
+        secured[index] = "-"
+    else:
+        raise ValueError(
+            f"provider {provider} has no verified non-argv primary prompt transport"
+        )
+    if any(prompt in value for value in secured):
+        raise ValueError("primary prompt remains visible in command argv")
+    return secured, prompt
+
+
+def run_primary_subprocess(
+    run_args: list[str] | str,
+    *,
+    use_shell: bool,
+    child_env: Mapping[str, str],
+    cwd: Path,
+    timeout_s: int,
+    output: Any,
+    provider: str | None,
+    enforce_mode: bool = False,
+    trusted_local: bool = False,
+    run_dir: Path | None = None,
+    evidence_dir: Path | None = None,
+    executable_attestation: Mapping[str, Any] | None = None,
+    stdin_text: str | None = None,
+    resource_metadata: dict[str, Any] | None = None,
+) -> tuple[int, bool, str | None]:
+    """Run one primary inside a kernel-owned descendant lifetime boundary.
+
+    Linux uses a fresh PID namespace, so daemonization or ``setsid`` cannot
+    escape the namespace lifetime. Windows uses a kill-on-close Job Object.
+    Other POSIX platforms fail closed because process groups alone are not a
+    security boundary against a deliberately daemonizing child.
+    """
+
+    options: dict[str, Any] = dict(provider_subprocess_options(provider))
+    windows_job: Any | None = None
+    close_windows_job: Callable[[], None] | None = None
+    credential_vault: Path | None = None
+    resource_scope: str | None = None
+    resource_limits: dict[str, int] = {}
+    execution_env = dict(child_env)
+    if os.name == "posix":
+        if not sys.platform.startswith("linux"):
+            raise OSError(
+                "primary descendant containment requires Linux PID namespaces"
+            )
+        bwrap = next(
+            (
+                candidate
+                for candidate in (Path("/usr/bin/bwrap"), Path("/bin/bwrap"))
+                if candidate.is_file()
+                and os.access(candidate, os.X_OK)
+                and not stat.S_ISLNK(os.lstat(candidate).st_mode)
+                and os.lstat(candidate).st_uid == 0
+                and not os.lstat(candidate).st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            ),
+            None,
+        )
+        if bwrap is None:
+            raise OSError(
+                "primary descendant containment requires a trusted bubblewrap binary"
+            )
+        inner_args = (
+            ["/bin/sh", "-c", str(run_args)]
+            if use_shell
+            else [str(item) for item in run_args]
+        )
+        sandbox_args = [
+            str(bwrap),
+            "--die-with-parent",
+            "--new-session",
+            "--unshare-ipc",
+            "--unshare-pid",
+        ]
+        if enforce_mode and not trusted_local:
+            raise OSError(
+                "Goal-Focus enforce primary execution is fail-closed: no "
+                "credential-blind, prompt-private, allowlist-filesystem, "
+                "resource-bounded model transport with constrained egress is "
+                "available"
+            )
+        elif trusted_local:
+            try:
+                inner_args = interpreter_bound_provider_command(inner_args)
+                run_args = trusted_local_containment_command(
+                    inner_args,
+                    cwd=cwd,
+                )
+            except ProviderResourceError as exc:
+                raise OSError(str(exc)) from exc
+        else:
+            # Monitor/legacy runs preserve their historical writable view while
+            # trusted-local enforce runs explicitly accept the same host view.
+            # Both retain the PID-namespace descendant-lifetime boundary.
+            sandbox_args.extend(
+                [
+                    "--bind",
+                    "/",
+                    "/",
+                    "--proc",
+                    "/proc",
+                    "--dev",
+                    "/dev",
+                ]
+            )
+            run_args = [
+                *sandbox_args,
+                "--chdir",
+                str(cwd),
+                "--",
+                *inner_args,
+            ]
+        if trusted_local:
+            try:
+                run_args, resource_limits, resource_scope = resource_limited_command(
+                    run_args,
+                    timeout_s,
+                    role="primary",
+                )
+                for temp_name in ("TMPDIR", "TMP", "TEMP"):
+                    execution_env[temp_name] = "/tmp"
+                execution_env = resource_control_environment(execution_env)
+            except ProviderResourceError as exc:
+                raise OSError(str(exc)) from exc
+            if resource_metadata is not None:
+                resource_metadata.clear()
+                resource_metadata.update(
+                    {
+                        "schema_version": "provider_resource_attestation.v1",
+                        "provider_transport": TRUSTED_LOCAL_TRANSPORT,
+                        "role": "primary",
+                        "scope_unit": resource_scope,
+                        "limits": public_resource_limits(resource_limits),
+                        "resource_gate": "pre-exec-cgroup-rlimit-v1",
+                        "output_capture": "bounded-pipe",
+                        "control_plane_masked": True,
+                        "cgroup_api_masked": True,
+                        "cleanup_verified": False,
+                        "capture_verified": False,
+                        "timed_out": False,
+                        "oversized_output": False,
+                        "sensitive_output_blocked": False,
+                    }
+                )
+        use_shell = False
+        options["start_new_session"] = True
+    elif os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        if enforce_mode:
+            raise OSError(
+                "Goal-Focus enforce primary integrity isolation requires Linux bubblewrap"
+            )
+        windows_job, close_windows_job = _create_windows_kill_on_close_job()
+        options["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    if trusted_local:
+        assert resource_scope is not None
+        try:
+            bounded = run_bounded_resource_process(
+                [str(item) for item in run_args],
+                env=execution_env,
+                cwd=cwd,
+                timeout_s=timeout_s,
+                output_limit_bytes=resource_limits["output_max_bytes"],
+                scope_unit=resource_scope,
+                stdin_text=stdin_text,
+                merge_stderr=True,
+            )
+        except Exception as exc:
+            prior_cleanup_error = getattr(exc, "cleanup_error", None)
+            retry_cleanup_error = cleanup_resource_scope(resource_scope)
+            cleanup_result = prior_cleanup_error or retry_cleanup_error
+            if resource_metadata is not None:
+                resource_metadata["cleanup_verified"] = cleanup_result is None
+                resource_metadata["finished_at"] = utc_now()
+            detail = (
+                ": resource cleanup was not verified"
+                if cleanup_result is not None
+                else ""
+            )
+            raise OSError(f"trusted-local provider execution failed{detail}") from exc
+        if resource_metadata is not None:
+            resource_metadata["cleanup_verified"] = bounded.cleanup_error is None
+            resource_metadata["timed_out"] = bounded.timed_out
+            resource_metadata["oversized_output"] = bounded.oversized
+            resource_metadata["capture_verified"] = bounded.capture_error is None
+            resource_metadata["finished_at"] = utc_now()
+        if bounded.oversized:
+            return_code = 126
+            output_text = (
+                "primary output was blocked before persistence because it was oversized\n"
+            )
+        elif bounded.capture_error is not None:
+            return_code = 126
+            output_text = (
+                "primary output was blocked because prompt delivery or output "
+                "capture was incomplete\n"
+            )
+        else:
+            return_code = bounded.return_code
+            output_text = bounded.stdout.decode("utf-8", errors="replace")
+            sensitive_findings = panel_payload_sensitive_findings(output_text)
+            if sensitive_findings:
+                if resource_metadata is not None:
+                    resource_metadata["sensitive_output_blocked"] = True
+                return_code = 126
+                output_text = (
+                    "primary output was blocked before persistence because it contained "
+                    "sensitive data categories: "
+                    + ", ".join(sensitive_findings)
+                    + "\n"
+                )
+        output.write(output_text)
+        output.flush()
+        if bounded.cleanup_error is not None:
+            return 126, bounded.timed_out, bounded.cleanup_error
+        return return_code, bounded.timed_out, None
+    # Allocate capture storage only after every fail-closed preflight.  In
+    # particular, blocked enforce-mode calls must not retain a descriptor until
+    # cyclic/implementation-specific garbage collection happens.
+    private_output = tempfile.TemporaryFile(mode="w+b")
+    try:
+        process = subprocess.Popen(
+            run_args,
+            shell=use_shell,
+            env=execution_env,
+            cwd=str(cwd),
+            stdout=private_output,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.PIPE if stdin_text is not None else None,
+            **options,
+        )
+    except Exception:
+        private_output.close()
+        cleanup_provider_sandbox_vault(credential_vault)
+        if resource_scope is not None:
+            cleanup_resource_scope(resource_scope)
+        if close_windows_job is not None:  # pragma: no cover - Windows CI
+            close_windows_job()
+        raise
+    if windows_job is not None:
+        try:
+            _assign_windows_job(windows_job, process)
+        except Exception:
+            process.kill()
+            process.wait(timeout=5)
+            assert close_windows_job is not None
+            close_windows_job()
+            raise
+    timed_out = False
+    cleanup_error: str | None = None
+    try:
+        if stdin_text is None:
+            return_code = process.wait(timeout=timeout_s)
+        else:
+            process.communicate(
+                input=stdin_text.encode("utf-8"), timeout=timeout_s
+            )
+            return_code = int(process.returncode or 0)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        return_code = 124
+    finally:
+        if os.name == "posix":
+            cleanup_error = _terminate_posix_process_group(process.pid, process)
+            if process.poll() is None:
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    cleanup_error = cleanup_error or (
+                        f"primary process {process.pid} did not exit after group termination"
+                    )
+        elif close_windows_job is not None:  # pragma: no cover - Windows CI
+            try:
+                close_windows_job()
+            except OSError as exc:
+                cleanup_error = str(exc)
+            if process.poll() is None:
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    cleanup_error = cleanup_error or "Windows Job Object cleanup timed out"
+        if resource_scope is not None:
+            scope_cleanup_error = cleanup_resource_scope(resource_scope)
+            cleanup_error = cleanup_error or scope_cleanup_error
+        cleanup_provider_sandbox_vault(credential_vault)
+    private_output.flush()
+    private_output.seek(0)
+    output_limit = int(resource_limits.get("output_max_bytes") or 16_000_000)
+    output_bytes = private_output.read(output_limit + 1)
+    private_output.close()
+    if len(output_bytes) > output_limit:
+        return_code = 126
+        output_text = "primary output was blocked before persistence because it was oversized\n"
+    else:
+        output_text = output_bytes.decode("utf-8", errors="replace")
+        sensitive_findings = panel_payload_sensitive_findings(output_text)
+        if sensitive_findings:
+            return_code = 126
+            output_text = (
+                "primary output was blocked before persistence because it contained "
+                "sensitive data categories: "
+                + ", ".join(sensitive_findings)
+                + "\n"
+            )
+    output.write(output_text)
+    output.flush()
+    if cleanup_error is not None:
+        return 126, timed_out, cleanup_error
+    return return_code, timed_out, None
 
 
 def selftest_driver_checks() -> dict[str, Any]:
@@ -1094,6 +2972,7 @@ def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
             max_depth=1,
             max_hops=1,
             max_child_workers=0,
+            goal_focus_mode="off",
         )
         init_loop(init_args)
         proof_path = run_dir / "proofs" / "offline_smoke.proof"
@@ -1165,6 +3044,275 @@ SENTINEL_STOP = "STOP_REQUESTED"
 SENTINEL_BLOCKED = "BLOCKED"
 SENTINEL_PAUSE = "PAUSE"
 HEARTBEAT_TTL_SECONDS = 1800
+MIGRATION_CLAIM_FILE = ".goal_focus_migration.claim"
+
+
+class MigrationClaimError(RuntimeError):
+    """Raised when driver ownership and migration quiescence conflict."""
+
+
+class RegistrySafetyError(RuntimeError):
+    """Raised when an authority-sensitive registry operation is unsafe."""
+
+
+class RegistryEntrySnapshot(NamedTuple):
+    """Exact registry bytes and inode metadata used for compare-and-delete."""
+
+    path: Path
+    entry: dict[str, Any]
+    identity: tuple[int, int, int, int]
+    payload: bytes
+
+
+def migration_claim_active(run_dir: Path) -> bool:
+    """Treat any claim leaf, including a symlink, as a fail-closed claim."""
+
+    try:
+        os.lstat(run_dir / MIGRATION_CLAIM_FILE)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def migration_claim_snapshot(run_dir: Path) -> tuple[dict[str, Any], tuple[int, int]]:
+    """Read one bounded regular claim and return the exact inode observed.
+
+    Invalid, oversized, or linked claims are deliberately errors: callers must
+    not infer that a malformed ownership marker is stale and remove it.
+    """
+
+    path = run_dir / MIGRATION_CLAIM_FILE
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        before = os.lstat(path)
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+            raise MigrationClaimError("migration claim is not a regular file")
+        try:
+            raw = _read_regular_text(path, max_bytes=4096)
+        except UnicodeDecodeError as exc:
+            raise MigrationClaimError(
+                "migration claim is not valid UTF-8 JSON"
+            ) from exc
+        after = os.lstat(path)
+        identity = (int(before.st_dev), int(before.st_ino))
+        if identity != (int(after.st_dev), int(after.st_ino)):
+            raise MigrationClaimError("migration claim changed while being inspected")
+    else:
+        directory_fd = _open_directory_nofollow(run_dir)
+        try:
+            fd = os.open(
+                MIGRATION_CLAIM_FILE,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+        finally:
+            os.close(directory_fd)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+                raise MigrationClaimError(
+                    "migration claim is not a bounded regular file"
+                )
+            chunks: list[bytes] = []
+            observed = 0
+            while observed <= 4096:
+                chunk = os.read(fd, 4097 - observed)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                observed += len(chunk)
+            payload = b"".join(chunks)
+            if len(payload) > 4096:
+                raise MigrationClaimError("migration claim exceeds 4096 bytes")
+            try:
+                raw = payload.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise MigrationClaimError(
+                    "migration claim is not valid UTF-8 JSON"
+                ) from exc
+            identity = (int(info.st_dev), int(info.st_ino))
+        finally:
+            os.close(fd)
+    try:
+        record = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise MigrationClaimError("migration claim is not valid UTF-8 JSON") from exc
+    if not isinstance(record, dict):
+        raise MigrationClaimError("migration claim must contain a JSON object")
+    return record, identity
+
+
+def acquire_migration_claim(run_dir: Path) -> tuple[int, int]:
+    """Atomically claim a loop before checking its live-driver registry."""
+
+    payload = json.dumps(
+        {
+            "pid": os.getpid(),
+            "claimed_at": utc_now(),
+            "nonce": uuid.uuid4().hex,
+        },
+        sort_keys=True,
+    ).encode("utf-8") + b"\n"
+    path = run_dir / MIGRATION_CLAIM_FILE
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        with path.open("xb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+            info = os.fstat(handle.fileno())
+            return int(info.st_dev), int(info.st_ino)
+    directory_fd = _open_directory_nofollow(run_dir)
+    try:
+        fd = os.open(
+            MIGRATION_CLAIM_FILE,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=directory_fd,
+        )
+        try:
+            remaining = memoryview(payload)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise OSError("could not write migration claim")
+                remaining = remaining[written:]
+            os.fsync(fd)
+            info = os.fstat(fd)
+            return int(info.st_dev), int(info.st_ino)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory_fd)
+
+
+def reclaim_dead_migration_claim(run_dir: Path) -> bool:
+    """Reclaim a claim only when its recorded owner PID is definitely dead.
+
+    A live, malformed, linked, or unreadable claim remains in place so both
+    migration and driver startup fail closed.  PID reuse therefore favors
+    safety over automatic recovery; an operator can inspect such a claim.
+    """
+
+    try:
+        record, identity = migration_claim_snapshot(run_dir)
+    except (FileNotFoundError, OSError, MigrationClaimError):
+        return False
+    pid = record.get("pid")
+    if not isinstance(pid, int) or pid <= 0 or pid_alive(pid):
+        return False
+    release_migration_claim(run_dir, identity)
+    return True
+
+
+def release_migration_claim(run_dir: Path, identity: tuple[int, int]) -> None:
+    """Rename, revalidate, and delete only the exact owned claim inode."""
+
+    path = run_dir / MIGRATION_CLAIM_FILE
+    quarantine = f".goal-focus-claim-release-{uuid.uuid4().hex}.json"
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        try:
+            before_record, before_identity = migration_claim_snapshot(run_dir)
+        except FileNotFoundError:
+            return
+        if before_identity != identity:
+            raise MigrationClaimError("migration claim identity changed before release")
+        before_payload = json.dumps(before_record, sort_keys=True, separators=(",", ":"))
+        quarantine_path = run_dir / quarantine
+        os.replace(path, quarantine_path)
+        try:
+            info = os.lstat(quarantine_path)
+            if (
+                stat.S_ISLNK(info.st_mode)
+                or not stat.S_ISREG(info.st_mode)
+                or (int(info.st_dev), int(info.st_ino)) != identity
+            ):
+                raise MigrationClaimError(
+                    f"migration claim changed during release and was retained: {quarantine_path}"
+                )
+            moved = json.loads(
+                _read_regular_text(quarantine_path, max_bytes=4096)
+            )
+            moved_payload = json.dumps(moved, sort_keys=True, separators=(",", ":"))
+            if moved_payload != before_payload:
+                raise MigrationClaimError(
+                    f"migration claim content changed during release and was retained: {quarantine_path}"
+                )
+            os.unlink(quarantine_path)
+        except Exception:
+            raise
+        return
+
+    directory_fd = _open_directory_nofollow(run_dir)
+    try:
+        try:
+            file_fd = os.open(
+                MIGRATION_CLAIM_FILE,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            return
+        try:
+            before = os.fstat(file_fd)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_nlink != 1
+                or before.st_size > 4096
+                or (int(before.st_dev), int(before.st_ino)) != identity
+            ):
+                raise MigrationClaimError(
+                    "migration claim identity changed before release"
+                )
+            with os.fdopen(file_fd, "rb", closefd=False) as handle:
+                before_payload = handle.read(4097)
+            after = os.fstat(file_fd)
+            if (
+                len(before_payload) > 4096
+                or _registry_identity(before) != _registry_identity(after)
+            ):
+                raise MigrationClaimError(
+                    "migration claim changed while preparing release"
+                )
+        finally:
+            os.close(file_fd)
+        try:
+            os.rename(
+                MIGRATION_CLAIM_FILE,
+                quarantine,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            raise MigrationClaimError(
+                "migration claim disappeared during release"
+            )
+        moved_fd = os.open(
+            quarantine,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+        try:
+            moved = os.fstat(moved_fd)
+            with os.fdopen(moved_fd, "rb", closefd=False) as handle:
+                moved_payload = handle.read(4097)
+        finally:
+            os.close(moved_fd)
+        if (
+            (int(moved.st_dev), int(moved.st_ino)) != identity
+            or not stat.S_ISREG(moved.st_mode)
+            or moved.st_nlink != 1
+            or moved_payload != before_payload
+        ):
+            raise MigrationClaimError(
+                "migration claim changed during release and was retained as "
+                f"{run_dir / quarantine}"
+            )
+        os.unlink(quarantine, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
 
 
 def registry_dir(args: argparse.Namespace) -> Path:
@@ -1278,71 +3426,493 @@ def list_registry_entries(reg: Path) -> list[tuple[Path, dict[str, Any]]]:
     return out
 
 
+def _open_trusted_registry_directory(reg: Path) -> int:
+    """Open a registry chain owned by root/current user and not writable by peers."""
+
+    absolute = Path(os.path.abspath(reg))
+    if os.name != "posix":  # pragma: no cover - POSIX authority implementation
+        raise OSError("descriptor-pinned registry authority requires POSIX")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(absolute.anchor or os.sep, flags)
+    effective_uid = os.geteuid()
+    try:
+        components = [absolute.anchor or os.sep, *absolute.parts[1:]]
+        for index, component in enumerate(components):
+            if index:
+                next_descriptor = os.open(component, flags, dir_fd=descriptor)
+                os.close(descriptor)
+                descriptor = next_descriptor
+            info = os.fstat(descriptor)
+            root_sticky = bool(
+                info.st_uid == 0
+                and info.st_mode & stat.S_ISVTX
+                and info.st_mode & stat.S_IWOTH
+            )
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid not in {0, effective_uid}
+                or (
+                    info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                    and not root_sticky
+                )
+            ):
+                raise OSError(
+                    f"registry directory chain is not host-controlled: {absolute}"
+                )
+        final = os.fstat(descriptor)
+        if final.st_uid != effective_uid or final.st_mode & 0o077:
+            raise OSError(
+                "registry directory must be private and owned by the current "
+                f"user: {absolute}"
+            )
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _lock_registry_descriptor(descriptor: int, *, exclusive: bool) -> None:
+    """Cooperatively serialize every current-runtime registry snapshot/mutation."""
+
+    if os.name != "posix":  # pragma: no cover - Windows uses its fallback paths
+        return
+    import fcntl
+
+    fcntl.flock(
+        descriptor,
+        fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH,
+    )
+
+
+def _registry_identity(info: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        int(info.st_dev),
+        int(info.st_ino),
+        int(info.st_size),
+        int(info.st_mtime_ns),
+    )
+
+
+def _validate_registry_leaf(
+    info: os.stat_result, directory_info: os.stat_result
+) -> None:
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_size > 1_000_000
+    ):
+        raise OSError("registry entry is unsafe or oversized")
+    if os.name == "posix" and (
+        info.st_uid != directory_info.st_uid
+        or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise OSError("registry entry has unsafe ownership or permissions")
+
+
+def _parse_registry_snapshot(
+    path: Path, payload: bytes, info: os.stat_result
+) -> RegistryEntrySnapshot:
+    if len(payload) > 1_000_000:
+        raise OSError("registry entry is oversized")
+    value = json.loads(payload.decode("utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError("registry entry is not a JSON object")
+    return RegistryEntrySnapshot(path, value, _registry_identity(info), payload)
+
+
+def _read_registry_snapshot_at(
+    reg: Path,
+    name: str,
+    *,
+    directory_fd: int | None = None,
+) -> RegistryEntrySnapshot:
+    """Read one registry leaf through a pinned directory and exact descriptor."""
+
+    path = reg / name
+    if not name.endswith(".json") or Path(name).name != name:
+        raise RegistrySafetyError(f"unsafe registry entry name: {name!r}")
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        before = os.lstat(path)
+        if stat.S_ISLNK(before.st_mode):
+            raise OSError("registry entry is a symlink")
+        file_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            opened = os.fstat(file_fd)
+            directory_info = os.lstat(reg)
+            _validate_registry_leaf(opened, directory_info)
+            if _registry_identity(before) != _registry_identity(opened):
+                raise OSError("registry entry changed during open")
+            with os.fdopen(file_fd, "rb", closefd=False) as handle:
+                payload = handle.read(1_000_001)
+            after = os.fstat(file_fd)
+            if _registry_identity(opened) != _registry_identity(after):
+                raise OSError("registry entry changed during read")
+        finally:
+            os.close(file_fd)
+        final_path = os.lstat(path)
+        if _registry_identity(final_path) != _registry_identity(after):
+            raise OSError("registry entry changed after read")
+        return _parse_registry_snapshot(path, payload, after)
+
+    owns_directory_fd = directory_fd is None
+    if directory_fd is None:
+        directory_fd = _open_trusted_registry_directory(reg)
+    assert directory_fd is not None
+    try:
+        directory_info = os.fstat(directory_fd)
+        file_fd = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=directory_fd,
+        )
+        try:
+            before = os.fstat(file_fd)
+            _validate_registry_leaf(before, directory_info)
+            with os.fdopen(file_fd, "rb", closefd=False) as handle:
+                payload = handle.read(1_000_001)
+            after = os.fstat(file_fd)
+            if _registry_identity(before) != _registry_identity(after):
+                raise OSError("registry entry changed during read")
+        finally:
+            os.close(file_fd)
+        return _parse_registry_snapshot(path, payload, after)
+    finally:
+        if owns_directory_fd:
+            os.close(directory_fd)
+
+
+def strict_registry_snapshots(reg: Path) -> list[RegistryEntrySnapshot]:
+    """Read every registry row exactly; any unsafe row blocks authority changes."""
+
+    reg = Path(os.path.abspath(reg))
+    try:
+        root_info = os.lstat(reg)
+    except FileNotFoundError:
+        return []
+    if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
+        raise RegistrySafetyError(f"registry is not a real directory: {reg}")
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        names = sorted(path.name for path in reg.glob("*.json"))
+        rows: list[RegistryEntrySnapshot] = []
+        for name in names:
+            try:
+                rows.append(_read_registry_snapshot_at(reg, name))
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                raise RegistrySafetyError(
+                    f"cannot safely parse registry entry {reg / name}"
+                ) from exc
+        return rows
+
+    try:
+        directory_fd = _open_trusted_registry_directory(reg)
+    except OSError as exc:
+        raise RegistrySafetyError(f"cannot securely open registry: {reg}") from exc
+    rows = []
+    try:
+        _lock_registry_descriptor(directory_fd, exclusive=False)
+        try:
+            names = sorted(
+                name for name in os.listdir(directory_fd) if name.endswith(".json")
+            )
+        except OSError as exc:
+            raise RegistrySafetyError(f"cannot list registry: {reg}") from exc
+        for name in names:
+            try:
+                rows.append(
+                    _read_registry_snapshot_at(
+                        reg, name, directory_fd=directory_fd
+                    )
+                )
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                raise RegistrySafetyError(
+                    f"cannot safely parse registry entry {reg / name}"
+                ) from exc
+    finally:
+        os.close(directory_fd)
+    return rows
+
+
+def strict_registry_entries(reg: Path) -> list[tuple[Path, dict[str, Any]]]:
+    """Compatibility view over the fail-closed exact registry snapshots."""
+
+    return [(row.path, row.entry) for row in strict_registry_snapshots(reg)]
+
+
+def _same_registry_snapshot(
+    observed: RegistryEntrySnapshot, expected: RegistryEntrySnapshot
+) -> bool:
+    return (
+        observed.path.name == expected.path.name
+        and observed.identity == expected.identity
+        and observed.payload == expected.payload
+    )
+
+
+def _validate_registry_authority_snapshot(snapshot: RegistryEntrySnapshot) -> None:
+    """Require enough typed identity to prove a row unrelated before mutation."""
+
+    entry = snapshot.entry
+    try:
+        safe_registry_run_id(entry.get("run_id"))
+    except ValueError as exc:
+        raise RegistrySafetyError(
+            f"registry entry {snapshot.path} has an invalid run_id"
+        ) from exc
+    for field in ("loop_dir", "project_root"):
+        raw = entry.get(field)
+        if (
+            not isinstance(raw, str)
+            or not raw.strip()
+            or any(ord(char) < 32 or ord(char) == 127 for char in raw)
+            or not Path(raw).is_absolute()
+        ):
+            raise RegistrySafetyError(
+                f"registry entry {snapshot.path} has an invalid {field}"
+            )
+    pid = entry.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid < 0:
+        raise RegistrySafetyError(
+            f"registry entry {snapshot.path} has an invalid pid"
+        )
+    if entry.get("driver") is not None and not isinstance(entry.get("driver"), bool):
+        raise RegistrySafetyError(
+            f"registry entry {snapshot.path} has an invalid driver marker"
+        )
+
+
+def delete_registry_snapshot(snapshot: RegistryEntrySnapshot) -> bool:
+    """Rename, verify, then delete only the exact snapshotted registry inode.
+
+    A raced replacement is retained under another ``*.json`` name so every
+    subsequent authority-sensitive scan still sees it and fails closed.
+    """
+
+    reg = Path(os.path.abspath(snapshot.path.parent))
+    name = snapshot.path.name
+    quarantine = f".registry-delete-{uuid.uuid4().hex}-{name}"
+    if os.name == "nt":  # pragma: no cover - exercised by Windows CI
+        try:
+            current = _read_registry_snapshot_at(reg, name)
+        except FileNotFoundError:
+            return False
+        if not _same_registry_snapshot(current, snapshot):
+            raise RegistrySafetyError(
+                f"registry entry changed before deletion: {snapshot.path}"
+            )
+        try:
+            os.replace(reg / name, reg / quarantine)
+        except FileNotFoundError:
+            return False
+        moved = _read_registry_snapshot_at(reg, quarantine)
+        if not _same_registry_snapshot(
+            moved, snapshot._replace(path=reg / quarantine)
+        ):
+            raise RegistrySafetyError(
+                f"registry entry changed during deletion and was retained: {reg / quarantine}"
+            )
+        os.unlink(reg / quarantine)
+        return True
+
+    directory_fd = _open_trusted_registry_directory(reg)
+    _lock_registry_descriptor(directory_fd, exclusive=True)
+    try:
+        try:
+            current = _read_registry_snapshot_at(
+                reg, name, directory_fd=directory_fd
+            )
+        except FileNotFoundError:
+            return False
+        if not _same_registry_snapshot(current, snapshot):
+            raise RegistrySafetyError(
+                f"registry entry changed before deletion: {snapshot.path}"
+            )
+        try:
+            os.rename(
+                name,
+                quarantine,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+        except FileNotFoundError:
+            return False
+        moved = _read_registry_snapshot_at(
+            reg, quarantine, directory_fd=directory_fd
+        )
+        expected_moved = snapshot._replace(path=reg / quarantine)
+        if not _same_registry_snapshot(moved, expected_moved):
+            raise RegistrySafetyError(
+                f"registry entry changed during deletion and was retained: {reg / quarantine}"
+            )
+        os.unlink(quarantine, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+        return True
+    finally:
+        os.close(directory_fd)
+
+
 def gc_registry(reg: Path) -> int:
     removed = 0
-    for path, entry in list_registry_entries(reg):
-        if not entry_is_live(entry):
-            try:
-                path.unlink()
+    for snapshot in strict_registry_snapshots(reg):
+        _validate_registry_authority_snapshot(snapshot)
+        entry = snapshot.entry
+        # A long provider call can outlive the heartbeat TTL while its owning
+        # driver PID is still running.  Never garbage-collect that ownership
+        # proof: migration and a second driver must continue to fail closed.
+        if not entry_is_live(entry) and not entry_owned_by_live_driver(entry):
+            if delete_registry_snapshot(snapshot):
                 removed += 1
-            except OSError:
-                pass
     return removed
+
+
+def strict_live_registry_entries(
+    reg: Path, *, collect_garbage: bool
+) -> list[tuple[Path, dict[str, Any]]]:
+    """Derive one authority decision from one fail-closed registry snapshot."""
+
+    live: list[tuple[Path, dict[str, Any]]] = []
+    for snapshot in strict_registry_snapshots(reg):
+        _validate_registry_authority_snapshot(snapshot)
+        entry = snapshot.entry
+        is_live = entry_is_live(entry) or entry_owned_by_live_driver(entry)
+        if is_live:
+            live.append((snapshot.path, entry))
+        elif collect_garbage:
+            delete_registry_snapshot(snapshot)
+    return live
 
 
 def arm_loop(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(args.dir).expanduser().resolve()
-    state = read_json(loop_paths(run_dir)["state"])
-    run_id = state.get("run_id") or str(uuid.uuid4())
-    root = Path(args.root).expanduser().resolve() if args.root else run_dir
-    reg = registry_dir(args)
-    reg.mkdir(parents=True, exist_ok=True)
-    gc_registry(reg)
-    if not args.force:
-        for _, entry in list_registry_entries(reg):
+    driver_claim = bool(getattr(args, "driver", False))
+    # Serialize current-runtime registrations for this loop.  Together with
+    # migration's claim-before-scan order, this prevents two drivers from
+    # replacing the same run-id registry entry and hiding a live owner.
+    with LoopLock(run_dir):
+        if driver_claim and migration_claim_active(run_dir):
+            raise MigrationClaimError(
+                "cannot start a driver while Goal-Focus migration owns the loop"
+            )
+        state = read_json(loop_paths(run_dir)["state"])
+        run_id = safe_registry_run_id(state.get("run_id") or str(uuid.uuid4()))
+        root = Path(args.root).expanduser().resolve() if args.root else run_dir
+        reg = registry_dir(args)
+        reg = _ensure_real_directory(reg)
+        gc_registry(reg)
+        requested_pid = int(args.pid) if args.pid else 0
+        snapshots = strict_registry_snapshots(reg)
+        target_snapshot: RegistryEntrySnapshot | None = None
+        for snapshot in snapshots:
+            _validate_registry_authority_snapshot(snapshot)
+            existing = snapshot.entry
+            if snapshot.path.name == f"{run_id}.json":
+                if existing.get("run_id") != run_id:
+                    raise RegistrySafetyError(
+                        f"registry filename {snapshot.path} belongs to another run_id"
+                    )
+                if target_snapshot is not None:
+                    raise RegistrySafetyError(
+                        f"registry contains duplicate target rows for {run_id}"
+                    )
+                target_snapshot = snapshot
+            elif existing.get("run_id") == run_id:
+                raise RegistrySafetyError(
+                    f"registry contains a duplicate row for run_id {run_id}: {snapshot.path}"
+                )
             if (
-                entry.get("project_root") == str(root)
-                and entry.get("run_id") != run_id
-                and entry_is_live(entry)
+                driver_claim
+                and existing.get("loop_dir") == str(run_dir)
+                and entry_owned_by_live_driver(existing)
+                and existing.get("pid") != requested_pid
             ):
-                raise ValueError(f"a live autoloop is already armed for {root}; pass --force to override")
-    # Notify policy: explicit arm flag → env/loop → secrets-backed auto (default on when configured).
-    explicit_notify = getattr(args, "notify", None)
-    notify_channel = resolve_notify_channel(
-        explicit=explicit_notify,
-        run_dir=run_dir,
-        registry=reg,
-        default_auto=True,
-    )
-    # Persist preference token (off|channel) so later drive inherits without re-probing secrets if off.
-    persist_token = normalize_notify_token(explicit_notify)
-    if persist_token is None:
-        persist_token = notify_channel or "off"
-    elif persist_token == "auto":
-        persist_token = notify_channel or "off"
-    write_loop_notify_policy(run_dir, None if persist_token == "off" else persist_token)
-    now = utc_now()
-    entry = {
-        "schema_version": SCHEMA_VERSION,
-        "run_id": run_id,
-        "loop_dir": str(run_dir),
-        "project_root": str(root),
-        "pid": int(args.pid) if args.pid else 0,
-        "driver": bool(getattr(args, "driver", False)),
-        "notify_channel": persist_token if persist_token != "off" else "off",
-        "heartbeat": now,
-        "created_at": now,
-    }
-    write_json(reg / f"{run_id}.json", entry)
-    return {
-        "status": "ok",
-        "action": "arm",
-        "run_id": run_id,
-        "registry": str(reg),
-        "project_root": str(root),
-        "notify_channel": entry["notify_channel"],
-        "notify_resolved": notify_channel,
-    }
+                raise ValueError(
+                    f"a live driver already owns {run_dir}; stop it before starting another"
+                )
+            if (
+                not args.force
+                and existing.get("project_root") == str(root)
+                and existing.get("run_id") != run_id
+                and entry_is_live(existing)
+            ):
+                raise ValueError(
+                    f"a live autoloop is already armed for {root}; pass --force to override"
+                )
+        # Notify policy: explicit arm flag → env/loop → secrets-backed auto.
+        explicit_notify = getattr(args, "notify", None)
+        notify_channel = resolve_notify_channel(
+            explicit=explicit_notify,
+            run_dir=run_dir,
+            registry=reg,
+            default_auto=True,
+        )
+        persist_token = normalize_notify_token(explicit_notify)
+        if persist_token is None:
+            persist_token = notify_channel or "off"
+        elif persist_token == "auto":
+            persist_token = notify_channel or "off"
+        write_loop_notify_policy(
+            run_dir, None if persist_token == "off" else persist_token
+        )
+        now = utc_now()
+        registration_id = uuid.uuid4().hex
+        entry = {
+            "schema_version": SCHEMA_VERSION,
+            "run_id": run_id,
+            "registration_id": registration_id,
+            "loop_dir": str(run_dir),
+            "project_root": str(root),
+            "pid": requested_pid,
+            "driver": driver_claim,
+            "notify_channel": persist_token if persist_token != "off" else "off",
+            "heartbeat": now,
+            "created_at": now,
+        }
+        own_snapshot = _write_registry_json_snapshot(
+            reg, run_id, entry, expected=target_snapshot
+        )
+        entry_path = own_snapshot.path
+
+        def remove_own_registration() -> None:
+            try:
+                delete_registry_snapshot(own_snapshot)
+            except (FileNotFoundError, OSError, RegistrySafetyError):
+                pass
+
+        # Close the check/register race with migration: a migration claim created
+        # after the first check either observes this registry entry, or this second
+        # check removes only our registration before the driver can execute work.
+        if driver_claim and migration_claim_active(run_dir):
+            remove_own_registration()
+            raise MigrationClaimError(
+                "Goal-Focus migration claimed the loop while the driver registered"
+            )
+        if driver_claim:
+            try:
+                current_snapshot = _read_registry_snapshot_at(reg, entry_path.name)
+            except Exception:
+                remove_own_registration()
+                raise
+            if (
+                not _same_registry_snapshot(current_snapshot, own_snapshot)
+                or current_snapshot.entry.get("registration_id") != registration_id
+            ):
+                remove_own_registration()
+                raise RuntimeError(
+                    "driver registry ownership changed during registration"
+                )
+        return {
+            "status": "ok",
+            "action": "arm",
+            "run_id": run_id,
+            "registration_id": registration_id,
+            "registry": str(reg),
+            "project_root": str(root),
+            "notify_channel": entry["notify_channel"],
+            "notify_resolved": notify_channel,
+        }
 
 
 def disarm_loop(args: argparse.Namespace) -> dict[str, Any]:
@@ -1357,27 +3927,44 @@ def disarm_loop(args: argparse.Namespace) -> dict[str, Any]:
             except (OSError, ValueError, json.JSONDecodeError):
                 run_id = None
     removed: list[str] = []
-    for path, entry in list_registry_entries(reg):
+    for snapshot in strict_registry_snapshots(reg):
+        _validate_registry_authority_snapshot(snapshot)
+        entry = snapshot.entry
         if (run_id and entry.get("run_id") == run_id) or (loop_dir and entry.get("loop_dir") == loop_dir):
-            try:
-                path.unlink()
+            if delete_registry_snapshot(snapshot):
                 removed.append(str(entry.get("run_id")))
-            except OSError:
-                pass
     return {"status": "ok", "action": "disarm", "removed": removed, "registry": str(reg)}
 
 
 def active_command(args: argparse.Namespace) -> dict[str, Any]:
     reg = registry_dir(args)
-    gc_registry(reg)
-    loops = [entry for _, entry in list_registry_entries(reg) if entry_is_live(entry)]
+    loops = [
+        entry
+        for _, entry in strict_live_registry_entries(
+            reg, collect_garbage=True
+        )
+    ]
     return {"status": "ok", "action": "active", "registry": str(reg), "count": len(loops), "loops": loops}
 
 
 def compute_done(run_dir: Path) -> dict[str, Any]:
+    if (run_dir / ".goal_focus_transactions").exists():
+        goal_focus_v2.recover_transactions(run_dir)
     paths = loop_paths(run_dir)
     state = read_json(paths["state"]) if paths["state"].exists() else {}
     budget = read_json(paths["budget"]) if paths["budget"].exists() else {}
+    for field in ("max_usd", "spent_usd"):
+        raw = budget.get(field, 0.0)
+        if isinstance(raw, bool):
+            raise ValueError(f"budget.json {field} must be a finite non-negative number")
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"budget.json {field} must be a finite non-negative number"
+            ) from exc
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError(f"budget.json {field} must be a finite non-negative number")
     stop_conditions = state.get("stop_conditions") or {}
     paused = (run_dir / SENTINEL_PAUSE).exists()
     require_user = bool(stop_conditions.get("require_user_stop_only"))
@@ -1469,7 +4056,6 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
         if hook_payload_is_reentrant(read_hook_payload()):
             return {"status": "ok", "action": "hook-check", "block": False, "reason": "stop_hook_active"}
         reg = registry_dir(args)
-        gc_registry(reg)
         # Workspace root for hooks: Grok sets GROK_WORKSPACE_ROOT and the Claude
         # alias CLAUDE_PROJECT_DIR; Claude sets CLAUDE_PROJECT_DIR. Diagnostic only
         # on Grok (Stop is non-blocking there).
@@ -1480,9 +4066,9 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
         )
         root = Path(raw_root).expanduser().resolve() if raw_root else Path.cwd().resolve()
         match: dict[str, Any] | None = None
-        for _, entry in list_registry_entries(reg):
-            if not entry_is_live(entry):
-                continue
+        for _, entry in strict_live_registry_entries(
+            reg, collect_garbage=True
+        ):
             entry_root = entry.get("project_root")
             if not entry_root:
                 continue
@@ -1526,7 +4112,18 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
                 f"registry entry for run {match.get('run_id')}, or run `touch {loop_dir}/{SENTINEL_STOP}`."
             ),
         }
-    except Exception as exc:  # noqa: BLE001 - the Stop hook must fail open.
+    except RegistrySafetyError as exc:
+        return {
+            "status": "ok",
+            "action": "hook-check",
+            "block": True,
+            "reason": "registry_unsafe_fail_closed",
+            "message": (
+                "Autoloop registry authority is unsafe and must be repaired before "
+                f"the session may stop: {exc}"
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001 - non-authority hook errors fail open.
         return {"status": "ok", "action": "hook-check", "block": False, "reason": f"error_fail_open:{exc}"}
 
 
@@ -1630,26 +4227,87 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
         "binaries": ["claude"],
         "args": ["-p", "{prompt}", "--dangerously-skip-permissions"],
         "consent_note": "--dangerously-skip-permissions grants full tool autonomy",
+        "model_env": "AAS_CLAUDE_LATEST_MODEL",
+        "model_flag": "--model",
+        "reasoning_env": "AAS_CLAUDE_HIGHEST_THINKING",
+        "reasoning_flag": "--effort",
     },
     "codex": {
         "binaries": ["codex"],
-        "args": ["exec", "--full-auto", "{prompt}"],
+        "args": [
+            "exec",
+            "--ignore-user-config",
+            "-c",
+            "model_provider=\"openai\"",
+            "--full-auto",
+            "{prompt}",
+        ],
         "consent_note": "--full-auto runs with the workspace-write sandbox",
+        "model_env": "AAS_CODEX_LATEST_MODEL",
+        "model_flag": "--model",
+        "reasoning_env": "AAS_CODEX_HIGHEST_THINKING",
+        "reasoning_config": "model_reasoning_effort",
     },
     "deepseek": {
         "binaries": ["codewhale", "codewhale-tui", "deepseek"],
-        "args": ["exec", "--auto", "{prompt}"],
+        "args": [
+            "--provider",
+            "deepseek",
+            "--no-project-config",
+            "-C",
+            "{dir}",
+            "exec",
+            "--auto",
+            "{prompt}",
+        ],
+        "binary_args": {
+            "codewhale": [
+                "--provider",
+                "deepseek",
+                "--no-project-config",
+                "-C",
+                "{dir}",
+                "exec",
+                "--auto",
+                "{prompt}",
+            ],
+            "deepseek": [
+                "--provider",
+                "deepseek",
+                "--no-project-config",
+                "-C",
+                "{dir}",
+                "exec",
+                "--auto",
+                "{prompt}",
+            ],
+            "codewhale-tui": [
+                "-w",
+                "{dir}",
+                "exec",
+                "--provider",
+                "deepseek",
+                "--auto",
+                "{prompt}",
+            ],
+        },
         "consent_note": "--auto enables tool-backed agent mode with auto-approvals",
+        "model_env": "AAS_DEEPSEEK_LATEST_MODEL",
+        "model_flag": "--model",
     },
     "opencode": {
         "binaries": ["opencode"],
         "args": ["run", "{prompt}"],
         "consent_note": "runs with the opencode agent's configured permissions",
+        "model_env": "AAS_OPENCODE_LATEST_MODEL",
+        "model_flag": "--model",
     },
     "copilot": {
         "binaries": ["copilot"],
         "args": ["-p", "{prompt}", "--allow-all-tools"],
         "consent_note": "--allow-all-tools grants full tool autonomy",
+        "model_env": "AAS_COPILOT_LATEST_MODEL",
+        "model_flag": "--model",
     },
     "antigravity": {
         # Google Antigravity CLI is `agy`.
@@ -1665,6 +4323,8 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
             "gemini": ["--yolo", "-p", "{prompt}"],
         },
         "consent_note": "agy --dangerously-skip-permissions (or gemini --yolo) auto-approves all actions",
+        "model_env": "AAS_ANTIGRAVITY_LATEST_MODEL",
+        "model_flag": "--model",
     },
     "grok": {
         # Short display list for error messages; full platform lists in GROK_BINARY_CANDIDATES.
@@ -1676,6 +4336,8 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
             "override AAS_AUTOLOOP_BIN_GROK or AAS_GROK"
         ),
         "platform_candidates": GROK_BINARY_CANDIDATES,
+        "model_env": "AAS_GROK_LATEST_MODEL",
+        "model_flag": "-m",
     },
     "kimi": {
         "binaries": ["kimi"],
@@ -1913,30 +4575,71 @@ def iteration_prompt(
     Drive sets AAS_DRIVE_INBOX_BLOCK (or pass inbox_block) after exclusive claim.
     When host panel is enabled, appends the hybrid-model ban on nested panel CLIs.
     """
-    base = (
-        "You are one iteration of a bounded autonomous research loop governed by "
-        "the autonomous-research-loop skill and the autonomous-loop-enforcement "
-        f"policy. The loop directory is: {run_dir}. Do exactly ONE iteration now: "
-        "(1) read recovery.md, loop_state.json, budget.json, and the tail of "
-        "iterations.jsonl in that directory; (2) execute the single next action "
-        "they record, following the loop's single-path policy and evidence gates; "
-        "(3) verify the result independently as the loop protocol requires; "
-        "(4) append exactly one iteration record to iterations.jsonl (prefer the "
-        "autonomous-research-loop-runtime append-iteration helper) and update "
-        "loop_state.json, budget.json, and recovery.md so the next iteration can "
-        "resume from files alone; (5) append a 3-6 sentence human-readable entry "
-        "to PROGRESS_REPORT.md in the loop directory (create it with a short "
-        "header if absent): what this iteration did, what it concluded, whether "
-        "it was independently verified, and what comes next — written for the "
-        "project owner, not for the next agent; (6) exit. Do not run more than one iteration. "
-        "Do not stop the loop yourself: the headless driver owns the stop "
-        "conditions. If you hit a credit or quota error, exit nonzero with the "
-        "provider's error text visible in your output."
-    )
+    if goal_focus_is_enforced(run_dir):
+        base = (
+            "You are one execution iteration of a bounded autonomous research loop "
+            "governed by Goal Focus v2 and the autonomous-loop-enforcement policy. "
+            f"The loop directory is: {run_dir}. Do exactly ONE iteration now: "
+            "(1) read goal_contract.json, approach_registry.json, current_plan.json, "
+            "recovery.md, loop_state.json, budget.json, and the tail of iterations.jsonl; "
+            "(2) execute only current_plan.next_action within its campaign, approach, "
+            "scope lock, and evidence gates; (3) run the narrowest meaningful local "
+            "checks, but do not claim that you supplied the independent host review; "
+            "(4) call the autonomous-research-loop-runtime append-iteration helper "
+            "exactly once, including --completed-summary, --current-summary, "
+            "--next-action, both progress deltas, actual compute provenance, and all "
+            "changed obligation ids. Assign a unique --claim-id to every material "
+            "result asserted in the staged output. The host has prepared "
+            "<loop>/.goal_focus/evidence/$AAS_AUTOLOOP_CANDIDATE_ID/. Write each "
+            "new evidence artifact there under one safe opaque artifact name, and "
+            "pass only that artifact name (not a path) as --evidence-id. Do not use "
+            "an existing project/configuration/credential file as evidence. Stage at "
+            "least one such concrete --evidence-id that supports the claims; undeclared or evidence-free "
+            "prose claims cannot be banked. In enforce mode this stages a pending candidate; "
+            "it does not bank the result. Do not directly edit iterations.jsonl, "
+            "loop_state.json, budget.json, current_plan.json, or the managed recovery "
+            "block; (5) exit after staging. The host driver owns independent result "
+            "review, atomic finalization, notifications, and all stop conditions. "
+            "If you hit a credit or quota error, exit nonzero with the provider's "
+            "error text visible in your output."
+        )
+    else:
+        base = (
+            "You are one iteration of a bounded autonomous research loop governed by "
+            "the autonomous-research-loop skill and the autonomous-loop-enforcement "
+            f"policy. The loop directory is: {run_dir}. Do exactly ONE iteration now: "
+            "(1) read recovery.md, loop_state.json, budget.json, and the tail of "
+            "iterations.jsonl in that directory; (2) execute the single next action "
+            "they record, following the loop's single-path policy and evidence gates; "
+            "(3) verify the result independently as the loop protocol requires; "
+            "(4) append exactly one iteration record to iterations.jsonl (prefer the "
+            "autonomous-research-loop-runtime append-iteration helper) and update "
+            "loop_state.json, budget.json, and recovery.md so the next iteration can "
+            "resume from files alone; (5) append a 3-6 sentence human-readable entry "
+            "to PROGRESS_REPORT.md in the loop directory (create it with a short "
+            "header if absent): what this iteration did, what it concluded, whether "
+            "it was independently verified, and what comes next — written for the "
+            "project owner, not for the next agent; (6) exit. Do not run more than one iteration. "
+            "Do not stop the loop yourself: the headless driver owns the stop "
+            "conditions. If you hit a credit or quota error, exit nonzero with the "
+            "provider's error text visible in your output."
+        )
     base = base + compute_policy_addon(run_dir)
     if panel_enabled:
         base = base + panel_prompt_addon(run_dir, panel_iter_dir)
-    if is_goal_priority_active(run_dir):
+    if goal_focus_is_enforced(run_dir):
+        try:
+            base = base + goal_focus_v2.goal_focus_prompt_addon(run_dir)
+        except Exception:  # noqa: BLE001 - prompt construction surfaces at dispatch gate
+            pass
+    elif goal_focus_runtime_mode(run_dir) == "monitor":
+        try:
+            base = base + goal_focus_v2.goal_focus_prompt_addon(run_dir)
+        except Exception:  # noqa: BLE001 - monitor findings are advisory
+            pass
+        if is_goal_priority_active(run_dir):
+            base = base + goal_priority_prompt_addon(run_dir)
+    elif is_goal_priority_active(run_dir):
         base = base + goal_priority_prompt_addon(run_dir)
     # Formal after goal_priority (subordinate to single-path + hard replan); empty when off.
     try:
@@ -1964,6 +4667,7 @@ def resolve_remote_notify_argv(
     job_id: str | None = None,
     *,
     html: str | None = None,
+    event_json_stdin: bool = False,
 ) -> list[str] | None:
     """Build argv for remote-bridge send (no shell). Returns None if unavailable."""
     if os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1" and os.environ.get("AAS_AUTOLOOP_NOTIFY_CMD"):
@@ -1973,9 +4677,12 @@ def resolve_remote_notify_argv(
     if not rb.is_file():
         return None
     py = os.environ.get("AAS_RUNTIME_PYTHON") or sys.executable
-    argv = [py, str(rb), "send", "--text", text]
-    if html:
-        argv.extend(["--html", html])
+    if event_json_stdin:
+        argv = [py, str(rb), "send", "--event-json", "-"]
+    else:
+        argv = [py, str(rb), "send", "--text", text]
+        if html:
+            argv.extend(["--html", html])
     if channel in {"zulip", "telegram", "both"}:
         argv.extend(["--channel", channel])
     if job_id:
@@ -2154,6 +4861,209 @@ def resolve_notify_channel(
 
 def provider_env_key(provider: str) -> str:
     return provider.upper().replace("-", "_")
+
+
+PROVIDER_ENDPOINT_IDENTITY_VARS: dict[str, frozenset[str]] = {
+    "claude": frozenset(
+        {
+            "ANTHROPIC_BASE_URL",
+            "ANTHROPIC_API_URL",
+            "CLAUDE_CODE_USE_BEDROCK",
+            "CLAUDE_CODE_USE_VERTEX",
+            "CLAUDE_CODE_USE_FOUNDRY",
+        }
+    ),
+    "codex": frozenset(
+        {
+            "OPENAI_BASE_URL",
+            "OPENAI_API_BASE",
+            "CODEX_BASE_URL",
+            "AZURE_OPENAI_ENDPOINT",
+        }
+    ),
+    "deepseek": frozenset(
+        {
+            "DEEPSEEK_BASE_URL",
+            "DEEPSEEK_API_BASE",
+            "CODEWHALE_BASE_URL",
+            "CODEWHALE_PROVIDER",
+        }
+    ),
+    "grok": frozenset({"XAI_BASE_URL", "GROK_BASE_URL"}),
+    "antigravity": frozenset(
+        {
+            "GOOGLE_GEMINI_BASE_URL",
+            "GOOGLE_VERTEX_BASE_URL",
+            "GEMINI_NEXT_GEN_API_BASE_URL",
+        }
+    ),
+}
+
+# A tool-enabled primary receives only ordinary process plumbing, explicit ARL
+# control values, and credentials/config for its one host-attested provider.
+# Notification, remote-bridge, CI, and other-provider secrets are intentionally
+# absent even if the supervising process has them. Trusted-local execution may
+# additionally receive only the Hetzner/Kaggle variables selected by the exact
+# host-pinned current-plan compute policy.
+PRIMARY_BASE_ENV_ALLOWLIST = frozenset(
+    {
+        "APPDATA",
+        "COLORTERM",
+        "COMSPEC",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LOCALAPPDATA",
+        "LOGNAME",
+        "NO_COLOR",
+        "PATH",
+        "PATHEXT",
+        "SHELL",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "SYSTEMROOT",
+        "TEMP",
+        "TERM",
+        "TMP",
+        "TMPDIR",
+        "TZ",
+        "USER",
+        "USERPROFILE",
+        "WINDIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+    }
+)
+PRIMARY_PROVIDER_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
+    "claude": frozenset(
+        {
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "CLAUDE_CONFIG_DIR",
+        }
+    ),
+    "codex": frozenset({"OPENAI_API_KEY", "CODEX_HOME"}),
+    "codewhale": frozenset({"DEEPSEEK_API_KEY", "CODEWHALE_HOME"}),
+    "deepseek": frozenset({"DEEPSEEK_API_KEY", "CODEWHALE_HOME"}),
+    "grok": frozenset({"GROK_API_KEY", "XAI_API_KEY", "GROK_CONFIG_DIR"}),
+    "antigravity": frozenset(
+        {"GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_CONFIG_DIR"}
+    ),
+    "copilot": frozenset(
+        {"COPILOT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}
+    ),
+    "kimi": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_CONFIG_DIR"}),
+    "opencode": frozenset({"OPENCODE_API_KEY", "OPENCODE_CONFIG_DIR"}),
+}
+PRIMARY_RUNTIME_ENV_ALLOWLIST = frozenset({"AAS_RUNTIME_ROOT", "AAS_RUNTIME_PYTHON"})
+PRIMARY_COMPUTE_LANE_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
+    "hetzner": frozenset({"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS"}),
+    "kaggle": frozenset({"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}),
+}
+
+
+def _host_pinned_primary_compute_lanes(run_dir: str | Path | None) -> frozenset[str]:
+    """Return reviewed lanes that remain inside a structured operator pin.
+
+    Credential admission is intentionally stricter than compute-result
+    validation: a model-selected ``allowed_services`` value cannot create its
+    own credential authority.  Any missing or unreadable authority fails closed
+    to an empty set so ambient cloud credentials never become global primary
+    process environment.
+    """
+
+    if run_dir is None:
+        return frozenset()
+    try:
+        root = Path(run_dir)
+        plan = goal_focus_v2.load_current_plan(root, required=True)
+        # The current plan is host-committed authority. Model advice may select
+        # allowed_services, but it cannot create the separately persisted
+        # user_allowed_services pin used by this resolver.
+        pinned, forbidden, _free_text_only = goal_focus_v2._pinned_compute_policy(
+            root, plan
+        )
+        policy = (
+            plan.get("compute_policy")
+            if isinstance(plan.get("compute_policy"), Mapping)
+            else {}
+        )
+        selected = goal_focus_v2._policy_allowed(policy)
+        plan_forbidden = goal_focus_v2._compute_services(
+            policy.get("forbidden_services")
+        )
+    except (OSError, TypeError, ValueError):
+        return frozenset()
+    if not pinned or not selected:
+        return frozenset()
+    return frozenset(
+        (pinned & selected) - forbidden - plan_forbidden
+    ) & PRIMARY_COMPUTE_LANE_ENV_ALLOWLIST.keys()
+
+
+def build_primary_child_env(
+    provider: str | None,
+    *,
+    executable_attestation: Mapping[str, Any] | None,
+    control: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+    include_provider_credentials: bool = True,
+    include_compute_credentials: bool = False,
+    compute_policy_run_dir: str | Path | None = None,
+) -> dict[str, str]:
+    """Build the strict environment for one primary execution process."""
+
+    source = os.environ if environ is None else environ
+    normalized = str(provider or "custom").strip().lower().replace("_", "-")
+    child = {
+        name: str(source[name])
+        for name in PRIMARY_BASE_ENV_ALLOWLIST | PRIMARY_RUNTIME_ENV_ALLOWLIST
+        if str(source.get(name) or "")
+    }
+    attested = bool(
+        isinstance(executable_attestation, Mapping)
+        and executable_attestation.get("provider") == normalized
+        and executable_attestation.get("source")
+        == "trusted_operator_provider_identity.v1"
+    )
+    if attested and include_provider_credentials:
+        for name in PRIMARY_PROVIDER_ENV_ALLOWLIST.get(normalized, ()):
+            if str(source.get(name) or ""):
+                child[name] = str(source[name])
+    if attested and include_compute_credentials:
+        for lane in _host_pinned_primary_compute_lanes(compute_policy_run_dir):
+            for name in PRIMARY_COMPUTE_LANE_ENV_ALLOWLIST[lane]:
+                if str(source.get(name) or ""):
+                    child[name] = str(source[name])
+    for name, value in control.items():
+        if str(name) == "AUTOLOOP_PROMPT":
+            continue
+        text = str(value if value is not None else "")
+        if text:
+            child[str(name)] = text
+    return child
+
+
+def provider_identity_overrides(
+    provider: str, environ: Mapping[str, str] | None = None
+) -> list[str]:
+    """Return process-shape or endpoint overrides invalidating family attribution."""
+
+    env = os.environ if environ is None else environ
+    key = provider_env_key(provider)
+    candidates = {
+        f"AAS_AUTOLOOP_BIN_{key}",
+        f"AAS_AUTOLOOP_CMD_{key}",
+        f"AAS_AUTOLOOP_ARGS_{key}",
+        f"AAS_{key}",
+    }
+    if provider == "grok":
+        candidates.add("AAS_GROK")
+    candidates.update(PROVIDER_ENDPOINT_IDENTITY_VARS.get(provider, ()))
+    return sorted(name for name in candidates if str(env.get(name) or "").strip())
 
 
 def runtime_platform_name() -> str:
@@ -2455,6 +5365,23 @@ def resolve_provider_binary_details(
         raise ValueError(f"unknown provider: {provider}")
     key = provider_env_key(provider)
     tried: list[str] = []
+    executable_attestation = attest_provider_executable(
+        provider,
+        environ=env,
+        required=False,
+    )
+    if executable_attestation is not None:
+        attested_path = str(executable_attestation["executable_path"])
+        tried.append(attested_path)
+        return attested_path, True, tried, (
+            {
+                "status": "host-attested",
+                "source": "provider_executable_attestation.v1",
+                "executable_attestation": executable_attestation,
+            }
+            if provider == "grok"
+            else None
+        )
     if provider == "grok":
         resolved_model = env.get("AAS_GROK_LATEST_MODEL")
         if resolved_model and GROK_MODEL_ID_RE.fullmatch(resolved_model) is None:
@@ -2665,12 +5592,19 @@ def resolve_provider_command(
         raise ValueError(f"unknown provider: {provider}")
     spec = PROVIDER_SPECS[provider]
     key = provider_env_key(provider)
+    executable_attestation = attest_provider_executable(
+        provider, environ=env, required=False
+    )
     prompt = iteration_prompt(
         run_dir,
         panel_enabled=panel_enabled,
         panel_iter_dir=panel_iter_dir,
     )
     full = env.get(f"AAS_AUTOLOOP_CMD_{key}")
+    if executable_attestation is not None and full:
+        raise ValueError(
+            "a host-attested provider cannot use a custom shell command"
+        )
     invalid_grok_model = (
         provider == "grok"
         and bool(env.get("AAS_GROK_LATEST_MODEL"))
@@ -2702,6 +5636,10 @@ def resolve_provider_command(
         environ=env,
     )
     args_raw = env.get(f"AAS_AUTOLOOP_ARGS_{key}")
+    if executable_attestation is not None and args_raw:
+        raise ValueError(
+            "a host-attested provider cannot use custom argument overrides"
+        )
     template = shlex.split(args_raw) if args_raw else list(spec["args"])
     # Per-binary arg templates: a spec may declare different flags per resolved
     # binary (e.g. antigravity: `agy -p ... --dangerously-skip-permissions` vs
@@ -2712,24 +5650,66 @@ def resolve_provider_command(
         base = re.sub(r"\.(exe|cmd|bat|ps1)$", "", base)
         if base in binary_args:
             template = list(binary_args[base])
-    if provider == "grok" and not args_raw and env.get("AAS_GROK_LATEST_MODEL"):
-        template.extend(["-m", env["AAS_GROK_LATEST_MODEL"]])
-    # Generic model pin for providers that declare model_env/model_flag (e.g. kimi).
-    # Raw AAS_AUTOLOOP_ARGS_* overrides disable this auto pin (same as Grok).
+    # A host-attested provider always launches the exact attested model.  The
+    # older convenience model variable may agree, but can never override or
+    # silently disagree with that identity.
     model_env_name = spec.get("model_env")
     model_flag = spec.get("model_flag")
-    if (
-        model_env_name
-        and model_flag
-        and not args_raw
-        and provider != "grok"
-        and env.get(str(model_env_name))
-    ):
-        template.extend([str(model_flag), str(env[str(model_env_name)])])
+    attested_model = str(
+        (executable_attestation or {}).get("model") or ""
+    ).strip()
+    configured_model = str(
+        env.get(str(model_env_name)) or "" if model_env_name else ""
+    ).strip()
+    if attested_model:
+        if not model_flag:
+            raise ValueError(
+                f"provider {provider} has no verified exact-model launch flag"
+            )
+        if configured_model and configured_model != attested_model:
+            raise ValueError(
+                f"{model_env_name} conflicts with the host-attested model"
+            )
+        template.extend([str(model_flag), attested_model])
+    elif model_env_name and model_flag and not args_raw and configured_model:
+        template.extend([str(model_flag), configured_model])
+    reasoning_env_name = spec.get("reasoning_env")
+    reasoning_flag = spec.get("reasoning_flag")
+    reasoning_config = spec.get("reasoning_config")
+    if reasoning_env_name and not args_raw and env.get(str(reasoning_env_name)):
+        reasoning_value = str(env[str(reasoning_env_name)])
+        if reasoning_flag:
+            template.extend([str(reasoning_flag), reasoning_value])
+        elif reasoning_config:
+            template.extend(
+                ["-c", f'{reasoning_config}="{reasoning_value}"']
+            )
     argv = [str(binary)] + [
         arg.replace("{prompt}", prompt).replace("{dir}", str(run_dir))
         for arg in template
     ]
+    prompt_transport = "argv"
+    if executable_attestation is not None:
+        matches = [index for index, value in enumerate(argv) if value == prompt]
+        if len(matches) != 1:
+            raise ValueError(
+                "host-attested provider command does not isolate one exact prompt argument"
+            )
+        prompt_index = matches[0]
+        if provider == "claude":
+            argv = [*argv[:prompt_index], *argv[prompt_index + 1 :]]
+            prompt_transport = "stdin"
+        elif provider == "codex":
+            argv[prompt_index] = "-"
+            prompt_transport = "stdin"
+        else:
+            # Do not leave exact prompt bytes in argv merely because this
+            # provider lacks a reviewed private transport.  The driver will
+            # refuse it before spawn.
+            argv = [*argv[:prompt_index], *argv[prompt_index + 1 :]]
+            prompt_transport = "unavailable"
+        if any(prompt in value for value in argv):
+            raise ValueError("host-attested provider prompt remains in argv")
     result = {
         "provider": provider,
         "mode": "argv",
@@ -2739,7 +5719,11 @@ def resolve_provider_command(
         "prompt": prompt,
         "consent_note": spec["consent_note"],
         "tried": tried,
+        "prompt_transport": prompt_transport,
     }
+    if executable_attestation is not None:
+        result["executable_attestation"] = executable_attestation
+        result["model"] = attested_model
     if grok_selection is not None:
         result["grok_selection"] = grok_selection
     return result
@@ -2768,17 +5752,65 @@ def agent_cmd_command(args: argparse.Namespace) -> dict[str, Any]:
 def last_ledger_record(run_dir: Path) -> dict[str, Any] | None:
     path = loop_paths(run_dir)["iterations"]
     try:
-        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        lines = [ln for ln in _read_regular_text(path).splitlines() if ln.strip()]
         return json.loads(lines[-1]) if lines else None
     except (OSError, ValueError, json.JSONDecodeError):
         return None
 
 
 def loop_driver_entry(reg: Path, run_dir: Path) -> dict[str, Any] | None:
-    for _, entry in list_registry_entries(reg):
+    for snapshot in strict_registry_snapshots(reg):
+        _validate_registry_authority_snapshot(snapshot)
+        entry = snapshot.entry
         if str(entry.get("loop_dir", "")) == str(run_dir):
             return entry
     return None
+
+
+def live_driver_entries_for_loop(
+    reg: Path, run_dir: Path
+) -> list[tuple[Path, dict[str, Any]]]:
+    """Return every live driver entry for one exact canonical loop path."""
+
+    target_path = Path(run_dir).resolve()
+    live: list[tuple[Path, dict[str, Any]]] = []
+    for path, entry in strict_registry_entries(reg):
+        raw_loop = entry.get("loop_dir")
+        if not isinstance(raw_loop, str) or not raw_loop.strip():
+            # A row without a loop identity cannot be proven unrelated to the
+            # migration target, so destructive migration stops for inspection.
+            raise RegistrySafetyError(
+                f"registry entry {path} lacks a valid loop_dir"
+            )
+        if any(ord(char) < 32 or ord(char) == 127 for char in raw_loop):
+            raise RegistrySafetyError(
+                f"registry entry {path} has an invalid loop_dir"
+            )
+        try:
+            entry_loop = Path(raw_loop).expanduser().resolve()
+        except (OSError, RuntimeError) as exc:
+            raise RegistrySafetyError(
+                f"registry entry {path} loop_dir cannot be canonicalized"
+            ) from exc
+        if entry_loop != target_path:
+            continue
+        driver_marker = entry.get("driver")
+        if driver_marker is not None and not isinstance(driver_marker, bool):
+            raise RegistrySafetyError(
+                f"matching registry entry {path} has an invalid driver marker"
+            )
+        pid = entry.get("pid")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid < 0:
+            raise RegistrySafetyError(
+                f"matching registry entry {path} has an invalid pid"
+            )
+        if driver_marker is True and pid <= 0:
+            raise RegistrySafetyError(
+                f"matching driver registry entry {path} lacks a positive pid"
+            )
+        if entry_owned_by_live_driver(entry):
+            live.append((path, entry))
+    return live
 
 
 def progress_paths(run_dir: Path, log_dir: Path | None = None) -> dict[str, Path]:
@@ -2804,6 +5836,15 @@ _NOTIFY_EVENT_MARKERS: dict[str, str] = {
     "terminal": "🛑",
     "driver_dead": "💀",
     "watch_start": "👀",
+    "iteration_rejected": "⛔",
+    "goal_focus_replan": "🧭",
+    "goal_focus_wait": "⏳",
+    "strategy_review_start": "🧠",
+    "strategy_review_wait": "⏳",
+    "result_review_start": "🔎",
+    "result_review_wait": "⏳",
+    "result_review_error": "⚠️",
+    "supervisor": "🛠️",
 }
 
 
@@ -2818,6 +5859,12 @@ _ATTEMPT_PROGRESS_EVENTS = frozenset(
         "panel_target_start",
         "panel_target_ok",
         "panel_target_fail",
+        "strategy_review_start",
+        "strategy_review_wait",
+        "result_review_start",
+        "result_review_wait",
+        "result_review_error",
+        "goal_focus_wait",
     }
 )
 
@@ -2900,7 +5947,7 @@ def build_progress_why_where(
     try:
         rec_path = Path(run_dir) / "recovery.md"
         if rec_path.is_file():
-            recovery_text = rec_path.read_text(encoding="utf-8", errors="replace")
+            recovery_text = _read_regular_text(rec_path, errors="replace")
     except OSError:
         recovery_text = ""
 
@@ -3259,6 +6306,375 @@ def format_progress_notify_telegram_html(
     return "\n".join(lines).strip()
 
 
+def _read_optional_json_object(path: Path) -> dict[str, Any]:
+    try:
+        return read_json(path) if path.is_file() else {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _notify_iteration_status(
+    event: str,
+    extra: dict[str, Any],
+    *,
+    record: Mapping[str, Any] | None = None,
+) -> str:
+    explicit = str(extra.get("iteration_status") or "").strip().lower()
+    if explicit:
+        return explicit
+    bank_status = str((record or {}).get("bank_status") or "").strip().lower()
+    if event == "iteration" and bank_status == "rejected":
+        return "failure"
+    if event in {"iteration_ok", "iteration", "result_accepted"}:
+        return "success"
+    if event in {"iteration_rejected", "result_rejected"}:
+        return "failure"
+    if event in {
+        "iteration_failed",
+        "auth_failure",
+        "driver_dead",
+        "runtime_error",
+        "result_review_error",
+    }:
+        return "error"
+    if event in {
+        "quota_wait",
+        "strategy_review_wait",
+        "result_review_wait",
+        "goal_focus_wait",
+    }:
+        return "waiting"
+    if event == "paused":
+        return "paused"
+    if event in {
+        "iteration_start",
+        "panel_target_start",
+        "strategy_review_start",
+        "result_review_start",
+    }:
+        return "running"
+    return "not_applicable"
+
+
+def _notify_review_status(
+    event: str,
+    extra: dict[str, Any],
+    *,
+    enforced: bool,
+    record: Mapping[str, Any] | None = None,
+) -> str:
+    explicit = str(extra.get("review_status") or "").strip().lower()
+    if explicit:
+        return explicit
+    bank_status = str((record or {}).get("bank_status") or "").strip().lower()
+    if event == "iteration" and bank_status == "rejected":
+        return "failed"
+    if event == "iteration" and bank_status == "accepted":
+        return "passed"
+    if event in {"iteration_rejected", "result_rejected"}:
+        return "failed"
+    if event in {
+        "strategy_review_start",
+        "strategy_review_wait",
+        "result_review_wait",
+        "result_review_start",
+    }:
+        return "pending"
+    if event == "result_review_error":
+        return "error"
+    if event in {"iteration_ok", "result_accepted"} and enforced:
+        return "passed"
+    if event == "iteration_start" and enforced:
+        return "pending"
+    return "not_required"
+
+
+def _notify_compute_value(record: dict[str, Any], extra: dict[str, Any], *, attempt: bool) -> Any:
+    if "compute" in extra:
+        return extra.get("compute")
+    if attempt:
+        return None
+    execution = record.get("execution")
+    raw = execution.get("compute") if isinstance(execution, dict) else None
+    if not isinstance(raw, dict) or "recording_status" not in raw:
+        return raw
+    if raw.get("recording_status") != "explicit":
+        return None
+    if raw.get("usage") == "none":
+        return []
+    services = raw.get("services")
+    return services if isinstance(services, list) else None
+
+
+def _notify_goal_progress(record: dict[str, Any], contract: dict[str, Any]) -> str:
+    progress = record.get("progress_assessment")
+    if isinstance(progress, dict) or record.get("bank_status") in {"accepted", "rejected"}:
+        progress = progress if isinstance(progress, dict) else {}
+        campaign_delta = str(
+            record.get("campaign_delta") or progress.get("campaign_delta") or "none"
+        )
+        global_delta = str(
+            record.get("global_delta") or progress.get("global_delta") or "none"
+        )
+        transitions = record.get("obligation_transitions")
+        if isinstance(transitions, list) and transitions:
+            obligations = [
+                str(item.get("obligation_id"))
+                for item in transitions
+                if isinstance(item, dict) and item.get("obligation_id")
+            ]
+        else:
+            obligations = [str(item) for item in progress.get("obligation_ids") or [] if item]
+        detail = f"campaign {campaign_delta}; global {global_delta}"
+        if obligations:
+            detail += "; obligations " + ", ".join(obligations)
+        return detail
+    obligations = contract.get("obligations")
+    if isinstance(obligations, dict) and obligations:
+        obligation_rows = list(obligations.values())
+    elif isinstance(obligations, list):
+        obligation_rows = obligations
+    else:
+        obligation_rows = []
+    if obligation_rows:
+        closed = sum(
+            1
+            for obligation in obligation_rows
+            if isinstance(obligation, dict)
+            and str(obligation.get("status") or "").lower()
+            in {"closed", "satisfied", "discharged"}
+        )
+        return f"{closed}/{len(obligation_rows)} named obligations satisfied"
+    return "Not measured"
+
+
+def _notify_success_criteria(value: Any) -> list[str]:
+    """Flatten Goal-Focus criterion objects for the transport schema."""
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, dict):
+        raw_rows: Any = list(value.values())
+    elif isinstance(value, list):
+        raw_rows = value
+    else:
+        return []
+    rows: list[str] = []
+    for item in raw_rows:
+        if isinstance(item, dict):
+            text_value = str(
+                item.get("description") or item.get("criterion") or item.get("id") or ""
+            ).strip()
+        else:
+            text_value = str(item or "").strip()
+        if text_value:
+            rows.append(text_value)
+    return rows
+
+
+def _build_notify_v2_envelope(
+    run_dir: Path,
+    event: str,
+    *,
+    record: dict[str, Any],
+    state: dict[str, Any],
+    budget: dict[str, Any],
+    extra: dict[str, Any],
+    iteration: int,
+    spent: int,
+    max_iter: int,
+    objective: str,
+    output: str,
+    progress_note: str,
+    why: str,
+    where: str,
+    timestamp: str,
+    attempt_event: bool,
+) -> dict[str, Any]:
+    """Resolve host-owned facts and build the mandatory Notify v2 envelope."""
+    identity = resolve_loop_notify_identity(run_dir)
+    contract = _read_optional_json_object(run_dir / "goal_contract.json")
+    plan = _read_optional_json_object(run_dir / "current_plan.json")
+    goal = str(
+        contract.get("goal")
+        or contract.get("main_goal")
+        or state.get("goal")
+        or "Research goal was not recorded."
+    ).strip()
+    success_criteria = _notify_success_criteria(
+        contract.get("success_criteria") or state.get("success_criteria")
+    )
+
+    iteration_status = _notify_iteration_status(event, extra, record=record)
+    review_status = _notify_review_status(
+        event,
+        extra,
+        enforced=goal_focus_is_enforced(run_dir),
+        record=record,
+    )
+    if iteration_status == "success":
+        completed = str(
+            extra.get("completed_summary")
+            or output
+            or record.get("completed_summary")
+            or "The iteration was reviewed and banked."
+        ).strip()
+    elif iteration_status == "failure":
+        completed = str(
+            extra.get("completed_summary")
+            or extra.get("review_summary")
+            or "No research result was banked because the staged candidate failed review."
+        ).strip()
+    elif iteration_status == "error":
+        completed = str(
+            extra.get("completed_summary")
+            or progress_note
+            or extra.get("error")
+            or "No new research result was banked because this iteration encountered an error."
+        ).strip()
+    else:
+        completed = str(
+            extra.get("completed_summary")
+            or "No new research result has been banked by this event."
+        ).strip()
+
+    current = str(
+        extra.get("current_summary")
+        or record.get("current_summary")
+        or plan.get("current_summary")
+        or where
+        or state.get("current_summary")
+        or "The research remains open at the last independently reviewed state."
+    ).strip()
+    next_action = str(
+        extra.get("next_action")
+        or plan.get("next_action")
+        or state.get("next_preferred_path")
+        or why
+        or objective
+        or "Reconcile the active plan before another iteration."
+    ).strip()
+    execution = record.get("execution") if isinstance(record.get("execution"), dict) else {}
+    executor = str(
+        extra.get("provider")
+        or extra.get("executor")
+        or execution.get("executor_provider")
+        or os.environ.get("AAS_AUTOLOOP_PRIMARY_PROVIDER")
+        or "Not recorded"
+    ).strip()
+    started_at = str(extra.get("started_at") or execution.get("started_at") or "").strip()
+    finished_at = str(
+        extra.get("finished_at") or execution.get("work_finished_at") or timestamp
+    ).strip()
+    duration = extra.get("duration_seconds")
+    if duration in (None, ""):
+        delta = record.get("budget_delta")
+        duration = delta.get("wall_time_seconds") if isinstance(delta, dict) else None
+    goal_focus = record.get("goal_focus") if isinstance(record.get("goal_focus"), dict) else {}
+    plan_revision = extra.get("plan_revision")
+    if plan_revision in (None, ""):
+        plan_revision = plan.get("plan_revision", goal_focus.get("plan_revision"))
+    campaign_id = str(
+        extra.get("campaign_id")
+        or goal_focus.get("campaign_id")
+        or record.get("campaign_id")
+        or plan.get("campaign_id")
+        or ""
+    )
+    objective_id = str(
+        extra.get("objective_id") or plan.get("objective_id") or record.get("objective") or ""
+    )
+    scope = str(
+        extra.get("scope")
+        or goal_focus.get("scope_lock")
+        or record.get("scope_lock")
+        or plan.get("scope_lock")
+        or ""
+    )
+    persisted_review = (
+        record.get("result_review")
+        if isinstance(record.get("result_review"), dict)
+        else {}
+    )
+    reviewer_families = (
+        extra.get("reviewer_families")
+        or persisted_review.get("reviewer_families")
+        or []
+    )
+    driver_agent: Any = extra.get("driver_agent")
+    if driver_agent is None and executor != "Not recorded":
+        driver_agent = {
+            "name": executor,
+            "provider": executor,
+            "role": "driver",
+        }
+        driver_model = str(extra.get("driver_model") or execution.get("executor_model") or "").strip()
+        if driver_model:
+            driver_agent["model"] = driver_model
+    panel_agents: Any = None
+    for key in ("panel_agents", "reviewer_agents", "reviewer_providers", "usable_providers"):
+        if key in extra:
+            panel_agents = extra.get(key)
+            break
+    if panel_agents is None:
+        persisted_agents: list[Any] = []
+        for key in ("providers", "usable_providers", "reviewer_providers"):
+            raw_agents = persisted_review.get(key)
+            if isinstance(raw_agents, (str, dict)):
+                raw_agents = [raw_agents]
+            if not isinstance(raw_agents, list):
+                continue
+            for agent in raw_agents:
+                if agent not in persisted_agents:
+                    persisted_agents.append(agent)
+        if persisted_agents:
+            panel_agents = persisted_agents
+    other_agents: Any = extra.get("other_agents") if "other_agents" in extra else None
+    compute = _notify_compute_value(record, extra, attempt=attempt_event)
+    candidate_id = str(extra.get("candidate_id") or record.get("candidate_id") or "").strip()
+    stable_event_id = str(extra.get("event_id") or "").strip()
+    if not stable_event_id and candidate_id and event in {
+        "iteration_ok",
+        "iteration_rejected",
+        "result_accepted",
+        "result_rejected",
+    }:
+        stable_event_id = f"arl-{event}-{candidate_id}"
+    return notify_v2.build_event(
+        event=event,
+        event_id=stable_event_id or None,
+        occurred_at=timestamp,
+        title=str(identity.get("title") or run_dir.name),
+        topic_slug=str(identity.get("slug") or run_dir.name),
+        goal=goal,
+        success_criteria=success_criteria,
+        goal_status=str(contract.get("status") or contract.get("goal_status") or "open"),
+        completed=completed,
+        current=current,
+        plan=next_action,
+        iteration_status=iteration_status,
+        loop_status=str(extra.get("loop_status") or state.get("status") or "running"),
+        review_status=review_status,
+        iteration_number=iteration,
+        spent_iterations=spent,
+        max_iterations=max_iter or None,
+        goal_progress=str(extra.get("goal_progress") or _notify_goal_progress(record, contract)),
+        executor=executor,
+        driver_agent=driver_agent,
+        panel_agents=panel_agents,
+        other_agents=other_agents,
+        compute=compute,
+        started_at=started_at or None,
+        finished_at=finished_at or None,
+        duration_seconds=duration,
+        decision=str(extra.get("decision") or record.get("decision") or ""),
+        campaign_id=campaign_id,
+        objective_id=objective_id,
+        scope=scope,
+        reviewer_families=reviewer_families,
+        plan_revision=plan_revision,
+    )
+
+
 def build_progress_event(
     run_dir: Path,
     event: str,
@@ -3437,21 +6853,132 @@ def build_progress_event(
     }
     if progress_note:
         payload["progress_note"] = progress_note
-    if extra:
-        for key, value in extra.items():
+    extra_data = dict(extra or {})
+    if extra_data:
+        for key, value in extra_data.items():
             if value is None or key == "text_override":
                 continue
             payload[key] = value
-        if extra.get("text_override"):
-            payload["text"] = str(extra["text_override"])
+        if extra_data.get("text_override"):
+            payload["legacy_text_override"] = str(extra_data["text_override"])
+
+    # Notify v2 owns all externally visible renderings. Keep the original flat
+    # fields for progress readers while exposing the validated envelope for the
+    # remote bridge and future consumers.
+    envelope = _build_notify_v2_envelope(
+        run_dir,
+        event,
+        record=record,
+        state=state,
+        budget=budget,
+        extra=extra_data,
+        iteration=iteration,
+        spent=spent,
+        max_iter=max_iter,
+        objective=objective,
+        output=output,
+        progress_note=progress_note,
+        why=why,
+        where=where,
+        timestamp=ts,
+        attempt_event=attempt_event,
+    )
+    rendered = notify_v2.render_all(envelope)
+    payload.update(notify_v2.legacy_flat_fields(envelope))
+    payload.update(
+        {
+            "dir": str(run_dir),
+            "last_completed_iteration": last_completed,
+            "next_iteration": next_iteration,
+            "why": why[:500] if why else "",
+            "where": where[:700] if where else "",
+            "notification_schema": envelope.get("schema"),
+            "notification_schema_version": envelope.get("schema_version"),
+            "notification": envelope,
+            "text": rendered["markdown"],
+            "text_html": rendered["telegram_html"],
+            "text_compact": rendered["compact"],
+        }
+    )
+    return _scrub_progress_payload(payload)
+
+
+_PROGRESS_SECRET_ENV_NAME = re.compile(
+    r"(?:API[_-]?KEY|AUTH|BEARER|COOKIE|CREDENTIAL|OAUTH|PASS(?:WORD|WD)?|"
+    r"PRIVATE[_-]?KEY|SECRET|SESSION|TOKEN)",
+    re.IGNORECASE,
+)
+_PROGRESS_PII_KEY = re.compile(
+    r"(?i)(?:^|[_ -])(?:pii|personal[_ -]?data|participant|patient|subject|"
+    r"research[_ -]?subject|data[_ -]?subject|full[_ -]?name|contact[_ -]?name|"
+    r"email|phone|home[_ -]?address|street[_ -]?address|date[_ -]?of[_ -]?birth|"
+    r"birth[_ -]?date|dob|ssn|passport|national[_ -]?id|tax[_ -]?id)(?:$|[_ -])"
+)
+
+
+def _progress_secret_values(
+    environ: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Return only credential-shaped environment values for exact redaction."""
+
+    source = os.environ if environ is None else environ
+    return [
+        str(value)
+        for name, value in source.items()
+        if _PROGRESS_SECRET_ENV_NAME.search(str(name)) and len(str(value)) >= 4
+    ]
+
+
+def _scrub_progress_payload(
+    payload: Any,
+    *,
+    secret_values: list[str] | None = None,
+    key_hint: str = "",
+) -> Any:
+    """Recursively scrub every string before progress leaves host memory."""
+
+    secrets = _progress_secret_values() if secret_values is None else secret_values
+    if isinstance(payload, str):
+        if key_hint and _PROGRESS_SECRET_ENV_NAME.search(key_hint):
+            return notify_v2.REDACTION
+        if key_hint and _PROGRESS_PII_KEY.search(key_hint):
+            return notify_v2.PII_REDACTION
+        return notify_v2.redact_text(payload, secrets)
+    if isinstance(payload, (list, tuple)):
+        return [
+            _scrub_progress_payload(item, secret_values=secrets, key_hint=key_hint)
+            for item in payload
+        ]
+    if isinstance(payload, Mapping):
+        scrubbed: dict[Any, Any] = {}
+        for raw_key, item in payload.items():
+            key = (
+                notify_v2.redact_text(raw_key, secrets)
+                if isinstance(raw_key, str)
+                else raw_key
+            )
+            scrubbed[key] = _scrub_progress_payload(
+                item,
+                secret_values=secrets,
+                key_hint=str(key),
+            )
+        return scrubbed
     return payload
 
 
 def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | None = None) -> None:
     """Write LIVE_STATUS.md and append progress.jsonl (best-effort, never raises)."""
     try:
+        # Defend direct callers as well as build_progress_event(): neither the
+        # JSONL audit surface nor LIVE_STATUS may receive raw caller extras.
+        payload = _scrub_progress_payload(payload)
         paths = progress_paths(run_dir, log_dir)
-        paths["log_dir"].mkdir(parents=True, exist_ok=True)
+        _ensure_real_directory(paths["log_dir"])
+        if os.name == "posix":
+            log_info = os.lstat(paths["log_dir"])
+            if log_info.st_uid != os.geteuid() or not stat.S_ISDIR(log_info.st_mode):
+                raise OSError("progress log directory is not current-user owned")
+            os.chmod(paths["log_dir"], 0o700, follow_symlinks=False)
         append_jsonl(paths["progress_jsonl"], payload)
         recovery_hint = ""
         recovery_path = loop_paths(run_dir)["recovery"]
@@ -3459,7 +6986,10 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
             try:
                 for line in recovery_path.read_text(encoding="utf-8", errors="replace").splitlines():
                     if line.startswith("- HEARTBEAT") or line.startswith("- Next safe action"):
-                        recovery_hint = line.lstrip("- ").strip()
+                        recovery_hint = notify_v2.redact_text(
+                            line.lstrip("- ").strip(),
+                            _progress_secret_values(),
+                        )
                         break
             except OSError:
                 recovery_hint = ""
@@ -3522,7 +7052,7 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
                 "",
             ]
         )
-        paths["live_status"].write_text(body, encoding="utf-8")
+        _atomic_write_runtime_text(paths["live_status"], body)
     except Exception:  # noqa: BLE001 - progress surfaces must never kill the driver.
         pass
 
@@ -3540,6 +7070,7 @@ _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
         "drive_start",
         "drive_stop",
         "iteration_ok",
+        "iteration_rejected",
         "iteration_failed",
         "quota_wait",
         "auth_failure",
@@ -3547,11 +7078,18 @@ _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
         "terminal",
         "driver_dead",
         "goal_priority_hard_replan",
+        "goal_focus_replan",
+        "goal_focus_wait",
+        "strategy_review_wait",
+        "result_review_wait",
+        "result_review_error",
+        "supervisor",
     }
 )
 
 # In-process + on-disk dedupe so concurrent drive/watch (or restarts) cannot
-# double-post identical / same-iteration bodies. Disk file is per loop dir.
+# double-post the exact rendered event. A corrected body for the same
+# event/iteration is deliberately not suppressed. Disk file is per loop dir.
 _LAST_REMOTE_NOTIFY: dict[str, Any] = {"fp": "", "at": 0.0}
 _REMOTE_NOTIFY_DEDUPE_SEC = 15.0
 _REMOTE_NOTIFY_ITER_DEDUPE_SEC = 120.0
@@ -3564,10 +7102,18 @@ def _remote_notify_dedupe_path(run_dir: Path) -> Path:
 def _remote_notify_load_disk(run_dir: Path) -> dict[str, Any]:
     path = _remote_notify_dedupe_path(run_dir)
     try:
-        if path.is_file():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                return data
+        info = os.lstat(path)
+        if (
+            stat.S_ISLNK(info.st_mode)
+            or not stat.S_ISREG(info.st_mode)
+            or getattr(info, "st_nlink", 1) != 1
+            or (os.name == "posix" and info.st_uid != os.geteuid())
+            or (os.name == "posix" and stat.S_IMODE(info.st_mode) & 0o077)
+        ):
+            return {}
+        data = json.loads(_read_regular_text(path, max_bytes=64_000))
+        if isinstance(data, dict):
+            return data
     except Exception:  # noqa: BLE001 - best-effort
         pass
     return {}
@@ -3576,10 +7122,7 @@ def _remote_notify_load_disk(run_dir: Path) -> dict[str, Any]:
 def _remote_notify_store_disk(run_dir: Path, data: dict[str, Any]) -> None:
     path = _remote_notify_dedupe_path(run_dir)
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, sort_keys=True), encoding="utf-8")
-        tmp.replace(path)
+        _atomic_write_runtime_text(path, json.dumps(data, sort_keys=True) + "\n")
     except Exception:  # noqa: BLE001 - best-effort
         pass
 
@@ -3596,20 +7139,27 @@ def _remote_notify_is_duplicate(
     last_at = float(_LAST_REMOTE_NOTIFY.get("at") or 0.0)
     if fp and fp == last_fp and (now - last_at) < _REMOTE_NOTIFY_DEDUPE_SEC:
         return True
+    memory_iter_key = str(_LAST_REMOTE_NOTIFY.get("iter_key") or "")
+    memory_iter_at = float(_LAST_REMOTE_NOTIFY.get("iter_at") or 0.0)
+    if (
+        iter_key
+        and iter_key == memory_iter_key
+        and (now - memory_iter_at) < _REMOTE_NOTIFY_ITER_DEDUPE_SEC
+    ):
+        return True
     disk = _remote_notify_load_disk(run_dir)
     disk_fp = str(disk.get("fp") or "")
     disk_at = float(disk.get("at") or 0.0)
     if fp and fp == disk_fp and (now - disk_at) < _REMOTE_NOTIFY_DEDUPE_SEC:
         return True
-    if iter_key:
-        last_iter = str(_LAST_REMOTE_NOTIFY.get("iter_key") or "")
-        last_iter_at = float(_LAST_REMOTE_NOTIFY.get("iter_at") or 0.0)
-        if iter_key == last_iter and (now - last_iter_at) < _REMOTE_NOTIFY_ITER_DEDUPE_SEC:
-            return True
-        disk_iter = str(disk.get("iter_key") or "")
-        disk_iter_at = float(disk.get("iter_at") or 0.0)
-        if iter_key == disk_iter and (now - disk_iter_at) < _REMOTE_NOTIFY_ITER_DEDUPE_SEC:
-            return True
+    disk_iter_key = str(disk.get("iter_key") or "")
+    disk_iter_at = float(disk.get("iter_at") or 0.0)
+    if (
+        iter_key
+        and iter_key == disk_iter_key
+        and (now - disk_iter_at) < _REMOTE_NOTIFY_ITER_DEDUPE_SEC
+    ):
+        return True
     return False
 
 
@@ -3664,6 +7214,18 @@ def _is_banned_notify_generic(name: str) -> bool:
     return False
 
 
+def _is_legacy_notify_placeholder(value: str) -> bool:
+    """Treat the old example topic marker as missing, not as an identity.
+
+    Historical copies of ``failover.example.json`` used this prose marker as
+    a concrete ``job_slug``.  Accept only the obvious case/separator variants
+    so a legitimate explicit title or topic is never discarded accidentally.
+    """
+
+    normalized = re.sub(r"[\s._-]+", "-", (value or "").strip().casefold()).strip("-")
+    return normalized == "optional-stable-zulip-topic-id"
+
+
 def _short_title_from_goal(goal: str, *, max_len: int = 80) -> str:
     g = " ".join((goal or "").split())
     if not g:
@@ -3686,18 +7248,20 @@ def resolve_loop_notify_identity(run_dir: Path | None = None) -> dict[str, str]:
       1. failover.json / notify.json / standing_orders.notify research_title
          (aliases: notify_title, display_name)
       2. env AAS_AUTOLOOP_RESEARCH_TITLE / AAS_REMOTE_JOB_TITLE
-      3. short form of loop_state.goal
-      4. directory name if not a banned generic
+      3. short form of authoritative goal_contract.goal
+      4. short form of loop_state.goal
+      5. directory name if not a banned generic
 
     Resolution for *slug* (Zulip topic / job id):
-      1. AAS_REMOTE_JOB_ID or explicit job_slug in config
+      1. explicit job_slug in config, then AAS_REMOTE_JOB_ID
       2. slugify(title)
       3. directory name if not banned-generic
     """
     title = ""
     job_slug = ""
     dir_name = ""
-    goal = ""
+    authoritative_goal = ""
+    state_goal = ""
     if run_dir is not None:
         rd = Path(run_dir).expanduser().resolve()
         dir_name = rd.name.strip()
@@ -3714,18 +7278,28 @@ def resolve_loop_notify_identity(run_dir: Path | None = None) -> dict[str, str]:
                 continue
             for key in ("research_title", "notify_title", "display_name"):
                 val = str(data.get(key) or "").strip()
-                if val and not title:
+                if val and not _is_legacy_notify_placeholder(val) and not title:
                     title = val
             for key in ("job_slug", "remote_job_id"):
                 val = str(data.get(key) or "").strip()
-                if val and not job_slug:
+                if val and not _is_legacy_notify_placeholder(val) and not job_slug:
                     job_slug = val
+        try:
+            contract_path = rd / "goal_contract.json"
+            if contract_path.is_file():
+                contract = read_json(contract_path)
+                if isinstance(contract, dict):
+                    authoritative_goal = str(
+                        contract.get("goal") or contract.get("main_goal") or ""
+                    ).strip()
+        except Exception:  # noqa: BLE001
+            authoritative_goal = ""
         try:
             state_path = rd / "loop_state.json"
             if state_path.is_file():
                 state = read_json(state_path)
                 if isinstance(state, dict):
-                    goal = str(state.get("goal") or "").strip()
+                    state_goal = str(state.get("goal") or "").strip()
                     so = state.get("standing_orders")
                     if isinstance(so, dict):
                         notify_so = so.get("notify")
@@ -3736,28 +7310,44 @@ def resolve_loop_notify_identity(run_dir: Path | None = None) -> dict[str, str]:
                                 "display_name",
                             ):
                                 val = str(notify_so.get(key) or "").strip()
-                                if val and not title:
+                                if (
+                                    val
+                                    and not _is_legacy_notify_placeholder(val)
+                                    and not title
+                                ):
                                     title = val
                             for key in ("job_slug", "remote_job_id"):
                                 val = str(notify_so.get(key) or "").strip()
-                                if val and not job_slug:
+                                if (
+                                    val
+                                    and not _is_legacy_notify_placeholder(val)
+                                    and not job_slug
+                                ):
                                     job_slug = val
         except Exception:  # noqa: BLE001
             pass
-    for env_key in ("AAS_AUTOLOOP_RESEARCH_TITLE", "AAS_REMOTE_JOB_TITLE"):
-        env_title = (os.environ.get(env_key) or "").strip()
-        if env_title:
-            title = env_title
-            break
-    env_job = (os.environ.get("AAS_REMOTE_JOB_ID") or "").strip()
-    if env_job:
-        job_slug = env_job
-    if not title and goal:
-        title = _short_title_from_goal(goal)
+    if not title:
+        for env_key in ("AAS_AUTOLOOP_RESEARCH_TITLE", "AAS_REMOTE_JOB_TITLE"):
+            env_title = (os.environ.get(env_key) or "").strip()
+            if env_title and not _is_legacy_notify_placeholder(env_title):
+                title = env_title
+                break
+    if not job_slug:
+        env_job = (os.environ.get("AAS_REMOTE_JOB_ID") or "").strip()
+        if env_job and not _is_legacy_notify_placeholder(env_job):
+            job_slug = env_job
+    if not title and authoritative_goal:
+        title = _short_title_from_goal(authoritative_goal)
+    if not title and state_goal:
+        title = _short_title_from_goal(state_goal)
     if not title and dir_name and not _is_banned_notify_generic(dir_name):
         title = dir_name
     if not title:
-        title = dir_name or "research"
+        title = (
+            dir_name
+            if dir_name and not _is_banned_notify_generic(dir_name)
+            else "research"
+        )
     if not job_slug:
         job_slug = _slugify_notify_id(title)
     if not job_slug and dir_name and not _is_banned_notify_generic(dir_name):
@@ -3770,7 +7360,7 @@ def resolve_loop_notify_identity(run_dir: Path | None = None) -> dict[str, str]:
 def resolve_remote_job_id(run_dir: Path | None = None) -> str | None:
     """Topic id for remote-bridge: explicit env/config, else research-topic slug."""
     env_id = (os.environ.get("AAS_REMOTE_JOB_ID") or "").strip()
-    if env_id:
+    if env_id and not _is_legacy_notify_placeholder(env_id):
         return env_id
     if run_dir is not None:
         ident = resolve_loop_notify_identity(run_dir)
@@ -3816,20 +7406,49 @@ def emit_loop_progress(
     # watch consumers / tests). Only a raw --notify-cmd shell hook replaces JSON.
     if to_stdout_json and not notify_cmd:
         print(json.dumps(env_payload), flush=True)
+    external_notify_allowed = (
+        goal_focus_runtime_mode(run_dir) != "enforce"
+        or os.environ.get("AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS") == "allow"
+    )
     # Structured remote-bridge notify (preferred). Channel already resolved by
     # drive/watch/arm via resolve_notify_channel; env is a last-resort fallback.
     channel = notify_channel
     if channel is None:
         channel = resolve_notify_channel(explicit=None, run_dir=run_dir, default_auto=False)
-    if channel and channel != "off" and event in _DEFAULT_REMOTE_NOTIFY_EVENTS:
-        # Prefer multi-line body; Telegram gets HTML when available.
+    if (
+        external_notify_allowed
+        and channel
+        and channel != "off"
+        and event in _DEFAULT_REMOTE_NOTIFY_EVENTS
+    ):
+        # Prefer the validated v2 envelope; Telegram/Zulip rendering and stable
+        # topic selection belong to remote-bridge, not this caller.
         notify_text = str(payload.get("text") or payload.get("text_compact") or "")
         notify_html = str(payload.get("text_html") or "")
+        notify_event = payload.get("notification")
         now = time.time()
-        fp = f"{event}\n{notify_text}".strip()
+        try:
+            fp = (
+                notify_v2.delivery_fingerprint(notify_event)
+                if isinstance(notify_event, dict)
+                else f"{event}\n{notify_text}".strip()
+            )
+            retry_fp = (
+                notify_v2.retry_fingerprint(notify_event)
+                if isinstance(notify_event, dict)
+                else fp
+            )
+        except Exception:  # noqa: BLE001 - delivery remains best-effort
+            fp = f"{event}\n{notify_text}".strip()
+            retry_fp = fp
         iter_no = payload.get("iteration")
-        # Cross-process key: same loop + event family + iteration within window.
-        iter_key = f"{event}:{iter_no}" if iter_no not in (None, "") else ""
+        # Timestamp-only rerenders share a key, while materially changed state
+        # keeps a distinct semantic fingerprint and remains deliverable.
+        iter_key = (
+            f"{event}:{iter_no}:{retry_fp}"
+            if iter_no not in (None, "")
+            else ""
+        )
         if _remote_notify_is_duplicate(
             run_dir, fp=fp, iter_key=iter_key, now=now
         ):
@@ -3840,16 +7459,108 @@ def emit_loop_progress(
                 notify_text,
                 job_id=resolve_remote_job_id(run_dir),
                 html=notify_html or None,
+                event_json_stdin=isinstance(notify_event, dict),
             )
             if argv:
                 try:
-                    subprocess.run(argv, check=False, timeout=60, capture_output=True)
-                    _remote_notify_remember(run_dir, fp=fp, iter_key=iter_key, now=now)
+                    completed = subprocess.run(
+                        argv,
+                        check=False,
+                        timeout=60,
+                        capture_output=True,
+                        text=True,
+                        input=(
+                            json.dumps(notify_event, ensure_ascii=False)
+                            if isinstance(notify_event, dict)
+                            else None
+                        ),
+                    )
+                    bridge_result: dict[str, Any] = {}
+                    try:
+                        loaded = json.loads(completed.stdout or "{}")
+                        if isinstance(loaded, dict):
+                            bridge_result = loaded
+                    except json.JSONDecodeError:
+                        bridge_result = {}
+                    delivery = bridge_result.get("delivery")
+                    delivered_or_known = bool(
+                        isinstance(delivery, dict)
+                        and (delivery.get("delivered") or delivery.get("deduplicated"))
+                    )
+                    if (
+                        completed.returncode == 0
+                        and bridge_result.get("ok") is True
+                        and not bridge_result.get("dry_run")
+                        and delivered_or_known
+                    ):
+                        _remote_notify_remember(
+                            run_dir, fp=fp, iter_key=iter_key, now=now
+                        )
                 except Exception:  # noqa: BLE001 - notify is best-effort
                     pass
-    if notify_cmd and os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1":
+    if (
+        external_notify_allowed
+        and notify_cmd
+        and os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1"
+    ):
         watch_notify(notify_cmd, env_payload)
     return payload
+
+
+def notify_event_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Emit one host-authored Notify v2 event through the normal progress path."""
+    run_dir = Path(args.dir).expanduser().resolve()
+    compute: Any = None
+    if bool(getattr(args, "compute_none", False)):
+        if getattr(args, "compute_run", None):
+            raise ValueError("--compute-none is mutually exclusive with --compute-run")
+        compute = []
+    elif getattr(args, "compute_run", None):
+        parsed = parse_compute_runs(args.compute_run)
+        compute = parsed.get("services") or []
+    extra = {
+        "completed_summary": str(args.completed or "").strip(),
+        "current_summary": str(args.current or "").strip(),
+        "next_action": str(args.plan or "").strip(),
+        "iteration_status": str(args.iteration_status or "not_applicable"),
+        "review_status": str(args.review_status or "not_required"),
+        "loop_status": str(args.loop_status or ""),
+        "provider": str(args.provider or "").strip(),
+        "driver_agent": str(getattr(args, "driver_agent", "") or "").strip() or None,
+        "panel_agents": (
+            list(args.panel_agent) if getattr(args, "panel_agent", None) is not None else None
+        ),
+        "other_agents": (
+            list(args.other_agent) if getattr(args, "other_agent", None) is not None else None
+        ),
+        "finished_at": str(args.finished_at or "").strip(),
+        "duration_seconds": args.duration_seconds,
+    }
+    if bool(getattr(args, "compute_none", False)) or getattr(
+        args, "compute_run", None
+    ):
+        extra["compute"] = compute
+    payload = emit_loop_progress(
+        run_dir,
+        str(args.event),
+        notify_channel=(
+            resolve_notify_channel(
+                explicit=args.notify,
+                run_dir=run_dir,
+                default_auto=True,
+            )
+            or "off"
+        ),
+        to_stderr=not bool(args.quiet),
+        to_stdout_json=False,
+        extra=extra,
+    )
+    return {
+        "status": "ok",
+        "action": "notify-event",
+        "dir": str(run_dir),
+        "event": payload.get("notification") or payload,
+    }
 
 
 def watch_notify(cmd: str | None, payload: dict[str, str]) -> None:
@@ -3893,7 +7604,8 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
         run_dir=run_dir,
         registry=reg,
         default_auto=True,
-    )
+    ) or "off"
+    notify_enabled = notify_channel != "off"
     # Seed LIVE_STATUS immediately so operators see current tip without waiting.
     emit_loop_progress(
         run_dir,
@@ -3921,7 +7633,7 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                 log_dir=log_dir,
                 notify_cmd=args.notify_cmd,
                 notify_channel=notify_channel,
-                to_stderr=bool(args.notify_cmd or notify_channel),
+                to_stderr=bool(args.notify_cmd or notify_enabled),
                 to_stdout_json=not bool(args.notify_cmd),
                 extra={"source": "watch", "text_override": text},
             )
@@ -3935,7 +7647,7 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                 log_dir=log_dir,
                 notify_cmd=args.notify_cmd,
                 notify_channel=notify_channel,
-                to_stderr=bool(args.notify_cmd or notify_channel),
+                to_stderr=bool(args.notify_cmd or notify_enabled),
                 to_stdout_json=not bool(args.notify_cmd),
                 extra={"source": "watch", "terminal_reason": reason},
             )
@@ -3953,7 +7665,7 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
                     log_dir=log_dir,
                     notify_cmd=args.notify_cmd,
                     notify_channel=notify_channel,
-                    to_stderr=bool(args.notify_cmd or notify_channel),
+                    to_stderr=bool(args.notify_cmd or notify_enabled),
                     to_stdout_json=not bool(args.notify_cmd),
                     extra={"source": "watch", "driver_pid": pid},
                 )
@@ -3966,20 +7678,54 @@ def watch_command(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def refresh_heartbeat(reg: Path, run_id: object) -> None:
-    if not isinstance(run_id, str) or not run_id:
-        return
-    path = reg / f"{run_id}.json"
     try:
-        entry = read_json(path)
+        safe_id = safe_registry_run_id(run_id)
+    except ValueError:
+        return
+    try:
+        snapshots = strict_registry_snapshots(reg)
+        for candidate in snapshots:
+            _validate_registry_authority_snapshot(candidate)
+        matches = [
+            candidate
+            for candidate in snapshots
+            if candidate.path.name == f"{safe_id}.json"
+            and candidate.entry.get("run_id") == safe_id
+        ]
+        if len(matches) != 1:
+            return
+        snapshot = matches[0]
+        entry = dict(snapshot.entry)
         entry["heartbeat"] = utc_now()
-        write_json(path, entry)
+        _write_registry_json_snapshot(reg, safe_id, entry, expected=snapshot)
     except Exception:  # noqa: BLE001 - heartbeat refresh is best-effort.
         pass
 
 
 def read_log_tail(path: Path, limit: int = 8192) -> str:
+    absolute = Path(os.path.abspath(path))
     try:
-        with path.open("rb") as handle:
+        if os.name == "nt":
+            info = os.lstat(absolute)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                return ""
+            handle = absolute.open("rb")
+        else:
+            directory_fd = _open_directory_nofollow(absolute.parent)
+            try:
+                file_fd = os.open(
+                    absolute.name,
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=directory_fd,
+                )
+            finally:
+                os.close(directory_fd)
+            info = os.fstat(file_fd)
+            if not stat.S_ISREG(info.st_mode):
+                os.close(file_fd)
+                return ""
+            handle = os.fdopen(file_fd, "rb")
+        with handle:
             handle.seek(0, os.SEEK_END)
             size = handle.tell()
             handle.seek(max(0, size - limit))
@@ -3988,12 +7734,645 @@ def read_log_tail(path: Path, limit: int = 8192) -> str:
         return ""
 
 
+def _read_open_log_tail(handle: Any, limit: int = 8192) -> str:
+    """Capture the subprocess log through the exact descriptor created by host."""
+
+    try:
+        handle.flush()
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - limit))
+        body = handle.read()
+        handle.seek(0, os.SEEK_END)
+        return str(body)
+    except (OSError, ValueError):
+        return ""
+
+
+def _structured_panel_payloads(summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    payloads: dict[str, dict[str, Any]] = {}
+    for provider_name, metadata in (summary.get("results") or {}).items():
+        if not isinstance(metadata, dict) or metadata.get("structured_valid") is not True:
+            continue
+        payload = metadata.get("structured_payload")
+        if isinstance(payload, dict):
+            payloads[str(provider_name)] = payload
+    return payloads
+
+
+def _panel_adjusted_registry(
+    registry: dict[str, Any], payloads: dict[str, dict[str, Any]]
+) -> tuple[dict[str, Any], set[str]]:
+    """Build an ephemeral registry scored from reviewed interval estimates."""
+    adjusted = copy.deepcopy(registry)
+    observations: dict[str, dict[str, list[tuple[float, float]]]] = {}
+    mentioned: set[str] = set()
+    for payload in payloads.values():
+        for candidate in payload.get("candidates") or []:
+            if not isinstance(candidate, dict):
+                continue
+            approach_id = str(candidate.get("approach_id") or "").strip()
+            if not approach_id:
+                continue
+            mentioned.add(approach_id)
+            factor_rows = observations.setdefault(approach_id, {})
+            estimates = candidate.get("estimates")
+            if not isinstance(estimates, dict):
+                continue
+            for factor, bounds in estimates.items():
+                if not isinstance(bounds, dict):
+                    continue
+                # The panel wire schema uses the more explicit name while the
+                # registry/scorer contract retains the shorter v2 key.
+                registry_factor = (
+                    "goal_resolution"
+                    if str(factor) == "goal_resolution_contribution"
+                    else str(factor)
+                )
+                try:
+                    lower = float(bounds.get("lower"))
+                    upper = float(bounds.get("upper"))
+                except (TypeError, ValueError):
+                    continue
+                factor_rows.setdefault(registry_factor, []).append(
+                    (min(lower, upper), max(lower, upper))
+                )
+    campaigns = adjusted.get("campaigns")
+    if not isinstance(campaigns, dict):
+        return adjusted, mentioned
+    for campaign in campaigns.values():
+        if not isinstance(campaign, dict):
+            continue
+        approaches = campaign.get("approaches")
+        if not isinstance(approaches, dict):
+            continue
+        for approach_id, approach in approaches.items():
+            if not isinstance(approach, dict):
+                continue
+            aid = str(approach_id)
+            # A direction that no valid reviewer inspected is not eligible for
+            # this decision, even if stale registry estimates look attractive.
+            if aid not in mentioned:
+                approach["status"] = "parked"
+                continue
+            reviewed_estimates: dict[str, dict[str, float]] = {}
+            for factor, bounds in observations.get(aid, {}).items():
+                reviewed_estimates[factor] = {
+                    "lower": min(row[0] for row in bounds),
+                    "upper": max(row[1] for row in bounds),
+                }
+            if reviewed_estimates:
+                approach["estimates"] = reviewed_estimates
+    return adjusted, mentioned
+
+
+def _strategy_selection_from_panel(
+    run_dir: Path, summary: dict[str, Any]
+) -> dict[str, Any]:
+    synthesis = summary.get("structured_synthesis")
+    synthesis = synthesis if isinstance(synthesis, dict) else {}
+    payloads = _structured_panel_payloads(summary)
+    different = set(synthesis.get("different_family_valid_providers") or [])
+    if not payloads or not different:
+        return {
+            "status": "waiting",
+            "reason": "no valid different-family strategy advice",
+            "summary": synthesis,
+        }
+    raw_primary_attestation = summary.get("primary_execution_attestation")
+    raw_provider_attestations = summary.get("provider_execution_attestations")
+    if not isinstance(raw_primary_attestation, dict) or not isinstance(
+        raw_provider_attestations, dict
+    ) or set(raw_provider_attestations) != set(payloads):
+        return {
+            "status": "waiting",
+            "reason": "strategy panel lacks exact host executable attestations",
+            "summary": synthesis,
+        }
+    try:
+        primary_execution_attestation = (
+            revalidate_provider_executable_attestation(
+                raw_primary_attestation,
+                forbidden_roots=(run_dir,),
+            )
+        )
+        provider_execution_attestations = {
+            provider_name: revalidate_provider_executable_attestation(
+                raw_provider_attestations[provider_name],
+                forbidden_roots=(run_dir,),
+            )
+            for provider_name in sorted(payloads)
+        }
+    except PanelIsolationError as exc:
+        return {
+            "status": "waiting",
+            "reason": f"strategy panel executable attestation is invalid: {exc}",
+            "summary": synthesis,
+        }
+    if any(
+        payloads.get(provider_name, {}).get("decision") == "no_viable_candidate"
+        for provider_name in different
+    ):
+        return {
+            "status": "waiting",
+            "reason": "different-family reviewer found no viable candidate",
+            "summary": synthesis,
+        }
+    snapshot = summary.get("authority_snapshot")
+    if not isinstance(snapshot, dict):
+        return {
+            "status": "waiting",
+            "reason": "strategy panel result lacks the exact reviewed authority snapshot",
+            "summary": synthesis,
+        }
+    try:
+        authority_binding = goal_focus_v2.strategy_authority_binding(snapshot)
+    except ValueError as exc:
+        return {
+            "status": "waiting",
+            "reason": f"strategy authority snapshot is invalid: {exc}",
+            "summary": synthesis,
+        }
+    registry = snapshot.get("approach_registry")
+    if not isinstance(registry, dict):
+        return {
+            "status": "waiting",
+            "reason": "strategy authority snapshot lacks the reviewed registry",
+            "summary": synthesis,
+        }
+    registry = copy.deepcopy(registry)
+    adjusted, mentioned = _panel_adjusted_registry(registry, payloads)
+    selection = goal_focus_v2.select_direction(adjusted)
+    selected_id = str(selection.get("selected_approach_id") or "")
+    if selection.get("status") != "selected" or not selected_id or selected_id not in mentioned:
+        return {
+            "status": "waiting",
+            "reason": "reviewed portfolio has no eligible direction",
+            "selection": selection,
+            "summary": synthesis,
+        }
+    reviewed_by_different = [
+        provider_name
+        for provider_name in sorted(different)
+        if any(
+            isinstance(candidate, dict)
+            and str(candidate.get("approach_id") or "") == selected_id
+            for candidate in payloads.get(provider_name, {}).get("candidates") or []
+        )
+    ]
+    if not reviewed_by_different:
+        return {
+            "status": "waiting",
+            "reason": "selected direction was not inspected by a different-family reviewer",
+            "selection": selection,
+            "summary": synthesis,
+        }
+    candidates: list[tuple[int, str, dict[str, Any]]] = []
+    # The concrete bounded action committed to current_plan must itself come
+    # from a reviewer independent of the active primary family, not merely
+    # share an approach id that another family happened to mention.
+    for provider_name in reviewed_by_different:
+        payload = payloads[provider_name]
+        for candidate in payload.get("candidates") or []:
+            if (
+                isinstance(candidate, dict)
+                and str(candidate.get("approach_id") or "") == selected_id
+            ):
+                candidates.append(
+                    (int(candidate.get("rank") or 999), provider_name, candidate)
+                )
+    candidates.sort(key=lambda row: (row[0], row[1]))
+    selected_candidate = copy.deepcopy(candidates[0][2]) if candidates else {}
+    selection = copy.deepcopy(selection)
+    selection.update(
+        {
+            "selected_candidate": selected_candidate,
+            "panel_synthesis": copy.deepcopy(synthesis),
+            "reviewed_by": sorted(payloads),
+            "reviewed_by_different_family": reviewed_by_different,
+            "panel_dissent": bool(synthesis.get("dissent")),
+        }
+    )
+    review = {
+        "schema_version": "direction_review.v2",
+        "status": "passed",
+        "different_family": True,
+        "primary_provider": synthesis.get("primary_provider"),
+        "primary_family": synthesis.get("primary_family"),
+        "primary_execution_attestation": primary_execution_attestation,
+        "providers": sorted(payloads),
+        "different_family_providers": reviewed_by_different,
+        "reviewer_families": sorted(
+            {
+                str(attestation.get("family") or "unverified")
+                for attestation in provider_execution_attestations.values()
+            }
+        ),
+        "provider_execution_attestations": provider_execution_attestations,
+        "structured_synthesis": copy.deepcopy(synthesis),
+        "provider_advice": copy.deepcopy(payloads),
+        "authority_snapshot": authority_binding,
+    }
+    return {"status": "ready", "selection": selection, "review": review}
+
+
+def _result_review_from_panel(
+    pending: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any]:
+    expected_id = str(pending.get("candidate_id") or "")
+    expected_fingerprint = goal_focus_v2.candidate_fingerprint(pending)
+    synthesis = summary.get("structured_synthesis")
+    synthesis = synthesis if isinstance(synthesis, dict) else {}
+    payloads = _structured_panel_payloads(summary)
+    if not payloads:
+        return {"status": "pending", "reason": "no valid structured result review"}
+    wrong_ids = {
+        str(payload.get("candidate_id") or "")
+        for payload in payloads.values()
+        if str(payload.get("candidate_id") or "") != expected_id
+    }
+    if wrong_ids or set(synthesis.get("candidate_ids") or []) != {expected_id}:
+        return {
+            "status": "pending",
+            "reason": "result reviewers did not review the exact pending candidate",
+            "wrong_candidate_ids": sorted(wrong_ids),
+        }
+    wrong_fingerprints = {
+        str(payload.get("candidate_fingerprint") or "")
+        for payload in payloads.values()
+        if str(payload.get("candidate_fingerprint") or "") != expected_fingerprint
+    }
+    if (
+        wrong_fingerprints
+        or set(synthesis.get("candidate_fingerprints") or [])
+        != {expected_fingerprint}
+    ):
+        return {
+            "status": "pending",
+            "reason": "result reviewers did not bind the exact pending candidate content",
+            "expected_candidate_fingerprint": expected_fingerprint,
+            "wrong_candidate_fingerprints": sorted(wrong_fingerprints),
+        }
+    pending_record = (
+        pending.get("record") if isinstance(pending.get("record"), dict) else {}
+    )
+    attestation = (
+        pending.get("host_execution_attestation")
+        if isinstance(pending.get("host_execution_attestation"), dict)
+        else {}
+    )
+    executor_provider = str(attestation.get("executor_provider") or "").strip()
+    if (
+        attestation.get("schema_version") != "host_execution_attestation.v1"
+        or attestation.get("source") != "host_dispatch"
+        or str(attestation.get("candidate_id") or "") != expected_id
+        or not executor_provider
+    ):
+        return {
+            "status": "pending",
+            "reason": "staged candidate lacks a valid host-pinned executor attestation",
+        }
+    execution = (
+        pending_record.get("execution")
+        if isinstance(pending_record.get("execution"), dict)
+        else {}
+    )
+    if str(execution.get("executor_provider") or "").strip() != executor_provider:
+        return {
+            "status": "pending",
+            "reason": "staged execution provenance disagrees with its host attestation",
+        }
+    raw_executor_attestation = attestation.get("executor_attestation")
+    raw_provider_attestations = summary.get("provider_execution_attestations")
+    if not isinstance(raw_executor_attestation, dict) or not isinstance(
+        raw_provider_attestations, dict
+    ) or set(raw_provider_attestations) != set(payloads):
+        return {
+            "status": "pending",
+            "reason": "result review lacks exact host executable attestations",
+        }
+    try:
+        executor_attestation = revalidate_provider_executable_attestation(
+            raw_executor_attestation
+        )
+        provider_execution_attestations = {
+            provider_name: revalidate_provider_executable_attestation(
+                raw_provider_attestations[provider_name]
+            )
+            for provider_name in sorted(payloads)
+        }
+    except PanelIsolationError as exc:
+        return {
+            "status": "pending",
+            "reason": f"result review executable attestation is invalid: {exc}",
+        }
+    primary_family = str(executor_attestation.get("family") or "unverified")
+    if (
+        str(executor_attestation.get("provider") or "") != executor_provider
+        or str(attestation.get("executor_family") or "") != primary_family
+    ):
+        return {
+            "status": "pending",
+            "reason": "staged executor identity disagrees with its host attestation",
+        }
+    different_providers = [
+        name
+        for name in sorted(payloads)
+        if primary_family != "unverified"
+        and str(
+            provider_execution_attestations[name].get("family") or "unverified"
+        )
+        not in {"unverified", primary_family}
+    ]
+    if not different_providers:
+        return {
+            "status": "pending",
+            "reason": "no valid different-family result review",
+        }
+    reviewer_families = sorted(
+        {
+            str(identity.get("family") or "unverified")
+            for identity in provider_execution_attestations.values()
+        }
+    )
+    requested_targets = goal_focus_v2.proposed_obligation_targets(pending_record)
+    evidence_checked = pending_record.get("evidence_checked")
+    try:
+        staged_evidence = goal_focus_v2.validate_evidence_artifacts(
+            pending_record, require_artifacts=True, candidate_id=expected_id
+        )
+    except ValueError as exc:
+        return {
+            "status": "pending",
+            "reason": f"candidate evidence snapshot is invalid: {exc}",
+        }
+    requested_claims = {
+        str(item) for item in pending_record.get("claim_ids") or [] if str(item)
+    }
+    if isinstance(evidence_checked, dict):
+        requested_claims.update(
+            str(item) for item in evidence_checked.get("claim_ids") or [] if str(item)
+        )
+    all_reviewers = set(payloads)
+    reviewer_coverage_errors: dict[str, dict[str, list[str]]] = {}
+    for provider_name, payload in payloads.items():
+        provider_claims = {
+            str(item.get("claim_id") or "")
+            for item in payload.get("claim_reviews") or []
+            if isinstance(item, dict) and str(item.get("claim_id") or "")
+        }
+        provider_obligations = {
+            str(item.get("obligation_id") or "")
+            for item in payload.get("obligation_reviews") or []
+            if isinstance(item, dict) and str(item.get("obligation_id") or "")
+        }
+        missing_claims = requested_claims - provider_claims
+        unexpected_claims = provider_claims - requested_claims
+        missing_obligations = set(requested_targets) - provider_obligations
+        unexpected_obligations = provider_obligations - set(requested_targets)
+        if missing_claims or unexpected_claims or missing_obligations or unexpected_obligations:
+            reviewer_coverage_errors[provider_name] = {
+                "missing_claim_ids": sorted(missing_claims),
+                "unexpected_claim_ids": sorted(unexpected_claims),
+                "missing_obligation_ids": sorted(missing_obligations),
+                "unexpected_obligation_ids": sorted(unexpected_obligations),
+            }
+    obligation_reviews: list[dict[str, Any]] = []
+    accepted_obligations: set[str] = set()
+    for obligation_id, target_status in sorted(requested_targets.items()):
+        rows: list[tuple[str, dict[str, Any]]] = []
+        for provider_name, payload in payloads.items():
+            for item in payload.get("obligation_reviews") or []:
+                if (
+                    isinstance(item, dict)
+                    and str(item.get("obligation_id") or "") == obligation_id
+                ):
+                    rows.append((provider_name, item))
+        def exact_accept(provider_name: str, item: dict[str, Any]) -> bool:
+            refs = {str(ref) for ref in item.get("evidence_refs") or [] if str(ref)}
+            inspected = {
+                str(path)
+                for path in payloads[provider_name].get("inspected_paths") or []
+                if str(path)
+            }
+            return (
+                item.get("verdict") == "accept"
+                and str(item.get("target_status") or "") == target_status
+                and bool(refs & staged_evidence)
+                and bool(refs & staged_evidence & inspected)
+            )
+
+        different_accept = any(
+            provider_name in different_providers and exact_accept(provider_name, item)
+            for provider_name, item in rows
+        )
+        unanimous_accept = {provider_name for provider_name, _ in rows} == all_reviewers and all(
+            exact_accept(provider_name, item) for provider_name, item in rows
+        )
+        evidence_refs = sorted(
+            {
+                str(ref)
+                for provider_name, item in rows
+                for ref in item.get("evidence_refs") or []
+                if str(ref)
+                and str(ref) in staged_evidence
+                and str(ref)
+                in {
+                    str(path)
+                    for path in payloads[provider_name].get("inspected_paths") or []
+                    if str(path)
+                }
+            }
+        )
+        accepted = different_accept and unanimous_accept and bool(evidence_refs)
+        if accepted:
+            accepted_obligations.add(obligation_id)
+        obligation_reviews.append(
+            {
+                "obligation_id": obligation_id,
+                "target_status": target_status,
+                "verdict": "accept" if accepted else "uncertain",
+                "evidence_refs": evidence_refs,
+                "reason": (
+                    "All responding reviewers, including a different family, accepted the exact target using staged evidence."
+                    if accepted
+                    else "The requested obligation transition lacked unanimous exact-target, staged-evidence, different-family support."
+                ),
+            }
+        )
+    missing_obligation_reviews = set(requested_targets) - accepted_obligations
+    reviewed_claims = {
+        str(item.get("claim_id") or "")
+        for payload in payloads.values()
+        for item in payload.get("claim_reviews") or []
+        if isinstance(item, dict) and str(item.get("claim_id") or "")
+    }
+    unexpected_claim_reviews = reviewed_claims - requested_claims
+    supported_claims: set[str] = set()
+    claim_reviews: list[dict[str, Any]] = []
+    for claim_id in sorted(requested_claims):
+        rows: list[tuple[str, dict[str, Any]]] = []
+        for provider_name, payload in payloads.items():
+            for item in payload.get("claim_reviews") or []:
+                if (
+                    isinstance(item, dict)
+                    and str(item.get("claim_id") or "") == claim_id
+                ):
+                    rows.append((provider_name, item))
+
+        def evidence_supported(provider_name: str, item: dict[str, Any]) -> bool:
+            refs = {str(ref) for ref in item.get("evidence_refs") or [] if str(ref)}
+            inspected = {
+                str(path)
+                for path in payloads[provider_name].get("inspected_paths") or []
+                if str(path)
+            }
+            return (
+                item.get("status") == "supported"
+                and bool(refs & staged_evidence & inspected)
+            )
+
+        different_support = any(
+            provider_name in different_providers
+            and evidence_supported(provider_name, item)
+            for provider_name, item in rows
+        )
+        unanimous_support = {provider_name for provider_name, _ in rows} == all_reviewers and all(
+            evidence_supported(provider_name, item) for provider_name, item in rows
+        )
+        evidence_refs = sorted(
+            {
+                str(ref)
+                for provider_name, item in rows
+                for ref in item.get("evidence_refs") or []
+                if str(ref)
+                and str(ref) in staged_evidence
+                and str(ref)
+                in {
+                    str(path)
+                    for path in payloads[provider_name].get("inspected_paths") or []
+                    if str(path)
+                }
+            }
+        )
+        supported = different_support and unanimous_support and bool(evidence_refs)
+        if supported:
+            supported_claims.add(claim_id)
+        claim_reviews.append(
+            {
+                "claim_id": claim_id,
+                "status": "supported" if supported else "disputed",
+                "evidence_refs": evidence_refs,
+                "reason": (
+                    "All responding reviewers, including a different family, supported the claim using staged evidence."
+                    if supported
+                    else "The claim lacked unanimous staged-evidence, different-family support."
+                ),
+            }
+        )
+    missing_claim_reviews = requested_claims - supported_claims
+    machine_checks = [
+        {**copy.deepcopy(item), "reviewer": provider_name}
+        for provider_name, payload in sorted(payloads.items())
+        for item in payload.get("machine_checks") or []
+        if isinstance(item, dict)
+    ]
+    conservative = str(synthesis.get("conservative_verdict") or "unavailable")
+    common_review = {
+        "schema_version": "result_review_summary.v2",
+        "candidate_id": expected_id,
+        "candidate_fingerprint": expected_fingerprint,
+        "different_family": True,
+        "executor_provider": executor_provider,
+        "executor_family": primary_family,
+        "executor_attestation": executor_attestation,
+        "providers": sorted(payloads),
+        "different_family_providers": different_providers,
+        "reviewer_families": reviewer_families,
+        "provider_execution_attestations": provider_execution_attestations,
+        "conservative_verdict": conservative,
+        "structured_synthesis": copy.deepcopy(synthesis),
+        "provider_reviews": copy.deepcopy(payloads),
+        "claim_reviews": claim_reviews,
+        "obligation_reviews": obligation_reviews,
+        "machine_checks": machine_checks,
+    }
+    if conservative == "pass" and (
+        not requested_claims
+        or missing_claim_reviews
+        or unexpected_claim_reviews
+        or missing_obligation_reviews
+        or reviewer_coverage_errors
+    ):
+        return {
+            "status": "pending",
+            "reason": "result review did not exactly cover every proposed claim/obligation",
+            "missing_claim_ids": sorted(missing_claim_reviews),
+            "unexpected_claim_ids": sorted(unexpected_claim_reviews),
+            "missing_obligation_ids": sorted(missing_obligation_reviews),
+            "reviewer_coverage_errors": reviewer_coverage_errors,
+            "review": common_review,
+        }
+    if conservative == "pass":
+        return {"status": "accepted", "review": {**common_review, "status": "passed"}}
+    if conservative in {"fail", "partial"}:
+        return {"status": "rejected", "review": {**common_review, "status": "failed"}}
+    return {
+        "status": "pending",
+        "reason": "result review did not reach a bank-or-reject verdict",
+        "review": common_review,
+    }
+
+
+def _reviewed_ledger_record(
+    pending: dict[str, Any], review: dict[str, Any]
+) -> dict[str, Any]:
+    """Translate staged self-assessment into evidence-gated finalized fields."""
+    record = copy.deepcopy(pending.get("record") or {})
+    record["source_candidate_fingerprint"] = goal_focus_v2.candidate_fingerprint(
+        pending
+    )
+    assessment = (
+        record.get("progress_assessment")
+        if isinstance(record.get("progress_assessment"), dict)
+        else {}
+    )
+    record["campaign_delta"] = str(assessment.get("campaign_delta") or "none")
+    requested_global = str(assessment.get("global_delta") or "none")
+    requested_targets = goal_focus_v2.proposed_obligation_targets(record)
+    checked = record.get("evidence_checked")
+    staged_evidence = {
+        str(item)
+        for item in (checked.get("evidence_ids") if isinstance(checked, dict) else []) or []
+        if str(item)
+    }
+    transitions: list[dict[str, str]] = []
+    review_evidence: set[str] = set()
+    for obligation in review.get("obligation_reviews") or []:
+        if not isinstance(obligation, dict) or obligation.get("verdict") != "accept":
+            continue
+        oid = str(obligation.get("obligation_id") or "")
+        target = str(obligation.get("target_status") or "")
+        refs = {str(item) for item in obligation.get("evidence_refs") or [] if str(item)}
+        if requested_targets.get(oid) == target and refs & staged_evidence:
+            transitions.append({"obligation_id": oid, "to": target})
+            review_evidence.update(refs & staged_evidence)
+    evidence = sorted(staged_evidence | review_evidence)
+    record["evidence_ids"] = evidence
+    record["obligation_transitions"] = transitions
+    record["reported_global_delta"] = requested_global
+    return record
+
+
 DRIVE_EXIT_CODES = {
     "max_failures": 3,
     "runtime_error": 4,
     "quota_wait_exhausted": 5,
     "provider_unavailable": 6,
     "auth_or_session_dead": 7,
+    "resource_cleanup_unverified": 8,
+    "candidate_quarantined": 9,
+    "quarantine_persistence_unverified": 10,
     "bad_arguments": 2,
 }
 
@@ -4009,6 +8388,27 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     platform-neutral replacement for the bash driver; the .sh shim delegates here."""
     run_dir = Path(args.dir).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else run_dir
+    if migration_claim_active(run_dir):
+        return {
+            "status": "failed",
+            "action": "drive",
+            "dir": str(run_dir),
+            "reason": "migration_in_progress",
+            "error": "Goal-Focus migration owns this loop; retry after it finishes",
+            "exit_code": DRIVE_EXIT_CODES["runtime_error"],
+        }
+    try:
+        if (run_dir / ".goal_focus_transactions").exists():
+            goal_focus_v2.recover_transactions(run_dir)
+    except Exception as exc:  # noqa: BLE001 - never mutate around a torn authority
+        return {
+            "status": "failed",
+            "action": "drive",
+            "dir": str(run_dir),
+            "reason": "runtime_error",
+            "error": f"Goal-Focus transaction recovery failed: {exc}",
+            "exit_code": DRIVE_EXIT_CODES["runtime_error"],
+        }
     iter_timeout = args.iteration_timeout if args.iteration_timeout and args.iteration_timeout > 0 else None
     max_failures = max(1, int(args.max_failures))
     poll = max(0.0, float(args.poll))
@@ -4023,6 +8423,97 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             "error": "exactly one of --cmd or --provider is required",
             "exit_code": DRIVE_EXIT_CODES["bad_arguments"],
         }
+    try:
+        initial_goal_focus_mode = (
+            goal_focus_runtime_mode(run_dir)
+            if goal_focus_state_present(run_dir)
+            else "off"
+        )
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "action": "drive",
+            "dir": str(run_dir),
+            "reason": "runtime_error",
+            "error": f"cannot determine Goal-Focus mode: {exc}",
+            "exit_code": DRIVE_EXIT_CODES["runtime_error"],
+        }
+    provider_transport = provider_transport_mode()
+    trusted_local_resource_profile: dict[str, int] = {}
+    if initial_goal_focus_mode == "enforce":
+        if provider_transport != TRUSTED_LOCAL_TRANSPORT:
+            return {
+                "status": "failed",
+                "action": "drive",
+                "dir": str(run_dir),
+                "reason": "secure_primary_transport_unavailable",
+                "error": (
+                    "Goal-Focus enforce execution is blocked before registration, "
+                    "panel review, dispatch, or worker spawn because no credential-blind, "
+                    "prompt-private, allowlist-filesystem, resource-bounded model "
+                    "transport with constrained egress is available"
+                ),
+                "exit_code": DRIVE_EXIT_CODES["runtime_error"],
+            }
+        try:
+            run_dir.relative_to(root)
+        except ValueError:
+            trusted_root_error = "the loop directory is outside the trusted project root"
+        else:
+            trusted_root_error = None
+        if (
+            trusted_root_error is not None
+            or root == Path("/")
+            or not root.is_dir()
+            or cmd is not None
+            or provider not in {"claude", "codex"}
+            or iter_timeout is None
+        ):
+            return {
+                "status": "failed",
+                "action": "drive",
+                "dir": str(run_dir),
+                "reason": "bad_arguments",
+                "error": trusted_root_error
+                or (
+                    "trusted-local enforce execution requires a real scoped project "
+                    "root, a positive iteration timeout, and an attested Claude or "
+                    "Codex provider"
+                ),
+                "exit_code": DRIVE_EXIT_CODES["bad_arguments"],
+            }
+    if provider_transport == TRUSTED_LOCAL_TRANSPORT:
+        if iter_timeout is None:
+            return {
+                "status": "failed",
+                "action": "drive",
+                "dir": str(run_dir),
+                "reason": "bad_arguments",
+                "error": "trusted-local execution requires a positive iteration timeout",
+                "exit_code": DRIVE_EXIT_CODES["bad_arguments"],
+            }
+        try:
+            trusted_local_resource_profile = preflight_resource_backend(
+                iter_timeout, role="primary"
+            )
+        except ProviderResourceCleanupError as exc:
+            return {
+                "status": "failed",
+                "action": "drive",
+                "dir": str(run_dir),
+                "reason": "resource_cleanup_unverified",
+                "error": str(exc),
+                "exit_code": DRIVE_EXIT_CODES["resource_cleanup_unverified"],
+            }
+        except ProviderResourceError as exc:
+            return {
+                "status": "failed",
+                "action": "drive",
+                "dir": str(run_dir),
+                "reason": "resource_limits_unavailable",
+                "error": str(exc),
+                "exit_code": DRIVE_EXIT_CODES["runtime_error"],
+            }
     quota_backoff = max(0, int(getattr(args, "quota_backoff", 900)))
     max_quota_waits = max(0, int(getattr(args, "max_quota_waits", 0)))
     log_dir = (
@@ -4030,7 +8521,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         if getattr(args, "log_dir", None)
         else run_dir / "driver_logs"
     )
-    log_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = _ensure_real_directory(log_dir)
     notify_cmd = getattr(args, "notify_cmd", None)
     reg = registry_dir(args)
     # Default: auto (secrets-backed). Explicit --notify off disables. Env and
@@ -4040,7 +8531,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         run_dir=run_dir,
         registry=reg,
         default_auto=True,
-    )
+    ) or "off"
     progress_enabled = not bool(getattr(args, "no_progress", False))
 
     def _progress(event: str, **extra: Any) -> None:
@@ -4057,9 +8548,25 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             extra=extra or None,
         )
 
-    # Arm (best-effort) so a concurrent interactive Stop hook for this root stands
-    # down; the driver itself enforces "done" regardless of the registry.
-    # Propagate notify preference so registry + loop_state stay aligned.
+    def _cancel_prepared_dispatch(intent: dict[str, Any], why: str) -> bool:
+        dispatch_id = str(intent.get("dispatch_id") or "")
+        if not dispatch_id:
+            return True
+        try:
+            goal_focus_v2.cancel_iteration_dispatch(
+                run_dir,
+                dispatch_id=dispatch_id,
+                reason=why,
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001 - caller must fail closed
+            sys.stderr.write(
+                f"autoloop-driver: could not cancel dispatch {dispatch_id}: {exc}\n"
+            )
+            return False
+
+    # Registration is a safety boundary for migration quiescence as well as the
+    # interactive Stop hook.  A driver must not execute unregistered.
     run_id: object = None
     arm_ns = argparse.Namespace(
         dir=str(run_dir),
@@ -4076,8 +8583,24 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         # Prefer resolved channel from arm when drive used auto.
         if arm_result.get("notify_resolved") and getattr(args, "notify", None) in (None, "auto"):
             notify_channel = arm_result.get("notify_resolved")
-    except Exception:  # noqa: BLE001 - arming is best-effort.
-        pass
+    except MigrationClaimError as exc:
+        return {
+            "status": "failed",
+            "action": "drive",
+            "dir": str(run_dir),
+            "reason": "migration_in_progress",
+            "error": str(exc),
+            "exit_code": DRIVE_EXIT_CODES["runtime_error"],
+        }
+    except Exception as exc:  # noqa: BLE001 - fail closed before agent execution.
+        return {
+            "status": "failed",
+            "action": "drive",
+            "dir": str(run_dir),
+            "reason": "driver_registration_failed",
+            "error": str(exc),
+            "exit_code": DRIVE_EXIT_CODES["runtime_error"],
+        }
     failures = 0
     quota_waits = 0
     quota_waits_total = 0
@@ -4087,8 +8610,8 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     panel_mode = getattr(args, "panel", None) or "auto"
     panel_enabled = resolve_panel_mode(panel_mode, run_dir)
     formal_pol, formal_pin = _apply_formal_drive_start(run_dir, args)
-    if provider:
-        os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = str(provider)
+    prior_primary_provider = os.environ.get("AAS_AUTOLOOP_PRIMARY_PROVIDER")
+    os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = str(provider or "custom")
     _progress(
         "drive_start",
         source="drive",
@@ -4096,10 +8619,105 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         drive_pid=os.getpid(),
         panel=panel_mode,
         panel_enabled=panel_enabled,
+        provider_transport=provider_transport,
+        resource_limits=public_resource_limits(trusted_local_resource_profile),
         formal_policy=(formal_pol.policy if formal_pol is not None else "off"),
     )
     try:
         while True:
+            goal_focus_present = goal_focus_state_present(run_dir)
+            goal_focus_mode = "off"
+            goal_focus_gate: dict[str, Any] | None = None
+            try:
+                # A prepared Goal-Focus transaction may already contain the
+                # terminal budget post-image. Finish it before compute_done can
+                # mistake a torn commit for a completed loop.
+                if (run_dir / ".goal_focus_transactions").exists():
+                    goal_focus_v2.recover_transactions(run_dir)
+                    goal_focus_present = goal_focus_state_present(run_dir)
+                if goal_focus_present:
+                    goal_focus_mode = goal_focus_runtime_mode(run_dir)
+                    if goal_focus_mode == "off":
+                        validation = goal_focus_v2.validate_goal_focus(run_dir)
+                        if validation.get("errors"):
+                            sys.stderr.write(
+                                "autoloop-driver: Goal-Focus off-mode finding: "
+                                + "; ".join(validation.get("errors") or [])
+                                + "\n"
+                            )
+                    elif goal_focus_mode == "monitor":
+                        # Monitor is observational: no reconciliation writes and
+                        # no automatic transaction mutation after the recovery
+                        # of an already-prepared atomic commit above.
+                        try:
+                            goal_focus_gate = goal_focus_v2.pre_dispatch_gate(
+                                run_dir,
+                                auto_recover=False,
+                                regenerate_views=False,
+                            )
+                        except Exception as monitor_exc:  # noqa: BLE001 - report only
+                            goal_focus_gate = {
+                                "ok": True,
+                                "action": "monitor_invalid_authority",
+                                "authority_errors": [str(monitor_exc)],
+                                "errors": [str(monitor_exc)],
+                                "triggers": [],
+                            }
+                    else:
+                        goal_focus_gate = goal_focus_v2.pre_dispatch_gate(run_dir)
+            except Exception as exc:  # noqa: BLE001 - unreadable mode/authority fails closed
+                _progress(
+                    "goal_focus_wait",
+                    source="drive",
+                    event_id="goal-focus-invalid-authority",
+                    iteration_status="waiting",
+                    review_status="pending",
+                    completed_summary="No new result was banked; Goal-Focus authority is invalid.",
+                    current_summary=f"Dispatch is blocked by invalid Goal-Focus state: {str(exc)[:400]}",
+                    next_action="Repair or reconcile the authoritative Goal-Focus files, then validate again.",
+                    error=str(exc)[:400],
+                )
+                interruptible_sleep(max(poll, 30.0), run_dir)
+                continue
+
+            identity_overrides = (
+                provider_identity_overrides(str(provider)) if provider else []
+            )
+            driver_execution_attestation: dict[str, Any] | None = None
+            driver_identity_error: str | None = None
+            if goal_focus_mode == "enforce" and provider and not identity_overrides:
+                try:
+                    driver_execution_attestation = attest_provider_executable(
+                        str(provider),
+                        forbidden_roots=(root, run_dir),
+                        required=True,
+                    )
+                except PanelIsolationError as exc:
+                    driver_identity_error = str(exc)
+            if goal_focus_mode == "enforce" and (
+                not provider
+                or driver_execution_attestation is None
+                or str(driver_execution_attestation.get("family") or "unverified")
+                == "unverified"
+                or bool(identity_overrides)
+            ):
+                reason = "bad_arguments"
+                sys.stderr.write(
+                    "autoloop-driver: Goal-Focus enforce mode requires --provider "
+                    "with a host-pinned model family; custom commands, provider command/"
+                    "argument/binary overrides, and unverified gateways cannot establish "
+                    "review independence"
+                    + (
+                        f" (identity overrides: {', '.join(identity_overrides)})"
+                        if identity_overrides
+                        else f" ({driver_identity_error})"
+                        if driver_identity_error
+                        else ""
+                    )
+                    + "\n"
+                )
+                break
+
             try:
                 verdict = compute_done(run_dir)
             except Exception:  # noqa: BLE001 - unreadable state -> fail safe (stop).
@@ -4118,23 +8736,394 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             # Re-resolve each cycle so loop_state/panel.json can opt in mid-run.
             panel_enabled = resolve_panel_mode(panel_mode, run_dir)
             refresh_heartbeat(reg, run_id)
-            # Hard goal_priority: steer next_preferred_path + recovery next-action
-            # before panel/primary when REPLAN_REQUIRED (never writes status).
-            try:
-                steer = apply_hard_path_discipline(run_dir)
-                if steer.get("applied"):
-                    _progress(
-                        "goal_priority_hard_replan",
-                        source="drive",
-                        reason=str(steer.get("reason") or "")[:200],
-                        residual_id=str(steer.get("residual_id") or ""),
-                        campaign_id=str(steer.get("campaign_id") or ""),
-                        path_preview=str(steer.get("path") or "")[:300],
+
+            if goal_focus_gate is not None and goal_focus_mode == "monitor":
+                # Monitor reports but never mutates strategy or blocks dispatch.
+                if goal_focus_gate.get("action") != "dispatch":
+                    sys.stderr.write(
+                        "autoloop-driver: Goal-Focus monitor finding: "
+                        + json.dumps(
+                            {
+                                "action": goal_focus_gate.get("action"),
+                                "errors": goal_focus_gate.get("errors") or [],
+                                "triggers": goal_focus_gate.get("triggers") or [],
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
                     )
-            except Exception as exc:  # noqa: BLE001 - steering must not kill drive
-                sys.stderr.write(
-                    f"autoloop-driver: goal_priority hard replan failed: {exc}\n"
+
+            if goal_focus_gate is not None and goal_focus_mode == "enforce":
+                gate_action = str(goal_focus_gate.get("action") or "reconcile")
+                gate_plan = (
+                    goal_focus_gate.get("plan")
+                    if isinstance(goal_focus_gate.get("plan"), dict)
+                    else {}
                 )
+                plan_revision = int(gate_plan.get("plan_revision") or 0)
+                trigger_codes = [
+                    str(item.get("code"))
+                    for item in goal_focus_gate.get("triggers") or []
+                    if isinstance(item, dict) and item.get("code")
+                ]
+                current_driver_family = (
+                    str(
+                        driver_execution_attestation.get("family")
+                        or "unverified"
+                    )
+                    if driver_execution_attestation is not None
+                    else "unverified"
+                )
+                reviewed_driver_family = str(
+                    gate_plan.get("dispatch_provider_family") or ""
+                ).strip()
+                if (
+                    gate_action == "dispatch"
+                    and (
+                        current_driver_family == "unverified"
+                        or reviewed_driver_family != current_driver_family
+                    )
+                ):
+                    gate_action = "replan"
+                    trigger_codes.append("driver_family_changed")
+                if gate_action == "dispatch_inflight":
+                    inflight = goal_focus_v2.load_iteration_dispatch(run_dir) or {}
+                    inflight_id = str(inflight.get("dispatch_id") or "")
+                    _progress(
+                        "goal_focus_wait",
+                        source="drive",
+                        event_id=f"goal-focus-dispatch-inflight-{inflight_id}",
+                        iteration_status="waiting",
+                        review_status="pending",
+                        completed_summary="No new result was banked; a host-pinned worker dispatch remains in flight.",
+                        current_summary=(
+                            f"Dispatch {inflight_id} is awaiting its exact staged candidate."
+                        ),
+                        next_action=(
+                            "Wait for the original worker. If it is confirmed dead, inspect "
+                            "goal-focus recover-dispatch and cancel only with the exact dispatch id."
+                        ),
+                    )
+                    interruptible_sleep(max(poll, 30.0), run_dir)
+                    continue
+                if gate_action == "candidate_quarantined":
+                    quarantine = goal_focus_v2.load_candidate_quarantine(run_dir) or {}
+                    _progress(
+                        "goal_focus_wait",
+                        source="drive",
+                        event_id=f"goal-focus-candidate-quarantine-{quarantine.get('quarantine_id')}",
+                        iteration_status="error",
+                        review_status="error",
+                        completed_summary="No result was banked; a failed provider completion was quarantined.",
+                        current_summary=(
+                            "Automatic review and dispatch are stopped for candidate "
+                            f"{quarantine.get('candidate_id') or 'unknown'}."
+                        ),
+                        next_action=(
+                            (
+                                "Confirm every provider descendant is gone. "
+                                if "cleanup" in str(quarantine.get("reason") or "").lower()
+                                else ""
+                            )
+                            + "Inspect the quarantine, then release its exact candidate "
+                            "fingerprint with goal-focus recover-quarantine."
+                        ),
+                    )
+                    reason = "candidate_quarantined"
+                    break
+                if gate_action == "review_pending":
+                    pending = goal_focus_v2.load_pending_candidate(run_dir)
+                    if not pending:
+                        _progress(
+                            "goal_focus_wait",
+                            source="drive",
+                            event_id=f"goal-focus-missing-pending-r{plan_revision}",
+                            iteration_status="waiting",
+                            review_status="pending",
+                            completed_summary="No new result was banked.",
+                            current_summary="The plan reports a pending result, but no candidate can be loaded.",
+                            next_action="Recover transactions and reconcile Goal-Focus state.",
+                        )
+                        interruptible_sleep(max(poll, 30.0), run_dir)
+                        continue
+                    pending_record = (
+                        pending.get("record") if isinstance(pending.get("record"), dict) else {}
+                    )
+                    try:
+                        goal_focus_v2.validate_host_staged_candidate(run_dir, pending)
+                    except Exception as exc:  # noqa: BLE001 - invalid authority never banks
+                        _progress(
+                            "result_review_wait",
+                            source="drive",
+                            event_id=f"result-review-invalid-candidate-{pending.get('candidate_id')}",
+                            candidate_id=str(pending.get("candidate_id") or ""),
+                            iteration_status="waiting",
+                            review_status="pending",
+                            completed_summary="No new result has been banked; the staged candidate violates host authority.",
+                            current_summary=str(exc)[:400],
+                            next_action="Repair or explicitly reject the exact candidate before review.",
+                        )
+                        interruptible_sleep(max(poll, 30.0), run_dir)
+                        continue
+                    pending_iteration = int(
+                        pending_record.get("iteration")
+                        or (read_json(loop_paths(run_dir)["budget"]).get("spent_iterations", 0) + 1)
+                    )
+                    review_dir = ensure_iter_dir(run_dir, iteration=pending_iteration)
+                    _progress(
+                        "result_review_start",
+                        source="drive",
+                        event_id=f"result-review-start-{pending.get('candidate_id')}",
+                        candidate_id=str(pending.get("candidate_id") or ""),
+                        iteration_status="running",
+                        review_status="pending",
+                        iter_dir=str(review_dir),
+                    )
+                    try:
+                        review_summary = run_panel_phase_for_drive(
+                            run_dir,
+                            root,
+                            "result_review",
+                            iter_dir=review_dir,
+                        )
+                        if review_summary.get("fatal_resource_cleanup_failure"):
+                            _progress(
+                                "result_review_error",
+                                source="drive",
+                                iteration_status="error",
+                                review_status="error",
+                                completed_summary="No result was banked because panel resource cleanup was not verified.",
+                                current_summary="A panel process scope may still be live; automatic retry is stopped.",
+                                next_action="Inspect and terminate the recorded panel scope before resuming.",
+                            )
+                            reason = "resource_cleanup_unverified"
+                            break
+                        review_outcome = _result_review_from_panel(pending, review_summary)
+                    except Exception as exc:  # noqa: BLE001 - pending must survive
+                        review_outcome = {
+                            "status": "pending",
+                            "reason": f"result review error: {exc}",
+                        }
+                    if review_outcome.get("status") in {"accepted", "rejected"}:
+                        accepted = review_outcome["status"] == "accepted"
+                        review = review_outcome.get("review") or {}
+                        ledger_record = _reviewed_ledger_record(pending, review)
+                        try:
+                            finalized = goal_focus_v2.finalize_candidate(
+                                run_dir,
+                                accepted=accepted,
+                                review=review,
+                                ledger_record=ledger_record,
+                                expected_plan_revision=int(pending.get("plan_revision") or 0),
+                            )
+                        except Exception as exc:  # noqa: BLE001 - preserve pending on failed commit
+                            _progress(
+                                "result_review_error",
+                                source="drive",
+                                event_id=f"result-review-finalize-error-{pending.get('candidate_id')}",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="error",
+                                review_status="error",
+                                completed_summary="No new result was banked because finalization failed.",
+                                current_summary=f"The reviewed candidate remains pending: {str(exc)[:400]}",
+                                next_action="Recover the transaction and retry exact-candidate finalization.",
+                                error=str(exc)[:400],
+                            )
+                            interruptible_sleep(max(poll, 30.0), run_dir)
+                            continue
+                        final_record = finalized.get("record") or {}
+                        final_plan = finalized.get("plan") or {}
+                        review_families = review.get("reviewer_families") or []
+                        review_agents = review.get("providers") or []
+                        if accepted:
+                            _progress(
+                                "iteration_ok",
+                                source="drive",
+                                event_id=f"arl-iteration_ok-{pending.get('candidate_id')}",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="success",
+                                review_status="passed",
+                                reviewer_families=review_families,
+                                panel_agents=review_agents,
+                                completed_summary=str(
+                                    final_record.get("completed_summary")
+                                    or resolve_progress_result_text(final_record)
+                                    or "The reviewed result was banked."
+                                ),
+                                current_summary=str(
+                                    final_record.get("current_summary")
+                                    or "The accepted result is now part of the authoritative ledger."
+                                ),
+                                next_action=str(
+                                    final_record.get("proposed_next_action")
+                                    or final_plan.get("next_action")
+                                    or "Run the pre-dispatch gate for the next bounded action."
+                                ),
+                                provider=str(
+                                    (final_record.get("execution") or {}).get("executor_provider")
+                                    if isinstance(final_record.get("execution"), dict)
+                                    else provider or ""
+                                ),
+                            )
+                        else:
+                            _progress(
+                                "iteration_rejected",
+                                source="drive",
+                                event_id=f"arl-iteration_rejected-{pending.get('candidate_id')}",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="failure",
+                                review_status="failed",
+                                reviewer_families=review_families,
+                                panel_agents=review_agents,
+                                completed_summary="No research claim was banked; the staged candidate failed independent review.",
+                                current_summary="The failed attempt consumed its recorded budget and the active plan now requires replanning.",
+                                next_action="Run a fresh structured strategy review before dispatching more research.",
+                                review_summary=str(review.get("conservative_verdict") or "failed"),
+                                provider=str(
+                                    (final_record.get("execution") or {}).get("executor_provider")
+                                    if isinstance(final_record.get("execution"), dict)
+                                    else provider or ""
+                                ),
+                            )
+                        continue
+                    _progress(
+                        "result_review_wait",
+                        source="drive",
+                        event_id=f"result-review-wait-{pending.get('candidate_id')}",
+                        candidate_id=str(pending.get("candidate_id") or ""),
+                        iteration_status="waiting",
+                        review_status="pending",
+                        completed_summary="No new result has been banked; the exact candidate remains staged.",
+                        current_summary=str(
+                            review_outcome.get("reason")
+                            or "Independent result review is not yet sufficient."
+                        ),
+                        next_action="Obtain a valid different-family review of the exact pending candidate.",
+                    )
+                    interruptible_sleep(max(poll, 30.0), run_dir)
+                    continue
+
+                if gate_action == "replan":
+                    strategy_dir = ensure_iter_dir(run_dir)
+                    _progress(
+                        "strategy_review_start",
+                        source="drive",
+                        event_id=f"strategy-review-start-r{plan_revision}",
+                        iteration_status="running",
+                        review_status="pending",
+                        iter_dir=str(strategy_dir),
+                    )
+                    try:
+                        strategy_summary = run_panel_phase_for_drive(
+                            run_dir,
+                            root,
+                            "strategy_review",
+                            iter_dir=strategy_dir,
+                        )
+                        if strategy_summary.get("fatal_resource_cleanup_failure"):
+                            _progress(
+                                "strategy_review_error",
+                                source="drive",
+                                iteration_status="error",
+                                review_status="error",
+                                completed_summary="No direction was committed because panel resource cleanup was not verified.",
+                                current_summary="A panel process scope may still be live; automatic retry is stopped.",
+                                next_action="Inspect and terminate the recorded panel scope before resuming.",
+                            )
+                            reason = "resource_cleanup_unverified"
+                            break
+                        strategy = _strategy_selection_from_panel(run_dir, strategy_summary)
+                    except Exception as exc:  # noqa: BLE001 - no unreviewed dispatch
+                        strategy = {"status": "waiting", "reason": str(exc)}
+                    if strategy.get("status") == "ready":
+                        try:
+                            committed = goal_focus_v2.commit_selected_direction(
+                                run_dir,
+                                strategy["selection"],
+                                strategy["review"],
+                                ",".join(trigger_codes) or "pre_dispatch",
+                                expected_plan_revision=plan_revision,
+                            )
+                        except Exception as exc:  # noqa: BLE001 - stale strategy must not stand
+                            strategy = {
+                                "status": "waiting",
+                                "reason": f"direction commit failed: {exc}",
+                            }
+                        else:
+                            committed_plan = committed.get("plan") or {}
+                            _progress(
+                                "goal_focus_replan",
+                                source="drive",
+                                event_id=f"goal-focus-replan-r{committed_plan.get('plan_revision')}",
+                                iteration_status="not_applicable",
+                                review_status="passed",
+                                reviewer_families=(strategy.get("review") or {}).get(
+                                    "reviewer_families"
+                                )
+                                or [],
+                                panel_agents=(strategy.get("review") or {}).get("providers")
+                                or [],
+                                completed_summary=(
+                                    "Committed a different-family-reviewed research direction: "
+                                    f"campaign {committed_plan.get('campaign_id')}, "
+                                    f"approach {committed_plan.get('approach_id')}."
+                                ),
+                                current_summary="The authoritative plan is active and coherent.",
+                                next_action=str(committed_plan.get("next_action") or ""),
+                                plan_revision=committed_plan.get("plan_revision"),
+                            )
+                            continue
+                    _progress(
+                        "strategy_review_wait",
+                        source="drive",
+                        event_id=f"strategy-review-wait-r{plan_revision}",
+                        iteration_status="waiting",
+                        review_status="pending",
+                        completed_summary="No direction was committed and no new research result was banked.",
+                        current_summary=str(
+                            strategy.get("reason")
+                            or "Structured strategy review did not yield a safe direction."
+                        ),
+                        next_action="Obtain valid different-family strategy advice or repair the approach registry.",
+                    )
+                    interruptible_sleep(max(poll, 30.0), run_dir)
+                    continue
+
+                if not goal_focus_gate.get("ok") or gate_action != "dispatch":
+                    _progress(
+                        "goal_focus_wait",
+                        source="drive",
+                        event_id=f"goal-focus-wait-r{plan_revision}-{gate_action}",
+                        iteration_status="waiting",
+                        review_status="pending",
+                        completed_summary="No new result was banked because the dispatch gate did not pass.",
+                        current_summary=(
+                            "; ".join(goal_focus_gate.get("errors") or [])
+                            or f"Goal-Focus gate action is {gate_action}."
+                        ),
+                        next_action="Reconcile and validate authoritative Goal-Focus state before dispatch.",
+                    )
+                    interruptible_sleep(max(poll, 30.0), run_dir)
+                    continue
+
+            if goal_focus_mode in {"off", "monitor"}:
+                # Monitor is observational: preserve the legacy hard-steering
+                # dispatch path while reporting Goal-Focus findings.
+                try:
+                    steer = apply_hard_path_discipline(run_dir)
+                    if steer.get("applied"):
+                        _progress(
+                            "goal_priority_hard_replan",
+                            source="drive",
+                            reason=str(steer.get("reason") or "")[:200],
+                            residual_id=str(steer.get("residual_id") or ""),
+                            campaign_id=str(steer.get("campaign_id") or ""),
+                            path_preview=str(steer.get("path") or "")[:300],
+                        )
+                except Exception as exc:  # noqa: BLE001 - steering must not kill drive
+                    sys.stderr.write(
+                        f"autoloop-driver: goal_priority hard replan failed: {exc}\n"
+                    )
             # Transactional remote-bridge claim (drive only; agent-cmd uses peek).
             remote_job = os.environ.get("AAS_REMOTE_JOB_ID")
             inbox_block, claim_ids, claim_fences, claimer = claim_remote_inbox_for_drive(
@@ -4145,8 +9134,17 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
 
+            # Goal-Focus enforce mode always needs the host-owned panel for its
+            # independent result review. This remains true when the legacy
+            # target-advice panel switch is explicitly off.
+            effective_panel_enabled = panel_enabled or goal_focus_mode == "enforce"
             panel_iter_dir: Path | None = None
-            if panel_enabled:
+            if goal_focus_mode == "enforce":
+                # Strategy is already committed by the strict pre-dispatch
+                # gate. Reserve the matching result-review directory without
+                # running legacy target advice.
+                panel_iter_dir = ensure_iter_dir(run_dir)
+            elif panel_enabled:
                 try:
                     panel_iter_dir = ensure_iter_dir(run_dir)
                     _progress(
@@ -4161,6 +9159,15 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         "target_advice",
                         iter_dir=panel_iter_dir,
                     )
+                    if target_summary.get("fatal_resource_cleanup_failure"):
+                        _progress(
+                            "panel_target_fail",
+                            source="drive",
+                            drive_cycle=iterations_run + 1,
+                            error="panel resource cleanup was not verified",
+                        )
+                        reason = "resource_cleanup_unverified"
+                        break
                     _progress(
                         "panel_target_ok" if target_summary.get("panel_content_pass") else "panel_target_fail",
                         source="drive",
@@ -4177,15 +9184,80 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         error=str(exc)[:200],
                     )
 
+            iteration_started_at = utc_now()
+            iteration_started_monotonic = time.monotonic()
+            dispatch_intent: dict[str, Any] = {}
+            if goal_focus_mode == "enforce":
+                identity_overrides = (
+                    provider_identity_overrides(provider) if provider else []
+                )
+                if (
+                    not provider
+                    or driver_execution_attestation is None
+                    or bool(identity_overrides)
+                ):
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=False,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    reason = "bad_arguments"
+                    sys.stderr.write(
+                        "autoloop-driver: Goal-Focus enforce mode requires --provider "
+                        "with a host-pinned model family; custom commands, provider command/"
+                        "argument/binary overrides, and unverified gateways cannot establish "
+                        "review independence\n"
+                    )
+                    break
+                try:
+                    driver_execution_attestation = (
+                        revalidate_provider_executable_attestation(
+                            driver_execution_attestation,
+                            forbidden_roots=(root, run_dir),
+                        )
+                    )
+                    prepared_dispatch = goal_focus_v2.prepare_iteration_dispatch(
+                        run_dir,
+                        executor_provider=provider,
+                        executor_family=str(
+                            driver_execution_attestation.get("family")
+                            or "unverified"
+                        ),
+                        executor_attestation=driver_execution_attestation,
+                        started_at=iteration_started_at,
+                        driver_pid=os.getpid(),
+                    )
+                    dispatch_intent = prepared_dispatch.get("dispatch") or {}
+                except Exception as exc:  # noqa: BLE001 - dispatch authority fails closed
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=False,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    reason = "runtime_error"
+                    sys.stderr.write(
+                        f"autoloop-driver: could not prepare Goal-Focus dispatch: {exc}\n"
+                    )
+                    break
+
             if provider:
                 try:
                     spec = resolve_provider_command(
                         provider,
                         run_dir,
-                        panel_enabled=panel_enabled,
+                        panel_enabled=effective_panel_enabled,
                         panel_iter_dir=panel_iter_dir,
                     )
                 except ValueError:
+                    _cancel_prepared_dispatch(
+                        dispatch_intent, "provider_command_resolution_failed"
+                    )
                     finalize_remote_inbox_claim(
                         remote_job or "",
                         claim_ids,
@@ -4218,42 +9290,202 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         success=False,
                     )
                     os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    _cancel_prepared_dispatch(
+                        dispatch_intent, "provider_binary_unavailable"
+                    )
                     reason = "provider_unavailable"
+                    break
+                if goal_focus_mode == "enforce" and (
+                    spec.get("mode") != "argv"
+                    or driver_execution_attestation is None
+                    or str(spec.get("binary") or "")
+                    != str(driver_execution_attestation.get("executable_path") or "")
+                ):
+                    _cancel_prepared_dispatch(
+                        dispatch_intent, "provider_executable_attestation_mismatch"
+                    )
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=False,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    reason = "bad_arguments"
+                    sys.stderr.write(
+                        "autoloop-driver: resolved provider executable does not match "
+                        "the host-pinned executable attestation\n"
+                    )
                     break
                 run_args = spec["argv"] if spec["mode"] == "argv" else spec["shell"]
                 use_shell = spec["mode"] == "shell"
                 prompt = spec["prompt"]
+                primary_prompt_transport = str(
+                    spec.get("prompt_transport") or "argv"
+                )
             else:
                 run_args = cmd
                 use_shell = True
                 prompt = iteration_prompt(
                     run_dir,
-                    panel_enabled=panel_enabled,
+                    panel_enabled=effective_panel_enabled,
                     panel_iter_dir=panel_iter_dir,
                 )
-            child_env = dict(
-                os.environ,
-                AUTOLOOP_DRIVER="1",
-                AUTOLOOP_DIR=str(run_dir),
-                AUTOLOOP_ROOT=str(root),
-                AUTOLOOP_PROMPT=prompt,
-            )
+                primary_prompt_transport = "shell"
+            primary_stdin_text: str | None = None
+            if provider:
+                try:
+                    assert_panel_prompt_safe(prompt)
+                    if primary_prompt_transport == "stdin":
+                        primary_stdin_text = prompt
+                    elif primary_prompt_transport == "unavailable":
+                        raise ValueError(
+                            f"provider {provider} has no reviewed private prompt transport"
+                        )
+                    elif not isinstance(run_args, list):
+                        raise ValueError(
+                            "provider prompt privacy requires argv execution"
+                        )
+                    else:
+                        run_args, primary_stdin_text = (
+                            prepare_primary_private_prompt_transport(
+                                provider, run_args, prompt
+                            )
+                        )
+                except PanelIsolationError as exc:
+                    _cancel_prepared_dispatch(
+                        dispatch_intent, "primary_prompt_privacy_gate_failed"
+                    )
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=False,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    reason = "bad_arguments"
+                    sys.stderr.write(
+                        "autoloop-driver: primary prompt privacy gate failed: "
+                        f"{exc}\n"
+                    )
+                    break
+                except ValueError as exc:
+                    _cancel_prepared_dispatch(
+                        dispatch_intent, "primary_prompt_transport_unavailable"
+                    )
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=False,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    reason = "bad_arguments"
+                    sys.stderr.write(
+                        "autoloop-driver: primary prompt transport failed: "
+                        f"{exc}\n"
+                    )
+                    break
+            control_env: dict[str, object] = {
+                "AUTOLOOP_DRIVER": "1",
+                "AUTOLOOP_DIR": str(run_dir),
+                "AUTOLOOP_ROOT": str(root),
+                "AAS_AUTOLOOP_PRIMARY_PROVIDER": str(provider or "custom"),
+                "AAS_AUTOLOOP_ITERATION_STARTED_AT": iteration_started_at,
+            }
+            if goal_focus_mode != "enforce":
+                control_env["AUTOLOOP_PROMPT"] = prompt
+            evidence_dir: Path | None = None
+            if provider == "deepseek":
+                # The argv pins CodeWhale to DeepSeek. Do not allow its normal
+                # active-provider or endpoint overrides to disagree with that pin.
+                control_env["DEEPSEEK_BASE_URL"] = "https://api.deepseek.com"
+            if dispatch_intent:
+                candidate_id = str(dispatch_intent.get("candidate_id") or "")
+                try:
+                    safe_candidate_id = safe_registry_run_id(candidate_id)
+                    relative_evidence_root = Path(
+                        str(dispatch_intent.get("evidence_root") or "")
+                    )
+                    expected_evidence_root = (
+                        Path(".goal_focus") / "evidence" / safe_candidate_id
+                    )
+                    if relative_evidence_root != expected_evidence_root:
+                        raise ValueError(
+                            "dispatch evidence_root is not the exact candidate-scoped root"
+                        )
+                    evidence_dir = _ensure_real_directory(
+                        run_dir / relative_evidence_root
+                    )
+                except (OSError, ValueError) as exc:
+                    _cancel_prepared_dispatch(
+                        dispatch_intent, "evidence_directory_unavailable"
+                    )
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=False,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    reason = "bad_arguments"
+                    sys.stderr.write(
+                        "autoloop-driver: could not prepare the candidate-scoped "
+                        f"evidence directory: {exc}\n"
+                    )
+                    break
+                control_env["AAS_AUTOLOOP_DISPATCH_ID"] = str(
+                    dispatch_intent.get("dispatch_id") or ""
+                )
+                control_env["AAS_AUTOLOOP_CANDIDATE_ID"] = safe_candidate_id
+                control_env["AAS_AUTOLOOP_EVIDENCE_DIR"] = str(evidence_dir)
+                control_env["AAS_AUTOLOOP_EVIDENCE_ROOT"] = str(evidence_dir)
+                control_env["AAS_AUTOLOOP_PLAN_REVISION"] = str(
+                    dispatch_intent.get("plan_revision") or ""
+                )
+                control_env["AAS_AUTOLOOP_RUN_ID"] = safe_registry_run_id(run_id)
+                control_env["AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION"] = "1"
             if formal_pol is not None:
-                child_env.update(export_formal_env(formal_pol))
-            if panel_enabled:
-                child_env["AAS_AUTOLOOP_PANEL"] = "on"
+                control_env.update(export_formal_env(formal_pol))
+            if effective_panel_enabled:
+                control_env["AAS_AUTOLOOP_PANEL"] = "on"
                 if panel_iter_dir is not None:
-                    child_env["AAS_AUTOLOOP_PANEL_ITER_DIR"] = str(panel_iter_dir)
+                    control_env["AAS_AUTOLOOP_PANEL_ITER_DIR"] = str(panel_iter_dir)
+            child_env = build_primary_child_env(
+                provider,
+                executable_attestation=driver_execution_attestation,
+                control=control_env,
+                compute_policy_run_dir=run_dir,
+                include_provider_credentials=(
+                    goal_focus_mode != "enforce"
+                    or provider_transport == TRUSTED_LOCAL_TRANSPORT
+                ),
+                include_compute_credentials=(
+                    provider_transport == TRUSTED_LOCAL_TRANSPORT
+                ),
+            )
             iterations_run += 1
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-            log_path = log_dir / f"iter_{stamp}_{iterations_run:04d}.log"
+            log_nonce = uuid.uuid4().hex[:16]
+            log_path = log_dir / f"iter_{stamp}_{iterations_run:04d}_{log_nonce}.log"
+            log_created = False
+            captured_log_tail = ""
+            timed_out = False
+            cleanup_error: str | None = None
+            primary_resource_metadata: dict[str, Any] = {}
+            host_runtime_error = False
             _progress(
                 "iteration_start",
                 source="drive",
                 drive_cycle=iterations_run,
                 log_path=str(log_path),
                 provider=provider or "",
-                panel_enabled=panel_enabled,
+                panel_enabled=effective_panel_enabled,
+                started_at=iteration_started_at,
             )
             pre_spent = 0
             try:
@@ -4263,12 +9495,12 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 pre_spent = 0
             try:
-                with log_path.open("w", encoding="utf-8", errors="replace") as log_fh:
-                    # Host prompt + sentinel first so classification can strip
-                    # host text even when the agent re-echoes the prompt.
+                with _open_exclusive_driver_log(log_path) as log_fh:
+                    log_created = True
+                    # Never persist the outbound prompt in the iteration log.
+                    # The sentinel still separates host metadata from any
+                    # eventual child output for failure classification.
                     try:
-                        log_fh.write(str(prompt or ""))
-                        log_fh.write("\n")
                         log_fh.write(HOST_PROMPT_SENTINEL)
                         log_fh.write("\n")
                         log_fh.flush()
@@ -4277,23 +9509,148 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     # Always run the iteration agent with project root as cwd so
                     # headless CLIs (including grok -p) see the correct workspace
                     # even when the driver was started from another directory.
-                    completed = subprocess.run(
-                        run_args,
-                        shell=use_shell,
-                        env=child_env,
-                        cwd=str(root),
-                        timeout=iter_timeout,
-                        stdout=log_fh,
-                        stderr=subprocess.STDOUT,
-                        **provider_subprocess_options(provider),
-                    )
-                rc = completed.returncode
-            except subprocess.TimeoutExpired:
-                rc = 124
+                    spawn_identity_error: str | None = None
+                    if goal_focus_mode == "enforce":
+                        try:
+                            if driver_execution_attestation is None:
+                                raise PanelIsolationError(
+                                    "missing provider executable attestation"
+                                )
+                            driver_execution_attestation = (
+                                revalidate_provider_executable_attestation(
+                                    driver_execution_attestation,
+                                    forbidden_roots=(root, run_dir),
+                                )
+                            )
+                        except PanelIsolationError as exc:
+                            spawn_identity_error = str(exc)
+                    if spawn_identity_error is not None:
+                        log_fh.write(
+                            "autoloop-driver: provider executable attestation "
+                            f"failed immediately before spawn: {spawn_identity_error}\n"
+                        )
+                        log_fh.flush()
+                        rc = 126
+                    else:
+                        try:
+                            rc, timed_out, cleanup_error = run_primary_subprocess(
+                                run_args,
+                                use_shell=use_shell,
+                                child_env=child_env,
+                                cwd=root,
+                                timeout_s=iter_timeout,
+                                output=log_fh,
+                                provider=provider,
+                                enforce_mode=goal_focus_mode == "enforce",
+                                trusted_local=(
+                                    provider_transport == TRUSTED_LOCAL_TRANSPORT
+                                ),
+                                run_dir=run_dir,
+                                evidence_dir=evidence_dir,
+                                executable_attestation=driver_execution_attestation,
+                                stdin_text=primary_stdin_text,
+                                resource_metadata=primary_resource_metadata,
+                            )
+                        except OSError as exc:
+                            log_fh.write(f"autoloop-driver: spawn failed: {exc}\n")
+                            log_fh.flush()
+                            if (
+                                primary_resource_metadata
+                                and primary_resource_metadata.get(
+                                    "cleanup_verified"
+                                )
+                                is False
+                            ):
+                                cleanup_error = (
+                                    "primary resource cleanup was not verified"
+                                )
+                                rc = 126
+                            else:
+                                rc = 127
+                        else:
+                            if timed_out:
+                                log_fh.write(
+                                    "autoloop-driver: iteration timed out; "
+                                    "the isolated primary process group was terminated\n"
+                                )
+                            if cleanup_error:
+                                log_fh.write(
+                                    "autoloop-driver: primary descendant cleanup failed: "
+                                    f"{cleanup_error}\n"
+                                )
+                            log_fh.flush()
+                    # Bind failure classification to the exact host-created
+                    # descriptor. Never close and reopen a pathname that a
+                    # same-user workspace process could replace.
+                    captured_log_tail = _read_open_log_tail(log_fh)
             except OSError as exc:
-                with log_path.open("a", encoding="utf-8", errors="replace") as log_fh:
-                    log_fh.write(f"autoloop-driver: spawn failed: {exc}\n")
+                sys.stderr.write(f"autoloop-driver: could not create iteration log: {exc}\n")
                 rc = 127
+                host_runtime_error = True
+            iteration_finished_at = utc_now()
+            iteration_duration = max(0.0, time.monotonic() - iteration_started_monotonic)
+            if host_runtime_error:
+                if goal_focus_mode == "enforce":
+                    _cancel_prepared_dispatch(
+                        dispatch_intent, "host_iteration_log_unavailable"
+                    )
+                finalize_remote_inbox_claim(
+                    remote_job or "",
+                    claim_ids,
+                    claimer=claimer,
+                    fences=claim_fences,
+                    success=False,
+                )
+                os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                reason = "runtime_error"
+                break
+            if goal_focus_mode == "enforce":
+                try:
+                    if cleanup_error is not None:
+                        raise OSError(
+                            "primary resource/descendant cleanup did not complete"
+                        )
+                    if timed_out:
+                        raise OSError(
+                            "primary exceeded its enforced wall-time limit"
+                        )
+                    goal_focus_v2.validate_provider_resource_attestation(
+                        primary_resource_metadata
+                    )
+                    if evidence_dir is None:
+                        raise OSError("candidate evidence directory is unavailable")
+                    consume_iteration_submission(
+                        run_dir,
+                        evidence_dir,
+                        expected_run_id=safe_registry_run_id(run_id),
+                        expected_dispatch_id=str(
+                            dispatch_intent.get("dispatch_id") or ""
+                        ),
+                        expected_candidate_id=str(
+                            dispatch_intent.get("candidate_id") or ""
+                        ),
+                        expected_provider=str(provider or ""),
+                        iteration_started_at=iteration_started_at,
+                        resource_attestation=primary_resource_metadata,
+                    )
+                except FileNotFoundError:
+                    if rc == 0:
+                        rc = 126
+                        sys.stderr.write(
+                            "autoloop-driver: worker exited without the exact "
+                            "host-mediated iteration submission\n"
+                        )
+                except Exception as exc:  # noqa: BLE001 - submission gate fails closed
+                    rc = 126
+                    sys.stderr.write(
+                        "autoloop-driver: host rejected iteration submission: "
+                        f"{exc}\n"
+                    )
+                else:
+                    # A securely claimed and host-staged candidate is the
+                    # completion boundary even if the worker later returned a
+                    # non-zero status after emitting its submission.
+                    rc = 0
             post_spent = pre_spent
             try:
                 budget_path = loop_paths(run_dir)["budget"]
@@ -4302,20 +9659,149 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 post_spent = pre_spent
             ledger_advanced = post_spent > pre_spent
-            iter_ok = rc == 0 and (ledger_advanced or not remote_job)
-            finalize_remote_inbox_claim(
-                remote_job or "",
-                claim_ids,
-                claimer=claimer,
-                fences=claim_fences,
-                success=iter_ok,
-            )
-            os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
-            if rc != 0:
-                tail = read_log_tail(log_path)
-                failure_class = classify_iteration_failure(
-                    tail, prompt=str(prompt or "")
+            quarantined_after_failure = False
+            if rc != 0 and goal_focus_mode == "enforce":
+                try:
+                    staged_after_error = goal_focus_v2.load_pending_candidate(run_dir)
+                except Exception:  # noqa: BLE001
+                    staged_after_error = None
+                if staged_after_error or cleanup_error is not None:
+                    if cleanup_error is not None:
+                        quarantine_reason = (
+                            "primary resource cleanup was not verified: "
+                            f"{cleanup_error}"
+                        )
+                    elif timed_out:
+                        quarantine_reason = (
+                            "primary exceeded its enforced wall-time limit"
+                        )
+                    elif primary_resource_metadata.get("oversized_output") is True:
+                        quarantine_reason = "primary exceeded its bounded output limit"
+                    elif primary_resource_metadata.get("sensitive_output_blocked") is True:
+                        quarantine_reason = "primary emitted blocked sensitive output"
+                    elif primary_resource_metadata.get("capture_verified") is not True:
+                        quarantine_reason = "primary output capture was not verified"
+                    else:
+                        quarantine_reason = (
+                            "candidate existed after the host submission gate failed "
+                            f"with worker status {rc}"
+                        )
+                    try:
+                        quarantine_result = goal_focus_v2.quarantine_failed_completion(
+                            run_dir,
+                            reason=quarantine_reason,
+                            fallback_dispatch=dispatch_intent,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - stop before review
+                        sys.stderr.write(
+                            "autoloop-driver: could not quarantine ineligible candidate: "
+                            f"{exc}\n"
+                        )
+                        reason = (
+                            "resource_cleanup_unverified"
+                            if cleanup_error is not None
+                            else "quarantine_persistence_unverified"
+                        )
+                        break
+                    quarantined_after_failure = quarantine_result.get("status") in {
+                        "quarantined",
+                        "already_quarantined",
+                    }
+                    if quarantined_after_failure:
+                        quarantine = quarantine_result.get("quarantine") or {}
+                        _progress(
+                            "goal_focus_wait",
+                            source="drive",
+                            event_id=(
+                                "goal-focus-candidate-quarantine-"
+                                f"{quarantine.get('quarantine_id') or 'unknown'}"
+                            ),
+                            candidate_id=str(quarantine.get("candidate_id") or ""),
+                            iteration_status="error",
+                            review_status="error",
+                            completed_summary=(
+                                "No result was banked; the host installed a quarantine "
+                                "tombstone after a failed completion gate."
+                            ),
+                            current_summary=quarantine_reason,
+                            next_action=(
+                                "Inspect and explicitly release the exact candidate "
+                                "fingerprint before dispatch can resume."
+                            ),
+                        )
+                if cleanup_error is not None:
+                    # The quarantine marker also blocks a later restart from
+                    # reviewing the stale pending object. If an unverified
+                    # descendant writes another pending file, validation sees
+                    # both files and still fails closed.
+                    reason = "resource_cleanup_unverified"
+                    break
+                if (
+                    not staged_after_error
+                    and not quarantined_after_failure
+                    and not _cancel_prepared_dispatch(
+                        dispatch_intent, "worker_exited_without_staging"
+                    )
+                ):
+                    reason = "runtime_error"
+                    break
+            if cleanup_error is not None:
+                # Descendant cleanup is a transport safety boundary, independent
+                # of Goal-Focus policy. Never retry or hand an unverified process
+                # tree to an outer provider failover path. Enforce mode performs
+                # its quarantine/tombstone work above before reaching this gate.
+                finalize_remote_inbox_claim(
+                    remote_job or "",
+                    claim_ids,
+                    claimer=claimer,
+                    fences=claim_fences,
+                    success=False,
                 )
+                os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                reason = "resource_cleanup_unverified"
+                break
+            if rc != 0:
+                finalize_remote_inbox_claim(
+                    remote_job or "",
+                    claim_ids,
+                    claimer=claimer,
+                    fences=claim_fences,
+                    success=False,
+                )
+                os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                # A rejected exclusive create has no trusted descriptor. A
+                # successful create is classified only from its in-memory tail.
+                tail = captured_log_tail if log_created else ""
+                failure_class = (
+                    "timeout"
+                    if timed_out
+                    else classify_iteration_failure(
+                        tail, prompt=str(prompt or "")
+                    )
+                )
+                if quarantined_after_failure:
+                    failures += 1
+                    _progress(
+                        "iteration_failed",
+                        source="drive",
+                        drive_cycle=iterations_run,
+                        rc=rc,
+                        log_path=str(log_path),
+                        failures=failures,
+                        max_failures=max_failures,
+                        provider=provider or "custom",
+                        started_at=iteration_started_at,
+                        finished_at=iteration_finished_at,
+                        duration_seconds=iteration_duration,
+                        failure_class=failure_class,
+                        timed_out=timed_out,
+                    )
+                    sys.stderr.write(
+                        "autoloop-driver: failed completion was quarantined; "
+                        f"stopping without retry or failover (log: {log_path})\n"
+                    )
+                    reason = "candidate_quarantined"
+                    break
                 if failure_class == "auth":
                     # Auth/session death is not a credit wait: exit immediately
                     # so an outer supervisor can rotate (exit 7).
@@ -4327,6 +9813,10 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         rc=rc,
                         log_path=str(log_path),
                         failure_class="auth",
+                        provider=provider or "custom",
+                        started_at=iteration_started_at,
+                        finished_at=iteration_finished_at,
+                        duration_seconds=iteration_duration,
                     )
                     sys.stderr.write(
                         f"autoloop-driver: provider auth/session failure (rc={rc}); "
@@ -4358,6 +9848,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         log_path=str(log_path),
                         quota_waits=quota_waits,
                         short_cap=short_cap,
+                        provider=provider or "custom",
+                        started_at=iteration_started_at,
+                        duration_seconds=iteration_duration,
                     )
                     # N means switch after the N-th consecutive quota failure
                     # (was `>` which required N+1 signals).
@@ -4390,6 +9883,12 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     log_path=str(log_path),
                     failures=failures,
                     max_failures=max_failures,
+                    provider=provider or "custom",
+                    started_at=iteration_started_at,
+                    finished_at=iteration_finished_at,
+                    duration_seconds=iteration_duration,
+                    failure_class=failure_class,
+                    timed_out=timed_out,
                 )
                 sys.stderr.write(
                     f"autoloop-driver: iteration command failed "
@@ -4399,6 +9898,338 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     reason = "max_failures"
                     break
             else:
+                if goal_focus_mode == "enforce":
+                    # The worker may only stage. The host must review and
+                    # atomically finalize the exact candidate before emitting
+                    # success or exposing any research claim in the ledger.
+                    try:
+                        pending = goal_focus_v2.load_pending_candidate(run_dir)
+                    except Exception as exc:  # noqa: BLE001
+                        pending = None
+                        pending_error = str(exc)
+                    else:
+                        pending_error = ""
+                    if not pending:
+                        _cancel_prepared_dispatch(
+                            dispatch_intent, "worker_completed_without_staging"
+                        )
+                        finalize_remote_inbox_claim(
+                            remote_job or "",
+                            claim_ids,
+                            claimer=claimer,
+                            fences=claim_fences,
+                            success=False,
+                        )
+                        os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                        failures += 1
+                        _progress(
+                            "result_review_error",
+                            source="drive",
+                            event_id=f"missing-staged-candidate-{iterations_run}",
+                            drive_cycle=iterations_run,
+                            iteration_status="error",
+                            review_status="error",
+                            provider=provider or "custom",
+                            started_at=iteration_started_at,
+                            finished_at=iteration_finished_at,
+                            duration_seconds=iteration_duration,
+                            completed_summary="No result was banked because the worker did not leave a staged candidate.",
+                            current_summary=(
+                                f"The pending candidate could not be loaded: {pending_error}"
+                                if pending_error
+                                else "The worker exited successfully without satisfying the Goal-Focus staging contract."
+                            ),
+                            next_action="Inspect the iteration log, correct the worker command, and retry the same reviewed plan.",
+                            log_path=str(log_path),
+                        )
+                        if failures >= max_failures:
+                            reason = "max_failures"
+                            break
+                        continue
+
+                    try:
+                        goal_focus_v2.validate_host_staged_candidate(
+                            run_dir,
+                            pending,
+                            expected_dispatch_id=str(
+                                dispatch_intent.get("dispatch_id") or ""
+                            ),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - never review unpinned provenance
+                        finalize_remote_inbox_claim(
+                            remote_job or "",
+                            claim_ids,
+                            claimer=claimer,
+                            fences=claim_fences,
+                            success=True,
+                        )
+                        os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                        _progress(
+                            "result_review_error",
+                            source="drive",
+                            event_id=f"dispatch-attestation-error-{pending.get('candidate_id')}",
+                            candidate_id=str(pending.get("candidate_id") or ""),
+                            iteration_status="error",
+                            review_status="error",
+                            provider=provider or "custom",
+                            started_at=iteration_started_at,
+                            finished_at=iteration_finished_at,
+                            duration_seconds=iteration_duration,
+                            completed_summary="No result was banked because host dispatch validation failed.",
+                            current_summary=f"The exact staged candidate remains pending: {str(exc)[:400]}",
+                            next_action="Repair or reject the exact pending candidate before independent review.",
+                            error=str(exc)[:400],
+                        )
+                        reason = "runtime_error"
+                        break
+
+                    # A durable staged candidate means the remote instruction
+                    # was executed exactly once. Consume its inbox claim even
+                    # if independent review must be retried later.
+                    finalize_remote_inbox_claim(
+                        remote_job or "",
+                        claim_ids,
+                        claimer=claimer,
+                        fences=claim_fences,
+                        success=True,
+                    )
+                    os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                    pending_record = (
+                        pending.get("record")
+                        if isinstance(pending.get("record"), dict)
+                        else {}
+                    )
+                    pending_iteration = int(
+                        pending_record.get("iteration") or (pre_spent + 1)
+                    )
+                    review_dir = panel_iter_dir
+                    if review_dir is None or not review_dir.is_dir():
+                        review_dir = ensure_iter_dir(
+                            run_dir, iteration=pending_iteration
+                        )
+                    review_started_monotonic = time.monotonic()
+                    _progress(
+                        "result_review_start",
+                        source="drive",
+                        event_id=f"result-review-start-{pending.get('candidate_id')}",
+                        drive_cycle=iterations_run,
+                        candidate_id=str(pending.get("candidate_id") or ""),
+                        iteration_status="running",
+                        review_status="pending",
+                        provider=provider or "custom",
+                        started_at=iteration_started_at,
+                        iter_dir=str(review_dir),
+                    )
+                    try:
+                        review_summary = run_panel_phase_for_drive(
+                            run_dir,
+                            root,
+                            "result_review",
+                            iter_dir=review_dir,
+                        )
+                        if review_summary.get("fatal_resource_cleanup_failure"):
+                            _progress(
+                                "result_review_error",
+                                source="drive",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="error",
+                                review_status="error",
+                                completed_summary="No result was banked because panel resource cleanup was not verified.",
+                                current_summary="A panel process scope may still be live; automatic retry is stopped.",
+                                next_action="Inspect and terminate the recorded panel scope before resuming.",
+                            )
+                            reason = "resource_cleanup_unverified"
+                            break
+                        review_outcome = _result_review_from_panel(
+                            pending, review_summary
+                        )
+                    except Exception as exc:  # noqa: BLE001 - candidate remains pending
+                        review_outcome = {
+                            "status": "pending",
+                            "reason": f"result review error: {exc}",
+                        }
+                    review_finished_at = utc_now()
+                    total_duration = iteration_duration + max(
+                        0.0, time.monotonic() - review_started_monotonic
+                    )
+                    if review_outcome.get("status") in {"accepted", "rejected"}:
+                        accepted = review_outcome["status"] == "accepted"
+                        review = review_outcome.get("review") or {}
+                        ledger_record = _reviewed_ledger_record(pending, review)
+                        try:
+                            finalized = goal_focus_v2.finalize_candidate(
+                                run_dir,
+                                accepted=accepted,
+                                review=review,
+                                ledger_record=ledger_record,
+                                expected_plan_revision=int(
+                                    pending.get("plan_revision") or 0
+                                ),
+                            )
+                        except Exception as exc:  # noqa: BLE001 - preserve pending
+                            failures += 1
+                            _progress(
+                                "result_review_error",
+                                source="drive",
+                                event_id=(
+                                    "result-review-finalize-error-"
+                                    f"{pending.get('candidate_id')}"
+                                ),
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="error",
+                                review_status="error",
+                                provider=provider or "custom",
+                                started_at=iteration_started_at,
+                                finished_at=review_finished_at,
+                                duration_seconds=total_duration,
+                                completed_summary="No result was banked because atomic finalization failed.",
+                                current_summary=f"The reviewed candidate remains pending: {str(exc)[:400]}",
+                                next_action="Recover the transaction and retry exact-candidate finalization.",
+                                error=str(exc)[:400],
+                            )
+                            if failures >= max_failures:
+                                reason = "max_failures"
+                                break
+                            continue
+                        failures = 0
+                        quota_waits = 0
+                        final_record = finalized.get("record") or {}
+                        final_plan = finalized.get("plan") or {}
+                        reviewer_families = review.get("reviewer_families") or []
+                        reviewer_agents = review.get("providers") or []
+                        if accepted:
+                            _progress(
+                                "iteration_ok",
+                                source="drive",
+                                event_id=f"arl-iteration_ok-{pending.get('candidate_id')}",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                drive_cycle=iterations_run,
+                                rc=0,
+                                log_path=str(log_path),
+                                iteration_status="success",
+                                review_status="passed",
+                                reviewer_families=reviewer_families,
+                                panel_agents=reviewer_agents,
+                                provider=provider or "custom",
+                                started_at=iteration_started_at,
+                                finished_at=review_finished_at,
+                                duration_seconds=total_duration,
+                                completed_summary=str(
+                                    final_record.get("completed_summary")
+                                    or resolve_progress_result_text(final_record)
+                                    or "The reviewed result was banked."
+                                ),
+                                current_summary=str(
+                                    final_record.get("current_summary")
+                                    or "The accepted result is now part of the authoritative ledger."
+                                ),
+                                next_action=str(
+                                    final_record.get("proposed_next_action")
+                                    or final_plan.get("next_action")
+                                    or "Run the next Goal-Focus pre-dispatch gate."
+                                ),
+                            )
+                        else:
+                            _progress(
+                                "iteration_rejected",
+                                source="drive",
+                                event_id=f"arl-iteration_rejected-{pending.get('candidate_id')}",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                drive_cycle=iterations_run,
+                                rc=0,
+                                log_path=str(log_path),
+                                iteration_status="failure",
+                                review_status="failed",
+                                reviewer_families=reviewer_families,
+                                panel_agents=reviewer_agents,
+                                provider=provider or "custom",
+                                started_at=iteration_started_at,
+                                finished_at=review_finished_at,
+                                duration_seconds=total_duration,
+                                completed_summary="No research claim was banked; the staged candidate failed independent review.",
+                                current_summary=(
+                                    "The failed attempt consumed its recorded budget; "
+                                    "the plan now requires replanning unless the budget is exhausted."
+                                ),
+                                next_action=str(
+                                    final_plan.get("next_action")
+                                    or "Run a fresh structured strategy review."
+                                ),
+                                review_summary=str(
+                                    review.get("conservative_verdict") or "failed"
+                                ),
+                            )
+
+                        # Formal hygiene is downstream of accepted research,
+                        # never of a merely staged or rejected candidate.
+                        if (
+                            accepted
+                            and formal_pol is not None
+                            and is_force_tick_enabled(formal_pol)
+                        ):
+                            try:
+                                _progress(
+                                    "formal_force_tick_start",
+                                    source="drive",
+                                    drive_cycle=iterations_run,
+                                )
+                                force_report = formal_force_tick(
+                                    run_dir,
+                                    root=root,
+                                    policy=formal_pol,
+                                    pin=formal_pin,
+                                )
+                                _progress(
+                                    "formal_force_tick_done",
+                                    source="drive",
+                                    drive_cycle=iterations_run,
+                                    terminal=force_report.get("terminal"),
+                                    hygiene_status=force_report.get("hygiene_status"),
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                sys.stderr.write(
+                                    "autoloop-driver: formal_force_tick failed: "
+                                    f"{exc}\n"
+                                )
+                                _progress(
+                                    "formal_force_tick_fail",
+                                    source="drive",
+                                    drive_cycle=iterations_run,
+                                    error=str(exc)[:200],
+                                )
+                        continue
+
+                    _progress(
+                        "result_review_wait",
+                        source="drive",
+                        event_id=f"result-review-wait-{pending.get('candidate_id')}",
+                        candidate_id=str(pending.get("candidate_id") or ""),
+                        drive_cycle=iterations_run,
+                        iteration_status="waiting",
+                        review_status="pending",
+                        provider=provider or "custom",
+                        started_at=iteration_started_at,
+                        duration_seconds=total_duration,
+                        completed_summary="No result has been banked; the exact candidate remains staged.",
+                        current_summary=str(
+                            review_outcome.get("reason")
+                            or "Independent result review is not yet sufficient."
+                        ),
+                        next_action="Obtain a valid different-family review of the exact pending candidate.",
+                    )
+                    interruptible_sleep(max(poll, 30.0), run_dir)
+                    continue
+
+                # Legacy mode keeps its established append-then-review behavior.
+                iter_ok = ledger_advanced or not remote_job
+                finalize_remote_inbox_claim(
+                    remote_job or "",
+                    claim_ids,
+                    claimer=claimer,
+                    fences=claim_fences,
+                    success=iter_ok,
+                )
+                os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
                 failures = 0
                 quota_waits = 0
                 _progress(
@@ -4407,17 +10238,19 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     drive_cycle=iterations_run,
                     rc=0,
                     log_path=str(log_path),
+                    provider=provider or "custom",
+                    started_at=iteration_started_at,
+                    finished_at=iteration_finished_at,
+                    duration_seconds=iteration_duration,
                 )
-                # Host-owned result review after a successful ledger-advancing iter.
+                # Host-owned advisory review after a legacy ledger-advancing iter.
                 if panel_enabled and ledger_advanced:
                     try:
                         review_dir = panel_iter_dir
                         if review_dir is None or not review_dir.is_dir():
-                            # Prefer the spent iteration number's directory.
-                            try:
-                                review_dir = ensure_iter_dir(run_dir, iteration=post_spent)
-                            except Exception:  # noqa: BLE001
-                                review_dir = ensure_iter_dir(run_dir)
+                            review_dir = ensure_iter_dir(
+                                run_dir, iteration=post_spent
+                            )
                         _progress(
                             "panel_review_start",
                             source="drive",
@@ -4430,6 +10263,15 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             "result_review",
                             iter_dir=review_dir,
                         )
+                        if review_summary.get("fatal_resource_cleanup_failure"):
+                            _progress(
+                                "panel_review_fail",
+                                source="drive",
+                                drive_cycle=iterations_run,
+                                error="panel resource cleanup was not verified",
+                            )
+                            reason = "resource_cleanup_unverified"
+                            break
                         _progress(
                             "panel_review_ok"
                             if review_summary.get("panel_content_pass")
@@ -4496,6 +10338,10 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             terminal_reason=reason,
             provider=provider or "",
         )
+        if prior_primary_provider is None:
+            os.environ.pop("AAS_AUTOLOOP_PRIMARY_PROVIDER", None)
+        else:
+            os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = prior_primary_provider
 
     exit_code = DRIVE_EXIT_CODES.get(reason, 0)
     return {
@@ -4522,9 +10368,515 @@ def positive_int(value: str) -> int:
 
 def nonnegative_float(value: str) -> float:
     parsed = float(value)
-    if parsed < 0:
-        raise argparse.ArgumentTypeError("must be non-negative")
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be finite and non-negative")
     return parsed
+
+
+def goal_focus_status_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    validation = goal_focus_v2.validate_goal_focus(run_dir, require_enabled=True)
+    try:
+        bundle = goal_focus_v2.load_goal_focus(run_dir)
+        triggers = goal_focus_v2.evaluate_replan_triggers(run_dir, bundle)
+    except Exception as exc:  # noqa: BLE001 - surface complete diagnostic JSON
+        bundle = {}
+        triggers = []
+        if not validation.get("errors"):
+            validation = {
+                **validation,
+                "status": "error",
+                "errors": [str(exc)],
+            }
+    plan = bundle.get("plan") if isinstance(bundle.get("plan"), dict) else {}
+    pending = (
+        bundle.get("pending_candidate")
+        if isinstance(bundle.get("pending_candidate"), dict)
+        else None
+    )
+    dispatch = (
+        bundle.get("iteration_dispatch")
+        if isinstance(bundle.get("iteration_dispatch"), dict)
+        else None
+    )
+    quarantine = (
+        bundle.get("candidate_quarantine")
+        if isinstance(bundle.get("candidate_quarantine"), dict)
+        else None
+    )
+    return {
+        "status": "ok" if not validation.get("errors") else "failed",
+        "action": "goal-focus-status",
+        "dir": str(run_dir),
+        "mode": plan.get("enforcement_mode", "off"),
+        "plan": {
+            key: plan.get(key)
+            for key in (
+                "plan_id",
+                "plan_revision",
+                "state",
+                "campaign_id",
+                "approach_id",
+                "objective_id",
+                "scope_lock",
+                "next_action",
+                "valid_through_iteration",
+            )
+        },
+        "pending_candidate": (
+            {
+                "candidate_id": pending.get("candidate_id"),
+                "status": pending.get("status"),
+                "plan_revision": pending.get("plan_revision"),
+                "staged_at": pending.get("staged_at"),
+            }
+            if pending
+            else None
+        ),
+        "inflight_dispatch": (
+            {
+                key: dispatch.get(key)
+                for key in (
+                    "dispatch_id",
+                    "candidate_id",
+                    "executor_provider",
+                    "executor_family",
+                    "plan_revision",
+                    "created_at",
+                    "driver_pid",
+                )
+            }
+            if dispatch
+            else None
+        ),
+        "candidate_quarantine": (
+            {
+                key: quarantine.get(key)
+                for key in (
+                    "quarantine_id",
+                    "object_kind",
+                    "candidate_id",
+                    "candidate_fingerprint",
+                    "reason",
+                    "quarantined_at",
+                )
+            }
+            if quarantine
+            else None
+        ),
+        "replan_triggers": triggers,
+        "validation": validation,
+    }
+
+
+def goal_focus_validate_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    result = goal_focus_v2.validate_goal_focus(run_dir, require_enabled=True)
+    return {
+        **result,
+        "status": "ok" if not result.get("errors") else "failed",
+        "action": "goal-focus-validate",
+        "dir": str(run_dir),
+    }
+
+
+def goal_focus_migrate_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    claim_identity: tuple[int, int] | None = None
+    migration_guard: dict[str, Any] | None = None
+    if bool(args.apply):
+        try:
+            claim_identity = acquire_migration_claim(run_dir)
+        except FileExistsError:
+            # A crashed owner is recoverable only with positive evidence that
+            # its recorded PID is dead.  Malformed/symlinked/live claims remain
+            # fail-closed and require operator inspection.
+            if reclaim_dead_migration_claim(run_dir):
+                try:
+                    claim_identity = acquire_migration_claim(run_dir)
+                except FileExistsError:
+                    claim_identity = None
+            if claim_identity is None:
+                return {
+                    "status": "failed",
+                    "migration_status": "migration_in_progress",
+                    "action": "goal-focus-migrate",
+                    "dir": str(run_dir),
+                    "dry_run": False,
+                    "applied": False,
+                    "error": (
+                        "another Goal-Focus migration owns this loop, or its "
+                        "claim cannot be safely proven stale"
+                    ),
+                }
+    try:
+        if bool(args.apply):
+            # Current-runtime driver registrations use this same loop lock.  A
+            # claim exists before the scan, so a waiter must fail its in-lock
+            # precheck; an earlier registrant is stable and visible here.
+            try:
+                with LoopLock(run_dir):
+                    live_drivers = live_driver_entries_for_loop(
+                        registry_dir(args), run_dir
+                    )
+            except RegistrySafetyError as exc:
+                return {
+                    "status": "failed",
+                    "migration_status": "registry_unsafe",
+                    "action": "goal-focus-migrate",
+                    "dir": str(run_dir),
+                    "dry_run": False,
+                    "applied": False,
+                    "error": str(exc),
+                }
+            if live_drivers:
+                entry = live_drivers[0][1]
+                return {
+                    "status": "failed",
+                    "migration_status": "active_driver",
+                    "action": "goal-focus-migrate",
+                    "dir": str(run_dir),
+                    "dry_run": False,
+                    "applied": False,
+                    "driver_pid": entry.get("pid"),
+                    "driver_pids": sorted(
+                        {
+                            int(candidate.get("pid"))
+                            for _, candidate in live_drivers
+                            if isinstance(candidate.get("pid"), int)
+                        }
+                    ),
+                    "error": "refusing migration while a live driver owns this loop",
+                }
+            if claim_identity is None:
+                raise MigrationClaimError("migration claim disappeared before apply")
+            claim_record, observed_identity = migration_claim_snapshot(run_dir)
+            nonce = str(claim_record.get("nonce") or "")
+            if (
+                observed_identity != claim_identity
+                or claim_record.get("pid") != os.getpid()
+                or re.fullmatch(r"[0-9a-f]{32}", nonce) is None
+            ):
+                raise MigrationClaimError(
+                    "migration claim ownership changed after the live-driver scan"
+                )
+            migration_guard = {
+                "schema_version": "goal_focus_migration_guard.v1",
+                "run_dir": str(run_dir),
+                "claim_identity": [int(value) for value in claim_identity],
+                "claim_pid": os.getpid(),
+                "nonce": nonce,
+                "live_driver_count": 0,
+            }
+        if bool(args.apply):
+            result = goal_focus_v2.migrate_v1(
+                run_dir,
+                apply=True,
+                active_campaign=(str(args.active_campaign).strip() or None),
+                migration_claim=migration_guard,
+            )
+        else:
+            result = goal_focus_v2.migrate_v1(
+                run_dir,
+                apply=False,
+                active_campaign=(str(args.active_campaign).strip() or None),
+            )
+    finally:
+        if claim_identity is not None:
+            release_migration_claim(run_dir, claim_identity)
+    failed = bool(result.get("error")) or (
+        bool(args.apply) and result.get("status") not in {"migrated", "already_migrated"}
+    )
+    return {
+        **result,
+        "status": "failed" if failed else "ok",
+        "migration_status": result.get("status"),
+        "action": "goal-focus-migrate",
+        "dir": str(run_dir),
+        "dry_run": not bool(args.apply),
+    }
+
+
+def goal_focus_reconcile_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    validation = goal_focus_v2.validate_goal_focus(run_dir, require_enabled=True)
+    if validation.get("errors"):
+        return {
+            "status": "failed",
+            "reconcile_status": "invalid_authority",
+            "action": "goal-focus-reconcile",
+            "dir": str(run_dir),
+            "dry_run": not bool(args.apply),
+            "applied": False,
+            "validation": validation,
+        }
+    result = goal_focus_v2.reconcile_goal_focus(run_dir, apply=bool(args.apply))
+    validation = goal_focus_v2.validate_goal_focus(run_dir, require_enabled=True)
+    return {
+        **result,
+        "status": "ok" if not validation.get("errors") else "failed",
+        "reconcile_status": result.get("status"),
+        "action": "goal-focus-reconcile",
+        "dir": str(run_dir),
+        "dry_run": not bool(args.apply),
+        "validation": validation,
+    }
+
+
+def goal_focus_recover_dispatch_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    goal_focus_v2.recover_transactions(run_dir)
+    dispatch = goal_focus_v2.load_iteration_dispatch(run_dir)
+    if not dispatch:
+        return {
+            "status": "ok",
+            "action": "goal-focus-recover-dispatch",
+            "dir": str(run_dir),
+            "recovery_status": "no_inflight_dispatch",
+            "applied": False,
+        }
+    dispatch_id = str(dispatch.get("dispatch_id") or "")
+    if not bool(args.cancel):
+        return {
+            "status": "ok",
+            "action": "goal-focus-recover-dispatch",
+            "dir": str(run_dir),
+            "recovery_status": "awaiting_explicit_cancel",
+            "applied": False,
+            "dispatch": dispatch,
+            "note": (
+                "Confirm that the original worker is no longer running, then rerun "
+                f"with --cancel --dispatch-id {dispatch_id}."
+            ),
+        }
+    if str(args.dispatch_id or "").strip() != dispatch_id:
+        return {
+            "status": "failed",
+            "action": "goal-focus-recover-dispatch",
+            "dir": str(run_dir),
+            "recovery_status": "dispatch_id_mismatch",
+            "applied": False,
+            "error": "--dispatch-id must exactly match the in-flight host dispatch",
+            "dispatch": dispatch,
+        }
+    result = goal_focus_v2.cancel_iteration_dispatch(
+        run_dir,
+        dispatch_id=dispatch_id,
+        reason=str(args.reason or "operator_confirmed_worker_absent"),
+    )
+    return {
+        "status": "ok",
+        "action": "goal-focus-recover-dispatch",
+        "dir": str(run_dir),
+        "recovery_status": result.get("status"),
+        "applied": result.get("status") == "cancelled",
+        "dispatch_id": dispatch_id,
+        "result": result,
+    }
+
+
+def goal_focus_recover_quarantine_command(
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    goal_focus_v2.recover_transactions(run_dir)
+    quarantine = goal_focus_v2.load_candidate_quarantine(run_dir)
+    if not quarantine:
+        return {
+            "status": "ok",
+            "action": "goal-focus-recover-quarantine",
+            "dir": str(run_dir),
+            "recovery_status": "no_candidate_quarantine",
+            "applied": False,
+        }
+    summary = {
+        key: quarantine.get(key)
+        for key in (
+            "quarantine_id",
+            "object_kind",
+            "candidate_id",
+            "candidate_fingerprint",
+            "reason",
+            "quarantined_at",
+        )
+    }
+    fingerprint = str(quarantine.get("candidate_fingerprint") or "")
+    if not bool(args.release):
+        return {
+            "status": "ok",
+            "action": "goal-focus-recover-quarantine",
+            "dir": str(run_dir),
+            "recovery_status": "awaiting_explicit_release",
+            "applied": False,
+            "quarantine": summary,
+            "note": (
+                (
+                    "First confirm every provider descendant is gone. "
+                    if "cleanup" in str(quarantine.get("reason") or "").lower()
+                    else ""
+                )
+                + "Inspect the quarantined completion and evidence, then rerun with "
+                "--release --candidate-fingerprint " + fingerprint
+            ),
+        }
+    if str(args.candidate_fingerprint or "").strip() != fingerprint:
+        return {
+            "status": "failed",
+            "action": "goal-focus-recover-quarantine",
+            "dir": str(run_dir),
+            "recovery_status": "candidate_fingerprint_mismatch",
+            "applied": False,
+            "error": (
+                "--candidate-fingerprint must exactly match the active quarantine"
+            ),
+            "quarantine": summary,
+        }
+    result = goal_focus_v2.release_candidate_quarantine(
+        run_dir,
+        expected_candidate_fingerprint=fingerprint,
+    )
+    return {
+        "status": "ok",
+        "action": "goal-focus-recover-quarantine",
+        "dir": str(run_dir),
+        "recovery_status": result.get("status"),
+        "applied": result.get("status") == "released",
+        "candidate_fingerprint": fingerprint,
+        "result": result,
+    }
+
+
+def goal_focus_replan_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    root = Path(args.root).expanduser().resolve() if args.root else run_dir
+    gate = goal_focus_v2.pre_dispatch_gate(run_dir)
+    if gate.get("errors"):
+        return {
+            "status": "failed",
+            "action": "goal-focus-replan",
+            "dir": str(run_dir),
+            "error": "Goal-Focus authority must validate before replanning",
+            "gate": gate,
+        }
+    if gate.get("action") in {"review_pending", "dispatch_inflight"}:
+        return {
+            "status": "failed",
+            "action": "goal-focus-replan",
+            "dir": str(run_dir),
+            "error": (
+                "the exact pending result must be reviewed before replanning"
+                if gate.get("action") == "review_pending"
+                else "an in-flight host dispatch must finish or be explicitly cancelled before replanning"
+            ),
+            "gate": gate,
+        }
+    registry = goal_focus_v2.load_approach_registry(run_dir, required=True)
+    provisional = goal_focus_v2.select_direction(registry)
+    if not bool(args.apply):
+        return {
+            "status": "ok",
+            "action": "goal-focus-replan",
+            "dir": str(run_dir),
+            "dry_run": True,
+            "reviewed": False,
+            "trigger": args.trigger,
+            "gate": gate,
+            "provisional_registry_selection": provisional,
+            "note": "No panel was dispatched and no authority file was changed.",
+        }
+
+    plan = goal_focus_v2.load_current_plan(run_dir, required=True)
+    primary_provider = str(
+        getattr(args, "primary_provider", None)
+        or os.environ.get("AAS_AUTOLOOP_PRIMARY_PROVIDER")
+        or ""
+    ).strip()
+    try:
+        primary_execution_attestation = attest_provider_executable(
+            primary_provider,
+            forbidden_roots=(root, run_dir),
+            required=True,
+        ) if primary_provider else None
+    except PanelIsolationError as exc:
+        primary_execution_attestation = None
+        primary_identity_error = str(exc)
+    else:
+        primary_identity_error = None
+    if (
+        not primary_provider
+        or primary_execution_attestation is None
+        or str(primary_execution_attestation.get("family") or "unverified")
+        == "unverified"
+    ):
+        return {
+            "status": "failed",
+            "action": "goal-focus-replan",
+            "dir": str(run_dir),
+            "dry_run": False,
+            "committed": False,
+            "error": (
+                "--primary-provider with a host-attested executable identity is required "
+                "for an applied manual strategy review"
+                + (f": {primary_identity_error}" if primary_identity_error else "")
+            ),
+        }
+    providers = (
+        [item.strip() for item in str(args.providers).split(",") if item.strip()]
+        if args.providers
+        else None
+    )
+    iter_dir = ensure_iter_dir(run_dir)
+    previous_primary = os.environ.get("AAS_AUTOLOOP_PRIMARY_PROVIDER")
+    os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = primary_provider
+    try:
+        summary = run_panel_phase_for_drive(
+            run_dir,
+            root,
+            "strategy_review",
+            iter_dir=iter_dir,
+            providers=providers,
+        )
+    finally:
+        if previous_primary is None:
+            os.environ.pop("AAS_AUTOLOOP_PRIMARY_PROVIDER", None)
+        else:
+            os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = previous_primary
+    strategy = _strategy_selection_from_panel(run_dir, summary)
+    if strategy.get("status") != "ready":
+        return {
+            "status": "failed",
+            "action": "goal-focus-replan",
+            "dir": str(run_dir),
+            "dry_run": False,
+            "committed": False,
+            "error": str(
+                strategy.get("reason")
+                or "structured strategy review did not yield a safe direction"
+            ),
+            "strategy": strategy,
+            "panel": summary,
+        }
+    committed = goal_focus_v2.commit_selected_direction(
+        run_dir,
+        strategy["selection"],
+        strategy["review"],
+        str(args.trigger or "manual"),
+        expected_plan_revision=int(plan.get("plan_revision") or 0),
+    )
+    validation = goal_focus_v2.validate_goal_focus(run_dir, require_enabled=True)
+    return {
+        "status": "ok" if not validation.get("errors") else "failed",
+        "action": "goal-focus-replan",
+        "dir": str(run_dir),
+        "dry_run": False,
+        "committed": True,
+        "trigger": args.trigger,
+        "selection": strategy.get("selection"),
+        "review": strategy.get("review"),
+        "plan": committed.get("plan"),
+        "transaction": committed.get("transaction"),
+        "validation": validation,
+    }
 
 
 def add_formal_policy_args(sub: argparse.ArgumentParser) -> None:
@@ -4612,10 +10964,118 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument(
         "--goal-priority-template",
         action="store_true",
-        help="also write goal_priority.json example (default enabled:true, discipline_mode:advise)",
+        help="also write legacy goal_priority.json example (default enabled:false, discipline_mode:soft)",
+    )
+    init.add_argument(
+        "--goal-focus-mode",
+        choices=sorted(GOAL_FOCUS_MODES),
+        default="enforce",
+        help="Goal Focus v2 mode for new loops (default: enforce; off preserves legacy-only behavior)",
     )
     add_formal_policy_args(init)
     init.set_defaults(func=init_loop)
+
+    goal_focus = subparsers.add_parser(
+        "goal-focus",
+        help="inspect, migrate, reconcile, or replan Goal-Focus v2 authority",
+    )
+    goal_focus_sub = goal_focus.add_subparsers(
+        dest="goal_focus_command", required=True
+    )
+
+    goal_focus_status = goal_focus_sub.add_parser(
+        "status", help="show the authoritative plan, triggers, pending review, and validation"
+    )
+    goal_focus_status.add_argument("--dir", required=True)
+    goal_focus_status.set_defaults(func=goal_focus_status_command)
+
+    goal_focus_validate = goal_focus_sub.add_parser(
+        "validate", help="validate Goal-Focus schemas and cross-file invariants"
+    )
+    goal_focus_validate.add_argument("--dir", required=True)
+    goal_focus_validate.set_defaults(func=goal_focus_validate_command)
+
+    goal_focus_migrate = goal_focus_sub.add_parser(
+        "migrate", help="plan or apply a provenance-preserving v1 migration"
+    )
+    goal_focus_migrate.add_argument("--dir", required=True)
+    goal_focus_migrate.add_argument(
+        "--registry-dir",
+        default=None,
+        help="autoloop registry root used to refuse apply while a driver is live",
+    )
+    goal_focus_migrate.add_argument(
+        "--active-campaign",
+        default="",
+        help="explicitly resolve ambiguous legacy direction signals",
+    )
+    migration_mode = goal_focus_migrate.add_mutually_exclusive_group()
+    migration_mode.add_argument("--dry-run", action="store_true")
+    migration_mode.add_argument("--apply", action="store_true")
+    goal_focus_migrate.set_defaults(func=goal_focus_migrate_command)
+
+    goal_focus_reconcile = goal_focus_sub.add_parser(
+        "reconcile", help="inspect or regenerate managed compatibility projections"
+    )
+    goal_focus_reconcile.add_argument("--dir", required=True)
+    reconcile_mode = goal_focus_reconcile.add_mutually_exclusive_group()
+    reconcile_mode.add_argument("--dry-run", action="store_true")
+    reconcile_mode.add_argument("--apply", action="store_true")
+    goal_focus_reconcile.set_defaults(func=goal_focus_reconcile_command)
+
+    goal_focus_recover_dispatch = goal_focus_sub.add_parser(
+        "recover-dispatch",
+        help="inspect or explicitly cancel an in-flight host dispatch after confirming its worker is gone",
+    )
+    goal_focus_recover_dispatch.add_argument("--dir", required=True)
+    goal_focus_recover_dispatch.add_argument("--cancel", action="store_true")
+    goal_focus_recover_dispatch.add_argument("--dispatch-id", default="")
+    goal_focus_recover_dispatch.add_argument(
+        "--reason", default="operator_confirmed_worker_absent"
+    )
+    goal_focus_recover_dispatch.set_defaults(
+        func=goal_focus_recover_dispatch_command
+    )
+
+    goal_focus_recover_quarantine = goal_focus_sub.add_parser(
+        "recover-quarantine",
+        help=(
+            "inspect or explicitly release a timed-out/failed provider candidate "
+            "by its exact fingerprint"
+        ),
+    )
+    goal_focus_recover_quarantine.add_argument("--dir", required=True)
+    goal_focus_recover_quarantine.add_argument("--release", action="store_true")
+    goal_focus_recover_quarantine.add_argument(
+        "--candidate-fingerprint", default=""
+    )
+    goal_focus_recover_quarantine.set_defaults(
+        func=goal_focus_recover_quarantine_command
+    )
+
+    goal_focus_replan = goal_focus_sub.add_parser(
+        "replan", help="preview registry scoring or commit a panel-reviewed direction"
+    )
+    goal_focus_replan.add_argument("--dir", required=True)
+    goal_focus_replan.add_argument(
+        "--root", default=None, help="project root used as the strategy-panel cwd"
+    )
+    goal_focus_replan.add_argument("--trigger", default="manual")
+    goal_focus_replan.add_argument(
+        "--providers",
+        default=None,
+        help="comma-separated panel providers; default comes from panel configuration",
+    )
+    goal_focus_replan.add_argument(
+        "--primary-provider",
+        choices=sorted(PROVIDER_SPECS),
+        default=None,
+        help="host-attested active driver provider (required with --apply)",
+    )
+    replan_mode = goal_focus_replan.add_mutually_exclusive_group()
+    replan_mode.add_argument("--dry-run", action="store_true")
+    replan_mode.add_argument("--apply", action="store_true")
+    goal_focus_replan.set_defaults(func=goal_focus_replan_command)
 
     append = subparsers.add_parser("append-iteration", help="append one iteration record")
     append.add_argument("--dir", required=True)
@@ -4669,6 +11129,51 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="optional free-text detail for goal_contribution",
     )
+    append.add_argument(
+        "--completed-summary",
+        default="",
+        help="plain-language summary of what this iteration completed",
+    )
+    append.add_argument(
+        "--current-summary",
+        default="",
+        help="plain-language position of the research after this result",
+    )
+    append.add_argument(
+        "--next-action",
+        default="",
+        help="proposed exact next action; Goal Focus review commits or rejects it",
+    )
+    append.add_argument(
+        "--campaign-delta",
+        choices=["none", "incremental", "substantial", "closed"],
+        default="none",
+    )
+    append.add_argument(
+        "--global-delta",
+        choices=["none", "reduced", "satisfied"],
+        default="none",
+    )
+    append.add_argument(
+        "--obligation-id",
+        action="append",
+        help="goal-contract obligation changed by this iteration (repeatable)",
+    )
+    append.add_argument(
+        "--compute-run",
+        action="append",
+        help="actual compute record as a JSON object or @JSON-file (repeatable)",
+    )
+    append.add_argument(
+        "--compute-none",
+        action="store_true",
+        help="explicitly record that no computation service was used",
+    )
+    append.add_argument(
+        "--executor-provider",
+        default="",
+        help="executor provider; drive normally supplies this automatically",
+    )
     append.set_defaults(func=append_iteration)
 
     validate = subparsers.add_parser("validate", help="validate loop ledger files")
@@ -4717,6 +11222,60 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_registry_args(watch)
     watch.set_defaults(func=watch_command)
+
+    notify_event = subparsers.add_parser(
+        "notify-event",
+        help="emit one structured Goal/Completed/Current/Plan notification",
+    )
+    notify_event.add_argument("--dir", required=True)
+    notify_event.add_argument("--event", required=True)
+    notify_event.add_argument("--completed", default="")
+    notify_event.add_argument("--current", default="")
+    notify_event.add_argument("--plan", default="")
+    notify_event.add_argument(
+        "--iteration-status",
+        choices=sorted(notify_v2.ITERATION_STATUSES),
+        default="not_applicable",
+    )
+    notify_event.add_argument(
+        "--review-status",
+        choices=sorted(notify_v2.REVIEW_STATUSES),
+        default="not_required",
+    )
+    notify_event.add_argument(
+        "--loop-status",
+        choices=sorted(notify_v2.LOOP_STATUSES),
+        default=None,
+    )
+    notify_event.add_argument("--provider", default="")
+    notify_event.add_argument(
+        "--driver-agent",
+        default="",
+        help="driver agent/provider actually used (defaults to --provider when known)",
+    )
+    notify_event.add_argument(
+        "--panel-agent",
+        action="append",
+        default=None,
+        help="panel agent/provider that actually returned usable work (repeatable; omit = unreported)",
+    )
+    notify_event.add_argument(
+        "--other-agent",
+        action="append",
+        default=None,
+        help="other participating agent/provider (repeatable; omit = unreported)",
+    )
+    notify_event.add_argument("--compute-run", action="append")
+    notify_event.add_argument("--compute-none", action="store_true")
+    notify_event.add_argument("--finished-at", default="")
+    notify_event.add_argument("--duration-seconds", type=nonnegative_float, default=None)
+    notify_event.add_argument(
+        "--notify",
+        default="auto",
+        choices=["auto", "off", "zulip", "telegram", "both"],
+    )
+    notify_event.add_argument("--quiet", action="store_true")
+    notify_event.set_defaults(func=notify_event_command)
 
     arm = subparsers.add_parser("arm", help="register a loop as active (force-management)")
     arm.add_argument("--dir", required=True)
@@ -4857,7 +11416,7 @@ def build_parser() -> argparse.ArgumentParser:
     panel.add_argument("--root", default=None, help="project root for child cwd (default: --dir or cwd)")
     panel.add_argument(
         "--phase",
-        choices=["target_advice", "result_review", "smoke"],
+        choices=["strategy_review", "target_advice", "result_review", "smoke"],
         default=None,
         help="panel phase (or use --smoke)",
     )
@@ -4889,16 +11448,7 @@ def panel_command(args: argparse.Namespace) -> dict[str, Any]:
         if args.providers
         else list(
             cfg.get("providers")
-            or [
-                "codex",
-                "claude",
-                "grok",
-                "opencode",
-                "antigravity",
-                "copilot",
-                "kimi",
-                "deepseek",
-            ]
+            or ["codex", "claude", "codewhale"]
         )
     )
     if args.smoke or args.phase == "smoke":
@@ -4919,11 +11469,15 @@ def panel_command(args: argparse.Namespace) -> dict[str, Any]:
         return {
             "status": "failed",
             "action": "panel",
-            "error": "provide --phase target_advice|result_review or --smoke",
+            "error": "provide --phase strategy_review|target_advice|result_review or --smoke",
         }
     prompt = args.prompt or ""
     if args.prompt_file:
-        prompt = Path(args.prompt_file).expanduser().read_text(encoding="utf-8")
+        prompt = _read_contained_regular_text(
+            run_dir,
+            Path(args.prompt_file),
+            max_bytes=2_000_000,
+        )
     iter_dir = Path(args.iter_dir).expanduser().resolve() if args.iter_dir else None
     timeout = args.timeout or None
     summary = run_panel_phase_for_drive(

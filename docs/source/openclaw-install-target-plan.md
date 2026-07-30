@@ -42,13 +42,15 @@ Implemented fail-closed behavior:
 - support files are skipped unless backed by
   `manifest/schema/openclaw/target-support-file.schema.json` metadata
 
-**Out of band from managed skill-file installs:** the dual-route `/aas`
-adapter under `~/.openclaw/workspace/skills/aas-remote-bridge/` is published
-from `canonical/runtime/skills/remote-bridge/` via
-`publish_openclaw_adapter.py`. It is not authorized by `openclaw-target-*`
-manifests. Edit canonical first; refresh the workspace copy with the publisher.
-Host↔workspace secrets/state sync is part of that runtime
-(`sync_remote_bridge_paths.py`).
+**Out of band from managed skill-file installs:** the legacy dual-route `/aas`
+adapter may exist under `~/.openclaw/workspace/skills/aas-remote-bridge/`, but
+publishing is currently disabled. `publish_openclaw_adapter.py` is an inert
+no-write revocation stub. It and the retired sync filename remain installed for
+one compatibility release. Replacing older managed runtime copies requires an
+explicitly reviewed backup-and-replace upgrade that preserves recovery data;
+default installation does not overwrite divergent copies. The blocked publisher
+cannot replace or clean up already-published OpenClaw workspace copies. Host and
+workspace secrets/state are independent; automatic/bidirectional sync is not supported.
 
 ## Scope And Evidence
 

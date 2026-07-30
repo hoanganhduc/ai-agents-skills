@@ -224,46 +224,94 @@ def units_done(out_dir: Path, glob: str = DEFAULT_CHECKPOINT_GLOB) -> int:
 
 # --- kernel packaging ---------------------------------------------------------
 
-def _thin_runner(job_id: str, round_idx: int, chunk_idx: int, num_chunks: int) -> str:
-    """Thin Python runner that shells out to bundle/run.sh.
+def _thin_runner_embedded(
+    job_id: str,
+    round_idx: int,
+    chunk_idx: int,
+    num_chunks: int,
+    zip_b64: str,
+) -> str:
+    """Self-contained Python runner: Kaggle script kernels only ship the code_file.
 
-    Kaggle kernel metadata only accepts language in {python, r, rmarkdown};
-    language=bash is rejected by the API. Keep the portable bundle's run.sh as
-    the real entrypoint.
+    Nested bundle/ directories are NOT uploaded by the Kaggle API. Embed the
+    portable job as base64 zip, extract to bundle/, then invoke run.sh.
     """
     return (
         "#!/usr/bin/env python3\n"
-        f"# {MANAGED_BY} kernel runner: job={job_id} round={round_idx} "
+        f"# {MANAGED_BY} kernel runner (embed-zip): job={job_id} round={round_idx} "
         f"chunk={chunk_idx}/{num_chunks}\n"
-        "import os, subprocess, sys\n"
+        "import base64, io, os, subprocess, sys, zipfile\n"
         f"os.chdir({KERNEL_WORKDIR!r})\n"
+        f"BUNDLE_ZIP_B64 = {zip_b64!r}\n"
+        "raw = base64.b64decode(BUNDLE_ZIP_B64)\n"
+        "if os.path.isdir('bundle'):\n"
+        "    import shutil as _sh; _sh.rmtree('bundle')\n"
+        "os.makedirs('bundle', exist_ok=True)\n"
+        "with zipfile.ZipFile(io.BytesIO(raw)) as zf:\n"
+        "    zf.extractall('bundle')\n"
+        "os.chmod('bundle/run.sh', 0o755)\n"
         "cores = str(os.cpu_count() or 1)\n"
         "env = os.environ.copy()\n"
         f"env['CHUNK_IDX'] = str({chunk_idx})\n"
         f"env['NUM_CHUNKS'] = str({num_chunks})\n"
         "env['CORES'] = cores\n"
+        "env['OUT'] = os.path.join(os.getcwd(), 'out')\n"
+        "os.makedirs(env['OUT'], exist_ok=True)\n"
         "rc = subprocess.call(['bash', 'bundle/run.sh'], env=env)\n"
+        # Copy unit checkpoints and engine JSON to /kaggle/working/out for fetch
+        "import shutil, pathlib\n"
+        "src = pathlib.Path('bundle/out')\n"
+        "dst = pathlib.Path('out')\n"
+        "dst.mkdir(exist_ok=True)\n"
+        "if src.is_dir():\n"
+        "    for p in src.iterdir():\n"
+        "        if p.is_file():\n"
+        "            shutil.copy2(p, dst / p.name)\n"
         "sys.exit(rc)\n"
     )
+
+
+def _zip_job_b64(job_dir: Path) -> str:
+    import base64
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    job_dir = Path(job_dir).expanduser().resolve()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(job_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            # Skip local results / caches
+            rel = path.relative_to(job_dir).as_posix()
+            if rel.startswith("out/") or "__pycache__" in rel or rel.endswith(".pyc"):
+                continue
+            zf.write(path, rel)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 def build_kernel_dir(*, job_id: str, job_dir: str | Path, round_idx: int, chunk_idx: int,
                      num_chunks: int, gpu: bool, checkpoints_dir: str | Path | None,
                      dest_root: str | Path, username: str | None = None) -> Path:
-    """Assemble a kernel working directory: the portable bundle under bundle/, a thin runner
-    code_file, kernel-metadata.json, and (on resume rounds) the prior checkpoints attached as
-    the kernel's input dataset. No network here -- this is pure local file assembly."""
+    """Assemble a kernel working directory: embed-zip code_file + metadata.
+
+    Kaggle script kernels only upload the code_file; nested bundle/ is not
+    shipped. The portable job is base64-embedded and extracted at runtime.
+    """
     dest = Path(dest_root) / f"kernel-r{round_idx}-c{chunk_idx}"
     dest.mkdir(parents=True, exist_ok=True)
-    # Copy the portable bundle in as bundle/ so the thin runner can invoke bundle/run.sh.
+    # Keep a local copy of the bundle for debugging/dry-run inspection.
     bundle_dst = dest / "bundle"
     if bundle_dst.exists():
         shutil.rmtree(bundle_dst)
     shutil.copytree(Path(job_dir).expanduser(), bundle_dst)
 
+    zip_b64 = _zip_job_b64(Path(job_dir))
     code_file = f"run-r{round_idx}-c{chunk_idx}.py"
     (dest / code_file).write_text(
-        _thin_runner(job_id, round_idx, chunk_idx, num_chunks), encoding="utf-8")
+        _thin_runner_embedded(job_id, round_idx, chunk_idx, num_chunks, zip_b64),
+        encoding="utf-8",
+    )
 
     dataset_sources: list[str] = []
     if checkpoints_dir and units_done(Path(checkpoints_dir)) > 0:

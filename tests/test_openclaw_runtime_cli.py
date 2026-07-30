@@ -10,6 +10,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from installer.ai_agents_skills.cli import main
 from installer.ai_agents_skills.openclaw_runtime_target_evidence import (
@@ -110,7 +111,11 @@ class RuntimeCliTest(unittest.TestCase):
             self.assertEqual(approved["approval"]["approval_hash"], approved["manifest_id"])
 
     def test_full_lifecycle_dry_run_approve_apply_broker(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "installer.ai_agents_skills.openclaw_runtime_target_apply."
+            "neutral_runtime_root_block_reason",
+            return_value=None,
+        ):
             tmp = Path(tmp)
             root = _mk_root(tmp)
             rroot = tmp / "neutral-runtime"
@@ -187,7 +192,11 @@ class RuntimeCliTest(unittest.TestCase):
             self.assertNotEqual(res["code"], 0)
 
     def test_apply_requires_confirmation_for_real_write(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "installer.ai_agents_skills.openclaw_runtime_target_apply."
+            "neutral_runtime_root_block_reason",
+            return_value=None,
+        ):
             tmp = Path(tmp)
             root = _mk_root(tmp)
             rroot = tmp / "neutral-runtime"
@@ -208,6 +217,8 @@ class RuntimeCliTest(unittest.TestCase):
             res = _run(["--json", "--root", str(root), "openclaw-runtime-apply-manifest",
                         "--manifest", str(apath), "--runtime-root", str(rroot), "--apply", "--real-system"])
             self.assertNotEqual(res["code"], 0)
+            payload = json.loads(res["out"])
+            self.assertIn("confirm", str(payload.get("error") or "").lower())
 
     def test_probe_offline_emits_derivable_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

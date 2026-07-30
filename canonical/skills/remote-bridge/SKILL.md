@@ -62,28 +62,29 @@ Never commit real tokens. Copy the example and fill placeholders:
 - macOS: `~/Library/Application Support/remote-bridge/secrets.json` or XDG
 - Windows: `%APPDATA%\remote-bridge\secrets.json`
 
+The selected secrets file must be an owner-private, single-link regular file
+inside an owner-controlled, non-writable-by-others directory; symlinked,
+hard-linked, permissive, oversized, or changing files are rejected. On POSIX,
+use mode `0600` for the file.
+
 Env overrides: `REMOTE_BRIDGE_SECRETS_FILE`, `ZULIP_*`, `TELEGRAM_BOT_TOKEN`,
 `TELEGRAM_ALLOWED_CHAT_IDS`, `AAS_REMOTE_JOB_ID`.
 
 **Do not** auto-read `~/.openclaw`. Prefer a **dedicated** Zulip bot user and a
 **dedicated** Telegram bot (not OpenClaw’s).
 
-### Host ↔ OpenClaw workspace secrets/state sync
+### OpenClaw compatibility boundary
 
-OpenClaw sandbox cannot bind-mount `~/.config`. When a dual-route OpenClaw
-adapter is present, secrets and mailbox state are mirrored (newer-wins) between:
-
-| Side | Secrets | State |
-|------|---------|-------|
-| Host | `~/.config/remote-bridge/secrets.json` | `~/.local/share/ai-agents-skills/remote-bridge` |
-| Workspace | `~/.openclaw/workspace/secrets/remote-bridge/secrets.json` | `~/.openclaw/workspace/.remote-bridge-state` |
-
-- Auto: `dispatch_aas.py` before `/aas`; host `remote_bridge.py` before/after
-  send/arm/handle/etc.
-- Manual: `aas-remote-bridge-sync` or
-  `python3 …/sync_remote_bridge_paths.py --json`
-- Disable: `AAS_REMOTE_BRIDGE_SYNC=0`
-- Engine: `canonical/runtime/skills/remote-bridge/sync_remote_bridge_paths.py`
+The host CLI does **not** import from, export to, or synchronize with
+`~/.openclaw` before or after commands. Host secrets and mailbox state remain
+host-owned. `sync_remote_bridge_paths.py` is shipped temporarily only as an
+inert revocation stub. Replacing a previously managed copy requires an
+explicitly reviewed backup-and-replace upgrade that preserves recovery data;
+the default installer does not overwrite divergent copies. The stub never
+inspects paths and is not part of normal `remote_bridge.py` execution.
+Any future compatibility transfer requires an
+explicit, separately reviewed one-way export that excludes secrets and treats
+workspace content as untrusted.
 
 ## Source of truth and OpenClaw dual-route
 
@@ -91,11 +92,11 @@ Reusable logic lives in **`~/ai-agents-skills`** (this skill +
 `canonical/runtime/skills/remote-bridge/`). Agent homes and
 `~/.openclaw/workspace/skills/aas-remote-bridge/` are **install products**.
 
-For `/aas` inside OpenClaw, publish the dual-route adapter from canonical:
-
-```bash
-python3 canonical/runtime/skills/remote-bridge/publish_openclaw_adapter.py
-```
+OpenClaw workspace publishing is currently fail-closed: the installed
+revocation stub performs no destination reads or writes. Do not refresh or
+create a workspace adapter until a descriptor-pinned, no-follow, recoverable
+publisher has passed security review. The blocked publisher cannot replace or
+clean up an already-published OpenClaw workspace copy.
 
 See `canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
 
@@ -111,7 +112,7 @@ See `canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
 | `send --text "…" [--channel zulip\|telegram\|both\|auto] [--dry-run]` | Notify (Zulip-primary; Telegram fallback) |
 | `request-approval --job ID --tool T [--wait --timeout N]` | Create approval + optional wait |
 | `instruct --job ID --text "…"` | Push inbox item |
-| `handle-command --text "/aas …" --principal USER` | Process one control command |
+| `handle-command --text "/aas …" --principal USER` or `--text-stdin` | Process one control command |
 | `format-inbox --job ID [--consume]` | Claim/format inbox for prompts |
 | `check-approval --job ID --digest HEX` | Consume matching allow reply |
 
@@ -119,10 +120,16 @@ Chat control commands (Zulip/Telegram body): `/aas help|status|approve|deny|say|
 
 ## ARL / drive integration
 
-**Default-on when secrets are configured.** `arm` and `drive` use `--notify auto`
-(default): if Zulip and/or Telegram credentials are present in
+`arm` and `drive` use `--notify auto` (default): if Zulip and/or Telegram credentials are present in
 `~/.config/remote-bridge/secrets.json` (or env), progress events are sent
-without an extra flag. Prefer:
+without an extra channel flag for legacy/off/monitor loops. Enforce mode also
+requires `AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS=allow`; without that explicit
+egress consent it produces local notification audit only. Prefer:
+
+Notification and panel egress consent is independent of provider execution
+trust. Selecting `trusted-local` never implies permission to send notification,
+panel, PII, or secret-bearing payloads externally; the existing exact consent
+and admission gates still apply.
 
 ```bash
 # one-time arm (persists notify_channel on loop_state + registry)
@@ -132,6 +139,7 @@ without an extra flag. Prefer:
 … run_autonomous_research_loop.sh drive --dir <loop> --root <proj> \
   --provider codex
 # equivalent explicit: --notify auto
+# enforce-mode network consent: AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS=allow
 # silence: --notify off   or   AAS_AUTOLOOP_NOTIFY=off
 ```
 
@@ -156,8 +164,11 @@ Events notified (best-effort, never abort the loop): `drive_start`,
 - watch ledger tick `iteration` — drive already owns completion notifies; sending
   both produced duplicate Zulip posts when `drive` and `watch` ran together
 
-Identical bodies are deduped for 15s (in-process + per-loop disk). Same
-event+iteration is also deduped for 120s across processes.
+Identical bodies are deduped for 15s (in-process + per-loop disk). Materially
+equivalent retries whose event ids or timing fields were rebuilt are deduped for
+120s. Remote Bridge locks the semantic retry identity across the complete
+check -> send -> remember sequence, so concurrent processes deliver it once;
+material changes to status, content, agents, or compute remain deliverable.
 
 Headless iterations inject a labeled **data-only** inbox block when
 `AAS_REMOTE_JOB_ID` is set. Approvals for auto-approve providers (`--yolo`,
@@ -173,5 +184,18 @@ Grok hooks **fail-open** on crash/timeout — not hard OS security.
 
 - Allowlist users on Zulip/Telegram.
 - Compromised allowlisted chat ≈ operator authority for headless soft path.
+- Zulip/Telegram endpoints require HTTPS, reject embedded URL credentials and
+  redirects, and allow localhost HTTP only with
+  `AAS_REMOTE_BRIDGE_ALLOW_HTTP_LOCALHOST=1`.
+- Structured event redaction covers every nested string value before transport
+  output or delivery-registry persistence; secret-bearing event ids are
+  replaced by opaque digest-derived ids. Common explicit email, phone,
+  government-id, address/DOB, and participant/patient/subject data is also
+  redacted; the heuristic is not a completeness guarantee.
+- Notification sends fail closed when the v2 secret/PII redactor cannot be
+  loaded or raises; exact configured-secret replacement is not an acceptable
+  fallback for unconfigured credentials or personal data.
+- Delivery locks and the dedupe registry require private host-owned regular
+  files and no-follow directory traversal.
 - Prefer structured `--notify` over raw `--notify-cmd` (set `AAS_ALLOW_RAW_NOTIFY_CMD=1` only if needed).
 - Platform “supported” claims need dated native smoke evidence per OS.

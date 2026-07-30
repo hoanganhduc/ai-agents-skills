@@ -19,12 +19,16 @@ import sys
 
 sys.dont_write_bytecode = True  # never write __pycache__ into the canonical runtime tree
 
+import ast
+import base64
+import io
 import json
 import os
 import subprocess
 import tempfile
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -837,6 +841,57 @@ class KaggleDriverTests(unittest.TestCase):
 
     def _creds(self) -> None:
         os.environ["KAGGLE_API_TOKEN"] = DRIVER_TOKEN
+
+    def test_kernel_code_file_embeds_portable_bundle(self) -> None:
+        bundle = self._bundle()
+        nested = bundle / "nested"
+        nested.mkdir()
+        (nested / "payload.txt").write_text("embedded-marker\n", encoding="utf-8")
+        transient = bundle / "out"
+        transient.mkdir()
+        (transient / "old-result.json").write_text("{}", encoding="utf-8")
+        cache = bundle / "__pycache__"
+        cache.mkdir()
+        (cache / "ignored.pyc").write_bytes(b"cache")
+
+        kernel_dir = kaggle_driver.build_kernel_dir(
+            job_id="jobX",
+            job_dir=bundle,
+            round_idx=0,
+            chunk_idx=1,
+            num_chunks=3,
+            gpu=False,
+            checkpoints_dir=None,
+            dest_root=self.tmp / "kernels",
+            username="tester",
+        )
+        metadata = json.loads(
+            (kernel_dir / "kernel-metadata.json").read_text(encoding="utf-8")
+        )
+        code = (kernel_dir / metadata["code_file"]).read_text(encoding="utf-8")
+        assignment = next(
+            node
+            for node in ast.walk(ast.parse(code))
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "BUNDLE_ZIP_B64"
+                for target in node.targets
+            )
+        )
+        self.assertIsInstance(assignment.value, ast.Constant)
+        embedded = base64.b64decode(assignment.value.value)
+        with zipfile.ZipFile(io.BytesIO(embedded)) as archive:
+            names = set(archive.namelist())
+            self.assertEqual(
+                archive.read("nested/payload.txt"), b"embedded-marker\n"
+            )
+
+        self.assertIn("manifest.json", names)
+        self.assertIn("run.sh", names)
+        self.assertNotIn("out/old-result.json", names)
+        self.assertNotIn("__pycache__/ignored.pyc", names)
+        self.assertIn("extractall('bundle')", code)
+        self.assertIn("env['OUT']", code)
 
     def test_preflight_plans_without_pushing(self) -> None:
         runner = _FakeRunner()

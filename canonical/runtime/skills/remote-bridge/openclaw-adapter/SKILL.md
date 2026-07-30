@@ -8,25 +8,34 @@ user-invocable: true
 
 > **Source of truth:** `~/ai-agents-skills` (canonical runtime
 > `skills/remote-bridge/`). This OpenClaw workspace copy is a **published
-> adapter**. Do not invent behavior only under `~/.openclaw`. Edit canonical,
-> then run `publish_openclaw_adapter.py`.
+> adapter**. Do not invent behavior only under `~/.openclaw`. Workspace
+> publishing is currently disabled until its filesystem boundary is hardened.
 
-## Secrets / state sync (host ↔ sandbox workspace)
+## Workspace-owned secrets and state (no synchronization)
 
-OpenClaw sandbox cannot bind-mount `~/.config`. Secrets and mailbox state are
-mirrored under the workspace:
+The adapter uses its own OpenClaw workspace paths:
 
-| Side | Secrets | State |
-|------|---------|-------|
-| Host | `~/.config/remote-bridge/secrets.json` | `~/.local/share/ai-agents-skills/remote-bridge` |
-| Workspace | `~/.openclaw/workspace/secrets/remote-bridge/secrets.json` | `~/.openclaw/workspace/.remote-bridge-state` |
+| Data | Sandbox path | Host view of the same workspace |
+|------|--------------|---------------------------------|
+| Secrets | `/workspace/secrets/remote-bridge/secrets.json` | `~/.openclaw/workspace/secrets/remote-bridge/secrets.json` |
+| State | `/workspace/.remote-bridge-state` | `~/.openclaw/workspace/.remote-bridge-state` |
 
-**Auto-sync (newer wins, no secret values logged):**
+There is **no automatic or bidirectional synchronization** with host
+`~/.config/remote-bridge` or `~/.local/share/ai-agents-skills/remote-bridge`.
+`dispatch_aas.py` never imports or runs the legacy sync helper. Host and
+workspace configurations are independent; an operator must provision the
+workspace-owned secrets file explicitly.
 
-- `dispatch_aas.py` runs sync before every `/aas` dispatch
-- host `remote_bridge.py` runs sync before/after send/arm/handle/etc.
-- manual: `aas-remote-bridge-sync` (or `python3 …/sync_remote_bridge_paths.py --json`)
-- disable: `AAS_REMOTE_BRIDGE_SYNC=0`
+`OPENCLAW_WORKSPACE` or `AAS_OPENCLAW_WORKSPACE` may select a different
+workspace root for the adapter parent. The child receives a narrow environment
+and always uses the selected workspace's private secrets/state paths; ambient
+provider/cloud tokens and host remote-bridge path overrides are not inherited.
+Do not use the legacy
+`sync_remote_bridge_paths.py` name to mirror secrets or state. The installed
+file is an inert revocation stub retained for one compatibility release.
+Replacing an older managed runtime copy requires an explicitly reviewed
+backup-and-replace upgrade that preserves recovery data; default installation
+does not overwrite divergent copies.
 
 ## When to use (MANDATORY)
 
@@ -36,24 +45,27 @@ If the **current user message** (after stripping a leading `@bot` mention) **sta
 2. **Immediately** run the dispatch script (paths work on host and in sandbox):
 
 ```bash
-python3 /workspace/skills/aas-remote-bridge/scripts/dispatch_aas.py \
-  --text "$USER_MESSAGE" \
+printf '%s' "$USER_MESSAGE" | \
+  python3 /workspace/skills/aas-remote-bridge/scripts/dispatch_aas.py \
+  --text-stdin \
   --principal "$SENDER_ID_OR_EMAIL"
 ```
 
 On the host (non-sandbox), either path works:
 
 ```bash
-python3 ~/.openclaw/workspace/skills/aas-remote-bridge/scripts/dispatch_aas.py \
-  --text "$USER_MESSAGE" \
+printf '%s' "$USER_MESSAGE" | \
+  python3 ~/.openclaw/workspace/skills/aas-remote-bridge/scripts/dispatch_aas.py \
+  --text-stdin \
   --principal "$SENDER_ID_OR_EMAIL"
 ```
 
 Or the installed AAS runtime (preferred when available):
 
 ```bash
-python3 ~/.local/share/ai-agents-skills/runtime/workspace/skills/remote-bridge/dispatch_aas.py \
-  --text "$USER_MESSAGE" \
+printf '%s' "$USER_MESSAGE" | \
+  python3 ~/.local/share/ai-agents-skills/runtime/workspace/skills/remote-bridge/dispatch_aas.py \
+  --text-stdin \
   --principal "$SENDER_ID_OR_EMAIL"
 ```
 
@@ -74,9 +86,8 @@ Live loop job example: `example-job` → local research loop dir for that job
 
 ## Maintaining this adapter
 
-```bash
-# From ai-agents-skills checkout:
-python3 canonical/runtime/skills/remote-bridge/publish_openclaw_adapter.py
-# or after runtime install:
-python3 ~/.local/share/ai-agents-skills/runtime/workspace/skills/remote-bridge/publish_openclaw_adapter.py
-```
+The installed workspace publisher is an intentional revocation stub. It returns
+`publisher_security_boundary_unavailable` without inspecting or mutating its
+destination. Treat any existing workspace copy as legacy until a separately
+reviewed descriptor-pinned/no-follow publisher is implemented. The blocked
+publisher cannot replace or clean up that workspace copy.

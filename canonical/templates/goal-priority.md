@@ -12,9 +12,13 @@ so OpenClaw can still install the ARL policy `SKILL.md`.
 
 ## Enable
 
-Active when the merged config has `"enabled": true` (the **default**), or when a
+Active when the merged config has `"enabled": true`, or when a
 config object exists and `AAS_AUTOLOOP_GOAL_PRIORITY=on` forces enable. Set
 `"enabled": false` or `AAS_AUTOLOOP_GOAL_PRIORITY=off` to opt out.
+
+This is the legacy v1 compatibility contract. Its executable defaults are
+`"enabled": false` and `"discipline_mode": "soft"`. New loops should use Goal
+Focus v2 in `enforce` mode; see the `goal-focus` template.
 
 - File: `{loop_dir}/goal_priority.json`
 - Or: `loop_state.standing_orders.goal_priority`
@@ -80,8 +84,9 @@ File: `{loop_dir}/residual_inventory.json`
 
 - `host_signal_epoch_iteration`: rows before this iteration are not host-counted.
 - Open leaves are listed in the drive/panel prompt when present.
-- Machine campaign order source remains **`goal_priority.json` only**.
-  Markdown (OPEN_QUESTION, APPROACH_REGISTRY) is advisory if injected later.
+- The merged machine campaign order uses defaults → `goal_priority.json` →
+  `loop_state.standing_orders.goal_priority`; standing orders win. Markdown
+  (OPEN_QUESTION, APPROACH_REGISTRY) remains advisory.
 
 ## Scope: encoding vs goal
 

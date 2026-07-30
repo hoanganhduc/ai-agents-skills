@@ -38,9 +38,25 @@ installed by normal `openclaw-target-*` skill copies.
 | Role | Location |
 |------|----------|
 | Source of truth | `canonical/runtime/skills/remote-bridge/` in this repo |
-| Publish command | `python3 …/publish_openclaw_adapter.py` |
-| Published tree | `~/.openclaw/workspace/skills/aas-remote-bridge/` |
-| Secrets/state sync | `sync_remote_bridge_paths.py` (host ↔ workspace mirrors) |
+| Publish status | **Blocked**: installed publisher name is an inert revocation stub |
+| Legacy tree | `~/.openclaw/workspace/skills/aas-remote-bridge/` |
+| Secrets | `~/.openclaw/workspace/secrets/remote-bridge/secrets.json` |
+| State | `~/.openclaw/workspace/.remote-bridge-state` |
+
+The adapter has **no automatic or bidirectional synchronization** with host
+remote-bridge secrets or state. `/aas` dispatch uses its separate
+workspace-owned paths, passes a narrow credential-free child environment, and
+never imports or runs the legacy sync helper.
+Operators must provision the workspace secrets explicitly; changes do not
+propagate between host and workspace configurations. Replacing an older managed
+runtime stub requires an
+explicitly reviewed backup-and-replace upgrade with preserved recovery data;
+default installation does not overwrite divergent copies. The blocked publisher
+cannot replace or clean up an existing legacy workspace tree.
+
+Do not create or refresh the legacy tree with the old publisher. Publishing is
+unsupported until a descriptor-pinned, no-follow, recoverable implementation
+passes security review.
 
 **Do not invent skill logic only under `~/.openclaw`.** Edit
 `~/ai-agents-skills`, install/runtime-sync as needed, then publish the adapter.
