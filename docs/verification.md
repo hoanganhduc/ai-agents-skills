@@ -176,7 +176,7 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 | Skill | Coverage | Smoke Contract | Reason |
 |---|---|---|---|
 | `annotated-review` | `manual-native` | no | Annotation workflows require user-provided documents and optional local tooling; no safe generic offline smoke is declared. |
-| `autonomous-research-loop-runtime` | `offline-smoke` | yes | Smoke validates local loop ledger initialization, append, validation, and status without network, package installs, provider CLIs, config writes, or subagent spawning. |
+| `autonomous-research-loop-runtime` | `offline-smoke` | yes | Smoke validates local loop ledger initialization, append, validation, and status without network, package installs, provider CLIs, config writes, or subagent spawning. The headless driver checks additionally require a host that can contain a primary process, and report themselves as skipped where it cannot. |
 | `axiom-axle-mcp` | `offline-smoke` | yes | Smoke validates inert AXLE setup guidance without installing packages or starting services. |
 | `calibre` | `manual-native` | no | Calibre workflows depend on the user's local ebook library and profile selection. |
 | `deep-research-workflow` | `offline-smoke` | yes | Selftest smoke is offline and validates the workflow guard contracts. |
