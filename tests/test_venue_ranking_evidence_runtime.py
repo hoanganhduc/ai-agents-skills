@@ -488,11 +488,11 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
                 ).stdout
             )
             self.assertEqual(result["match_count"], 2)
-            matches = [json.loads(line) for line in (run_dir / "matches.jsonl").read_text().splitlines()]
+            matches = [json.loads(line) for line in (run_dir / "matches.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual({row["venue_id"] for row in matches}, {"venue-tcs-journal", "venue-tocs-journal"})
             self.assertTrue(all(row["match_method"] == "exact-alias" for row in matches))
             observations = [
-                json.loads(line) for line in (run_dir / "observations.jsonl").read_text().splitlines()
+                json.loads(line) for line in (run_dir / "observations.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             tcs_quartiles = [
                 row
@@ -517,7 +517,7 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
                 str(records),
                 "--offline",
             )
-            matches = [json.loads(line) for line in (run_dir / "matches.jsonl").read_text().splitlines()]
+            matches = [json.loads(line) for line in (run_dir / "matches.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0]["venue_id"], "venue-tcs-journal")
             self.assertEqual(matches[0]["match_method"], "exact-identifier")
@@ -637,7 +637,7 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
                 ).stdout
             )
             self.assertEqual(result["match_count"], 1)
-            observation = json.loads((run_dir / "observations.jsonl").read_text())
+            observation = json.loads((run_dir / "observations.jsonl").read_text(encoding="utf-8"))
             self.assertEqual(observation["value"], "A")
             self.assertEqual(observation["freshness_status"], "currentness-unconfirmed")
             self.assertEqual(observation["source_id"], "community-list")
@@ -958,10 +958,10 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
                     "--offline",
                 ).stdout
             )
-            venues = [json.loads(line) for line in (run_dir / "venues.jsonl").read_text().splitlines()]
+            venues = [json.loads(line) for line in (run_dir / "venues.jsonl").read_text(encoding="utf-8").splitlines()]
             observations = [
                 json.loads(line)
-                for line in (run_dir / "observations.jsonl").read_text().splitlines()
+                for line in (run_dir / "observations.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual(result["match_count"], 1)
             self.assertEqual(len(venues), 1)
@@ -1326,7 +1326,7 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
                 str(records),
                 "--offline",
             )
-            matches = [json.loads(line) for line in (run_dir / "matches.jsonl").read_text().splitlines()]
+            matches = [json.loads(line) for line in (run_dir / "matches.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual(len(matches), 2)
             self.assertEqual(
                 {(row["venue_id"], row["match_method"]) for row in matches},

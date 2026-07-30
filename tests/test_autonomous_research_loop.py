@@ -738,7 +738,7 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                 self.assertNotEqual(rejected.returncode, 0)
                 self.assertIn("finite and non-negative", rejected.stderr)
                 self.assertEqual((run_dir / "budget.json").read_bytes(), before_budget)
-                self.assertEqual((run_dir / "iterations.jsonl").read_text(), "")
+                self.assertEqual((run_dir / "iterations.jsonl").read_text(encoding="utf-8"), "")
 
     def test_validate_rejects_non_finite_persisted_usd_budget_fields(self) -> None:
         for field in ("max_usd", "spent_usd"):
@@ -1783,7 +1783,7 @@ class RuntimeDriveTests(unittest.TestCase):
             )
             res = self._drive(loop, reg, cmd)
             self.assertEqual(res.returncode, 0)
-            self.assertEqual((loop / "c").read_text(), "3")
+            self.assertEqual((loop / "c").read_text(encoding="utf-8"), "3")
 
     @unittest.skipUnless(
         _primary_containment_available(),
@@ -1799,7 +1799,7 @@ class RuntimeDriveTests(unittest.TestCase):
             )
             res = self._drive(loop, reg, cmd, "--max-failures", "3")
             self.assertEqual(res.returncode, 3)
-            self.assertEqual((loop / "c").read_text(), "3")
+            self.assertEqual((loop / "c").read_text(encoding="utf-8"), "3")
 
     @unittest.skipUnless(
         _primary_containment_available(),
@@ -1826,7 +1826,7 @@ class RuntimeDriveTests(unittest.TestCase):
                 "1",
             )
             self.assertEqual(res.returncode, 5, res.stderr)
-            self.assertEqual((loop / "c").read_text(), "3")
+            self.assertEqual((loop / "c").read_text(encoding="utf-8"), "3")
 
     def test_failover_defaults_cap_driver_at_three(self) -> None:
         config = json.loads(
@@ -1854,7 +1854,7 @@ class RuntimeDriveTests(unittest.TestCase):
             )
             res = self._drive(loop, reg, cmd)
             self.assertEqual(res.returncode, 0)
-            self.assertEqual((loop / "env").read_text(), "1")
+            self.assertEqual((loop / "env").read_text(encoding="utf-8"), "1")
 
     @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
     @unittest.skipUnless(
@@ -6152,7 +6152,7 @@ class DriveCwdTests(unittest.TestCase):
                 cwd=str(base),  # driver started outside root
             )
             self.assertEqual(res.returncode, 0, res.stderr)
-            recorded = (loop / "cwd").read_text()
+            recorded = (loop / "cwd").read_text(encoding="utf-8")
             self.assertEqual(Path(recorded).resolve(), root.resolve())
 
 
@@ -6337,8 +6337,8 @@ raise SystemExit(2)
             result = self._run(root, loop, self._config())
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual((loop / "driver" / "PRIMARY").read_text(), "codex")
-            self.assertEqual((loop / "driver" / "EXCLUDED").read_text(), "claude\n")
+            self.assertEqual((loop / "driver" / "PRIMARY").read_text(encoding="utf-8"), "codex")
+            self.assertEqual((loop / "driver" / "EXCLUDED").read_text(encoding="utf-8"), "claude\n")
             self.assertEqual(
                 stat.S_IMODE((loop / "driver" / "PRIMARY").stat().st_mode), 0o600
             )
@@ -6347,14 +6347,14 @@ raise SystemExit(2)
             )
             drive_rows = [
                 json.loads(line)
-                for line in (loop / "stub-drive.jsonl").read_text().splitlines()
+                for line in (loop / "stub-drive.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual(
                 [row["provider"] for row in drive_rows], ["claude", "codex"]
             )
             notify_rows = [
                 json.loads(line)
-                for line in (loop / "stub-notify.jsonl").read_text().splitlines()
+                for line in (loop / "stub-notify.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertGreaterEqual(len(notify_rows), 3)
             self.assertTrue(all(row[0] == "notify-event" for row in notify_rows))
@@ -6425,11 +6425,11 @@ raise SystemExit(2)
             self.assertEqual(result.returncode, 13, result.stdout + result.stderr)
             drive_rows = [
                 json.loads(line)
-                for line in (loop / "stub-drive.jsonl").read_text().splitlines()
+                for line in (loop / "stub-drive.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual([row["provider"] for row in drive_rows], ["claude"])
             excluded = loop / "driver" / "EXCLUDED"
-            self.assertTrue(not excluded.exists() or not excluded.read_text().strip())
+            self.assertTrue(not excluded.exists() or not excluded.read_text(encoding="utf-8").strip())
 
     def test_supervisor_never_retries_candidate_quarantine(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6443,11 +6443,11 @@ raise SystemExit(2)
             self.assertEqual(result.returncode, 14, result.stdout + result.stderr)
             drive_rows = [
                 json.loads(line)
-                for line in (loop / "stub-drive.jsonl").read_text().splitlines()
+                for line in (loop / "stub-drive.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual([row["provider"] for row in drive_rows], ["claude"])
             excluded = loop / "driver" / "EXCLUDED"
-            self.assertTrue(not excluded.exists() or not excluded.read_text().strip())
+            self.assertTrue(not excluded.exists() or not excluded.read_text(encoding="utf-8").strip())
 
     def test_supervisor_never_retries_unpersisted_quarantine(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -6464,7 +6464,7 @@ raise SystemExit(2)
             self.assertEqual(result.returncode, 15, result.stdout + result.stderr)
             drive_rows = [
                 json.loads(line)
-                for line in (loop / "stub-drive.jsonl").read_text().splitlines()
+                for line in (loop / "stub-drive.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual([row["provider"] for row in drive_rows], ["claude"])
 
