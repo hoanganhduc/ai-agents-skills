@@ -6656,7 +6656,7 @@ class NotifyPolicyTests(unittest.TestCase):
             with self.subTest(placeholder=placeholder), tempfile.TemporaryDirectory() as tmp:
                 loop = Path(tmp) / "research_loop"
                 loop.mkdir()
-                goal = "Resolve the Kempe changes open question"
+                goal = "Resolve the sample bounded open question"
                 (loop / "goal_contract.json").write_text(
                     json.dumps({"goal": goal}), encoding="utf-8"
                 )
@@ -6693,7 +6693,7 @@ class NotifyPolicyTests(unittest.TestCase):
                     remote_job = mod.resolve_remote_job_id(loop)
 
                 self.assertEqual(identity["title"], goal)
-                self.assertEqual(identity["slug"], "resolve-the-kempe-changes-open-question")
+                self.assertEqual(identity["slug"], "resolve-the-sample-bounded-open-question")
                 self.assertEqual(remote_job, identity["slug"])
                 self.assertNotIn("optional-stable", json.dumps(identity).lower())
 
@@ -6816,15 +6816,15 @@ class ResearchNotifyTextTests(unittest.TestCase):
         arl = self._runtime()
         record = {
             "label": "A2-SAMPLE-370",
-            "objective": "Design the AND/OR differentiation gadget",
-            "outcome": "and-or-differentiation-designed;no-new-claws",
+            "objective": "Design the sample gadget construction",
+            "outcome": "sample-construction-designed;no-regressions",
             "primary_independent_agree": True,
             "goal_contribution": "construct",
             "campaign_id": "A2",
         }
         text = arl.research_result_text(record)
-        self.assertIn("Design the AND/OR differentiation gadget", text)
-        self.assertIn("and-or-differentiation-designed", text)
+        self.assertIn("Design the sample gadget construction", text)
+        self.assertIn("sample-construction-designed", text)
         self.assertIn("verification agree", text)
         self.assertIn("construct", text)
         self.assertIn("A2", text)

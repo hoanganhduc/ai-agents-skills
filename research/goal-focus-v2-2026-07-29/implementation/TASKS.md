@@ -168,8 +168,8 @@
 
 ## Active-loop rollout
 
-- [x] Record the held clawfree rollout profile: title `Clawfree
-  reconfiguration`, slug `clawfree-reconfiguration`, Claude
+- [x] Record the held pilot rollout profile: stable research title and
+  topic slug, Claude
   `claude-fable-5` at highest available thinking as driver, Claude/Codex/
   CodeWhale panel, Grok/Kimi excluded, Hetzner/Kaggle-only compute, and Notify
   v2 enabled behind explicit egress consent, using the explicit trusted-local
