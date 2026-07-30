@@ -817,6 +817,18 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
         path.chmod(0o600)
         return path
 
+    def test_secrets_file_loads_a_regular_private_leaf(self) -> None:
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            valid = Path(tmp) / "valid.json"
+            valid.write_text('{"default_channel":"zulip"}\n', encoding="utf-8")
+            if os.name == "posix":
+                valid.chmod(0o600)
+            loaded, loaded_path = mod.load_secrets(str(valid), {})
+            self.assertEqual(loaded["default_channel"], "zulip")
+            self.assertEqual(loaded_path, str(valid))
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX mode and link semantics")
     def test_secrets_file_requires_private_single_link_regular_leaf(self) -> None:
         mod = self._mod()
         with tempfile.TemporaryDirectory() as tmp:
@@ -824,9 +836,6 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
             valid = root / "valid.json"
             valid.write_text('{"default_channel":"zulip"}\n', encoding="utf-8")
             valid.chmod(0o600)
-            loaded, loaded_path = mod.load_secrets(str(valid), {})
-            self.assertEqual(loaded["default_channel"], "zulip")
-            self.assertEqual(loaded_path, str(valid))
 
             permissive = root / "permissive.json"
             permissive.write_text("{}\n", encoding="utf-8")
@@ -855,10 +864,19 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             config_home = root / "config"
-            default_dir = config_home / "remote-bridge"
+            base_env = {
+                "HOME": str(root / "home"),
+                "XDG_CONFIG_HOME": str(config_home),
+                # Windows resolves the default secrets file under APPDATA rather
+                # than XDG, so the platform's own candidate list places the
+                # fixture and the assertion below stays honest on both.
+                "APPDATA": str(config_home),
+                "AAS_REMOTE_BRIDGE_STATE": str(root / "state"),
+            }
+            default_path = mod.secrets_candidates(base_env)[0]
+            default_dir = default_path.parent
             default_dir.mkdir(parents=True)
             default_dir.chmod(0o700)
-            default_path = default_dir / "secrets.json"
             default_path.write_text(
                 json.dumps(
                     {
@@ -878,11 +896,6 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
             explicit.write_text("{}\n", encoding="utf-8")
             explicit.chmod(0o600)
             missing = root / "missing.json"
-            base_env = {
-                "HOME": str(root / "home"),
-                "XDG_CONFIG_HOME": str(config_home),
-                "AAS_REMOTE_BRIDGE_STATE": str(root / "state"),
-            }
 
             loaded, loaded_path = mod.load_secrets(None, dict(base_env))
             self.assertEqual(loaded_path, str(default_path))
@@ -1336,7 +1349,9 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
             mailbox = mod.Mailbox(root / "state")
             mailbox.ensure()
             registry = mod._notify_delivery_path(mailbox)
-            registry.write_text('{"schema_version":"1.0","deliveries":{}}\n')
+            registry.write_text(
+                '{"schema_version":"1.0","deliveries":{}}\n', encoding="utf-8"
+            )
             os.chmod(registry, 0o600)
             victim = root / "victim.txt"
             original = b"must remain unchanged\n"
