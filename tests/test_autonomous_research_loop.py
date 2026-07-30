@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import importlib.util
 import io
@@ -288,6 +289,9 @@ def run_helper(*args: str, check: bool = True) -> subprocess.CompletedProcess[st
         [sys.executable, "-B", str(HELPER), *args],
         capture_output=True,
         text=True,
+        # The runtime forces UTF-8 stdio; a cp1252 default decode kills the
+        # reader thread and leaves stdout as None.
+        encoding="utf-8",
         timeout=20,
         check=check,
         env=_subprocess_env(),
@@ -616,6 +620,7 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             [sys.executable, "-B", str(HELPER), "selftest"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=20,
             check=True,
             env=_subprocess_env(),
@@ -644,6 +649,7 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                 [sys.executable, "-B", str(HELPER), "validate", "--dir", str(run_dir)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=20,
                 check=True,
                 env=_subprocess_env(),
@@ -652,6 +658,7 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                 [sys.executable, "-B", str(HELPER), "status", "--dir", str(run_dir)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=20,
                 check=True,
                 env=_subprocess_env(),
@@ -664,6 +671,31 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             self.assertEqual(status_payload["status"], "ok")
             self.assertEqual(status_payload["state_status"], "running")
             self.assertEqual(status_payload["last_decision"], "continue")
+
+    def test_captured_children_are_decoded_as_utf_8(self) -> None:
+        """Every captured child of this module must be decoded as UTF-8.
+
+        The runtime forces UTF-8 stdio, so a parent left on the platform default
+        (cp1252 on a Windows runner) raises inside the reader thread and reports
+        ``stdout`` as ``None`` instead of the child's JSON. The default comes
+        from the C locale of the running interpreter and cannot be patched from
+        a POSIX host, so the call sites are checked in the source instead.
+        """
+
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        offenders = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"run", "Popen"}
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "subprocess"
+            and "text" in {keyword.arg for keyword in node.keywords}
+            and "encoding" not in {keyword.arg for keyword in node.keywords}
+        ]
+
+        self.assertEqual(offenders, [])
 
     def test_usd_cli_parsers_reject_non_finite_values_without_writes(self) -> None:
         for raw in ("nan", "inf", "-inf"):
@@ -1128,6 +1160,7 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             [sys.executable, "-B", str(HELPER), "selftest"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=20,
             check=True,
             env=_subprocess_env(),
@@ -1152,6 +1185,7 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             [sys.executable, "-B", str(HELPER), *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=20,
             env=env,
             check=False,
@@ -1586,7 +1620,7 @@ def _arm_loop(run_dir: Path, registry: Path, root: Path) -> None:
     env = _subprocess_env({"AAS_AUTOLOOP_REGISTRY": str(registry)})
     subprocess.run(
         [sys.executable, "-B", str(HELPER), "arm", "--dir", str(run_dir), "--root", str(root)],
-        capture_output=True, text=True, timeout=20, env=env, check=False,
+        capture_output=True, text=True, encoding="utf-8", timeout=20, env=env, check=False,
     )
 
 
@@ -1596,7 +1630,7 @@ def _init_loop(run_dir: Path, registry: Path, *extra: str, max_iterations: int =
         [sys.executable, "-B", str(HELPER), "init", "--dir", str(run_dir), "--goal", "g",
          "--success-criteria", "sc", "--max-iterations", str(max_iterations),
          "--goal-focus-mode", "off", *extra],
-        capture_output=True, text=True, timeout=20, env=env, check=False,
+        capture_output=True, text=True, encoding="utf-8", timeout=20, env=env, check=False,
     )
 
 
@@ -1628,6 +1662,7 @@ class RuntimeHookCheckTests(unittest.TestCase):
             input=payload,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=30,
             env=env,
             check=False,
@@ -1687,7 +1722,8 @@ class AutoloopStopHookShimTests(unittest.TestCase):
         env.pop("AUTOLOOP_DRIVER", None)
         return subprocess.run(
             ["bash", str(self.STOP_HOOK)],
-            input=payload, capture_output=True, text=True, timeout=30, env=env, check=False,
+            input=payload, capture_output=True, text=True, encoding="utf-8", timeout=30, env=env,
+            check=False,
         )
 
     def _armed(self, base: Path):
@@ -1717,7 +1753,7 @@ class RuntimeDriveTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, "-B", str(HELPER), "drive", "--dir", str(run_dir), "--root", str(run_dir),
              "--cmd", cmd, *extra],
-            capture_output=True, text=True, timeout=timeout, env=env, check=False,
+            capture_output=True, text=True, encoding="utf-8", timeout=timeout, env=env, check=False,
         )
 
     def test_stops_immediately_when_already_done(self) -> None:
@@ -1869,6 +1905,7 @@ class RuntimeDriveTests(unittest.TestCase):
                         argv,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
                         timeout=40,
                         env=env,
                         check=False,
@@ -2118,6 +2155,7 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                 append_args,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
                 env=_subprocess_env(
                     {"AAS_AUTOLOOP_PRIMARY_PROVIDER": "claude"}
@@ -2155,6 +2193,7 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                 append_args,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 check=False,
                 env=_subprocess_env(
                     {
@@ -2839,6 +2878,7 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    encoding="utf-8",
                     env=child_env,
                 )
                 assert process.stdout is not None
@@ -2869,6 +2909,7 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                 [sys.executable, "-B", "-c", dead_owner_code, str(loop)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=10,
                 check=True,
                 env=child_env,
@@ -5437,7 +5478,7 @@ class AutoloopDriverShimTests(unittest.TestCase):
             res = subprocess.run(
                 ["bash", str(self.DRIVER), "--dir", str(loop), "--root", str(loop),
                  "--cmd", ': > "$AUTOLOOP_DIR/ran"'],
-                capture_output=True, text=True, timeout=40, env=env, check=False,
+                capture_output=True, text=True, encoding="utf-8", timeout=40, env=env, check=False,
             )
             self.assertEqual(res.returncode, 0)
             self.assertFalse((loop / "ran").exists())  # iteration command never ran
@@ -6041,6 +6082,7 @@ class HookCheckWorkspaceRootTests(unittest.TestCase):
                 [sys.executable, "-B", str(HELPER), "hook-check", "--registry-dir", str(reg)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 env=env,
                 check=False,
             )
@@ -6061,6 +6103,7 @@ class HookCheckWorkspaceRootTests(unittest.TestCase):
                 [sys.executable, "-B", str(HELPER), "hook-check", "--registry-dir", str(reg)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 env=env_wrong,
                 check=False,
             )
@@ -6102,6 +6145,7 @@ class DriveCwdTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=40,
                 env=env,
                 check=False,
@@ -6175,6 +6219,7 @@ class DriveProviderGrokTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=45,
                 env=env,
                 check=False,
@@ -6277,6 +6322,7 @@ raise SystemExit(2)
             ["bash", str(SUPERVISOR)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=20,
             check=False,
             env=env,
