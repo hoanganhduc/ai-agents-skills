@@ -315,7 +315,22 @@ print("allocation unexpectedly survived", flush=True)
         self.assertFalse(result.timed_out)
         self.assertFalse(result.oversized)
         self.assertGreater(limits["address_space_bytes"], 3 * limits["memory_max_bytes"])
-        self.assertIn(result.return_code, {-signal.SIGKILL, 128 + signal.SIGKILL})
+        # Dying by signal is what separates a ``memory.max`` kill from the
+        # ``MemoryError`` the address-space limit would raise, and the signal
+        # the wrapper reports depends on which half of the teardown finishes
+        # first: the kernel's own ``SIGKILL``, or the ``SIGTERM`` systemd sends
+        # while stopping the scope the kill just emptied.  A host-side
+        # termination cannot reach here, because the two assertions above rule
+        # out the only paths that terminate a still-running probe.
+        self.assertIn(
+            result.return_code,
+            {
+                -signal.SIGKILL,
+                128 + signal.SIGKILL,
+                -signal.SIGTERM,
+                128 + signal.SIGTERM,
+            },
+        )
         self.assertNotIn(b"unexpectedly survived", result.stdout)
 
     def test_tasks_max_denies_thread_growth(self) -> None:
