@@ -56,6 +56,11 @@ jobs:
       - name: Run static checks
         run: make static-check
 
+      - name: Install bubblewrap for containment tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+
       - name: Run unit tests
         run: make test
 
@@ -172,6 +177,11 @@ jobs:
 
       - name: Run static checks
         run: make static-check
+
+      - name: Install bubblewrap for containment tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
 
       - name: Run unit tests
         run: make test

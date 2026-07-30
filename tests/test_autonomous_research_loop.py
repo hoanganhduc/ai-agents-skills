@@ -161,6 +161,66 @@ def _primary_resource_attestation(*, wall_time_seconds: int = 60) -> dict[str, A
 sys.dont_write_bytecode = True
 
 
+_TRUSTED_CONTAINMENT: bool | None = None
+
+
+def _trusted_containment_works() -> bool:
+    """Report whether the production containment command actually spawns.
+
+    Every primary the runtime executes is wrapped in a descendant-lifetime
+    boundary, which fails closed unless a root-owned bubblewrap binary sits at
+    a fixed system path. A present binary is not enough: hosts that confine
+    unprivileged user namespaces (Ubuntu 24.04 does so through AppArmor) pass
+    the trust check and then fail at spawn time. Probe the real wrapper once
+    and cache the verdict for the whole module.
+    """
+
+    global _TRUSTED_CONTAINMENT
+    if _TRUSTED_CONTAINMENT is None:
+        _TRUSTED_CONTAINMENT = False
+        if sys.platform.startswith("linux"):
+            runtime = HELPER.parent
+            if str(runtime) not in sys.path:
+                sys.path.insert(0, str(runtime))
+            import provider_resources  # noqa: WPS
+
+            try:
+                probe = provider_resources.trusted_local_containment_command(
+                    ["/bin/true"], cwd=Path.cwd().resolve()
+                )
+                completed = subprocess.run(
+                    probe,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (
+                provider_resources.ProviderResourceError,
+                OSError,
+                subprocess.SubprocessError,
+            ):
+                return _TRUSTED_CONTAINMENT
+            _TRUSTED_CONTAINMENT = completed.returncode == 0
+    return _TRUSTED_CONTAINMENT
+
+
+def _primary_containment_available() -> bool:
+    """Report whether this host can contain a primary at all.
+
+    Bubblewrap is only the Linux mechanism: Windows bounds descendants with a
+    kill-on-close Job Object, so a bubblewrap verdict must not gate those runs.
+    The remaining POSIX platforms have no boundary the runtime accepts, so it
+    fails closed there and these tests cannot run.
+    """
+
+    if os.name == "nt":
+        return True
+    if not sys.platform.startswith("linux"):
+        return False
+    return _trusted_containment_works()
+
+
 def _subprocess_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -513,6 +573,10 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                     before_entries,
                 )
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "the selftest iteration requires a working bubblewrap",
+    )
     def test_runtime_helper_selftest_is_offline_and_validates_ledger(self) -> None:
         completed = subprocess.run(
             [sys.executable, "-B", str(HELPER), "selftest"],
@@ -1006,6 +1070,10 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                                 target_relpaths,
                             )
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "the selftest iteration requires a working bubblewrap",
+    )
     def test_runtime_companion_smoke_contract_and_validator_are_explicit(self) -> None:
         manifests = load_manifests()
         self.assertIn("autonomous-research-loop-runtime", selected_runtime_skills(manifests, None))
@@ -1630,6 +1698,10 @@ class RuntimeDriveTests(unittest.TestCase):
             self.assertEqual(res.returncode, 0)
             self.assertFalse((loop / "ran").exists())  # iteration command never ran
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_runs_iterations_until_user_stop(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
@@ -1643,6 +1715,10 @@ class RuntimeDriveTests(unittest.TestCase):
             self.assertEqual(res.returncode, 0)
             self.assertEqual((loop / "c").read_text(), "3")
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_stops_after_max_failures(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
@@ -1655,6 +1731,10 @@ class RuntimeDriveTests(unittest.TestCase):
             self.assertEqual(res.returncode, 3)
             self.assertEqual((loop / "c").read_text(), "3")
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_grok_402_balance_exhaustion_uses_three_quota_tries(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
@@ -1689,6 +1769,10 @@ class RuntimeDriveTests(unittest.TestCase):
         self.assertIn("dd.get('max_failures', 3)", supervisor)
         self.assertNotIn("dd.get('max_failures', 10)", supervisor)
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_exports_driver_env_so_hook_stands_down(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp); reg, loop = base / "reg", base / "loop"
@@ -1703,6 +1787,10 @@ class RuntimeDriveTests(unittest.TestCase):
             self.assertEqual((loop / "env").read_text(), "1")
 
     @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_provider_overrides_fail_before_execution_and_custom_cmd_keeps_umask(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -2127,6 +2215,10 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             self.assertIn("hard path steering active", prompt)
             self.assertNotIn("Stage the result for independent review", prompt)
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_monitor_drive_banks_legacy_iteration_without_mutating_goal_focus_authority(self) -> None:
         arl, _ = self._runtime_modules()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2182,6 +2274,10 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             after = {name: (loop / name).read_bytes() for name in before}
             self.assertEqual(after, before)
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_monitor_reports_corrupt_goal_focus_authority_but_does_not_block_legacy_drive(self) -> None:
         arl, _ = self._runtime_modules()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2874,8 +2970,8 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             self.assertEqual(list(registry_dir.iterdir()), [])
 
     @unittest.skipUnless(
-        sys.platform.startswith("linux"),
-        "trusted-local transport requires Linux",
+        _trusted_containment_works(),
+        "trusted-local transport requires a working bubblewrap",
     )
     def test_trusted_local_primary_subprocess_enforces_limits_and_stdin(self) -> None:
         arl, _gf = self._runtime_modules()
@@ -2939,8 +3035,8 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
         popen.assert_not_called()
 
     @unittest.skipUnless(
-        sys.platform.startswith("linux"),
-        "trusted-local transport requires Linux",
+        _trusted_containment_works(),
+        "trusted-local transport requires a working bubblewrap",
     )
     def test_trusted_local_primary_cpu_limit_terminates_before_wall_timeout(self) -> None:
         arl, _gf = self._runtime_modules()
@@ -4756,6 +4852,10 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             read_tail.assert_not_called()
             worker.assert_not_called()
 
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_successful_driver_log_is_classified_from_original_descriptor(self) -> None:
         arl, _gf = self._runtime_modules()
         with tempfile.TemporaryDirectory() as tmp:
@@ -5934,6 +6034,10 @@ class HookCheckWorkspaceRootTests(unittest.TestCase):
 
 
 class DriveCwdTests(unittest.TestCase):
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_drive_sets_child_cwd_to_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

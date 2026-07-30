@@ -92,6 +92,44 @@ def _provider_binary(name: str) -> str | None:
     return os.environ.get(f"AAS_AUTOLOOP_ATTESTED_BIN_{name.upper()}")
 
 
+_TRUSTED_CONTAINMENT: bool | None = None
+
+
+def _trusted_containment_works() -> bool:
+    """Report whether the production containment command actually spawns.
+
+    Trusted-local containment fails closed unless a root-owned bubblewrap
+    binary sits at a fixed system path, and a present binary is not enough:
+    hosts that confine unprivileged user namespaces (Ubuntu 24.04 does so
+    through AppArmor) pass the trust check and then fail at spawn time. Probe
+    the real wrapper once and cache the verdict for the whole module.
+    """
+
+    global _TRUSTED_CONTAINMENT
+    if _TRUSTED_CONTAINMENT is None:
+        _TRUSTED_CONTAINMENT = False
+        if sys.platform.startswith("linux"):
+            try:
+                probe = pr.trusted_local_containment_command(
+                    ["/bin/true"], cwd=Path.cwd().resolve()
+                )
+                completed = subprocess.run(
+                    probe,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+            except (
+                pr.ProviderResourceError,
+                OSError,
+                subprocess.SubprocessError,
+            ):
+                return _TRUSTED_CONTAINMENT
+            _TRUSTED_CONTAINMENT = completed.returncode == 0
+    return _TRUSTED_CONTAINMENT
+
+
 def strategy_advice(
     approach_id: str = "A3",
     *,
@@ -228,8 +266,8 @@ class PanelParentUnitTests(unittest.TestCase):
             )
 
     @unittest.skipUnless(
-        sys.platform.startswith("linux"),
-        "trusted-local containment requires Linux",
+        _trusted_containment_works(),
+        "trusted-local containment requires a working bubblewrap",
     )
     def test_trusted_local_resource_and_control_plane_command_shape(self) -> None:
         cwd = Path.cwd().resolve()
@@ -319,8 +357,8 @@ class PanelParentUnitTests(unittest.TestCase):
         self.assertEqual(command[gate_index + 3 :], containment)
 
     @unittest.skipUnless(
-        sys.platform.startswith("linux"),
-        "trusted-local tmux masking requires Linux",
+        _trusted_containment_works(),
+        "trusted-local tmux masking requires a working bubblewrap",
     )
     def test_trusted_local_containment_hides_live_tmux_control_socket(self) -> None:
         tmux = Path("/usr/bin/tmux")
@@ -350,8 +388,8 @@ class PanelParentUnitTests(unittest.TestCase):
         self.assertNotIn("reachable", inside.stdout)
 
     @unittest.skipUnless(
-        sys.platform.startswith("linux"),
-        "trusted-local temporary cwd containment requires Linux",
+        _trusted_containment_works(),
+        "trusted-local temporary cwd containment requires a working bubblewrap",
     )
     def test_trusted_local_containment_preserves_cwd_beneath_tmp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -407,6 +445,10 @@ class PanelParentUnitTests(unittest.TestCase):
             )
         self.assertEqual(run.call_count, 3)
 
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "resource enforcement preflight requires Linux",
+    )
     def test_resource_backend_preflight_propagates_scope_cleanup_failure(self) -> None:
         scope = "aas-arl-primary-1234-feedfacefeed.scope"
         limits = {"tasks_max": 64}
@@ -437,6 +479,10 @@ class PanelParentUnitTests(unittest.TestCase):
                     environ={"HOME": str(Path.home())},
                 )
 
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "resource enforcement preflight requires Linux",
+    )
     def test_resource_backend_preflight_exercises_containment_and_limits(self) -> None:
         scope = "aas-arl-primary-1234-feedfacefeed.scope"
         limits = {"tasks_max": 64}
@@ -718,8 +764,8 @@ class PanelParentUnitTests(unittest.TestCase):
             self.assertFalse(marker.exists())
 
     @unittest.skipUnless(
-        sys.platform.startswith("linux"),
-        "trusted-local transport requires Linux",
+        _trusted_containment_works(),
+        "trusted-local transport requires a working bubblewrap",
     )
     def test_trusted_local_real_panel_uses_stdin_and_mandatory_limits(self) -> None:
         prompt = "bounded non-sensitive review prompt"
@@ -815,8 +861,8 @@ class PanelParentUnitTests(unittest.TestCase):
         self.assertEqual(result["error_class"], "isolation_unavailable")
 
     @unittest.skipUnless(
-        sys.platform.startswith("linux"),
-        "trusted-local transport requires Linux",
+        _trusted_containment_works(),
+        "trusted-local transport requires a working bubblewrap",
     )
     def test_trusted_local_codewhale_records_required_argv_transport(self) -> None:
         prompt = "bounded CodeWhale review prompt"
