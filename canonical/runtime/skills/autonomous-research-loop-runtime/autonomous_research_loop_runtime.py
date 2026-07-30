@@ -5946,8 +5946,12 @@ def research_result_text(record: dict[str, Any]) -> str:
 
 
 def research_position_text(record: dict[str, Any], fallback: str = "") -> str:
-    """Describe where the goal stands after a record: remaining evidence gaps."""
-    gaps = record.get("evidence_gaps")
+    """Describe where the goal stands after a record: remaining evidence gaps.
+
+    Ledger records carry the gap list under ``remaining_gaps``; accept the
+    ``evidence_gaps`` spelling too so hand-built records still render.
+    """
+    gaps = record.get("remaining_gaps") or record.get("evidence_gaps")
     if not (isinstance(gaps, list) and gaps):
         return fallback
     shown = ", ".join(str(gap) for gap in gaps[:4])

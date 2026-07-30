@@ -6843,7 +6843,7 @@ class ResearchNotifyTextTests(unittest.TestCase):
 
     def test_research_position_text_lists_bounded_gaps(self) -> None:
         arl = self._runtime()
-        record = {"evidence_gaps": ["g1", "g2", "g3", "g4", "g5", "g6"]}
+        record = {"remaining_gaps": ["g1", "g2", "g3", "g4", "g5", "g6"]}
         text = arl.research_position_text(record, "Banked.")
         self.assertIn("Banked.", text)
         self.assertIn("g1", text)
@@ -6853,3 +6853,8 @@ class ResearchNotifyTextTests(unittest.TestCase):
         self.assertEqual(
             arl.research_position_text({}, "fallback only"), "fallback only"
         )
+
+    def test_research_position_text_accepts_evidence_gaps_spelling(self) -> None:
+        arl = self._runtime()
+        record = {"evidence_gaps": ["only-gap"]}
+        self.assertIn("only-gap", arl.research_position_text(record))
