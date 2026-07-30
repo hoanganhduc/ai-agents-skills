@@ -205,6 +205,40 @@ def _trusted_containment_works() -> bool:
     return _TRUSTED_CONTAINMENT
 
 
+_TRUSTED_RESOURCE_ENFORCEMENT: bool | None = None
+
+
+def _trusted_resource_enforcement_works() -> bool:
+    """Report whether this host can also enforce trusted-local resource limits.
+
+    Containment is only half of the transport precondition. Every trusted-local
+    child additionally runs inside a systemd user scope, so the host needs a
+    live user manager and its session bus; without them the runtime refuses to
+    start the child at all. A host that cannot enforce limits is not a runtime
+    defect, so probe the real backend once and cache the verdict.
+    """
+
+    global _TRUSTED_RESOURCE_ENFORCEMENT
+    if _TRUSTED_RESOURCE_ENFORCEMENT is None:
+        _TRUSTED_RESOURCE_ENFORCEMENT = False
+        if _trusted_containment_works():
+            runtime = HELPER.parent
+            if str(runtime) not in sys.path:
+                sys.path.insert(0, str(runtime))
+            import provider_resources  # noqa: WPS
+
+            try:
+                provider_resources.preflight_resource_backend(30, role="primary")
+            except (
+                provider_resources.ProviderResourceError,
+                OSError,
+                subprocess.SubprocessError,
+            ):
+                return _TRUSTED_RESOURCE_ENFORCEMENT
+            _TRUSTED_RESOURCE_ENFORCEMENT = True
+    return _TRUSTED_RESOURCE_ENFORCEMENT
+
+
 def _primary_containment_available() -> bool:
     """Report whether this host can contain a primary at all.
 
@@ -2970,8 +3004,8 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             self.assertEqual(list(registry_dir.iterdir()), [])
 
     @unittest.skipUnless(
-        _trusted_containment_works(),
-        "trusted-local transport requires a working bubblewrap",
+        _trusted_resource_enforcement_works(),
+        "trusted-local transport requires a working bubblewrap and a systemd user scope",
     )
     def test_trusted_local_primary_subprocess_enforces_limits_and_stdin(self) -> None:
         arl, _gf = self._runtime_modules()
@@ -3035,8 +3069,8 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
         popen.assert_not_called()
 
     @unittest.skipUnless(
-        _trusted_containment_works(),
-        "trusted-local transport requires a working bubblewrap",
+        _trusted_resource_enforcement_works(),
+        "trusted-local transport requires a working bubblewrap and a systemd user scope",
     )
     def test_trusted_local_primary_cpu_limit_terminates_before_wall_timeout(self) -> None:
         arl, _gf = self._runtime_modules()
