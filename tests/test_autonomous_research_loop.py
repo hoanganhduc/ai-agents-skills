@@ -6798,3 +6798,58 @@ class NotifyPolicyTests(unittest.TestCase):
             self.assertTrue(entries)
             entry = json.loads(entries[0].read_text(encoding="utf-8"))
             self.assertEqual(entry.get("notify_channel"), "off")
+
+
+class ResearchNotifyTextTests(unittest.TestCase):
+    """Notify summaries must carry the research finding, not agent status."""
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    def test_research_result_text_prefers_objective_and_outcome(self) -> None:
+        arl = self._runtime()
+        record = {
+            "label": "A2-SAMPLE-370",
+            "objective": "Design the AND/OR differentiation gadget",
+            "outcome": "and-or-differentiation-designed;no-new-claws",
+            "primary_independent_agree": True,
+            "goal_contribution": "construct",
+            "campaign_id": "A2",
+        }
+        text = arl.research_result_text(record)
+        self.assertIn("Design the AND/OR differentiation gadget", text)
+        self.assertIn("and-or-differentiation-designed", text)
+        self.assertIn("verification agree", text)
+        self.assertIn("construct", text)
+        self.assertIn("A2", text)
+
+    def test_research_result_text_prefers_worker_plain_summary(self) -> None:
+        arl = self._runtime()
+        record = {
+            "completed_summary": "The gadget enforces both constraint types.",
+            "objective": "unused when a plain summary exists",
+            "primary_independent_agree": False,
+        }
+        text = arl.research_result_text(record)
+        self.assertIn("The gadget enforces both constraint types.", text)
+        self.assertNotIn("unused when a plain summary exists", text)
+        self.assertIn("verification disagree", text)
+
+    def test_research_position_text_lists_bounded_gaps(self) -> None:
+        arl = self._runtime()
+        record = {"evidence_gaps": ["g1", "g2", "g3", "g4", "g5", "g6"]}
+        text = arl.research_position_text(record, "Banked.")
+        self.assertIn("Banked.", text)
+        self.assertIn("g1", text)
+        self.assertIn("g4", text)
+        self.assertNotIn("g5", text)
+        self.assertIn("(+2 more)", text)
+        self.assertEqual(
+            arl.research_position_text({}, "fallback only"), "fallback only"
+        )

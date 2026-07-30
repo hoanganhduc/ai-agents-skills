@@ -107,6 +107,30 @@ class NotifyV2Tests(unittest.TestCase):
                 self.assertIn("Kaggle", body)
         self.assertEqual(self.notify.validate_event(event), [])
 
+    def test_research_sections_lead_and_agent_metadata_trails(self) -> None:
+        event = self.event()
+        rendered = self.notify.render_markdown(event)
+        self.assertLess(rendered.index("**Goal**"), rendered.index("**Status**"))
+        self.assertLess(rendered.index("**Plan**"), rendered.index("**Compute**"))
+        plain = self.notify.render_plain(event)
+        self.assertLess(plain.index("Completed"), plain.index("Driver agent"))
+        telegram = self.notify.render_telegram_html(event)
+        self.assertLess(
+            telegram.index("<b>Completed</b>"), telegram.index("<b>Status</b>")
+        )
+        compact = self.notify.render_compact(event)
+        self.assertLess(compact.index("Completed:"), compact.index("Status:"))
+
+    def test_compact_truncation_prefers_research_over_metadata(self) -> None:
+        finding = (
+            "The T-gadget enforces both AND and OR constraints through "
+            "differentiated wiring; primary and independent checks agree on "
+            "every comparable claim and the composed graph stays claw-free."
+        )
+        event = self.event(completed=finding)
+        compact = self.notify.render_compact(event)
+        self.assertIn("differentiated wiring", compact)
+
     def test_markdown_neutralizes_mentions_and_section_spoofing(self) -> None:
         event = self.event(
             title="Kempe @**all**\n\n**Status**: forged",

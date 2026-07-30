@@ -1057,18 +1057,9 @@ def _render_lines(event: Mapping[str, Any], *, markdown: bool) -> list[str]:
     title = dynamic(_title_text(event))
     heading = f"{marker} **{title}**" if markdown else f"{marker} {title}"
     label = (lambda name: f"**{name}**") if markdown else (lambda name: name)
-    lines = [
-        heading,
-        "",
-        f"{label('Status')}: {dynamic(_status_text(event))}",
-        f"{label('Progress')}: {dynamic(_progress_text(event))}",
-        f"{label('Finished')}: {dynamic(_finished_text(event))}",
-        f"{label('Executor')}: {dynamic(iteration.get('executor'), 'Not recorded')}",
-        f"{label('Driver agent')}: {dynamic(format_agent_usage(event, 'driver'))}",
-        f"{label('Panel agents')}: {dynamic(format_agent_usage(event, 'panel'))}",
-        f"{label('Other agents')}: {dynamic(format_agent_usage(event, 'other'))}",
-        f"{label('Compute')}: {dynamic(format_compute(event))}",
-    ]
+    # Research content is the body of the message; agent and status details
+    # follow as a trailer so they never displace the findings.
+    lines = [heading]
     for key, name in (
         ("goal", "Goal"),
         ("completed", "Completed"),
@@ -1076,6 +1067,19 @@ def _render_lines(event: Mapping[str, Any], *, markdown: bool) -> list[str]:
         ("plan", "Plan"),
     ):
         lines.extend(["", label(name), dynamic(sections.get(key), "Not recorded.")])
+    lines.extend(
+        [
+            "",
+            f"{label('Status')}: {dynamic(_status_text(event))}",
+            f"{label('Progress')}: {dynamic(_progress_text(event))}",
+            f"{label('Finished')}: {dynamic(_finished_text(event))}",
+            f"{label('Executor')}: {dynamic(iteration.get('executor'), 'Not recorded')}",
+            f"{label('Driver agent')}: {dynamic(format_agent_usage(event, 'driver'))}",
+            f"{label('Panel agents')}: {dynamic(format_agent_usage(event, 'panel'))}",
+            f"{label('Other agents')}: {dynamic(format_agent_usage(event, 'other'))}",
+            f"{label('Compute')}: {dynamic(format_compute(event))}",
+        ]
+    )
     return lines
 
 
@@ -1127,18 +1131,9 @@ def render_telegram_html(
     marker = _ITERATION_MARKERS.get(_text(iteration.get("status")), "•")
 
     def render(section_budget: int) -> str:
-        lines = [
-            f"{marker} <b>{_bounded_html(_title_text(event), 190)}</b>",
-            "",
-            f"<b>Status</b>: {_bounded_html(_status_text(event), 180)}",
-            f"<b>Progress</b>: {_bounded_html(_progress_text(event), 250)}",
-            f"<b>Finished</b>: {_bounded_html(_finished_text(event), 100)}",
-            f"<b>Executor</b>: {_bounded_html(iteration.get('executor'), 100)}",
-            f"<b>Driver agent</b>: {_bounded_html(format_agent_usage(event, 'driver'), 160)}",
-            f"<b>Panel agents</b>: {_bounded_html(format_agent_usage(event, 'panel'), 220)}",
-            f"<b>Other agents</b>: {_bounded_html(format_agent_usage(event, 'other'), 180)}",
-            f"<b>Compute</b>: {_bounded_html(format_compute(event), 250)}",
-        ]
+        # Research sections lead with the flexible budget; agent and status
+        # details trail with fixed small budgets.
+        lines = [f"{marker} <b>{_bounded_html(_title_text(event), 190)}</b>"]
         for key, name in (
             ("goal", "Goal"),
             ("completed", "Completed"),
@@ -1148,6 +1143,19 @@ def render_telegram_html(
             lines.extend(
                 ["", f"<b>{name}</b>", _bounded_html(sections.get(key), section_budget)]
             )
+        lines.extend(
+            [
+                "",
+                f"<b>Status</b>: {_bounded_html(_status_text(event), 140)}",
+                f"<b>Progress</b>: {_bounded_html(_progress_text(event), 160)}",
+                f"<b>Finished</b>: {_bounded_html(_finished_text(event), 100)}",
+                f"<b>Executor</b>: {_bounded_html(iteration.get('executor'), 80)}",
+                f"<b>Driver agent</b>: {_bounded_html(format_agent_usage(event, 'driver'), 120)}",
+                f"<b>Panel agents</b>: {_bounded_html(format_agent_usage(event, 'panel'), 160)}",
+                f"<b>Other agents</b>: {_bounded_html(format_agent_usage(event, 'other'), 120)}",
+                f"<b>Compute</b>: {_bounded_html(format_compute(event), 180)}",
+            ]
+        )
         return "\n".join(lines).strip()
 
     for section_budget in (430, 360, 300, 240, 180, 120, 80, 48):
@@ -1174,20 +1182,22 @@ def render_compact(
         clean = " ".join(_text(value, "Not recorded").split())
         return clean if len(clean) <= limit else clean[: limit - 1].rstrip() + "…"
 
+    # Research sections come first and hold the larger budgets; agent and
+    # status details trail so truncation eats metadata before findings.
     fields = [
         (f"{marker} Title", _title_text(event), 100),
-        ("Status", _status_text(event), 130),
-        ("Progress", _progress_text(event), 150),
-        ("Finished", _finished_text(event), 90),
-        ("Executor", iteration.get("executor"), 60),
-        ("Driver agent", format_agent_usage(event, "driver"), 80),
-        ("Panel agents", format_agent_usage(event, "panel"), 110),
-        ("Other agents", format_agent_usage(event, "other"), 90),
-        ("Compute", format_compute(event), 100),
-        ("Goal", sections.get("goal"), 90),
-        ("Completed", sections.get("completed"), 90),
-        ("Current", sections.get("current"), 90),
-        ("Plan", sections.get("plan"), 90),
+        ("Goal", sections.get("goal"), 120),
+        ("Completed", sections.get("completed"), 260),
+        ("Current", sections.get("current"), 180),
+        ("Plan", sections.get("plan"), 150),
+        ("Status", _status_text(event), 90),
+        ("Progress", _progress_text(event), 90),
+        ("Finished", _finished_text(event), 60),
+        ("Executor", iteration.get("executor"), 40),
+        ("Driver agent", format_agent_usage(event, "driver"), 60),
+        ("Panel agents", format_agent_usage(event, "panel"), 80),
+        ("Other agents", format_agent_usage(event, "other"), 60),
+        ("Compute", format_compute(event), 80),
     ]
     for scale in (1.0, 0.8, 0.6, 0.45, 0.3, 0.2, 0.12):
         value = " | ".join(

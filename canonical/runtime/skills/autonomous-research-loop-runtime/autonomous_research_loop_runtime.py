@@ -5914,6 +5914,48 @@ def resolve_progress_result_text(record: dict[str, Any]) -> str:
     return output[:700]
 
 
+def research_result_text(record: dict[str, Any]) -> str:
+    """Assemble a research-first result summary from a ledger record.
+
+    Notifications must lead with what the iteration found, not which agent ran
+    it. Prefer the worker's plain-language summary, then objective plus
+    outcome, then the goal-contribution fallback; append verification
+    agreement so the finding and its evidence status read together.
+    """
+    base = str(record.get("completed_summary") or "").strip()
+    if not base:
+        objective = str(record.get("objective") or "").strip()
+        outcome = str(record.get("outcome") or "").strip().replace(";", "; ")
+        base = objective or str(record.get("label") or "").strip()
+        if outcome:
+            base = f"{base} — {outcome}" if base else outcome
+    if not base:
+        base = resolve_progress_result_text(record)
+    parts = [base] if base else []
+    agree = record.get("primary_independent_agree")
+    if agree is True:
+        parts.append("Primary and independent verification agree.")
+    elif agree is False:
+        parts.append("Primary and independent verification disagree.")
+    contribution = str(record.get("goal_contribution") or "").strip()
+    campaign = str(record.get("campaign_id") or record.get("campaign") or "").strip()
+    if contribution:
+        suffix = f" (campaign {campaign})" if campaign else ""
+        parts.append(f"Goal contribution: {contribution}{suffix}.")
+    return " ".join(parts)[:900]
+
+
+def research_position_text(record: dict[str, Any], fallback: str = "") -> str:
+    """Describe where the goal stands after a record: remaining evidence gaps."""
+    gaps = record.get("evidence_gaps")
+    if not (isinstance(gaps, list) and gaps):
+        return fallback
+    shown = ", ".join(str(gap) for gap in gaps[:4])
+    extra = f" (+{len(gaps) - 4} more)" if len(gaps) > 4 else ""
+    gap_text = f"Remaining evidence gaps: {shown}{extra}."
+    return f"{fallback} {gap_text}".strip() if fallback else gap_text
+
+
 def parse_recovery_table_field(recovery_md: str, field_name: str) -> str:
     """Extract a ``| Field | value |`` cell from recovery.md (best-effort)."""
     target = field_name.strip().lower()
@@ -8946,13 +8988,15 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                 reviewer_families=review_families,
                                 panel_agents=review_agents,
                                 completed_summary=str(
-                                    final_record.get("completed_summary")
-                                    or resolve_progress_result_text(final_record)
+                                    research_result_text(final_record)
                                     or "The reviewed result was banked."
                                 ),
-                                current_summary=str(
-                                    final_record.get("current_summary")
-                                    or "The accepted result is now part of the authoritative ledger."
+                                current_summary=research_position_text(
+                                    final_record,
+                                    str(
+                                        final_record.get("current_summary")
+                                        or "The accepted result is now part of the authoritative ledger."
+                                    ),
                                 ),
                                 next_action=str(
                                     final_record.get("proposed_next_action")
@@ -8993,7 +9037,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         candidate_id=str(pending.get("candidate_id") or ""),
                         iteration_status="waiting",
                         review_status="pending",
-                        completed_summary="No new result has been banked; the exact candidate remains staged.",
+                        completed_summary=(
+                            "Staged, not yet banked (awaiting independent review): "
+                            + (
+                                research_result_text(pending_record)
+                                or "the exact staged candidate."
+                            )
+                        ),
                         current_summary=str(
                             review_outcome.get("reason")
                             or "Independent result review is not yet sufficient."
@@ -10115,13 +10165,15 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                 finished_at=review_finished_at,
                                 duration_seconds=total_duration,
                                 completed_summary=str(
-                                    final_record.get("completed_summary")
-                                    or resolve_progress_result_text(final_record)
+                                    research_result_text(final_record)
                                     or "The reviewed result was banked."
                                 ),
-                                current_summary=str(
-                                    final_record.get("current_summary")
-                                    or "The accepted result is now part of the authoritative ledger."
+                                current_summary=research_position_text(
+                                    final_record,
+                                    str(
+                                        final_record.get("current_summary")
+                                        or "The accepted result is now part of the authoritative ledger."
+                                    ),
                                 ),
                                 next_action=str(
                                     final_record.get("proposed_next_action")
@@ -10210,7 +10262,13 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         provider=provider or "custom",
                         started_at=iteration_started_at,
                         duration_seconds=total_duration,
-                        completed_summary="No result has been banked; the exact candidate remains staged.",
+                        completed_summary=(
+                            "Staged, not yet banked (awaiting independent review): "
+                            + (
+                                research_result_text(pending_record)
+                                or "the exact staged candidate."
+                            )
+                        ),
                         current_summary=str(
                             review_outcome.get("reason")
                             or "Independent result review is not yet sufficient."
