@@ -56,6 +56,8 @@ def _json_bytes(value: Any) -> bytes:
 def _fsync_dir(path: Path) -> None:
     """Best-effort directory fsync (not supported by every platform)."""
 
+    if os.name == "nt":  # pragma: no cover - Windows cannot open a directory
+        return
     try:
         fd = _open_directory_nofollow(path)
     except (OSError, AttributeError):
@@ -68,24 +70,50 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
-def _open_directory_nofollow(path: Path, *, create: bool = False) -> int:
-    """Open a real directory chain, optionally creating missing components."""
+def _ensure_directory_chain_by_lstat(absolute: Path, *, create: bool = False) -> None:
+    """Validate a directory chain component by component, without descriptors."""
+
+    for component in [*reversed(absolute.parents), absolute]:
+        try:
+            info = os.lstat(component)
+        except FileNotFoundError:
+            if not create:
+                raise
+            os.mkdir(component, 0o700)
+            info = os.lstat(component)
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise TransactionError(
+                f"transaction directory is not a real directory: {component}"
+            )
+
+
+def _ensure_directory_chain(path: Path, *, create: bool = False) -> None:
+    """Require a real, symlink-free directory chain, optionally creating it.
+
+    POSIX walks the chain with descriptors so a component cannot be swapped for
+    a symlink between the check and the use. Windows has no ``os`` call that
+    opens a directory, so it validates each component with ``lstat`` instead.
+    """
 
     absolute = Path(os.path.abspath(path))
-    if os.name == "nt":  # pragma: no cover - Windows CI exercises fallback paths
-        for component in [*reversed(absolute.parents), absolute]:
-            try:
-                info = os.lstat(component)
-            except FileNotFoundError:
-                if not create:
-                    raise
-                os.mkdir(component, 0o700)
-                info = os.lstat(component)
-            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-                raise TransactionError(
-                    f"transaction directory is not a real directory: {component}"
-                )
-        return os.open(absolute, os.O_RDONLY)
+    if os.name == "nt":  # pragma: no cover - Windows CI exercises this branch
+        _ensure_directory_chain_by_lstat(absolute, create=create)
+        return
+    os.close(_open_directory_nofollow(absolute, create=create))
+
+
+def _open_directory_nofollow(path: Path, *, create: bool = False) -> int:
+    """Open a real directory chain, optionally creating missing components.
+
+    POSIX only: Windows rejects ``os.open`` on a directory, so callers that just
+    need the chain validated use :func:`_ensure_directory_chain`.
+    """
+
+    if os.name == "nt":  # pragma: no cover - guards against a POSIX-only path
+        raise TransactionError(
+            "directory descriptors are not available on this platform"
+        )
+    absolute = Path(os.path.abspath(path))
 
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(absolute.anchor or os.sep, flags)
@@ -207,8 +235,7 @@ def _validate_private_transaction_directory(path: Path, *, label: str) -> None:
 
 def _atomic_write_bytes(path: Path, payload: bytes) -> None:
     if os.name == "nt":  # pragma: no cover - Windows CI exercises fallback paths
-        directory_fd = _open_directory_nofollow(path.parent, create=True)
-        os.close(directory_fd)
+        _ensure_directory_chain(path.parent, create=True)
         fd, tmp_name = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
         )
@@ -261,8 +288,7 @@ def _unlink_nofollow(path: Path) -> None:
     """Unlink a leaf relative to a no-follow parent descriptor."""
 
     if os.name == "nt":  # pragma: no cover - Windows CI exercises fallback paths
-        _open_fd = _open_directory_nofollow(path.parent)
-        os.close(_open_fd)
+        _ensure_directory_chain(path.parent)
         path.unlink()
         _fsync_dir(path.parent)
         return
@@ -327,34 +353,35 @@ class LoopLock:
         self._handle: Any = None
 
     def __enter__(self) -> "LoopLock":
-        directory_fd = _open_directory_nofollow(self.run_dir, create=True)
         path = self.run_dir / LOCK_FILENAME
-        try:
-            if os.name == "nt":  # pragma: no cover
-                try:
-                    before = os.lstat(path)
-                except FileNotFoundError:
-                    before = None
-                if before is not None and stat.S_ISLNK(before.st_mode):
-                    raise TransactionError(f"loop lock is a symlink: {path}")
-                lock_fd = os.open(
-                    path,
-                    os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
-                    0o600,
-                )
-                after = os.fstat(lock_fd)
-                if before is not None and (
-                    int(getattr(before, "st_dev", 0)),
-                    int(getattr(before, "st_ino", 0)),
-                ) != (
-                    int(getattr(after, "st_dev", 0)),
-                    int(getattr(after, "st_ino", 0)),
-                ):
-                    os.close(lock_fd)
-                    raise TransactionError(f"loop lock changed while opening: {path}")
-                _validate_lock_file(lock_fd, path)
-                self._handle = os.fdopen(lock_fd, "a+b")
-            else:
+        if os.name == "nt":  # pragma: no cover
+            _ensure_directory_chain(self.run_dir, create=True)
+            try:
+                before = os.lstat(path)
+            except FileNotFoundError:
+                before = None
+            if before is not None and stat.S_ISLNK(before.st_mode):
+                raise TransactionError(f"loop lock is a symlink: {path}")
+            lock_fd = os.open(
+                path,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                0o600,
+            )
+            after = os.fstat(lock_fd)
+            if before is not None and (
+                int(getattr(before, "st_dev", 0)),
+                int(getattr(before, "st_ino", 0)),
+            ) != (
+                int(getattr(after, "st_dev", 0)),
+                int(getattr(after, "st_ino", 0)),
+            ):
+                os.close(lock_fd)
+                raise TransactionError(f"loop lock changed while opening: {path}")
+            _validate_lock_file(lock_fd, path)
+            self._handle = os.fdopen(lock_fd, "a+b")
+        else:
+            directory_fd = _open_directory_nofollow(self.run_dir, create=True)
+            try:
                 lock_fd = os.open(
                     LOCK_FILENAME,
                     os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
@@ -367,8 +394,8 @@ class LoopLock:
                     os.close(lock_fd)
                     raise
                 self._handle = os.fdopen(lock_fd, "a+b")
-        finally:
-            os.close(directory_fd)
+            finally:
+                os.close(directory_fd)
         self._handle.seek(0, os.SEEK_END)
         if self._handle.tell() == 0:
             self._handle.write(b"0")
@@ -819,8 +846,7 @@ def commit_transaction(
         if _lstat_nofollow(tx_dir) is not None:
             raise TransactionError(f"transaction id already exists: {transaction_id}")
         post_dir = tx_dir / "postimages"
-        post_fd = _open_directory_nofollow(post_dir, create=True)
-        os.close(post_fd)
+        _ensure_directory_chain(post_dir, create=True)
         _validate_private_transaction_directory(tx_root, label="transaction journal root")
         _validate_private_transaction_directory(tx_dir, label="transaction journal entry")
         _validate_private_transaction_directory(

@@ -6,6 +6,7 @@ import hashlib
 import json
 import multiprocessing
 import os
+import stat
 import sys
 import tempfile
 import threading
@@ -571,6 +572,42 @@ class TransactionStateMachineTests(unittest.TestCase):
             with self.assertRaises((st.TransactionError, OSError)):
                 st.commit_transaction(root, deletes=["nested/victim.bin"])
             self.assertEqual(victim.read_text(encoding="utf-8"), "keep")
+
+
+class DescriptorFreeDirectoryChainTests(unittest.TestCase):
+    """Windows validates directory chains instead of opening descriptors.
+
+    ``os.open`` refuses a directory on Windows, so the chain walk used there is
+    descriptor-free and is exercised directly here. Pinning ``os.name`` is not an
+    option: ``pathlib`` dispatches on it and cannot build a ``WindowsPath`` on a
+    POSIX host.
+    """
+
+    def test_chain_creates_components_and_rejects_a_symlinked_component(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            st._ensure_directory_chain_by_lstat(root / "journal" / "post", create=True)
+            self.assertTrue((root / "journal" / "post").is_dir())
+            self.assertEqual(
+                stat.S_IMODE((root / "journal" / "post").stat().st_mode), 0o700
+            )
+
+            link = root / "link"
+            link.symlink_to(root / "journal")
+            with self.assertRaises(st.TransactionError):
+                st._ensure_directory_chain_by_lstat(link / "post")
+
+    def test_missing_component_without_create_still_raises_file_not_found(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                st._ensure_directory_chain_by_lstat(Path(tmp) / "absent")
+
+    def test_a_file_in_the_chain_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            regular = Path(tmp) / "regular"
+            regular.write_text("payload", encoding="utf-8")
+            with self.assertRaises(st.TransactionError):
+                st._ensure_directory_chain_by_lstat(regular / "post", create=True)
 
 
 if __name__ == "__main__":
