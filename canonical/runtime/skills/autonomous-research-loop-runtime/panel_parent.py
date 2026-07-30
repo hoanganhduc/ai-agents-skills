@@ -783,7 +783,11 @@ def _read_executable_attestation(
 ) -> tuple[str, os.stat_result]:
     """Hash one executable through a descriptor-relative no-follow open."""
 
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    # O_BINARY: Windows opens descriptors in text mode, which rewrites CRLF and
+    # truncates at Ctrl-Z, so the digest would never match the file on disk.
+    flags = (
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    )
     try:
         fd = os.open(path if parent_fd is None else path.name, flags, dir_fd=parent_fd)
     except OSError as exc:
