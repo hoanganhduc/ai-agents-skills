@@ -12,6 +12,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -42,6 +43,30 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+class _VanishingLockDirectory:
+    """Remove the run directory just before the lock file is opened.
+
+    ``O_CREAT`` recreates a removed lock file, so only a missing parent
+    directory can make the kernel raise ``ENOENT`` for the lock open. Dropping
+    the directory under the already-open directory descriptor therefore
+    reproduces the concurrent-cleanup race with a real kernel error instead of
+    a synthetic exception.
+    """
+
+    def __init__(self, run_dir: Path, *, every_attempt: bool = False) -> None:
+        self.run_dir = run_dir
+        self.every_attempt = every_attempt
+        self.attempts = 0
+        self._real_open = os.open
+
+    def __call__(self, path: object, *args: object, **kwargs: object) -> int:
+        if str(path).endswith(st.LOCK_FILENAME):
+            self.attempts += 1
+            if self.every_attempt or self.attempts == 1:
+                os.rmdir(self.run_dir)
+        return self._real_open(path, *args, **kwargs)  # type: ignore[arg-type]
 
 
 def _revision_writer_process(
@@ -299,9 +324,12 @@ class TransactionStateMachineTests(unittest.TestCase):
             _write_json(root / "current_plan.json", {"plan_revision": 1, "winner": "none"})
             outcomes: list[str] = []
             outcome_lock = threading.Lock()
+            names = ("A", "B")
+            barrier = threading.Barrier(len(names), timeout=30)
 
             def writer(name: str) -> None:
                 try:
+                    barrier.wait()
                     st.commit_transaction(
                         root,
                         json_files={"current_plan.json": {"plan_revision": 2, "winner": name}},
@@ -310,10 +338,12 @@ class TransactionStateMachineTests(unittest.TestCase):
                     outcome = "committed"
                 except st.RevisionConflict:
                     outcome = "conflict"
+                except BaseException as exc:  # pragma: no cover - reported, not swallowed
+                    outcome = f"error:{type(exc).__name__}:{exc}"
                 with outcome_lock:
                     outcomes.append(outcome)
 
-            threads = [threading.Thread(target=writer, args=(name,)) for name in ("A", "B")]
+            threads = [threading.Thread(target=writer, args=(name,)) for name in names]
             for thread in threads:
                 thread.start()
             for thread in threads:
@@ -572,6 +602,55 @@ class TransactionStateMachineTests(unittest.TestCase):
             with self.assertRaises((st.TransactionError, OSError)):
                 st.commit_transaction(root, deletes=["nested/victim.bin"])
             self.assertEqual(victim.read_text(encoding="utf-8"), "keep")
+
+
+class LoopLockVanishedPathTests(unittest.TestCase):
+    """A writer must not leak ``FileNotFoundError`` from lock acquisition.
+
+    Concurrent writers observed this on macOS CI: the loser of a race saw
+    ``ENOENT`` for ``.goal_focus.lock`` instead of the revision conflict the
+    state machine promises. The race is reproduced here deterministically by
+    dropping the run directory between the directory walk and the lock open.
+    """
+
+    def test_lock_acquisition_retries_when_the_run_directory_vanishes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            vanish = _VanishingLockDirectory(root)
+            with mock.patch.object(st.os, "open", vanish):
+                with st.LoopLock(root, timeout_seconds=5):
+                    pass
+            self.assertEqual(vanish.attempts, 2)
+            self.assertTrue((root / st.LOCK_FILENAME).is_file())
+
+    def test_lock_acquisition_times_out_when_the_directory_keeps_vanishing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            vanish = _VanishingLockDirectory(root, every_attempt=True)
+            with mock.patch.object(st.os, "open", vanish):
+                with self.assertRaises(st.LockTimeout) as caught:
+                    with st.LoopLock(root, timeout_seconds=0.05):
+                        pass
+            self.assertIsInstance(caught.exception.__cause__, FileNotFoundError)
+            self.assertGreaterEqual(vanish.attempts, 1)
+
+    def test_lock_acquisition_does_not_retry_other_open_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            attempts: list[str] = []
+            real_open = os.open
+
+            def refuse(path: object, *args: object, **kwargs: object) -> int:
+                if str(path).endswith(st.LOCK_FILENAME):
+                    attempts.append(str(path))
+                    raise PermissionError("loop lock open refused")
+                return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+            with mock.patch.object(st.os, "open", refuse):
+                with self.assertRaises(PermissionError):
+                    with st.LoopLock(root, timeout_seconds=5):
+                        pass
+            self.assertEqual(len(attempts), 1)
 
 
 class DescriptorFreeDirectoryChainTests(unittest.TestCase):
