@@ -2791,7 +2791,9 @@ def selftest_driver_checks() -> dict[str, Any]:
     drive_checks = "ran"
     drive_skip_reason = ""
     with tempfile.TemporaryDirectory(prefix="autoloop-driver-smoke-") as tmp:
-        base = Path(tmp)
+        # Resolve OS-level symlinks (macOS tempdirs live under /var); the
+        # symlink-strict init walk below validates the canonical path.
+        base = Path(tmp).resolve()
         # 1. Provider command construction: every provider builds an argv with
         # the prompt substituted; a stubbed binary override must be honored and
         # reported as not found without consulting PATH defaults.
@@ -3012,7 +3014,10 @@ def selftest_drive_loop_checks(base: Path) -> list[str]:
 
 def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="autonomous-loop-smoke-") as tmp:
-        run_dir = Path(tmp) / "loop"
+        # Resolve OS-level symlinks (macOS tempdirs live under /var) so the
+        # symlink-strict init walk sees the canonical path; the init check
+        # itself stays unchanged for user-supplied paths.
+        run_dir = Path(tmp).resolve() / "loop"
         init_args = argparse.Namespace(
             dir=str(run_dir),
             goal="offline smoke test",
