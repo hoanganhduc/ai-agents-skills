@@ -3376,7 +3376,7 @@ def load_panel_config(run_dir: Path) -> dict[str, Any]:
         if isinstance(panel, dict):
             cfg.update({k: v for k, v in panel.items() if v is not None})
         elif so and so.get("multi_agent_panel"):
-            # clawfree legacy key
+            # legacy standing-orders key
             cfg["enabled"] = True
     env_flag = os.environ.get("AAS_AUTOLOOP_PANEL", "").strip().lower()
     if env_flag in ("1", "on", "true", "yes"):

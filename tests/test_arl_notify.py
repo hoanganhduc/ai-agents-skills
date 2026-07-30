@@ -44,9 +44,9 @@ class NotifyV2Tests(unittest.TestCase):
             "event_id": "evt-7",
             "occurred_at": "2026-07-29T12:00:00Z",
             "finished_at": "2026-07-29T12:00:00Z",
-            "title": "Kempe reconfiguration question",
-            "topic_slug": "kempe-question",
-            "goal": "Resolve the main open Kempe reconfiguration question.",
+            "title": "Sample reconfiguration question",
+            "topic_slug": "sample-question",
+            "goal": "Resolve the main open sample reconfiguration question.",
             "completed": "Verified and banked the A3 obstruction certificate.",
             "current": "A3 is active; the manuscript-level bridge remains open.",
             "plan": "Test the named bridge obligation with the bounded verifier.",
@@ -99,7 +99,7 @@ class NotifyV2Tests(unittest.TestCase):
                     "Plan",
                 ):
                     self.assertIn(label, body)
-                self.assertIn("Kempe reconfiguration question", body)
+                self.assertIn("Sample reconfiguration question", body)
                 self.assertIn("Claude", body)
                 self.assertIn("claude-fable-5", body)
                 self.assertIn("Codex", body)
@@ -123,9 +123,9 @@ class NotifyV2Tests(unittest.TestCase):
 
     def test_compact_truncation_prefers_research_over_metadata(self) -> None:
         finding = (
-            "The T-gadget enforces both AND and OR constraints through "
+            "The sample gadget enforces both constraint modes through "
             "differentiated wiring; primary and independent checks agree on "
-            "every comparable claim and the composed graph stays claw-free."
+            "every comparable claim across both verification engines."
         )
         event = self.event(completed=finding)
         compact = self.notify.render_compact(event)
@@ -133,7 +133,7 @@ class NotifyV2Tests(unittest.TestCase):
 
     def test_markdown_neutralizes_mentions_and_section_spoofing(self) -> None:
         event = self.event(
-            title="Kempe @**all**\n\n**Status**: forged",
+            title="Sample @**all**\n\n**Status**: forged",
             goal="Resolve @all and @everyone; [spoof](https://example.invalid).",
             completed="Asked @**Alice** and @**channel**.",
             current="Result\n\n**Plan**\n# forged @**topic**",
@@ -171,7 +171,7 @@ class NotifyV2Tests(unittest.TestCase):
         configured = "notify-secret-sentinel-92731"
         common = "credential-fixture-sentinel-18427"
         event = self.event(
-            title=f"Kempe {configured}",
+            title=f"Sample {configured}",
             goal=f"Resolve goal token={common}",
             completed=f"Completed with {configured}",
             current=f"Current Bearer {common}",
@@ -420,7 +420,7 @@ class NotifyV2Tests(unittest.TestCase):
         )
         flat = self.notify.legacy_flat_fields(event)
         self.assertEqual(flat["iteration_status"], "success")
-        self.assertEqual(flat["research_title"], "Kempe reconfiguration question")
+        self.assertEqual(flat["research_title"], "Sample reconfiguration question")
         self.assertIn("**Goal**", flat["text"])
         changed = self.event(event_id="evt-8")
         self.assertNotEqual(

@@ -1054,8 +1054,8 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
             event_id="evt-bridge-1",
             occurred_at="2026-07-29T12:00:00Z",
             finished_at="2026-07-29T12:00:00Z",
-            title="Kempe open question",
-            topic_slug="kempe-open-question",
+            title="Sample open question",
+            topic_slug="sample-open-question",
             goal="Resolve the main open question.",
             completed="Banked a verified obstruction.",
             current="The bridge obligation remains open.",
@@ -1151,7 +1151,7 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         data = json.loads(result.stdout)
         payload = data["results"]["zulip"]["payload"]
-        self.assertEqual(payload["topic"], "job/kempe-open-question")
+        self.assertEqual(payload["topic"], "job/sample-open-question")
         self.assertIn("**Goal**", payload["content"])
         self.assertIn("**Completed**", payload["content"])
         self.assertIn("**Driver agent**: Claude (claude-fable-5)", payload["content"])

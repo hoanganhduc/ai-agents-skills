@@ -233,11 +233,11 @@ probes and a fresh security reviewer confirms that the primary cannot read,
 mutate, exfiltrate, exhaust, or impersonate the host control plane. This future
 criterion is not a prerequisite for an explicitly accepted trusted-local run.
 
-#### Rollout target profile — clawfree loop
+#### Rollout target profile — pilot loop
 
-- Loop: project-relative `research/clawfree-loop`.
-- Notify title: `Clawfree reconfiguration`.
-- Stable topic/job slug: `clawfree-reconfiguration`.
+- Loop: the pilot project's `research/` loop directory.
+- Notify title: the loop's stable research title.
+- Stable topic/job slug: derived from the research title.
 - Driver: Claude, model `claude-fable-5`, highest available thinking level.
 - Provider execution: explicit `trusted-local`; no hostile-process containment
   claim is made.
