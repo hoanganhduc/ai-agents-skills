@@ -360,7 +360,7 @@
       "runtime_dir": "autonomous-research-loop-runtime",
       "smoke_coverage": {
         "status": "offline-smoke",
-        "reason": "Smoke validates local loop ledger initialization, append, validation, and status without network, package installs, provider CLIs, config writes, or subagent spawning."
+        "reason": "Smoke validates local loop ledger initialization, append, validation, and status without network, package installs, provider CLIs, config writes, or subagent spawning. The headless driver checks additionally require a host that can contain a primary process, and report themselves as skipped where it cannot."
       },
       "files": [
         {
