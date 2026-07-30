@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/tests.yml"
+      - ".github/scripts/**"
       - ".github/workflows/docs.yml"
       - "Makefile"
       - "make.bat"
@@ -20,6 +21,7 @@ on:
   push:
     paths:
       - ".github/workflows/tests.yml"
+      - ".github/scripts/**"
       - ".github/workflows/docs.yml"
       - "Makefile"
       - "make.bat"
@@ -56,10 +58,8 @@ jobs:
       - name: Run static checks
         run: make static-check
 
-      - name: Install bubblewrap for containment tests
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap
+      - name: Install and report containment support
+        run: .github/scripts/containment-support.sh
 
       - name: Run unit tests
         run: make test
@@ -178,10 +178,8 @@ jobs:
       - name: Run static checks
         run: make static-check
 
-      - name: Install bubblewrap for containment tests
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap
+      - name: Install and report containment support
+        run: .github/scripts/containment-support.sh
 
       - name: Run unit tests
         run: make test
