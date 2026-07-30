@@ -6962,3 +6962,73 @@ class ResearchNotifyTextTests(unittest.TestCase):
         arl = self._runtime()
         record = {"evidence_gaps": ["only-gap"]}
         self.assertIn("only-gap", arl.research_position_text(record))
+
+
+class SelftestContainmentGateTests(unittest.TestCase):
+    """A host that cannot contain a primary is not a driver defect."""
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    def test_refused_containment_is_reported_as_unavailable(self) -> None:
+        arl = self._runtime()
+        with mock.patch.object(
+            arl,
+            "run_primary_subprocess",
+            side_effect=OSError("primary descendant containment requires Linux"),
+        ):
+            available, reason = arl.host_primary_containment_status()
+        self.assertFalse(available)
+        self.assertEqual(reason, "primary descendant containment requires Linux")
+
+    def test_failed_probe_reports_the_captured_boundary_error(self) -> None:
+        arl = self._runtime()
+
+        def _fail(*_args: Any, **kwargs: Any) -> tuple[int, bool, None]:
+            kwargs["output"].write("bwrap: setting up uid map: Permission denied\n")
+            return 1, False, None
+
+        with mock.patch.object(arl, "run_primary_subprocess", _fail):
+            available, reason = arl.host_primary_containment_status()
+        self.assertFalse(available)
+        self.assertIn("containment probe exited 1", reason)
+        self.assertIn("setting up uid map", reason)
+
+    def test_timed_out_probe_is_not_reported_as_available(self) -> None:
+        arl = self._runtime()
+        with mock.patch.object(
+            arl, "run_primary_subprocess", return_value=(0, True, None)
+        ):
+            available, _reason = arl.host_primary_containment_status()
+        self.assertFalse(available)
+
+    def test_uncontainable_host_skips_drive_checks_without_failing(self) -> None:
+        arl = self._runtime()
+        with mock.patch.object(
+            arl, "host_primary_containment_status", return_value=(False, "no boundary")
+        ), mock.patch.object(arl, "selftest_drive_loop_checks") as drive:
+            result = arl.selftest_driver_checks()
+        drive.assert_not_called()
+        self.assertTrue(result["ok"], result["errors"])
+        self.assertEqual(result["drive_checks"], "skipped")
+        self.assertEqual(result["drive_skip_reason"], "no boundary")
+
+    def test_contained_host_runs_drive_checks_and_keeps_their_errors(self) -> None:
+        arl = self._runtime()
+        with mock.patch.object(
+            arl, "host_primary_containment_status", return_value=(True, "available")
+        ), mock.patch.object(
+            arl, "selftest_drive_loop_checks", return_value=["drive contract broke"]
+        ) as drive:
+            result = arl.selftest_driver_checks()
+        drive.assert_called_once()
+        self.assertFalse(result["ok"])
+        self.assertIn("drive contract broke", result["errors"])
+        self.assertEqual(result["drive_checks"], "ran")
+        self.assertEqual(result["drive_skip_reason"], "")

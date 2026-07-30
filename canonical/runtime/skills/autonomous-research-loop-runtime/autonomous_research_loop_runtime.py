@@ -2747,11 +2747,49 @@ def run_primary_subprocess(
     return return_code, timed_out, None
 
 
+def host_primary_containment_status() -> tuple[bool, str]:
+    """Report whether this host can launch a contained primary, and why not.
+
+    Containment is a precondition of every iteration, not a feature of one:
+    Linux needs a working bubblewrap PID namespace, Windows needs a Job Object,
+    and the remaining POSIX platforms are refused outright.  A host that cannot
+    contain a primary cannot run the driver at all, which is a host property
+    rather than a driver defect, so the offline selftest separates the two.
+    """
+
+    with tempfile.TemporaryDirectory(prefix="autoloop-contain-probe-") as tmp:
+        probe_dir = Path(tmp).resolve()
+        log_path = probe_dir / "probe.log"
+        try:
+            with log_path.open("w", encoding="utf-8", newline="\n") as handle:
+                return_code, timed_out, _cleanup_error = run_primary_subprocess(
+                    [sys.executable, "-c", "pass"],
+                    use_shell=False,
+                    child_env=dict(os.environ),
+                    cwd=probe_dir,
+                    timeout_s=60,
+                    output=handle,
+                    provider=None,
+                )
+        except OSError as exc:
+            return False, str(exc)
+        if timed_out:
+            return False, "containment probe timed out"
+        if return_code != 0:
+            detail = " ".join(
+                log_path.read_text(encoding="utf-8", errors="replace").split()
+            )
+            return False, f"containment probe exited {return_code}: {detail[:200]}"
+    return True, "host containment is available"
+
+
 def selftest_driver_checks() -> dict[str, Any]:
     """Offline checks for the provider adapters and the headless driver. Uses
     only stub commands (this Python interpreter); no provider CLI is invoked."""
     errors: list[str] = []
     providers_checked = 0
+    drive_checks = "ran"
+    drive_skip_reason = ""
     with tempfile.TemporaryDirectory(prefix="autoloop-driver-smoke-") as tmp:
         base = Path(tmp)
         # 1. Provider command construction: every provider builds an argv with
@@ -2877,75 +2915,99 @@ def selftest_driver_checks() -> dict[str, Any]:
             ident2 = resolve_loop_notify_identity(loop_notify)
             if ident2.get("title") != "Explicit Title Only":
                 errors.append(f"explicit research_title not preferred: {ident2}")
-        # 3. Drive to completion on a stub command (budget cap = 2 iterations).
-        loop_a = base / "loop-a"
-        init_loop(selftest_init_args(loop_a, max_iterations=2))
-        stub = base / "stub_iteration.py"
-        stub.write_text(STUB_ITERATION_SNIPPET, encoding="utf-8", newline="\n")
-        stub_cmd = f'"{sys.executable}" "{stub}"'
-        result = drive_command(selftest_drive_args(loop_a, base / "reg", stub_cmd))
-        budget_a = read_json(loop_a / "budget.json")
-        if (
-            result.get("reason") != "done"
-            or result.get("exit_code") != 0
-            or int(budget_a.get("spent_iterations", 0)) != 2
-            or result.get("iterations_run") != 2
-        ):
-            errors.append(f"drive stub run did not complete cleanly: {result}")
-        elif not list((loop_a / "driver_logs").glob("iter_*.log")):
-            errors.append("drive stub run left no iteration logs")
-        # 4. Quota pause-and-resume: first stub call fails with a 429 signal and
-        # must be waited out (not counted as a failure with max_failures=1),
-        # the second call succeeds and the budget cap ends the loop.
-        loop_b = base / "loop-b"
-        init_loop(selftest_init_args(loop_b, max_iterations=1))
-        quota_cmd = f'"{sys.executable}" "{stub}" --quota-first'
-        # Short backoff so selftest stays fast.
-        result_b = drive_command(
-            selftest_drive_args(loop_b, base / "reg", quota_cmd)
-        )
-        if (
-            result_b.get("reason") != "done"
-            or result_b.get("quota_waits_total") != 1
-            or int(read_json(loop_b / "budget.json").get("spent_iterations", 0)) != 1
-        ):
-            errors.append(f"drive quota pause-and-resume misbehaved: {result_b}")
-        # 5. Auth fail → exit 7, no quota waits.
-        loop_c = base / "loop-c"
-        init_loop(selftest_init_args(loop_c, max_iterations=3))
-        auth_cmd = f'"{sys.executable}" "{stub}" --auth-fail'
-        args_c = selftest_drive_args(loop_c, base / "reg", auth_cmd)
-        args_c.max_failures = 5
-        result_c = drive_command(args_c)
-        if (
-            result_c.get("reason") != "auth_or_session_dead"
-            or int(result_c.get("exit_code") or 0) != 7
-            or int(result_c.get("quota_waits_total") or 0) != 0
-        ):
-            errors.append(f"drive auth fail did not exit 7: {result_c}")
-        # 6. Weekly limit ×3 with max_quota_waits=3 → exit 5 (switch signal).
-        loop_d = base / "loop-d"
-        init_loop(selftest_init_args(loop_d, max_iterations=10))
-        weekly_cmd = f'"{sys.executable}" "{stub}" --weekly-limit'
-        args_d = selftest_drive_args(loop_d, base / "reg", weekly_cmd)
-        args_d.max_quota_waits = 3
-        args_d.quota_backoff = 0
-        args_d.max_failures = 3
-        result_d = drive_command(args_d)
-        if (
-            result_d.get("reason") != "quota_wait_exhausted"
-            or int(result_d.get("exit_code") or 0) != 5
-            or int(result_d.get("quota_waits_total") or 0) != 3
-        ):
-            errors.append(
-                f"drive weekly-limit×3 did not exit 5 after 3 waits: {result_d}"
+        contained, containment_reason = host_primary_containment_status()
+        if contained:
+            errors.extend(selftest_drive_loop_checks(base))
+        else:
+            drive_checks = "skipped"
+            drive_skip_reason = containment_reason
+            print(
+                "autoloop-selftest: driver drive checks skipped because this "
+                f"host cannot contain a primary: {containment_reason}",
+                file=sys.stderr,
             )
     return {
         "ok": not errors,
         "errors": errors,
         "providers_checked": providers_checked,
         "provider_cli_attempted": False,
+        "drive_checks": drive_checks,
+        "drive_skip_reason": drive_skip_reason,
     }
+
+
+def selftest_drive_loop_checks(base: Path) -> list[str]:
+    """Drive the headless loop on stub commands and report contract breaks.
+
+    Every iteration runs inside the platform containment boundary, so these
+    checks require a host that can contain a primary.
+    """
+
+    errors: list[str] = []
+    # 3. Drive to completion on a stub command (budget cap = 2 iterations).
+    loop_a = base / "loop-a"
+    init_loop(selftest_init_args(loop_a, max_iterations=2))
+    stub = base / "stub_iteration.py"
+    stub.write_text(STUB_ITERATION_SNIPPET, encoding="utf-8", newline="\n")
+    stub_cmd = f'"{sys.executable}" "{stub}"'
+    result = drive_command(selftest_drive_args(loop_a, base / "reg", stub_cmd))
+    budget_a = read_json(loop_a / "budget.json")
+    if (
+        result.get("reason") != "done"
+        or result.get("exit_code") != 0
+        or int(budget_a.get("spent_iterations", 0)) != 2
+        or result.get("iterations_run") != 2
+    ):
+        errors.append(f"drive stub run did not complete cleanly: {result}")
+    elif not list((loop_a / "driver_logs").glob("iter_*.log")):
+        errors.append("drive stub run left no iteration logs")
+    # 4. Quota pause-and-resume: first stub call fails with a 429 signal and
+    # must be waited out (not counted as a failure with max_failures=1),
+    # the second call succeeds and the budget cap ends the loop.
+    loop_b = base / "loop-b"
+    init_loop(selftest_init_args(loop_b, max_iterations=1))
+    quota_cmd = f'"{sys.executable}" "{stub}" --quota-first'
+    # Short backoff so selftest stays fast.
+    result_b = drive_command(
+        selftest_drive_args(loop_b, base / "reg", quota_cmd)
+    )
+    if (
+        result_b.get("reason") != "done"
+        or result_b.get("quota_waits_total") != 1
+        or int(read_json(loop_b / "budget.json").get("spent_iterations", 0)) != 1
+    ):
+        errors.append(f"drive quota pause-and-resume misbehaved: {result_b}")
+    # 5. Auth fail → exit 7, no quota waits.
+    loop_c = base / "loop-c"
+    init_loop(selftest_init_args(loop_c, max_iterations=3))
+    auth_cmd = f'"{sys.executable}" "{stub}" --auth-fail'
+    args_c = selftest_drive_args(loop_c, base / "reg", auth_cmd)
+    args_c.max_failures = 5
+    result_c = drive_command(args_c)
+    if (
+        result_c.get("reason") != "auth_or_session_dead"
+        or int(result_c.get("exit_code") or 0) != 7
+        or int(result_c.get("quota_waits_total") or 0) != 0
+    ):
+        errors.append(f"drive auth fail did not exit 7: {result_c}")
+    # 6. Weekly limit ×3 with max_quota_waits=3 → exit 5 (switch signal).
+    loop_d = base / "loop-d"
+    init_loop(selftest_init_args(loop_d, max_iterations=10))
+    weekly_cmd = f'"{sys.executable}" "{stub}" --weekly-limit'
+    args_d = selftest_drive_args(loop_d, base / "reg", weekly_cmd)
+    args_d.max_quota_waits = 3
+    args_d.quota_backoff = 0
+    args_d.max_failures = 3
+    result_d = drive_command(args_d)
+    if (
+        result_d.get("reason") != "quota_wait_exhausted"
+        or int(result_d.get("exit_code") or 0) != 5
+        or int(result_d.get("quota_waits_total") or 0) != 3
+    ):
+        errors.append(
+            f"drive weekly-limit×3 did not exit 5 after 3 waits: {result_d}"
+        )
+    return errors
 
 
 def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
