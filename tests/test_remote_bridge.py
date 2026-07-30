@@ -6,6 +6,7 @@ import copy
 import io
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1793,6 +1794,79 @@ raise SystemExit(bridge.cmd_send(args))
                 self.assertEqual(process.returncode, 0, stdout + stderr)
             calls = counter_path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(calls, ["send"])
+
+
+class RemoteBridgeNotifyDirectoryChain(unittest.TestCase):
+    """Windows validates notification directories instead of pinning them.
+
+    ``os.open`` refuses a directory on Windows, so that platform walks every
+    component with ``lstat``. The walk is exercised directly here: ``os.name``
+    cannot be patched, because ``pathlib`` dispatches on it and cannot build a
+    ``WindowsPath`` on a POSIX host.
+    """
+
+    def _mod(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("aas_remote_bridge_chain", RB)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_missing_components_are_created(self) -> None:
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            leaf = Path(tmp) / "bridge" / "notify_locks"
+            mod._ensure_real_directory(leaf, create=True)
+            self.assertTrue(leaf.is_dir())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory mode semantics")
+    def test_created_components_are_owner_private(self) -> None:
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            leaf = Path(tmp) / "bridge" / "notify_locks"
+            mod._ensure_real_directory(leaf, create=True)
+            for created in (leaf.parent, leaf):
+                self.assertEqual(stat.S_IMODE(created.stat().st_mode), 0o700)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
+    def test_symlinked_component_is_rejected(self) -> None:
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "real").mkdir()
+            (root / "link").symlink_to(root / "real", target_is_directory=True)
+            with self.assertRaisesRegex(OSError, "notification directory is unsafe"):
+                mod._ensure_real_directory(root / "link" / "notify_locks", create=True)
+
+    def test_regular_file_component_is_rejected(self) -> None:
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            regular = Path(tmp) / "regular"
+            regular.write_text("payload", encoding="utf-8")
+            with self.assertRaisesRegex(OSError, "notification directory is unsafe"):
+                mod._ensure_real_directory(regular / "notify_locks", create=True)
+
+    def test_missing_component_without_create_is_not_found(self) -> None:
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(FileNotFoundError):
+                mod._ensure_real_directory(Path(tmp) / "absent" / "leaf", create=False)
+
+    def test_chain_check_leaves_no_open_descriptor(self) -> None:
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            leaf = Path(tmp) / "bridge" / "notify_locks"
+            probe = os.open(os.devnull, os.O_RDONLY)
+            os.close(probe)
+            mod._ensure_notify_directory_chain(leaf, create=True)
+            self.assertTrue(leaf.is_dir())
+            reopened = os.open(os.devnull, os.O_RDONLY)
+            os.close(reopened)
+            # A leaked pin would shift the lowest free descriptor number.
+            self.assertEqual(probe, reopened)
 
 
 if __name__ == "__main__":

@@ -236,21 +236,29 @@ def _secure_read_secrets_file(path: Path, *, max_bytes: int = 1_000_000) -> byte
     """Descriptor-read one private, owner-controlled secrets file."""
 
     absolute = Path(os.path.abspath(path))
-    parent_fd = _open_notify_directory_nofollow(absolute.parent, create=False)
+    # Windows cannot hold a directory descriptor: the parent chain is validated
+    # by lstat, the leaf is opened by absolute path, and the descriptor-based
+    # parent checks below are POSIX-only anyway.
+    parent_fd: int | None = None
+    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+        _ensure_notify_directory_chain(absolute.parent, create=False)
+    else:
+        parent_fd = _open_notify_directory_nofollow(absolute.parent, create=False)
     try:
-        parent_info = os.fstat(parent_fd)
-        if not stat.S_ISDIR(parent_info.st_mode):
-            raise OSError("remote-bridge secrets parent is not a directory")
-        if os.name == "posix" and (
-            int(parent_info.st_uid) != int(os.geteuid())
-            or parent_info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-        ):
-            raise OSError("remote-bridge secrets parent is not owner-controlled")
+        if parent_fd is not None:
+            parent_info = os.fstat(parent_fd)
+            if not stat.S_ISDIR(parent_info.st_mode):
+                raise OSError("remote-bridge secrets parent is not a directory")
+            if os.name == "posix" and (
+                int(parent_info.st_uid) != int(os.geteuid())
+                or parent_info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            ):
+                raise OSError("remote-bridge secrets parent is not owner-controlled")
         flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-        try:
-            file_fd = os.open(absolute.name, flags, dir_fd=parent_fd)
-        except TypeError:  # pragma: no cover - older Windows dir_fd fallback
+        if parent_fd is None:  # pragma: no cover - exercised on Windows CI
             file_fd = os.open(absolute, flags)
+        else:
+            file_fd = os.open(absolute.name, flags, dir_fd=parent_fd)
         try:
             before = os.fstat(file_fd)
             if (
@@ -292,7 +300,8 @@ def _secure_read_secrets_file(path: Path, *, max_bytes: int = 1_000_000) -> byte
         finally:
             os.close(file_fd)
     finally:
-        os.close(parent_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def _split_ids(raw: str | None) -> list[str]:
@@ -1048,7 +1057,13 @@ def _read_event_json_path(source: str) -> bytes:
     """Descriptor-read one stable, bounded local event JSON file."""
 
     path = Path(os.path.abspath(Path(source).expanduser()))
-    parent_fd = _open_notify_directory_nofollow(path.parent, create=False)
+    # Windows cannot hold a directory descriptor, so the parent chain is
+    # validated by lstat and every leaf step below works on the absolute path.
+    parent_fd: int | None = None
+    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+        _ensure_notify_directory_chain(path.parent, create=False)
+    else:
+        parent_fd = _open_notify_directory_nofollow(path.parent, create=False)
     file_fd: int | None = None
     try:
         flags = (
@@ -1098,7 +1113,8 @@ def _read_event_json_path(source: str) -> bytes:
     finally:
         if file_fd is not None:
             os.close(file_fd)
-        os.close(parent_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def _read_event_json_stdin() -> bytes:
@@ -1178,14 +1194,20 @@ def _notify_delivery_path(mailbox: Mailbox | None = None) -> Path:
     return mb.bridge_dir / "notify_deliveries.json"
 
 
-def _ensure_real_directory(path: Path) -> None:
-    """Create a directory chain while refusing symlink or non-directory parts."""
+def _ensure_real_directory(path: Path, *, create: bool = True) -> None:
+    """Walk a directory chain while refusing symlink or non-directory parts.
+
+    Missing components are created privately when ``create`` is set; otherwise a
+    missing component raises ``FileNotFoundError``.
+    """
 
     absolute = Path(os.path.abspath(path))
     for component in [*reversed(absolute.parents), absolute]:
         try:
             info = os.lstat(component)
         except FileNotFoundError:
+            if not create:
+                raise
             try:
                 os.mkdir(component, 0o700)
             except FileExistsError:
@@ -1194,21 +1216,35 @@ def _ensure_real_directory(path: Path) -> None:
                 continue
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             raise OSError(
-                f"notification lock directory is unsafe: {component}"
+                f"notification directory is unsafe: {component}"
             )
 
 
-def _open_notify_directory_nofollow(path: Path, *, create: bool = False) -> int:
-    """Open a pinned directory chain, creating missing components privately."""
+def _ensure_notify_directory_chain(path: Path, *, create: bool = False) -> None:
+    """Require a real, symlink-free directory chain, optionally creating it.
+
+    POSIX pins the chain with descriptors so a component cannot be swapped for a
+    symlink between the check and the use. Windows has no ``os`` call that opens
+    a directory, so it validates every component with ``lstat`` instead.
+    """
 
     absolute = Path(os.path.abspath(path))
-    if os.name == "nt":  # pragma: no cover - Windows CI exercises fallback
-        _ensure_real_directory(absolute) if create else None
-        for component in [*reversed(absolute.parents), absolute]:
-            info = os.lstat(component)
-            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-                raise OSError(f"notification directory is unsafe: {component}")
-        return os.open(absolute, os.O_RDONLY)
+    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+        _ensure_real_directory(absolute, create=create)
+        return
+    os.close(_open_notify_directory_nofollow(absolute, create=create))
+
+
+def _open_notify_directory_nofollow(path: Path, *, create: bool = False) -> int:
+    """Open a pinned directory chain, creating missing components privately.
+
+    POSIX only: Windows rejects ``os.open`` on a directory, so callers that only
+    need the chain validated use :func:`_ensure_notify_directory_chain`.
+    """
+
+    if os.name == "nt":  # pragma: no cover - guards against a POSIX-only path
+        raise OSError("notification directory descriptors are POSIX-only")
+    absolute = Path(os.path.abspath(path))
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(absolute.anchor or os.sep, flags)
     try:
@@ -1258,8 +1294,7 @@ def _secure_notification_registry_read(
 ) -> dict[str, Any] | None:
     path = _notify_delivery_path(mailbox)
     if os.name == "nt":  # pragma: no cover - exercised on Windows CI
-        parent_fd = _open_notify_directory_nofollow(path.parent, create=True)
-        os.close(parent_fd)
+        _ensure_notify_directory_chain(path.parent, create=True)
         for protected in (mailbox.root, mailbox.bridge_dir):
             _validate_notify_private_directory(protected)
         try:
@@ -1331,8 +1366,7 @@ def _secure_notification_registry_write(mailbox: Mailbox, data: dict[str, Any]) 
     if len(payload) > 2_000_000:
         raise OSError("notification registry post-image is oversized")
     if os.name == "nt":  # pragma: no cover - exercised on Windows CI
-        parent_fd = _open_notify_directory_nofollow(path.parent, create=True)
-        os.close(parent_fd)
+        _ensure_notify_directory_chain(path.parent, create=True)
         for protected in (mailbox.root, mailbox.bridge_dir):
             _validate_notify_private_directory(protected)
         try:
@@ -1445,31 +1479,10 @@ class NotificationDeliveryLock:
         self.handle: Any = None
 
     def __enter__(self) -> Mailbox:
-        pinned_parent_fd = _open_notify_directory_nofollow(
-            self.path.parent, create=True
-        )
-        try:
-            if os.name == "posix":
-                for protected in (
-                    self.mailbox.root,
-                    self.mailbox.bridge_dir,
-                    self.path.parent,
-                ):
-                    info = os.lstat(protected)
-                    if (
-                        stat.S_ISLNK(info.st_mode)
-                        or not stat.S_ISDIR(info.st_mode)
-                        or info.st_uid != os.geteuid()
-                        or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-                    ):
-                        raise OSError(
-                            f"notification lock directory is not private: {protected}"
-                        )
-        except BaseException:
-            os.close(pinned_parent_fd)
-            raise
         if os.name == "nt":  # pragma: no cover - exercised on Windows CI
-            os.close(pinned_parent_fd)
+            # Windows cannot pin the parent with a descriptor, so the chain is
+            # validated by lstat and the leaf is opened by absolute path.
+            _ensure_notify_directory_chain(self.path.parent, create=True)
             try:
                 before = os.lstat(self.path)
             except FileNotFoundError:
@@ -1500,6 +1513,29 @@ class NotificationDeliveryLock:
                 raise
             self.handle = os.fdopen(lock_fd, "a+b")
         else:
+            pinned_parent_fd = _open_notify_directory_nofollow(
+                self.path.parent, create=True
+            )
+            try:
+                if os.name == "posix":
+                    for protected in (
+                        self.mailbox.root,
+                        self.mailbox.bridge_dir,
+                        self.path.parent,
+                    ):
+                        info = os.lstat(protected)
+                        if (
+                            stat.S_ISLNK(info.st_mode)
+                            or not stat.S_ISDIR(info.st_mode)
+                            or info.st_uid != os.geteuid()
+                            or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                        ):
+                            raise OSError(
+                                f"notification lock directory is not private: {protected}"
+                            )
+            except BaseException:
+                os.close(pinned_parent_fd)
+                raise
             try:
                 lock_fd = os.open(
                     self.path.name,
