@@ -352,8 +352,13 @@ class LoopLock:
         self.timeout_seconds = max(0.0, float(timeout_seconds))
         self._handle: Any = None
 
-    def __enter__(self) -> "LoopLock":
-        path = self.run_dir / LOCK_FILENAME
+    def _open_lock_handle(self, path: Path) -> Any:
+        """Open and validate the lock file, returning a buffered handle.
+
+        A fresh directory descriptor is taken on every call because the caller
+        retries this step while the lock path keeps vanishing.
+        """
+
         if os.name == "nt":  # pragma: no cover
             _ensure_directory_chain(self.run_dir, create=True)
             try:
@@ -378,29 +383,43 @@ class LoopLock:
                 os.close(lock_fd)
                 raise TransactionError(f"loop lock changed while opening: {path}")
             _validate_lock_file(lock_fd, path)
-            self._handle = os.fdopen(lock_fd, "a+b")
-        else:
-            directory_fd = _open_directory_nofollow(self.run_dir, create=True)
+            return os.fdopen(lock_fd, "a+b")
+        directory_fd = _open_directory_nofollow(self.run_dir, create=True)
+        try:
+            lock_fd = os.open(
+                LOCK_FILENAME,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=directory_fd,
+            )
             try:
-                lock_fd = os.open(
-                    LOCK_FILENAME,
-                    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-                    0o600,
-                    dir_fd=directory_fd,
-                )
-                try:
-                    _validate_lock_file(lock_fd, path)
-                except BaseException:
-                    os.close(lock_fd)
-                    raise
-                self._handle = os.fdopen(lock_fd, "a+b")
-            finally:
-                os.close(directory_fd)
+                _validate_lock_file(lock_fd, path)
+            except BaseException:
+                os.close(lock_fd)
+                raise
+            return os.fdopen(lock_fd, "a+b")
+        finally:
+            os.close(directory_fd)
+
+    def __enter__(self) -> "LoopLock":
+        path = self.run_dir / LOCK_FILENAME
+        deadline = time.monotonic() + self.timeout_seconds
+        while True:
+            try:
+                self._handle = self._open_lock_handle(path)
+                break
+            except FileNotFoundError as exc:
+                # Another writer can drop the directory that holds the lock
+                # between the chain walk and the open, and ``O_CREAT`` cannot
+                # rebuild a missing parent.  Only this vanished-path race is
+                # retried; every other failure still fails closed.
+                if time.monotonic() >= deadline:
+                    raise LockTimeout(f"timed out opening loop lock: {path}") from exc
+                time.sleep(0.025)
         self._handle.seek(0, os.SEEK_END)
         if self._handle.tell() == 0:
             self._handle.write(b"0")
             self._handle.flush()
-        deadline = time.monotonic() + self.timeout_seconds
         while True:
             try:
                 if os.name == "nt":  # pragma: no cover - exercised on Windows CI
