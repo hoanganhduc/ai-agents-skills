@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -128,6 +129,35 @@ def _trusted_containment_works() -> bool:
                 return _TRUSTED_CONTAINMENT
             _TRUSTED_CONTAINMENT = completed.returncode == 0
     return _TRUSTED_CONTAINMENT
+
+
+_TRUSTED_RESOURCE_ENFORCEMENT: bool | None = None
+
+
+def _trusted_resource_enforcement_works() -> bool:
+    """Report whether this host can also enforce trusted-local resource limits.
+
+    Containment is only half of the transport precondition. Every trusted-local
+    child additionally runs inside a systemd user scope, so the host needs a
+    live user manager and its session bus; without them the runtime refuses to
+    start the child at all. A host that cannot enforce limits is not a runtime
+    defect, so probe the real backend once and cache the verdict.
+    """
+
+    global _TRUSTED_RESOURCE_ENFORCEMENT
+    if _TRUSTED_RESOURCE_ENFORCEMENT is None:
+        _TRUSTED_RESOURCE_ENFORCEMENT = False
+        if _trusted_containment_works():
+            try:
+                pr.preflight_resource_backend(30, role="panel")
+            except (
+                pr.ProviderResourceError,
+                OSError,
+                subprocess.SubprocessError,
+            ):
+                return _TRUSTED_RESOURCE_ENFORCEMENT
+            _TRUSTED_RESOURCE_ENFORCEMENT = True
+    return _TRUSTED_RESOURCE_ENFORCEMENT
 
 
 def strategy_advice(
@@ -764,8 +794,8 @@ class PanelParentUnitTests(unittest.TestCase):
             self.assertFalse(marker.exists())
 
     @unittest.skipUnless(
-        _trusted_containment_works(),
-        "trusted-local transport requires a working bubblewrap",
+        _trusted_resource_enforcement_works(),
+        "trusted-local transport requires a working bubblewrap and a systemd user scope",
     )
     def test_trusted_local_real_panel_uses_stdin_and_mandatory_limits(self) -> None:
         prompt = "bounded non-sensitive review prompt"
@@ -861,8 +891,8 @@ class PanelParentUnitTests(unittest.TestCase):
         self.assertEqual(result["error_class"], "isolation_unavailable")
 
     @unittest.skipUnless(
-        _trusted_containment_works(),
-        "trusted-local transport requires a working bubblewrap",
+        _trusted_resource_enforcement_works(),
+        "trusted-local transport requires a working bubblewrap and a systemd user scope",
     )
     def test_trusted_local_codewhale_records_required_argv_transport(self) -> None:
         prompt = "bounded CodeWhale review prompt"
@@ -2114,6 +2144,152 @@ class ResultReviewStatusNormalizationTests(unittest.TestCase):
         self.assertEqual(pp.normalize_result_review_statuses(data), [])
         self.assertEqual(data["claim_reviews"][0]["status"], "maybe")
 
+
+class DescriptorFreeDependencyAttestationTests(unittest.TestCase):
+    """Windows attests the dependency closure by name, not by descriptor.
+
+    ``os.open`` refuses a directory on Windows and there is no ``dir_fd``, so
+    that platform walks the closure with ``lstat``. The walk is exercised
+    directly here: ``os.name`` cannot be patched, because ``pathlib`` dispatches
+    on it and cannot build a ``WindowsPath`` on a POSIX host.
+    """
+
+    def _closure(self, base: Path, *, newline: bytes = b"\r\n") -> Path:
+        root = base / "node_modules" / "provider"
+        (root / "lib" / "inner").mkdir(parents=True)
+        (root / "cli.js").write_bytes(b"alpha" + newline + b"\x1aomega")
+        (root / "lib" / "b.js").write_bytes(b"beta")
+        (root / "lib" / "inner" / "c.js").write_bytes(b"gamma")
+        if os.name == "posix":
+            for current, _dirs, names in os.walk(root):
+                os.chmod(current, 0o700)
+                for name in names:
+                    os.chmod(Path(current) / name, 0o600)
+        return root
+
+    def _walk(self, root: Path, **bounds: int) -> dict:
+        return pp._dependency_tree_attestation_by_lstat(
+            Path(os.path.abspath(root)),
+            max_files=bounds.get("max_files", 250_000),
+            max_bytes=bounds.get("max_bytes", 2_000_000_000),
+        )
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX directory descriptors")
+    def test_the_lstat_walk_reproduces_the_descriptor_walk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._closure(Path(tmp))
+            self.assertEqual(
+                pp._dependency_tree_attestation(root), self._walk(root)
+            )
+
+    def test_an_absent_descriptor_selects_the_lstat_walk(self) -> None:
+        real = pp._open_real_directory_descriptor
+
+        def without_descriptor(path, *, create, purpose):  # noqa: ANN001
+            absolute, descriptor = real(path, create=create, purpose=purpose)
+            if descriptor is not None:
+                os.close(descriptor)
+            return absolute, None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._closure(Path(tmp))
+            expected = self._walk(root)
+            with mock.patch.object(
+                pp, "_open_real_directory_descriptor", without_descriptor
+            ):
+                self.assertEqual(pp._dependency_tree_attestation(root), expected)
+            self.assertEqual(expected["dependency_file_count"], 3)
+            self.assertEqual(expected["dependency_policy"], "hash_revalidated")
+
+    def test_the_digest_covers_exact_file_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            crlf = self._closure(base / "crlf")
+            newline = self._closure(base / "newline", newline=b"\n")
+            self.assertNotEqual(
+                self._walk(crlf)["dependency_sha256"],
+                self._walk(newline)["dependency_sha256"],
+            )
+
+    def test_the_file_and_byte_bounds_are_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._closure(Path(tmp))
+            for bounds in ({"max_files": 2}, {"max_bytes": 4}):
+                with self.subTest(bounds=bounds):
+                    with self.assertRaisesRegex(
+                        pp.PanelIsolationError, "exceeds the attestation bound"
+                    ):
+                        self._walk(root, **bounds)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
+    def test_a_symlinked_entry_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._closure(Path(tmp))
+            (root / "lib" / "alias.js").symlink_to(root / "cli.js")
+            with self.assertRaisesRegex(
+                pp.PanelIsolationError, "symlink or reparse point"
+            ):
+                self._walk(root)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
+    def test_a_symlinked_subdirectory_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = self._closure(base)
+            outside = base / "outside"
+            outside.mkdir(mode=0o700)
+            (root / "vendor").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(
+                pp.PanelIsolationError, "symlink or reparse point"
+            ):
+                self._walk(root)
+
+    @unittest.skipUnless(os.name == "posix", "requires a POSIX named pipe")
+    def test_a_non_regular_file_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._closure(Path(tmp))
+            os.mkfifo(root / "pipe", 0o600)
+            with self.assertRaisesRegex(
+                pp.PanelIsolationError, "not a regular file/directory"
+            ):
+                self._walk(root)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX hard-link counts")
+    def test_a_hard_link_out_of_the_closure_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = self._closure(base)
+            os.link(root / "cli.js", root / "lib" / "cli-link.js")
+            self.assertEqual(self._walk(root)["dependency_file_count"], 4)
+            os.link(root / "cli.js", base / "escaped.js")
+            with self.assertRaisesRegex(
+                pp.PanelIsolationError, "hard link outside the attested closure"
+            ):
+                self._walk(root)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX ownership bits")
+    def test_a_group_writable_entry_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._closure(Path(tmp))
+            (root / "lib" / "b.js").chmod(0o660)
+            with self.assertRaisesRegex(
+                pp.PanelIsolationError, "not host-controlled"
+            ):
+                self._walk(root)
+
+    def test_a_windows_reparse_point_is_rejected_as_link_like(self) -> None:
+        class _Junction:
+            st_mode = stat.S_IFDIR | 0o700
+            st_file_attributes = (
+                stat.FILE_ATTRIBUTE_DIRECTORY | stat.FILE_ATTRIBUTE_REPARSE_POINT
+            )
+
+        class _Regular:
+            st_mode = stat.S_IFREG | 0o600
+            st_file_attributes = stat.FILE_ATTRIBUTE_ARCHIVE
+
+        self.assertTrue(pp._is_link_like(_Junction()))
+        self.assertFalse(pp._is_link_like(_Regular()))
 
 
 if __name__ == "__main__":

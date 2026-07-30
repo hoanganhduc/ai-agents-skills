@@ -863,8 +863,178 @@ def _provider_dependency_root(
     return root
 
 
+def _is_link_like(info: os.stat_result) -> bool:
+    """Report a symlink or any Windows reparse point (junction, mount, placeholder).
+
+    ``st_file_attributes`` only exists on Windows, so POSIX relies on ``S_ISLNK``.
+    """
+
+    return bool(stat.S_ISLNK(info.st_mode)) or bool(
+        getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+    )
+
+
+def _dependency_tree_attestation_by_lstat(
+    canonical: Path, *, max_files: int, max_bytes: int
+) -> dict[str, Any]:
+    """Hash a bounded dependency tree by name where ``dir_fd`` does not exist.
+
+    Windows has neither ``os.open`` on a directory nor ``dir_fd`` traversal, so
+    every component is validated with ``lstat`` and then reopened by name. A
+    component swapped between its ``lstat`` and the open that follows it is
+    therefore undetectable, which is strictly weaker than the descriptor-pinned
+    POSIX walk. Symlinks, reparse points, and non-regular files still fail
+    closed; the file/byte bounds, hard-link accounting, and digest records are
+    those of the POSIX walk. ``root_owned_read_only`` is never claimed on
+    Windows because that platform synthesizes ``st_uid`` and ``st_mode``.
+    """
+
+    digest = hashlib.sha256()
+    file_count = 0
+    total_bytes = 0
+    effective_uid = os.geteuid() if os.name == "posix" else None
+    root_owned_read_only = effective_uid is not None
+    hardlinks: dict[tuple[int, int], dict[str, int]] = {}
+
+    def inspect(directory: Path, relative: tuple[str, ...]) -> None:
+        nonlocal file_count, total_bytes, root_owned_read_only
+        directory_info = os.lstat(directory)
+        if _is_link_like(directory_info):
+            raise PanelIsolationError(
+                f"provider dependency directory is a symlink or reparse point: {directory}"
+            )
+        if not stat.S_ISDIR(directory_info.st_mode) or (
+            effective_uid is not None
+            and (
+                directory_info.st_uid not in {0, effective_uid}
+                or directory_info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            )
+        ):
+            raise PanelIsolationError(
+                f"provider dependency directory is not host-controlled: {directory}"
+            )
+        if directory_info.st_uid != 0 or directory_info.st_mode & stat.S_IWUSR:
+            root_owned_read_only = False
+        digest.update(b"D\0" + os.fsencode("/".join(relative)) + b"\0")
+        digest.update(str(stat.S_IMODE(directory_info.st_mode)).encode("ascii") + b"\0")
+        for name in sorted(os.listdir(directory)):
+            # A backslash is a further path component on Windows and a colon
+            # addresses an alternate data stream, so both are unsafe leaf names.
+            if name in {".", ".."} or any(char in name for char in "/\\:\x00"):
+                raise PanelIsolationError("provider dependency tree has an unsafe name")
+            child_relative = (*relative, name)
+            child_path = directory / name
+            before = os.lstat(child_path)
+            if _is_link_like(before):
+                raise PanelIsolationError(
+                    f"provider dependency is a symlink or reparse point: {child_path}"
+                )
+            if effective_uid is not None and (
+                before.st_uid not in {0, effective_uid}
+                or before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            ):
+                raise PanelIsolationError(
+                    f"provider dependency is not host-controlled: {child_path}"
+                )
+            if before.st_uid != 0 or before.st_mode & stat.S_IWUSR:
+                root_owned_read_only = False
+            if stat.S_ISDIR(before.st_mode):
+                inspect(child_path, child_relative)
+                continue
+            if not stat.S_ISREG(before.st_mode):
+                raise PanelIsolationError(
+                    f"provider dependency is not a regular file/directory: {child_path}"
+                )
+            if before.st_nlink > 1:
+                identity = (int(before.st_dev), int(before.st_ino))
+                observed_link = hardlinks.setdefault(
+                    identity,
+                    {"expected": int(before.st_nlink), "seen": 0},
+                )
+                if observed_link["expected"] != int(before.st_nlink):
+                    raise PanelIsolationError(
+                        f"provider dependency link count changed: {child_path}"
+                    )
+                observed_link["seen"] += 1
+            file_count += 1
+            total_bytes += int(before.st_size)
+            if file_count > max_files or total_bytes > max_bytes:
+                raise PanelIsolationError(
+                    "provider dependency closure exceeds the attestation bound"
+                )
+            digest.update(b"F\0" + os.fsencode("/".join(child_relative)) + b"\0")
+            digest.update(str(stat.S_IMODE(before.st_mode)).encode("ascii") + b"\0")
+            # O_BINARY: Windows opens descriptors in text mode, which rewrites
+            # CRLF and truncates at Ctrl-Z, so the digest would never match the
+            # file on disk.
+            child_fd = os.open(
+                child_path,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_BINARY", 0),
+            )
+            try:
+                opened = os.fstat(child_fd)
+                # Windows fills st_dev/st_ino from a different API for lstat
+                # than for fstat, so only size and mtime bind the opened
+                # handle back to the inspected name.
+                if not stat.S_ISREG(opened.st_mode) or (
+                    int(before.st_size),
+                    int(before.st_mtime_ns),
+                ) != (
+                    int(opened.st_size),
+                    int(opened.st_mtime_ns),
+                ):
+                    raise PanelIsolationError(
+                        f"provider dependency changed during secure open: {child_path}"
+                    )
+                while True:
+                    block = os.read(child_fd, 1024 * 1024)
+                    if not block:
+                        break
+                    digest.update(block)
+                after = os.fstat(child_fd)
+                if (
+                    int(opened.st_dev),
+                    int(opened.st_ino),
+                    int(opened.st_size),
+                    int(opened.st_mtime_ns),
+                    int(opened.st_nlink),
+                ) != (
+                    int(after.st_dev),
+                    int(after.st_ino),
+                    int(after.st_size),
+                    int(after.st_mtime_ns),
+                    int(after.st_nlink),
+                ):
+                    raise PanelIsolationError(
+                        f"provider dependency changed while being hashed: {child_path}"
+                    )
+            finally:
+                os.close(child_fd)
+
+    inspect(canonical, ())
+    if any(item["seen"] != item["expected"] for item in hardlinks.values()):
+        raise PanelIsolationError(
+            "provider dependency has a hard link outside the attested closure"
+        )
+    return {
+        "dependency_root": str(canonical),
+        "dependency_sha256": "sha256:" + digest.hexdigest(),
+        "dependency_file_count": file_count,
+        "dependency_total_bytes": total_bytes,
+        "dependency_policy": (
+            "root_owned_read_only" if root_owned_read_only else "hash_revalidated"
+        ),
+    }
+
+
 def _dependency_tree_attestation(root: Path) -> dict[str, Any]:
-    """Hash a bounded no-symlink dependency tree through directory descriptors."""
+    """Hash a bounded no-symlink dependency tree through directory descriptors.
+
+    Platforms without ``dir_fd`` traversal fall back to the weaker by-name walk
+    in :func:`_dependency_tree_attestation_by_lstat`.
+    """
 
     max_files = 250_000
     max_bytes = 2_000_000_000
@@ -878,9 +1048,9 @@ def _dependency_tree_attestation(root: Path) -> dict[str, Any]:
     canonical, root_fd = _open_real_directory_descriptor(
         root, create=False, purpose="provider-dependency"
     )
-    if root_fd is None:  # pragma: no cover - Windows fallback below
-        raise PanelIsolationError(
-            "descriptor-pinned provider dependency attestation requires POSIX"
+    if root_fd is None:  # pragma: no cover - Windows CI exercises this fallback
+        return _dependency_tree_attestation_by_lstat(
+            canonical, max_files=max_files, max_bytes=max_bytes
         )
 
     def inspect(directory_fd: int, relative: tuple[str, ...]) -> None:
