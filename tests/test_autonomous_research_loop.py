@@ -8,6 +8,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -7112,3 +7113,58 @@ class SelftestContainmentGateTests(unittest.TestCase):
         self.assertIn("drive contract broke", result["errors"])
         self.assertEqual(result["drive_checks"], "ran")
         self.assertEqual(result["drive_skip_reason"], "")
+
+
+class SelftestScratchPathTests(unittest.TestCase):
+    """The offline selftest owns its scratch root, symlinked temp dir or not.
+
+    ``init_loop`` refuses a loop path that crosses a symlink, and on macOS every
+    ``tempfile`` path does because ``/var`` links to ``/private/var``.  The unit
+    suite resolves the process-wide temp directory at import time, so only a
+    staged symlink reproduces what the installed runtime meets on that platform.
+    """
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    def _symlinked_temp_directory(self) -> str:
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
+        real = base / "real"
+        real.mkdir()
+        link = base / "link"
+        link.symlink_to(real, target_is_directory=True)
+        return str(link)
+
+    @unittest.skipUnless(
+        hasattr(os, "symlink"), "requires POSIX symlink semantics"
+    )
+    def test_driver_checks_run_under_a_symlinked_temp_directory(self) -> None:
+        arl = self._runtime()
+        with mock.patch.object(
+            tempfile, "tempdir", self._symlinked_temp_directory()
+        ), mock.patch.object(
+            arl, "host_primary_containment_status", return_value=(False, "no boundary")
+        ):
+            result = arl.selftest_driver_checks()
+        self.assertTrue(result["ok"], result["errors"])
+
+    @unittest.skipUnless(
+        hasattr(os, "symlink"), "requires POSIX symlink semantics"
+    )
+    def test_selftest_command_runs_under_a_symlinked_temp_directory(self) -> None:
+        arl = self._runtime()
+        with mock.patch.object(
+            tempfile, "tempdir", self._symlinked_temp_directory()
+        ), mock.patch.object(
+            arl, "selftest_driver_checks", return_value={"ok": True, "errors": []}
+        ):
+            result = arl.selftest_command(argparse.Namespace())
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["validation_status"], "ok")
