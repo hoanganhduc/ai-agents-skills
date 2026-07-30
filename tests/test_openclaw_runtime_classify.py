@@ -16,7 +16,7 @@ from installer.ai_agents_skills.openclaw_runtime_target_classify import (
 )
 
 SCHEMA = json.loads(
-    (Path(REPO_ROOT) / "manifest" / "schema" / "openclaw" / "target-support-file.schema.json").read_text("utf-8")
+    (Path(REPO_ROOT) / "manifest" / "schema" / "openclaw" / "target-support-file.schema.json").read_text(encoding="utf-8")
 )
 _FILE_SCHEMA = SCHEMA["properties"]["files"]["items"]
 _FILE_PROPS = _FILE_SCHEMA["properties"]

@@ -942,7 +942,7 @@ class GoalFocusContractsTests(_AttestedGoalFocusTestCase):
             self.assertEqual(bundle["contract"]["schema_version"], gf.GOAL_CONTRACT_SCHEMA)
             self.assertEqual(bundle["registry"]["schema_version"], gf.APPROACH_REGISTRY_SCHEMA)
             self.assertEqual(bundle["plan"]["state"], "needs_replan")
-            self.assertIn("goal-focus-managed:start", (root / "recovery.md").read_text())
+            self.assertIn("goal-focus-managed:start", (root / "recovery.md").read_text(encoding="utf-8"))
             result = gf.validate_goal_focus(root, require_enabled=True)
             self.assertEqual(result["status"], "ok", result)
             self.assertEqual(result["errors"], [])
@@ -1073,10 +1073,10 @@ class GoalFocusContractsTests(_AttestedGoalFocusTestCase):
             plan = _activate(root)
             self.assertEqual(plan["state"], "active")
             self.assertEqual(plan["campaign_id"], "C1")
-            state = json.loads((root / "loop_state.json").read_text())
+            state = json.loads((root / "loop_state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["next_preferred_path"], gf.render_current_path(plan))
             self.assertEqual(state["goal_focus_projection"]["plan_revision"], plan["plan_revision"])
-            self.assertIn(gf.render_current_path(plan), (root / "recovery.md").read_text())
+            self.assertIn(gf.render_current_path(plan), (root / "recovery.md").read_text(encoding="utf-8"))
             decisions = gf.load_direction_decisions(root)
             self.assertEqual(decisions[-1]["decision_type"], "select_direction")
             validation = gf.validate_goal_focus(root, require_enabled=True)
@@ -1087,7 +1087,7 @@ class GoalFocusContractsTests(_AttestedGoalFocusTestCase):
             root = Path(tmp)
             _initialize(root)
             _activate(root)
-            state = json.loads((root / "loop_state.json").read_text())
+            state = json.loads((root / "loop_state.json").read_text(encoding="utf-8"))
             state["next_preferred_path"] = "campaign `C2` — stale path"
             _write_json(root / "loop_state.json", state)
             result = gf.validate_goal_focus(root, require_enabled=True)
@@ -1515,7 +1515,7 @@ class GoalFocusSelectionTests(_AttestedGoalFocusTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             _seed_legacy_loop(root)
-            state = json.loads((root / "loop_state.json").read_text())
+            state = json.loads((root / "loop_state.json").read_text(encoding="utf-8"))
             state["standing_orders"] = {
                 "compute": {
                     "allowed_services": ["modal", "kaggle"],
@@ -1863,7 +1863,7 @@ class GoalFocusProgressTests(_AttestedGoalFocusTestCase):
 class GoalFocusMigrationTests(_AttestedGoalFocusTestCase):
     def _legacy(self, root: Path, *, path_campaign: str, recovery_campaign: str, ledger_campaign: str) -> None:
         _seed_legacy_loop(root)
-        state = json.loads((root / "loop_state.json").read_text())
+        state = json.loads((root / "loop_state.json").read_text(encoding="utf-8"))
         state["next_preferred_path"] = (
             f"Pivot to campaign `{path_campaign}`. Do not restart campaign `A2`."
         )
@@ -2951,7 +2951,7 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                 with self.assertRaisesRegex(ValueError, pattern):
                     gf.finalize_candidate(root, accepted=True, review=review)
                 self.assertTrue((root / gf.PENDING_CANDIDATE_FILE).exists())
-                self.assertEqual((root / "iterations.jsonl").read_text(), "")
+                self.assertEqual((root / "iterations.jsonl").read_text(encoding="utf-8"), "")
 
     def test_final_banking_revalidates_embedded_provider_reviews(self) -> None:
         cases = (
@@ -3163,7 +3163,7 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                     )
                 else:
                     self.assertEqual((root / "budget.json").read_bytes(), protected_before)
-                    self.assertEqual((root / "iterations.jsonl").read_text(), "")
+                    self.assertEqual((root / "iterations.jsonl").read_text(encoding="utf-8"), "")
 
     def test_host_derives_terminal_state_from_reviewed_goal_obligations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3191,7 +3191,7 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                 result["record"]["stop_reason"],
                 "terminal_claim_not_supported_by_goal_obligations",
             )
-            self.assertEqual(json.loads((root / "loop_state.json").read_text())["status"], "running")
+            self.assertEqual(json.loads((root / "loop_state.json").read_text(encoding="utf-8"))["status"], "running")
 
     def test_host_dispatch_is_pinned_and_consumed_atomically_by_stage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3532,8 +3532,8 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                 contract["obligations"]["GOAL-SC-1"]["evidence_refs"],
                 ["proof.json"],
             )
-            self.assertEqual(json.loads((root / "budget.json").read_text())["spent_iterations"], 1)
-            rows = json.loads((root / "iterations.jsonl").read_text().strip())
+            self.assertEqual(json.loads((root / "budget.json").read_text(encoding="utf-8"))["spent_iterations"], 1)
+            rows = json.loads((root / "iterations.jsonl").read_text(encoding="utf-8").strip())
             self.assertEqual(rows["bank_status"], "accepted")
 
     def test_host_finalized_goal_success_validates_without_legacy_proof_artifact(self) -> None:
@@ -3837,7 +3837,7 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                 result["record"]["obligation_transitions"],
                 [{"obligation_id": "GOAL-SC-1", "to": "satisfied"}],
             )
-            self.assertEqual(json.loads((root / "loop_state.json").read_text())["status"], "stopped")
+            self.assertEqual(json.loads((root / "loop_state.json").read_text(encoding="utf-8"))["status"], "stopped")
 
     def test_finalize_requires_exact_candidate_id_without_mutation(self) -> None:
         for review_candidate_id in (None, "different-candidate"):
@@ -4036,7 +4036,7 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                 gf.load_pending_candidate(root)["candidate_id"],
                 {"candidate-A", "candidate-B"},
             )
-            self.assertEqual((root / "iterations.jsonl").read_text(), "")
+            self.assertEqual((root / "iterations.jsonl").read_text(encoding="utf-8"), "")
             self.assertFalse((root / st.TRANSACTION_DIRNAME).exists())
 
     def test_review_error_keeps_candidate_pending_and_consumes_no_budget(self) -> None:
@@ -4054,8 +4054,8 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                     review=_bound_review(staged, status="error"),
                 )
             self.assertIsNotNone(gf.load_pending_candidate(root))
-            self.assertEqual(json.loads((root / "budget.json").read_text())["spent_iterations"], 0)
-            self.assertEqual((root / "iterations.jsonl").read_text(), "")
+            self.assertEqual(json.loads((root / "budget.json").read_text(encoding="utf-8"))["spent_iterations"], 0)
+            self.assertEqual((root / "iterations.jsonl").read_text(encoding="utf-8"), "")
 
     def test_rejected_candidate_consumes_budget_but_banks_no_claims(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -4114,7 +4114,7 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
             self.assertEqual(record["evidence_checked"]["claim_ids"], [])
             self.assertEqual(record["execution"]["executor_provider"], "codex")
             self.assertEqual(record["compute"]["runs"], [{"service": "modal"}])
-            self.assertEqual(json.loads((root / "budget.json").read_text())["spent_iterations"], 1)
+            self.assertEqual(json.loads((root / "budget.json").read_text(encoding="utf-8"))["spent_iterations"], 1)
             self.assertEqual(gf.load_current_plan(root)["state"], "needs_replan")
 
     def test_rejected_final_budget_candidate_becomes_terminal_block_and_validates(self) -> None:
@@ -4186,8 +4186,8 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
             )
 
             record = result["record"]
-            state = json.loads((root / "loop_state.json").read_text())
-            budget = json.loads((root / "budget.json").read_text())
+            state = json.loads((root / "loop_state.json").read_text(encoding="utf-8"))
+            budget = json.loads((root / "budget.json").read_text(encoding="utf-8"))
             self.assertEqual(record["bank_status"], "rejected")
             self.assertEqual(record["decision"], "blocked")
             self.assertEqual(record["stop_reason"], "result_rejected_at_iteration_budget_limit")

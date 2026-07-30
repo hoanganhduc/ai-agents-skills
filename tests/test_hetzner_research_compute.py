@@ -961,7 +961,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertGreater(res["reserved"], 0.0)
             ledger = state / "hetzner-reservations.jsonl"
             self.assertTrue(ledger.exists())
-            row = json.loads(ledger.read_text().splitlines()[0])
+            row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[0])
             self.assertEqual(row["unit"], "eur")
             # A second reservation that would exceed the daily cap is refused.
             with self.assertRaises(hetzner_backend.HetznerBudgetError):
@@ -1546,7 +1546,7 @@ class LivenessAndCapTests(unittest.TestCase):
         self.assertEqual(budget_ledger.outstanding(state, "gha"), 112.0)
         rows = [
             json.loads(line)
-            for line in (state / "gha-reservations.jsonl").read_text().splitlines()
+            for line in (state / "gha-reservations.jsonl").read_text(encoding="utf-8").splitlines()
         ]
         self.assertEqual([row["state"] for row in rows].count("accrued"), 1)
         self.assertEqual([row["state"] for row in rows].count("reserved"), 1)
@@ -2511,7 +2511,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(prov[0]["server_type"], "cpx62")
         self.assertGreater(prov[0]["est_eur"], 0.0)
         self.assertTrue(prov[0]["dead_mans_switch"])
-        self.assertNotIn(DRIVER_TOKEN, (self.state / hetzner_audit.AUDIT_FILENAME).read_text())
+        self.assertNotIn(DRIVER_TOKEN, (self.state / hetzner_audit.AUDIT_FILENAME).read_text(encoding="utf-8"))
 
     def test_down_confirm_writes_destroy_audit(self) -> None:
         runner = _FakeRunner()
@@ -2527,7 +2527,7 @@ class HetznerDriverTests(unittest.TestCase):
         the write, so the token never reaches disk."""
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         hetzner_audit.append(self.state, {"event": "provision", "leak": f"x {DRIVER_TOKEN} y"})
-        raw = (self.state / hetzner_audit.AUDIT_FILENAME).read_text()
+        raw = (self.state / hetzner_audit.AUDIT_FILENAME).read_text(encoding="utf-8")
         self.assertNotIn(DRIVER_TOKEN, raw)
         self.assertIn("<REDACTED_HCLOUD_TOKEN>", raw)
         self.assertEqual(hetzner_audit.read(self.state)[0]["event"], "provision")
@@ -2633,7 +2633,7 @@ class HetznerReaperTests(unittest.TestCase):
         records = hetzner_audit.read(self.state)
         self.assertTrue(records)
         self.assertTrue(all(r["event"] == "reap" for r in records))
-        self.assertNotIn(DRIVER_TOKEN, (self.state / hetzner_audit.AUDIT_FILENAME).read_text())
+        self.assertNotIn(DRIVER_TOKEN, (self.state / hetzner_audit.AUDIT_FILENAME).read_text(encoding="utf-8"))
 
     def test_reaper_requires_token(self) -> None:
         os.environ.pop("HCLOUD_TOKEN", None)

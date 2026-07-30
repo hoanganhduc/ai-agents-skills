@@ -233,7 +233,7 @@ class TransactionStateMachineTests(unittest.TestCase):
                     json_files={"current_plan.json": {"plan_revision": 3, "value": "new"}},
                     expected_revisions={"current_plan.json": ("plan_revision", 1)},
                 )
-            self.assertEqual(json.loads((root / "current_plan.json").read_text())["value"], "old")
+            self.assertEqual(json.loads((root / "current_plan.json").read_text(encoding="utf-8"))["value"], "old")
 
     def test_recovery_finishes_all_postimages_after_each_crash_point(self) -> None:
         for crash_after in ("prepared", 1, "after_apply", "committed"):
@@ -255,8 +255,8 @@ class TransactionStateMachineTests(unittest.TestCase):
                         crash_after=crash_after,
                     )
                 st.recover_transactions(root)
-                self.assertEqual(json.loads((root / "current_plan.json").read_text())["value"], "new")
-                self.assertEqual(json.loads((root / "goal_contract.json").read_text())["value"], "new")
+                self.assertEqual(json.loads((root / "current_plan.json").read_text(encoding="utf-8"))["value"], "new")
+                self.assertEqual(json.loads((root / "goal_contract.json").read_text(encoding="utf-8"))["value"], "new")
                 self.assertFalse((root / st.TRANSACTION_DIRNAME).exists())
 
     def test_binary_postimage_recovers_without_text_normalization(self) -> None:
@@ -280,7 +280,7 @@ class TransactionStateMachineTests(unittest.TestCase):
             event = {"event_id": "evt-1", "value": 1}
             st.commit_transaction(root, jsonl_appends={"events.jsonl": [event]})
             st.commit_transaction(root, jsonl_appends={"events.jsonl": [event]})
-            rows = [json.loads(line) for line in (root / "events.jsonl").read_text().splitlines()]
+            rows = [json.loads(line) for line in (root / "events.jsonl").read_text(encoding="utf-8").splitlines()]
             self.assertEqual(rows, [event])
 
     def test_delete_is_recovered_idempotently(self) -> None:
@@ -296,7 +296,7 @@ class TransactionStateMachineTests(unittest.TestCase):
                 )
             st.recover_transactions(root)
             self.assertFalse((root / "pending.json").exists())
-            self.assertTrue(json.loads((root / "done.json").read_text())["done"])
+            self.assertTrue(json.loads((root / "done.json").read_text(encoding="utf-8"))["done"])
 
     def test_expected_absent_conflict_writes_no_partial_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -349,7 +349,7 @@ class TransactionStateMachineTests(unittest.TestCase):
             for thread in threads:
                 thread.join()
             self.assertEqual(sorted(outcomes), ["committed", "conflict"])
-            self.assertIn(json.loads((root / "current_plan.json").read_text())["winner"], {"A", "B"})
+            self.assertIn(json.loads((root / "current_plan.json").read_text(encoding="utf-8"))["winner"], {"A", "B"})
 
     def test_two_processes_at_same_revision_yield_exactly_one_commit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -393,7 +393,7 @@ class TransactionStateMachineTests(unittest.TestCase):
                 sorted(result_by_writer.values()),
                 ["committed", "conflict"],
             )
-            final_plan = json.loads((root / "current_plan.json").read_text())
+            final_plan = json.loads((root / "current_plan.json").read_text(encoding="utf-8"))
             committed_writer = next(
                 name for name, outcome in result_by_writer.items() if outcome == "committed"
             )
@@ -463,15 +463,15 @@ class TransactionStateMachineTests(unittest.TestCase):
             )
             self.assertTrue((root / "iteration_candidate.json").exists())
             self.assertEqual(
-                json.loads((root / "goal_contract.json").read_text())["goal_revision"],
+                json.loads((root / "goal_contract.json").read_text(encoding="utf-8"))["goal_revision"],
                 3,
             )
             self.assertEqual(
-                json.loads((root / "loop_state.json").read_text())["last_iteration"],
+                json.loads((root / "loop_state.json").read_text(encoding="utf-8"))["last_iteration"],
                 1,
             )
             self.assertEqual(
-                len((root / "iterations.jsonl").read_text().splitlines()),
+                len((root / "iterations.jsonl").read_text(encoding="utf-8").splitlines()),
                 1,
             )
 
@@ -490,13 +490,13 @@ class TransactionStateMachineTests(unittest.TestCase):
 
             for name, expected in expected_json.items():
                 with self.subTest(name=name):
-                    self.assertEqual(json.loads((root / name).read_text()), expected)
+                    self.assertEqual(json.loads((root / name).read_text(encoding="utf-8")), expected)
             iterations = [
-                json.loads(line) for line in (root / "iterations.jsonl").read_text().splitlines()
+                json.loads(line) for line in (root / "iterations.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             decisions = [
                 json.loads(line)
-                for line in (root / "direction_decisions.jsonl").read_text().splitlines()
+                for line in (root / "direction_decisions.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual([row["event_id"] for row in iterations], ["iteration-1", "iteration-candidate-2"])
             self.assertEqual([row["event_id"] for row in decisions], ["decision-1", "decision-candidate-2"])
