@@ -583,18 +583,29 @@ class DescriptorFreeDirectoryChainTests(unittest.TestCase):
     POSIX host.
     """
 
-    def test_chain_creates_components_and_rejects_a_symlinked_component(self) -> None:
+    def test_chain_creates_every_missing_component(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             st._ensure_directory_chain_by_lstat(root / "journal" / "post", create=True)
             self.assertTrue((root / "journal" / "post").is_dir())
-            self.assertEqual(
-                stat.S_IMODE((root / "journal" / "post").stat().st_mode), 0o700
-            )
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX directory modes")
+    def test_created_components_are_private(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "journal" / "post"
+            st._ensure_directory_chain_by_lstat(target, create=True)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlink semantics")
+    def test_a_symlinked_component_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            st._ensure_directory_chain_by_lstat(root / "journal" / "post", create=True)
             link = root / "link"
             link.symlink_to(root / "journal")
-            with self.assertRaises(st.TransactionError):
+            with self.assertRaisesRegex(
+                st.TransactionError, "not a real directory"
+            ):
                 st._ensure_directory_chain_by_lstat(link / "post")
 
     def test_missing_component_without_create_still_raises_file_not_found(self) -> None:
