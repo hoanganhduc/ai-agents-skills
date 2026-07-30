@@ -846,7 +846,9 @@ class KaggleDriverTests(unittest.TestCase):
         bundle = self._bundle()
         nested = bundle / "nested"
         nested.mkdir()
-        (nested / "payload.txt").write_text("embedded-marker\n", encoding="utf-8")
+        # Written as bytes: text mode would translate the newline on Windows and
+        # the assertion below checks that the bundle carries the exact payload.
+        (nested / "payload.txt").write_bytes(b"embedded-marker\n")
         transient = bundle / "out"
         transient.mkdir()
         (transient / "old-result.json").write_text("{}", encoding="utf-8")
