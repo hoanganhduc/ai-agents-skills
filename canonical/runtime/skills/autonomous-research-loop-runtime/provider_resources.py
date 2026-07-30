@@ -669,8 +669,14 @@ def cleanup_resource_scope(scope_unit: str) -> str | None:
             timeout=5,
             check=False,
         )
-        if killed.returncode != 0:
-            return "provider resource scope cleanup failed"
+        # A scope that finishes deactivating between the inspection above and
+        # this kill makes ``systemctl kill`` exit non-zero for a unit that is
+        # already gone, which is the ordinary case right after the kernel OOM
+        # killer tears one down.  A failed kill is therefore inconclusive on
+        # its own; only the observed unit state decides.  The poll below still
+        # fails closed, and it keeps the two outcomes distinct: a kill that was
+        # refused while the scope kept running is a cleanup failure, while a
+        # kill that was accepted and did not take effect is a survival.
         deadline = time.monotonic() + 3.0
         while time.monotonic() < deadline:
             check = subprocess.run(
@@ -700,6 +706,8 @@ def cleanup_resource_scope(scope_unit: str) -> str | None:
             ) in {"inactive", "failed"}:
                 return None
             time.sleep(0.05)
+        if killed.returncode != 0:
+            return "provider resource scope cleanup failed"
         return "provider resource scope survived cleanup"
     except (OSError, subprocess.TimeoutExpired):
         return "provider resource scope cleanup failed"
