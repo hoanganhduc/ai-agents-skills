@@ -116,7 +116,11 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/ru
 ```
 
 On Windows use `%AAS_RUNTIME_ROOT%\run_skill.bat ... run_autonomous_research_loop.bat drive --dir research\run --provider codex`.
-Wrap with `nohup`, `systemd-run`, or Task Scheduler for multi-day runs.
+Wrap with a persistent user service or Task Scheduler for multi-day runs. A
+managed executor may reap ordinary `nohup` descendants when its command ends;
+on Linux, prefer a `systemd-run --user` service whose command is a loop-owned
+wrapper. Load credentials inside that wrapper, never through token-valued
+`--setenv` arguments or unit properties.
 
 Driver behavior:
 

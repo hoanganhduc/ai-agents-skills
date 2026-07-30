@@ -31,9 +31,29 @@ python3 "$PACK/apply_failover_settings.py" \
 export LOOP_DIR=/path/to/loop
 export PROJECT_ROOT=/path/to/project
 export AAS_RUNTIME_ROOT="$RUNTIME"
-# Optional: pre-export HCLOUD_TOKEN / KAGGLE_API_TOKEN via loop helper
-nohup bash "$PACK/LAUNCH_supervisor.sh" replace >>"$LOOP_DIR/driver_logs/launch.out" 2>&1 &
+# In an ordinary interactive shell, run LAUNCH_supervisor.sh directly. Under a
+# managed executor that reaps descendants, start a persistent user service
+# through a loop-owned wrapper that loads credentials internally:
+systemd-run \
+  --user \
+  --quiet \
+  --collect \
+  --no-ask-password \
+  --expand-environment=no \
+  --unit=aas-autoloop-example.service \
+  --service-type=exec \
+  --working-directory="$PROJECT_ROOT" \
+  --property=KillMode=control-group \
+  --property=TimeoutStopSec=20s \
+  /path/to/loop-owned-launch-wrapper --foreground
 ```
+
+The service command and unit properties must contain only non-secret paths and
+controls. Do not pass provider or compute tokens through `--setenv`, `env
+TOKEN=...`, or unit `Environment=` properties. The wrapper should construct a
+minimal environment, source the loop's non-secret policy/pin file, load only
+the approved credentials from its protected source, then `exec` this pack's
+`LAUNCH_supervisor.sh start` in the foreground.
 
 ## Provider ids
 
