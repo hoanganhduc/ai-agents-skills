@@ -92,14 +92,15 @@ def _load_secrets():
     return secrets
 
 
-def load_config(require=None):
+def load_config(require=None, config_path=None):
     """Load config + secrets. Returns merged dict.
 
     Args:
         require: list of required config keys (beyond REQUIRED_FOR_SEARCH).
                  Raises SystemExit if any are missing.
+        config_path: explicit config file; defaults to the workspace location.
     """
-    config_path = _find_config_path()
+    config_path = config_path or _find_config_path()
     if not os.path.exists(config_path):
         print(json.dumps({
             "status": "error",
