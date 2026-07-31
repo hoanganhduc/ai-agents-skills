@@ -510,6 +510,11 @@ def smoke_env(manifests: dict[str, Any], skill: str, workspace: Path) -> dict[st
     env["AAS_RUNTIME_WORKSPACE"] = str(workspace)
     env["PYTHONUTF8"] = env.get("PYTHONUTF8", "1")
     env["PYTHONIOENCODING"] = env.get("PYTHONIOENCODING", "utf-8")
+    # The smoke runs a dispatcher out of the canonical tree, and importing it
+    # writes ``__pycache__`` directories the runtime inventory check then denies
+    # as sources it never enrolled. Keep the child from emitting bytecode so a
+    # smoke run leaves the tree exactly as it found it.
+    env["PYTHONDONTWRITEBYTECODE"] = env.get("PYTHONDONTWRITEBYTECODE", "1")
     smoke = manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
     env_canaries = smoke.get("env_canaries", {}) if isinstance(smoke, dict) else {}
     if isinstance(env_canaries, dict):
