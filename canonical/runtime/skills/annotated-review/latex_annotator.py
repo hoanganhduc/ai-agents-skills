@@ -230,11 +230,13 @@ def inject_document_start(
     ]
     inject_block = "\n".join(inject_lines) + "\n"
 
-    # Find \begin{document}
-    m = re.search(r"(\\begin\{document\}\s*\n)", tex_content)
+    # Find \begin{document}. Requiring a newline after it silently skipped the
+    # whole injection for the common \begin{document}\maketitle and
+    # \begin{document}% idioms, so match the command alone and open the line.
+    m = re.search(r"\\begin\{document\}", tex_content)
     if m:
         insert_pos = m.end()
-        tex_content = tex_content[:insert_pos] + inject_block + tex_content[insert_pos:]
+        tex_content = tex_content[:insert_pos] + "\n" + inject_block + tex_content[insert_pos:]
     return tex_content
 
 
@@ -619,10 +621,10 @@ def precompile_preview(source_dir: str) -> Tuple[Optional[str], Optional[str]]:
 
     # Inject \linenumbers after \begin{document}
     if "\\linenumbers" not in content:
-        m = re.search(r"(\\begin\{document\}\s*\n)", content)
+        m = re.search(r"\\begin\{document\}", content)
         if m:
             insert_pos = m.end()
-            content = content[:insert_pos] + "\\linenumbers\n\\setlength{\\linenumbersep}{2pt}\n" + content[insert_pos:]
+            content = content[:insert_pos] + "\n\\linenumbers\n\\setlength{\\linenumbersep}{2pt}\n" + content[insert_pos:]
 
     with open(root_tex, "w", encoding="utf-8") as f:
         f.write(content)

@@ -2055,6 +2055,10 @@
           "server_start": "forbidden",
           "config_write": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "SEMANTIC_SCHOLAR_API_KEY": "SUBMISSION-VENUE-SELECTOR-CANARY",
+          "UNPAYWALL_EMAIL": "SUBMISSION-VENUE-SELECTOR-CANARY"
         }
       }
     },
@@ -3704,6 +3708,9 @@
           "provider_cli": "forbidden",
           "subagent_spawn": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_URL_TO_SCREENSHOT_SMOKE_TOKEN": "URL-TO-SCREENSHOT-SMOKE-CANARY"
         }
       }
     }
