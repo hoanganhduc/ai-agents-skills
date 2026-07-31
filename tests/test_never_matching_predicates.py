@@ -285,38 +285,92 @@ class SafetyScriptPortabilityTest(unittest.TestCase):
                 self.assertNotIn(r"\b", rule, "use an explicit non-word class so the rule survives POSIX grep")
 
 
-class SmokeCanaryTest(unittest.TestCase):
-    """Two canary assertions checked for a string nothing ever injected.
+class DeepResearchFallbackTest(unittest.TestCase):
+    """The legacy-runtime fallback was gated on a string argparse never emits.
 
-    A canary-not-leaked check compares the smoke payload against a literal. When
-    no env_canaries entry puts that literal into the environment, the check
-    passes unconditionally and proves nothing about secret handling.
+    An installed runtime predating the selftest subcommand fails with
+    "invalid choice: 'selftest'", not "invalid command: selftest", so the guard
+    returned False on the one input it existed to recognise and the whole
+    fallback path was unreachable.
+    """
+
+    ARGPARSE_STDERR = (
+        "usage: run_deep_research_workflow [-h] {doctor,init,validate} ...\n"
+        "run_deep_research_workflow: error: argument command: invalid choice: "
+        "'selftest' (choose from 'doctor', 'init', 'validate')\n"
+    )
+
+    def setUp(self) -> None:
+        from installer.ai_agents_skills.runtime_smoke import is_deep_research_selftest_unsupported
+
+        self.unsupported = is_deep_research_selftest_unsupported
+
+    def result(self, returncode: int, stderr: str = "", stdout: str = ""):
+        import subprocess
+
+        return subprocess.CompletedProcess(args=["selftest"], returncode=returncode, stdout=stdout, stderr=stderr)
+
+    def test_argparse_rejection_is_recognised(self) -> None:
+        self.assertTrue(self.unsupported(self.result(2, stderr=self.ARGPARSE_STDERR)))
+
+    def test_older_wording_is_still_recognised(self) -> None:
+        self.assertTrue(self.unsupported(self.result(2, stderr="error: invalid command: selftest")))
+
+    def test_success_and_unrelated_failures_are_not_mistaken_for_it(self) -> None:
+        self.assertFalse(self.unsupported(self.result(0, stdout="{}")))
+        self.assertFalse(self.unsupported(self.result(1, stderr="Traceback: PermissionError")))
+        self.assertFalse(self.unsupported(self.result(2, stderr="invalid choice: 'doctor'")))
+
+
+class SmokeCanaryTest(unittest.TestCase):
+    """A canary is vacuous unless it is both injected and asserted on.
+
+    An assertion whose literal no env_canaries entry injects passes
+    unconditionally; a declared canary that nothing asserts on proves nothing
+    either. Both directions are pinned, because either alone leaves a check
+    that cannot fail.
     """
 
     def setUp(self) -> None:
         manifest = json.loads((ROOT / "manifest" / "runtime.yaml").read_text(encoding="utf-8"))
         self.declared = {
-            name: set((spec.get("smoke") or {}).get("env_canaries", {}).values())
+            name: set(literals)
             for name, spec in manifest["skills"].items()
+            for literals in [((spec.get("smoke") or {}).get("env_canaries", {}) or {}).values()]
+            if literals
         }
         self.asserted = {}
-        skill = None
-        for line in (ROOT / "installer" / "ai_agents_skills" / "runtime_smoke.py").read_text(encoding="utf-8").splitlines():
-            branch = re.search(r'(?:if|elif) skill == "([^"]+)"', line)
-            if branch:
-                skill = branch.group(1)
-            canary = re.search(r'canary-not-leaked.*?"([A-Z0-9-]*CANARY)"', line)
-            if canary:
-                self.asserted.setdefault(skill, set()).add(canary.group(1))
+        skills = ()
+        source = (ROOT / "installer" / "ai_agents_skills" / "runtime_smoke.py").read_text(encoding="utf-8")
+        for line in source.splitlines():
+            single = re.search(r'(?:if|elif) skill == "([^"]+)"', line)
+            group = re.search(r'(?:if|elif) skill in \{([^}]*)\}', line)
+            if single:
+                skills = (single.group(1),)
+            elif group:
+                skills = tuple(re.findall(r'"([^"]+)"', group.group(1)))
+            # Match the canary literal rather than the check name. The same
+            # assertion is spelled "canary-not-leaked" in some branches and
+            # "no-secret-value" in others, and anchoring on one name made half
+            # the sites invisible.
+            for literal in re.findall(r'"([A-Z][A-Z0-9-]*CANARY)"', line):
+                for skill in skills:
+                    self.asserted.setdefault(skill, set()).add(literal)
 
     def test_the_canary_sites_were_found(self) -> None:
-        self.assertGreaterEqual(len(self.asserted), 3)
+        self.assertGreaterEqual(len(self.asserted), 6)
 
     def test_every_asserted_canary_is_actually_injected(self) -> None:
         for skill, literals in self.asserted.items():
             with self.subTest(skill=skill):
                 missing = literals - self.declared.get(skill, set())
                 self.assertEqual(missing, set(), f"{skill} checks for a canary it never injects")
+
+    def test_every_injected_canary_is_actually_asserted(self) -> None:
+        for skill, literals in self.declared.items():
+            with self.subTest(skill=skill):
+                missing = literals - self.asserted.get(skill, set())
+                self.assertEqual(missing, set(), f"{skill} injects a canary no check looks for")
 
 
 if __name__ == "__main__":

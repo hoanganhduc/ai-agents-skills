@@ -399,7 +399,10 @@ def is_deep_research_selftest_unsupported(result: subprocess.CompletedProcess[st
     if result.returncode == 0:
         return False
     text = f"{result.stdout} {result.stderr}".lower()
-    return "invalid command: selftest" in text
+    # argparse reports an unknown subcommand as "invalid choice: 'selftest'",
+    # so matching "invalid command: selftest" recognised nothing and left the
+    # legacy fallback below unreachable. Keep the older wording as well.
+    return "selftest" in text and ("invalid choice" in text or "invalid command" in text)
 
 
 def runtime_command_target(
