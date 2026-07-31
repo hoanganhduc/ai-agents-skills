@@ -1,0 +1,13 @@
+{
+  "fixture_id": "unchecked-scope",
+  "defect_class": "unchecked_scope",
+  "defect_label": "Two of five scoped sections were never inspected, and the report omits the required 'incomplete analysis' marker.",
+  "target_gates": ["research-verification-gate", "research-report-reviewer"],
+  "artifact": {
+    "kind": "research_report",
+    "scope": {"sections_total": 5, "sections_inspected": 3, "materially_unchecked": true},
+    "report_text": "All scoped areas were reviewed and the findings are complete."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["material scope unchecked without an 'incomplete analysis' disclosure"]
+}

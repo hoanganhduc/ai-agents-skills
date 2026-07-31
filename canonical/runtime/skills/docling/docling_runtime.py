@@ -80,6 +80,7 @@ DEFAULT_OCR_QUALITY_THRESHOLD = 0.55
 DEFAULT_OCR_MIN_CHARS_PER_PAGE = 120
 DEFAULT_OCR_MIN_ALNUM_RATIO = 0.35
 DEFAULT_OCR_MAX_REPLACEMENT_RATIO = 0.02
+DEFAULT_MAX_STDOUT_CHARS = 200_000
 DEFAULT_OCRSPACE_MAX_PAGES = 10
 DEFAULT_OCRSPACE_DPI = 200
 DEFAULT_OCRSPACE_TIMEOUT = 60.0
@@ -252,6 +253,49 @@ def write_text_output(output: str, text: str, *, overwrite: bool = False) -> Non
     mode = "w" if overwrite else "x"
     with path.open(mode, encoding="utf-8") as handle:
         handle.write(text)
+
+
+def add_json_output_arguments(parser) -> None:
+    parser.add_argument("--output", help="Write the JSON payload to this local path instead of stdout.")
+    parser.add_argument("--overwrite", action="store_true", help="Replace an existing --output file.")
+    parser.add_argument(
+        "--max-stdout-chars",
+        type=int,
+        default=DEFAULT_MAX_STDOUT_CHARS,
+        help=(
+            "Refuse to print more than this many characters to stdout; 0 disables the ceiling. "
+            "Large documents belong in --output."
+        ),
+    )
+
+
+def prepare_json_output(args) -> None:
+    """Reject unusable output settings before paying for conversion."""
+    non_negative_int(getattr(args, "max_stdout_chars", DEFAULT_MAX_STDOUT_CHARS), "max-stdout-chars")
+    output = getattr(args, "output", None)
+    if output:
+        validate_output_path(output, overwrite=getattr(args, "overwrite", False))
+
+
+def emit_json_payload(args, payload: dict) -> None:
+    """Write a payload whole, or fail telling the caller how to get it whole.
+
+    The runtime never silently drops output: anything too large for stdout is an
+    error naming the flags that make it fit.
+    """
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    output = getattr(args, "output", None)
+    if output:
+        write_text_output(output, text + "\n", overwrite=getattr(args, "overwrite", False))
+        return
+    ceiling = non_negative_int(getattr(args, "max_stdout_chars", DEFAULT_MAX_STDOUT_CHARS), "max-stdout-chars")
+    if ceiling and len(text) > ceiling:
+        raise DoclingRuntimeError(
+            f"payload is {len(text)} characters, above the stdout ceiling of {ceiling}; "
+            "write it whole with --output PATH, request a window with --offset/--limit, "
+            "or raise --max-stdout-chars"
+        )
+    print(text)
 
 
 def build_docling_converter(options: dict):
@@ -1009,6 +1053,16 @@ def _parse_page_range(value) -> tuple[int, int]:
     if end_int < start_int:
         raise DoclingRuntimeError("page_range end must be greater than or equal to start")
     return (start_int, end_int)
+
+
+def non_negative_int(value, name: str) -> int:
+    try:
+        parsed = int(value or 0)
+    except (TypeError, ValueError) as exc:
+        raise DoclingRuntimeError(f"{name} must be an integer") from exc
+    if parsed < 0:
+        raise DoclingRuntimeError(f"{name} must be zero or greater")
+    return parsed
 
 
 def _positive_int(value, name: str) -> int:

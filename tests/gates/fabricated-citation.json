@@ -1,0 +1,18 @@
+{
+  "fixture_id": "fabricated-citation",
+  "defect_class": "citation_fabrication",
+  "defect_label": "Claim C-2 cites source S-999, which is absent from the evidence list.",
+  "target_gates": ["research-verification-gate", "research-report-reviewer"],
+  "artifact": {
+    "kind": "research_report",
+    "evidence_list": [
+      {"source_id": "S-1", "title": "Verifier efficacy study", "url": "https://example.org/s1", "accessed": "2026-07-01"}
+    ],
+    "claims": [
+      {"claim_id": "C-1", "text": "Gate chains reduce unsupported claims.", "cited_sources": ["S-1"]},
+      {"claim_id": "C-2", "text": "Seeded corpora cut false passes by half.", "cited_sources": ["S-999"]}
+    ]
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["C-2 cites S-999, which is not in the evidence list"]
+}

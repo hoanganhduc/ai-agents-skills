@@ -24,8 +24,12 @@ Use this as the last gate before claiming a research output is ready.
   `active_overlays`, `active_requirement_ids`, and `style_applied`
 - mathematical, TCS, graph-theoretic, formal-proof, or LaTeX writing loaded
   `math-manuscript-style.md`
+- every input the conclusions rest on was read whole, or its truncation is
+  disclosed: tool payloads reporting `complete: false`, capped subprocess
+  output, partial retrievals, and summaries standing in for full sources
 - remaining gaps are disclosed
-- `incomplete analysis` is used when material scope is still unchecked
+- `incomplete analysis` is used when material scope is still unchecked, and when
+  a load-bearing source was read only in part
 
 ## Output contract
 
@@ -34,6 +38,9 @@ Produce a short visible section titled `Delivery Check`.
 Include:
 
 - `Status` — `READY` or `NOT READY`
+- `Gate version` — the `version` recorded for `research-verification-gate` in
+  `manifest/skills.yaml` (`unversioned` when absent), so past verdicts stay
+  interpretable as the gate evolves
 - `Confirmed` — the key checks that passed
 - `Gaps` — anything still blocking delivery
 - `Next step` — deliver now or fix specific gaps first
@@ -52,7 +59,14 @@ Use the checklist in `references/checklist.md`.
 
 - do not silently downgrade a blocker into a caveat
 - if material scope is unchecked, require `incomplete analysis`
+- treat undisclosed truncation as unchecked scope, not as a formatting nit: a
+  conclusion drawn from a silently partial source is unsupported, whatever the
+  source appeared to say
 - keep the gate short and concrete
+- staged fail-visible rollout: while enforcement is warn-only, log every
+  downgraded blocker or skipped check (in the run ledger when one exists) with
+  its reason; a later fail-closed stage may make `NOT READY` a hard stop, and
+  the override log is itself research evidence
 
 ## Recommended templates
 

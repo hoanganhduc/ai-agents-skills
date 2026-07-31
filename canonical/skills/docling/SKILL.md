@@ -137,6 +137,10 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh extract   --
 Emits JSON with counts and basic structural signals such as headings, tables, pictures, and pages.
 The same `--config`, `--preset`, OCR, table, page, and limit options are accepted.
 
+Every heading is emitted by default. `--headings-limit` and `--max-heading-chars`
+narrow the output; whenever they do, the payload reports `complete: false` next
+to `headings_total`, so a partial list is never mistaken for the whole structure.
+
 ### OCR quality
 
 ```bash
@@ -155,6 +159,44 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh chunk   --so
 ```
 
 The same `--config`, `--preset`, OCR, table, page, and limit options are accepted.
+
+Chunk output is complete by default: every chunk, with its full text. A real
+paper runs to hundreds of chunks, so the payload usually belongs in a file
+rather than on stdout:
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh chunk \
+  --source "/path/to/file.pdf" \
+  --output "/path/to/chunks.json"
+```
+
+Printing more than `--max-stdout-chars` (200,000 by default) is an **error**,
+not a silent cut. The message names the three ways out: `--output` for the whole
+document, `--offset`/`--limit` for a deliberate window, or a raised ceiling.
+
+To page through a long document, follow `next_offset` until it is `null`:
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh chunk \
+  --source "/path/to/file.pdf" --offset 0 --limit 50
+```
+
+Read these fields before using the result:
+
+| Field | Meaning |
+|---|---|
+| `complete` | `true` only when every character of every chunk is present |
+| `chunks_total` / `chunks_emitted` | how much of the document this payload covers |
+| `characters_total` / `characters_emitted` | the same in characters |
+| `next_offset` | `--offset` for the next page, or `null` at the end |
+| `truncated_chunks` | chunks cut by `--max-chunk-chars` (0 unless you asked) |
+
+Each chunk carries `index`, `characters`, `truncated`, and the Docling `meta`
+with page and bounding-box provenance, so a quoted passage keeps its locator.
+
+`--max-chunk-chars` cuts individual chunks and is off by default. Use it only
+when a downstream consumer needs a hard per-chunk bound; the cut is recorded per
+chunk and in `truncated_chunks`.
 
 ## Recommended settings
 

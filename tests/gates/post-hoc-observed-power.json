@@ -1,0 +1,14 @@
+{
+  "fixture_id": "post-hoc-observed-power",
+  "defect_class": "post_hoc_observed_power",
+  "defect_label": "Analysis justifies a null result with post-hoc observed power computed from the observed effect.",
+  "target_gates": [],
+  "coverage_note": "No current gate catches this class; the fixture tracks the repo's verified statistical-rigor gap and awaits the proposed study-design-and-power skill.",
+  "artifact": {
+    "kind": "analysis_plan",
+    "post_hoc": true,
+    "analysis_text": "The null result is reliable because observed power was 0.82 given the observed effect size."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["post-hoc observed power used to justify a conclusion"]
+}

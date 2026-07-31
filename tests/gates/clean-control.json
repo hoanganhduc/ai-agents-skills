@@ -1,0 +1,24 @@
+{
+  "fixture_id": "clean-control",
+  "defect_class": "none",
+  "defect_label": "Control: every claim cites a listed, non-retracted, supporting source; scope fully inspected with concrete dates; venue ranking has comparator evidence; no statistical claims.",
+  "target_gates": ["research-verification-gate"],
+  "artifact": {
+    "kind": "research_report",
+    "scope": {"sections_total": 2, "sections_inspected": 2, "materially_unchecked": false},
+    "report_text": "Findings reported with concrete dates (accessed 2026-07-01).",
+    "evidence_list": [
+      {"source_id": "S-1", "title": "Verifier efficacy study", "accessed": "2026-07-01", "retracted": false, "supports": true}
+    ],
+    "claims": [
+      {"claim_id": "C-1", "text": "Gate chains reduce unsupported claims.", "presented_as": "supporting", "cited_sources": ["S-1"]}
+    ],
+    "venue_ranking": {
+      "ranked": [{"venue": "Journal A", "rank": 1}],
+      "comparator_paper_evidence": [{"paper": "Comparator 2025", "similarity": "high"}]
+    },
+    "analysis_text": "No statistical claims are made."
+  },
+  "expected_verdict": "READY",
+  "expected_signals": []
+}

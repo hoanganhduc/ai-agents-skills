@@ -10,6 +10,11 @@ Review the draft against this list:
 - Does the draft answer the stated question without wandering?
 - Are key uncertainties or exclusions named?
 - Is any recommendation stronger than the cited evidence allows?
+- **Undisclosed truncation (BLOCK if load-bearing):** does a claim rest on a
+  source that was read only in part — a payload reporting `complete: false`,
+  capped tool or subprocess output, a partial retrieval — without the draft
+  saying so? Treat the claim as unsupported until the full source is read or
+  the partial read is disclosed.
 - For blog/article/report drafting, were prior posts, templates, style guides,
   or supplied examples inspected before writing?
 - **Formal overclaim (BLOCK if present):** draft says proved/machine-checked/
