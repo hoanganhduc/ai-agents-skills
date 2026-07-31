@@ -83,7 +83,7 @@ def _load_secrets():
     if missing:
         secrets_path = _find_secrets_path()
         if os.path.exists(secrets_path):
-            with open(secrets_path) as f:
+            with open(secrets_path, encoding="utf-8") as f:
                 file_secrets = json.load(f)
             for key in missing:
                 if key in file_secrets and file_secrets[key]:
@@ -109,7 +109,7 @@ def load_config(require=None):
         }))
         sys.exit(1)
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = json.load(f)
 
     # Apply defaults for missing optional keys

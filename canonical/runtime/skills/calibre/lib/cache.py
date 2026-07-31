@@ -20,7 +20,7 @@ def load_cache(cache_path):
         return [], None
 
     try:
-        with open(cache_path) as f:
+        with open(cache_path, encoding="utf-8") as f:
             data = json.load(f)
         updated = data.get("updated", 0)
         age_hours = (time.time() - updated) / 3600 if updated else None
@@ -32,7 +32,7 @@ def load_cache(cache_path):
 def save_cache(cache_path, items):
     """Write items list to cache file."""
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    with open(cache_path, "w") as f:
+    with open(cache_path, "w", encoding="utf-8") as f:
         json.dump({"items": items, "updated": time.time()}, f)
 
 

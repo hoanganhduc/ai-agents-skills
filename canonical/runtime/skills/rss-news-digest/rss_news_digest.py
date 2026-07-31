@@ -1127,7 +1127,7 @@ def _write_digest_stubs(items):
     ingested_ids = set()
     if ingested_file.exists():
         try:
-            records = json.loads(ingested_file.read_text())
+            records = json.loads(ingested_file.read_text(encoding="utf-8"))
             ingested_ids = {r["id"] for r in records if r.get("source") == "digest"}
         except Exception:
             pass
@@ -1175,16 +1175,16 @@ def _write_digest_stubs(items):
             f"## Connections to current research\n\n_To be filled on access._\n"
         )
         try:
-            out_file.write_text(content)
+            out_file.write_text(content, encoding="utf-8")
             new_records.append({"source": "digest", "id": item_id, "processed_at": now})
         except Exception:
             pass
 
     if new_records:
         try:
-            existing = json.loads(ingested_file.read_text()) if ingested_file.exists() else []
+            existing = json.loads(ingested_file.read_text(encoding="utf-8")) if ingested_file.exists() else []
             ingested_file.parent.mkdir(parents=True, exist_ok=True)
-            ingested_file.write_text(json.dumps(existing + new_records, indent=2))
+            ingested_file.write_text(json.dumps(existing + new_records, indent=2), encoding="utf-8")
         except Exception:
             pass
 

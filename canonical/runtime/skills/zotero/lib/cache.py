@@ -19,7 +19,7 @@ def load_cache(config):
     if not os.path.exists(path):
         return [], None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         mtime = os.path.getmtime(path)
         age_hours = (time.time() - mtime) / 3600
@@ -32,7 +32,7 @@ def save_cache(config, items):
     """Save items to cache."""
     path = _cache_path(config)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump({"items": items, "updated": time.time()}, f, ensure_ascii=False)
 
 

@@ -526,7 +526,7 @@ def fetch(
             "-n", f"result-{job_id}", "-D", str(dest),
         ])
         files = list(dest.glob("*.json"))
-        result = json.loads(files[0].read_text()) if files else {"status": "no-artifact"}
+        result = json.loads(files[0].read_text(encoding="utf-8")) if files else {"status": "no-artifact"}
     except GhaError:
         result = {"status": "no-artifact"}
     actual = None

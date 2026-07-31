@@ -101,7 +101,7 @@ def _check_staging(config):
     try:
         os.makedirs(staging, exist_ok=True)
         test_file = os.path.join(staging, ".write_test")
-        with open(test_file, "w") as f:
+        with open(test_file, "w", encoding="utf-8") as f:
             f.write("ok")
         os.remove(test_file)
         return {"name": "staging_dir", "ok": True,

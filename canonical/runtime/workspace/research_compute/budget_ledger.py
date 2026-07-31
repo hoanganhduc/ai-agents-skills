@@ -28,7 +28,7 @@ def _ledger_path(state_root: Path, backend: str) -> Path:
 def _lock(path: Path) -> Iterator[None]:
     path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = path.with_suffix(".lock")
-    handle = lock_file.open("w")
+    handle = lock_file.open("w", encoding="utf-8")
     try:
         if fcntl is not None:
             fcntl.flock(handle, fcntl.LOCK_EX)
@@ -42,12 +42,12 @@ def _lock(path: Path) -> Iterator[None]:
 def _read(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def _write(path: Path, rows: list[dict[str, Any]]) -> None:
     tmp = path.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    tmp.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     tmp.replace(path)
 
 

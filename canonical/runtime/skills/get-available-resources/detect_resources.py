@@ -265,7 +265,7 @@ def detect_all_resources(output_path: str = None) -> Dict[str, Any]:
     resources["recommendations"] = generate_recommendations(resources)
 
     # Save to JSON file
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(resources, f, indent=2)
 
     return resources
