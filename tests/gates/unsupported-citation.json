@@ -1,0 +1,17 @@
+{
+  "fixture_id": "unsupported-citation",
+  "defect_class": "unsupported_citation",
+  "defect_label": "Claim C-1 presents source S-1 as supporting, but the evidence record marks it as not supporting the claim.",
+  "target_gates": ["research-report-reviewer", "research-verification-gate"],
+  "artifact": {
+    "kind": "research_report",
+    "evidence_list": [
+      {"source_id": "S-1", "title": "Null-result trial", "supports": false, "note": "No significant difference from control."}
+    ],
+    "claims": [
+      {"claim_id": "C-1", "text": "The intervention improves retention.", "presented_as": "supporting", "cited_sources": ["S-1"]}
+    ]
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["C-1 presents S-1 as supporting while the evidence record marks supports=false"]
+}

@@ -1,0 +1,18 @@
+{
+  "fixture_id": "venue-ranking-without-comparator",
+  "defect_class": "venue_ranking_without_comparator",
+  "defect_label": "Venue ranking lists two ranked venues with no comparator-paper evidence.",
+  "target_gates": ["submission-venue-selector", "research-verification-gate"],
+  "artifact": {
+    "kind": "venue_ranking",
+    "venue_ranking": {
+      "ranked": [
+        {"venue": "Journal A", "rank": 1},
+        {"venue": "Conference B", "rank": 2}
+      ],
+      "comparator_paper_evidence": []
+    }
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["ranked venues without comparator-paper evidence"]
+}

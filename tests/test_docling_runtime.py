@@ -334,6 +334,146 @@ ocrspace = "secret-api-value"
 
             self.assertEqual(module.validate_output_path(str(output), overwrite=True), output)
 
+    def test_chunk_help_exposes_windowing_flags(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(DOCLING_DIR / "docling_chunk.py"), "--help"],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env=no_bytecode_env(),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        for flag in ("--offset", "--limit", "--max-chunk-chars", "--output", "--max-stdout-chars"):
+            self.assertIn(flag, completed.stdout)
+
+    def test_extract_help_exposes_heading_flags(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(DOCLING_DIR / "docling_extract.py"), "--help"],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env=no_bytecode_env(),
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        for flag in ("--headings-limit", "--max-heading-chars", "--output", "--max-stdout-chars"):
+            self.assertIn(flag, completed.stdout)
+
+    def test_chunk_rejects_negative_window_before_docling_import(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(DOCLING_DIR / "docling_chunk.py"),
+                "--source",
+                "paper.pdf",
+                "--offset=-1",
+            ],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            env=no_bytecode_env(),
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("offset must be zero or greater", completed.stderr)
+
+    def test_chunk_rejects_existing_output_before_docling_import(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "paper.pdf"
+            output = root / "chunks.json"
+            source.write_bytes(b"%PDF-1.4\n")
+            output.write_text("existing", encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(DOCLING_DIR / "docling_chunk.py"),
+                    "--source",
+                    str(source),
+                    "--output",
+                    str(output),
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=30,
+                env=no_bytecode_env(),
+            )
+
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("--overwrite", completed.stderr)
+        self.assertEqual(output.name, "chunks.json")
+
+    def test_oversized_payload_fails_closed_instead_of_truncating(self) -> None:
+        module = load_docling_runtime()
+        args = SimpleNamespace(output=None, overwrite=False, max_stdout_chars=64)
+
+        with self.assertRaises(module.DoclingRuntimeError) as caught:
+            module.emit_json_payload(args, {"text": "x" * 500})
+
+        message = str(caught.exception)
+        self.assertIn("--output", message)
+        self.assertIn("--offset/--limit", message)
+        self.assertIn("--max-stdout-chars", message)
+
+    def test_payload_written_to_output_is_whole(self) -> None:
+        module = load_docling_runtime()
+        payload = {"complete": True, "chunks": [{"text": "y" * 5000}]}
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "chunks.json"
+            args = SimpleNamespace(output=str(output), overwrite=False, max_stdout_chars=64)
+
+            module.emit_json_payload(args, payload)
+
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), payload)
+
+    def test_zero_ceiling_disables_the_stdout_limit(self) -> None:
+        module = load_docling_runtime()
+        args = SimpleNamespace(output=None, overwrite=False, max_stdout_chars=0)
+
+        with patch("builtins.print") as printed:
+            module.emit_json_payload(args, {"text": "z" * 5000})
+
+        self.assertEqual(json.loads(printed.call_args[0][0])["text"], "z" * 5000)
+
+    def test_non_negative_int_contract(self) -> None:
+        module = load_docling_runtime()
+        self.assertEqual(module.non_negative_int(0, "limit"), 0)
+        self.assertEqual(module.non_negative_int(None, "limit"), 0)
+        self.assertEqual(module.non_negative_int("7", "limit"), 7)
+        with self.assertRaisesRegex(module.DoclingRuntimeError, "zero or greater"):
+            module.non_negative_int(-1, "limit")
+        with self.assertRaisesRegex(module.DoclingRuntimeError, "must be an integer"):
+            module.non_negative_int("many", "limit")
+
+    def test_heading_labels_match_docling_structural_labels(self) -> None:
+        """The old predicate matched the substring "heading", which no Docling
+        structural label contains, so extract reported zero headings forever."""
+        spec = importlib.util.spec_from_file_location(
+            "docling_extract_under_test",
+            DOCLING_DIR / "docling_extract.py",
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(DOCLING_DIR))
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.dont_write_bytecode = previous
+            sys.path.remove(str(DOCLING_DIR))
+
+        self.assertIn("section_header", module.HEADING_LABELS)
+        self.assertIn("title", module.HEADING_LABELS)
+        self.assertNotIn("page_header", module.HEADING_LABELS)
+        for label in module.HEADING_LABELS:
+            self.assertNotIn("heading", label)
+
     @unittest.skipIf(os.name == "nt", "POSIX shell wrapper test")
     def test_posix_wrapper_uses_aas_runtime_python(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

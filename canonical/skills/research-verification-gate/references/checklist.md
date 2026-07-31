@@ -11,6 +11,9 @@ Mark the answer `READY` only if all of these are true:
   format-matched writing
 - exclusions and unresolved gaps are visible
 - no hidden dependency on unchecked material scope remains
+- load-bearing sources were read whole, or the partial read is disclosed —
+  check tool payloads for `complete: false`, capped output, and partial
+  retrievals rather than assuming a result is the full document
 
 Compact output shape:
 

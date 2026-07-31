@@ -16,6 +16,9 @@ Use this after a draft exists and before presenting research as final.
   `guards.jsonl`, `delivery.json`, source ledgers, analysis matrices, and report
   evidence mappings
 - unsupported or weakly supported claims
+- claims resting on sources that were read only in part, where the draft does
+  not say so — silently truncated tool output, capped payloads, or a summary
+  standing in for the full source make a claim unsupported, not merely thin
 - missing dates or stale-time ambiguity
 - scope drift relative to the original question
 - places where observation and inference are blended together

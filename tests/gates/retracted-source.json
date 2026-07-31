@@ -1,0 +1,18 @@
+{
+  "fixture_id": "retracted-source",
+  "defect_class": "retracted_source",
+  "defect_label": "Claim C-1 rests on source S-2, which is marked retracted in the evidence list.",
+  "target_gates": ["research-verification-gate", "research-report-reviewer"],
+  "artifact": {
+    "kind": "research_report",
+    "evidence_list": [
+      {"source_id": "S-1", "title": "Replication study", "accessed": "2026-07-01", "retracted": false},
+      {"source_id": "S-2", "title": "Original efficacy claim", "accessed": "2026-07-01", "retracted": true}
+    ],
+    "claims": [
+      {"claim_id": "C-1", "text": "The treatment effect is established.", "cited_sources": ["S-2"]}
+    ]
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["C-1 is supported only by retracted source S-2"]
+}
