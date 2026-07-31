@@ -25,7 +25,10 @@ SAFETY_PATTERNS = {
     "run_cmd": re.compile(r"\brun_cmd\b"),
     "initialize": re.compile(r"\binitialize\b"),
     "@[extern]": re.compile(r"@\s*\[\s*extern\b"),
-    "foreign": re.compile(r"\b(foreign import|@[A-Za-z0-9_]*extern)\b"),
+    # The leading \b must stay inside the alternatives: a shared one would
+    # demand a word character before "@", so "@extern" at the start of a line
+    # never matched.
+    "foreign": re.compile(r"(?:\bforeign import\b|@[A-Za-z0-9_]*extern\b)"),
 }
 FORMAL_ARTIFACT_STAGES = {"intake", "stub", "candidate_solution", "final_candidate", "archived"}
 RUNNERS = {"direct-lean", "lake-env-lean"}

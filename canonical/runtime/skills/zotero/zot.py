@@ -1012,6 +1012,10 @@ def _extract_file_metadata(file_path, content_type=""):
     type_map = {
         "application/epub+zip": "book",
         "application/x-mobipocket-ebook": "book",
+        # DjVu resolves to image/vnd.djvu, so these must stay above the
+        # "image/" prefix or every scanned book is filed as artwork.
+        "image/vnd.djvu": "document",
+        "image/x-djvu": "document",
         "application/djvu": "document",
         "image/": "artwork",
         "video/": "videoRecording",

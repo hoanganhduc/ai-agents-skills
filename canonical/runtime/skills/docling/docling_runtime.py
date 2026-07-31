@@ -78,12 +78,15 @@ LOCAL_OCR_ENGINES = {"auto", "easyocr", "ocrmac", "rapidocr", "tesseract", "tess
 OCR_FALLBACKS = {"none", "ocrspace"}
 DEFAULT_OCR_QUALITY_THRESHOLD = 0.55
 DEFAULT_OCR_MIN_CHARS_PER_PAGE = 120
+DEFAULT_OCR_MIN_WORDS_PER_PAGE = 20
 DEFAULT_OCR_MIN_ALNUM_RATIO = 0.35
 DEFAULT_OCR_MAX_REPLACEMENT_RATIO = 0.02
 DEFAULT_MAX_STDOUT_CHARS = 200_000
 DEFAULT_OCRSPACE_MAX_PAGES = 10
 DEFAULT_OCRSPACE_DPI = 200
 DEFAULT_OCRSPACE_TIMEOUT = 60.0
+CJK_CHARACTER_RE = re.compile("[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
+WORD_RE = re.compile(r"[^\W_][\w'-]+")
 OCRSPACE_KEY_ENVS = ("OCRSPACE_API_KEY", "OCR_SPACE_API_KEY", "OCRSPACE_KEY", "OCR_SPACE_KEY")
 OCRSPACE_ENDPOINT = "https://api.ocr.space/parse/image"
 OCRSPACE_LANGUAGE_MAP = {
@@ -167,6 +170,12 @@ def add_common_arguments(parser) -> None:
 def add_quality_arguments(parser) -> None:
     parser.add_argument("--ocr-quality-threshold", type=float, default=DEFAULT_OCR_QUALITY_THRESHOLD)
     parser.add_argument("--ocr-min-chars-per-page", type=int, default=DEFAULT_OCR_MIN_CHARS_PER_PAGE)
+    parser.add_argument(
+        "--ocr-min-words-per-page",
+        type=int,
+        default=DEFAULT_OCR_MIN_WORDS_PER_PAGE,
+        help="Words per page below which extraction counts as degraded; 0 disables the floor.",
+    )
     parser.add_argument("--ocr-min-alnum-ratio", type=float, default=DEFAULT_OCR_MIN_ALNUM_RATIO)
     parser.add_argument("--ocr-max-replacement-ratio", type=float, default=DEFAULT_OCR_MAX_REPLACEMENT_RATIO)
 
@@ -311,13 +320,12 @@ def build_docling_converter(options: dict):
 
         pipeline_options = VlmPipelineOptions(document_timeout=options.get("document_timeout"))
         _apply_common_pipeline_options(pipeline_options, options)
+        format_option = PdfFormatOption(
+            pipeline_options=pipeline_options,
+            pipeline_cls=VlmPipeline,
+        )
         return DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(
-                    pipeline_options=pipeline_options,
-                    pipeline_cls=VlmPipeline,
-                )
-            }
+            format_options={InputFormat.PDF: format_option, InputFormat.IMAGE: format_option}
         )
 
     pipeline_options = PdfPipelineOptions(
@@ -328,7 +336,28 @@ def build_docling_converter(options: dict):
     _apply_common_pipeline_options(pipeline_options, options)
     _apply_table_options(pipeline_options, options)
     _apply_ocr_options(pipeline_options, options)
-    return DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)})
+    return DocumentConverter(
+        format_options={
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+            InputFormat.IMAGE: _image_format_option(PdfFormatOption, pipeline_options),
+        }
+    )
+
+
+def _image_format_option(pdf_format_option_cls, pipeline_options):
+    """Build the IMAGE format option so image inputs honour the same options as PDFs.
+
+    Keying `format_options` on PDF alone left every runtime option — OCR mode,
+    engine, languages, tables, threads, device, timeout — silently ignored for
+    the jpg/png/tiff inputs this skill advertises. Docling's own CLI pairs IMAGE
+    with an image-native backend to avoid pypdfium2 locking; fall back to the
+    plain option when that backend is unavailable.
+    """
+    try:
+        from docling.backend.image_backend import ImageDocumentBackend
+    except ImportError:
+        return pdf_format_option_cls(pipeline_options=pipeline_options)
+    return pdf_format_option_cls(pipeline_options=pipeline_options, backend=ImageDocumentBackend)
 
 
 def conversion_kwargs(options: dict) -> dict:
@@ -375,9 +404,22 @@ def document_quality_report(document, args) -> dict:
         pages=document_page_count(document),
         threshold=float(args.ocr_quality_threshold),
         min_chars_per_page=int(args.ocr_min_chars_per_page),
+        min_words_per_page=int(args.ocr_min_words_per_page),
         min_alnum_ratio=float(args.ocr_min_alnum_ratio),
         max_replacement_ratio=float(args.ocr_max_replacement_ratio),
     )
+
+
+def count_words(text: str) -> int:
+    """Count words in any script the skill claims to support.
+
+    Kana, Han, and Hangul are written without spaces, so each such character
+    counts as one word; every other script keeps the two-or-more-character
+    token shape. An ASCII-only class here made the words-per-page floor
+    unsatisfiable for monolingual Chinese, Japanese, Korean, Russian, Greek,
+    Arabic, and Thai documents no matter how clean the extraction was.
+    """
+    return len(CJK_CHARACTER_RE.findall(text)) + len(WORD_RE.findall(CJK_CHARACTER_RE.sub(" ", text)))
 
 
 def evaluate_ocr_quality(
@@ -386,6 +428,7 @@ def evaluate_ocr_quality(
     pages: int,
     threshold: float = DEFAULT_OCR_QUALITY_THRESHOLD,
     min_chars_per_page: int = DEFAULT_OCR_MIN_CHARS_PER_PAGE,
+    min_words_per_page: int = DEFAULT_OCR_MIN_WORDS_PER_PAGE,
     min_alnum_ratio: float = DEFAULT_OCR_MIN_ALNUM_RATIO,
     max_replacement_ratio: float = DEFAULT_OCR_MAX_REPLACEMENT_RATIO,
 ) -> dict:
@@ -394,6 +437,7 @@ def evaluate_ocr_quality(
     min_alnum_ratio = _ratio(min_alnum_ratio, "ocr_min_alnum_ratio")
     max_replacement_ratio = _ratio(max_replacement_ratio, "ocr_max_replacement_ratio")
     min_chars_per_page = _positive_int(min_chars_per_page, "ocr_min_chars_per_page")
+    min_words_per_page = non_negative_int(min_words_per_page, "ocr_min_words_per_page")
 
     text = text or ""
     stripped = text.strip()
@@ -402,17 +446,17 @@ def evaluate_ocr_quality(
     alnum_count = sum(1 for char in nonspace_chars if char.isalnum())
     replacement_count = stripped.count("\ufffd")
     control_count = sum(1 for char in stripped if ord(char) < 32 and char not in "\n\r\t")
-    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'_-]{1,}", stripped)
+    words = count_words(stripped)
 
     chars_per_page = len(stripped) / page_count
-    words_per_page = len(words) / page_count
+    words_per_page = words / page_count
     alnum_ratio = (alnum_count / nonspace_count) if nonspace_count else 0.0
     replacement_ratio = (replacement_count / max(1, len(stripped))) if stripped else 0.0
     control_ratio = (control_count / max(1, len(stripped))) if stripped else 0.0
 
     score_parts = [
         min(1.0, chars_per_page / min_chars_per_page),
-        min(1.0, words_per_page / 20.0),
+        min(1.0, words_per_page / min_words_per_page) if min_words_per_page else 1.0,
         min(1.0, alnum_ratio / min_alnum_ratio) if min_alnum_ratio else 1.0,
         max(0.0, 1.0 - (replacement_ratio / max_replacement_ratio)) if max_replacement_ratio else 1.0,
         max(0.0, 1.0 - (control_ratio / 0.02)),
@@ -423,7 +467,7 @@ def evaluate_ocr_quality(
         reasons.append("no extracted text")
     if chars_per_page < min_chars_per_page:
         reasons.append("low characters per page")
-    if words_per_page < 20:
+    if min_words_per_page and words_per_page < min_words_per_page:
         reasons.append("low words per page")
     if alnum_ratio < min_alnum_ratio:
         reasons.append("low alphanumeric ratio")
@@ -441,7 +485,7 @@ def evaluate_ocr_quality(
         "pages": page_count,
         "characters": len(stripped),
         "characters_per_page": round(chars_per_page, 2),
-        "words": len(words),
+        "words": words,
         "words_per_page": round(words_per_page, 2),
         "alnum_ratio": round(alnum_ratio, 4),
         "replacement_ratio": round(replacement_ratio, 4),

@@ -33,27 +33,27 @@ if [[ -z "$cmd" ]]; then
   exit 2
 fi
 
-if echo "$cmd" | grep -qE 'rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(/|/home(\s|$)|~/?(\s|$))'; then
+if echo "$cmd" | grep -qE 'rm[[:space:]]+(-[a-zA-Z]*f[a-zA-Z]*[[:space:]]+)?(-[a-zA-Z]*r[a-zA-Z]*[[:space:]]+)?(/|/home([[:space:]]|$)|~/?([[:space:]]|$))'; then
   echo "BLOCKED: destructive rm -rf targeting root or home directory." >&2
   exit 2
 fi
 
-if echo "$cmd" | grep -qE 'git\s+push\s+.*--force.*\s+(origin\s+)?(main|master)\b'; then
+if echo "$cmd" | grep -qE 'git[[:space:]]+push[[:space:]]+.*--force.*[[:space:]]+(origin[[:space:]]+)?(main|master)([^[:alnum:]_]|$)'; then
   echo "BLOCKED: force push to main/master." >&2
   exit 2
 fi
 
-if echo "$cmd" | grep -qE '(curl|wget)\s+[^|]*\|\s*(ba)?sh'; then
+if echo "$cmd" | grep -qE '(curl|wget)[[:space:]]+[^|]*\|[[:space:]]*(ba)?sh'; then
   echo "BLOCKED: pipe-to-shell pattern detected." >&2
   exit 2
 fi
 
-if echo "$cmd" | grep -qiE 'DROP\s+(DATABASE|TABLE)\s'; then
+if echo "$cmd" | grep -qiE 'DROP[[:space:]]+(DATABASE|TABLE)[[:space:]]'; then
   echo "BLOCKED: DROP DATABASE/TABLE detected." >&2
   exit 2
 fi
 
-if echo "$cmd" | grep -qiE '\b(Remove-Item|rm|del|erase)\b'; then
+if echo "$cmd" | grep -qiE '(^|[^[:alnum:]_])(Remove-Item|rm|del|erase)([^[:alnum:]_]|$)'; then
   if echo "$cmd" | grep -qiE '(^|[[:space:]])(-Recurse|-r)([[:space:]]|$)' \
     && echo "$cmd" | grep -qiE '(^|[[:space:]])(-Force|-f)([[:space:]]|$)'; then
     echo "BLOCKED: PowerShell recursive forced deletion detected." >&2
@@ -61,12 +61,12 @@ if echo "$cmd" | grep -qiE '\b(Remove-Item|rm|del|erase)\b'; then
   fi
 fi
 
-if echo "$cmd" | grep -qiE '\b(rmdir|rd)\b\s+/s\s+/q\b|\b(del|erase)\b\s+/[sq]\b'; then
+if echo "$cmd" | grep -qiE '(^|[^[:alnum:]_])(rmdir|rd)[[:space:]]+/s[[:space:]]+/q([^[:alnum:]_]|$)|(^|[^[:alnum:]_])(del|erase)[[:space:]]+/[sq]([^[:alnum:]_]|$)'; then
   echo "BLOCKED: CMD recursive deletion detected." >&2
   exit 2
 fi
 
-if echo "$cmd" | grep -qiE '\b(Format-Volume|format)\b'; then
+if echo "$cmd" | grep -qiE '(^|[^[:alnum:]_])(Format-Volume|format)([^[:alnum:]_]|$)'; then
   echo "BLOCKED: Windows volume formatting detected." >&2
   exit 2
 fi
