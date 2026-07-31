@@ -15,3 +15,11 @@ import tempfile
 # processes spawned by tests on the same resolved directory.
 tempfile.tempdir = os.path.realpath(tempfile.gettempdir())
 os.environ["TMPDIR"] = tempfile.tempdir
+
+# Tests that run a runtime dispatcher as a subprocess make it import modules out
+# of the canonical tree, and the import leaves ``__pycache__`` directories
+# behind. The runtime inventory check denies any source it did not enrol, so the
+# second run of the suite on the same checkout fails on the first run's
+# bytecode. Disable it for every child the suite spawns; the parent already
+# holds its own bytecode from before this module was imported.
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
