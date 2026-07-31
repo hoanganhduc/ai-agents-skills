@@ -12,11 +12,14 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest import mock
 
 from tests.test_zotero_webdav_metadata import load_zot_module
 
@@ -323,54 +326,167 @@ class DeepResearchFallbackTest(unittest.TestCase):
 
 
 class SmokeCanaryTest(unittest.TestCase):
-    """A canary is vacuous unless it is both injected and asserted on.
+    """A canary proves nothing unless it is injected, scanned, and unskippable.
 
-    An assertion whose literal no env_canaries entry injects passes
-    unconditionally; a declared canary that nothing asserts on proves nothing
-    either. Both directions are pinned, because either alone leaves a check
-    that cannot fail.
+    The scan used to sit inside validate_smoke_output, below an early return taken
+    on any non-zero exit, and it read only the parsed JSON payload. So it was
+    absent from every failure path and blind to stderr — the two places an
+    environment value actually escapes. Deriving the checks from the manifest and
+    appending them outside the validator makes declaring a canary the only step
+    needed to wire one up, and makes skipping one impossible.
     """
 
     def setUp(self) -> None:
-        manifest = json.loads((ROOT / "manifest" / "runtime.yaml").read_text(encoding="utf-8"))
-        self.declared = {
-            name: set(literals)
-            for name, spec in manifest["skills"].items()
-            for literals in [((spec.get("smoke") or {}).get("env_canaries", {}) or {}).values()]
-            if literals
+        from installer.ai_agents_skills import runtime_smoke
+
+        self.smoke = runtime_smoke
+        self.manifest = json.loads((ROOT / "manifest" / "runtime.yaml").read_text(encoding="utf-8"))
+        self.manifests = {"runtime": self.manifest}
+
+    def declared(self, skill: str) -> dict:
+        return (self.manifest["skills"][skill].get("smoke") or {}).get("env_canaries") or {}
+
+    def with_canaries(self):
+        return [name for name in self.manifest["skills"] if self.declared(name)]
+
+    def run_case(self, skill: str, returncode: int, stdout: str, stderr: str) -> dict:
+        """Drive run_smoke_case over a fabricated child result.
+
+        The point is the wiring, not the skill: patching the subprocess call lets
+        a crash, a garbled payload, and a timeout each be replayed exactly.
+        """
+        completed = subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+        with mock.patch.object(self.smoke, "run_smoke_process", return_value=completed):
+            return self.smoke.run_smoke_case(
+                self.manifests,
+                skill=skill,
+                runner={"name": "run_skill.sh", "argv": ["/nonexistent/run_skill.sh"]},
+                workspace=Path(tempfile.gettempdir()),
+                platform="linux",
+                timeout=5,
+            )
+
+    def test_every_secret_forbidding_skill_declares_a_canary(self) -> None:
+        for name, spec in self.manifest["skills"].items():
+            smoke = spec.get("smoke") or {}
+            if (smoke.get("safety") or {}).get("real_secrets") != "forbidden":
+                continue
+            with self.subTest(skill=name):
+                self.assertTrue(
+                    smoke.get("env_canaries"),
+                    f"{name} forbids real secrets but injects nothing that would prove it",
+                )
+
+    def test_the_canaries_were_found(self) -> None:
+        self.assertGreaterEqual(len(self.with_canaries()), 18)
+
+    def test_a_declared_canary_produces_a_check(self) -> None:
+        for name in self.with_canaries():
+            with self.subTest(skill=name):
+                checks = self.smoke.canary_checks(self.manifests, name, "", "")
+                self.assertEqual(len(checks), len(self.declared(name)))
+                self.assertTrue(all(check["ok"] for check in checks))
+
+    def test_a_leak_on_either_stream_is_caught(self) -> None:
+        for name in self.with_canaries():
+            leaked = sorted(self.declared(name).values())[0]
+            with self.subTest(skill=name):
+                on_stdout = self.smoke.canary_checks(self.manifests, name, f'{{"v": "{leaked}"}}', "")
+                on_stderr = self.smoke.canary_checks(self.manifests, name, "", f"Traceback: env={leaked}")
+                self.assertFalse(all(c["ok"] for c in on_stdout), "a canary on stdout must fail the smoke")
+                self.assertFalse(all(c["ok"] for c in on_stderr), "a canary on stderr must fail the smoke")
+
+    def test_the_scan_survives_the_paths_that_used_to_skip_it(self) -> None:
+        skill = "graph-verifier"
+        leaked = sorted(self.declared(skill).values())[0]
+        paths = {
+            "non-zero exit": self.run_case(skill, 1, "", f"Traceback (most recent call last): KEY={leaked}"),
+            "unparseable stdout": self.run_case(skill, 0, f"not json at all {leaked}", ""),
         }
-        self.asserted = {}
-        skills = ()
-        source = (ROOT / "installer" / "ai_agents_skills" / "runtime_smoke.py").read_text(encoding="utf-8")
-        for line in source.splitlines():
-            single = re.search(r'(?:if|elif) skill == "([^"]+)"', line)
-            group = re.search(r'(?:if|elif) skill in \{([^}]*)\}', line)
-            if single:
-                skills = (single.group(1),)
-            elif group:
-                skills = tuple(re.findall(r'"([^"]+)"', group.group(1)))
-            # Match the canary literal rather than the check name. The same
-            # assertion is spelled "canary-not-leaked" in some branches and
-            # "no-secret-value" in others, and anchoring on one name made half
-            # the sites invisible.
-            for literal in re.findall(r'"([A-Z][A-Z0-9-]*CANARY)"', line):
-                for skill in skills:
-                    self.asserted.setdefault(skill, set()).add(literal)
+        for label, result in paths.items():
+            with self.subTest(path=label):
+                names = [check["name"] for check in result["checks"]]
+                self.assertTrue(
+                    any(name.startswith("canary-not-leaked") for name in names),
+                    f"the canary scan disappeared on the {label} path",
+                )
+                self.assertFalse(all(check["ok"] for check in result["checks"]))
+                self.assertEqual(result["status"], "failed")
 
-    def test_the_canary_sites_were_found(self) -> None:
-        self.assertGreaterEqual(len(self.asserted), 6)
+    def test_the_scan_survives_a_timeout(self) -> None:
+        skill = "graph-verifier"
+        leaked = sorted(self.declared(skill).values())[0]
+        expired = subprocess.TimeoutExpired(cmd=["run_skill.sh"], timeout=1, output=f"partial {leaked}", stderr="")
+        with mock.patch.object(self.smoke, "run_smoke_process", side_effect=expired):
+            result = self.smoke.run_smoke_case(
+                self.manifests,
+                skill=skill,
+                runner={"name": "run_skill.sh", "argv": ["/nonexistent/run_skill.sh"]},
+                workspace=Path(tempfile.gettempdir()),
+                platform="linux",
+                timeout=1,
+            )
+        leaked_checks = [c for c in result["checks"] if c["name"].startswith("canary-not-leaked")]
+        self.assertTrue(leaked_checks, "a hung skill that dumped a canary must still be caught")
+        self.assertFalse(all(check["ok"] for check in leaked_checks))
 
-    def test_every_asserted_canary_is_actually_injected(self) -> None:
-        for skill, literals in self.asserted.items():
+
+class SmokeSelftestBranchTest(unittest.TestCase):
+    """Three skills declared full safety contracts and were checked only for exit 0.
+
+    Each emits a structured selftest report the harness never read, so a run whose
+    internal checks had all failed still passed the smoke as long as the process
+    exited cleanly. An empty report has to count as a failure for the same reason:
+    a selftest that asserts nothing likewise reports nothing failing.
+    """
+
+    GOOD = {
+        "manim-math-animation": {"ok": True, "passed": 7, "total": 7, "failures": []},
+        "slides-to-video": {"ok": True, "passed": 9, "total": 9, "failures": []},
+        "send-email": {"ok": True, "command": "selftest", "passed": 15, "failed": 0},
+    }
+    BAD = {
+        "manim-math-animation": [
+            {"ok": False, "passed": 6, "total": 7, "failures": [{"check": "scenegen"}]},
+            {"ok": True, "passed": 0, "total": 0, "failures": []},
+        ],
+        "slides-to-video": [
+            {"ok": False, "passed": 8, "total": 9, "failures": [{"check": "ffmpeg-argv"}]},
+            {"ok": True, "passed": 0, "total": 0, "failures": []},
+        ],
+        "send-email": [
+            {"ok": False, "command": "selftest", "passed": 14, "failed": 1},
+            {"ok": True, "command": "selftest", "passed": 0, "failed": 0},
+        ],
+    }
+
+    def setUp(self) -> None:
+        from installer.ai_agents_skills import runtime_smoke
+
+        self.smoke = runtime_smoke
+
+    def validate(self, skill: str, payload: dict) -> list[dict]:
+        completed = subprocess.CompletedProcess(
+            args=["selftest"], returncode=0, stdout=json.dumps(payload), stderr=""
+        )
+        return self.smoke.validate_smoke_output({}, skill, completed, ["selftest"])
+
+    def test_a_healthy_report_passes(self) -> None:
+        for skill, payload in self.GOOD.items():
             with self.subTest(skill=skill):
-                missing = literals - self.declared.get(skill, set())
-                self.assertEqual(missing, set(), f"{skill} checks for a canary it never injects")
+                checks = self.validate(skill, payload)
+                self.assertGreater(len(checks), 1, f"{skill} is still checked for nothing but exit 0")
+                self.assertTrue(all(check["ok"] for check in checks))
 
-    def test_every_injected_canary_is_actually_asserted(self) -> None:
-        for skill, literals in self.declared.items():
-            with self.subTest(skill=skill):
-                missing = literals - self.asserted.get(skill, set())
-                self.assertEqual(missing, set(), f"{skill} injects a canary no check looks for")
+    def test_a_failing_or_empty_report_is_rejected(self) -> None:
+        for skill, payloads in self.BAD.items():
+            for index, payload in enumerate(payloads):
+                with self.subTest(skill=skill, payload=index):
+                    checks = self.validate(skill, payload)
+                    self.assertFalse(
+                        all(check["ok"] for check in checks),
+                        f"{skill} accepted a selftest report it should have rejected",
+                    )
 
 
 if __name__ == "__main__":

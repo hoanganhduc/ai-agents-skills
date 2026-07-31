@@ -214,6 +214,9 @@
           "provider_cli": "forbidden",
           "subagent_spawn": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_MANIM_TOKEN": "MANIM-MATH-ANIMATION-SMOKE-CANARY"
         }
       }
     },
@@ -252,6 +255,9 @@
           "provider_cli": "forbidden",
           "subagent_spawn": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "SMTP_PASSWORD": "SEND-EMAIL-SMOKE-CANARY"
         }
       }
     },
@@ -298,6 +304,10 @@
           "provider_cli": "forbidden",
           "subagent_spawn": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "ZULIP_API_KEY": "REMOTE-BRIDGE-SMOKE-CANARY",
+          "TELEGRAM_BOT_TOKEN": "REMOTE-BRIDGE-SMOKE-CANARY"
         }
       }
     },
@@ -353,6 +363,9 @@
           "provider_cli": "forbidden",
           "subagent_spawn": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_SLIDES_TO_VIDEO_TOKEN": "SLIDES-TO-VIDEO-SMOKE-CANARY"
         }
       }
     },
@@ -1068,6 +1081,9 @@
           "server_start": "forbidden",
           "config_write": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_DEEP_RESEARCH_API_KEY": "DEEP-RESEARCH-SMOKE-CANARY"
         }
       }
     },
@@ -1340,6 +1356,9 @@
           "server_start": "forbidden",
           "config_write": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_FORMAL_SKELETON_TOKEN": "FORMAL-SKELETON-SMOKE-CANARY"
         }
       }
     },
@@ -1653,6 +1672,9 @@
           "server_start": "forbidden",
           "config_write": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_LEAN_INTAKE_TOKEN": "LEAN-FORMALIZATION-INTAKE-SMOKE-CANARY"
         }
       }
     },
@@ -1733,6 +1755,9 @@
           "server_start": "forbidden",
           "config_write": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_LEAN_GATE_TOKEN": "LEAN-STRICT-GATE-SMOKE-CANARY"
         }
       }
     },
@@ -1803,6 +1828,9 @@
           "server_start": "forbidden",
           "config_write": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_RESOURCES_TOKEN": "GET-AVAILABLE-RESOURCES-SMOKE-CANARY"
         }
       }
     },
@@ -1975,6 +2003,9 @@
           "server_start": "forbidden",
           "config_write": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_GRAPH_VERIFIER_TOKEN": "GRAPH-VERIFIER-SMOKE-CANARY"
         }
       }
     },
@@ -2170,6 +2201,9 @@
           "provider_cli": "forbidden",
           "subagent_spawn": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_VENUE_RANKING_TOKEN": "VENUE-RANKING-EVIDENCE-SMOKE-CANARY"
         }
       }
     },
@@ -2250,6 +2284,9 @@
           "server_start": "forbidden",
           "config_write": "forbidden",
           "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_SELF_IMPROVING_TOKEN": "SELF-IMPROVING-AGENT-SMOKE-CANARY"
         }
       }
     },

@@ -309,7 +309,10 @@ def run_smoke_case(
             "args": args,
             "timeout_seconds": effective_timeout,
             "returncode": None,
-            "checks": [{"name": "completed-before-timeout", "ok": False}],
+            "checks": [
+                {"name": "completed-before-timeout", "ok": False},
+                *canary_checks(manifests, skill, exc.stdout or "", exc.stderr or ""),
+            ],
             "stdout_tail": (exc.stdout or "")[-2000:],
             "stderr_tail": (exc.stderr or "")[-2000:],
         }
@@ -320,6 +323,11 @@ def run_smoke_case(
             {"name": "exit-zero", "ok": completed.returncode == 0},
             {"name": "output-validation", "ok": False, "reason": str(exc)},
         ]
+    # Appended out here rather than inside validate_smoke_output, which returns
+    # early on a non-zero exit and is bypassed entirely when parsing raises or a
+    # checks_override is supplied. Those are the paths a leak most likely takes,
+    # so the canary scan has to outlive all of them.
+    checks = [*checks, *canary_checks(manifests, skill, completed.stdout, completed.stderr)]
     status = "ok" if completed.returncode == 0 and all(check["ok"] for check in checks) else "failed"
     result = {
         "status": status,
@@ -532,6 +540,33 @@ def env_name_looks_secret(name: str) -> bool:
     return any(marker in upper for marker in ("TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY", "AUTH"))
 
 
+def canary_checks(
+    manifests: dict[str, Any],
+    skill: str,
+    stdout: str,
+    stderr: str,
+) -> list[dict[str, Any]]:
+    """Assert that none of the injected canaries came back out.
+
+    ``smoke_env`` plants these values in the child environment, so any occurrence
+    in the output means the skill echoed something it was handed as a secret. The
+    scan reads the raw streams rather than the parsed payload: a canary printed to
+    stderr, or beside the JSON on stdout, has leaked just as surely as one carried
+    inside it. Callers run this on every exit path, because a traceback is the
+    most likely place for an environment value to escape.
+    """
+    smoke = manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
+    env_canaries = smoke.get("env_canaries", {}) if isinstance(smoke, dict) else {}
+    if not isinstance(env_canaries, dict):
+        return []
+    combined = f"{stdout or ''}\n{stderr or ''}"
+    return [
+        {"name": f"canary-not-leaked:{name}", "ok": value not in combined}
+        for name, value in sorted(env_canaries.items())
+        if isinstance(name, str) and isinstance(value, str)
+    ]
+
+
 def validate_smoke_output(
     manifests: dict[str, Any],
     skill: str,
@@ -608,7 +643,6 @@ def validate_smoke_output(
         })
     elif skill == "axiom-axle-mcp":
         payload = parse_json_stdout(completed.stdout)
-        serialized = json.dumps(payload, sort_keys=True)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
         checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
         checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
@@ -619,10 +653,8 @@ def validate_smoke_output(
         checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
         checks.append({"name": "placeholder-present", "ok": payload.get("snippet_contains_placeholder") is True})
         checks.append({"name": "package-pinned", "ok": payload.get("snippet_package_pinned") is True})
-        checks.append({"name": "no-secret-value", "ok": "AXLE-SMOKE-CANARY" not in serialized})
     elif skill == "opengauss":
         payload = parse_json_stdout(completed.stdout)
-        serialized = json.dumps(payload, sort_keys=True)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok" and payload.get("ok") is True})
         checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
         checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
@@ -635,7 +667,6 @@ def validate_smoke_output(
         checks.append({"name": "placeholder-present", "ok": payload.get("snippet_contains_placeholder") is True})
         checks.append({"name": "install-pointer-present", "ok": payload.get("snippet_has_install_pointer") is True})
         checks.append({"name": "windows-live-policy", "ok": payload.get("native_windows_refused") is True})
-        checks.append({"name": "no-secret-value", "ok": "OPENGAUSS-SMOKE-CANARY" not in serialized})
         policy = payload.get("evidence_policy") if isinstance(payload.get("evidence_policy"), dict) else {}
         checks.append({
             "name": "evidence-policy-present",
@@ -643,7 +674,6 @@ def validate_smoke_output(
         })
     elif skill == "lean-explore-mcp":
         payload = parse_json_stdout(completed.stdout)
-        serialized = json.dumps(payload, sort_keys=True)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
         checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
         checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
@@ -655,7 +685,6 @@ def validate_smoke_output(
         checks.append({"name": "downloads-not-attempted", "ok": payload.get("downloads_attempted") is False})
         checks.append({"name": "api-placeholder-present", "ok": payload.get("api_snippet_contains_placeholder") is True})
         checks.append({"name": "local-snippet-omits-api-key", "ok": payload.get("local_snippet_omits_api_key") is True})
-        checks.append({"name": "no-secret-value", "ok": "LEANEXPLORE-SMOKE-CANARY" not in serialized})
     elif skill == "self-improving-agent":
         payload = parse_json_stdout(completed.stdout)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
@@ -671,7 +700,6 @@ def validate_smoke_output(
         checks.append({"name": "windows-safety-patterns", "ok": payload.get("windows_safety_patterns") is True})
     elif skill == "submission-venue-selector":
         payload = parse_json_stdout(completed.stdout)
-        serialized = json.dumps(payload, sort_keys=True)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
         checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
         checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
@@ -682,11 +710,9 @@ def validate_smoke_output(
         checks.append({"name": "real-secrets-not-read", "ok": payload.get("real_secrets_read") is False})
         checks.append({"name": "downloads-not-attempted", "ok": payload.get("downloads_attempted") is False})
         checks.append({"name": "mutations-not-attempted", "ok": payload.get("mutations_attempted") is False})
-        checks.append({"name": "canary-not-leaked", "ok": "SUBMISSION-VENUE-SELECTOR-CANARY" not in serialized})
         checks.append({"name": "schema-list-present", "ok": "delivery.json" in payload.get("schemas", [])})
     elif skill == "autonomous-research-loop-runtime":
         payload = parse_json_stdout(completed.stdout)
-        serialized = json.dumps(payload, sort_keys=True)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
         checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
         checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
@@ -698,10 +724,8 @@ def validate_smoke_output(
         checks.append({"name": "subagents-not-spawned", "ok": payload.get("subagents_spawned") is False})
         checks.append({"name": "run-dir-created", "ok": payload.get("run_dir_created") is True})
         checks.append({"name": "validation-ok", "ok": payload.get("validation_status") == "ok"})
-        checks.append({"name": "canary-not-leaked", "ok": "AUTONOMOUS-RESEARCH-LOOP-CANARY" not in serialized})
     elif skill == "url-to-screenshot-runtime":
         payload = parse_json_stdout(completed.stdout)
-        serialized = json.dumps(payload, sort_keys=True)
         checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
         checks.append({"name": "status-ok", "ok": payload.get("status") == "ok"})
         checks.append({"name": "no-failures", "ok": payload.get("failures") == []})
@@ -717,7 +741,6 @@ def validate_smoke_output(
         checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
         checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
         checks.append({"name": "browser-not-launched", "ok": payload.get("browser_launched") is False})
-        checks.append({"name": "canary-not-leaked", "ok": "URL-TO-SCREENSHOT-SMOKE-CANARY" not in serialized})
     elif skill == "venue-ranking-evidence":
         payload = parse_json_stdout(completed.stdout)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
@@ -752,6 +775,26 @@ def validate_smoke_output(
         }
         reported = set(payload.get("checks") or [])
         checks.append({"name": "selftest-checks", "ok": required_checks.issubset(reported)})
+    elif skill in {"manim-math-animation", "slides-to-video"}:
+        payload = parse_json_stdout(completed.stdout)
+        clip_passed = payload.get("passed")
+        clip_total = payload.get("total")
+        checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
+        checks.append({"name": "no-failures", "ok": payload.get("failures") == []})
+        checks.append({
+            "name": "all-passed",
+            "ok": isinstance(clip_passed, int) and isinstance(clip_total, int) and clip_passed == clip_total,
+        })
+        # A selftest that asserts nothing also reports nothing failing, so an
+        # empty run has to count as a failure rather than a clean sheet.
+        checks.append({"name": "checks-not-empty", "ok": isinstance(clip_total, int) and clip_total > 0})
+    elif skill == "send-email":
+        payload = parse_json_stdout(completed.stdout)
+        mail_passed = payload.get("passed")
+        checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
+        checks.append({"name": "selftest-command", "ok": payload.get("command") == "selftest"})
+        checks.append({"name": "no-failed-checks", "ok": payload.get("failed") == 0})
+        checks.append({"name": "checks-not-empty", "ok": isinstance(mail_passed, int) and mail_passed > 0})
     return checks
 
 
