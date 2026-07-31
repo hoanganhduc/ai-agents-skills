@@ -30,7 +30,7 @@ def load_config(require=None):
     # Load config.json from skill dir
     cfg_path = os.path.join(SKILL_DIR, "config.json")
     if os.path.exists(cfg_path):
-        with open(cfg_path) as f:
+        with open(cfg_path, encoding="utf-8") as f:
             config.update(json.load(f))
 
     # Load secrets file
@@ -39,7 +39,7 @@ def load_config(require=None):
         os.path.join(WORKSPACE, ".secrets.json"),
     )
     if os.path.exists(secrets_file):
-        with open(secrets_file) as f:
+        with open(secrets_file, encoding="utf-8") as f:
             secrets = json.load(f)
         for key in ("GDRIVE_CREDENTIALS",):
             if key in secrets:

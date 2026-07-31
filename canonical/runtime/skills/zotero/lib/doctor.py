@@ -140,7 +140,7 @@ def _check_staging_dir(config):
         # Check writable
         test_file = os.path.join(staging, ".write_test")
         try:
-            with open(test_file, "w") as f:
+            with open(test_file, "w", encoding="utf-8") as f:
                 f.write("test")
             os.remove(test_file)
             return {"name": "Staging directory", "ok": True, "message": f"Writable at {staging}"}
@@ -158,7 +158,7 @@ def _check_orphaned_attachments(config):
     workspace = config.get("workspace", "")
     orphan_log = os.path.join(workspace, "data", "research", "zotero", "orphaned-keys.log")
     if os.path.exists(orphan_log):
-        with open(orphan_log) as f:
+        with open(orphan_log, encoding="utf-8") as f:
             lines = [l.strip() for l in f if l.strip()]
         if lines:
             return {"name": "Orphaned attachments", "ok": False,

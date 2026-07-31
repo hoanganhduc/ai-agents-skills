@@ -498,7 +498,7 @@ def cmd_add(args):
         os.makedirs(config["staging_dir"], exist_ok=True)
         if fcntl:
             try:
-                lock_fd = open(lock_path, "w")
+                lock_fd = open(lock_path, "w", encoding="utf-8")
                 fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except (BlockingIOError, OSError):
                 _output({"status": "error", "action": "add",
@@ -684,7 +684,7 @@ def _cmd_add_batch(args, config, client):
         _output({"status": "error", "action": "add", "message": f"File not found: {args.batch_file}", "code": "CONFIG_MISSING"})
         sys.exit(1)
 
-    with open(args.batch_file) as f:
+    with open(args.batch_file, encoding="utf-8") as f:
         identifiers = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
     import subprocess
@@ -740,7 +740,7 @@ def _cmd_add_from_manifest(args, config, client):
         _output({"status": "error", "action": "add", "message": f"Manifest not found: {args.manifest}", "code": "CONFIG_MISSING"})
         sys.exit(1)
 
-    with open(args.manifest) as f:
+    with open(args.manifest, encoding="utf-8") as f:
         manifest = json.load(f)
 
     items = manifest.get("items", manifest.get("papers", []))
@@ -1237,7 +1237,7 @@ def _log_orphan(config, attachment_key, error_msg):
     import datetime
     orphan_log = os.path.join(config["workspace"], "data", "research", "zotero", "orphaned-keys.log")
     os.makedirs(os.path.dirname(orphan_log), exist_ok=True)
-    with open(orphan_log, "a") as f:
+    with open(orphan_log, "a", encoding="utf-8") as f:
         f.write(f"{datetime.datetime.utcnow().isoformat()} {attachment_key} {error_msg}\n")
 
 

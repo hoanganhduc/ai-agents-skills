@@ -83,7 +83,7 @@ class DriveSync:
         drive_mtime = db_file.get("modifiedTime", "")
         mtime_cache = self.db_local + ".mtime"
         if not force and os.path.exists(self.db_local) and os.path.exists(mtime_cache):
-            with open(mtime_cache) as f:
+            with open(mtime_cache, encoding="utf-8") as f:
                 cached_mtime = f.read().strip()
             if cached_mtime == drive_mtime:
                 return False  # already current
@@ -94,7 +94,7 @@ class DriveSync:
         os.replace(tmp_path, self.db_local)
 
         # Cache mtime
-        with open(mtime_cache, "w") as f:
+        with open(mtime_cache, "w", encoding="utf-8") as f:
             f.write(drive_mtime)
 
         return True

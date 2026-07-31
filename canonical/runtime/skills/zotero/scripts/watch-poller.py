@@ -22,14 +22,14 @@ WATCH_KEYS_FILE = os.path.join(WORKSPACE, "data", "research", "zotero", "watch-k
 
 def load_watch_keys():
     if os.path.exists(WATCH_KEYS_FILE):
-        with open(WATCH_KEYS_FILE) as f:
+        with open(WATCH_KEYS_FILE, encoding="utf-8") as f:
             return json.load(f)
     return {}
 
 
 def save_watch_keys(data):
     os.makedirs(os.path.dirname(WATCH_KEYS_FILE), exist_ok=True)
-    with open(WATCH_KEYS_FILE, "w") as f:
+    with open(WATCH_KEYS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
