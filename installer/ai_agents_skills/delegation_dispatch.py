@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import os
 import re
@@ -29,8 +30,43 @@ KIMI_RUNTIME_ARGV_TRANSPORT = "runtime_argv_prompt"
 # Antigravity uses the same argv transport: -p consumes the next token as the prompt
 # and does not read the user prompt from stdin (host-proved 2026-07-25).
 ANTIGRAVITY_RUNTIME_ARGV_TRANSPORT = "runtime_argv_prompt"
+# Canonical argv-transport marker shared by kimi, antigravity, and deepseek.
+RUNTIME_ARGV_TRANSPORT = KIMI_RUNTIME_ARGV_TRANSPORT
+# Providers whose CLIs take the user prompt as an argv value; run_command must
+# not deliver the prompt on stdin for these.
+ARGV_PROMPT_PROVIDERS = {"kimi", "antigravity", "deepseek"}
 # Windows CreateProcess command-line budget is well below dispatcher MAX_TASK_CHARS.
 KIMI_MAX_PROMPT_CHARS = 24_000
+# No antigravity-specific probe exists: this is the same conservative argv
+# ceiling as kimi rather than a measured `agy` boundary, and should be tightened
+# if the CLI is ever host-probed. Without it an over-long prompt reaches execve
+# and dies with E2BIG, which is a worse diagnostic than failing closed here.
+ANTIGRAVITY_MAX_PROMPT_CHARS = 24_000
+# codewhale (deepseek provider CLI) `exec` exits 0 with empty stdout/stderr when
+# the prompt exceeds a few thousand characters (host-probed 2026-07-30: 2400-char
+# prompt completed, ~3500-char brief failed silently). Fail closed below the
+# probed boundary instead of recording a silent empty participant.
+DEEPSEEK_MAX_PROMPT_CHARS = 2_000
+# Every argv-transport provider needs a budget, because for these the prompt is a
+# command-line argument rather than stdin. Keyed by ARGV_PROMPT_PROVIDERS: a
+# member missing from this table is a bug, not a licence to skip the check, so
+# the two are asserted equal in the tests rather than defaulted here.
+PROVIDER_PROMPT_BUDGETS = {
+    "kimi": KIMI_MAX_PROMPT_CHARS,
+    "antigravity": ANTIGRAVITY_MAX_PROMPT_CHARS,
+    "deepseek": DEEPSEEK_MAX_PROMPT_CHARS,
+}
+
+
+class PromptBudgetError(ValueError):
+    """A prompt is too long for the provider CLI's argv budget.
+
+    Subclasses ValueError so callers that catch the broad type keep working. The
+    narrower type is what lets run_external_participant fail one participant
+    without also swallowing the malformed-command and invalid-model errors that
+    the same call raises, which are run-fatal on purpose.
+    """
+
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
 GROK_REMOTE_EXECUTABLES = {"grok-remote", "grok-remote.cmd"}
@@ -422,9 +458,23 @@ def build_provider_dispatch_plan(
                 "grok_profile_status": grok_profile_status,
                 "grok_selection": public_grok_selection(grok_selection or {}),
             }
+    unresolved = unresolved_model_placeholders(command_template, model_profile)
+    if unresolved:
+        env_name = dispatch_command_env_name(provider)
+        return {
+            "provider": provider,
+            "status": "blocked",
+            "reason": (
+                f"{env_name} uses {', '.join(unresolved)} but no value was resolved; "
+                f"set AAS_{provider.upper()}_LATEST_MODEL / "
+                f"AAS_{provider.upper()}_HIGHEST_THINKING, pass --resolved-model / "
+                "--resolved-thinking, or drop the placeholder from the template"
+            ),
+            "research_model_policy": model_profile,
+        }
     command = render_model_placeholders(command_template, model_profile)
     spec = delegation["providers"][provider]
-    transport = KIMI_RUNTIME_ARGV_TRANSPORT if provider == "kimi" else "stdin"
+    transport = RUNTIME_ARGV_TRANSPORT if provider in ARGV_PROMPT_PROVIDERS else "stdin"
     item = {
         "provider": provider,
         "status": "ready",
@@ -845,6 +895,36 @@ def resolve_model_profile(
     }
 
 
+def dispatch_failure_code(exc: Exception) -> str:
+    """Map a dispatch-time exception to a stable validation error code."""
+    if isinstance(exc, PromptBudgetError):
+        return "shell_argument_limit"
+    if isinstance(exc, OSError) and exc.errno == errno.E2BIG:
+        # A budget we did not cover: execve refused the argv, so report it as the
+        # same class of failure rather than as a missing CLI.
+        return "shell_argument_limit"
+    return "dispatch_cli_unavailable"
+
+
+def failed_dispatch_participant(
+    root: Path,
+    run_dir: Path,
+    plan: dict[str, Any],
+    *,
+    phase: str,
+    error: str,
+) -> dict[str, Any]:
+    """Record a participant that never produced output, without failing the run.
+
+    A CLI that cannot be launched, or a prompt that will not fit its argv, is one
+    participant's failure. Reporting it the way a failed smoke is reported keeps
+    the results of participants that already ran and still writes the manifest.
+    """
+    validation = {"status": "failed", "phase": phase, "errors": [error]}
+    write_json(root, run_dir / "validation" / f"{plan['participant_id']}.json", validation)
+    return participant_result(plan, run_dir, "failed", validation)
+
+
 def run_external_participant(
     root: Path,
     run_dir: Path,
@@ -868,15 +948,23 @@ def run_external_participant(
         if candidate and candidate != "not-specified":
             resolved_model = str(candidate)
     smoke_marker = f"AAS_FINAL_MARKER_{participant_id}_SMOKE"
-    smoke = run_command(
-        plan["command"],
-        smoke_prompt(smoke_marker),
-        timeout=timeout,
-        env=cmd_env,
-        final_marker=smoke_marker,
-        provider=plan["provider"],
-        resolved_model=resolved_model,
-    )
+    try:
+        smoke = run_command(
+            plan["command"],
+            smoke_prompt(smoke_marker),
+            timeout=timeout,
+            env=cmd_env,
+            final_marker=smoke_marker,
+            provider=plan["provider"],
+            resolved_model=resolved_model,
+        )
+    except OSError as exc:
+        # A configured dispatch command whose binary is missing or not executable
+        # raises here. The prompt budget cannot: the smoke prompt is a fixed short
+        # string, so PromptBudgetError is deliberately not caught at this call.
+        return failed_dispatch_participant(
+            root, run_dir, plan, phase="smoke", error=dispatch_failure_code(exc)
+        )
     write_probe(root, run_dir, participant_id, "smoke", smoke)
     smoke_validation = validate_command_output(smoke, smoke_marker)
     if smoke_validation["status"] != "ok":
@@ -892,15 +980,23 @@ def run_external_participant(
         final_marker=task_marker,
         model_profile=plan["research_model_policy"],
     )
-    completed = run_command(
-        plan["command"],
-        prompt,
-        timeout=timeout,
-        env=cmd_env,
-        final_marker=task_marker,
-        provider=plan["provider"],
-        resolved_model=resolved_model,
-    )
+    try:
+        completed = run_command(
+            plan["command"],
+            prompt,
+            timeout=timeout,
+            env=cmd_env,
+            final_marker=task_marker,
+            provider=plan["provider"],
+            resolved_model=resolved_model,
+        )
+    except (PromptBudgetError, OSError) as exc:
+        # A prompt too long for one CLI's argv budget, or a CLI that disappeared
+        # between the smoke probe and the task, is that participant's failure and
+        # not the run's.
+        return failed_dispatch_participant(
+            root, run_dir, plan, phase="task", error=dispatch_failure_code(exc)
+        )
     write_raw(root, run_dir, participant_id, completed, plan["command_shape"])
     parsed = parse_result_json(completed.stdout)
     write_json(root, run_dir / "parsed" / f"{participant_id}.json", parsed)
@@ -920,12 +1016,15 @@ def run_external_participant(
 def build_capability_profile(plan: dict[str, Any]) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     transport = plan.get("input_transport") or (
-        KIMI_RUNTIME_ARGV_TRANSPORT if plan.get("provider") == "kimi" else "stdin"
+        RUNTIME_ARGV_TRANSPORT if plan.get("provider") in ARGV_PROMPT_PROVIDERS else "stdin"
     )
-    if transport == KIMI_RUNTIME_ARGV_TRANSPORT:
-        cwd_assumptions = "selected root or caller cwd; task input is delivered as kimi -p argv after the prompt is known"
-        transports = [KIMI_RUNTIME_ARGV_TRANSPORT]
-        capabilities = [KIMI_RUNTIME_ARGV_TRANSPORT, "json-envelope-final-marker"]
+    if transport == RUNTIME_ARGV_TRANSPORT:
+        cwd_assumptions = (
+            "selected root or caller cwd; task input is delivered as an argv "
+            "prompt value after the prompt is known"
+        )
+        transports = [RUNTIME_ARGV_TRANSPORT]
+        capabilities = [RUNTIME_ARGV_TRANSPORT, "json-envelope-final-marker"]
     else:
         cwd_assumptions = "selected root or caller cwd; task input is transported over stdin"
         transports = ["stdin"]
@@ -1173,12 +1272,21 @@ def run_command(
     if not parts:
         raise ValueError("empty dispatch command")
     stdin_prompt = prompt
+    budget = PROVIDER_PROMPT_BUDGETS.get(provider or "")
+    if budget is not None and len(prompt) > budget:
+        # One guard for every argv-transport provider, so adding a provider to
+        # ARGV_PROMPT_PROVIDERS without a budget is a missing table entry the
+        # tests catch rather than an unguarded execve that dies with E2BIG.
+        raise PromptBudgetError(
+            f"{provider} prompt exceeds safe argv budget of {budget} characters "
+            "(shell_argument_limit)"
+        )
     if provider == "antigravity":
         # runtime_argv_prompt: -p <prompt> then autonomy flags. Never put flags
         # between -p and the prompt (they become the prompt text).
-        if "{prompt}" in rendered:
-            rendered = rendered.replace("{prompt}", prompt)
-            parts = split_dispatch_command(rendered)
+        substituted = substitute_prompt_tokens(parts, prompt)
+        if substituted is not None:
+            parts = substituted
         else:
             # Strip accidental --print/-p from operator prefix so we do not double -p.
             filtered = [parts[0]]
@@ -1207,11 +1315,6 @@ def run_command(
             parts.extend(["--model", model])
         stdin_prompt = ""
     if provider == "kimi":
-        if len(prompt) > KIMI_MAX_PROMPT_CHARS:
-            raise ValueError(
-                f"kimi prompt exceeds safe argv budget of {KIMI_MAX_PROMPT_CHARS} characters "
-                "(shell_argument_limit)"
-            )
         # Fail closed on known CLI conflicts: one-shot -p cannot combine with
         # agent-mode flags (host-observed: "Cannot combine --prompt with --yolo").
         kimi_forbidden = {
@@ -1229,10 +1332,10 @@ def run_command(
                 "(and optional -m). Do not combine one-shot --prompt with --yolo/--auto."
             )
         # runtime_argv_prompt: deliver after prompt is known; do not rely on stdin.
-        if "{prompt}" in rendered:
+        substituted = substitute_prompt_tokens(parts, prompt)
+        if substituted is not None:
             # Operator template requested explicit placeholder substitution.
-            rendered = rendered.replace("{prompt}", prompt)
-            parts = split_dispatch_command(rendered)
+            parts = substituted
             bad2 = [p for p in parts[1:] if p in {"-y", "--yolo", "--auto"}]
             if bad2:
                 raise ValueError(
@@ -1246,6 +1349,24 @@ def run_command(
             if KIMI_MODEL_ID_RE.fullmatch(model) is None:
                 raise ValueError("resolved Kimi model ID is invalid")
             parts.extend(["-m", model])
+        stdin_prompt = ""
+    if provider == "deepseek":
+        # codewhale `exec` takes the prompt as a positional argv value and does
+        # not read it from stdin (host-probed 2026-07-30: a piped prompt exits
+        # with a usage error). Deliver runtime-argv style like kimi/antigravity,
+        # but as the trailing positional argument:
+        # `codewhale --model <m> exec --reasoning-effort <e> <prompt>`.
+        substituted = substitute_prompt_tokens(parts, prompt)
+        if substituted is not None:
+            parts = substituted
+        else:
+            parts = [*parts, prompt]
+        model = resolved_model or env.get("AAS_DEEPSEEK_LATEST_MODEL")
+        if model and "--model" not in parts and not any(
+            p.startswith("--model=") for p in parts
+        ):
+            # codewhale global flags must precede the `exec` subcommand.
+            parts = [parts[0], "--model", model, *parts[1:]]
         stdin_prompt = ""
     command_env = dict(env)
     command_env["AAS_DELEGATION_FINAL_MARKER"] = final_marker
@@ -1288,12 +1409,51 @@ def strip_wrapping_quotes(value: str) -> str:
     return value
 
 
+def substitute_prompt_tokens(parts: list[str], prompt: str) -> list[str] | None:
+    """Replace the {prompt} placeholder inside already-split argv tokens.
+
+    Substituting into the command string and re-splitting would run the prompt
+    through the lexer: whitespace in user text becomes argv boundaries, so the
+    CLI receives only its first word, and an apostrophe raises "No closing
+    quotation" from shlex. Splitting first keeps the prompt in one argv element
+    whatever it contains, and stops prompt text from being read as flags.
+
+    Returns None when the template carries no placeholder, so callers can tell
+    "operator asked for substitution" from "append the prompt ourselves".
+    """
+    if not any("{prompt}" in part for part in parts):
+        return None
+    return [part.replace("{prompt}", prompt) for part in parts]
+
+
 def render_command_template(command: str, final_marker: str) -> str:
     return (
         command
         .replace("{final_marker}", shlex.quote(final_marker))
         .replace("{marker}", shlex.quote(final_marker))
     )
+
+
+def unresolved_model_placeholders(command: str, model_profile: dict[str, Any]) -> list[str]:
+    """Template placeholders that have nothing to substitute.
+
+    render_model_placeholders falls back to the sentinel "not-specified", which
+    is not a model name or a reasoning level: substituting it hands the provider
+    CLI a literal `--model not-specified` that the CLI will either reject or
+    silently treat as a model it does not have. Report the placeholders instead,
+    so the participant is blocked with a fixable reason before dispatch.
+    """
+    unresolved = []
+    for placeholder, key in (
+        ("{model}", "resolved_model"),
+        ("{thinking}", "resolved_thinking"),
+        ("{reasoning}", "resolved_thinking"),
+    ):
+        if placeholder not in command:
+            continue
+        if str(model_profile.get(key, "not-specified")) == "not-specified":
+            unresolved.append(placeholder)
+    return unresolved
 
 
 def render_model_placeholders(command: str, model_profile: dict[str, Any]) -> str:
@@ -1328,6 +1488,15 @@ def validate_command_output(completed: CompletedCommand, final_marker: str) -> d
         errors.append("timeout_no_final")
     if completed.returncode != 0:
         errors.append("nonzero_exit")
+    if (
+        completed.returncode == 0
+        and not completed.timed_out
+        and not completed.stdout.strip()
+    ):
+        # Silent empty success: codewhale 0.9.1 exits 0 with no output when the
+        # prompt exceeds its headless budget (host-probed 2026-07-30). Surface it
+        # as its own diagnostic instead of only a missing marker.
+        errors.append("empty_stdout")
     if final_marker not in completed.stdout:
         errors.append("missing_final_marker")
     parsed = parse_result_json(completed.stdout)
