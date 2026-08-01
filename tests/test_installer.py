@@ -350,6 +350,32 @@ class ManifestTests(unittest.TestCase):
                                manifests["artifacts"], manifests["system_dependencies"],
                                manifests["runtime"], manifests["delegation"])
 
+    def test_skill_version_field_is_optional_semver(self) -> None:
+        import copy
+        from installer.ai_agents_skills.manifest import ManifestError, validate_manifests
+        manifests = load_manifests()
+        skills = copy.deepcopy(manifests["skills"])
+        # The four core research gates carry versions for verdict stamping;
+        # the field is optional everywhere else.
+        for gate in (
+            "research-verification-gate",
+            "research-report-reviewer",
+            "research-briefing",
+            "decision-doubt-loop",
+        ):
+            self.assertIn("version", skills["skills"][gate])
+        skills["skills"]["tikz-draw"]["version"] = "not-a-version"
+        with self.assertRaises(ManifestError):
+            validate_manifests(skills, manifests["profiles"], manifests["dependencies"],
+                               manifests["artifacts"], manifests["system_dependencies"],
+                               manifests["runtime"], manifests["delegation"])
+        # Absent version stays valid.
+        skills2 = copy.deepcopy(manifests["skills"])
+        del skills2["skills"]["research-briefing"]["version"]
+        validate_manifests(skills2, manifests["profiles"], manifests["dependencies"],
+                           manifests["artifacts"], manifests["system_dependencies"],
+                           manifests["runtime"], manifests["delegation"])
+
     def test_default_profile_resolves_research_core(self) -> None:
         manifests = load_manifests()
         args = Args()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any
@@ -90,6 +91,14 @@ def validate_manifests(
                 raise ManifestError(f"skill {name} is missing {field}")
         if "_" in name:
             raise ManifestError(f"skill {name} must use canonical kebab-case")
+        version = spec.get("version")
+        if version is not None and (
+            not isinstance(version, str)
+            or re.fullmatch(r"\d+\.\d+\.\d+", version) is None
+        ):
+            raise ManifestError(
+                f'skill {name} version must be a semver string like "1.0.0"'
+            )
         declared_dependencies = set(dependencies["tools"]) | set(packages)
         for field in ("required_dependencies", "optional_dependencies"):
             for dependency in spec.get(field, []):
