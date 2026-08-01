@@ -1,0 +1,14 @@
+{
+  "fixture_id": "review-round-wording-only-delta",
+  "defect_class": "review_round_wording_only_delta",
+  "defect_label": "A follow-up review round only reworded agreement prose and was treated as progress.",
+  "target_gates": ["research-verification-gate"],
+  "artifact": {
+    "kind": "multi_agent_review",
+    "review_delta": "wording_only",
+    "presented_as_progress": true,
+    "report_text": "We now all agree; no new evidence was inspected."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["empty evidence delta between review rounds"]
+}

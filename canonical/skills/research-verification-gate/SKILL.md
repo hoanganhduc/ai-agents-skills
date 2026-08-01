@@ -30,6 +30,13 @@ Use this as the last gate before claiming a research output is ready.
 - remaining gaps are disclosed
 - `incomplete analysis` is used when material scope is still unchecked, and when
   a load-bearing source was read only in part
+- residual uncertainty is listed for unfinished or disputed load-bearing claims
+- multi-LLM LGTM / same-family agreement alone is not bankable supporting
+  evidence; require different-family re-derivation and/or a machine-checkable
+  artifact for banking language
+- review rounds that only reword without an evidence delta do not count as
+  progress; do not continue until all reviewers approve
+- open negative-space / blocked-route failures stay disclosed (halt and disclose)
 
 ## Output contract
 
@@ -43,6 +50,7 @@ Include:
   interpretable as the gate evolves
 - `Confirmed` — the key checks that passed
 - `Gaps` — anything still blocking delivery
+- `Residual uncertainty` — unfinished / disputed / negative-space items
 - `Next step` — deliver now or fix specific gaps first
 - `Style` — `style_profile_ref`, active overlays, `active_requirement_ids`, and
   whether `style_applied` is supported
@@ -62,6 +70,8 @@ Use the checklist in `references/checklist.md`.
 - treat undisclosed truncation as unchecked scope, not as a formatting nit: a
   conclusion drawn from a silently partial source is unsupported, whatever the
   source appeared to say
+- do not treat multi-LLM LGTM as proved or supported without different-family
+  or machine-checkable support
 - keep the gate short and concrete
 - staged fail-visible rollout: while enforcement is warn-only, log every
   downgraded blocker or skipped check (in the run ledger when one exists) with

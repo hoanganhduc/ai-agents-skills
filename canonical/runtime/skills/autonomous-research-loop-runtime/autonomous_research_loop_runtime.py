@@ -8017,7 +8017,7 @@ def _strategy_selection_from_panel(
         }
     registry = copy.deepcopy(registry)
     adjusted, mentioned = _panel_adjusted_registry(registry, payloads)
-    selection = goal_focus_v2.select_direction(adjusted)
+    selection = goal_focus_v2.select_direction(adjusted, run_dir=run_dir)
     selected_id = str(selection.get("selected_approach_id") or "")
     if selection.get("status") != "selected" or not selected_id or selected_id not in mentioned:
         return {
@@ -10504,6 +10504,31 @@ def nonnegative_float(value: str) -> float:
     return parsed
 
 
+def _goal_focus_negative_space_status(run_dir: Path) -> dict[str, Any]:
+    """Compact negative-space summary for goal-focus status (never bank authority)."""
+
+    try:
+        import negative_space as ns_mod
+    except ImportError:  # pragma: no cover
+        try:
+            from . import negative_space as ns_mod  # type: ignore
+        except ImportError:
+            return {"open_count": 0, "available": False}
+    try:
+        report = ns_mod.validate_negative_space(run_dir, enforce=False)
+        open_rows = ns_mod.summarize_open(run_dir, limit=10)
+        return {
+            "available": True,
+            "open_count": int(report.get("open_count") or 0),
+            "path": report.get("path"),
+            "open_entries": open_rows,
+            "errors": list(report.get("errors") or []),
+            "warnings": list(report.get("warnings") or []),
+        }
+    except Exception as exc:  # noqa: BLE001 - status must stay diagnostic
+        return {"available": False, "open_count": 0, "error": str(exc)}
+
+
 def goal_focus_status_command(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = Path(args.dir).expanduser().resolve()
     validation = goal_focus_v2.validate_goal_focus(run_dir, require_enabled=True)
@@ -10597,6 +10622,7 @@ def goal_focus_status_command(args: argparse.Namespace) -> dict[str, Any]:
         ),
         "replan_triggers": triggers,
         "validation": validation,
+        "negative_space": _goal_focus_negative_space_status(run_dir),
     }
 
 
@@ -10902,7 +10928,7 @@ def goal_focus_replan_command(args: argparse.Namespace) -> dict[str, Any]:
             "gate": gate,
         }
     registry = goal_focus_v2.load_approach_registry(run_dir, required=True)
-    provisional = goal_focus_v2.select_direction(registry)
+    provisional = goal_focus_v2.select_direction(registry, run_dir=run_dir)
     if not bool(args.apply):
         return {
             "status": "ok",

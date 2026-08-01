@@ -27,6 +27,13 @@ from state_transaction import (
     recover_transactions,
 )
 
+try:
+    import anti_false_consensus as afc
+    import negative_space as ns
+except ImportError:  # pragma: no cover - package-relative install layouts
+    from . import anti_false_consensus as afc  # type: ignore
+    from . import negative_space as ns  # type: ignore
+
 GOAL_CONTRACT_FILE = "goal_contract.json"
 APPROACH_REGISTRY_FILE = "approach_registry.json"
 CURRENT_PLAN_FILE = "current_plan.json"
@@ -818,7 +825,11 @@ def _find_approach(
 
 
 def _approach_ineligibility(
-    registry: Mapping[str, Any], campaign_id: str, approach_id: str
+    registry: Mapping[str, Any],
+    campaign_id: str,
+    approach_id: str,
+    *,
+    run_dir: str | Path | None = None,
 ) -> str:
     """Return a stable exclusion reason, or an empty string when dispatchable."""
     campaign = _campaigns(registry).get(campaign_id)
@@ -848,6 +859,10 @@ def _approach_ineligibility(
         return "compute_forbidden"
     if approach.get("stale") is True:
         return "stale_estimate"
+    if run_dir is not None:
+        ns_reason = ns.approach_blocked_by_negative_space(run_dir, approach_id)
+        if ns_reason:
+            return ns_reason
     return ""
 
 
@@ -1145,8 +1160,14 @@ def _validate_registry(registry: Mapping[str, Any], errors: list[str], warnings:
                 errors.append(f"approach {approach_id} campaign_id disagrees with its campaign key")
             if raw.get("status", "eligible") not in APPROACH_STATUSES:
                 errors.append(f"approach {approach_id} has invalid status")
-            if raw.get("status") == "blocked" and not _clean_text(raw.get("reopen_condition")):
-                warnings.append(f"blocked approach {approach_id} has no reopen_condition")
+            if raw.get("status") in {"blocked", "closed"} and not _clean_text(
+                raw.get("reopen_condition")
+            ):
+                # Enforce-mode elevates this via validate_negative_space; keep a
+                # soft warning here so monitor mode still surfaces the gap.
+                warnings.append(
+                    f"{raw.get('status')} approach {approach_id} has no reopen_condition"
+                )
             if "estimates" in raw and not isinstance(raw.get("estimates"), Mapping):
                 errors.append(f"approach {approach_id} estimates must be an object")
             estimates = raw.get("estimates") if isinstance(raw.get("estimates"), Mapping) else {}
@@ -1167,7 +1188,12 @@ def _validate_registry(registry: Mapping[str, Any], errors: list[str], warnings:
 
 
 def _validate_plan(
-    plan: Mapping[str, Any], contract: Mapping[str, Any], registry: Mapping[str, Any], errors: list[str]
+    plan: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    registry: Mapping[str, Any],
+    errors: list[str],
+    *,
+    run_dir: str | Path | None = None,
 ) -> None:
     if plan.get("schema_version") != CURRENT_PLAN_SCHEMA:
         errors.append(f"{CURRENT_PLAN_FILE} schema_version must be {CURRENT_PLAN_SCHEMA}")
@@ -1186,7 +1212,9 @@ def _validate_plan(
         approach_id = _clean_text(plan.get("approach_id"))
         if not campaign_id or not approach_id:
             errors.append("active current_plan requires campaign_id and approach_id")
-        eligibility_error = _approach_ineligibility(registry, campaign_id, approach_id)
+        eligibility_error = _approach_ineligibility(
+            registry, campaign_id, approach_id, run_dir=run_dir
+        )
         if eligibility_error:
             errors.append(
                 "active current_plan references an ineligible campaign/approach: "
@@ -1359,11 +1387,19 @@ def validate_goal_focus(
 
     _validate_contract(contract, errors, warnings)
     _validate_registry(registry, errors, warnings)
-    _validate_plan(plan, contract, registry, errors)
+    _validate_plan(plan, contract, registry, errors, run_dir=root)
     mode_error = _mode_authority_error(plan, decisions)
     if mode_error:
         errors.append(mode_error)
     _validate_plan_compute_policy(root, plan, errors)
+    ns_report = ns.validate_negative_space(
+        root,
+        registry,
+        enforce=plan.get("enforcement_mode") == "enforce",
+    )
+    checked.append(ns.NEGATIVE_SPACE_REL.as_posix())
+    errors.extend(ns_report.get("errors") or [])
+    warnings.extend(ns_report.get("warnings") or [])
     for index, decision in enumerate(decisions, start=1):
         if decision.get("schema_version") != DIRECTION_DECISION_SCHEMA:
             warnings.append(f"direction decision row {index} uses an unknown schema")
@@ -1539,12 +1575,18 @@ def score_approach(approach: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _eligible_approaches(registry: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+def _eligible_approaches(
+    registry: Mapping[str, Any],
+    *,
+    run_dir: str | Path | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     rows = _approach_rows(registry)
     eligible: list[dict[str, Any]] = []
     excluded: list[dict[str, str]] = []
     for campaign_id, approach_id, approach in rows:
-        reason = _approach_ineligibility(registry, campaign_id, approach_id)
+        reason = _approach_ineligibility(
+            registry, campaign_id, approach_id, run_dir=run_dir
+        )
         if reason:
             excluded.append({"campaign_id": campaign_id, "approach_id": approach_id, "reason": reason})
             continue
@@ -1554,8 +1596,12 @@ def _eligible_approaches(registry: Mapping[str, Any]) -> tuple[list[dict[str, An
     return eligible, excluded
 
 
-def rank_approaches(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
-    eligible, _ = _eligible_approaches(registry)
+def rank_approaches(
+    registry: Mapping[str, Any],
+    *,
+    run_dir: str | Path | None = None,
+) -> list[dict[str, Any]]:
+    eligible, _ = _eligible_approaches(registry, run_dir=run_dir)
     scored = [score_approach(approach) for approach in eligible]
     return sorted(
         scored,
@@ -1563,10 +1609,15 @@ def rank_approaches(registry: Mapping[str, Any]) -> list[dict[str, Any]]:
     )
 
 
-def select_direction(registry: Mapping[str, Any], *, max_portfolio: int = 3) -> dict[str, Any]:
+def select_direction(
+    registry: Mapping[str, Any],
+    *,
+    max_portfolio: int = 3,
+    run_dir: str | Path | None = None,
+) -> dict[str, Any]:
     """Select a dominant exploitation path or a bounded informative experiment."""
 
-    eligible, excluded = _eligible_approaches(registry)
+    eligible, excluded = _eligible_approaches(registry, run_dir=run_dir)
     scores = [score_approach(approach) for approach in eligible]
     by_id = {str(approach["id"]): approach for approach in eligible}
     scores.sort(key=lambda row: (-row["conservative"], -row["optimistic"], row["approach_id"]))
@@ -1663,6 +1714,7 @@ def evaluate_replan_triggers(
             registry,
             _clean_text(plan.get("campaign_id")),
             _clean_text(plan.get("approach_id")),
+            run_dir=root,
         )
         if eligibility_error:
             add("selected_approach_ineligible", eligibility_error)
@@ -2435,7 +2487,7 @@ def _validate_direction_review_boundary(
         raise ValueError("different-family strategy advice found no viable candidate")
 
     adjusted, mentioned = _review_adjusted_registry(registry, payloads)
-    recomputed = select_direction(adjusted)
+    recomputed = select_direction(adjusted, run_dir=root)
     if (
         recomputed.get("status") != "selected"
         or _clean_text(recomputed.get("selected_campaign_id")) != selected_campaign_id
@@ -2548,7 +2600,9 @@ def commit_selected_direction(
     if not campaign_id or not approach_id:
         raise ValueError("selection requires selected_campaign_id and selected_approach_id")
     approach = _find_approach(registry, campaign_id, approach_id)
-    eligibility_error = _approach_ineligibility(registry, campaign_id, approach_id)
+    eligibility_error = _approach_ineligibility(
+        registry, campaign_id, approach_id, run_dir=root
+    )
     if approach is None or eligibility_error:
         raise ValueError(
             "selection does not reference an eligible registered approach"
@@ -5269,6 +5323,97 @@ def validate_host_finalized_goal_success(
     return errors
 
 
+def _negative_space_entry_for_finalize(
+    run_dir: Path,
+    *,
+    candidate: Mapping[str, Any],
+    record: Mapping[str, Any],
+    review: Mapping[str, Any],
+    registry: Mapping[str, Any],
+    accepted: bool,
+) -> dict[str, Any] | None:
+    """Build a negative-space row when finalization permanently blocks a route.
+
+    Triggers (reject path only):
+    - record.block_approach is true, or
+    - record.negative_space is a mapping with mechanism details, or
+    - the approach is blocked/closed in the postimage registry
+    """
+
+    if accepted:
+        return None
+    approach_id = _clean_text(
+        record.get("approach_id") or candidate.get("approach_id")
+    )
+    campaign_id = _clean_text(
+        record.get("campaign_id") or candidate.get("campaign_id")
+    )
+    approach = (
+        _find_approach(registry, campaign_id, approach_id) if approach_id else None
+    )
+    approach_status = (
+        _clean_text(approach.get("status")).lower() if isinstance(approach, dict) else ""
+    )
+    explicit = record.get("negative_space")
+    if not isinstance(explicit, Mapping):
+        explicit = {}
+    block = (
+        record.get("block_approach") is True
+        or bool(explicit)
+        or approach_status in {"blocked", "closed"}
+    )
+    if not block or not approach_id:
+        return None
+    mechanism = _clean_text(
+        explicit.get("mechanism_text")
+        or record.get("failure_summary")
+        or record.get("stop_reason")
+        or review.get("summary")
+        or f"rejected candidate on approach {approach_id}"
+    )
+    failure = _clean_text(
+        explicit.get("failure_summary")
+        or record.get("stop_reason")
+        or "result_rejected"
+    )
+    reopen = _clean_text(
+        explicit.get("reopen_condition")
+        or (approach.get("reopen_condition") if isinstance(approach, dict) else "")
+        or "new mechanism required after independent review"
+    )
+    evidence_ids = [
+        _clean_text(x)
+        for x in (explicit.get("evidence_ids") or record.get("evidence_ids") or [])
+        if _clean_text(x)
+    ]
+    review_fp = _object_fingerprint(dict(review)) if isinstance(review, Mapping) else ""
+    try:
+        return ns.entry_for_blocked_approach(
+            approach_id=approach_id,
+            campaign_id=campaign_id or None,
+            mechanism_text=mechanism,
+            failure_summary=failure,
+            reopen_condition=reopen,
+            evidence_ids=evidence_ids or None,
+            evidence_absent_reason=(
+                None
+                if evidence_ids
+                else _clean_text(explicit.get("evidence_absent_reason"))
+                or "rejected_candidate_without_staged_evidence_ids"
+            ),
+            iteration_id=str(record.get("iteration") or ""),
+            candidate_fingerprint=_clean_text(
+                record.get("source_candidate_fingerprint")
+                or candidate.get("candidate_id")
+            ),
+            result_review_fingerprint=review_fp or None,
+            registry_revision=_positive_int(registry.get("registry_revision")),
+            kind=_clean_text(explicit.get("kind")) or "blocked_route",
+        )
+    except ValueError:
+        return None
+
+
 def finalize_candidate(
     run_dir: str | Path,
     *,
@@ -5353,6 +5498,43 @@ def finalize_candidate(
         raise ValueError(
             "a rejected candidate requires a failed/rejected review; operational review errors remain pending"
         )
+    # R4 anti-false-consensus: multi-LLM LGTM alone never banks (defense in depth
+    # beyond different_family, which is already required above).
+    machine_ok = False
+    if isinstance(ledger_record, Mapping):
+        machine_ok = ledger_record.get("machine_check_passed") is True
+    bank_ok, bank_reason = afc.bankable_review_ok(
+        review, accepted=accepted, machine_check_passed=machine_ok
+    )
+    if not bank_ok:
+        raise ValueError(f"anti-false-consensus bank gate: {bank_reason}")
+    # R2: optional prior review snapshot on the candidate refuses wording-only progress.
+    prior_review = (
+        candidate.get("prior_review_snapshot")
+        if isinstance(candidate.get("prior_review_snapshot"), Mapping)
+        else None
+    )
+    if prior_review is not None and accepted:
+        current_snap = {
+            "evidence_ids": list(
+                (ledger_record or candidate.get("record") or {}).get("evidence_ids")
+                or []
+            ),
+            "obligation_transitions": list(
+                (ledger_record or candidate.get("record") or {}).get(
+                    "obligation_transitions"
+                )
+                or []
+            ),
+            "summary": _clean_text(review.get("summary") or review.get("notes")),
+        }
+        ok_delta, delta_reason, _delta = afc.allows_review_round_progress(
+            prior_review, current_snap
+        )
+        if not ok_delta:
+            raise ValueError(
+                f"anti-false-consensus evidence-delta gate: {delta_reason}"
+            )
 
     record = copy.deepcopy(dict(ledger_record or candidate.get("record") or {}))
     if bound_review:
@@ -5587,13 +5769,39 @@ def finalize_candidate(
         json_files["loop_state.json"] = state
     if budget:
         json_files["budget.json"] = budget
+
+    jsonl_appends: dict[str, list[Any]] = {
+        "iterations.jsonl": [record],
+        DIRECTION_DECISIONS_FILE: [mode_event],
+    }
+    ns_entry = _negative_space_entry_for_finalize(
+        root,
+        candidate=candidate,
+        record=record,
+        review=review,
+        registry=registry,
+        accepted=accepted,
+    )
+    if ns_entry is not None:
+        ns_rel = ns.NEGATIVE_SPACE_REL.as_posix()
+        ns_path = root / ns.NEGATIVE_SPACE_REL
+        if ns_path.exists():
+            try:
+                expected_hashes[ns_rel] = hashlib.sha256(
+                    _read_regular_bytes(ns_path, max_bytes=16_000_000)
+                ).hexdigest()
+            except (OSError, ValueError, TypeError):
+                # Fall back: let transaction create postimage without preimage hash.
+                pass
+        else:
+            expected_absent.append(ns_rel)
+        jsonl_appends[ns_rel] = [ns_entry]
+        record["negative_space_entry_id"] = ns_entry.get("entry_id")
+
     tx = commit_transaction(
         root,
         json_files=json_files,
-        jsonl_appends={
-            "iterations.jsonl": [record],
-            DIRECTION_DECISIONS_FILE: [mode_event],
-        },
+        jsonl_appends=jsonl_appends,
         deletes=[PENDING_CANDIDATE_FILE],
         expected_revisions={
             CURRENT_PLAN_FILE: ("plan_revision", expected),

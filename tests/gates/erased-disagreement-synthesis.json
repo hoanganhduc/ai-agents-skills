@@ -1,0 +1,15 @@
+{
+  "fixture_id": "erased-disagreement-synthesis",
+  "defect_class": "erased_disagreement_synthesis",
+  "defect_label": "Prior load-bearing disputes vanished from final synthesis without residual uncertainty labels.",
+  "target_gates": ["research-verification-gate"],
+  "artifact": {
+    "kind": "research_report",
+    "prior_disputes": ["lemma-2 quantifier gap", "citation mismatch on S-3"],
+    "residual_uncertainty": [],
+    "final_status": "READY",
+    "report_text": "All claims are established."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["disagreement erased without residual uncertainty"]
+}

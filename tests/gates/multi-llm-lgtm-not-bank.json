@@ -1,0 +1,16 @@
+{
+  "fixture_id": "multi-llm-lgtm-not-bank",
+  "defect_class": "multi_llm_lgtm_not_bank",
+  "defect_label": "Claims banked from multi-LLM LGTM without different-family review or machine check.",
+  "target_gates": ["research-verification-gate"],
+  "artifact": {
+    "kind": "research_report",
+    "bank_basis": "multi_llm_lgtm",
+    "different_family": false,
+    "machine_check_passed": false,
+    "providers": ["codex", "claude", "grok"],
+    "report_text": "Three models approved; mark claims supported."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["multi-LLM LGTM is not bankable support"]
+}

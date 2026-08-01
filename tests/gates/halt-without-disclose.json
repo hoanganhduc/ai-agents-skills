@@ -1,0 +1,15 @@
+{
+  "fixture_id": "halt-without-disclose",
+  "defect_class": "halt_without_disclose",
+  "defect_label": "Review halted at the round cap without residual uncertainty or negative-space disclosure.",
+  "target_gates": ["research-verification-gate"],
+  "artifact": {
+    "kind": "multi_agent_review",
+    "review_halted": true,
+    "residual_uncertainty": [],
+    "negative_space_disclosed": false,
+    "report_text": "Stopping for now; findings look fine."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["halt without disclose of uncertainty or negative space"]
+}
