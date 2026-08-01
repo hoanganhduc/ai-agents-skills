@@ -27,6 +27,7 @@ RUNTIME_SMOKE_SKILLS = (
     "graph-verifier",
     "lean-explore-mcp",
     "lean-formalization-intake",
+    "lean-research-library",
     "lean-strict-verification-gate",
     "self-improving-agent",
 )
@@ -498,7 +499,7 @@ def smoke_args(manifests: dict[str, Any], skill: str, workspace: Path) -> list[s
         return ["smoke"]
     if skill == "lean-explore-mcp":
         return ["smoke"]
-    if skill in {"lean-formalization-intake", "lean-strict-verification-gate"}:
+    if skill in {"lean-formalization-intake", "lean-research-library", "lean-strict-verification-gate"}:
         return ["doctor"]
     return []
 
@@ -641,6 +642,18 @@ def validate_smoke_output(
             "name": "lean-status-recorded",
             "ok": payload.get("tool_status", {}).get("lean", {}).get("status") in {"available", "tool_unavailable"},
         })
+    elif skill == "lean-research-library":
+        payload = parse_json_stdout(completed.stdout)
+        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
+        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
+        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
+        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
+        checks.append({
+            "name": "lean-status-recorded",
+            "ok": payload.get("tool_status", {}).get("lean", {}).get("status") in {"available", "tool_unavailable"},
+        })
+        # an unconfigured library is a reported state with guidance, never a smoke failure
+        checks.append({"name": "library-state-recorded", "ok": isinstance(payload.get("library_configured"), bool)})
     elif skill == "axiom-axle-mcp":
         payload = parse_json_stdout(completed.stdout)
         checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})

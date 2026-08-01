@@ -90,6 +90,7 @@
       "skills": [
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-research-library",
         "lean-explore-mcp",
         "lean-strict-verification-gate",
         "opengauss"
@@ -100,6 +101,7 @@
       "skills": [
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-research-library",
         "lean-explore-mcp",
         "lean-strict-verification-gate",
         "axiom-axle-mcp",
@@ -164,6 +166,7 @@
         "get-available-resources",
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-research-library",
         "lean-explore-mcp",
         "lean-strict-verification-gate",
         "axiom-axle-mcp",

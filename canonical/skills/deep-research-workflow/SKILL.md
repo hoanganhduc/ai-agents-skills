@@ -266,6 +266,7 @@ Use the local helpers as optional gates:
 bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh assess --claim-id C1 --claim "..."
 ```
+Use `lean-research-library` for the personal-library reuse gate before any Lean formalization and the user-gated intake after it.
 
 ```bash
 bash "$AAS_RUNTIME_ROOT/run_skill.sh" \

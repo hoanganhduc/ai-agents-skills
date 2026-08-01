@@ -683,3 +683,5 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 - `goal-priority` -- legacy `goal_priority.v1` reference (defaults disabled/soft; does not change stop conditions).
 - `informal-to-lean-formalization-runbook` -- F1–F7 formalization positions when path is formal-track under `formal_policy`.
 - `sample-arl-headless-driver-with-formal` -- thin env fragment + example JSON for force-driven ARL with formal tools (not a forked supervisor).
+
+When `formal_policy` is `auto`, `on`, or `force`, wire `lean-research-library` at F2' (search-first) and F7' (user-gated intake); staging and outward-facing actions batch at run boundaries and always wait for the user.
