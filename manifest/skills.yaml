@@ -783,6 +783,42 @@
         "agent-visible"
       ]
     },
+    "lean-research-library": {
+      "description": "Use when any Lean formalization task starts (reuse Mathlib and the personal research library first) or ends (user-gated intake of results into the library, mathlib-PR flagging, paper-artifact scaffolding and gated Zenodo publishing).",
+      "profiles": [
+        "formal-research",
+        "formal-research-remote",
+        "full-research"
+      ],
+      "supported_agents": [
+        "codex",
+        "claude",
+        "deepseek",
+        "opencode",
+        "antigravity"
+      ],
+      "required_dependencies": [
+        "python-runtime"
+      ],
+      "optional_dependencies": [
+        "lean-cli",
+        "lake-cli",
+        "mathlib-cache"
+      ],
+      "optional_capabilities": [
+        "formal-lane-intake",
+        "lean-tool-detection"
+      ],
+      "recommended_templates": [
+        "informal-to-lean-formalization-runbook"
+      ],
+      "verification": [
+        "file-exists",
+        "metadata-valid",
+        "agent-visible",
+        "offline-smoke"
+      ]
+    },
     "lean-explore-mcp": {
       "description": "Optional inert LeanExplore MCP setup helper for Lean declaration search.",
       "profiles": [

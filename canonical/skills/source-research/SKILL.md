@@ -43,6 +43,7 @@ Open these only when relevant:
 - Explicit TikZ drawing, refactoring, extraction, compile, or diagram-review requests route to `tikz-draw`.
 - Small graph-theoretic verification routes to `graph-verifier`.
 - Mathematical research tasks that need heavy graph-theoretic, combinatorial, algebraic, or spectral computation route to `sagemath`.
+Formal candidates that pass intake also run `lean-research-library search` before any new formalization is attempted.
 
 ## Default workflow
 

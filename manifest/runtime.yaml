@@ -19,6 +19,7 @@
         "docling",
         "formal-skeleton-helper",
         "lean-formalization-intake",
+        "lean-research-library",
         "lean-explore-mcp",
         "lean-strict-verification-gate",
         "get-available-resources",
@@ -180,17 +181,142 @@
         "reason": "Selftest validates scene-spec round-trips, the generated Manim source (Write/MathTex/TransformMatchingTex/emphasis), and the manim/ffmpeg argv builders with no network, package install, Manim, LaTeX, or ffmpeg."
       },
       "files": [
-        {"source": "skills/manim-math-animation/manim_math_animation_runtime.py", "target": "workspace/skills/manim-math-animation/manim_math_animation_runtime.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/requirements.txt", "target": "workspace/skills/manim-math-animation/requirements.txt", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/run_manim_math_animation.sh", "target": "workspace/skills/manim-math-animation/run_manim_math_animation.sh", "platforms": ["linux", "macos", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
-        {"source": "skills/manim-math-animation/run_manim_math_animation.bat", "target": "workspace/skills/manim-math-animation/run_manim_math_animation.bat", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/run_manim_math_animation.ps1", "target": "workspace/skills/manim-math-animation/run_manim_math_animation.ps1", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/mma/__init__.py", "target": "workspace/skills/manim-math-animation/mma/__init__.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/mma/model.py", "target": "workspace/skills/manim-math-animation/mma/model.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/mma/scenegen.py", "target": "workspace/skills/manim-math-animation/mma/scenegen.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/mma/render.py", "target": "workspace/skills/manim-math-animation/mma/render.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/mma/doctor.py", "target": "workspace/skills/manim-math-animation/mma/doctor.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/manim-math-animation/mma/selftest.py", "target": "workspace/skills/manim-math-animation/mma/selftest.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"}
+        {
+          "source": "skills/manim-math-animation/manim_math_animation_runtime.py",
+          "target": "workspace/skills/manim-math-animation/manim_math_animation_runtime.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/requirements.txt",
+          "target": "workspace/skills/manim-math-animation/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/run_manim_math_animation.sh",
+          "target": "workspace/skills/manim-math-animation/run_manim_math_animation.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/manim-math-animation/run_manim_math_animation.bat",
+          "target": "workspace/skills/manim-math-animation/run_manim_math_animation.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/run_manim_math_animation.ps1",
+          "target": "workspace/skills/manim-math-animation/run_manim_math_animation.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/mma/__init__.py",
+          "target": "workspace/skills/manim-math-animation/mma/__init__.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/mma/model.py",
+          "target": "workspace/skills/manim-math-animation/mma/model.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/mma/scenegen.py",
+          "target": "workspace/skills/manim-math-animation/mma/scenegen.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/mma/render.py",
+          "target": "workspace/skills/manim-math-animation/mma/render.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/mma/doctor.py",
+          "target": "workspace/skills/manim-math-animation/mma/doctor.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/manim-math-animation/mma/selftest.py",
+          "target": "workspace/skills/manim-math-animation/mma/selftest.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
       ],
       "smoke": {
         "schema": "runtime-smoke.v1",
@@ -202,9 +328,15 @@
           "windows": "workspace/skills/manim-math-animation/run_manim_math_animation.bat",
           "windows_ps1": "workspace/skills/manim-math-animation/run_manim_math_animation.ps1"
         },
-        "args": ["selftest", "--work-dir", "{smoke_dir}/mma"],
+        "args": [
+          "selftest",
+          "--work-dir",
+          "{smoke_dir}/mma"
+        ],
         "timeout_seconds": 30,
-        "writes": {"workspace_scratch": true},
+        "writes": {
+          "workspace_scratch": true
+        },
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -227,11 +359,64 @@
         "reason": "Selftest builds, serializes, and re-parses plain-text, HTML, and attachment messages in memory and checks cc/bcc envelope expansion, port/security inference, header-injection rejection, and password redaction with no network, SMTP connection, package install, or real secrets."
       },
       "files": [
-        {"source": "skills/send-email/send_email.py", "target": "workspace/skills/send-email/send_email.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/send-email/send-email.example.json", "target": "workspace/skills/send-email/send-email.example.json", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/send-email/run_send_email.sh", "target": "workspace/skills/send-email/run_send_email.sh", "platforms": ["linux", "macos", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
-        {"source": "skills/send-email/run_send_email.bat", "target": "workspace/skills/send-email/run_send_email.bat", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/send-email/run_send_email.ps1", "target": "workspace/skills/send-email/run_send_email.ps1", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"}
+        {
+          "source": "skills/send-email/send_email.py",
+          "target": "workspace/skills/send-email/send_email.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/send-email/send-email.example.json",
+          "target": "workspace/skills/send-email/send-email.example.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/send-email/run_send_email.sh",
+          "target": "workspace/skills/send-email/run_send_email.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/send-email/run_send_email.bat",
+          "target": "workspace/skills/send-email/run_send_email.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/send-email/run_send_email.ps1",
+          "target": "workspace/skills/send-email/run_send_email.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        }
       ],
       "smoke": {
         "schema": "runtime-smoke.v1",
@@ -243,9 +428,15 @@
           "windows": "workspace/skills/send-email/run_send_email.bat",
           "windows_ps1": "workspace/skills/send-email/run_send_email.ps1"
         },
-        "args": ["selftest", "--work-dir", "{smoke_dir}/send-email"],
+        "args": [
+          "selftest",
+          "--work-dir",
+          "{smoke_dir}/send-email"
+        ],
         "timeout_seconds": 20,
-        "writes": {"workspace_scratch": true},
+        "writes": {
+          "workspace_scratch": true
+        },
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -268,19 +459,168 @@
         "reason": "Selftest exercises mailbox arm/CAS/approval single-use, inbox claim/consume, /aas parser boundaries, and in-memory config redaction without network, path synchronization, or real-secret discovery; installed legacy sync/publisher names are inert revocation stubs."
       },
       "files": [
-        {"source": "skills/remote-bridge/remote_bridge.py", "target": "workspace/skills/remote-bridge/remote_bridge.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/autonomous-research-loop-runtime/notify_v2.py", "target": "workspace/skills/remote-bridge/notify_v2.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/remote-bridge/remote-bridge.example.json", "target": "workspace/skills/remote-bridge/remote-bridge.example.json", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/remote-bridge/sync_remote_bridge_paths.py", "target": "workspace/skills/remote-bridge/sync_remote_bridge_paths.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
-        {"source": "skills/remote-bridge/publish_openclaw_adapter.py", "target": "workspace/skills/remote-bridge/publish_openclaw_adapter.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
-        {"source": "skills/remote-bridge/dispatch_aas.py", "target": "workspace/skills/remote-bridge/dispatch_aas.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
-        {"source": "skills/remote-bridge/openclaw-adapter/SKILL.md", "target": "workspace/skills/remote-bridge/openclaw-adapter/SKILL.md", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/remote-bridge/openclaw-adapter/README.md", "target": "workspace/skills/remote-bridge/openclaw-adapter/README.md", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/remote-bridge/run_remote_bridge.sh", "target": "workspace/skills/remote-bridge/run_remote_bridge.sh", "platforms": ["linux", "macos", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
-        {"source": "skills/remote-bridge/run_remote_bridge.bat", "target": "workspace/skills/remote-bridge/run_remote_bridge.bat", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/remote-bridge/run_remote_bridge.ps1", "target": "workspace/skills/remote-bridge/run_remote_bridge.ps1", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/remote-bridge/hooks/pretooluse_deny_until_approved.py", "target": "workspace/skills/remote-bridge/hooks/pretooluse_deny_until_approved.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/remote-bridge/hooks/grok-remote-bridge-gate.json.example", "target": "workspace/skills/remote-bridge/hooks/grok-remote-bridge-gate.json.example", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"}
+        {
+          "source": "skills/remote-bridge/remote_bridge.py",
+          "target": "workspace/skills/remote-bridge/remote_bridge.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/notify_v2.py",
+          "target": "workspace/skills/remote-bridge/notify_v2.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/remote-bridge/remote-bridge.example.json",
+          "target": "workspace/skills/remote-bridge/remote-bridge.example.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/remote-bridge/sync_remote_bridge_paths.py",
+          "target": "workspace/skills/remote-bridge/sync_remote_bridge_paths.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/remote-bridge/publish_openclaw_adapter.py",
+          "target": "workspace/skills/remote-bridge/publish_openclaw_adapter.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/remote-bridge/dispatch_aas.py",
+          "target": "workspace/skills/remote-bridge/dispatch_aas.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/remote-bridge/openclaw-adapter/SKILL.md",
+          "target": "workspace/skills/remote-bridge/openclaw-adapter/SKILL.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/remote-bridge/openclaw-adapter/README.md",
+          "target": "workspace/skills/remote-bridge/openclaw-adapter/README.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/remote-bridge/run_remote_bridge.sh",
+          "target": "workspace/skills/remote-bridge/run_remote_bridge.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/remote-bridge/run_remote_bridge.bat",
+          "target": "workspace/skills/remote-bridge/run_remote_bridge.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/remote-bridge/run_remote_bridge.ps1",
+          "target": "workspace/skills/remote-bridge/run_remote_bridge.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/remote-bridge/hooks/pretooluse_deny_until_approved.py",
+          "target": "workspace/skills/remote-bridge/hooks/pretooluse_deny_until_approved.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/remote-bridge/hooks/grok-remote-bridge-gate.json.example",
+          "target": "workspace/skills/remote-bridge/hooks/grok-remote-bridge-gate.json.example",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
       ],
       "smoke": {
         "schema": "runtime-smoke.v1",
@@ -292,9 +632,15 @@
           "windows": "workspace/skills/remote-bridge/run_remote_bridge.bat",
           "windows_ps1": "workspace/skills/remote-bridge/run_remote_bridge.ps1"
         },
-        "args": ["selftest", "--work-dir", "{smoke_dir}/remote-bridge"],
+        "args": [
+          "selftest",
+          "--work-dir",
+          "{smoke_dir}/remote-bridge"
+        ],
         "timeout_seconds": 30,
-        "writes": {"workspace_scratch": true},
+        "writes": {
+          "workspace_scratch": true
+        },
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -318,28 +664,285 @@
         "reason": "Selftest validates the deterministic core (1:1 pairing, duration re-basing, language-aware engine ladder, math verbalization, effect filtergraph building, caption formatting, clip args, and the SHA-pinned approval gate) with no network, package install, ffmpeg, or TTS."
       },
       "files": [
-        {"source": "skills/slides-to-video/slides_to_video_runtime.py", "target": "workspace/skills/slides-to-video/slides_to_video_runtime.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/requirements.txt", "target": "workspace/skills/slides-to-video/requirements.txt", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/run_slides_to_video.sh", "target": "workspace/skills/slides-to-video/run_slides_to_video.sh", "platforms": ["linux", "macos", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
-        {"source": "skills/slides-to-video/run_slides_to_video.bat", "target": "workspace/skills/slides-to-video/run_slides_to_video.bat", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/slides-to-video/run_slides_to_video.ps1", "target": "workspace/skills/slides-to-video/run_slides_to_video.ps1", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/__init__.py", "target": "workspace/skills/slides-to-video/s2v/__init__.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/model.py", "target": "workspace/skills/slides-to-video/s2v/model.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/languages.py", "target": "workspace/skills/slides-to-video/s2v/languages.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/fonts.py", "target": "workspace/skills/slides-to-video/s2v/fonts.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/ingest.py", "target": "workspace/skills/slides-to-video/s2v/ingest.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/pptx_render.py", "target": "workspace/skills/slides-to-video/s2v/pptx_render.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/tts.py", "target": "workspace/skills/slides-to-video/s2v/tts.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/audio.py", "target": "workspace/skills/slides-to-video/s2v/audio.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/effects.py", "target": "workspace/skills/slides-to-video/s2v/effects.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/assemble.py", "target": "workspace/skills/slides-to-video/s2v/assemble.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/captions.py", "target": "workspace/skills/slides-to-video/s2v/captions.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/orchestrator.py", "target": "workspace/skills/slides-to-video/s2v/orchestrator.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/doctor.py", "target": "workspace/skills/slides-to-video/s2v/doctor.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/selftest.py", "target": "workspace/skills/slides-to-video/s2v/selftest.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/languages/generic.json", "target": "workspace/skills/slides-to-video/s2v/languages/generic.json", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/languages/en.json", "target": "workspace/skills/slides-to-video/s2v/languages/en.json", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/slides-to-video/s2v/languages/vi.json", "target": "workspace/skills/slides-to-video/s2v/languages/vi.json", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"}
+        {
+          "source": "skills/slides-to-video/slides_to_video_runtime.py",
+          "target": "workspace/skills/slides-to-video/slides_to_video_runtime.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/requirements.txt",
+          "target": "workspace/skills/slides-to-video/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/run_slides_to_video.sh",
+          "target": "workspace/skills/slides-to-video/run_slides_to_video.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/slides-to-video/run_slides_to_video.bat",
+          "target": "workspace/skills/slides-to-video/run_slides_to_video.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/run_slides_to_video.ps1",
+          "target": "workspace/skills/slides-to-video/run_slides_to_video.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/__init__.py",
+          "target": "workspace/skills/slides-to-video/s2v/__init__.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/model.py",
+          "target": "workspace/skills/slides-to-video/s2v/model.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/languages.py",
+          "target": "workspace/skills/slides-to-video/s2v/languages.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/fonts.py",
+          "target": "workspace/skills/slides-to-video/s2v/fonts.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/ingest.py",
+          "target": "workspace/skills/slides-to-video/s2v/ingest.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/pptx_render.py",
+          "target": "workspace/skills/slides-to-video/s2v/pptx_render.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/tts.py",
+          "target": "workspace/skills/slides-to-video/s2v/tts.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/audio.py",
+          "target": "workspace/skills/slides-to-video/s2v/audio.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/effects.py",
+          "target": "workspace/skills/slides-to-video/s2v/effects.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/assemble.py",
+          "target": "workspace/skills/slides-to-video/s2v/assemble.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/captions.py",
+          "target": "workspace/skills/slides-to-video/s2v/captions.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/orchestrator.py",
+          "target": "workspace/skills/slides-to-video/s2v/orchestrator.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/doctor.py",
+          "target": "workspace/skills/slides-to-video/s2v/doctor.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/selftest.py",
+          "target": "workspace/skills/slides-to-video/s2v/selftest.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/languages/generic.json",
+          "target": "workspace/skills/slides-to-video/s2v/languages/generic.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/languages/en.json",
+          "target": "workspace/skills/slides-to-video/s2v/languages/en.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/slides-to-video/s2v/languages/vi.json",
+          "target": "workspace/skills/slides-to-video/s2v/languages/vi.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
       ],
       "smoke": {
         "schema": "runtime-smoke.v1",
@@ -351,9 +954,15 @@
           "windows": "workspace/skills/slides-to-video/run_slides_to_video.bat",
           "windows_ps1": "workspace/skills/slides-to-video/run_slides_to_video.ps1"
         },
-        "args": ["selftest", "--work-dir", "{smoke_dir}/s2v"],
+        "args": [
+          "selftest",
+          "--work-dir",
+          "{smoke_dir}/s2v"
+        ],
         "timeout_seconds": 30,
-        "writes": {"workspace_scratch": true},
+        "writes": {
+          "workspace_scratch": true
+        },
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -522,7 +1131,11 @@
         {
           "source": "skills/autonomous-research-loop-runtime/arl_drive_supervisor.sh",
           "target": "workspace/skills/autonomous-research-loop-runtime/arl_drive_supervisor.sh",
-          "platforms": ["linux", "macos", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0755"
@@ -530,7 +1143,11 @@
         {
           "source": "skills/autonomous-research-loop-runtime/LAUNCH_supervisor.sh",
           "target": "workspace/skills/autonomous-research-loop-runtime/LAUNCH_supervisor.sh",
-          "platforms": ["linux", "macos", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0755"
@@ -538,7 +1155,12 @@
         {
           "source": "skills/autonomous-research-loop-runtime/sync_panel_exclude.py",
           "target": "workspace/skills/autonomous-research-loop-runtime/sync_panel_exclude.py",
-          "platforms": ["linux", "macos", "windows", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0755"
@@ -546,7 +1168,12 @@
         {
           "source": "skills/autonomous-research-loop-runtime/apply_failover_settings.py",
           "target": "workspace/skills/autonomous-research-loop-runtime/apply_failover_settings.py",
-          "platforms": ["linux", "macos", "windows", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0755"
@@ -554,7 +1181,12 @@
         {
           "source": "skills/autonomous-research-loop-runtime/failover.example.json",
           "target": "workspace/skills/autonomous-research-loop-runtime/failover.example.json",
-          "platforms": ["linux", "macos", "windows", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0644"
@@ -562,7 +1194,12 @@
         {
           "source": "skills/autonomous-research-loop-runtime/supervisor_README.md",
           "target": "workspace/skills/autonomous-research-loop-runtime/supervisor_README.md",
-          "platforms": ["linux", "macos", "windows", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0644"
@@ -1481,7 +2118,12 @@
         {
           "source": "skills/opengauss/opengauss.py",
           "target": "workspace/skills/opengauss/opengauss.py",
-          "platforms": ["linux", "macos", "windows", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0644"
@@ -1489,7 +2131,9 @@
         {
           "source": "skills/opengauss/run_opengauss.bat",
           "target": "workspace/skills/opengauss/run_opengauss.bat",
-          "platforms": ["windows"],
+          "platforms": [
+            "windows"
+          ],
           "type": "text",
           "newline": "crlf",
           "mode": "0644"
@@ -1497,7 +2141,9 @@
         {
           "source": "skills/opengauss/run_opengauss.ps1",
           "target": "workspace/skills/opengauss/run_opengauss.ps1",
-          "platforms": ["windows"],
+          "platforms": [
+            "windows"
+          ],
           "type": "text",
           "newline": "crlf",
           "mode": "0644"
@@ -1505,7 +2151,11 @@
         {
           "source": "skills/opengauss/run_opengauss.sh",
           "target": "workspace/skills/opengauss/run_opengauss.sh",
-          "platforms": ["linux", "macos", "wsl"],
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
           "type": "text",
           "newline": "lf",
           "mode": "0755"
@@ -1521,9 +2171,13 @@
           "windows": "workspace/skills/opengauss/run_opengauss.bat",
           "windows_ps1": "workspace/skills/opengauss/run_opengauss.ps1"
         },
-        "args": ["smoke"],
+        "args": [
+          "smoke"
+        ],
         "timeout_seconds": 15,
-        "writes": {"workspace_scratch": true},
+        "writes": {
+          "workspace_scratch": true
+        },
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -3721,33 +4375,350 @@
         "reason": "Selftest validates the deterministic core (browser-detection candidate order for linux/macos/windows synthetic layouts, SSRF URL-admission gate, CDP command JSON with no --remote-allow-origins flag and a --host-resolver-rules MAP pin, consent-selector list, viewport/full-page arg builders, in-memory blank-output detector, the verify gate on synth golden+blank, and per-OS process-kill strategy selection) with no network, browser launch, or package install."
       },
       "files": [
-        {"source": "skills/url-to-screenshot-runtime/url_to_screenshot_runtime.py", "target": "workspace/skills/url-to-screenshot-runtime/url_to_screenshot_runtime.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/requirements.txt", "target": "workspace/skills/url-to-screenshot-runtime/requirements.txt", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/run_url_to_screenshot.sh", "target": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.sh", "platforms": ["linux", "macos", "wsl"], "type": "text", "newline": "lf", "mode": "0755"},
-        {"source": "skills/url-to-screenshot-runtime/run_url_to_screenshot.bat", "target": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.bat", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1", "target": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1", "platforms": ["windows"], "type": "text", "newline": "crlf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/__init__.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/__init__.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/security.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/security.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/pngtools.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/pngtools.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/pdf.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/pdf.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/limits.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/limits.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/detect.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/detect.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/oneshot.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/oneshot.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/cdp.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/cdp.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/consent.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/consent.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/capture.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/capture.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/procctl.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/procctl.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/blank.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/blank.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/verify.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/verify.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/naming.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/naming.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/doctor.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/doctor.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/selftest.py", "target": "workspace/skills/url-to-screenshot-runtime/u2s/selftest.py", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/plain.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/plain.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/consent.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/consent.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/blank.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/blank.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/slow.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/slow.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/tall.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/tall.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"},
-        {"source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/ssrf.html", "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/ssrf.html", "platforms": ["linux", "macos", "windows", "wsl"], "type": "text", "newline": "lf", "mode": "0644"}
+        {
+          "source": "skills/url-to-screenshot-runtime/url_to_screenshot_runtime.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/url_to_screenshot_runtime.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/requirements.txt",
+          "target": "workspace/skills/url-to-screenshot-runtime/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/run_url_to_screenshot.sh",
+          "target": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/run_url_to_screenshot.bat",
+          "target": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1",
+          "target": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/__init__.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/__init__.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/security.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/security.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/pngtools.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/pngtools.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/pdf.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/pdf.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/limits.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/limits.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/detect.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/detect.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/oneshot.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/oneshot.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/cdp.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/cdp.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/consent.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/consent.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/capture.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/capture.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/procctl.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/procctl.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/blank.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/blank.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/verify.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/verify.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/naming.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/naming.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/doctor.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/doctor.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/selftest.py",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/selftest.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/plain.html",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/plain.html",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/consent.html",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/consent.html",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/blank.html",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/blank.html",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/slow.html",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/slow.html",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/tall.html",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/tall.html",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/url-to-screenshot-runtime/u2s/htmlfixtures/ssrf.html",
+          "target": "workspace/skills/url-to-screenshot-runtime/u2s/htmlfixtures/ssrf.html",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        }
       ],
       "smoke": {
         "schema": "runtime-smoke.v1",
@@ -3759,9 +4730,15 @@
           "windows": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.bat",
           "windows_ps1": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1"
         },
-        "args": ["selftest", "--work-dir", "{smoke_dir}/u2s"],
+        "args": [
+          "selftest",
+          "--work-dir",
+          "{smoke_dir}/u2s"
+        ],
         "timeout_seconds": 60,
-        "writes": {"workspace_scratch": true},
+        "writes": {
+          "workspace_scratch": true
+        },
         "safety": {
           "network": "forbidden",
           "live_api": "forbidden",
@@ -3774,6 +4751,89 @@
         },
         "env_canaries": {
           "AAS_URL_TO_SCREENSHOT_SMOKE_TOKEN": "URL-TO-SCREENSHOT-SMOKE-CANARY"
+        }
+      }
+    },
+    "lean-research-library": {
+      "runtime_dir": "lean-research-library",
+      "smoke_coverage": {
+        "status": "offline-smoke",
+        "reason": "Doctor smoke reports tool/config state offline; every network verb is marked and excluded from smoke."
+      },
+      "files": [
+        {
+          "source": "skills/lean-research-library/lean_research_library.py",
+          "target": "workspace/skills/lean-research-library/lean_research_library.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-research-library/run_lean_research_library.bat",
+          "target": "workspace/skills/lean-research-library/run_lean_research_library.bat",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-research-library/run_lean_research_library.ps1",
+          "target": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-research-library/run_lean_research_library.sh",
+          "target": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        }
+      ],
+      "smoke": {
+        "schema": "runtime-smoke.v1",
+        "mode": "offline",
+        "command": {
+          "linux": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+          "macos": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+          "wsl": "workspace/skills/lean-research-library/run_lean_research_library.sh",
+          "windows": "workspace/skills/lean-research-library/run_lean_research_library.bat",
+          "windows_ps1": "workspace/skills/lean-research-library/run_lean_research_library.ps1"
+        },
+        "args": [
+          "doctor"
+        ],
+        "timeout_seconds": 20,
+        "writes": {
+          "workspace_scratch": true
+        },
+        "safety": {
+          "network": "forbidden",
+          "live_api": "forbidden",
+          "package_install": "forbidden",
+          "server_start": "forbidden",
+          "config_write": "forbidden",
+          "real_secrets": "forbidden"
+        },
+        "env_canaries": {
+          "AAS_LEAN_LIBRARY_TOKEN": "LEAN-RESEARCH-LIBRARY-SMOKE-CANARY"
         }
       }
     }

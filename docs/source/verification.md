@@ -165,7 +165,7 @@ Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
 macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
-`autonomous-research-loop-runtime`, `axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-strict-verification-gate`, `manim-math-animation`, `opengauss`, `remote-bridge`, `self-improving-agent`, `send-email`, `slides-to-video`, `submission-venue-selector`, `url-to-screenshot-runtime`, `venue-ranking-evidence`, forcing copy-mode runtime installation in a temporary
+`autonomous-research-loop-runtime`, `axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-research-library`, `lean-strict-verification-gate`, `manim-math-animation`, `opengauss`, `remote-bridge`, `self-improving-agent`, `send-email`, `slides-to-video`, `submission-venue-selector`, `url-to-screenshot-runtime`, `venue-ranking-evidence`, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
 `--skills` may only select skills that are supported by this runtime-smoke
@@ -190,6 +190,7 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 | `kaggle-research-compute` | `manual-native` | no | Kaggle lifecycle verbs require the new Kaggle API token (KAGGLE_API_TOKEN or ~/.kaggle/access_token) and push real kernels; per Kaggle ToS no live call is made in the build. The offline dry-run, resume-loop, fan-out, and guard paths are covered by tests/test_kaggle_research_compute.py (all kaggle CLI calls and the kagglehub-validate hook mocked). |
 | `lean-explore-mcp` | `offline-smoke` | yes | Smoke validates inert LeanExplore MCP setup guidance without installing packages, starting services, or calling live APIs. |
 | `lean-formalization-intake` | `offline-smoke` | yes | Doctor smoke records local Lean availability without installing dependencies. |
+| `lean-research-library` | `offline-smoke` | yes | Doctor smoke reports tool/config state offline; every network verb is marked and excluded from smoke. |
 | `lean-strict-verification-gate` | `offline-smoke` | yes | Doctor smoke records local Lean availability and scanner status without installing dependencies. |
 | `manim-math-animation` | `offline-smoke` | yes | Selftest validates scene-spec round-trips, the generated Manim source (Write/MathTex/TransformMatchingTex/emphasis), and the manim/ffmpeg argv builders with no network, package install, Manim, LaTeX, or ffmpeg. |
 | `modal-research-compute` | `manual-native` | no | Modal workflows require explicit external compute credentials and are not safe for generic offline smoke. |

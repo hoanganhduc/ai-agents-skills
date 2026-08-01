@@ -48,12 +48,14 @@ Apply every phase, in order.
 |---|---|---|---|---|---|
 | F1. Intake & suitability | Local-first decision on whether to formalize and at what granularity. | `lean-formalization-intake` |  |  |  |
 | F2. Declaration map | Map each informal step to a Lean declaration; search for reusable Mathlib results first. | `lean-explore-mcp` |  |  |  |
+| F2'. Library reuse gate | Run `lean-research-library search` per target statement; precedence is normative: mathlib > personal library > peer satellite > formalize new. `statement_only` hits are never reusable proofs. | `lean-research-library` |  |  |  |
 | F3. Skeleton | Emit minimal statement stubs and namespace wrappers with explicit `sorry` placeholders. | `formal-skeleton-helper` |  |  |  |
 | F4a. Fill & track (agent/Mathlib) | Discharge each `sorry` via reuse and local proof work; track blockers. | `lean-explore-mcp` |  |  |  |
 | F4b. OpenGauss fill (optional) | When `opengauss doctor` is ready and live install exists, use guided `/prove` or `/draft` only; record `opengauss_run` provenance — never claim-support. | `opengauss` |  |  |  |
 | F5. Strict verify | Scanner-first verification; report typecheck status and claim-support status separately. | `lean-strict-verification-gate` |  |  |  |
 | F6. Fresh-context cross-check | A different context independently confirms both typecheck and claim support. | `cross-agent-delegation`, `decision-doubt-loop` |  |  |  |
 | F7. Acceptance | Decide `verified` or `not-ready`; both a clean typecheck and confirmed claim support are required. |  |  |  |  |
+| F7'. Library intake gate | After acceptance, run `lean-research-library intake` on new files; present proposals and ASK THE USER before any `stage --apply`. Staging and anything outward-facing (repos, pushes, Zenodo) stay user-gated even in autonomous runs. | `lean-research-library` |  |  |  |
 
 ## Intake and Suitability Gate (F1)
 
@@ -312,3 +314,15 @@ Open sorry-ledger rows:
 Acceptance decision (`verified` / `not-ready`):
 
 Recommended next action:
+
+
+## Paper-to-artifact pipeline (autonomous runs)
+
+For end-to-end "formalize this paper" requests, drive F1-F7' with
+`autonomous-research-loop` (`formal_policy: force`, headless drive). Set
+`closed_deps: true` in the lean-research-library config when the run must use
+only Lean core, Mathlib, and the personal library. The run terminates in one
+of exactly two states, decided by `lean-strict-verification-gate`: a
+sorry-free artifact scaffolded via `lean-research-library artifact new`, or an
+honest ledger of open statements. Approval gates batch at run boundaries:
+library staging and artifact publication always wait for the user.
