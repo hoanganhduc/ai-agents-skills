@@ -91,6 +91,23 @@ class StatusAndSearchTests(unittest.TestCase):
         self.assertEqual(payload["buckets"]["peer_satellite"], [])
         self.assertTrue(any("closed-deps" in n for n in payload["notes"]))
 
+    def test_phrase_in_module_docstring_finds_the_files_decls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_library(Path(tmp))
+            target = Path(tmp) / "HoangMathLib" / "Mathlib" / "Combinatorics" / "Good.lean"
+            target.write_text(
+                "/-! Lemmas: a subset of an independent set is independent. -/\n"
+                + "\n" * 60
+                + "import Mathlib.Combinatorics.SimpleGraph.Clique\n"
+                "theorem SimpleGraph.far_away_lemma : True := trivial\n",
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {"AAS_LEAN_LIBRARY_ROOT": str(root)}, clear=False):
+                payload = run_cli(["search", "--query", "subset of an independent set", "--offline"])
+        self.assertEqual(payload["recommendation"], "use-library")
+        names = [h["name"] for h in payload["buckets"]["library"]]
+        self.assertIn("SimpleGraph.far_away_lemma", names)
+
     def test_mathlib_hit_wins_over_library_hit(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_library(Path(tmp))

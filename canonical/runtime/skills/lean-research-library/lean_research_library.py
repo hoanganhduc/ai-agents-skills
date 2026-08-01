@@ -238,13 +238,28 @@ def grep_tree(root: Path, module_prefix: str, query: str) -> list[dict[str, str]
             text = lean_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        lowered = text.lower()
+        decl_hit = False
         for match in DECL_RE.finditer(text):
             name = match.group(1)
-            if needle in name.lower() or needle in text[max(0, match.start() - 200):match.end() + 200].lower():
+            if needle in name.lower() or needle in lowered[max(0, match.start() - 600):match.end() + 600]:
+                decl_hit = True
                 hits.append({
                     "name": name,
                     "file": str(lean_file.relative_to(root)),
                     "source": module_prefix,
+                })
+                if len(hits) >= 25:
+                    return hits
+        if not decl_hit and needle in lowered:
+            # phrase lives elsewhere in the file (module docstring, comments):
+            # surface every declaration of the file as a file-level match
+            for match in DECL_RE.finditer(text):
+                hits.append({
+                    "name": match.group(1),
+                    "file": str(lean_file.relative_to(root)),
+                    "source": module_prefix,
+                    "match": "file-level",
                 })
                 if len(hits) >= 25:
                     return hits
