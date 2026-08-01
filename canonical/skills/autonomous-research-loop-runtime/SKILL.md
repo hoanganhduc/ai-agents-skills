@@ -247,26 +247,45 @@ candidate evidence included in the requested review to leave the host.
 
 ### Notify v2 progress body (drive / watch / supervisor)
 
-New progress events use `aas.autoloop.notify.v2`. Runtime code supplies
-finalized facts, `notify_v2` validates and renders them, and `remote-bridge`
-chooses transport. Notification failure never changes loop truth.
+New progress events use `aas.autoloop.notify.v2` **schema_version `2.1`**.
+Runtime code supplies finalized facts, `notify_v2` validates and renders them,
+and `remote-bridge` chooses transport. Notification failure never changes loop
+truth. The body layout is **pack-owned** (not a per-loop template file); see
+`canonical/templates/arl-notify-v2.md`.
+
+**Profiles** (`presentation.body_profile`, default `operator_full`):
+
+| Profile | Body |
+|---|---|
+| `operator_full` | Status early; Results; Decision + reason; Started; structured Runtime errors / Review failures when present |
+| `legacy` | Prior v2.0 lead (Goal/Completed/Current/Plan) without the new lead labels |
+
+Select profile via `notify.json` `body_profile`, then
+`standing_orders.notify.body_profile`, then
+`AAS_AUTOLOOP_NOTIFY_BODY_PROFILE`. Stored on the envelope so remote-bridge
+re-renders with the same profile. Install **both** ARL and remote-bridge
+`notify_v2.py` copies (must hash equal).
 
 Every Markdown, plain-text, Telegram HTML, and compact rendering contains:
 
 | Field | Required meaning |
 |---|---|
 | Title | Research-specific identity plus iteration/event outcome; do not use a generic `loop` title when a goal/title exists. |
-| Status | Separate iteration, result-review, and loop status. |
+| Status | Separate iteration, result-review, and loop status (promoted early in `operator_full`). |
 | Progress | Iteration budget used/remaining and plain-language goal/obligation progress. |
+| Started | `iteration.started_at` only; `Not recorded` if unknown — never invent from finish time. |
 | Finished | Finish timestamp and duration for success/failure/error; `Not finished` for running/waiting/paused. |
 | Executor | Primary provider that performed the attempted iteration. |
 | Driver agent | Driver agent/provider actually used, with model/family when recorded. |
 | Panel agents | Panel agents/providers that actually returned usable work; never just the configured invite list. |
 | Other agents | Any additional participating agent roles/providers. |
-| Compute | Explicit structured compute provenance. |
+| Compute | Explicit structured compute provenance (none vs unreported). |
+| Runtime errors / Review failures | From `issues` tri-state; omit empty host-asserted lists; unreported ≠ none. |
 | **Goal** | What the main research problem is. |
 | **Completed** | What was finalized; say explicitly when nothing was banked. |
+| **Results** | Banked claim ids/gists for this event, or explicit no-claims text. |
 | **Current** | Where the research stands now plus the current event's result in plain text. |
+| **Decision** / **Decision reason** | Ledger decision and why (pending on attempt events). |
 | **Plan** | The next bounded action or why the loop is waiting. |
 
 Iteration status is one of `running`, `success`, `failure`, `error`, `waiting`,

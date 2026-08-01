@@ -6754,6 +6754,153 @@ def _build_notify_v2_envelope(
         "result_rejected",
     }:
         stable_event_id = f"arl-{event}-{candidate_id}"
+
+    # --- Notify v2.1 host fields (event-class gated; never invent banked claims) ---
+    banked_event = event in {
+        "iteration_ok",
+        "result_accepted",
+    } and not attempt_event
+    reject_event = event in {
+        "iteration_rejected",
+        "result_rejected",
+        "result_review_failed",
+    }
+    error_event = event in {
+        "iteration_failed",
+        "quota_wait",
+        "auth_or_session_dead",
+    } or iteration_status == "error"
+
+    # Results: only attribute claim ids to this iteration on banked success.
+    results_text = "No claims banked."
+    if banked_event and iteration_status == "success":
+        claim_ids = extra.get("claim_ids") or record.get("claim_ids") or []
+        if isinstance(claim_ids, str):
+            claim_ids = [claim_ids]
+        if isinstance(claim_ids, list) and claim_ids:
+            results_text = "Banked claims: " + ", ".join(
+                str(c) for c in claim_ids if str(c).strip()
+            )
+        else:
+            results_text = str(
+                extra.get("results_summary")
+                or record.get("output")
+                or completed
+                or "Iteration banked; no claim ids were recorded."
+            ).strip()
+    elif attempt_event:
+        results_text = "No claims banked by this event."
+
+    # Decision: do not copy tip ledger decision onto attempt events.
+    if attempt_event:
+        decision_text = ""
+        decision_reason = "Not recorded."
+    else:
+        decision_text = str(extra.get("decision") or record.get("decision") or "").strip()
+        reason_bits: list[str] = []
+        for key in (
+            "decision_reason",
+            "goal_contribution_detail",
+            "review_summary",
+            "completed_summary",
+        ):
+            val = str(extra.get(key) or record.get(key) or "").strip()
+            if val:
+                reason_bits.append(val)
+                break
+        if not reason_bits and next_action and not banked_event:
+            # next_action is a plan, not always a rationale — only use when no better.
+            if extra.get("decision_reason") or record.get("goal_contribution_detail"):
+                reason_bits.append(next_action)
+        decision_reason = reason_bits[0] if reason_bits else "Not recorded."
+
+    # Issues: tri-state (reported true only when host filled structured issues).
+    issue_errors: list[dict[str, str]] = []
+    issue_failures: list[dict[str, str]] = []
+    issues_reported = False
+    failure_class = str(
+        extra.get("failure_class") or extra.get("error_class") or ""
+    ).strip().lower()
+    if error_event or failure_class:
+        issues_reported = True
+        code = failure_class or "runtime"
+        # Never forward sensitive blocked stdout — category/code only.
+        if code in {"sensitive_output", "content:credential-assignment", "pii"} or (
+            "sensitive" in code
+        ):
+            msg = "Primary output blocked as sensitive; details omitted."
+            code = "sensitive_output"
+        else:
+            raw_err = str(extra.get("error") or progress_note or "").strip()
+            msg = raw_err[:240] if raw_err else f"Iteration error ({code})."
+        issue_errors.append({"code": code[:64], "message": msg, "stage": "drive"})
+    if reject_event or review_status == "failed":
+        issues_reported = True
+        claim_reviews = (
+            extra.get("claim_reviews")
+            or persisted_review.get("claim_reviews")
+            or []
+        )
+        if isinstance(claim_reviews, list):
+            for review in claim_reviews:
+                if not isinstance(review, dict):
+                    continue
+                status = str(review.get("status") or "").lower()
+                if status in {"disputed", "rejected", "fail", "failed", "unsupported"}:
+                    cid = str(review.get("claim_id") or "claim").strip()
+                    reason = str(review.get("reason") or status).strip()[:240]
+                    issue_failures.append(
+                        {
+                            "code": "claim_disputed",
+                            "message": f"{cid}: {reason}",
+                            "stage": "result_review",
+                        }
+                    )
+        if not issue_failures:
+            summary = str(
+                extra.get("review_summary")
+                or persisted_review.get("conservative_verdict")
+                or "Candidate failed independent review."
+            ).strip()[:240]
+            issue_failures.append(
+                {
+                    "code": "result_review_rejected",
+                    "message": summary,
+                    "stage": "result_review",
+                }
+            )
+    if banked_event and iteration_status == "success" and not issue_errors and not issue_failures:
+        issues_reported = True  # host asserts none
+
+    issues_payload: dict[str, Any] = {
+        "reported": issues_reported,
+        "errors": issue_errors,
+        "failures": issue_failures,
+    }
+
+    # body_profile: notify.json > standing_orders.notify > env > default
+    body_profile = "operator_full"
+    candidates: list[str] = []
+    try:
+        notify_cfg = _read_optional_json_object(run_dir / "notify.json")
+        candidates.append(str(notify_cfg.get("body_profile") or "").strip())
+    except Exception:  # noqa: BLE001
+        pass
+    so = state.get("standing_orders") if isinstance(state.get("standing_orders"), dict) else {}
+    so_notify = so.get("notify") if isinstance(so, dict) else None
+    if isinstance(so_notify, dict):
+        candidates.append(str(so_notify.get("body_profile") or "").strip())
+    elif isinstance(so_notify, str):
+        candidates.append(so_notify.strip())
+    candidates.append(str(extra.get("body_profile") or "").strip())
+    candidates.append(str(os.environ.get("AAS_AUTOLOOP_NOTIFY_BODY_PROFILE") or "").strip())
+    for cand in candidates:
+        if cand in {"operator_full", "legacy"}:
+            body_profile = cand
+            break
+
+    error_class_out = failure_class or None
+
     return notify_v2.build_event(
         event=event,
         event_id=stable_event_id or None,
@@ -6781,7 +6928,12 @@ def _build_notify_v2_envelope(
         started_at=started_at or None,
         finished_at=finished_at or None,
         duration_seconds=duration,
-        decision=str(extra.get("decision") or record.get("decision") or ""),
+        decision=decision_text,
+        decision_reason=decision_reason,
+        results=results_text,
+        issues=issues_payload,
+        body_profile=body_profile,
+        error_class=error_class_out,
         campaign_id=campaign_id,
         objective_id=objective_id,
         scope=scope,
