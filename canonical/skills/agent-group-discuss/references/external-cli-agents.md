@@ -117,6 +117,15 @@ export AAS_CLAUDE_LATEST_MODEL='<current-latest-model>'
 export AAS_CLAUDE_HIGHEST_THINKING='xhigh'
 ```
 
+`{model}`, `{thinking}`, and `{reasoning}` are substituted when the dispatch plan
+is built, from `--resolved-model` / `--resolved-thinking` or the matching
+`AAS_<PROVIDER>_LATEST_MODEL` / `AAS_<PROVIDER>_HIGHEST_THINKING` variables. A
+template that uses one of them with nothing resolved **blocks that participant**
+with a reason naming the placeholder, rather than passing the internal sentinel
+`not-specified` to the CLI as a model name. Either resolve the value or drop the
+placeholder from the template. `{prompt}` is different: it is substituted at
+execution time, per argv token (see the argv-transport providers below).
+
 For Antigravity, managed dispatch uses **runtime argv prompt** transport (like
 Kimi), not stdin. The default prefix is the bare `agy` binary; `run_command`
 appends `-p <prompt> --dangerously-skip-permissions` after the prompt is known.
@@ -137,6 +146,15 @@ immediately):
 ```bash
 export AAS_ANTIGRAVITY_DISPATCH_COMMAND='agy -p {prompt} --dangerously-skip-permissions --model {model}'
 ```
+
+`{prompt}` is substituted into the already-split argv tokens, so the prompt is
+always delivered as a single argument no matter what whitespace or quote
+characters it contains. Do not quote the placeholder in the template.
+
+Antigravity prompts are held to `ANTIGRAVITY_MAX_PROMPT_CHARS` (currently
+24_000). That is the same conservative argv ceiling as Kimi rather than a probed
+`agy` boundary; an over-budget prompt fails the participant with
+`shell_argument_limit` instead of reaching `execve`.
 
 The dispatcher does not use `ANTIGRAVITY_LS_ADDRESS`; that variable belongs to
 language-server integrations outside this CLI subprocess adapter.
@@ -317,6 +335,33 @@ Diagnostic codes (in addition to the shared taxonomy): `kimi_flag_conflict`
 when the CLI rejects prompt+agent-mode combinations;
 `shell_argument_limit` when the prompt exceeds the argv budget.
 
+For DeepSeek (CodeWhale CLI), the managed dispatch shape is **runtime argv
+prompt**: the dispatcher appends the prompt as the trailing positional
+argument. codewhale `exec` does not read the user prompt from stdin (a piped
+prompt exits with a usage error — host-probed 2026-07-30). Flag order is
+strict: `--model` is a global flag before the `exec` subcommand;
+`--reasoning-effort` is an exec-subcommand flag after it.
+
+```bash
+export AAS_DEEPSEEK_DISPATCH_COMMAND='codewhale exec --reasoning-effort max'
+export AAS_DEEPSEEK_LATEST_MODEL='<current-latest-model>'
+export AAS_DEEPSEEK_HIGHEST_THINKING='max'
+```
+
+The dispatcher inserts a resolved `--model <model>` immediately after the
+binary when the template does not pin one. It fails closed with
+`shell_argument_limit` when the prompt exceeds `DEEPSEEK_MAX_PROMPT_CHARS`
+(currently 2_000): codewhale 0.9.1 exits 0 with empty stdout/stderr on longer
+prompts (probed boundary: 2400 chars completed, ~3500 failed silently), which
+would otherwise record a silent empty participant. The over-budget participant
+is recorded as failed with `shell_argument_limit` in its validation artifact;
+participants that already ran keep their results and the run manifest is still
+written. Budget accordingly: the participant prompt scaffolding costs 540–575
+characters — it grows with the role name, the template name, and the resolved
+model ID — so keep task text under about 1,400 characters and compact, chunk, or
+route longer tasks to a provider with a wider budget. A zero-byte successful
+result is reported as `empty_stdout` in validation.
+
 Do not hardcode provider model names into shared templates unless a specific
 target system has just probed and recorded that model as current.
 
@@ -374,6 +419,12 @@ Use stable diagnostic codes in participant state and validation artifacts:
 - `evidence_contract_failed`
 - `stale_capability_profile`
 - `kimi_flag_conflict`
+- `dispatch_cli_unavailable`
+
+A participant whose CLI cannot be launched — a configured binary that is missing
+or not executable — fails with `dispatch_cli_unavailable` at the smoke phase.
+Like `shell_argument_limit`, this fails that participant only: the other
+participants keep their results and the run manifest is still written.
 
 ## Role-Aware Evidence Policy
 

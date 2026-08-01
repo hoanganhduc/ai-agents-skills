@@ -19,6 +19,20 @@ missing endpoint instead of reporting the provider ready on the API key alone.
 Set `DEEPSEEK_BASE_URL` explicitly to route through a different (e.g. proxy)
 endpoint.
 
+## Headless delegation transport (host-probed 2026-07-30)
+
+`codewhale exec` takes the prompt as a positional argv value; it does not read
+the user prompt from stdin (a piped prompt exits with a usage error). The
+managed dispatcher therefore delivers deepseek prompts runtime-argv style, as
+the trailing positional argument, and inserts `--model` before the `exec`
+subcommand when the template does not pin one (`--reasoning-effort` stays an
+exec-subcommand flag in the operator template). codewhale 0.9.1 exits 0 with
+empty stdout/stderr when the prompt exceeds a few thousand characters (probed:
+2400 completed, ~3500 failed silently), so the dispatcher fails closed above
+2,000 characters with `shell_argument_limit` instead of recording a silent
+empty participant; keep briefs compact until a fixed CLI version is verified.
+A zero-byte successful result validates as `empty_stdout`.
+
 In auto mode, DeepSeek skill files remain reference adapters until native
 loader evidence proves another mode. DeepSeek personas and entrypoint aliases
 are reference prompts/docs, not claims that DeepSeek enforces Codex or Claude

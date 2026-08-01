@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import json
 import os
@@ -23,11 +24,18 @@ from installer.ai_agents_skills.delegation import (
     endpoint_summary,
 )
 from installer.ai_agents_skills.delegation_dispatch import (
+    ANTIGRAVITY_MAX_PROMPT_CHARS,
     EXTERNAL_PROVIDERS,
+    ARGV_PROMPT_PROVIDERS,
+    DEEPSEEK_MAX_PROMPT_CHARS,
+    PROVIDER_PROMPT_BUDGETS,
+    PromptBudgetError,
+    RUNTIME_ARGV_TRANSPORT,
     build_capability_profile,
     build_dispatch_plan,
     default_dispatch_command,
     dispatch_external_agents,
+    dispatch_failure_code,
     dispatch_command,
     ensure_run_dir,
     expand_auto_providers,
@@ -39,6 +47,7 @@ from installer.ai_agents_skills.delegation_dispatch import (
     resolve_run_dir,
     run_external_participant,
     run_command,
+    validate_command_output,
     validate_resolved_model_syntax_before_prechecks,
 )
 from installer.ai_agents_skills.discovery import split_command
@@ -203,6 +212,58 @@ def write_marker_cli(path: Path, marker: Path) -> Path:
             "exit /b 99\r\n"
         ),
     )
+
+
+# A valid result envelope plus the marker run_command exports as
+# AAS_DELEGATION_FINAL_MARKER, so one stub answers both the smoke probe and the
+# task without knowing which call it is serving.
+ENVELOPE_SH = (
+    "printf '%s\\n' 'AAS_RESULT_JSON_START'\n"
+    "printf '%s\\n' "
+    "'{\"status\":\"ok\",\"findings\":[],\"limitations\":[],\"warnings\":[]}'\n"
+    "printf '%s\\n' 'AAS_RESULT_JSON_END'\n"
+    'printf \'%s\\n\' "$AAS_DELEGATION_FINAL_MARKER"\n'
+)
+
+ARGV_ECHO_SH = (
+    "printf 'argc=%s\\n' \"$#\"\n"
+    'for a in "$@"; do printf \'arg=[%s]\\n\' "$a"; done\n'
+)
+
+
+def write_envelope_cli(path: Path) -> Path:
+    """A stub provider CLI that satisfies both probes in run_external_participant."""
+    return write_test_cli(
+        path,
+        posix=f"#!/bin/sh\n{ENVELOPE_SH}",
+        windows="@echo off\r\nexit /b 97\r\n",
+    )
+
+
+def write_argv_echo_cli(path: Path) -> Path:
+    """A stub CLI that reports how the dispatcher split its argv, then answers the probes."""
+    return write_test_cli(
+        path,
+        posix=f"#!/bin/sh\n{ARGV_ECHO_SH}{ENVELOPE_SH}",
+        windows="@echo off\r\nexit /b 97\r\n",
+    )
+
+
+def deepseek_ready_plan(command: str) -> dict[str, Any]:
+    """A ready dispatch plan item shaped like build_provider_dispatch_plan's."""
+    return {
+        "provider": "deepseek",
+        "status": "ready",
+        "participant_id": "deepseek-external-1",
+        "recipient_profile": "external-cli",
+        "default_role_family": "reviewer",
+        "command_shape": "codewhale <args-redacted>",
+        "command": command,
+        "transport": RUNTIME_ARGV_TRANSPORT,
+        "input_transport": RUNTIME_ARGV_TRANSPORT,
+        "output_contract": "json-envelope-final-marker",
+        "research_model_policy": {"status": "ok", "resolved_model": "not-specified"},
+    }
 
 
 def create_agent_homes(root: Path, *agents: str) -> None:
@@ -1641,6 +1702,390 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
                     resolved_model=None,
                 )
             self.assertIn("kimi_flag_conflict", str(ctx.exception))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_deepseek_run_command_delivers_prompt_as_positional_argv(self):
+        # Regression guard for the codewhale transport contract (host-probed
+        # 2026-07-30): codewhale `exec` takes the prompt as a positional argv
+        # value and does not read stdin; --model is a global flag that must
+        # precede the exec subcommand. The fake enforces that ordering and
+        # never reads stdin, so the old stdin transport fails here.
+        fake_codewhale = (
+            "#!/bin/sh\n"
+            'model=""\n'
+            'if [ "$1" = "--model" ]; then model="$2"; shift 2; fi\n'
+            '[ "$1" = "exec" ] || { echo "usage: codewhale-tui exec <PROMPT>..." >&2; exit 2; }\n'
+            "shift\n"
+            'while [ "$#" -gt 1 ]; do shift; done\n'
+            'prompt="${1:-}"\n'
+            '[ -n "$prompt" ] || { echo "usage: codewhale-tui exec <PROMPT>..." >&2; exit 2; }\n'
+            'case "$prompt" in -*) echo "prompt became a flag" >&2; exit 2;; esac\n'
+            'printf "model=%s\\n" "$model"\n'
+            'printf "%s\\n" "$prompt"\n'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            codewhale = write_test_cli(
+                Path(tmp) / "codewhale",
+                posix=fake_codewhale,
+                windows="@echo off\r\nexit /b 97\r\n",
+            )
+            result = run_command(
+                f"{codewhale} exec --reasoning-effort max",
+                "PROMPT_ROUND_TRIP",
+                timeout=30,
+                env=dict(os.environ),
+                final_marker="M",
+                provider="deepseek",
+                resolved_model="deepseek-v4-pro",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("model=deepseek-v4-pro", result.stdout)
+            self.assertIn("PROMPT_ROUND_TRIP", result.stdout)
+
+    def test_deepseek_run_command_rejects_overlong_prompt(self):
+        # codewhale 0.9.1 exits 0 with empty output on over-long prompts
+        # (host-probed); the dispatcher must fail closed before launching.
+        overlong = "x" * (DEEPSEEK_MAX_PROMPT_CHARS + 1)
+        with self.assertRaises(ValueError) as ctx:
+            run_command(
+                "codewhale exec",
+                overlong,
+                timeout=5,
+                env=dict(os.environ),
+                final_marker="M",
+                provider="deepseek",
+                resolved_model=None,
+            )
+        self.assertIn("shell_argument_limit", str(ctx.exception))
+        self.assertIsInstance(ctx.exception, PromptBudgetError)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_overlong_prompt_fails_the_participant_not_the_run(self):
+        # The budget guard used to raise all the way through the participant loop
+        # in dispatch_external_agents, so one over-budget prompt discarded the
+        # results of every sibling that had already run and left the run without
+        # a manifest. It has to degrade this participant the way a failed smoke
+        # does, and leave the artifact the failure taxonomy promises.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = write_envelope_cli(root / "codewhale")
+            run_dir = resolve_run_dir(root, None, "budget-run")
+            ensure_run_dir(root, run_dir)
+            result = run_external_participant(
+                root,
+                run_dir,
+                deepseek_ready_plan(f"{cli} exec"),
+                "x" * (DEEPSEEK_MAX_PROMPT_CHARS * 2),
+                role="reviewer",
+                template=None,
+                timeout=30,
+                env=dict(os.environ),
+            )
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["validation"]["phase"], "task")
+            self.assertEqual(result["validation"]["errors"], ["shell_argument_limit"])
+            artifact = run_dir / "validation" / "deepseek-external-1.json"
+            self.assertTrue(artifact.is_file())
+            recorded = json.loads(artifact.read_text(encoding="utf-8"))
+            self.assertEqual(recorded["errors"], ["shell_argument_limit"])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_within_budget_prompt_still_reaches_the_provider(self):
+        # Control for the test above: a guard that fired on every prompt, or a
+        # catch that swallowed the healthy path, would satisfy it just as well.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = write_envelope_cli(root / "codewhale")
+            run_dir = resolve_run_dir(root, None, "budget-run")
+            ensure_run_dir(root, run_dir)
+            result = run_external_participant(
+                root,
+                run_dir,
+                deepseek_ready_plan(f"{cli} exec"),
+                "review this claim",
+                role="reviewer",
+                template=None,
+                timeout=30,
+                env=dict(os.environ),
+            )
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["validation"]["errors"], [])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_over_budget_participant_does_not_discard_its_siblings(self):
+        # The blast radius, measured at the loop rather than at the guard: the
+        # over-budget provider is dispatched first, so a raise here used to
+        # destroy the sibling's completed result and skip the run manifest
+        # entirely. Both providers reach "ready" through the real gates.
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = write_envelope_cli(root / "stub-cli")
+            args = SimpleNamespace(
+                root=root,
+                platform="linux",
+                task="A" * (DEEPSEEK_MAX_PROMPT_CHARS),
+                task_file=None,
+                providers="deepseek,kimi",
+                provider="deepseek",
+                resolved_model=None,
+                resolved_thinking=None,
+                run_dir=None,
+                max_providers=2,
+                research=False,
+                dry_run=False,
+                allow_external_cli=True,
+                role="reviewer",
+                template=None,
+                timeout=30,
+            )
+            overrides = {
+                "AAS_DEEPSEEK_DISPATCH_COMMAND": str(cli),
+                "AAS_KIMI_DISPATCH_COMMAND": str(cli),
+                "AAS_DEEPSEEK_LATEST_MODEL": "",
+                "AAS_DEEPSEEK_HIGHEST_THINKING": "",
+                "AAS_KIMI_LATEST_MODEL": "",
+                "AAS_KIMI_HIGHEST_THINKING": "",
+            }
+            with patch.dict(os.environ, overrides, clear=False):
+                result = dispatch_external_agents(args, manifests)
+
+            planned = {item["provider"]: item["status"] for item in result["dispatch_plan"]}
+            self.assertEqual(planned, {"deepseek": "ready", "kimi": "ready"})
+            recorded = {item["provider"]: item["status"] for item in result["participants"]}
+            self.assertEqual(recorded, {"deepseek": "failed", "kimi": "ok"})
+
+            manifest_path = Path(result["run_dir"]) / "manifest.json"
+            self.assertTrue(manifest_path.is_file())
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            listed = {item["participant_id"]: item["status"] for item in manifest["participants"]}
+            self.assertEqual(
+                listed, {"deepseek-external-1": "failed", "kimi-external-1": "ok"}
+            )
+
+    @staticmethod
+    def antigravity_args(root: Path) -> SimpleNamespace:
+        return SimpleNamespace(
+            root=root,
+            platform="linux",
+            task="review this claim",
+            task_file=None,
+            providers="antigravity",
+            provider="antigravity",
+            resolved_model=None,
+            resolved_thinking=None,
+            run_dir=None,
+            max_providers=1,
+            research=False,
+            dry_run=False,
+            allow_external_cli=True,
+            role="reviewer",
+            template=None,
+            timeout=30,
+        )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_unresolved_model_placeholder_blocks_the_participant(self):
+        # render_model_placeholders substitutes the sentinel "not-specified" when
+        # nothing is resolved, so the documented `--model {model}` template used
+        # to hand the CLI a literal `--model not-specified`.
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = write_argv_echo_cli(root / "agy")
+            overrides = {
+                "AAS_ANTIGRAVITY_DISPATCH_COMMAND": f"{cli} -p {{prompt}} --model {{model}}",
+                "AAS_ANTIGRAVITY_LATEST_MODEL": "",
+                "AAS_ANTIGRAVITY_HIGHEST_THINKING": "",
+            }
+            with patch.dict(os.environ, overrides, clear=False):
+                result = dispatch_external_agents(self.antigravity_args(root), manifests)
+
+            item = result["dispatch_plan"][0]
+            self.assertEqual(item["status"], "blocked")
+            self.assertIn("{model}", item["reason"])
+            self.assertIn("AAS_ANTIGRAVITY_LATEST_MODEL", item["reason"])
+            self.assertEqual(result.get("participants", []), [])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_resolved_model_placeholder_reaches_the_cli(self):
+        # Control for the block above: the placeholder is substituted at plan
+        # build, so a resolved model must still arrive as its own argv value.
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli = write_argv_echo_cli(root / "agy")
+            overrides = {
+                "AAS_ANTIGRAVITY_DISPATCH_COMMAND": f"{cli} -p {{prompt}} --model {{model}}",
+                "AAS_ANTIGRAVITY_LATEST_MODEL": "gemini-3-pro",
+                "AAS_ANTIGRAVITY_HIGHEST_THINKING": "",
+            }
+            with patch.dict(os.environ, overrides, clear=False):
+                result = dispatch_external_agents(self.antigravity_args(root), manifests)
+
+            self.assertEqual(result["dispatch_plan"][0]["status"], "ready")
+            self.assertEqual(result["participants"][0]["status"], "ok")
+            stdout = (
+                Path(result["run_dir"]) / "raw" / "antigravity-external-1" / "stdout.txt"
+            ).read_text(encoding="utf-8")
+            self.assertIn("arg=[--model]", stdout)
+            self.assertIn("arg=[gemini-3-pro]", stdout)
+            # "not-specified" still appears inside the prompt body (resolved
+            # thinking); what must not appear is a sentinel argv value.
+            self.assertNotIn("arg=[not-specified]", stdout)
+
+    def test_dispatch_failure_code_maps_each_launch_failure(self):
+        # E2BIG is the residual case: a template that repeats {prompt} can still
+        # overrun the kernel's per-argument limit under a per-provider budget, and
+        # that is an argv-size failure rather than a missing CLI.
+        self.assertEqual(
+            dispatch_failure_code(PromptBudgetError("shell_argument_limit")),
+            "shell_argument_limit",
+        )
+        self.assertEqual(
+            dispatch_failure_code(OSError(errno.E2BIG, "Argument list too long")),
+            "shell_argument_limit",
+        )
+        self.assertEqual(
+            dispatch_failure_code(FileNotFoundError(errno.ENOENT, "No such file")),
+            "dispatch_cli_unavailable",
+        )
+        self.assertEqual(
+            dispatch_failure_code(PermissionError(errno.EACCES, "Permission denied")),
+            "dispatch_cli_unavailable",
+        )
+
+    def test_every_argv_prompt_provider_has_a_prompt_budget(self):
+        # For argv-transport providers the prompt is a command-line argument, so
+        # an unbudgeted one reaches execve and dies with E2BIG. Adding a provider
+        # to ARGV_PROMPT_PROVIDERS without a budget must fail here, not there.
+        self.assertEqual(set(PROVIDER_PROMPT_BUDGETS), ARGV_PROMPT_PROVIDERS)
+        for provider, budget in PROVIDER_PROMPT_BUDGETS.items():
+            self.assertGreater(budget, 0, provider)
+
+    def test_antigravity_run_command_rejects_overlong_prompt(self):
+        # antigravity sat in ARGV_PROMPT_PROVIDERS with no guard at all, so an
+        # over-long prompt was handed straight to execve.
+        overlong = "x" * (ANTIGRAVITY_MAX_PROMPT_CHARS + 1)
+        with self.assertRaises(PromptBudgetError) as ctx:
+            run_command(
+                "agy",
+                overlong,
+                timeout=5,
+                env=dict(os.environ),
+                final_marker="M",
+                provider="antigravity",
+                resolved_model=None,
+            )
+        self.assertIn("shell_argument_limit", str(ctx.exception))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_missing_dispatch_binary_fails_the_participant_not_the_run(self):
+        # A configured command whose binary does not exist raises FileNotFoundError
+        # from the smoke probe. That used to escape the participant loop and abort
+        # the run before the manifest was written.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            missing = root / "does-not-exist-cli"
+            run_dir = resolve_run_dir(root, None, "missing-cli-run")
+            ensure_run_dir(root, run_dir)
+            result = run_external_participant(
+                root,
+                run_dir,
+                deepseek_ready_plan(f"{missing} exec"),
+                "review this claim",
+                role="reviewer",
+                template=None,
+                timeout=30,
+                env=dict(os.environ),
+            )
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["validation"]["phase"], "smoke")
+            self.assertEqual(result["validation"]["errors"], ["dispatch_cli_unavailable"])
+            artifact = run_dir / "validation" / "deepseek-external-1.json"
+            self.assertTrue(artifact.is_file())
+            recorded = json.loads(artifact.read_text(encoding="utf-8"))
+            self.assertEqual(recorded["errors"], ["dispatch_cli_unavailable"])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_prompt_placeholder_delivers_one_argv_element(self):
+        # Substituting into the command string and re-splitting shattered a
+        # multi-word prompt across argv, so the documented unquoted template
+        # `agy -p {prompt} ...` delivered only the first word.
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = write_argv_echo_cli(Path(tmp) / "agy")
+            env = {k: v for k, v in os.environ.items() if k != "AAS_ANTIGRAVITY_LATEST_MODEL"}
+            result = run_command(
+                f"{cli} -p {{prompt}} --dangerously-skip-permissions",
+                "review this claim carefully",
+                timeout=30,
+                env=env,
+                final_marker="M",
+                provider="antigravity",
+                resolved_model=None,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("argc=3", result.stdout)
+            self.assertIn("arg=[review this claim carefully]", result.stdout)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_prompt_placeholder_does_not_let_task_text_become_a_flag(self):
+        # Re-splitting read the prompt's own words as argv tokens, so task text
+        # that merely mentioned --yolo tripped kimi's one-shot flag conflict.
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = write_argv_echo_cli(Path(tmp) / "kimi")
+            env = {k: v for k, v in os.environ.items() if k != "AAS_KIMI_LATEST_MODEL"}
+            result = run_command(
+                f"{cli} {{prompt}}",
+                "run this --yolo style please",
+                timeout=30,
+                env=env,
+                final_marker="M",
+                provider="kimi",
+                resolved_model=None,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("argc=1", result.stdout)
+            self.assertIn("arg=[run this --yolo style please]", result.stdout)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX shell fake CLI")
+    def test_prompt_placeholder_accepts_an_apostrophe(self):
+        # Re-splitting also meant an apostrophe anywhere in the task text raised
+        # a bare ValueError ("No closing quotation") out of shlex.
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = write_argv_echo_cli(Path(tmp) / "codewhale")
+            result = run_command(
+                f"{cli} exec {{prompt}}",
+                "it's a claim",
+                timeout=30,
+                env=dict(os.environ),
+                final_marker="M",
+                provider="deepseek",
+                resolved_model=None,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("arg=[it's a claim]", result.stdout)
+
+    def test_deepseek_uses_runtime_argv_transport(self):
+        self.assertIn("deepseek", ARGV_PROMPT_PROVIDERS)
+        self.assertIn("antigravity", ARGV_PROMPT_PROVIDERS)
+        self.assertIn("kimi", ARGV_PROMPT_PROVIDERS)
+        profile = build_capability_profile(
+            {
+                "provider": "deepseek",
+                "command_shape": "codewhale <args-redacted>",
+                "research_model_policy": {"status": "ok"},
+            }
+        )
+        self.assertEqual(profile["input_transport"], RUNTIME_ARGV_TRANSPORT)
+        self.assertEqual(profile["input_transports_tested"], [RUNTIME_ARGV_TRANSPORT])
+
+    def test_validate_command_output_flags_silent_empty_success(self):
+        completed = SimpleNamespace(returncode=0, stdout="", stderr="", timed_out=False)
+        validation = validate_command_output(completed, "AAS_FINAL_MARKER_X_TASK")
+        self.assertEqual(validation["status"], "failed")
+        self.assertIn("empty_stdout", validation["errors"])
+        self.assertIn("missing_final_marker", validation["errors"])
 
 
 if __name__ == "__main__":
