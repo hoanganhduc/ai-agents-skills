@@ -16,6 +16,18 @@ confirms**. Every load-bearing finding must be independently re-derived or
 refuted by a different agent family, restatement is not verification, and no
 finding stands until a clean-context agent confirms accept or reject.
 
+### Anti-false-consensus (portable)
+
+- Cap review rounds; never “persist until all approve.” On cap, escalate
+  unfinished with residual uncertainty labels.
+- A later critique round requires an **evidence delta** (new evidence ids,
+  machine checks, independent derivation, or obligation transitions). Wording-
+  only agreement is not progress.
+- Multi-agent LGTM is advice, not a bank. Different-family re-derivation and/or
+  a machine-checkable artifact is required for bankable language.
+- Keep open negative-space / blocked-route ids visible when present; do not
+  wash them away with polish.
+
 ## Review Metadata
 
 | Field | Value |

@@ -45,6 +45,11 @@ proposed `study-design-and-power` skill if that lands.
 | `venue_ranking_without_comparator` | ranked venues without comparator-paper evidence |
 | `unsupported_citation` | existing source presented as supporting when it is not |
 | `undisclosed_truncation` | conclusion rests on a load-bearing source read only in part, with no disclosure |
+| `false_consensus_persist_until_approve` | review continues past the round cap solely to chase unanimous approval |
+| `review_round_wording_only_delta` | follow-up round is wording-only yet treated as progress |
+| `erased_disagreement_synthesis` | prior disputes erased without residual uncertainty labels |
+| `multi_llm_lgtm_not_bank` | multi-LLM LGTM used as banked support without different-family or machine check |
+| `halt_without_disclose` | review halt without residual uncertainty / negative-space disclosure |
 | `none` | clean control (expected verdict `READY`) |
 
 ## Fixture schema

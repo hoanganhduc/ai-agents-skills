@@ -12,6 +12,7 @@ machine-readable portfolio of approaches, and records every direction decision.
 | `approach_registry.json` | Campaigns, approaches, forecasts, blockers, dependencies, and reopen conditions |
 | `current_plan.json` | The one active campaign, approach, objective, and next action |
 | `direction_decisions.jsonl` | Append-only migration, selection, revision, and outcome audit |
+| `.goal_focus/negative_space.jsonl` | Append-only permanent failed explorations / blocked routes (`negative_space.v1`); never banks positive claims |
 
 `loop_state.goal`, `loop_state.success_criteria`,
 `loop_state.next_preferred_path`, and the managed block in `recovery.md` are
@@ -73,6 +74,14 @@ Default utility weights are:
 - Invalid, omitted, or unavailable trusted-local resource controls deny before
   provider spawn; strict-isolated never falls back to trusted-local.
 - A blocked route needs a recorded new mechanism and fresh review to reopen.
+- Open `negative_space.v1` rows make the approach ineligible even if registry
+  status is manually flipped to `eligible`. Reopen requires a **new**
+  `mechanism_fingerprint` plus different-family review binding; wording-only
+  reopen is rejected (`wording_only_reopen`).
+- Multi-LLM LGTM alone never banks; enforce-mode acceptance still requires
+  different-family `result_review` (and optional machine checks). Wording-only
+  review-round progress without an evidence delta must not be treated as
+  convergence.
 - Plan, goal, registry, and candidate content use hash/revision compare-and-swap.
 - State changes use a recoverable write-ahead transaction, no-follow directory
   traversal, and atomic replace.

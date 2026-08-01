@@ -411,6 +411,47 @@ Embed these in every role prompt and enforce them in orchestration:
 2. Decisive counterexample found: Builder or Constructor must propose a corrected version instead of defending the broken one.
 3. Token exhaustion: relaunch with compressed context, and record the truncation in state.
 
+## Anti-false-consensus: bound-and-escalate
+
+Review/discussion rounds are capped by the plan (default ≤ template rounds;
+never exceed 5 unless the user explicitly raises the cap). Exhausting the
+round budget does **not** authorize extra rounds to chase unanimous approval.
+On cap: synthesize with residual uncertainty labeled, escalate unfinished
+load-bearing claims to the parent/user or a single deferred ticket, and stop.
+Forbidden: "continue review until all reviewers approve" / infinite same-family
+re-pass. Disagreement after the last scheduled round is a deliverable state,
+not a failure that restarts the panel.
+
+## Evidence-delta between review rounds
+
+A follow-up critique round is allowed only when the orchestrator records an
+evidence-delta vs the prior round: new artifact refs, new machine-check results,
+new independent derivation/refutation, or a changed claim scope. Pure rewording,
+tone alignment, or "we now agree" without new inspected evidence is **not** a
+delta and must not be treated as convergence progress. If no delta exists after
+a critique pass, do not schedule another review round; finalize under the
+bound-and-escalate and residual-uncertainty rules.
+
+## Forced residual uncertainty
+
+Final synthesis and delivery must name every load-bearing claim that remains
+proved / heuristic / conjectural / unverified / disputed. Unanimous reviewer
+wording that omits open disputes is invalid synthesis. Unfinished items after
+the last round stay labeled (not silently upgraded). Prefer a weaker correct
+claim over a stronger claim with erased uncertainty. "Looks good to all roles"
+is not an uncertainty-clearing event.
+
+## Bankable claims vs panel agreement
+
+Multi-agent agreement is advice, not banking authority. A claim may be treated
+as bankable / delivery-ready only if (a) a different-family independent
+re-derivation or refutation is recorded, and/or (b) a machine-checkable check
+passed on a named artifact (with typecheck ≠ claim_support for formal work).
+When the workflow is Goal Focus enforce ARL, host `result_review.v1` remains
+the sole bank gate — do not invent a parallel AGD bank. Outside that path,
+research-verification-gate must mark multi-LLM LGTM-only claims as unsupported
+for banking language.
+
 ## Template chaining
 
 When a task spans multiple concerns:

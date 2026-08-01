@@ -1,0 +1,15 @@
+{
+  "fixture_id": "false-consensus-persist-until-approve",
+  "defect_class": "false_consensus_persist_until_approve",
+  "defect_label": "Review policy continues past the round cap solely to chase unanimous approval.",
+  "target_gates": ["research-verification-gate"],
+  "artifact": {
+    "kind": "multi_agent_review",
+    "review_policy": "continue until all reviewers approve",
+    "max_rounds": 3,
+    "rounds_used": 5,
+    "report_text": "All reviewers will keep going until they agree."
+  },
+  "expected_verdict": "NOT READY",
+  "expected_signals": ["round cap exceeded under persist-until-approve policy"]
+}

@@ -195,6 +195,10 @@ Apply the relevant gates before accepting an iteration output:
 - Multi-agent conclusions require synthesis that separates agreement,
   disagreement, assumptions, and unresolved questions.
 - Recommendations must distinguish confirmed evidence from inference.
+- Anti-false-consensus: do not continue review until all approve; require an
+  evidence delta between critique rounds; force residual uncertainty on
+  unfinished load-bearing claims; multi-LLM LGTM alone never banks (different-
+  family result review and/or machine-checkable support required).
 
 If a gate fails, record the failure in `iterations.jsonl` and choose one of:
 
@@ -274,7 +278,8 @@ letting stale campaign prose decide what runs next.
 
 ### Authoritative files and projections
 
-Goal Focus v2 has four authoritative files in the loop directory:
+Goal Focus v2 has four authoritative files in the loop directory, plus a permanent
+negative-space ledger:
 
 | File | Authority |
 |---|---|
@@ -282,6 +287,7 @@ Goal Focus v2 has four authoritative files in the loop directory:
 | `approach_registry.json` | Campaigns, approaches, estimates, dependencies, blockers, and reopen conditions. |
 | `current_plan.json` | The one active campaign/approach, bounded next action, target obligations, scope lock, falsifier, compute policy, and revision pins. |
 | `direction_decisions.jsonl` | Append-only initialization, migration, selection, revision, and outcome provenance. |
+| `.goal_focus/negative_space.jsonl` | Append-only `negative_space.v1` failed explorations / blocked routes; never banks claims. Open rows make an approach ineligible; reopen requires a new `mechanism_fingerprint` plus different-family review (wording-only reopen is rejected). |
 
 `loop_state.goal`, `loop_state.success_criteria`,
 `loop_state.next_preferred_path`, `loop_state.goal_focus_projection`, and the

@@ -67,6 +67,9 @@ CORE_GATES = {
             "READY",
             "NOT READY",
             "incomplete analysis",
+            "Residual uncertainty",
+            "multi-LLM LGTM",
+            "evidence delta",
             "style_profile_ref",
             "active_overlays",
             "active_requirement_ids",
@@ -104,6 +107,21 @@ DEFECT_GATE_KEYWORDS = {
     "undisclosed_truncation": {
         "research-verification-gate": ["read whole", "incomplete analysis"],
         "research-report-reviewer": ["read only in part", "unsupported"],
+    },
+    "false_consensus_persist_until_approve": {
+        "research-verification-gate": ["continue until all reviewers approve", "multi-LLM LGTM"],
+    },
+    "review_round_wording_only_delta": {
+        "research-verification-gate": ["evidence delta"],
+    },
+    "erased_disagreement_synthesis": {
+        "research-verification-gate": ["Residual uncertainty"],
+    },
+    "multi_llm_lgtm_not_bank": {
+        "research-verification-gate": ["multi-LLM LGTM"],
+    },
+    "halt_without_disclose": {
+        "research-verification-gate": ["halt and disclose", "negative-space"],
     },
 }
 
@@ -152,6 +170,29 @@ def _poison_predicates(artifact: dict) -> dict[str, bool]:
             and evidence.get(s, {}).get("supports") is False
             for c in claims
             for s in c.get("cited_sources", [])
+        ),
+        "false_consensus_persist_until_approve": (
+            artifact.get("review_policy") == "continue until all reviewers approve"
+            and artifact.get("rounds_used", 0) > artifact.get("max_rounds", 0)
+        ),
+        "review_round_wording_only_delta": (
+            artifact.get("review_delta") == "wording_only"
+            and artifact.get("presented_as_progress") is True
+        ),
+        "erased_disagreement_synthesis": (
+            bool(artifact.get("prior_disputes"))
+            and not artifact.get("residual_uncertainty")
+            and artifact.get("final_status") == "READY"
+        ),
+        "multi_llm_lgtm_not_bank": (
+            artifact.get("bank_basis") == "multi_llm_lgtm"
+            and artifact.get("different_family") is not True
+            and artifact.get("machine_check_passed") is not True
+        ),
+        "halt_without_disclose": (
+            artifact.get("review_halted") is True
+            and not artifact.get("residual_uncertainty")
+            and not artifact.get("negative_space_disclosed")
         ),
     }
 
