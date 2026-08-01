@@ -21,8 +21,13 @@ actions behind explicit approval gates.
    new.** A `statement_only` hit (e.g. FormalConjectures) is a sorry'd
    statement, never a reusable proof.
 2. **After a formalization result is accepted** — run `intake` on the new
-   file. Present its proposal packet to the user and **ask before any
-   `stage --apply`**. Never write to the library without that approval.
+   file. A declaration is a library candidate **only if** it is (i) absent
+   from mathlib AND the library (search-verified) and (ii) useful beyond the
+   immediate task; everything else stays where it was produced. Present the
+   proposal packet with a usefulness justification per candidate and **ask
+   before any `stage --apply`**. Never write to the library without that
+   approval. For paper-artifact campaigns, this intake pass runs **once,
+   after the full formalization is complete**, not per result.
 3. **Two actions are always user-gated**, even inside autonomous loops:
    staging into the library, and anything outward-facing (repo creation,
    pushes, Zenodo publishing). Autonomous runs batch these gates at run
