@@ -110,16 +110,24 @@ class NotifyV2Tests(unittest.TestCase):
     def test_research_sections_lead_and_agent_metadata_trails(self) -> None:
         event = self.event()
         rendered = self.notify.render_markdown(event)
-        self.assertLess(rendered.index("**Goal**"), rendered.index("**Status**"))
+        # operator_full: Status is promoted for triage, then research sections,
+        # then agent/compute trailer.
+        self.assertLess(rendered.index("**Status**"), rendered.index("**Goal**"))
+        self.assertLess(rendered.index("**Results**"), rendered.index("**Decision**"))
         self.assertLess(rendered.index("**Plan**"), rendered.index("**Compute**"))
+        self.assertLess(rendered.index("**Started**"), rendered.index("**Finished**"))
         plain = self.notify.render_plain(event)
         self.assertLess(plain.index("Completed"), plain.index("Driver agent"))
         telegram = self.notify.render_telegram_html(event)
         self.assertLess(
-            telegram.index("<b>Completed</b>"), telegram.index("<b>Status</b>")
+            telegram.index("<b>Status</b>"), telegram.index("<b>Completed</b>")
+        )
+        self.assertLess(
+            telegram.index("<b>Decision</b>"), telegram.index("<b>Compute</b>")
         )
         compact = self.notify.render_compact(event)
-        self.assertLess(compact.index("Completed:"), compact.index("Status:"))
+        self.assertLess(compact.index("Status:"), compact.index("Completed:"))
+        self.assertLess(compact.index("Results:"), compact.index("Compute:"))
 
     def test_compact_truncation_prefers_research_over_metadata(self) -> None:
         finding = (
@@ -321,7 +329,10 @@ class NotifyV2Tests(unittest.TestCase):
                 self.assertIn("Other agents", body)
                 self.assertIn("Sage verifier", body)
                 self.assertIn("SageMath 10", body)
-                self.assertIn("certificate verifier", body)
+                # Compact may truncate the role under trailer pressure; full
+                # renderers keep the role string.
+                if name != "compact":
+                    self.assertIn("certificate verifier", body)
 
     def test_existing_v2_event_without_agents_is_compatibly_upgraded(self) -> None:
         event = self.event()
@@ -644,6 +655,138 @@ class NotifyV2Tests(unittest.TestCase):
         self.assertIn("structured notification emitted", local_log)
         self.assertNotIn("RESEARCH_TITLE", local_log)
         self.assertNotRegex(local_log, r'\$(?:1|msg)(?:\b|["}])')
+
+
+
+    def test_v21_literal_legacy_upgrade(self) -> None:
+        """A serialized v2.0 envelope upgrades without inventing empty issues as none."""
+        legacy = {
+            "schema": self.notify.SCHEMA_ID,
+            "schema_version": "2.0",
+            "event_id": "legacy-evt",
+            "event": "iteration_ok",
+            "occurred_at": "2026-07-29T12:00:00Z",
+            "research": {
+                "title": "Legacy title",
+                "topic_slug": "legacy-title",
+                "goal": "Legacy goal text for the open problem.",
+                "success_criteria": [],
+                "goal_status": "open",
+            },
+            "iteration": {
+                "number": 3,
+                "status": "success",
+                "decision": "continue",
+                "campaign_id": "",
+                "objective_id": "",
+                "scope": "",
+                "executor": "Codex",
+                "started_at": "",
+                "finished_at": "2026-07-29T12:00:00Z",
+                "duration_seconds": 10,
+            },
+            "review": {"status": "passed", "families": []},
+            "loop": {"status": "running"},
+            "progress": {
+                "spent_iterations": 3,
+                "max_iterations": 10,
+                "remaining_iterations": 7,
+                "goal_summary": "Not measured",
+            },
+            "agents": {
+                "driver": {
+                    "reported": True,
+                    "agents": [{"name": "Codex", "role": "driver"}],
+                },
+                "panel": {"reported": True, "agents": []},
+                "other": {"reported": False, "agents": []},
+            },
+            "compute": {"reported": True, "runs": []},
+            "sections": {
+                "goal": "Legacy goal text for the open problem.",
+                "completed": "Banked a legacy result.",
+                "current": "Still open.",
+                "plan": "Continue.",
+            },
+        }
+        upgraded = self.notify.ensure_event(legacy)
+        self.assertEqual(upgraded["schema_version"], "2.1")
+        self.assertEqual(upgraded["presentation"]["body_profile"], "operator_full")
+        self.assertIn("results", upgraded["sections"])
+        self.assertIn("decision", upgraded["sections"])
+        self.assertIn("decision_reason", upgraded["sections"])
+        self.assertFalse(upgraded["issues"]["reported"])
+        md = self.notify.render_markdown(upgraded)
+        self.assertIn("Not recorded in this legacy event", md)
+        # Unreported issues must not claim "None" as host-asserted empty.
+        self.assertIn("Not recorded (legacy/unreported)", md)
+
+    def test_operator_full_renders_decision_results_started(self) -> None:
+        event = self.event(
+            decision="revise",
+            results="Claim a3-x supported; claim a3-y disputed.",
+            decision_reason="Different-family review rejected the bridge claim.",
+            started_at="2026-07-29T11:58:00Z",
+            issues={
+                "reported": True,
+                "errors": [],
+                "failures": [
+                    {
+                        "code": "result_review_rejected",
+                        "message": "claim a3-y disputed",
+                        "stage": "result_review",
+                    }
+                ],
+            },
+        )
+        md = self.notify.render_markdown(event)
+        for token in (
+            "**Results**",
+            "**Decision**",
+            "**Decision reason**",
+            "**Started**",
+            "Review failures",
+            "claim a3-y disputed",
+            "2026-07-29T11:58:00Z",
+        ):
+            self.assertIn(token, md)
+        # Empty errors omitted when reported with empty list.
+        self.assertNotIn("Runtime errors", md)
+
+    def test_legacy_body_profile_omits_new_lead_labels(self) -> None:
+        event = self.event(body_profile="legacy", decision="continue")
+        md = self.notify.render_markdown(event)
+        self.assertIn("**Goal**", md)
+        self.assertIn("**Completed**", md)
+        # New lead labels are not used in legacy layout.
+        self.assertNotIn("**Results**", md)
+        self.assertNotIn("**Decision reason**", md)
+        self.assertNotIn("**Started**", md)
+
+    def test_sensitive_issue_messages_are_length_capped_and_redacted(self) -> None:
+        secret = "sk-abcdefghijklmnopqrstuvwxyz012345"
+        event = self.event(
+            decision_reason=f"failed with token {secret}",
+            issues={
+                "reported": True,
+                "errors": [
+                    {
+                        "code": "sensitive_output",
+                        "message": "x" * 500,
+                    }
+                ],
+                "failures": [],
+            },
+        )
+        self.assertLessEqual(len(event["issues"]["errors"][0]["message"]), 240)
+        rendered = self.notify.render_all(event, secret_values=[secret])
+        blob = json.dumps(rendered)
+        self.assertNotIn(secret, blob)
+        # Markdown may escape underscores in the code token.
+        self.assertTrue(
+            "sensitive_output" in rendered["plain"]
+            or "sensitive\\_output" in rendered["markdown"]
+        )
 
 
 if __name__ == "__main__":
