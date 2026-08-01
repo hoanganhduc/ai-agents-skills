@@ -201,6 +201,7 @@
       ]
     },
     "research-briefing": {
+      "version": "1.0.0",
       "description": "Scope nontrivial research before execution with evidence plan and workflow recommendation.",
       "profiles": [
         "research-core",
@@ -247,6 +248,7 @@
       ]
     },
     "decision-doubt-loop": {
+      "version": "1.0.0",
       "description": "In-flight fresh-context adversarial review of a non-trivial decision before it stands.",
       "profiles": [
         "serious-research",
@@ -342,6 +344,7 @@
       ]
     },
     "research-report-reviewer": {
+      "version": "1.0.0",
       "description": "Review draft research reports for unsupported claims, ambiguity, and evidence gaps.",
       "profiles": [
         "research-core",
@@ -365,6 +368,7 @@
       ]
     },
     "research-verification-gate": {
+      "version": "1.0.0",
       "description": "Final evidence, date, and gap check before delivery.",
       "profiles": [
         "research-core",
