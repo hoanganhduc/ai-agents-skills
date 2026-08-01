@@ -764,7 +764,9 @@ class NotifyV2Tests(unittest.TestCase):
         self.assertNotIn("**Started**", md)
 
     def test_sensitive_issue_messages_are_length_capped_and_redacted(self) -> None:
-        secret = "sk-abcdefghijklmnopqrstuvwxyz012345"
+        # Use the same non-sk sentinel style as other notify redaction tests so
+        # repo sanitizer checks do not false-positive on fixture secrets.
+        secret = "notify-secret-sentinel-notify-v21-48107"
         event = self.event(
             decision_reason=f"failed with token {secret}",
             issues={
