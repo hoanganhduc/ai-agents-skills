@@ -430,6 +430,11 @@ def intake_payload(cfg: dict[str, Any], file: Path, task_id: str) -> dict[str, A
         "task_id": task_id,
         "source_file": str(file),
         "candidates": candidates,
+        "intake_criterion": (
+            "a candidate enters the library only if it is absent from mathlib AND the"
+            " library (run the next_check search) and useful beyond the immediate task;"
+            " justify usefulness when presenting"
+        ),
         "user_gate": "REQUIRED: present these to the user and obtain approval before any stage call",
         "verification_gate_packet": {
             "gate": "lean-strict-verification-gate",

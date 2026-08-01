@@ -141,6 +141,7 @@ class GateTests(unittest.TestCase):
         self.assertEqual(payload["writes_performed"], [])
         self.assertEqual(before, after)
         self.assertIn("APPROVAL", payload["user_gate"].upper())
+        self.assertIn("useful beyond the immediate task", payload["intake_criterion"])
 
     def test_stage_blocks_discipline_violations_and_default_is_dry_run(self):
         with tempfile.TemporaryDirectory() as tmp:

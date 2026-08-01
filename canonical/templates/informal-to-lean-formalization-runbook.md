@@ -55,7 +55,7 @@ Apply every phase, in order.
 | F5. Strict verify | Scanner-first verification; report typecheck status and claim-support status separately. | `lean-strict-verification-gate` |  |  |  |
 | F6. Fresh-context cross-check | A different context independently confirms both typecheck and claim support. | `cross-agent-delegation`, `decision-doubt-loop` |  |  |  |
 | F7. Acceptance | Decide `verified` or `not-ready`; both a clean typecheck and confirmed claim support are required. |  |  |  |  |
-| F7'. Library intake gate | After acceptance, run `lean-research-library intake` on new files; present proposals and ASK THE USER before any `stage --apply`. Staging and anything outward-facing (repos, pushes, Zenodo) stay user-gated even in autonomous runs. | `lean-research-library` |  |  |  |
+| F7'. Library intake gate | After acceptance (for paper-artifact campaigns: once, after the FULL formalization), run `lean-research-library intake`. Candidate criterion: absent from mathlib AND the library (search-verified) AND useful beyond the immediate task — otherwise it stays in the paper repo. Present proposals with usefulness justifications and ASK THE USER before any `stage --apply`. Staging and anything outward-facing (repos, pushes, Zenodo) stay user-gated even in autonomous runs. | `lean-research-library` |  |  |  |
 
 ## Intake and Suitability Gate (F1)
 
