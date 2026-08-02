@@ -32,9 +32,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Any
+
+# Host-accepted job_ref charset (append-iteration / Goal-Focus compute rows).
+_JOB_REF_SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$")
 
 # Kept short on purpose: it is prepended to every panel brief and iteration
 # contract, and panel briefs are truncated at max_chars.
@@ -74,8 +78,14 @@ STANDING_RULES = (
     "recheck is diagnostic; it does not widen the allowlist or authorize local "
     "heavy substitute.\n"
     "6. Local compute is for work that finishes in about a minute on one core: "
-    "smoke tests, bundle validation, reading a result a lane already produced. "
-    "Run it under the loop's guard or the throttled local queue, never bare.\n"
+    "smoke tests, bundle validation, reading a result a lane already produced, "
+    "or short `lake build` / `lake exe axiom_audit` when the loop allowlists "
+    "`local`. Run it under the loop's guard or the throttled local queue, never bare.\n"
+    "6b. When reporting compute with `--compute-run` / staged provenance, "
+    "`job_ref` must be a short **slug** (letters, digits, `._:/@-` only — "
+    "**no spaces**), e.g. `lake-build-artifact` or `axiom-audit`. Put the full "
+    "command or log path in `detail`, not in `job_ref`. The host may slugify a "
+    "command-like job_ref, but prefer correct slugs.\n"
     "7. A refusal from a guard or the broker is an instruction, not a result. It "
     "means partition the work and send it remote (or recheck lane preflight per "
     "rule 5); it never means retry heavy work unthrottled locally.\n"
@@ -85,6 +95,41 @@ STANDING_RULES = (
     "crashes mid-lifecycle use the lane `down --orphans --confirm` path. "
     "See `skills/hetzner-research-compute/references/agent-loop-integration.md`."
 )
+
+
+def normalize_compute_job_ref(value: object) -> tuple[str | None, str | None]:
+    """Return ``(safe_job_ref, residual_detail)`` for a compute run row.
+
+    Agents often put full shell commands (with spaces) in ``job_ref``. The host
+    contract only allows a bounded safe identifier. This helper slugifies unsafe
+    values and returns the original text so callers can preserve it in
+    ``detail`` instead of failing the whole iteration submit.
+    """
+
+    if value in (None, ""):
+        return None, None
+    if not isinstance(value, str):
+        value = str(value)
+    raw = value.strip()
+    if not raw:
+        return None, None
+    if _JOB_REF_SAFE.fullmatch(raw) is not None:
+        return raw, None
+
+    slug = re.sub(r"\s+", "-", raw)
+    slug = re.sub(r"[^A-Za-z0-9._:/@-]+", "-", slug)
+    slug = re.sub(r"-{2,}", "-", slug).strip("-._:/@")
+    if not slug:
+        slug = "compute-run"
+    if re.match(r"^[A-Za-z0-9]", slug) is None:
+        slug = f"j-{slug}"
+    slug = slug[:200]
+    if _JOB_REF_SAFE.fullmatch(slug) is None:
+        slug = re.sub(r"[^A-Za-z0-9._:/@-]", "", slug)[:200]
+        if not slug or re.match(r"^[A-Za-z0-9]", slug) is None:
+            slug = "compute-run"
+    residual = raw if raw != slug else None
+    return slug, residual
 
 
 def _read_regular_text(path: Path, *, max_bytes: int = 2_000_000) -> str:
