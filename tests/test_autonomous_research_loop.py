@@ -6200,7 +6200,9 @@ class DriveCwdTests(unittest.TestCase):
 
 
 class DriveProviderGrokTests(unittest.TestCase):
-    def test_drive_provider_grok_fails_before_unprivate_prompt_execution(self) -> None:
+    def test_drive_provider_grok_uses_private_prompt_file_stdin_transport(self) -> None:
+        """Grok primary rewrites -p prompt to --prompt-file /dev/stdin before spawn."""
+
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             reg = base / "reg"
@@ -6209,28 +6211,31 @@ class DriveProviderGrokTests(unittest.TestCase):
             bindir = base / "bin"
             root.mkdir()
             bindir.mkdir()
-            # Fake grok via host Python so Windows and POSIX both can exec it.
             fake = bindir / ("fake_grok.cmd" if os.name == "nt" else "fake_grok")
             if os.name == "nt":
+                # Batch: record %* then stop after second invocation.
                 fake.write_text(
                     "@echo off\r\n"
-                    f"\"{sys.executable}\" -c "
-                    "\"import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); "
-                    "c=(int((d/'c').read_text()) if (d/'c').exists() else 0)+1; "
-                    "(d/'c').write_text(str(c)); "
-                    "(d/f'cwd_{c}').write_text(os.getcwd()); "
-                    "(c>=2 and (d/'STOP_REQUESTED').write_text('x'))\"\r\n",
+                    "set /p c=<%AUTOLOOP_DIR%\\c 2>nul\r\n"
+                    "if not defined c set c=0\r\n"
+                    "set /a c=c+1\r\n"
+                    "echo %c%>\"%AUTOLOOP_DIR%\\c\"\r\n"
+                    "cd >\"%AUTOLOOP_DIR%\\cwd_%c%\"\r\n"
+                    "echo %*>\"%AUTOLOOP_DIR%\\argv_%c%\"\r\n"
+                    "if %c% GEQ 2 echo x>\"%AUTOLOOP_DIR%\\STOP_REQUESTED\"\r\n",
                     encoding="utf-8",
                 )
             else:
                 fake.write_text(
                     "#!/bin/sh\n"
-                    f"exec \"{sys.executable}\" -c "
-                    "\"import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); "
-                    "c=(int((d/'c').read_text()) if (d/'c').exists() else 0)+1; "
-                    "(d/'c').write_text(str(c)); "
-                    "(d/f'cwd_{c}').write_text(os.getcwd()); "
-                    "(c>=2 and (d/'STOP_REQUESTED').write_text('x'))\"\n",
+                    "d=\"${AUTOLOOP_DIR:?}\"\n"
+                    "c=1\n"
+                    "if [ -f \"$d/c\" ]; then c=$(($(cat \"$d/c\") + 1)); fi\n"
+                    "printf '%s' \"$c\" > \"$d/c\"\n"
+                    "pwd > \"$d/cwd_$c\"\n"
+                    "printf '%s\\n' \"$@\" > \"$d/argv_$c\"\n"
+                    "if [ \"$c\" -ge 2 ]; then printf 'x' > \"$d/STOP_REQUESTED\"; fi\n"
+                    "exit 0\n",
                     encoding="utf-8",
                 )
                 fake.chmod(0o755)
@@ -6268,10 +6273,18 @@ class DriveProviderGrokTests(unittest.TestCase):
                 check=False,
                 cwd=str(base),
             )
-            self.assertEqual(res.returncode, 2, res.stderr + res.stdout)
-            self.assertIn("primary prompt transport failed", res.stderr)
-            self.assertFalse((loop / "c").exists())
-            self.assertFalse((loop / "cwd_1").exists())
+            self.assertEqual(res.returncode, 0, res.stderr + res.stdout)
+            self.assertNotIn("primary prompt transport failed", res.stderr)
+            self.assertTrue((loop / "c").exists(), res.stderr + res.stdout)
+            self.assertGreaterEqual(int((loop / "c").read_text(encoding="utf-8")), 1)
+            self.assertTrue((loop / "cwd_1").exists())
+            argv_text = (loop / "argv_1").read_text(encoding="utf-8")
+            self.assertIn("--prompt-file", argv_text)
+            self.assertIn("/dev/stdin", argv_text)
+            # Private transport must not keep the legacy -p prompt flag.
+            self.assertNotRegex(argv_text, r"(?m)^-p$")
+            self.assertNotIn("exactly ONE iteration", argv_text)
+
 
 
 @unittest.skipUnless(os.name == "posix", "the supervisor is a POSIX shell runtime")
