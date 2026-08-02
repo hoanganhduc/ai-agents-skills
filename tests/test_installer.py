@@ -320,6 +320,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(skills["autonomous-research-loop"]["recommended_templates"],
                          ["autonomous-research-loop-runbook",
                           "autonomous-research-loop-portfolio-runbook",
+                          "arl-scripted-force-loop",
                           "goal-focus",
                           "goal-priority"])
         for name, spec in skills.items():

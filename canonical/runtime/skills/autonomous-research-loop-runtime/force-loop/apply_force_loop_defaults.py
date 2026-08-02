@@ -1,0 +1,438 @@
+#!/usr/bin/env python3
+"""Apply force-loop default pins to a loop directory.
+
+Always materializes (not examples-only):
+  - Goal Focus enforcement_mode=enforce (current_plan + standing_orders.goal_focus)
+  - goal_priority enabled=true, discipline_mode=hard (+ env AAS_AUTOLOOP_GOAL_PRIORITY=on)
+  - notify ON (AAS_AUTOLOOP_NOTIFY=auto; standing_orders.notify)
+  - compute_policy.json + standing_orders.compute (profile-dependent)
+  - formal standing/file pins when --profile formal
+
+Idempotent: merges into existing files; does not delete campaign content.
+Never prints secrets.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+PACK_DIR = Path(__file__).resolve().parent
+DEFAULTS_DIR = PACK_DIR / "defaults"
+
+PROFILES = frozenset({"formal", "general"})
+
+
+def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, sort_keys=False)
+            handle.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            if text and not text.endswith("\n"):
+                handle.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _backup(path: Path, backup_dir: Path) -> None:
+    if not path.is_file():
+        return
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    dest = backup_dir / path.name
+    shutil.copy2(path, dest)
+
+
+def _load_profile_compute(profile: str) -> dict[str, Any]:
+    name = (
+        "compute_policy.formal.json"
+        if profile == "formal"
+        else "compute_policy.general.json"
+    )
+    path = DEFAULTS_DIR / name
+    data = _read_json(path)
+    if not data:
+        raise FileNotFoundError(f"missing defaults file: {path}")
+    return data
+
+
+def _load_goal_priority_base() -> dict[str, Any]:
+    path = DEFAULTS_DIR / "goal_priority.base.json"
+    data = _read_json(path)
+    if not data:
+        raise FileNotFoundError(f"missing defaults file: {path}")
+    return data
+
+
+def apply_goal_priority(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "goal_priority.json"
+    existing = _read_json(path)
+    base = _load_goal_priority_base()
+    if existing:
+        # Preserve campaign structure; force discipline pins.
+        merged = dict(existing)
+        merged["schema_version"] = existing.get("schema_version") or base["schema_version"]
+        merged["enabled"] = True
+        merged["discipline_mode"] = "hard"
+        if not merged.get("primary_campaign"):
+            merged["primary_campaign"] = base["primary_campaign"]
+        if not merged.get("campaign_registry"):
+            merged["campaign_registry"] = base["campaign_registry"]
+        if "require_goal_contribution_in_ledger" not in merged:
+            merged["require_goal_contribution_in_ledger"] = True
+        if "panel_rank_by_goal_ev" not in merged:
+            merged["panel_rank_by_goal_ev"] = True
+    else:
+        merged = dict(base)
+        merged["enabled"] = True
+        merged["discipline_mode"] = "hard"
+    _atomic_write_json(path, merged)
+    return merged
+
+
+def apply_compute_policy(run_dir: Path, profile: str) -> dict[str, Any]:
+    path = run_dir / "compute_policy.json"
+    data = _load_profile_compute(profile)
+    _atomic_write_json(path, data)
+    return data
+
+
+def apply_notify_identity(run_dir: Path, *, research_title: str | None) -> dict[str, Any]:
+    path = run_dir / "notify.json"
+    existing = _read_json(path)
+    data = dict(existing) if existing else {}
+    title = research_title or data.get("research_title") or data.get("notify_title")
+    if title:
+        data.setdefault("research_title", str(title))
+        data.setdefault("notify_title", str(title))
+        data.setdefault("display_name", str(title))
+    data.setdefault("body_profile", "operator_full")
+    if not path.is_file() or research_title:
+        _atomic_write_json(path, data)
+    return data
+
+
+def apply_formal_policy(run_dir: Path, profile: str) -> dict[str, Any] | None:
+    if profile != "formal":
+        return None
+    formal_dir = run_dir / "formal"
+    formal_dir.mkdir(parents=True, exist_ok=True)
+    path = formal_dir / "formal_policy.json"
+    existing = _read_json(path)
+    cfg = {
+        "schema_version": "formal_policy.v1",
+        "policy": "on",
+        "project": existing.get("project") or ".",
+        "force_credits": int(existing.get("force_credits") or 3),
+        "allow_path_steal": bool(existing.get("allow_path_steal", False)),
+        "typecheck": True,
+        "force_after_iteration": bool(existing.get("force_after_iteration", False)),
+        "allow_create_skeleton": bool(existing.get("allow_create_skeleton", True)),
+        "notes": existing.get("notes")
+        if isinstance(existing.get("notes"), list)
+        else ["force-loop formal profile"],
+        "status": existing.get("status")
+        if isinstance(existing.get("status"), dict)
+        else {
+            "phase": "",
+            "lake_build": "",
+            "sorry_count": None,
+            "updated_at": "",
+        },
+    }
+    _atomic_write_json(path, cfg)
+    return cfg
+
+
+def apply_current_plan_enforce(run_dir: Path) -> bool:
+    path = run_dir / "current_plan.json"
+    if not path.is_file():
+        return False
+    plan = _read_json(path)
+    if not plan:
+        return False
+    if plan.get("enforcement_mode") == "enforce":
+        return True
+    plan["enforcement_mode"] = "enforce"
+    _atomic_write_json(path, plan)
+    return True
+
+
+def apply_standing_orders(
+    run_dir: Path,
+    *,
+    profile: str,
+    compute: dict[str, Any],
+    formal: dict[str, Any] | None,
+    research_title: str | None,
+) -> dict[str, Any]:
+    path = run_dir / "loop_state.json"
+    state = _read_json(path)
+    if not state:
+        # Minimal standing shell so pins exist even before full init.
+        state = {
+            "schema_version": "1.0",
+            "status": "initialized",
+            "standing_orders": {},
+        }
+    so = state.get("standing_orders")
+    if not isinstance(so, dict):
+        so = {}
+        state["standing_orders"] = so
+
+    policy = compute.get("policy") if isinstance(compute.get("policy"), dict) else compute
+    backends = list(policy.get("backends") or [])
+    forbidden = list(policy.get("forbidden_services") or [])
+    so["compute"] = {
+        "backends": backends,
+        "forbidden_services": forbidden,
+        "note": str(compute.get("notes") or "force-loop compute pin"),
+    }
+    so["goal_focus"] = {
+        "mode": "enforce",
+        "note": "force-loop default: Goal Focus enforce + goal_priority hard",
+    }
+    so["goal_priority"] = {
+        "enabled": True,
+        "discipline_mode": "hard",
+    }
+    notify = so.get("notify") if isinstance(so.get("notify"), dict) else {}
+    notify["mode"] = "auto"
+    notify["schema"] = notify.get("schema") or "aas.autoloop.notify.v2"
+    notify["schema_version"] = notify.get("schema_version") or "2.1"
+    notify["body_profile"] = notify.get("body_profile") or "operator_full"
+    if research_title:
+        notify["research_title"] = research_title
+    so["notify"] = notify
+
+    if profile == "formal" and formal:
+        so_formal = so.get("formal") if isinstance(so.get("formal"), dict) else {}
+        so_formal.update(
+            {
+                "policy": formal.get("policy", "on"),
+                "project": formal.get("project", "."),
+                "typecheck": True,
+                "force_after_iteration": bool(formal.get("force_after_iteration", False)),
+                "force_credits": int(formal.get("force_credits") or 3),
+                "allow_path_steal": bool(formal.get("allow_path_steal", False)),
+                "allow_create_skeleton": bool(formal.get("allow_create_skeleton", True)),
+                "note": "force-loop formal profile; distinct from formal_policy=force hygiene",
+            }
+        )
+        so["formal"] = so_formal
+
+    panel = so.get("panel") if isinstance(so.get("panel"), dict) else {}
+    panel.setdefault("enabled", True)
+    so["panel"] = panel
+
+    state["standing_orders"] = so
+    # Align top-level notify policy fields when present / useful for drive.
+    state["notify_policy"] = state.get("notify_policy") or "on"
+    _atomic_write_json(path, state)
+    return so
+
+
+def write_host_env_defaults(run_dir: Path, profile: str) -> Path:
+    """Write host-owned env pin under driver/ (not agent-sourced)."""
+    dest = run_dir / "driver" / "force_loop.env"
+    lines = [
+        "# Generated by apply_force_loop_defaults.py — strict KEY=VALUE only.",
+        "# Load via load_loop_env.py; never shell-source agent-writable trees.",
+        "AAS_AUTOLOOP_GOAL_PRIORITY=on",
+        "AAS_AUTOLOOP_NOTIFY=auto",
+    ]
+    if profile == "formal":
+        lines.extend(
+            [
+                "AAS_AUTOLOOP_FORMAL_POLICY=on",
+                "AAS_AUTOLOOP_FORMAL_TYPECHECK=1",
+            ]
+        )
+    else:
+        lines.append("AAS_AUTOLOOP_FORMAL_POLICY=off")
+    _atomic_write_text(dest, "\n".join(lines) + "\n")
+    return dest
+
+
+def verify_effective(run_dir: Path, profile: str) -> list[str]:
+    """Return list of missing-default errors (empty = ok)."""
+    errors: list[str] = []
+    gp = _read_json(run_dir / "goal_priority.json")
+    if not gp.get("enabled"):
+        errors.append("goal_priority.enabled is not true")
+    if str(gp.get("discipline_mode") or "").lower() != "hard":
+        errors.append("goal_priority.discipline_mode is not hard")
+
+    cp = _read_json(run_dir / "compute_policy.json")
+    policy = cp.get("policy") if isinstance(cp.get("policy"), dict) else cp
+    backends = policy.get("backends") if isinstance(policy, dict) else None
+    if not backends:
+        errors.append("compute_policy backends missing")
+
+    state = _read_json(run_dir / "loop_state.json")
+    so = state.get("standing_orders") if isinstance(state.get("standing_orders"), dict) else {}
+    gf = so.get("goal_focus") if isinstance(so.get("goal_focus"), dict) else {}
+    if str(gf.get("mode") or "").lower() != "enforce":
+        errors.append("standing_orders.goal_focus.mode is not enforce")
+    gpp = so.get("goal_priority") if isinstance(so.get("goal_priority"), dict) else {}
+    if str(gpp.get("discipline_mode") or "").lower() != "hard":
+        errors.append("standing_orders.goal_priority.discipline_mode is not hard")
+    notify = so.get("notify") if isinstance(so.get("notify"), dict) else {}
+    mode = str(notify.get("mode") or "").lower()
+    if mode not in {"auto", "on"}:
+        errors.append("standing_orders.notify.mode is not auto/on")
+
+    env_path = run_dir / "driver" / "force_loop.env"
+    if not env_path.is_file():
+        errors.append("driver/force_loop.env missing")
+    else:
+        text = env_path.read_text(encoding="utf-8")
+        if "AAS_AUTOLOOP_GOAL_PRIORITY=on" not in text:
+            errors.append("force_loop.env missing AAS_AUTOLOOP_GOAL_PRIORITY=on")
+        if "AAS_AUTOLOOP_NOTIFY=auto" not in text and "AAS_AUTOLOOP_NOTIFY=on" not in text:
+            errors.append("force_loop.env missing notify ON")
+
+    plan = _read_json(run_dir / "current_plan.json")
+    if plan and str(plan.get("enforcement_mode") or "").lower() not in {"", "enforce"}:
+        if str(plan.get("enforcement_mode") or "").lower() != "enforce":
+            errors.append("current_plan.enforcement_mode is not enforce")
+
+    if profile == "formal":
+        formal = _read_json(run_dir / "formal" / "formal_policy.json")
+        if str(formal.get("policy") or "").lower() != "on":
+            errors.append("formal_policy.policy is not on")
+        if not formal.get("typecheck"):
+            errors.append("formal_policy.typecheck is not true")
+
+    return errors
+
+
+def apply_defaults(
+    run_dir: Path,
+    *,
+    profile: str = "formal",
+    research_title: str | None = None,
+    backup: bool = True,
+) -> dict[str, Any]:
+    profile = (profile or "formal").strip().lower()
+    if profile not in PROFILES:
+        raise ValueError(f"profile must be one of {sorted(PROFILES)}")
+    run_dir = run_dir.expanduser().resolve()
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    if backup:
+        backup_dir = run_dir / "driver" / "force_loop_pin_backups"
+        for name in (
+            "goal_priority.json",
+            "compute_policy.json",
+            "loop_state.json",
+            "current_plan.json",
+            "notify.json",
+        ):
+            _backup(run_dir / name, backup_dir)
+        _backup(run_dir / "formal" / "formal_policy.json", backup_dir)
+
+    gp = apply_goal_priority(run_dir)
+    compute = apply_compute_policy(run_dir, profile)
+    formal = apply_formal_policy(run_dir, profile)
+    notify = apply_notify_identity(run_dir, research_title=research_title)
+    plan_updated = apply_current_plan_enforce(run_dir)
+    standing = apply_standing_orders(
+        run_dir,
+        profile=profile,
+        compute=compute,
+        formal=formal,
+        research_title=research_title,
+    )
+    env_path = write_host_env_defaults(run_dir, profile)
+    errors = verify_effective(run_dir, profile)
+    return {
+        "ok": not errors,
+        "profile": profile,
+        "run_dir": str(run_dir),
+        "goal_priority": {
+            "enabled": gp.get("enabled"),
+            "discipline_mode": gp.get("discipline_mode"),
+        },
+        "notify_mode": (standing.get("notify") or {}).get("mode"),
+        "goal_focus_mode": (standing.get("goal_focus") or {}).get("mode"),
+        "env_path": str(env_path),
+        "current_plan_enforced": plan_updated,
+        "notify_identity": {
+            "research_title": notify.get("research_title"),
+        },
+        "errors": errors,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--dir", required=True, help="loop directory")
+    p.add_argument(
+        "--profile",
+        default="formal",
+        choices=sorted(PROFILES),
+        help="formal | general",
+    )
+    p.add_argument("--research-title", default=None)
+    p.add_argument("--no-backup", action="store_true")
+    p.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="check effective defaults without writing",
+    )
+    args = p.parse_args(argv)
+    run_dir = Path(args.dir).expanduser().resolve()
+    if args.verify_only:
+        errors = verify_effective(run_dir, args.profile)
+        print(json.dumps({"ok": not errors, "errors": errors, "run_dir": str(run_dir)}, indent=2))
+        return 0 if not errors else 1
+    result = apply_defaults(
+        run_dir,
+        profile=args.profile,
+        research_title=args.research_title,
+        backup=not args.no_backup,
+    )
+    print(json.dumps(result, indent=2))
+    return 0 if result.get("ok") else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

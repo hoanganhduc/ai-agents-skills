@@ -23,6 +23,7 @@
         "template:deep-research-report",
         "template:autonomous-research-loop-runbook",
         "template:autonomous-research-loop-portfolio-runbook",
+        "template:arl-scripted-force-loop",
         "template:engineering-delivery-loop-runbook",
         "template:reversible-decision-memo",
         "template:informal-to-lean-formalization-runbook",
@@ -43,6 +44,7 @@
         "template:deep-research-report",
         "template:autonomous-research-loop-runbook",
         "template:autonomous-research-loop-portfolio-runbook",
+        "template:arl-scripted-force-loop",
         "template:cross-provider-research-panel",
         "template:manager-worker-research-review",
         "template:informal-to-lean-formalization-runbook",
@@ -542,6 +544,23 @@
           "autonomous-research-loop-runtime",
           "agent-group-discuss",
           "decision-doubt-loop"
+        ]
+      },
+      "arl-scripted-force-loop": {
+        "description": "Discovery doc for the default cross-platform scripted force-loop kit (runtime pack under autonomous-research-loop-runtime/force-loop/). Points operators at bootstrap/start with enforce, hard goal_priority, and notify ON.",
+        "source": "arl-scripted-force-loop.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity",
+          "copilot",
+          "grok"
+        ],
+        "depends_on_skills": [
+          "autonomous-research-loop",
+          "autonomous-research-loop-runtime"
         ]
       },
       "engineering-delivery-loop-runbook": {

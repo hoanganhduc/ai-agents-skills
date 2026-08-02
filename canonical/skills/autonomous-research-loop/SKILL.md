@@ -244,7 +244,9 @@ Evidence labels (`lean_declaration_search`, `opengauss_run`, `formal_scan`,
 `formal_typecheck`) never alone set claim-support. Host force tick reports are
 hygiene only (`claim_support_status=not_evaluated`).
 
-Thin sample for existing supervisors:
+**Default scripted force-loop** (all OS; enforce + hard + notify ON): runtime
+pack `autonomous-research-loop-runtime/force-loop/` — discovery template
+`arl-scripted-force-loop`. Thin formal-env sample for existing supervisors only:
 `canonical/templates/sample-arl-headless-driver-with-formal/`
 (`formal_env.inc.sh` — no forked driver). Instruction:
 `canonical/instructions/autonomous-loop-formal-policy.md`.
@@ -539,10 +541,16 @@ On resume, read `loop_state.json`, `budget.json`, `iterations.jsonl`, and
 ## Truly Autonomous Execution
 
 A chat session cannot carry a long loop by itself: context windows and turn
-boundaries end it. For unattended multi-day runs, hand the loop to the
-`autonomous-research-loop-runtime` headless driver, which respawns a fresh
-headless agent session per iteration against the on-disk loop files and owns
-the stop conditions:
+boundaries end it. For unattended multi-day runs, prefer the **force-loop kit** (default pins:
+Goal Focus enforce, goal_priority hard, notify auto/on; Linux/macOS/Windows/WSL):
+
+```bash
+... force-loop/run_force_loop.sh bootstrap --loop <loop_dir> --root <project> --profile formal --goal "…"
+... force-loop/run_force_loop.sh start --loop <loop_dir> --root <project> --provider <claude|codex|…>
+```
+
+Raw headless `drive` remains available; it respawns a fresh agent session per
+iteration against on-disk loop files and owns stop conditions:
 
 ```bash
 ... run_autonomous_research_loop.sh drive --dir <loop_dir> --provider <claude|codex|deepseek|opencode|copilot|antigravity|grok|kimi>
@@ -679,9 +687,10 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
+- `arl-scripted-force-loop` -- discovery for the **default** scripted force-loop kit (runtime `force-loop/`).
 - `goal-focus` -- Goal Focus v2 authoritative-state, selection, review-before-bank, migration, and notification contract.
 - `goal-priority` -- legacy `goal_priority.v1` reference (defaults disabled/soft; does not change stop conditions).
 - `informal-to-lean-formalization-runbook` -- F1–F7 formalization positions when path is formal-track under `formal_policy`.
-- `sample-arl-headless-driver-with-formal` -- thin env fragment + example JSON for force-driven ARL with formal tools (not a forked supervisor).
+- `sample-arl-headless-driver-with-formal` -- thin formal-env layer only (not the force-loop default).
 
 When `formal_policy` is `auto`, `on`, or `force`, wire `lean-research-library` at F2' (search-first) and F7' (user-gated intake); staging and outward-facing actions batch at run boundaries and always wait for the user.

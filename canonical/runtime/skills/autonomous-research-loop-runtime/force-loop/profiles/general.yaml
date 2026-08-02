@@ -1,0 +1,17 @@
+# Force-loop general profile.
+profile: general
+goal_focus:
+  enforcement_mode: enforce
+goal_priority:
+  enabled: true
+  discipline_mode: hard
+notify:
+  mode: auto
+formal:
+  policy: off
+  typecheck: false
+compute:
+  backends: [local, kaggle, modal]
+  forbidden_services: [hetzner, github-actions]
+panel:
+  enabled: true

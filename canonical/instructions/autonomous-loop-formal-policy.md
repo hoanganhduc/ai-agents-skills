@@ -84,8 +84,11 @@ compute_policy → panel (if) → goal_priority → formal_policy
 
 ## Sample headless wiring
 
-See `canonical/templates/sample-arl-headless-driver-with-formal/` — thin
-`formal_env.inc.sh` only; do not fork supervisor drive logic.
+**Default unattended formal force-loop:** runtime pack
+`autonomous-research-loop-runtime/force-loop/` with `--profile formal` (and
+discovery template `arl-scripted-force-loop`). Thin formal-env layer only:
+`canonical/templates/sample-arl-headless-driver-with-formal/` —
+`formal_env.inc.sh`; do not fork supervisor drive logic.
 
 **Boolean env parsing:** supervisors must use explicit
 `[[ "$AAS_AUTOLOOP_FORMAL_FORCE" == "1" ]]` (or `true`), **not**

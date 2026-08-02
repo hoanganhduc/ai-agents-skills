@@ -40,6 +40,7 @@ Templates are guidance runbooks; pair them with the backing skills they list.
 | Build / implement in a bounded, verified loop | `engineering-delivery-loop-runbook` |
 | Record a decision (rationale, alternatives, reversibility) | `reversible-decision-memo` |
 | Formalize an informal proof in Lean | `informal-to-lean-formalization-runbook` |
-| Opt formal tools into ARL / headless drive | `autonomous-loop-formal-policy` + `sample-arl-headless-driver-with-formal` (`--formal-policy on\|force`) |
+| Scripted force-loop (default, all OS) | `arl-scripted-force-loop` + runtime `force-loop/` (`bootstrap` / `start`; enforce + hard + notify) |
+| Opt formal tools into ARL / headless drive | `autonomous-loop-formal-policy` + force-loop `--profile formal` (thin sample: `sample-arl-headless-driver-with-formal`) |
 | Spec / plan / checklist | `spec`, `tasks-plan`, `tasks-todo` |
 | Cross-provider or manager-worker delegation | `cross-provider-research-panel`, `hierarchical-agent-delegation` |
