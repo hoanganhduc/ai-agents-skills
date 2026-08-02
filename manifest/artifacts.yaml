@@ -164,6 +164,7 @@
         "template:deep-research-report",
         "template:autonomous-research-loop-runbook",
         "template:autonomous-research-loop-portfolio-runbook",
+        "template:arl-scripted-force-loop",
         "template:engineering-delivery-loop-runbook",
         "template:reversible-decision-memo",
         "template:informal-to-lean-formalization-runbook",

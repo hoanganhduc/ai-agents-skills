@@ -1,6 +1,6 @@
 ---
 name: autonomous-research-loop-runtime
-description: Runtime helper for autonomous-research-loop ledgers plus headless drive and host-owned multi-agent panel phases (--panel on, auto, or off). Use to initialize, append, validate, inspect, smoke-test, drive, or panel-dispatch loop state without requiring ad-hoc nested multi-agent CLIs from the primary agent.
+description: Runtime helper for autonomous-research-loop ledgers plus headless drive, host-owned multi-agent panel phases (--panel on, auto, or off), and the default cross-platform force-loop kit (bootstrap/start/drain with enforce/hard/notify defaults). Use to initialize, append, validate, inspect, smoke-test, drive, or panel-dispatch loop state without requiring ad-hoc nested multi-agent CLIs from the primary agent.
 ---
 
 # Autonomous Research Loop Runtime
