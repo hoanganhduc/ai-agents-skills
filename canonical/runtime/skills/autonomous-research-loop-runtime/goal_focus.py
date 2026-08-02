@@ -4307,12 +4307,27 @@ def validate_compute_execution(
             raise ValueError(
                 f"{label} status must be one of {sorted(COMPUTE_RUN_STATUSES)}"
             )
+        try:
+            from compute_policy import normalize_compute_job_ref  # type: ignore
+        except ImportError:  # pragma: no cover - package-style import
+            from .compute_policy import normalize_compute_job_ref  # type: ignore
         job_ref = row.get("job_ref")
         if job_ref not in (None, ""):
-            if not isinstance(job_ref, str) or re.fullmatch(
-                r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}", job_ref
-            ) is None:
+            safe_ref, residual = normalize_compute_job_ref(job_ref)
+            if safe_ref is None:
                 raise ValueError(f"{label} job_ref must be a safe string identifier")
+            # In-place normalize so staged candidates keep a host-safe job_ref.
+            if isinstance(row, dict):
+                row["job_ref"] = safe_ref
+                if residual:
+                    existing_detail = row.get("detail")
+                    if existing_detail in (None, ""):
+                        row["detail"] = residual[:500]
+                    elif (
+                        isinstance(existing_detail, str)
+                        and residual not in existing_detail
+                    ):
+                        row["detail"] = f"{existing_detail}; cmd={residual}"[:500]
         detail = row.get("detail")
         if detail not in (None, "") and (
             not isinstance(detail, str) or len(detail) > 500

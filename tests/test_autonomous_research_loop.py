@@ -4601,6 +4601,78 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                 with self.subTest(compute=compute), self.assertRaises(ValueError):
                     gf.validate_compute_execution(loop, compute)
 
+    def test_compute_job_ref_command_strings_are_slugified(self) -> None:
+        """Local lake-style job_ref with spaces must stage, not hard-fail submit."""
+        arl, gf = self._runtime_modules()
+        # CLI / append path
+        parsed = arl.parse_compute_runs(
+            [
+                json.dumps(
+                    {
+                        "service": "local",
+                        "status": "succeeded",
+                        "job_ref": "lake build Artifact",
+                    }
+                )
+            ]
+        )
+        self.assertEqual(parsed["recording_status"], "explicit")
+        self.assertEqual(parsed["usage"], "local")
+        row = parsed["services"][0]
+        self.assertEqual(row["service"], "local")
+        self.assertEqual(row["job_ref"], "lake-build-Artifact")
+        self.assertIn("lake build Artifact", row.get("detail") or "")
+        # Already-safe refs stay unchanged
+        ok = arl.parse_compute_runs(
+            [
+                json.dumps(
+                    {
+                        "service": "local",
+                        "status": "succeeded",
+                        "job_ref": "lake-build-artifact",
+                        "detail": "lake build Artifact",
+                    }
+                )
+            ]
+        )
+        self.assertEqual(ok["services"][0]["job_ref"], "lake-build-artifact")
+        self.assertEqual(ok["services"][0]["detail"], "lake build Artifact")
+
+        # Goal-Focus validate path also normalizes in place
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=2)
+            init_args.goal_focus_mode = "enforce"
+            arl.init_loop(init_args)
+            (loop / "compute_policy.json").write_text(
+                json.dumps(
+                    {
+                        "policy": {
+                            "backends": ["local", "kaggle"],
+                            "forbidden_services": ["hetzner"],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self._activate_single_direction(arl, gf, loop)
+            compute = {
+                "recording_status": "explicit",
+                "usage": "local",
+                "services": [
+                    {
+                        "service": "local",
+                        "status": "succeeded",
+                        "job_ref": "lake exe axiom_audit",
+                    }
+                ],
+            }
+            gf.validate_compute_execution(loop, compute)
+            self.assertEqual(
+                compute["services"][0]["job_ref"], "lake-exe-axiom_audit"
+            )
+            self.assertIn("lake exe axiom_audit", compute["services"][0]["detail"])
+
     def test_primary_compute_credentials_follow_host_pinned_effective_policy(self) -> None:
         arl, gf = self._runtime_modules()
         lane_variables = {

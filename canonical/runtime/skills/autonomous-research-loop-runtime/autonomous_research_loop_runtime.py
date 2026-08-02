@@ -64,7 +64,10 @@ try:
         is_goal_priority_active,
         load_goal_priority,
     )
-    from compute_policy import compute_policy_addon  # type: ignore
+    from compute_policy import (  # type: ignore
+        compute_policy_addon,
+        normalize_compute_job_ref,
+    )
     import goal_focus as goal_focus_v2  # type: ignore
     import notify_v2  # type: ignore
     from state_transaction import LoopLock  # type: ignore
@@ -119,7 +122,10 @@ except ImportError:  # pragma: no cover - package-style import during tests
         is_goal_priority_active,
         load_goal_priority,
     )
-    from .compute_policy import compute_policy_addon  # type: ignore
+    from .compute_policy import (  # type: ignore
+        compute_policy_addon,
+        normalize_compute_job_ref,
+    )
     from . import goal_focus as goal_focus_v2  # type: ignore
     from . import notify_v2  # type: ignore
     from .state_transaction import LoopLock  # type: ignore
@@ -862,14 +868,26 @@ def parse_compute_runs(values: list[str] | None, *, explicit_none: bool = False)
         if status not in COMPUTE_RUN_STATUSES:
             raise ValueError(f"compute run status must be one of {sorted(COMPUTE_RUN_STATUSES)}")
         normalized: dict[str, Any] = {"service": service, "status": status}
+        residual_job_detail: str | None = None
         for key in ("job_ref", "detail", "started_at", "finished_at", "duration_seconds"):
             value = item.get(key)
             if value not in (None, ""):
-                if key == "job_ref" and re.fullmatch(
-                    r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}", str(value)
-                ) is None:
-                    raise ValueError("compute job_ref must be a safe non-secret identifier")
-                normalized[key] = value
+                if key == "job_ref":
+                    safe_ref, residual = normalize_compute_job_ref(value)
+                    if safe_ref is None:
+                        continue
+                    normalized["job_ref"] = safe_ref
+                    residual_job_detail = residual
+                else:
+                    normalized[key] = value
+        if residual_job_detail:
+            existing_detail = str(normalized.get("detail") or "").strip()
+            if residual_job_detail not in existing_detail:
+                if existing_detail:
+                    merged = f"{existing_detail}; cmd={residual_job_detail}"
+                else:
+                    merged = residual_job_detail
+                normalized["detail"] = merged[:500]
         services.append(normalized)
     return {
         "recording_status": "explicit",
