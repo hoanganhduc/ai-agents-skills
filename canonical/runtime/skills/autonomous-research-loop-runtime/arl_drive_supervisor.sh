@@ -408,7 +408,8 @@ while :; do
   fi
 
   write_primary "$provider"
-  notify "driving with primary=$provider (first available; excluded: ${EXCLUDED[*]:-none})"
+  # Do not remote-notify here: drive emits drive_start, which is the single
+  # start-class remote event (avoids supervisor+drive_start double posts).
 
   # shellcheck disable=SC2086
   python3 "$RUNTIME_PY" drive \

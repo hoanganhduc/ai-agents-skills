@@ -19,7 +19,7 @@ from typing import Any, Iterable, Mapping, Sequence
 SCHEMA_ID = "aas.autoloop.notify.v2"
 SCHEMA_VERSION = "2.1"
 SUPPORTED_SCHEMA_VERSIONS = frozenset({"2.0", "2.1"})
-BODY_PROFILES = frozenset({"operator_full", "legacy"})
+BODY_PROFILES = frozenset({"operator_full", "operator_compact", "legacy"})
 DEFAULT_BODY_PROFILE = "operator_full"
 FREEFORM_SECTION_MAX = 500
 ISSUE_MESSAGE_MAX = 240
@@ -27,6 +27,24 @@ TELEGRAM_SAFE_MAX = 3300
 SECTION_SENTINEL_NOT_RECORDED = "Not recorded."
 SECTION_SENTINEL_NO_CLAIMS = "No claims banked."
 SECTION_SENTINEL_PENDING_DECISION = "Pending (not finalized)"
+# Values that add no operator decision signal when printed as a field body.
+_NON_INFORMATIVE_FIELD_VALUES = frozenset(
+    {
+        "",
+        "not recorded",
+        "not recorded.",
+        "not recorded (legacy/unreported)",
+        "not finished",
+        "no claims banked",
+        "no claims banked.",
+        "no claims banked by this event",
+        "no claims banked by this event.",
+        "pending (not finalized)",
+        "none",
+        "not recorded in this legacy event",
+        "not recorded in this legacy event.",
+    }
+)
 
 ITERATION_STATUSES = frozenset(
     {"running", "success", "failure", "error", "waiting", "paused", "not_applicable"}
@@ -104,7 +122,19 @@ _PII_KEY = re.compile(
     r"email|phone|home[_ -]?address|street[_ -]?address|date[_ -]?of[_ -]?birth|"
     r"birth[_ -]?date|dob|ssn|passport|national[_ -]?id|tax[_ -]?id)(?:$|[_ -])"
 )
-_ZULIP_MARKDOWN_CONTROL = re.compile(r"([\\`*_~\[\]#>|])")
+# Zulip does not honor CommonMark backslash escapes (``\_``, ``\` ``, ``\*`` show
+# the backslash). Sanitize untrusted freeform without inserting visible ``\``.
+_ZULIP_MARKUP_REPLACEMENTS = (
+    ("@", "＠"),  # neutralize mentions (also applied again for clarity in helper)
+    ("**", "∗∗"),  # break bold section spoofing
+    ("`", "'"),  # break code spans (avoids visible \` on Zulip)
+    ("[", "［"),
+    ("]", "］"),
+    ("#", "＃"),
+    ("~", "∼"),
+    ("|", "∣"),
+    ("\\", "＼"),
+)
 
 _ITERATION_MARKERS = {
     "running": "▶️",
@@ -145,13 +175,28 @@ def _zulip_markdown_text(value: Any, default: str = "") -> str:
     """Render one untrusted value as inert, single-line Zulip Markdown text.
 
     Notification labels and layout are host-owned.  Every value derived from
-    research/provider output is flattened, mention-neutralized, and escaped so
-    it cannot create a wildcard/personal mention or inject a second section.
+    research/provider output is flattened and markup-neutralized so it cannot
+    create mentions or inject a second section.  CommonMark backslash escapes
+    are intentionally not used — Zulip often displays them literally.
     """
 
     flattened = " ".join(_text(value, default).split())
-    mention_safe = flattened.replace("@", "＠")
-    return _ZULIP_MARKDOWN_CONTROL.sub(r"\\\1", mention_safe)
+    # Preserve host redaction markers so they stay machine-grepable after markup
+    # neutralization (bracket replacement would otherwise turn [REDACTED] into
+    # fullwidth brackets).
+    placeholders: list[str] = []
+    out = flattened
+
+    def _stash(match: re.Match[str]) -> str:
+        placeholders.append(match.group(0))
+        return f"\x00RED{len(placeholders) - 1}\x00"
+
+    out = re.sub(r"\[REDACTED(?:-[A-Z]+)?\]", _stash, out)
+    for src, dst in _ZULIP_MARKUP_REPLACEMENTS:
+        out = out.replace(src, dst)
+    for index, original in enumerate(placeholders):
+        out = out.replace(f"\x00RED{index}\x00", original)
+    return out
 
 
 def redact_text(value: Any, secret_values: Sequence[str] | None = None) -> str:
@@ -1250,22 +1295,37 @@ def _progress_text(event: Mapping[str, Any]) -> str:
 
 
 def _finished_text(event: Mapping[str, Any]) -> str:
+    """Terminal finish line, or empty when in-flight (omit from body)."""
     iteration = event.get("iteration") if isinstance(event.get("iteration"), Mapping) else {}
     status = _text(iteration.get("status"))
     if status in {"running", "waiting", "paused"}:
-        return "Not finished"
+        return ""
     finished = _text(iteration.get("finished_at")) or _text(event.get("occurred_at"))
     if not finished:
-        return "Not recorded"
-    duration = _duration_text(iteration.get("duration_seconds")) or "Not recorded"
-    return f"{finished} · Duration: {duration}"
+        return ""
+    duration = _duration_text(iteration.get("duration_seconds"))
+    if duration:
+        return f"{finished} · Duration: {duration}"
+    return finished
 
 
 def _started_text(event: Mapping[str, Any]) -> str:
     """Started time from iteration.started_at only — never invent from finished_at."""
     iteration = event.get("iteration") if isinstance(event.get("iteration"), Mapping) else {}
-    started = _text(iteration.get("started_at"))
-    return started if started else "Not recorded"
+    return _text(iteration.get("started_at"))
+
+
+def _event_time_text(event: Mapping[str, Any]) -> str:
+    """Wall-clock stamp for this notification (always preferred over empty Started)."""
+    return _text(event.get("occurred_at"))
+
+
+def _is_non_informative_field(value: Any) -> bool:
+    """True when a field body is empty or a host sentinel with no decision value."""
+    text = _text(value)
+    if not text:
+        return True
+    return text.casefold() in _NON_INFORMATIVE_FIELD_VALUES
 
 
 def _body_profile(event: Mapping[str, Any]) -> str:
@@ -1274,11 +1334,32 @@ def _body_profile(event: Mapping[str, Any]) -> str:
     return profile if profile in BODY_PROFILES else DEFAULT_BODY_PROFILE
 
 
+def _append_labeled_block(
+    lines: list[str],
+    *,
+    label_fn,
+    name: str,
+    value: Any,
+    dynamic,
+    inline: bool = False,
+) -> None:
+    """Append a labeled field only when the value is informative."""
+    if _is_non_informative_field(value):
+        return
+    rendered = dynamic(value)
+    if _is_non_informative_field(rendered):
+        return
+    if inline:
+        lines.append(f"{label_fn(name)}: {rendered}")
+    else:
+        lines.extend(["", label_fn(name), rendered])
+
+
 def format_issues(event: Mapping[str, Any], kind: str) -> str | None:
     """Human text for errors/failures, or None when the line should be omitted."""
     issues = event.get("issues") if isinstance(event.get("issues"), Mapping) else {}
     if not issues.get("reported"):
-        return "Not recorded (legacy/unreported)"
+        return None  # omit unreported legacy noise from the body
     records = issues.get(kind) if isinstance(issues.get(kind), list) else []
     if not records:
         return None  # omit empty ops noise when host asserts none
@@ -1287,9 +1368,12 @@ def format_issues(event: Mapping[str, Any], kind: str) -> str | None:
         if not isinstance(record, Mapping):
             continue
         code = _text(record.get("code"), "unspecified")
-        message = _text(record.get("message"), "Not recorded.")
+        message = _text(record.get("message"), "")
         stage = _text(record.get("stage"))
-        piece = f"{code}: {message}"
+        if message:
+            piece = f"{code}: {message}"
+        else:
+            piece = code
         if stage:
             piece += f" ({stage})"
         values.append(piece)
@@ -1330,33 +1414,59 @@ def _render_lines(event: Mapping[str, Any], *, markdown: bool) -> list[str]:
     label = (lambda name: f"**{name}**") if markdown else (lambda name: name)
     profile = _body_profile(event)
     lines = [heading]
+    iteration_status = _text(iteration.get("status"))
+
+    def section_value(key: str) -> Any:
+        return sections.get(key)
+
+    def add_inline(name: str, value: Any) -> None:
+        _append_labeled_block(
+            lines, label_fn=label, name=name, value=value, dynamic=dynamic, inline=True
+        )
+
+    def add_block(name: str, value: Any) -> None:
+        _append_labeled_block(
+            lines, label_fn=label, name=name, value=value, dynamic=dynamic, inline=False
+        )
+
+    # Status + event time first (scannable); omit empty/sentinel bodies elsewhere.
+    lines.append(f"{label('Status')}: {dynamic(_status_text(event))}")
+    event_time = _event_time_text(event)
+    if event_time:
+        lines.append(f"{label('Event time')}: {dynamic(event_time)}")
 
     if profile == "legacy":
-        # Historical v2.0 layout (research sections only in the lead).
         for key, name in (
             ("goal", "Goal"),
             ("completed", "Completed"),
             ("current", "Current"),
             ("plan", "Plan"),
         ):
-            lines.extend(["", label(name), dynamic(sections.get(key), "Not recorded.")])
-        lines.extend(
-            [
-                "",
-                f"{label('Status')}: {dynamic(_status_text(event))}",
-                f"{label('Progress')}: {dynamic(_progress_text(event))}",
-                f"{label('Finished')}: {dynamic(_finished_text(event))}",
-                f"{label('Executor')}: {dynamic(iteration.get('executor'), 'Not recorded')}",
-                f"{label('Driver agent')}: {dynamic(format_agent_usage(event, 'driver'))}",
-                f"{label('Panel agents')}: {dynamic(format_agent_usage(event, 'panel'))}",
-                f"{label('Other agents')}: {dynamic(format_agent_usage(event, 'other'))}",
-                f"{label('Compute')}: {dynamic(format_compute(event))}",
-            ]
-        )
+            add_block(name, section_value(key))
+        add_inline("Progress", _progress_text(event))
+        add_inline("Finished", _finished_text(event))
+        add_inline("Executor", iteration.get("executor"))
+        add_inline("Driver agent", format_agent_usage(event, "driver"))
+        add_inline("Panel agents", format_agent_usage(event, "panel"))
+        add_inline("Other agents", format_agent_usage(event, "other"))
+        add_inline("Compute", format_compute(event))
         return lines
 
-    # operator_full: status early for triage; results/decision/reason in the lead.
-    lines.extend(["", f"{label('Status')}: {dynamic(_status_text(event))}"])
+    if profile == "operator_compact":
+        # Dense mobile body: change signal + next step only.
+        add_block("Completed", section_value("completed"))
+        add_block("Current", section_value("current"))
+        add_block("Plan", section_value("plan"))
+        add_inline("Progress", _progress_text(event))
+        runtime_errors = format_issues(event, "errors")
+        review_failures = format_issues(event, "failures")
+        if runtime_errors is not None:
+            add_inline("Runtime errors", runtime_errors)
+        if review_failures is not None:
+            add_inline("Review failures", review_failures)
+        return lines
+
+    # operator_full: research sections then trailer; skip non-informative fields.
     for key, name in (
         ("goal", "Goal"),
         ("completed", "Completed"),
@@ -1366,26 +1476,35 @@ def _render_lines(event: Mapping[str, Any], *, markdown: bool) -> list[str]:
         ("decision_reason", "Decision reason"),
         ("plan", "Plan"),
     ):
-        lines.extend(["", label(name), dynamic(sections.get(key), "Not recorded.")])
-    lines.extend(
-        [
-            "",
-            f"{label('Progress')}: {dynamic(_progress_text(event))}",
-            f"{label('Started')}: {dynamic(_started_text(event))}",
-            f"{label('Finished')}: {dynamic(_finished_text(event))}",
-            f"{label('Executor')}: {dynamic(iteration.get('executor'), 'Not recorded')}",
-            f"{label('Driver agent')}: {dynamic(format_agent_usage(event, 'driver'))}",
-            f"{label('Panel agents')}: {dynamic(format_agent_usage(event, 'panel'))}",
-            f"{label('Other agents')}: {dynamic(format_agent_usage(event, 'other'))}",
-            f"{label('Compute')}: {dynamic(format_compute(event))}",
-        ]
-    )
+        value = section_value(key)
+        # Decision pending is already implied by WAITING status.
+        if (
+            key in {"decision", "decision_reason"}
+            and iteration_status in {"waiting", "running", "paused"}
+            and _is_non_informative_field(value)
+        ):
+            continue
+        if (
+            key in {"decision", "decision_reason"}
+            and _text(value).casefold() == SECTION_SENTINEL_PENDING_DECISION.casefold()
+        ):
+            continue
+        add_block(name, value)
+
+    add_inline("Progress", _progress_text(event))
+    add_inline("Started", _started_text(event))
+    add_inline("Finished", _finished_text(event))
+    add_inline("Executor", iteration.get("executor"))
+    add_inline("Driver agent", format_agent_usage(event, "driver"))
+    add_inline("Panel agents", format_agent_usage(event, "panel"))
+    add_inline("Other agents", format_agent_usage(event, "other"))
+    add_inline("Compute", format_compute(event))
     runtime_errors = format_issues(event, "errors")
     review_failures = format_issues(event, "failures")
     if runtime_errors is not None:
-        lines.append(f"{label('Runtime errors')}: {dynamic(runtime_errors)}")
+        add_inline("Runtime errors", runtime_errors)
     if review_failures is not None:
-        lines.append(f"{label('Review failures')}: {dynamic(review_failures)}")
+        add_inline("Review failures", review_failures)
     return lines
 
 
@@ -1442,7 +1561,24 @@ def render_telegram_html(
         def tb(limit: int) -> int:
             return max(24, int(limit * trailer_scale))
 
+        def add_inline(name: str, value: Any, limit: int) -> None:
+            if _is_non_informative_field(value):
+                return
+            lines.append(f"<b>{name}</b>: {_bounded_html(value, limit)}")
+
+        def add_block(name: str, value: Any, limit: int) -> None:
+            if _is_non_informative_field(value):
+                return
+            lines.extend(["", f"<b>{name}</b>", _bounded_html(value, limit)])
+
         lines = [f"{marker} <b>{_bounded_html(_title_text(event), 190)}</b>"]
+        lines.append(
+            f"<b>Status</b>: {_bounded_html(_status_text(event), max(80, section_budget // 2))}"
+        )
+        event_time = _event_time_text(event)
+        if event_time:
+            lines.append(f"<b>Event time</b>: {_bounded_html(event_time, tb(80))}")
+
         if profile == "legacy":
             for key, name in (
                 ("goal", "Goal"),
@@ -1450,27 +1586,26 @@ def render_telegram_html(
                 ("current", "Current"),
                 ("plan", "Plan"),
             ):
-                lines.extend(
-                    ["", f"<b>{name}</b>", _bounded_html(sections.get(key), section_budget)]
-                )
-            lines.extend(
-                [
-                    "",
-                    f"<b>Status</b>: {_bounded_html(_status_text(event), tb(140))}",
-                    f"<b>Progress</b>: {_bounded_html(_progress_text(event), tb(160))}",
-                    f"<b>Finished</b>: {_bounded_html(_finished_text(event), tb(100))}",
-                    f"<b>Executor</b>: {_bounded_html(iteration.get('executor'), tb(80))}",
-                    f"<b>Driver agent</b>: {_bounded_html(format_agent_usage(event, 'driver'), tb(120))}",
-                    f"<b>Panel agents</b>: {_bounded_html(format_agent_usage(event, 'panel'), tb(160))}",
-                    f"<b>Other agents</b>: {_bounded_html(format_agent_usage(event, 'other'), tb(120))}",
-                    f"<b>Compute</b>: {_bounded_html(format_compute(event), tb(180))}",
-                ]
-            )
+                add_block(name, sections.get(key), section_budget)
+            add_inline("Progress", _progress_text(event), tb(160))
+            add_inline("Finished", _finished_text(event), tb(100))
+            add_inline("Executor", iteration.get("executor"), tb(80))
+            add_inline("Driver agent", format_agent_usage(event, "driver"), tb(120))
+            add_inline("Panel agents", format_agent_usage(event, "panel"), tb(160))
+            add_inline("Other agents", format_agent_usage(event, "other"), tb(120))
+            add_inline("Compute", format_compute(event), tb(180))
+        elif profile == "operator_compact":
+            add_block("Completed", sections.get("completed"), section_budget)
+            add_block("Current", sections.get("current"), section_budget)
+            add_block("Plan", sections.get("plan"), section_budget)
+            add_inline("Progress", _progress_text(event), tb(120))
+            runtime_errors = format_issues(event, "errors")
+            review_failures = format_issues(event, "failures")
+            if runtime_errors is not None:
+                add_inline("Runtime errors", runtime_errors, tb(120))
+            if review_failures is not None:
+                add_inline("Review failures", review_failures, tb(120))
         else:
-            # Protect decision/results with the section budget; shrink trailer first.
-            lines.extend(
-                ["", f"<b>Status</b>: {_bounded_html(_status_text(event), max(80, section_budget // 2))}"]
-            )
             for key, name in (
                 ("goal", "Goal"),
                 ("completed", "Completed"),
@@ -1480,32 +1615,28 @@ def render_telegram_html(
                 ("decision_reason", "Decision reason"),
                 ("plan", "Plan"),
             ):
-                lines.extend(
-                    ["", f"<b>{name}</b>", _bounded_html(sections.get(key), section_budget)]
-                )
-            lines.extend(
-                [
-                    "",
-                    f"<b>Progress</b>: {_bounded_html(_progress_text(event), tb(120))}",
-                    f"<b>Started</b>: {_bounded_html(_started_text(event), tb(80))}",
-                    f"<b>Finished</b>: {_bounded_html(_finished_text(event), tb(100))}",
-                    f"<b>Executor</b>: {_bounded_html(iteration.get('executor'), tb(60))}",
-                    f"<b>Driver agent</b>: {_bounded_html(format_agent_usage(event, 'driver'), tb(100))}",
-                    f"<b>Panel agents</b>: {_bounded_html(format_agent_usage(event, 'panel'), tb(120))}",
-                    f"<b>Other agents</b>: {_bounded_html(format_agent_usage(event, 'other'), tb(80))}",
-                    f"<b>Compute</b>: {_bounded_html(format_compute(event), tb(140))}",
-                ]
-            )
+                value = sections.get(key)
+                if (
+                    key in {"decision", "decision_reason"}
+                    and _text(value).casefold()
+                    == SECTION_SENTINEL_PENDING_DECISION.casefold()
+                ):
+                    continue
+                add_block(name, value, section_budget)
+            add_inline("Progress", _progress_text(event), tb(120))
+            add_inline("Started", _started_text(event), tb(80))
+            add_inline("Finished", _finished_text(event), tb(100))
+            add_inline("Executor", iteration.get("executor"), tb(60))
+            add_inline("Driver agent", format_agent_usage(event, "driver"), tb(100))
+            add_inline("Panel agents", format_agent_usage(event, "panel"), tb(120))
+            add_inline("Other agents", format_agent_usage(event, "other"), tb(80))
+            add_inline("Compute", format_compute(event), tb(140))
             runtime_errors = format_issues(event, "errors")
             review_failures = format_issues(event, "failures")
             if runtime_errors is not None:
-                lines.append(
-                    f"<b>Runtime errors</b>: {_bounded_html(runtime_errors, tb(120))}"
-                )
+                add_inline("Runtime errors", runtime_errors, tb(120))
             if review_failures is not None:
-                lines.append(
-                    f"<b>Review failures</b>: {_bounded_html(review_failures, tb(120))}"
-                )
+                add_inline("Review failures", review_failures, tb(120))
         return "\n".join(lines).strip()
 
     # Prefer shrinking trailer before research section budget.
@@ -1541,18 +1672,21 @@ def render_compact(
     profile = _body_profile(event)
 
     def clip(value: Any, limit: int) -> str:
-        clean = " ".join(_text(value, "Not recorded").split())
+        clean = " ".join(_text(value).split())
+        if not clean:
+            return ""
         return clean if len(clean) <= limit else clean[: limit - 1].rstrip() + "…"
 
     # Tiers: protect title/status/completed/results/decision before trailer.
     if profile == "legacy":
         protected = [
             (f"{marker} Title", _title_text(event), 100),
+            ("Status", _status_text(event), 90),
+            ("Event time", _event_time_text(event), 50),
             ("Goal", sections.get("goal"), 120),
             ("Completed", sections.get("completed"), 260),
             ("Current", sections.get("current"), 180),
             ("Plan", sections.get("plan"), 150),
-            ("Status", _status_text(event), 90),
         ]
         trailer = [
             ("Progress", _progress_text(event), 90),
@@ -1563,10 +1697,27 @@ def render_compact(
             ("Other agents", format_agent_usage(event, "other"), 60),
             ("Compute", format_compute(event), 80),
         ]
+    elif profile == "operator_compact":
+        protected = [
+            (f"{marker} Title", _title_text(event), 100),
+            ("Status", _status_text(event), 90),
+            ("Event time", _event_time_text(event), 50),
+            ("Completed", sections.get("completed"), 200),
+            ("Current", sections.get("current"), 140),
+            ("Plan", sections.get("plan"), 140),
+        ]
+        trailer = [("Progress", _progress_text(event), 70)]
+        runtime_errors = format_issues(event, "errors")
+        review_failures = format_issues(event, "failures")
+        if runtime_errors is not None:
+            trailer.append(("Runtime errors", runtime_errors, 60))
+        if review_failures is not None:
+            trailer.append(("Review failures", review_failures, 60))
     else:
         protected = [
             (f"{marker} Title", _title_text(event), 100),
             ("Status", _status_text(event), 90),
+            ("Event time", _event_time_text(event), 50),
             ("Completed", sections.get("completed"), 200),
             ("Results", sections.get("results"), 160),
             ("Decision", sections.get("decision"), 80),
@@ -1602,14 +1753,19 @@ def render_compact(
         (0.4, 0.1),
         (0.3, 0.05),
     ):
-        parts = [
-            f"{name}: {clip(raw, max(8, int(limit * prot_scale)))}"
-            for name, raw, limit in protected
-        ]
-        parts.extend(
-            f"{name}: {clip(raw, max(8, int(limit * trail_scale)))}"
-            for name, raw, limit in trailer
-        )
+        parts: list[str] = []
+        for name, raw, limit in protected:
+            if _is_non_informative_field(raw):
+                continue
+            clipped = clip(raw, max(8, int(limit * prot_scale)))
+            if clipped:
+                parts.append(f"{name}: {clipped}")
+        for name, raw, limit in trailer:
+            if _is_non_informative_field(raw):
+                continue
+            clipped = clip(raw, max(8, int(limit * trail_scale)))
+            if clipped:
+                parts.append(f"{name}: {clipped}")
         value = " | ".join(parts)
         value = " ".join(value.split())
         if len(value) <= max_chars:

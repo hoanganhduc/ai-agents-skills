@@ -4482,6 +4482,84 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             self.assertEqual(cancelled["recovery_status"], "cancelled")
             self.assertIsNone(gf.load_iteration_dispatch(loop))
 
+    def test_orphaned_dispatch_auto_reclaim_when_owner_pid_dead(self) -> None:
+        """Dead owner + no staged candidate must reclaim without operator cancel.
+
+        Service restart / SIGKILL used to leave iteration_dispatch forever and
+        wedged drive on goal_focus_wait. Automatic reclaim is gated on both
+        owner death and absence of a staged candidate.
+        """
+        arl, gf = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=2)
+            init_args.goal_focus_mode = "enforce"
+            arl.init_loop(init_args)
+            self._activate_single_direction(arl, gf, loop)
+            dead_pid = 999_999_999
+            self.assertFalse(arl.pid_alive(dead_pid))
+            dispatch = gf.prepare_iteration_dispatch(
+                loop,
+                executor_provider="claude",
+                executor_family="anthropic",
+                executor_attestation=_provider_attestation("claude", loop),
+                started_at="2026-07-29T12:00:00Z",
+                driver_pid=os.getpid(),
+            )["dispatch"]
+
+            blocked = arl.try_cancel_orphaned_host_dispatch(
+                loop, reason="fixture_live_owner"
+            )
+            self.assertEqual(blocked["status"], "owner_alive")
+            self.assertFalse(blocked["applied"])
+            self.assertIsNotNone(gf.load_iteration_dispatch(loop))
+
+            # Simulate the owning drive dying without cancel (service SIGKILL).
+            orphaned = dict(dispatch)
+            orphaned["driver_pid"] = dead_pid
+            (loop / "iteration_dispatch.json").write_text(
+                json.dumps(orphaned, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            reclaimed = arl.try_cancel_orphaned_host_dispatch(
+                loop, reason="owner_driver_pid_absent"
+            )
+            self.assertTrue(reclaimed["applied"])
+            self.assertEqual(reclaimed["status"], "cancelled")
+            self.assertEqual(reclaimed["dispatch_id"], dispatch["dispatch_id"])
+            self.assertIsNone(gf.load_iteration_dispatch(loop))
+
+    def test_own_unconsumed_dispatch_cancelled_on_drive_shutdown_helper(self) -> None:
+        arl, gf = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=2)
+            init_args.goal_focus_mode = "enforce"
+            arl.init_loop(init_args)
+            self._activate_single_direction(arl, gf, loop)
+            dispatch = gf.prepare_iteration_dispatch(
+                loop,
+                executor_provider="claude",
+                executor_family="anthropic",
+                executor_attestation=_provider_attestation("claude", loop),
+                started_at="2026-07-29T12:00:00Z",
+                driver_pid=os.getpid(),
+            )["dispatch"]
+            foreign = arl.try_cancel_own_unconsumed_dispatch(
+                loop, owner_pid=os.getpid() + 10_000, reason="not me"
+            )
+            self.assertEqual(foreign["status"], "not_owner")
+            self.assertFalse(foreign["applied"])
+            self.assertIsNotNone(gf.load_iteration_dispatch(loop))
+            mine = arl.try_cancel_own_unconsumed_dispatch(
+                loop,
+                owner_pid=os.getpid(),
+                reason="drive_shutdown_unconsumed_dispatch",
+            )
+            self.assertTrue(mine["applied"])
+            self.assertEqual(mine["dispatch_id"], dispatch["dispatch_id"])
+            self.assertIsNone(gf.load_iteration_dispatch(loop))
+
     def test_enforce_compute_allowlist_rejects_unreported_and_unlisted_services(self) -> None:
         arl, gf = self._runtime_modules()
         with tempfile.TemporaryDirectory() as tmp:
@@ -6562,6 +6640,61 @@ class NotifyPolicyTests(unittest.TestCase):
             self.assertIsNone(
                 mod.resolve_notify_channel(explicit=None, run_dir=None, default_auto=True)
             )
+
+    def test_remote_notify_allowlist_excludes_wait_ticks(self) -> None:
+        """Wait ticks stay local (progress.jsonl) but must not fan out remotely."""
+        mod = self._mod()
+        remote = mod._DEFAULT_REMOTE_NOTIFY_EVENTS
+        for wait_event in (
+            "strategy_review_wait",
+            "goal_focus_wait",
+            "result_review_wait",
+        ):
+            self.assertNotIn(wait_event, remote)
+        for keep in (
+            "drive_start",
+            "iteration_ok",
+            "iteration_failed",
+            "goal_focus_replan",
+            "result_review_error",
+            "supervisor",
+        ):
+            self.assertIn(keep, remote)
+
+    def test_wait_events_do_not_call_remote_transport(self) -> None:
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            mod.init_loop(mod.selftest_init_args(loop, max_iterations=3))
+            with mock.patch.dict(
+                os.environ,
+                {"AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS": "allow"},
+                clear=False,
+            ), mock.patch.object(mod, "resolve_remote_notify_argv") as resolve, mock.patch.object(
+                mod.subprocess, "run"
+            ) as transport:
+                for event in (
+                    "strategy_review_wait",
+                    "goal_focus_wait",
+                    "result_review_wait",
+                ):
+                    mod.emit_loop_progress(
+                        loop,
+                        event,
+                        notify_channel="zulip",
+                        to_stderr=False,
+                        extra={
+                            "iteration_status": "waiting",
+                            "review_status": "pending",
+                            "completed_summary": "No direction committed.",
+                            "current_summary": "waiting",
+                            "next_action": "retry strategy review",
+                        },
+                    )
+            resolve.assert_not_called()
+            transport.assert_not_called()
+            progress = (loop / "driver_logs" / "progress.jsonl").read_text(encoding="utf-8")
+            self.assertIn("strategy_review_wait", progress)
 
     def test_notify_off_has_zero_remote_transport_side_effects(self) -> None:
         mod = self._mod()

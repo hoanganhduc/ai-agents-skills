@@ -80,18 +80,18 @@ class NotifyV2Tests(unittest.TestCase):
         return self.notify.build_event(**values)
 
     def test_all_renderers_contain_required_fields(self) -> None:
-        event = self.event()
+        event = self.event(started_at="2026-07-29T11:58:00Z")
         rendered = self.notify.render_all(event)
         for name, body in rendered.items():
             with self.subTest(renderer=name):
                 for label in (
                     "Status",
+                    "Event time",
                     "Progress",
                     "Finished",
                     "Executor",
                     "Driver agent",
                     "Panel agents",
-                    "Other agents",
                     "Compute",
                     "Goal",
                     "Completed",
@@ -99,20 +99,29 @@ class NotifyV2Tests(unittest.TestCase):
                     "Plan",
                 ):
                     self.assertIn(label, body)
+                # Empty other_agents is omitted (non-informative "None").
+                self.assertNotIn("Other agents", body)
                 self.assertIn("Sample reconfiguration question", body)
                 self.assertIn("Claude", body)
                 self.assertIn("claude-fable-5", body)
                 self.assertIn("Codex", body)
                 self.assertIn("CodeWhale", body)
                 self.assertIn("Kaggle", body)
+                self.assertIn("2026-07-29T12:00:00Z", body)
         self.assertEqual(self.notify.validate_event(event), [])
 
     def test_research_sections_lead_and_agent_metadata_trails(self) -> None:
-        event = self.event()
+        event = self.event(
+            started_at="2026-07-29T11:58:00Z",
+            decision="continue",
+            results="Claim banked.",
+            decision_reason="Review passed.",
+        )
         rendered = self.notify.render_markdown(event)
-        # operator_full: Status is promoted for triage, then research sections,
+        # operator_full: Status + Event time early, then research sections,
         # then agent/compute trailer.
         self.assertLess(rendered.index("**Status**"), rendered.index("**Goal**"))
+        self.assertLess(rendered.index("**Event time**"), rendered.index("**Goal**"))
         self.assertLess(rendered.index("**Results**"), rendered.index("**Decision**"))
         self.assertLess(rendered.index("**Plan**"), rendered.index("**Compute**"))
         self.assertLess(rendered.index("**Started**"), rendered.index("**Finished**"))
@@ -167,13 +176,21 @@ class NotifyV2Tests(unittest.TestCase):
 
         self.assertNotIn("@", rendered)
         self.assertIn("＠", rendered)
+        # Host labels remain real markdown bold; freeform spoof is neutralized
+        # without CommonMark backslash escapes (Zulip shows those literally).
         self.assertEqual(rendered.count("**Status**"), 1)
         self.assertEqual(rendered.count("**Completed**"), 1)
         self.assertEqual(rendered.count("**Plan**"), 1)
-        self.assertIn(r"\*\*Status\*\*: forged", rendered)
-        self.assertIn(r"\*\*Plan\*\*", rendered)
-        self.assertIn(r"\[spoof\](https://example.invalid)", rendered)
+        self.assertNotIn(r"\*", rendered)
+        self.assertNotIn(r"\`", rendered)
+        self.assertNotIn(r"\_", rendered)
+        self.assertIn("∗∗Status∗∗: forged", rendered)
+        self.assertIn("∗∗Plan∗∗", rendered)
+        self.assertIn("［spoof］(https://example.invalid)", rendered)
         self.assertNotIn("\n# forged", rendered)
+        # Backticks in freeform become straight quotes, not \` .
+        self.assertIn("'forged code'", rendered)
+        self.assertNotIn("`forged code`", rendered)
 
     def test_all_renderers_redact_configured_and_common_secrets(self) -> None:
         configured = "notify-secret-sentinel-92731"
@@ -269,8 +286,11 @@ class NotifyV2Tests(unittest.TestCase):
         )
         plain = self.notify.render_plain(event)
         self.assertIn("Iteration WAITING", plain)
-        self.assertIn("Finished: Not finished", plain)
-        self.assertIn("Compute: None", plain)
+        # In-flight finish/empty-compute sentinels are omitted from the body.
+        self.assertNotIn("Not finished", plain)
+        self.assertNotIn("Finished:", plain)
+        self.assertNotIn("Compute: None", plain)
+        self.assertIn("Event time:", plain)
         self.assertEqual(event["iteration"]["finished_at"], "")
 
     def test_all_compute_services_are_structured(self) -> None:
@@ -717,9 +737,10 @@ class NotifyV2Tests(unittest.TestCase):
         self.assertIn("decision_reason", upgraded["sections"])
         self.assertFalse(upgraded["issues"]["reported"])
         md = self.notify.render_markdown(upgraded)
-        self.assertIn("Not recorded in this legacy event", md)
-        # Unreported issues must not claim "None" as host-asserted empty.
-        self.assertIn("Not recorded (legacy/unreported)", md)
+        # Legacy freeform may still carry honesty text; unreported issues/agents
+        # are omitted rather than printed as "Not recorded (legacy/unreported)".
+        self.assertNotIn("Not recorded (legacy/unreported)", md)
+        self.assertIn("Event time", md)
 
     def test_operator_full_renders_decision_results_started(self) -> None:
         event = self.event(
@@ -784,11 +805,53 @@ class NotifyV2Tests(unittest.TestCase):
         rendered = self.notify.render_all(event, secret_values=[secret])
         blob = json.dumps(rendered)
         self.assertNotIn(secret, blob)
-        # Markdown may escape underscores in the code token.
-        self.assertTrue(
-            "sensitive_output" in rendered["plain"]
-            or "sensitive\\_output" in rendered["markdown"]
+        # Underscores are not Zulip-escaped (Zulip does not use _ for italics).
+        self.assertIn("sensitive_output", rendered["plain"])
+        self.assertIn("sensitive_output", rendered["markdown"])
+        self.assertNotIn("sensitive\\_output", rendered["markdown"])
+
+    def test_zulip_markdown_does_not_backslash_escape_underscores(self) -> None:
+        event = self.event(
+            goal="Prove isRigidOn_univ_iff (Lemma 1(b)).",
+            current="Campaign `tier-B` active",
+            iteration_status="not_applicable",
+            review_status="not_required",
         )
+        md = self.notify.render_markdown(event)
+        self.assertIn("isRigidOn_univ_iff", md)
+        self.assertNotIn("isRigidOn\\_univ\\_iff", md)
+        self.assertIn("NOT_APPLICABLE", md)
+        self.assertNotIn("NOT\\_APPLICABLE", md)
+        self.assertIn("Campaign 'tier-B' active", md)
+        self.assertNotIn("\\`", md)
+        self.assertNotIn("`tier-B`", md)
+
+    def test_operator_compact_omits_trailer_noise(self) -> None:
+        event = self.event(body_profile="operator_compact", compute=None, other_agents=None)
+        md = self.notify.render_markdown(event)
+        self.assertIn("**Status**", md)
+        self.assertIn("**Event time**", md)
+        self.assertIn("**Completed**", md)
+        self.assertNotIn("**Goal**", md)
+        self.assertNotIn("**Compute**", md)
+        self.assertNotIn("**Driver agent**", md)
+
+    def test_omit_empty_started_and_pending_decision_on_waiting(self) -> None:
+        event = self.event(
+            event="strategy_review_wait",
+            iteration_status="waiting",
+            review_status="pending",
+            decision=None,
+            decision_reason=None,
+            results=None,
+            compute=[],
+        )
+        md = self.notify.render_markdown(event)
+        self.assertIn("**Event time**", md)
+        self.assertNotIn("**Started**", md)
+        self.assertNotIn("**Finished**", md)
+        self.assertNotIn("Pending (not finalized)", md)
+        self.assertNotIn("No claims banked", md)
 
 
 if __name__ == "__main__":

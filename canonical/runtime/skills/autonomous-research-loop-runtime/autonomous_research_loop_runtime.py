@@ -3459,6 +3459,128 @@ def pid_alive(pid: object) -> bool:
     return True
 
 
+def try_cancel_orphaned_host_dispatch(
+    run_dir: str | Path,
+    *,
+    reason: str = "owner_driver_pid_absent",
+) -> dict[str, Any]:
+    """Cancel an unconsumed host dispatch whose owner drive process is gone.
+
+    Safe automatic recovery after service restart / SIGKILL: never cancels when a
+    candidate is already staged (that path stays on independent result review),
+    and never cancels while the recorded ``driver_pid`` is still alive.
+    """
+
+    root = Path(run_dir)
+    try:
+        goal_focus_v2.recover_transactions(root)
+    except Exception:  # noqa: BLE001 - best-effort before load
+        pass
+    dispatch = goal_focus_v2.load_iteration_dispatch(root)
+    if not dispatch:
+        return {"status": "absent", "applied": False}
+    if goal_focus_v2.load_pending_candidate(root):
+        return {
+            "status": "pending_candidate",
+            "applied": False,
+            "dispatch_id": str(dispatch.get("dispatch_id") or ""),
+        }
+    dispatch_id = str(dispatch.get("dispatch_id") or "").strip()
+    owner = dispatch.get("driver_pid")
+    if not dispatch_id:
+        return {"status": "invalid_dispatch", "applied": False}
+    if pid_alive(owner):
+        return {
+            "status": "owner_alive",
+            "applied": False,
+            "dispatch_id": dispatch_id,
+            "driver_pid": owner,
+        }
+    try:
+        result = goal_focus_v2.cancel_iteration_dispatch(
+            root,
+            dispatch_id=dispatch_id,
+            reason=reason,
+        )
+    except Exception as exc:  # noqa: BLE001 - caller decides fail-open vs wait
+        return {
+            "status": "failed",
+            "applied": False,
+            "dispatch_id": dispatch_id,
+            "driver_pid": owner,
+            "error": str(exc),
+        }
+    return {
+        "status": str(result.get("status") or "cancelled"),
+        "applied": result.get("status") == "cancelled",
+        "dispatch_id": dispatch_id,
+        "driver_pid": owner,
+        "result": result,
+    }
+
+
+def try_cancel_own_unconsumed_dispatch(
+    run_dir: str | Path,
+    *,
+    owner_pid: int,
+    reason: str = "drive_shutdown_unconsumed_dispatch",
+) -> dict[str, Any]:
+    """Cancel a dispatch owned by this drive process when no candidate was staged.
+
+    Used from the drive ``finally`` path so a clean SIGTERM/systemd stop does not
+    leave the next drive wedged on ``goal_focus_wait`` forever.
+    """
+
+    root = Path(run_dir)
+    if not isinstance(owner_pid, int) or owner_pid <= 0:
+        return {"status": "bad_owner_pid", "applied": False}
+    try:
+        goal_focus_v2.recover_transactions(root)
+    except Exception:  # noqa: BLE001 - best-effort before load
+        pass
+    dispatch = goal_focus_v2.load_iteration_dispatch(root)
+    if not dispatch:
+        return {"status": "absent", "applied": False}
+    if goal_focus_v2.load_pending_candidate(root):
+        return {
+            "status": "pending_candidate",
+            "applied": False,
+            "dispatch_id": str(dispatch.get("dispatch_id") or ""),
+        }
+    dispatch_id = str(dispatch.get("dispatch_id") or "").strip()
+    recorded = dispatch.get("driver_pid")
+    if not dispatch_id:
+        return {"status": "invalid_dispatch", "applied": False}
+    if int(recorded or 0) != int(owner_pid):
+        return {
+            "status": "not_owner",
+            "applied": False,
+            "dispatch_id": dispatch_id,
+            "driver_pid": recorded,
+        }
+    try:
+        result = goal_focus_v2.cancel_iteration_dispatch(
+            root,
+            dispatch_id=dispatch_id,
+            reason=reason,
+        )
+    except Exception as exc:  # noqa: BLE001 - shutdown is best-effort
+        return {
+            "status": "failed",
+            "applied": False,
+            "dispatch_id": dispatch_id,
+            "driver_pid": recorded,
+            "error": str(exc),
+        }
+    return {
+        "status": str(result.get("status") or "cancelled"),
+        "applied": result.get("status") == "cancelled",
+        "dispatch_id": dispatch_id,
+        "driver_pid": recorded,
+        "result": result,
+    }
+
+
 def parse_iso(value: object) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -7371,6 +7493,9 @@ def write_live_status(run_dir: Path, payload: dict[str, Any], log_dir: Path | No
 # - iteration (watch ledger tick): drive already owns remote completion via
 #   iteration_ok / iteration_failed. When drive + watch run together, notifying
 #   both produced duplicate Zulip posts for the same iteration.
+# Wait ticks (strategy_review_wait / goal_focus_wait / result_review_wait) stay
+# in progress.jsonl / LIVE_STATUS but are not remote-notified: replan loops re-emit
+# them every ≥30s and produced Zulip spam. Remote is for outcomes and hard stops.
 _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
     {
         "drive_start",
@@ -7385,9 +7510,6 @@ _DEFAULT_REMOTE_NOTIFY_EVENTS = frozenset(
         "driver_dead",
         "goal_priority_hard_replan",
         "goal_focus_replan",
-        "goal_focus_wait",
-        "strategy_review_wait",
-        "result_review_wait",
         "result_review_error",
         "supervisor",
     }
@@ -9095,6 +9217,34 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 if gate_action == "dispatch_inflight":
                     inflight = goal_focus_v2.load_iteration_dispatch(run_dir) or {}
                     inflight_id = str(inflight.get("dispatch_id") or "")
+                    reclaim = try_cancel_orphaned_host_dispatch(
+                        run_dir,
+                        reason="owner_driver_pid_absent",
+                    )
+                    if reclaim.get("applied"):
+                        _progress(
+                            "goal_focus_recover",
+                            source="drive",
+                            event_id=(
+                                f"goal-focus-dispatch-orphan-cancel-"
+                                f"{reclaim.get('dispatch_id') or inflight_id}"
+                            ),
+                            iteration_status="waiting",
+                            review_status="pending",
+                            completed_summary=(
+                                "Cancelled an orphaned host dispatch whose owner driver "
+                                "process is gone and left no staged candidate."
+                            ),
+                            current_summary=(
+                                f"Dispatch {reclaim.get('dispatch_id') or inflight_id} "
+                                f"was reclaimed (driver_pid "
+                                f"{reclaim.get('driver_pid')!r} not alive)."
+                            ),
+                            next_action=(
+                                "Prepare a fresh host-pinned dispatch for the active plan."
+                            ),
+                        )
+                        continue
                     _progress(
                         "goal_focus_wait",
                         source="drive",
@@ -10646,6 +10796,36 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             error=str(exc)[:200],
                         )
     finally:
+        # If this drive prepared a host dispatch and exits before a candidate is
+        # staged (systemd stop, SIGTERM, crash after prepare), clear it so the
+        # next drive is not wedged on goal_focus_wait forever.
+        try:
+            shutdown_reclaim = try_cancel_own_unconsumed_dispatch(
+                run_dir,
+                owner_pid=os.getpid(),
+                reason="drive_shutdown_unconsumed_dispatch",
+            )
+            if shutdown_reclaim.get("applied"):
+                _progress(
+                    "goal_focus_recover",
+                    source="drive",
+                    event_id=(
+                        "goal-focus-dispatch-shutdown-cancel-"
+                        f"{shutdown_reclaim.get('dispatch_id') or 'unknown'}"
+                    ),
+                    iteration_status="waiting",
+                    review_status="pending",
+                    completed_summary=(
+                        "Cancelled this drive's unconsumed host dispatch during shutdown."
+                    ),
+                    current_summary=(
+                        f"Dispatch {shutdown_reclaim.get('dispatch_id')} released on "
+                        "drive exit (no staged candidate)."
+                    ),
+                    next_action="Next drive may prepare a fresh host-pinned dispatch.",
+                )
+        except Exception:  # noqa: BLE001 - shutdown reclaim is best-effort.
+            pass
         disarm_ns = argparse.Namespace(
             dir=str(run_dir), run_id=None, registry_dir=getattr(args, "registry_dir", None)
         )
