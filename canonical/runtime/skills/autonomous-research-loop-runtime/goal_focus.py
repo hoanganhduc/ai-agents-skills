@@ -4313,21 +4313,24 @@ def validate_compute_execution(
             from .compute_policy import normalize_compute_job_ref  # type: ignore
         job_ref = row.get("job_ref")
         if job_ref not in (None, ""):
+            # Only string job_refs are accepted. Unsafe command-like strings are
+            # slugified in place; non-strings remain a hard type error.
+            if not isinstance(job_ref, str):
+                raise ValueError(f"{label} job_ref must be a safe string identifier")
             safe_ref, residual = normalize_compute_job_ref(job_ref)
             if safe_ref is None:
                 raise ValueError(f"{label} job_ref must be a safe string identifier")
             # In-place normalize so staged candidates keep a host-safe job_ref.
-            if isinstance(row, dict):
-                row["job_ref"] = safe_ref
-                if residual:
-                    existing_detail = row.get("detail")
-                    if existing_detail in (None, ""):
-                        row["detail"] = residual[:500]
-                    elif (
-                        isinstance(existing_detail, str)
-                        and residual not in existing_detail
-                    ):
-                        row["detail"] = f"{existing_detail}; cmd={residual}"[:500]
+            row["job_ref"] = safe_ref
+            if residual:
+                existing_detail = row.get("detail")
+                if existing_detail in (None, ""):
+                    row["detail"] = residual[:500]
+                elif (
+                    isinstance(existing_detail, str)
+                    and residual not in existing_detail
+                ):
+                    row["detail"] = f"{existing_detail}; cmd={residual}"[:500]
         detail = row.get("detail")
         if detail not in (None, "") and (
             not isinstance(detail, str) or len(detail) > 500
