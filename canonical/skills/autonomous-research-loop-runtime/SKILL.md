@@ -125,12 +125,14 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   start --loop research/run --root "$PWD" --provider claude
 ```
 
-Windows:
+Windows (`.bat` or `.ps1`):
+
+```bat
+%AAS_RUNTIME_ROOT%\run_skill.bat skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1 bootstrap --loop research\run --root %CD% --profile formal --goal "..."
+```
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
-  skills\autonomous-research-loop-runtime\force-loop\run_force_loop.ps1 `
-  bootstrap --loop research\run --root $PWD --profile formal --goal "..."
+& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1 bootstrap --loop research\run --root $PWD --profile formal --goal "..."
 ```
 
 Pack docs: `force-loop/README.md`, `OPERATOR_RUNBOOK.md`. Discovery template:
