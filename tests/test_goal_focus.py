@@ -1574,6 +1574,97 @@ class GoalFocusSelectionTests(_AttestedGoalFocusTestCase):
                 ["kaggle", "modal"],
             )
 
+    def test_operator_file_pin_admits_local_despite_old_plan_forbid(self) -> None:
+        """compute_policy.json + standing win over sticky old-plan local forbid."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_legacy_loop(root)
+            state = json.loads((root / "loop_state.json").read_text(encoding="utf-8"))
+            state["standing_orders"] = {
+                "compute": {
+                    "backends": ["local", "kaggle", "modal"],
+                    "forbidden_services": ["hetzner", "github-actions"],
+                }
+            }
+            _write_json(root / "loop_state.json", state)
+            _write_json(
+                root / "compute_policy.json",
+                {
+                    "policy": {
+                        "backends": ["local", "kaggle", "modal"],
+                        "forbidden_services": ["hetzner", "github-actions"],
+                    }
+                },
+            )
+            gf.initialize_goal_focus(
+                root,
+                goal="Prove the main theorem",
+                success_criteria="Produce a verified terminal theorem.",
+            )
+            plan = gf.load_current_plan(root)
+            # Simulate a sticky prior plan that forbade local and only pinned remote.
+            plan["compute_policy"] = {
+                "allowed_services": ["kaggle", "modal"],
+                "forbidden_services": ["github-actions", "hetzner", "local"],
+                "user_allowed_services": ["kaggle", "modal"],
+                "allowlist_source": "operator_structured_policy",
+            }
+            _write_json(root / gf.CURRENT_PLAN_FILE, plan)
+
+            pinned, forbidden, _ = gf._pinned_compute_policy(root, plan)
+            self.assertIn("local", pinned)
+            self.assertNotIn("local", forbidden)
+
+            resolved = gf._resolve_reviewed_compute_policy(
+                root,
+                plan,
+                {
+                    "allowed_services": ["kaggle", "modal"],
+                    "user_allowed_services": ["kaggle", "modal"],
+                    "forbidden_services": ["github-actions", "hetzner", "local"],
+                },
+            )
+            self.assertIn("local", resolved["allowed_services"])
+            self.assertIn("local", resolved["user_allowed_services"])
+            self.assertNotIn("local", resolved["forbidden_services"])
+
+    def test_explicit_candidate_narrow_compute_policy_is_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _seed_legacy_loop(root)
+            state = json.loads((root / "loop_state.json").read_text(encoding="utf-8"))
+            state["standing_orders"] = {
+                "compute": {
+                    "backends": ["local", "kaggle", "modal"],
+                    "forbidden_services": ["hetzner"],
+                }
+            }
+            _write_json(root / "loop_state.json", state)
+            _write_json(
+                root / "compute_policy.json",
+                {
+                    "policy": {
+                        "backends": ["local", "kaggle", "modal"],
+                        "forbidden_services": ["hetzner"],
+                    }
+                },
+            )
+            gf.initialize_goal_focus(
+                root,
+                goal="Prove the main theorem",
+                success_criteria="Produce a verified terminal theorem.",
+            )
+            old_plan = gf.load_current_plan(root)
+            resolved = gf._resolve_reviewed_compute_policy(
+                root,
+                old_plan,
+                {"allowed_services": ["modal"]},
+            )
+            self.assertEqual(resolved["allowed_services"], ["modal"])
+            self.assertEqual(
+                resolved["user_allowed_services"], ["kaggle", "local", "modal"]
+            )
+
     def test_strategy_commit_rejects_same_revision_authority_mutation(self) -> None:
         for mutation in (
             "goal",
