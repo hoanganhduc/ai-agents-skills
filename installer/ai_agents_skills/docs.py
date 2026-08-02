@@ -248,7 +248,21 @@ are the top-level manual copies of those pages.
 
 ## Acknowledgements
 
-This repository was implemented and maintained with help from ChatGPT Codex.
+This repository was implemented and maintained with help from coding agents,
+including:
+
+- OpenAI Codex (ChatGPT Codex)
+- Anthropic Claude (Claude Code)
+- xAI Grok
+- DeepSeek (CodeWhale)
+- GitHub Copilot
+- OpenCode
+- Antigravity CLI
+- Kimi Code
+
+Human direction, review, and release decisions remain with the maintainer.
+Install targets may also include restricted OpenClaw-shaped environments; those
+are not claimed as primary coding agents for this repository's authorship.
 
 ## License
 
@@ -2300,8 +2314,8 @@ The shared skills involved are:
 |---|---|
 | `agent-group-discuss` | Template-based multi-agent discussion, review, and research. |
 | `prose` | More explicit OpenProse-style decomposition, parallel work, and synthesis. |
-| `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes; optional soft `goal_priority.v1` path discipline. |
-| `autonomous-research-loop-runtime` | Headless `drive`, host-owned `panel` phases (adaptive per-provider timeouts), and optional goal_priority soft ledger fields. |
+| `autonomous-research-loop` | Bounded research loop policy; multi-agent **panel advises**, single path executes; Goal Focus **enforce** for new loops; scripted force-loop defaults (hard goal_priority + notify). Soft `goal_priority.v1` remains a legacy compatibility path. |
+| `autonomous-research-loop-runtime` | Headless `drive`, host-owned `panel` phases (adaptive timeouts), Goal Focus machinery, and the default **force-loop** kit (`force-loop/` bootstrap/start/drain on all OS). |
 | `sagemath` | Optional graph theory, algebra, enumeration, and invariant checks. |
 | `graph-verifier` | Lightweight graph sanity checks. |
 | `cross-agent-delegation` | Closed packet contracts for parent-controlled handoffs; it does not execute or broker agents. |
@@ -2318,7 +2332,38 @@ CLIs under its sandbox”:
    research step and must not nest panel CLIs for multi-agent purposes.
 3. **Host parent** runs **result review** on new artifacts.
 4. **Host evidence gates** bank claims; panel consensus is not evidence.
-5. **Notify** (optional remote-bridge) is progress messaging only.
+5. **Notify** (remote-bridge when configured) is progress messaging only;
+   force-loop apply defaults leave notify **auto/on**.
+
+### Default scripted force-loop (all OS)
+
+Use the installed **force-loop** kit first. It applies Goal Focus **enforce**,
+goal_priority **hard**, and **notify auto**, and works on Linux, macOS, Windows,
+and WSL without requiring systemd. Discovery template: `arl-scripted-force-loop`.
+
+```bash
+# Bootstrap pins + smoke (init if needed)
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
+  skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \\
+  bootstrap --loop research/run --root "$PWD" --profile formal --goal "…"
+
+# Foreground start (default supervision mode)
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
+  skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \\
+  start --loop research/run --root "$PWD" --provider codex
+
+# Status / stuck dispatch or quarantine
+… force-loop/run_force_loop.sh status --loop research/run
+… force-loop/run_force_loop.sh drain --loop research/run --cancel-dispatch-id <exact-id>
+```
+
+Windows: `run_skill.bat` / `run_skill.ps1` with
+`skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1`.
+
+### Advanced: raw drive / supervisor
+
+Raw `drive` and POSIX `LAUNCH_supervisor.sh` remain supported for custom
+compositions. Prefer force-loop for new campaigns.
 
 ```bash
 # Enable host panel around each drive iteration
@@ -2335,9 +2380,13 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
 
 Panel provider budgets default to **adaptive** timeouts (prompt size, provider
 multipliers, recent elapsed history, hard max). Set `"timeout_mode": "fixed"` for
-legacy flat caps. Optional soft **goal priority** (`goal_priority.json` with
-explicit `"enabled": true`) injects goal-EV / campaign / streak warnings without
-adding stop conditions; see template `goal-priority`.
+legacy flat caps.
+
+**Discipline defaults (force-loop apply):** Goal Focus `enforcement_mode=enforce`,
+`goal_priority.enabled=true` with `discipline_mode=hard`, and notify auto/on.
+Legacy soft **goal priority** (`goal_priority.json` with explicit enable) still
+injects goal-EV / campaign / streak warnings without v2 enforce gates; see
+templates `goal-focus` and `goal-priority`.
 
 Optional loop config (`panel.json` or `loop_state.standing_orders.panel`):
 
@@ -2350,9 +2399,9 @@ Optional loop config (`panel.json` or `loop_state.standing_orders.panel`):
 ```
 
 Use **`agent-group-discuss`** for heavy strategy pauses and template panels.
-Use **ARL `drive --panel`** for routine per-iteration advice and review while the
-loop runs unattended. Keep cross-provider depth shallow: one parent layer, not
-recursive multi-vendor trees.
+Use **force-loop start** (or raw ARL `drive --panel`) for routine per-iteration
+advice and review while the loop runs unattended. Keep cross-provider depth
+shallow: one parent layer, not recursive multi-vendor trees.
 
 Codex has a native `spawn_agent` orchestration model. Claude and DeepSeek get
 the same templates and adapter instructions, but their actual process control

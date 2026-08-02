@@ -1,11 +1,12 @@
 # AI Agents Skills Documentation
 
 Shared, sanitized skill bodies, settings metadata, and installers for Codex,
-Claude, DeepSeek, and explicit Copilot adapters. The docs describe a research
-workstation where multiple agent frontends share one canonical skill
-repository, while local software such as Python, TeX, optional SageMath,
-library tools, document parsers, and public database clients are detected as
-external capabilities instead of being hardcoded.
+Claude, DeepSeek, GitHub Copilot, OpenCode, Antigravity CLI, Grok, Kimi Code,
+and restricted OpenClaw targets. The docs describe a research workstation where
+multiple agent frontends share one canonical skill repository, while local
+software such as Python, TeX, optional SageMath, library tools, document
+parsers, and public database clients are detected as external capabilities
+instead of being hardcoded.
 
 Latest update: {sub-ref}`today`
 

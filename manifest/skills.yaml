@@ -2,7 +2,7 @@
   "schema_version": 1,
   "skills": {
     "autonomous-research-loop": {
-      "description": "Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs; prefers host-owned multi-agent panel with single-path drive primary.",
+      "description": "Run bounded autonomous research iterations with evidence gates, recovery ledgers, and optional cross-agent handoffs; prefers host-owned multi-agent panel with single-path drive primary; scripted force-loop defaults (Goal Focus enforce, hard goal_priority, notify ON).",
       "profiles": [
         "research-core",
         "serious-research",
@@ -42,7 +42,7 @@
       ]
     },
     "autonomous-research-loop-runtime": {
-      "description": "Offline runtime helper for loop ledgers plus headless drive and panel (host-owned multi-agent phases via --panel on, auto, or off).",
+      "description": "Offline runtime helper for loop ledgers plus headless drive, host-owned panel phases (--panel on, auto, or off), and the default cross-platform force-loop kit (bootstrap/start/drain with enforce/hard/notify defaults).",
       "profiles": [
         "research-core",
         "serious-research",
