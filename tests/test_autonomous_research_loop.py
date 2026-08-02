@@ -6225,11 +6225,11 @@ class DriveProviderGrokTests(unittest.TestCase):
         self.assertIn("grok", arl.TRUSTED_LOCAL_ENFORCE_PRIMARY_PROVIDERS)
 
     @unittest.skipUnless(
-        _primary_containment_available(),
-        "driving real iterations requires a working bubblewrap",
+        sys.platform.startswith("linux") and _primary_containment_available(),
+        "drive --provider grok spawn check requires Linux bubblewrap containment",
     )
     def test_drive_provider_grok_uses_private_prompt_file_stdin_transport(self) -> None:
-        """End-to-end: drive --provider grok spawns with --prompt-file /dev/stdin."""
+        """End-to-end (Linux): drive --provider grok spawns with --prompt-file /dev/stdin."""
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
