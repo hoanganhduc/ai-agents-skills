@@ -6515,9 +6515,21 @@ raise SystemExit(2)
                 json.loads(line)
                 for line in (loop / "stub-notify.jsonl").read_text(encoding="utf-8").splitlines()
             ]
-            self.assertGreaterEqual(len(notify_rows), 3)
+            # Two structured notifies minimum: quota rotate on claude + terminal
+            # stop under codex. Supervisor no longer emits a start-class remote
+            # notify before drive (drive owns drive_start; avoids double posts).
+            self.assertGreaterEqual(len(notify_rows), 2)
             self.assertTrue(all(row[0] == "notify-event" for row in notify_rows))
             self.assertTrue(all("--completed" in row for row in notify_rows))
+            completed_bits = " ".join(
+                " ".join(row[row.index("--completed") + 1 :]) for row in notify_rows
+            )
+            self.assertRegex(completed_bits, r"quota|credit|exhausted", completed_bits)
+            self.assertRegex(
+                completed_bits,
+                r"stop condition|exiting|done",
+                completed_bits,
+            )
             self.assertNotIn("Supervisor behavioral test", result.stderr)
             self.assertIn("structured notification emitted", result.stderr)
             self.assertEqual(list((loop / "driver").glob(".*.tmp")), [])

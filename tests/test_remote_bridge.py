@@ -1423,7 +1423,10 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
         self.assertNotIn("not-a-real-key", result.stdout)
         self.assertNotIn("1:not-a-real-token", result.stdout)
         payload = json.loads(result.stdout)["results"]["zulip"]["payload"]
-        self.assertIn(r"\[REDACTED\]", payload["content"])
+        # Zulip CommonMark: do not backslash-escape brackets around REDACTED
+        # (literal \[ looks wrong in the client). Plain [REDACTED] is correct.
+        self.assertIn("[REDACTED]", payload["content"])
+        self.assertNotIn(r"\[REDACTED\]", payload["content"])
         self.assertIn("Claude", payload["content"])
         self.assertIn("Hetzner", payload["content"])
 
