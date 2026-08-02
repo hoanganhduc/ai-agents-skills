@@ -1,44 +1,60 @@
-# ARL Notify v2.1 — operator_full body (pack-owned)
+# ARL Notify v2.1 — operator body (pack-owned)
 
 **Schema:** `aas.autoloop.notify.v2` / `2.1`  
 **Module:** `canonical/runtime/skills/autonomous-research-loop-runtime/notify_v2.py`  
-**Profiles:** `operator_full` (default) · `legacy` (opt-out)
+**Profiles:** `operator_full` (default) · `operator_compact` · `legacy` (opt-out)
 
 Loop identity only (`research_title`, `job_slug`) lives in `failover.json` / `notify.json`.  
 The body layout is **not** a per-loop template file.
 
 ## Section order (`operator_full`)
 
-1. Title  
+1. Title (status icon + research title)  
 2. Status (iteration · loop · review)  
-3. Goal  
-4. Completed  
-5. Results  
-6. Current  
-7. Decision  
-8. Decision reason  
-9. Plan  
-10. Progress  
-11. Started  
-12. Finished  
-13. Executor  
-14. Driver agent  
-15. Panel agents  
-16. Other agents  
-17. Compute  
-18. Runtime errors *(omitted when none and host-reported)*  
-19. Review failures *(omitted when none and host-reported)*  
+3. **Event time** (`occurred_at`, always when known)  
+4. Goal *(omitted if empty / non-informative sentinel)*  
+5. Completed  
+6. Results  
+7. Current  
+8. Decision  
+9. Decision reason  
+10. Plan  
+11. Progress  
+12. Started *(only when `iteration.started_at` set)*  
+13. Finished *(only when terminal with a real timestamp)*  
+14. Executor  
+15. Driver agent  
+16. Panel agents  
+17. Other agents  
+18. Compute  
+19. Runtime errors *(omitted when none or unreported)*  
+20. Review failures *(omitted when none or unreported)*  
 
-## Honesty rules
+## `operator_compact`
 
-| Situation | Rendered text |
-|-----------|----------------|
-| No claims this event | `No claims banked.` / `No claims banked by this event.` |
-| Issues not filled (legacy) | `Not recorded (legacy/unreported)` |
-| Host asserts zero issues | section **omitted** (not “None” spam) |
-| Decision mid-attempt | `Pending (not finalized)` |
-| Started unknown | `Not recorded` (never invent from finish time) |
+Title, Status, Event time, Completed, Current, Plan, Progress, plus errors/failures when present.  
+No Goal/Results/Decision trailer, no agent/compute noise.
+
+## Honesty and omit-empty rules
+
+| Situation | Behavior |
+|-----------|----------|
+| Empty / “Not recorded” / “Not recorded (legacy/unreported)” | **Omit the field line** (do not print noise) |
+| In-flight finish | **Omit** Finished (do not print “Not finished”) |
+| No claims this event | **Omit** Results when it would only say “No claims banked…” |
+| Decision mid-wait | **Omit** Pending decision lines (Status already says WAITING) |
+| Started unknown | **Omit** Started (never invent from finish time) |
+| Event wall-clock | Always print **Event time** from `occurred_at` |
+| Host asserts zero issues | section **omitted** |
 | Sensitive output blocked | code `sensitive_output` only — no raw dump |
+| Zulip freeform markup | Do **not** CommonMark-backslash-escape (`\_`, `\``, `\*` show literally on Zulip). Flatten newlines; neutralize `@` / `` ` `` / `**` / links with lookalikes |
+
+## Remote vs local progress
+
+`progress.jsonl` / `LIVE_STATUS.md` still record wait ticks.  
+**Remote** (Zulip/Telegram) does **not** send `strategy_review_wait`, `goal_focus_wait`, or `result_review_wait` (replan loops re-emit them every ≥30s). Prefer outcomes: `iteration_ok` / rejected / failed, replan commits, quota/auth, terminal.
+
+Supervisor no longer remote-notifies “driving with primary=…” immediately before drive; **`drive_start`** is the single start-class remote event.
 
 ## Profile selection
 
@@ -51,10 +67,14 @@ Profile is stored on the envelope as `presentation.body_profile` so remote-bridg
 
 ## Install
 
-Update **both** installed copies (must hash equal):
+Update **both** installed copies (must hash equal) via scoped skill install only:
 
 - `…/autonomous-research-loop-runtime/notify_v2.py`  
 - `…/remote-bridge/notify_v2.py`  
+
+```bash
+make install ARGS="--skills autonomous-research-loop-runtime,remote-bridge --apply --real-system"
+```
 
 Adoption is process reload, not directory rewrite. Silent loops stay silent.
 
@@ -62,8 +82,8 @@ Adoption is process reload, not directory rewrite. Silent loops stay silent.
 
 ```text
 ✅ **Clawfree reconfiguration — Iteration 376 succeeded**
-
 **Status**: Iteration SUCCESS · Loop RUNNING · Review PASSED
+**Event time**: 2026-08-01T16:25:14Z
 
 **Goal**
 Determine KR complexity on claw-free graphs for fixed k≥3.
@@ -85,13 +105,11 @@ Different-family review still open on the manuscript-native pack.
 
 **Plan**
 Route T3 enumeration to kaggle+modal.
-
 **Progress**: 376/1000 iteration budget used (624 remaining); goal progress: …
 **Started**: 2026-08-01T15:56:45Z
 **Finished**: 2026-08-01T16:25:14Z · Duration: 28m 29s
 **Executor**: codex
 **Driver agent**: codex (gpt-5.6-sol)
 **Panel agents**: codewhale
-**Other agents**: None
-**Compute**: None
+**Compute**: kaggle
 ```

@@ -18,6 +18,8 @@ The user can request a template by name, or the orchestrator can auto-select bas
 
 If multiple templates match, prefer the more domain-specific one.
 
+Lean Formalization Team sessions MUST open with the `lean-research-library` search gate (mathlib > HoangMathLib > new) and close with its `intake` gate; staging stays user-approved.
+
 ## Template chaining
 
 When a task spans multiple concerns, chain templates as sequential phases within a single run. Each phase uses one template, and the output of one phase feeds into the next.

@@ -257,36 +257,40 @@ truth. The body layout is **pack-owned** (not a per-loop template file); see
 
 | Profile | Body |
 |---|---|
-| `operator_full` | Status early; Results; Decision + reason; Started; structured Runtime errors / Review failures when present |
-| `legacy` | Prior v2.0 lead (Goal/Completed/Current/Plan) without the new lead labels |
+| `operator_full` | Status + Event time early; research sections; trailer; **omit** empty/sentinel fields |
+| `operator_compact` | Title, Status, Event time, Completed/Current/Plan, Progress; errors only when present |
+| `legacy` | Prior v2.0 lead (Goal/Completed/Current/Plan); omit-empty still applies |
 
 Select profile via `notify.json` `body_profile`, then
 `standing_orders.notify.body_profile`, then
 `AAS_AUTOLOOP_NOTIFY_BODY_PROFILE`. Stored on the envelope so remote-bridge
 re-renders with the same profile. Install **both** ARL and remote-bridge
-`notify_v2.py` copies (must hash equal).
+`notify_v2.py` copies (must hash equal). Wait ticks
+(`strategy_review_wait` / `goal_focus_wait` / `result_review_wait`) are local
+progress only — not remote. Zulip does not backslash-escape `_`.
 
-Every Markdown, plain-text, Telegram HTML, and compact rendering contains:
+Every Markdown, plain-text, Telegram HTML, and compact rendering includes when informative:
 
 | Field | Required meaning |
 |---|---|
 | Title | Research-specific identity plus iteration/event outcome; do not use a generic `loop` title when a goal/title exists. |
 | Status | Separate iteration, result-review, and loop status (promoted early in `operator_full`). |
+| Event time | `occurred_at` wall-clock for this notification (always when known). |
 | Progress | Iteration budget used/remaining and plain-language goal/obligation progress. |
-| Started | `iteration.started_at` only; `Not recorded` if unknown — never invent from finish time. |
-| Finished | Finish timestamp and duration for success/failure/error; `Not finished` for running/waiting/paused. |
+| Started | `iteration.started_at` only; **omit** if unknown — never invent from finish time. |
+| Finished | Finish timestamp and duration for terminal statuses; **omit** for running/waiting/paused. |
 | Executor | Primary provider that performed the attempted iteration. |
 | Driver agent | Driver agent/provider actually used, with model/family when recorded. |
 | Panel agents | Panel agents/providers that actually returned usable work; never just the configured invite list. |
 | Other agents | Any additional participating agent roles/providers. |
-| Compute | Explicit structured compute provenance (none vs unreported). |
-| Runtime errors / Review failures | From `issues` tri-state; omit empty host-asserted lists; unreported ≠ none. |
-| **Goal** | What the main research problem is. |
-| **Completed** | What was finalized; say explicitly when nothing was banked. |
-| **Results** | Banked claim ids/gists for this event, or explicit no-claims text. |
-| **Current** | Where the research stands now plus the current event's result in plain text. |
-| **Decision** / **Decision reason** | Ledger decision and why (pending on attempt events). |
-| **Plan** | The next bounded action or why the loop is waiting. |
+| Compute | Explicit structured compute provenance when reported. |
+| Runtime errors / Review failures | From `issues` tri-state; omit empty or unreported. |
+| **Goal** | What the main research problem is (omit if empty). |
+| **Completed** | What was finalized when material. |
+| **Results** | Banked claim ids/gists when present. |
+| **Current** | Where the research stands now. |
+| **Decision** / **Decision reason** | Ledger decision when set (omit pending noise on waits). |
+| **Plan** | The next bounded action. |
 
 Iteration status is one of `running`, `success`, `failure`, `error`, `waiting`,
 `paused`, or `not_applicable`. Review status is `not_required`, `pending`,
