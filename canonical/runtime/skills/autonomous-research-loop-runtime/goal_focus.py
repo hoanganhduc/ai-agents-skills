@@ -895,30 +895,91 @@ def _policy_allowed(policy: Mapping[str, Any]) -> set[str]:
     return allowed
 
 
+def _is_machine_gated_next_action(text: object) -> bool:
+    """True when next_action looks like a formal edit + lake/axiom gate.
+
+    Used to prefer registry text over panel inspect/sketch softening.
+    """
+    t = _clean_text(text).lower()
+    if not t:
+        return False
+    if any(
+        marker in t
+        for marker in (
+            "read-only inspect",
+            "inspect only",
+            "use no compute",
+            "proof sketch alone",
+        )
+    ) and "lake" not in t:
+        return False
+    has_action = any(word in t for word in ("edit", "prove", "fill", "sorry", "formal-track"))
+    has_gate = "lake" in t or "axiom" in t
+    return has_action and has_gate
+
+
+def _file_compute_allowlist(run_dir: Path) -> set[str]:
+    """Non-empty structured allowlist from compute_policy.json, else empty."""
+    policy_path = run_dir / "compute_policy.json"
+    if not policy_path.exists():
+        return set()
+    document = _read_object(policy_path, required=True)
+    external = document.get("policy") if isinstance(document.get("policy"), dict) else document
+    if not isinstance(external, Mapping):
+        return set()
+    return _policy_allowed(external)
+
+
+def _old_plan_compute_allowlist(old_plan: Mapping[str, Any]) -> set[str]:
+    old_policy = old_plan.get("compute_policy")
+    if not isinstance(old_policy, dict):
+        return set()
+    from_user = _compute_services(
+        old_policy.get("user_allowed_services")
+        or old_policy.get("pinned_allowed_services")
+    )
+    if from_user:
+        return from_user
+    return _policy_allowed(old_policy)
+
+
 def _pinned_compute_policy(run_dir: Path, old_plan: Mapping[str, Any]) -> tuple[set[str], set[str], bool]:
-    """Return structured user allow/deny pins and whether only free text exists."""
+    """Return structured user allow/deny pins and whether only free text exists.
+
+    When ``compute_policy.json`` defines a non-empty structured allowlist, that
+    file plus ``loop_state.standing_orders.compute`` are authoritative: the old
+    plan's sticky ``user_allowed_services`` / ``forbidden_services`` are not
+    inherited (operator re-pin can admit ``local`` again after a prior forbid).
+    Without a structured file allowlist, legacy behavior still includes the old
+    plan pins so unpinned loops do not silently open services.
+    """
     allowed_sets: list[set[str]] = []
     forbidden: set[str] = set()
     free_text_only = False
 
-    old_policy = old_plan.get("compute_policy")
-    if isinstance(old_policy, dict):
-        old_pins = _compute_services(
-            old_policy.get("user_allowed_services")
-            or old_policy.get("pinned_allowed_services")
-        )
-        if old_pins:
-            allowed_sets.append(old_pins)
-        forbidden.update(_compute_services(old_policy.get("forbidden_services")))
+    file_allowed = _file_compute_allowlist(run_dir)
+    operator_file_authoritative = bool(file_allowed)
+
+    if not operator_file_authoritative:
+        old_policy = old_plan.get("compute_policy")
+        if isinstance(old_policy, dict):
+            old_pins = _compute_services(
+                old_policy.get("user_allowed_services")
+                or old_policy.get("pinned_allowed_services")
+            )
+            if old_pins:
+                allowed_sets.append(old_pins)
+            forbidden.update(_compute_services(old_policy.get("forbidden_services")))
 
     policy_path = run_dir / "compute_policy.json"
     if policy_path.exists():
         document = _read_object(policy_path, required=True)
         external = document.get("policy") if isinstance(document.get("policy"), dict) else document
-        external_allowed = _policy_allowed(external)
+        external_allowed = _policy_allowed(external) if isinstance(external, Mapping) else set()
         if external_allowed:
             allowed_sets.append(external_allowed)
-        forbidden.update(_compute_services(external.get("forbidden_services")))
+        if isinstance(external, Mapping):
+            forbidden.update(_compute_services(external.get("forbidden_services")))
 
     state = _read_object(run_dir / "loop_state.json", required=False)
     orders = state.get("standing_orders") if isinstance(state.get("standing_orders"), dict) else {}
@@ -957,6 +1018,7 @@ def _resolve_reviewed_compute_policy(
         raise ValueError("compute_policy must be an object")
     pinned, forbidden, free_text_only = _pinned_compute_policy(run_dir, old_plan)
     requested_allowed = _policy_allowed(requested)
+    old_allowed = _old_plan_compute_allowlist(old_plan)
     if pinned and not requested_allowed:
         selected_allowed = set(pinned)
     elif pinned:
@@ -966,7 +1028,16 @@ def _resolve_reviewed_compute_policy(
                 "reviewed compute policy widens the user allowlist: "
                 + ", ".join(sorted(widening))
             )
-        selected_allowed = requested_allowed
+        # Re-stating the previous plan's allowlist must not permanently exclude
+        # services newly admitted by operator file pins (e.g. local for lake).
+        # Explicit candidate/approach narrowing to a proper subset other than
+        # the old plan allowlist is preserved.
+        if requested_allowed < pinned and (
+            not old_allowed or requested_allowed == old_allowed
+        ):
+            selected_allowed = set(pinned)
+        else:
+            selected_allowed = requested_allowed
     elif requested_allowed and free_text_only:
         raise ValueError(
             "cannot validate a reviewed compute policy against free-text-only user standing orders; "
@@ -2650,13 +2721,26 @@ def commit_selected_direction(
             default=0,
         ) + horizon
     next_action = _clean_text(reviewed_value("next_action"))
+    registry_next_action = _clean_text(approach.get("next_action"))
+    # Prefer a machine-gated registry next_action when the panel softens to
+    # inspect/sketch-only text (formal campaigns otherwise thrash forever).
+    if _is_machine_gated_next_action(registry_next_action) and not _is_machine_gated_next_action(
+        next_action
+    ):
+        next_action = registry_next_action
     falsifier = _clean_text(reviewed_value("falsifier"))
     if not next_action:
         raise ValueError("selected direction requires a non-empty reviewed or registered next_action")
+    # Prefer approach compute_policy when present so local lake pin is not lost.
+    compute_reviewed = reviewed_value("compute_policy", None)
+    if compute_reviewed in (None, "") and isinstance(approach.get("compute_policy"), Mapping):
+        compute_reviewed = approach.get("compute_policy")
+    if compute_reviewed in (None, ""):
+        compute_reviewed = old_plan.get("compute_policy") or {}
     compute_policy = _resolve_reviewed_compute_policy(
         root,
         old_plan,
-        reviewed_value("compute_policy", old_plan.get("compute_policy") or {}),
+        compute_reviewed,
     )
     plan = copy.deepcopy(old_plan)
     plan.update(
