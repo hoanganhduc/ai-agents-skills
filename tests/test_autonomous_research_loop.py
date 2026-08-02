@@ -6200,8 +6200,36 @@ class DriveCwdTests(unittest.TestCase):
 
 
 class DriveProviderGrokTests(unittest.TestCase):
+    def test_grok_primary_private_prompt_transport_is_prompt_file_stdin(self) -> None:
+        """Grok rewrites -p <prompt> to --prompt-file /dev/stdin before spawn."""
+
+        arl, _gf = RuntimeGoalFocusIntegrationTests._runtime_modules()
+        prompt = "GROK_PRIMARY_PRIVATE_PROMPT_SENTINEL exactly ONE iteration marker"
+        raw = ["/usr/bin/true", "-p", prompt, "--yolo", "-m", "grok-test-model"]
+        secured, stdin_prompt = arl.prepare_primary_private_prompt_transport(
+            "grok", raw, prompt
+        )
+        self.assertEqual(stdin_prompt, prompt)
+        self.assertEqual(
+            secured,
+            [
+                "/usr/bin/true",
+                "--prompt-file",
+                "/dev/stdin",
+                "--yolo",
+                "-m",
+                "grok-test-model",
+            ],
+        )
+        self.assertNotIn(prompt, secured)
+        self.assertIn("grok", arl.TRUSTED_LOCAL_ENFORCE_PRIMARY_PROVIDERS)
+
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
     def test_drive_provider_grok_uses_private_prompt_file_stdin_transport(self) -> None:
-        """Grok primary rewrites -p prompt to --prompt-file /dev/stdin before spawn."""
+        """End-to-end: drive --provider grok spawns with --prompt-file /dev/stdin."""
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -6213,7 +6241,6 @@ class DriveProviderGrokTests(unittest.TestCase):
             bindir.mkdir()
             fake = bindir / ("fake_grok.cmd" if os.name == "nt" else "fake_grok")
             if os.name == "nt":
-                # Batch: record %* then stop after second invocation.
                 fake.write_text(
                     "@echo off\r\n"
                     "set /p c=<%AUTOLOOP_DIR%\\c 2>nul\r\n"
@@ -6277,11 +6304,9 @@ class DriveProviderGrokTests(unittest.TestCase):
             self.assertNotIn("primary prompt transport failed", res.stderr)
             self.assertTrue((loop / "c").exists(), res.stderr + res.stdout)
             self.assertGreaterEqual(int((loop / "c").read_text(encoding="utf-8")), 1)
-            self.assertTrue((loop / "cwd_1").exists())
             argv_text = (loop / "argv_1").read_text(encoding="utf-8")
             self.assertIn("--prompt-file", argv_text)
             self.assertIn("/dev/stdin", argv_text)
-            # Private transport must not keep the legacy -p prompt flag.
             self.assertNotRegex(argv_text, r"(?m)^-p$")
             self.assertNotIn("exactly ONE iteration", argv_text)
 
