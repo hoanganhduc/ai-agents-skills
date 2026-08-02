@@ -4,6 +4,12 @@ Outer supervisor around stock single-provider `drive`. Installs with the
 `autonomous-research-loop-runtime` skill (per-file entries in
 `manifest/runtime.yaml`).
 
+**Default multi-OS force-loop:** prefer sibling pack `force-loop/`
+(`run_force_loop.sh` / `.ps1`) for bootstrap, applied defaults
+(enforce / hard / notify), and portable start/stop/drain. This supervisor pack
+is the POSIX failover detail that kit uses when present; direct
+`LAUNCH_supervisor.sh` remains an advanced entry.
+
 ## Files
 
 | File | Role |

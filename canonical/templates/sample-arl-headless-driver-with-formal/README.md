@@ -2,6 +2,12 @@
 
 This directory is a **thin sample**, not a second ARL supervisor.
 
+**Default force-loop path:** use the runtime pack
+`autonomous-research-loop-runtime/force-loop/` (discovery:
+`arl-scripted-force-loop`) for bootstrap/start with enforce, hard goal_priority,
+and notify ON on all supported OSes. Keep this directory for formal-env
+fragments only.
+
 ## Glossary (do not conflate)
 
 | Term | Meaning |

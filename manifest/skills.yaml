@@ -31,6 +31,7 @@
       "recommended_templates": [
         "autonomous-research-loop-runbook",
         "autonomous-research-loop-portfolio-runbook",
+        "arl-scripted-force-loop",
         "goal-focus",
         "goal-priority"
       ],
@@ -71,6 +72,7 @@
       "recommended_templates": [
         "autonomous-research-loop-runbook",
         "autonomous-research-loop-portfolio-runbook",
+        "arl-scripted-force-loop",
         "goal-priority"
       ],
       "verification": [

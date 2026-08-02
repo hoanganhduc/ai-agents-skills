@@ -1,0 +1,34 @@
+{
+  "schema_version": "goal_priority.v1",
+  "enabled": true,
+  "discipline_mode": "hard",
+  "primary_campaign": "main",
+  "primary_objective": "Advance loop_state.goal with host-verifiable artifacts",
+  "campaign_registry": {
+    "main": {
+      "objective": "Advance the stated goal with a host-verifiable artifact",
+      "entry_condition": "Always while this is primary",
+      "non_goals": [
+        "Unbounded local sampling without goal reduction",
+        "Banking agent summary without machine evidence"
+      ]
+    }
+  },
+  "closed_campaigns": [],
+  "next_campaigns_ordered": [
+    "main"
+  ],
+  "max_consecutive_local_without_goal_delta": 2,
+  "local_without_goal_delta_tags": [
+    "bookkeeping",
+    "local_refinement_only",
+    "skeleton_only",
+    "finite_sample_only",
+    "inspect_only",
+    "proof_sketch_only",
+    "ledger_only"
+  ],
+  "require_goal_contribution_in_ledger": true,
+  "panel_rank_by_goal_ev": true,
+  "host_signal_epoch_iteration": null
+}

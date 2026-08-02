@@ -1,0 +1,14 @@
+{
+  "policy": {
+    "backends": [
+      "local",
+      "kaggle",
+      "modal"
+    ],
+    "forbidden_services": [
+      "hetzner",
+      "github-actions"
+    ]
+  },
+  "notes": "Force-loop formal default: local for lake/typecheck; kaggle/modal for batch; no Hetzner/GHA."
+}

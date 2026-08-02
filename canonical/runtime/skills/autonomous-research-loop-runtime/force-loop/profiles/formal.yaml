@@ -1,0 +1,18 @@
+# Force-loop formal profile (documentation + machine-readable hints for apply).
+profile: formal
+goal_focus:
+  enforcement_mode: enforce
+goal_priority:
+  enabled: true
+  discipline_mode: hard
+notify:
+  mode: auto
+formal:
+  policy: on
+  typecheck: true
+  force_after_iteration: false
+compute:
+  backends: [local, kaggle, modal]
+  forbidden_services: [hetzner, github-actions]
+panel:
+  enabled: true

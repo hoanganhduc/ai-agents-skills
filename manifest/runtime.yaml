@@ -1259,6 +1259,233 @@
           "type": "text",
           "newline": "lf",
           "mode": "0755"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/force_loop_cli.py",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/force_loop_cli.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/force_loop_process.py",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/force_loop_process.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/load_loop_env.py",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/load_loop_env.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/apply_force_loop_defaults.py",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/apply_force_loop_defaults.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/run_force_loop.cmd",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.cmd",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/README.md",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/README.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/OPERATOR_RUNBOOK.md",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/OPERATOR_RUNBOOK.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/LESSONS.md",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/LESSONS.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/defaults/env.defaults",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/defaults/env.defaults",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/defaults/compute_policy.formal.json",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/defaults/compute_policy.formal.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/defaults/compute_policy.general.json",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/defaults/compute_policy.general.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/defaults/goal_priority.base.json",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/defaults/goal_priority.base.json",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/profiles/formal.yaml",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/profiles/formal.yaml",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/profiles/general.yaml",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/profiles/general.yaml",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/examples/formal_campaign/README.md",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/examples/formal_campaign/README.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/examples/general_campaign/README.md",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/examples/general_campaign/README.md",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
         }
       ],
       "smoke": {

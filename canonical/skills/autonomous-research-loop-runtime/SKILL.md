@@ -109,7 +109,35 @@ exit. Inspect it with `agent-cmd --provider <p> --dir <loop> --print-prompt`.
 OpenClaw is not a driver target (no local agent CLI); drive its loops from a
 supported provider instead.
 
-Start an unattended run (POSIX):
+### Default scripted force-loop (all OS)
+
+For unattended **force-loop** (supervisor + drive with Goal Focus discipline),
+prefer the installed **force-loop kit** first. It applies notify ON, Goal Focus
+**enforce**, and goal_priority **hard**, and works on Linux, macOS, Windows, and
+WSL without requiring systemd:
+
+```bash
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
+  bootstrap --loop research/run --root "$PWD" --profile formal --goal "..."
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+  skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
+  start --loop research/run --root "$PWD" --provider claude
+```
+
+Windows:
+
+```powershell
+& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+  skills\autonomous-research-loop-runtime\force-loop\run_force_loop.ps1 `
+  bootstrap --loop research\run --root $PWD --profile formal --goal "..."
+```
+
+Pack docs: `force-loop/README.md`, `OPERATOR_RUNBOOK.md`. Discovery template:
+`arl-scripted-force-loop`. Direct `drive` / `LAUNCH_supervisor.sh` remain
+supported as advanced paths.
+
+Start a raw unattended `drive` (POSIX, advanced):
 
 ```bash
 bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh drive --dir research/run --provider claude
@@ -346,12 +374,17 @@ outbound prompt bytes; finding reports name categories, never matched values.
 
 ### Primary failover supervisor (optional pack)
 
+**Default multi-OS path:** `force-loop/` kit (`bootstrap` / `start` / `drain`).
+The shell supervisor below is the POSIX failover detail used by that kit when
+present, and remains available as an advanced direct entry.
+
 For multi-day multi-provider runs, use the runtime support files (installed with
 this skill):
 
+- `force-loop/` — **default** scripted force-loop (all OS; enforce/hard/notify)
 - `supervisor_README.md` — full compose notes
 - `LAUNCH_supervisor.sh start|replace` — flock (`start` refuses if held → exit 10;
-  `replace` stops prior supervisor+drive then starts)
+  `replace` stops prior supervisor+drive then starts); POSIX advanced
 - `arl_drive_supervisor.sh` — rotates on drive exit 5/6/7; session-excludes;
   empty order → exit 11; restart cap → exit 12
 - `{loop}/failover.json` from `failover.example.json` (`primary_order`,
@@ -397,7 +430,9 @@ legacy `goal_priority`) → `formal_policy` (empty when off).
 launches OpenGauss; never sets `claim_support_status=supported`. Missing Lake
 → `tool_unavailable`; drive continues.
 
-**Glossary:** headless force-driven ARL ≠ `formal_policy=force`. Thin sample:
+**Glossary:** headless force-driven ARL ≠ `formal_policy=force`. Default
+scripted force-loop pack: `force-loop/` (and discovery template
+`arl-scripted-force-loop`). Thin formal-env sample only:
 `canonical/templates/sample-arl-headless-driver-with-formal/`. Instruction:
 `canonical/instructions/autonomous-loop-formal-policy.md`.
 
@@ -674,7 +709,8 @@ the `workflow-templates` artifact profile, or `--with-deps` to pull backing skil
 
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `autonomous-research-loop-portfolio-runbook` -- Open-problem, portfolio-first variant of the autonomous research-loop runbook: a rigorous definition-of-done with an insufficient-result disqualification list, an approach registry with blocked-route discipline, and an adversarial audit gate with a concrete-deliverable requirement, keeping the same four stop conditions, cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
+- `arl-scripted-force-loop` -- discovery doc for the **default** cross-platform force-loop kit (runtime `force-loop/`).
 - `goal-focus` -- Goal Focus v2 authoritative-state, strategy-review, stage/review/finalize, migration, and Notify v2 reference.
 - `goal-priority` -- legacy `goal_priority.v1` reference (defaults disabled/soft).
-- `sample-arl-headless-driver-with-formal` -- thin env fragment for force-driven ARL + formal_policy (not a forked supervisor).
+- `sample-arl-headless-driver-with-formal` -- thin formal-env layer only (not the force-loop default).
 - `informal-to-lean-formalization-runbook` -- F1–F7 positions when formal-track.

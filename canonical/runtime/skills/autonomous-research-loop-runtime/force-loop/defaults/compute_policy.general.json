@@ -1,0 +1,14 @@
+{
+  "policy": {
+    "backends": [
+      "local",
+      "kaggle",
+      "modal"
+    ],
+    "forbidden_services": [
+      "hetzner",
+      "github-actions"
+    ]
+  },
+  "notes": "Force-loop general default compute allowlist (operator may re-pin)."
+}
