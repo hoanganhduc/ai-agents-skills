@@ -4862,6 +4862,48 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                             provider, loop, environ=conflicting_env
                         )
 
+    def test_grok_trusted_local_primary_uses_prompt_file_stdin_transport(self) -> None:
+        """Grok enforce primary scrubs -p prompt and uses --prompt-file /dev/stdin."""
+        arl, _gf = self._runtime_modules()
+        prompt = "GROK_PRIMARY_PRIVATE_PROMPT_SENTINEL"
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            loop.mkdir()
+            with mock.patch.object(arl, "iteration_prompt", return_value=prompt):
+                spec = arl.resolve_provider_command(
+                    "grok", loop, environ=dict(os.environ)
+                )
+            argv = list(spec["argv"])
+            self.assertEqual(spec["prompt_transport"], "stdin")
+            self.assertNotIn(prompt, argv)
+            self.assertNotIn("-p", argv)
+            self.assertNotIn("--single", argv)
+            self.assertIn("--prompt-file", argv)
+            self.assertEqual(argv[argv.index("--prompt-file") + 1], "/dev/stdin")
+            self.assertIn("--yolo", argv)
+            # prepare_primary_private_prompt_transport also accepts the -p shape
+            raw = [
+                str(spec["binary"]),
+                "-p",
+                prompt,
+                "--yolo",
+                "-m",
+                "grok-test-model",
+            ]
+            secured, stdin_prompt = arl.prepare_primary_private_prompt_transport(
+                "grok", raw, prompt
+            )
+            self.assertEqual(stdin_prompt, prompt)
+            self.assertNotIn(prompt, secured)
+            self.assertEqual(
+                secured[secured.index("--prompt-file") + 1], "/dev/stdin"
+            )
+            self.assertIn("grok", arl.TRUSTED_LOCAL_ENFORCE_PRIMARY_PROVIDERS)
+            self.assertEqual(
+                arl.TRUSTED_LOCAL_ENFORCE_PRIMARY_PROVIDERS,
+                frozenset({"claude", "codex", "grok"}),
+            )
+
     def test_panel_prompt_file_is_contained_and_read_without_following_links(self) -> None:
         arl, _gf = self._runtime_modules()
         with tempfile.TemporaryDirectory() as tmp:

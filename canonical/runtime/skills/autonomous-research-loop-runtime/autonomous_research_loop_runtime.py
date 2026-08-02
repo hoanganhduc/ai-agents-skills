@@ -2437,6 +2437,23 @@ def prepare_primary_private_prompt_transport(
     elif provider == "codex":
         secured = [*run_args]
         secured[index] = "-"
+    elif provider == "grok":
+        # Host-proved: grok -p does not read stdin; --prompt-file /dev/stdin does
+        # (same shape as cross-agent delegation dispatch).
+        if index > 0 and run_args[index - 1] in {"-p", "--single"}:
+            secured = [
+                *run_args[: index - 1],
+                "--prompt-file",
+                "/dev/stdin",
+                *run_args[index + 1 :],
+            ]
+        else:
+            secured = [
+                *run_args[:index],
+                "--prompt-file",
+                "/dev/stdin",
+                *run_args[index + 1 :],
+            ]
     else:
         raise ValueError(
             f"provider {provider} has no verified non-argv primary prompt transport"
@@ -4426,6 +4443,11 @@ PROVIDER_SPECS: dict[str, dict[str, Any]] = {
 # host text before matching provider failure signals.
 HOST_PROMPT_SENTINEL = "# --- END HOST PROMPT ---"
 
+# Goal-Focus enforce + trusted-local drive primaries. Each must have a
+# reviewed private (non-argv) prompt transport under prepare_primary_private_prompt_transport
+# and resolve_provider_command host-attested argv scrubbing.
+TRUSTED_LOCAL_ENFORCE_PRIMARY_PROVIDERS = frozenset({"claude", "codex", "grok"})
+
 # Auth/session death: rotate or stop; never treat as credit wait.
 # Prefer multi-token phrases; avoid bare \b401\b (hex / counts false positives).
 AUTH_PATTERN = re.compile(
@@ -5770,6 +5792,23 @@ def resolve_provider_command(
             prompt_transport = "stdin"
         elif provider == "codex":
             argv[prompt_index] = "-"
+            prompt_transport = "stdin"
+        elif provider == "grok":
+            # Host-proved private transport: --prompt-file /dev/stdin (not -p).
+            if prompt_index > 0 and argv[prompt_index - 1] in {"-p", "--single"}:
+                argv = [
+                    *argv[: prompt_index - 1],
+                    "--prompt-file",
+                    "/dev/stdin",
+                    *argv[prompt_index + 1 :],
+                ]
+            else:
+                argv = [
+                    *argv[:prompt_index],
+                    "--prompt-file",
+                    "/dev/stdin",
+                    *argv[prompt_index + 1 :],
+                ]
             prompt_transport = "stdin"
         else:
             # Do not leave exact prompt bytes in argv merely because this
@@ -8733,7 +8772,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             or root == Path("/")
             or not root.is_dir()
             or cmd is not None
-            or provider not in {"claude", "codex"}
+            or provider not in TRUSTED_LOCAL_ENFORCE_PRIMARY_PROVIDERS
             or iter_timeout is None
         ):
             return {
@@ -8744,8 +8783,8 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 "error": trusted_root_error
                 or (
                     "trusted-local enforce execution requires a real scoped project "
-                    "root, a positive iteration timeout, and an attested Claude or "
-                    "Codex provider"
+                    "root, a positive iteration timeout, and an attested Claude, "
+                    "Codex, or Grok provider"
                 ),
                 "exit_code": DRIVE_EXIT_CODES["bad_arguments"],
             }

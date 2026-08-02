@@ -205,6 +205,8 @@ PROVIDER_EXECUTABLE_PACKAGE_MARKERS: dict[str, tuple[str, ...]] = {
     "codex": ("/@openai/codex/",),
     "codewhale": ("/node_modules/codewhale/",),
     "deepseek": ("/node_modules/codewhale/",),
+    # Official download layout: real file grok-<version>-<platform> (symlinks not allowed).
+    "grok": ("/.grok/downloads/grok-",),
 }
 
 # A panel child receives a deliberately small process environment.  Provider
