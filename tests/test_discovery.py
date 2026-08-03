@@ -3,15 +3,19 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from installer.ai_agents_skills.discovery import (
     candidates_for_platform,
+    check_capabilities,
     discover_python_package,
     discover_tool,
+    discover_wsl_candidate,
     split_command,
     substrate_for,
 )
@@ -49,6 +53,79 @@ class DiscoveryTests(unittest.TestCase):
             ".agents_skills_venv\\Lib\\site-packages",
             candidates_for_platform(site_candidates, "windows"),
         )
+
+    def test_agent_python_candidates_include_local_course_and_eoffice_venvs(self) -> None:
+        manifests = load_manifests()
+        candidates = manifests["dependencies"]["python_candidate_sets"]["agent"]
+        site_candidates = manifests["dependencies"]["python_site_candidate_sets"]["agent"]
+        windows = candidates_for_platform(candidates, "windows")
+        windows_sites = candidates_for_platform(site_candidates, "windows")
+
+        self.assertIn(".course_venv\\Scripts\\python.exe", windows)
+        self.assertIn(".vnu-eoffice_venv\\Scripts\\python.exe", windows)
+        self.assertIn(".course_venv\\Lib\\site-packages", windows_sites)
+        self.assertIn(".vnu-eoffice_venv\\Lib\\site-packages", windows_sites)
+
+    def test_python_capabilities_probe_ssl_venv_and_pip_independently(self) -> None:
+        with (
+            patch("installer.ai_agents_skills.discovery.run_python") as run_python,
+            patch("installer.ai_agents_skills.discovery.run_python_args", return_value=True) as run_python_args,
+        ):
+            run_python.side_effect = lambda _command, code, _platform: code in {"import ssl", "import venv"}
+            result = check_capabilities("python-runtime", "python", "windows")
+
+        self.assertEqual(result, {"ssl": True, "venv": True, "pip": True})
+        self.assertEqual(
+            [call.args[1] for call in run_python.call_args_list],
+            ["import ssl", "import venv"],
+        )
+        run_python_args.assert_called_once_with("python", ["-m", "pip", "--version"], "windows")
+
+    def test_windows_wsl_candidate_uses_exec_and_literal_tilde(self) -> None:
+        resolved = "/opt/sage-10.4/sage\n"
+        version = "SageMath version 10.4\n"
+        with (
+            patch.dict(os.environ, {"AAS_SAGE_WSL_DISTRO": "Ubuntu-Test"}),
+            patch("installer.ai_agents_skills.discovery.shutil.which", return_value="wsl.exe"),
+            patch("installer.ai_agents_skills.discovery.subprocess.run") as run,
+        ):
+            run.side_effect = [
+                subprocess.CompletedProcess([], 0, stdout=resolved, stderr=""),
+                subprocess.CompletedProcess([], 0, stdout=version, stderr=""),
+            ]
+            result = discover_wsl_candidate(
+                "sage-runtime",
+                "~/sage-10.4/sage",
+                "wsl:~/sage-10.4/sage",
+            )
+
+        resolve_args = run.call_args_list[0].args[0]
+        version_args = run.call_args_list[1].args[0]
+        self.assertEqual(resolve_args[:5], ["wsl.exe", "--distribution", "Ubuntu-Test", "--exec", "sh"])
+        self.assertIn(r"${cmd#\~/}", resolve_args[6])
+        self.assertEqual(
+            version_args,
+            ["wsl.exe", "--distribution", "Ubuntu-Test", "--exec", "/opt/sage-10.4/sage", "--version"],
+        )
+        self.assertIn("--distribution Ubuntu-Test --exec", result["command"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["version"], "SageMath version 10.4")
+
+    def test_windows_wsl_candidate_uses_default_distro_when_override_is_unset(self) -> None:
+        with (
+            patch.dict(os.environ, {"AAS_SAGE_WSL_DISTRO": ""}),
+            patch("installer.ai_agents_skills.discovery.shutil.which", return_value="wsl.exe"),
+            patch("installer.ai_agents_skills.discovery.subprocess.run") as run,
+        ):
+            run.side_effect = [
+                subprocess.CompletedProcess([], 0, stdout="/usr/bin/sage\n", stderr=""),
+                subprocess.CompletedProcess([], 0, stdout="SageMath version 10.4\n", stderr=""),
+            ]
+            result = discover_wsl_candidate("sage-runtime", "sage", "wsl:sage")
+
+        self.assertEqual(run.call_args_list[0].args[0][:3], ["wsl.exe", "--exec", "sh"])
+        self.assertEqual(run.call_args_list[1].args[0], ["wsl.exe", "--exec", "/usr/bin/sage", "--version"])
+        self.assertNotIn("--distribution", result["command"])
 
     def test_wsl_sage_candidate_is_degraded_not_windows_package(self) -> None:
         manifests = load_manifests()

@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 :: SageMath execution via WSL.
 :: Optional overrides:
-::   AAS_SAGE_WSL_DISTRO - WSL distro name, default Ubuntu-24.04
+::   AAS_SAGE_WSL_DISTRO - optional WSL distro name; default is the WSL default distro
 ::   AAS_SAGE_BIN        - Sage executable inside WSL, default sage
 
 if not defined OPENCLAW_WORKSPACE if defined AAS_RUNTIME_WORKSPACE set "OPENCLAW_WORKSPACE=%AAS_RUNTIME_WORKSPACE%"
@@ -11,7 +11,6 @@ if not defined OPENCLAW_WORKSPACE set "OPENCLAW_WORKSPACE=%~dp0..\.."
 for %%I in ("%OPENCLAW_WORKSPACE%") do set "OPENCLAW_WORKSPACE=%%~fI"
 set "WS=%OPENCLAW_WORKSPACE%"
 if defined AAS_RUNTIME_WORKSPACE set "WS=%AAS_RUNTIME_WORKSPACE%"
-if not defined AAS_SAGE_WSL_DISTRO set "AAS_SAGE_WSL_DISTRO=Ubuntu-24.04"
 if not defined AAS_SAGE_BIN set "AAS_SAGE_BIN=sage"
 set "SAGE_DIR=%WS%\data\research\sagemath"
 set "SESSION_DIR=%SAGE_DIR%\sessions"
@@ -91,15 +90,21 @@ if "!MODE!"=="file" (
     set "WSL_PATH=!FILE_PATH!"
     set "WSL_PATH=!WSL_PATH:\=/!"
     set "WSL_PATH=!WSL_PATH:C:=/mnt/c!"
-    wsl.exe -d "!AAS_SAGE_WSL_DISTRO!" -- timeout !TIMEOUT_VAL! "!AAS_SAGE_BIN!" "!WSL_PATH!"
+    set "AAS_SAGE_TIMEOUT_ARG=!TIMEOUT_VAL!"
+    set "AAS_SAGE_INPUT_ARG=!WSL_PATH!"
+    powershell.exe -NoProfile -NonInteractive -Command "$wslArgs = @(); if ($env:AAS_SAGE_WSL_DISTRO) { $wslArgs += @('-d', $env:AAS_SAGE_WSL_DISTRO) }; $wslArgs += @('--', 'timeout', $env:AAS_SAGE_TIMEOUT_ARG, $env:AAS_SAGE_BIN, $env:AAS_SAGE_INPUT_ARG); if ($env:AAS_SAGE_TIMEOUT_ARG -notmatch '^[1-9][0-9]*$') { Write-Error 'Sage timeout must be a positive integer'; exit 2 }; & wsl.exe @wslArgs; exit $LASTEXITCODE"
+    set "SAGE_RC=!ERRORLEVEL!"
 ) else (
     set "TMPFILE=%TEMP%\sage_tmp_%RANDOM%.sage"
     echo !CODE!> "!TMPFILE!"
     set "WSL_TMP=!TMPFILE!"
     set "WSL_TMP=!WSL_TMP:\=/!"
     set "WSL_TMP=!WSL_TMP:C:=/mnt/c!"
-    wsl.exe -d "!AAS_SAGE_WSL_DISTRO!" -- timeout !TIMEOUT_VAL! "!AAS_SAGE_BIN!" "!WSL_TMP!"
+    set "AAS_SAGE_TIMEOUT_ARG=!TIMEOUT_VAL!"
+    set "AAS_SAGE_INPUT_ARG=!WSL_TMP!"
+    powershell.exe -NoProfile -NonInteractive -Command "$wslArgs = @(); if ($env:AAS_SAGE_WSL_DISTRO) { $wslArgs += @('-d', $env:AAS_SAGE_WSL_DISTRO) }; $wslArgs += @('--', 'timeout', $env:AAS_SAGE_TIMEOUT_ARG, $env:AAS_SAGE_BIN, $env:AAS_SAGE_INPUT_ARG); if ($env:AAS_SAGE_TIMEOUT_ARG -notmatch '^[1-9][0-9]*$') { Write-Error 'Sage timeout must be a positive integer'; exit 2 }; & wsl.exe @wslArgs; exit $LASTEXITCODE"
+    set "SAGE_RC=!ERRORLEVEL!"
     del "!TMPFILE!" 2>nul
 )
 
-endlocal
+endlocal & exit /b %SAGE_RC%

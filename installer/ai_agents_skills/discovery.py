@@ -295,11 +295,10 @@ def check_capabilities(name: str, command: str, platform: str | None = None) -> 
     if not can_execute_host(command, platform):
         return {"executable": True, "host-executable": False}
     if name == "python-runtime":
-        code = "import ssl, venv, pip; print('ok')"
         return {
-            "ssl": run_python(command, code, platform),
+            "ssl": run_python(command, "import ssl", platform),
             "venv": run_python(command, "import venv", platform),
-            "pip": run_python(command, "import pip", platform),
+            "pip": run_python_args(command, ["-m", "pip", "--version"], platform),
         }
     if name == "powershell-runtime":
         return {"script-execution": True, "utf8-output": True}
@@ -315,6 +314,23 @@ def run_python(command: str, code: str, platform: str | None = None) -> bool:
     try:
         result = subprocess.run(
             [parts[0], *parts[1:], "-c", code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+    except Exception:
+        return False
+    return result.returncode == 0
+
+
+def run_python_args(command: str, args: list[str], platform: str | None = None) -> bool:
+    if not can_execute_host(command, platform):
+        return False
+    parts = split_command(command)
+    try:
+        result = subprocess.run(
+            [parts[0], *parts[1:], *args],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=5,
@@ -450,7 +466,7 @@ def discover_wsl_candidate(name: str, command_name: str, raw: str) -> dict[str, 
     resolve_script = r'''
 cmd=$1
 case "$cmd" in
-  "~/"*) cmd="$HOME/${cmd#~/}" ;;
+  "~/"*) cmd="$HOME/${cmd#\~/}" ;;
 esac
 if [ -x "$cmd" ]; then
   printf '%s\n' "$cmd"
@@ -460,8 +476,13 @@ else
   exit 1
 fi
 '''
+    distro = os.environ.get("AAS_SAGE_WSL_DISTRO", "").strip() if name == "sage-runtime" else ""
+    wsl_exec = [wsl]
+    if distro:
+        wsl_exec.extend(["--distribution", distro])
+    wsl_exec.append("--exec")
     probe = subprocess.run(
-        [wsl, "sh", "-lc", resolve_script, "sh", command_name],
+        [*wsl_exec, "sh", "-lc", resolve_script, "sh", command_name],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -473,17 +494,17 @@ fi
             "logical_name": name,
             "candidate": raw,
             "status": "missing",
-            "reason": f"{command_name} not found inside default WSL distro",
+            "reason": f"{command_name} not found inside {distro or 'default'} WSL distro",
             "scope": "wsl",
             "substrate": "wsl",
         }
     resolved = probe.stdout.strip().splitlines()[0]
-    command = f"{wsl} sh -lc {shlex.quote(resolved)}"
+    command = " ".join([*(shlex.quote(part) for part in wsl_exec), shlex.quote(resolved)])
     return {
         "logical_name": name,
         "candidate": raw,
         "command": command,
-        "version": detect_wsl_version(wsl, resolved),
+        "version": detect_wsl_version(wsl, resolved, distro=distro or None),
         "scope": "wsl",
         "substrate": "wsl",
         "capabilities": {"executable": True, "wsl-command-exec": True},
@@ -601,20 +622,21 @@ def discover_wsl_vhdx_candidate(
     }
 
 
-def detect_wsl_version(wsl: str, command_name: str) -> str:
-    version_script = r'''
-cmd=$1
-"$cmd" --version 2>&1 | head -n 1
-'''
+def detect_wsl_version(wsl: str, command_name: str, distro: str | None = None) -> str:
+    wsl_exec = [wsl]
+    if distro:
+        wsl_exec.extend(["--distribution", distro])
+    wsl_exec.append("--exec")
     result = subprocess.run(
-        [wsl, "sh", "-lc", version_script, "sh", command_name],
+        [*wsl_exec, command_name, "--version"],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         timeout=10,
         check=False,
     )
-    return result.stdout.strip() or "unknown"
+    lines = result.stdout.strip().splitlines()
+    return lines[0] if lines else "unknown"
 
 
 def discover_python_package(

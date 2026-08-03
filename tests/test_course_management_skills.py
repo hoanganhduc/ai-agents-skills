@@ -62,6 +62,11 @@ class CourseManagementSkillsTests(unittest.TestCase):
                     msg=f"{sk}: forbidden line {line!r}",
                 )
 
+    def test_skill_bodies_prefer_dedicated_windows_venv(self):
+        for sk in COURSE_SKILLS:
+            body = (ROOT / "canonical" / "skills" / sk / "SKILL.md").read_text(encoding="utf-8")
+            self.assertIn(r'$env:USERPROFILE\.course_venv\Scripts\python.exe', body)
+
     def test_required_deps_include_package(self):
         for sk in COURSE_SKILLS:
             deps = self.skills[sk]["required_dependencies"]

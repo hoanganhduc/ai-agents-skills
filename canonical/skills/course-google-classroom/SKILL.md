@@ -16,6 +16,8 @@ Use this skill when the user asks about Google Classroom: listing courses or stu
 python3 -m course_hoanganhduc.gclass_agent <command> [options]
 ```
 
+- On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.gclass_agent <command> [options]` in PowerShell.
+
 - Do **not** run `course --unenroll-google-classroom`, `--grade-google-classroom`, or `--download-google-classroom-submissions` from this skill.
 - When a course id is required in agent mode, set:
 

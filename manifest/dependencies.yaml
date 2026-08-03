@@ -109,6 +109,7 @@
         "linux": ["${AAS_SAGE}", "sage", "~/sage/sage", "~/sage/src/bin/sage", "~/sage-10.4/sage"],
         "windows": [
           "%AAS_SAGE%",
+          "wsl:%AAS_SAGE_BIN%",
           "wsl:sage",
           "wsl:~/sage/sage",
           "wsl:~/sage/src/bin/sage",
@@ -414,6 +415,8 @@
         "./.venv/bin/python"
       ],
       "windows": [
+        ".course_venv\\Scripts\\python.exe",
+        ".vnu-eoffice_venv\\Scripts\\python.exe",
         ".agents_skills_venv\\Scripts\\python.exe",
         ".codex\\.venv\\Scripts\\python.exe",
         ".claude\\.venv\\Scripts\\python.exe",
@@ -481,6 +484,8 @@
         "~/.local/lib/python*/site-packages"
       ],
       "windows": [
+        ".course_venv\\Lib\\site-packages",
+        ".vnu-eoffice_venv\\Lib\\site-packages",
         ".agents_skills_venv\\Lib\\site-packages",
         ".codex\\.venv\\Lib\\site-packages",
         ".claude\\.venv\\Lib\\site-packages",
