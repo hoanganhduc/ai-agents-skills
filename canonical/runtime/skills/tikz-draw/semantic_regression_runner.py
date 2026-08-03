@@ -33,9 +33,17 @@ def platform_command(platform: str, command_shape: str) -> list[str]:
     if platform == "codex":
         runtime = codex_runtime_root()
         if command_shape == "windows" or (command_shape == "auto" and os.name == "nt"):
+            powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+            if not powershell:
+                raise RuntimeError("PowerShell is required for the Windows runtime")
             return [
-                str(runtime / "run_skill.bat"),
-                r"skills\tikz-draw\run_tikz_draw.bat",
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(runtime / "run_skill.ps1"),
+                "skills/tikz-draw/tikz_draw.py",
             ]
         return [
             "bash",
@@ -44,9 +52,18 @@ def platform_command(platform: str, command_shape: str) -> list[str]:
         ]
     if platform == "claude":
         if command_shape == "windows" or (command_shape == "auto" and os.name == "nt"):
+            powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+            if not powershell:
+                raise RuntimeError("PowerShell is required for the Windows runtime")
+            runtime = codex_runtime_root()
             return [
-                str(Path.home() / ".claude" / "skills" / "_run.bat"),
-                r"skills\tikz-draw\run_tikz_draw.bat",
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(runtime / "run_skill.ps1"),
+                "skills/tikz-draw/tikz_draw.py",
             ]
         return [
             "bash",

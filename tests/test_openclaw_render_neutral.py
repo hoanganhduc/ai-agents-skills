@@ -74,7 +74,7 @@ class OpenClawRenderNeutralTest(unittest.TestCase):
                         self.assertNotIn(token, out)
 
     def test_copied_non_codex_render_preserves_shared_runtime_root_examples(self) -> None:
-        content = "Run `%LOCALAPPDATA%\\ai-agents-skills\\runtime\\run_skill.bat` on Windows.\n"
+        content = "Run `%LOCALAPPDATA%\\ai-agents-skills\\runtime\\run_skill.ps1` on Windows.\n"
         out, changed = render_runtime_path_neutral(content)
         self.assertFalse(changed)
         self.assertEqual(out, content)

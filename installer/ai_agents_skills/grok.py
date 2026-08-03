@@ -69,8 +69,7 @@ GROK_REMOTE_CLI_TOOL_SPEC: dict[str, Any] = {
             "~/grok-proxy/grok-remote",
         ],
         "windows": [
-            "grok-remote.cmd",
-            "grok-remote",
+            "grok-remote.exe",
         ],
     }
 }

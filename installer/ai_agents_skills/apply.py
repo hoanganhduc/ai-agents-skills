@@ -340,6 +340,8 @@ def apply_managed_file_remove_action(root: Path, run_id: str, action: dict[str, 
     result["state_operation"] = "remove"
     if action["operation"] != "remove-obsolete":
         result["applied"] = False
+        result["managed"] = False
+        result["state_operation"] = None
         result["installed_signature"] = artifact_signature(path)
         return result
     expected_signature = action.get("installed_signature")

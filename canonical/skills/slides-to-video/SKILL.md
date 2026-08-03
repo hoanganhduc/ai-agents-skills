@@ -19,8 +19,8 @@ target. Set `$runtime` to the installed runtime root. Multi-agent installs usual
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/slides-to-video/run_slides_to_video.bat" <args>
-& "$runtime\run_skill.bat" "skills/slides-to-video/run_slides_to_video.ps1" <args>
+& "$runtime\run_skill.ps1" "skills/slides-to-video/run_slides_to_video.ps1" <args>
+& "$runtime\run_skill.ps1" "skills/slides-to-video/run_slides_to_video.ps1" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and the `.sh` command target.

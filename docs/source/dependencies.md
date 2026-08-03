@@ -16,7 +16,7 @@ Minimum installer prerequisites:
 
 - Python 3.10 or newer.
 - A shell that can run the launcher: POSIX shell plus `make` on
-  Linux/macOS, or `make.bat` with PowerShell on native Windows.
+  Linux/macOS, or `./make.ps1` with PowerShell on native Windows.
 - Existing agent homes for any agents you want to install into. Missing
   agent homes are skipped rather than created implicitly.
 
@@ -80,7 +80,7 @@ Status vocabulary used by `precheck`:
 | `beautifulsoup4-python-package` | `python` | bs4 |
 | `calibre-cli` | `tool` | calibre-cli |
 | `chromium-browser-system-tool` | `tool` | chromium-browser-system-tool |
-| `course-hoanganhduc-python-package` | `python` | course_hoanganhduc; candidate set `agent` |
+| `course-hoanganhduc-python-package` | `python` | course_hoanganhduc; candidate set `course` |
 | `docling-mcp-python-package` | `python` | docling_mcp; candidate set `docling` |
 | `docling-python-package` | `python` | docling; candidate set `docling` |
 | `ebooklib-python-package` | `python` | ebooklib |
@@ -106,7 +106,7 @@ Status vocabulary used by `precheck`:
 | `lean-explore-python-package` | `python` | lean_explore; candidate set `agent` |
 | `leanexplore-auth` | `remote-service` | remote-service |
 | `libreoffice-system-tool` | `tool` | libreoffice-system-tool |
-| `manim-python-package` | `python` | manim |
+| `manim-python-package` | `python` | manim; candidate set `manim` |
 | `manim-tex-runtime` | `tool` | manim-tex-runtime |
 | `modal-auth` | `remote-service` | remote-service |
 | `modal-python-package` | `python` | modal; candidate set `agent` |
@@ -140,7 +140,7 @@ Status vocabulary used by `precheck`:
 | `torch-python-package` | `python` | torch; candidate set `docling` |
 | `torchvision-python-package` | `python` | torchvision; candidate set `docling` |
 | `venue-ranking-provider-access` | `remote-service` | remote-service |
-| `vnu-eoffice-python-package` | `python` | vnu_eoffice; candidate set `agent` |
+| `vnu-eoffice-python-package` | `python` | vnu_eoffice, requests, bs4; candidate set `vnu-eoffice` |
 | `websocket-client-python-package` | `python` | websocket |
 | `zotero-credentials` | `remote-service` | remote-service |
 
@@ -184,14 +184,14 @@ Evidence inspected:
 | `lake-cli` | optional for local Lean project checks; never installed by wrappers | Lake executable on PATH, via AAS_LAKE, or via an existing elan install. | Lake executable on PATH, via AAS_LAKE, or via an existing per-user elan install. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `lean-cli` | optional for local formal typechecking; never installed by wrappers | Lean 4 executable on PATH, via AAS_LEAN, or via an existing elan install. | Lean 4 executable on PATH, via AAS_LEAN, or via an existing per-user elan install. | `lean-strict-verification-gate` |
 | `libreoffice` | optional PPTX renderer; not needed on Windows when Microsoft PowerPoint is installed | soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | soffice.exe on PATH from a LibreOffice install. | `slides-to-video PPTX input` |
-| `make-or-command-wrapper` | optional convenience entrypoint | make invokes installer commands. | make.bat invokes installer commands without requiring GNU Make. | `installation` |
+| `make-or-command-wrapper` | optional convenience entrypoint | make invokes installer commands. | ./make.ps1 invokes installer commands without requiring GNU Make. | `installation` |
 | `manim-tex-runtime` | required for manim-math-animation rendering (heavier than plain tex-runtime) | LaTeX (texlive + texlive-latex-extra + cm-super) with dvisvgm and the standalone/preview packages, plus libcairo2-dev and libpango1.0-dev; e.g. apt-get install dvisvgm texlive texlive-latex-extra libcairo2-dev libpango1.0-dev. | MiKTeX/TeX Live providing latex + dvisvgm + standalone/preview; cairo/pango ship in the Manim Windows wheels. | `manim-math-animation` |
 | `mathlib-cache` | optional manually prepared Lean dependency cache | Existing project-local mathlib cache or manually prepared Lake cache. | Existing project-local mathlib cache or manually prepared Lake cache. | `lean-strict-verification-gate`, `lean-formalization-intake` |
 | `modal-cli` | optional until submit/deploy/wait/fetch are used | Installed by the modal Python package and authenticated with modal token set/new. | Installed into the agent virtualenv; wrappers add the venv Scripts directory to PATH. | `modal-research-compute` |
 | `node-runtime` | required for Node-backed MCP servers and optional Zotero translation-server workflows | Node.js 18+ with npm. | Node.js 18+ with npm/npx; Windows Codex config uses npx for the sequential-thinking MCP server. | `Codex MCP`, `zotero translation server` |
 | `ocr-runtime` | optional for scanned-document OCR | Tesseract with tessdata available; current Claude docling docs use TESSDATA_PREFIX=/usr/share/tessdata/. | Current Windows docling flow prefers rapidocr Python extras; Tesseract may be used through WSL if needed. | `docling` |
 | `pdftotext` | optional for venue lookup; required for venue-ranking-evidence browser-proof marker verification | pdftotext on PATH from Poppler, e.g. apt-get install poppler-utils. | pdftotext.exe from a Poppler distribution on PATH. | `venue-ranking-evidence` |
-| `powershell-runtime` | required for Windows bootstrap and Windows wrapper execution | not required | PowerShell 5.1+ or PowerShell 7+. | `make.bat`, `installer bootstrap`, `Windows runtime wrappers` |
+| `powershell-runtime` | required for Windows bootstrap and Windows wrapper execution | not required | PowerShell 5.1+ or PowerShell 7+. | `./make.ps1`, `installer bootstrap`, `Windows runtime wrappers` |
 | `pptx-renderer` | optional, required only for PPTX input rendering | LibreOffice soffice/libreoffice on PATH, e.g. apt-get install libreoffice. | Microsoft PowerPoint from Microsoft Office via COM automation, or LibreOffice soffice.exe on PATH. | `slides-to-video PPTX input` |
 | `python-runtime` | required for runtime-backed skills and the installer | Native Python 3.10+ detected from environment override, repo venv, python3, or python. | Native Python 3.10+ detected from environment override, repo venv, C:\Python3*, per-user Python installs, Program Files installs, py -3, python.exe, or python. | `installer`, `zotero`, `calibre`, `docling`, `get-available-resources`, `research-digest-wrapper`, `rss-news-digest`, `digest-bridge`, `tikz-draw`, `graph-verifier`, `submission-venue-selector`, `venue-ranking-evidence`, `annotated-review`, `modal-research-compute`, `hetzner-research-compute`, `kaggle-research-compute`, `session-logs`, `lean-formalization-intake`, `lean-explore-mcp`, `lean-strict-verification-gate` |
 | `ripgrep-cli` | optional but expected by local search/session workflows | rg on PATH. | rg.exe or rg on PATH. | `session-logs`, `research workflows`, `repo inspection` |
@@ -272,7 +272,7 @@ Evidence inspected:
 - SageMath is WSL-backed on the inspected Windows config, not native Windows.
 - Docling OCR is Windows-native through rapidocr extras; Tesseract is a Linux/WSL option.
 - Docker is explicitly not required by the inspected Windows Sage config.
-- Windows wrapper commands may use PowerShell, .bat launchers, native Python venvs, and WSL in the same workflow.
+- Windows wrapper commands may use PowerShell scripts, native Python venvs, and WSL in the same workflow; CMD runtime launchers are not published.
 
 
 ## Docling And OCR Runtime Notes

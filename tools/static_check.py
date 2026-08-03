@@ -69,10 +69,33 @@ def check_shell_syntax(files: list[Path]) -> list[str]:
     for path in files:
         if path.suffix != ".sh":
             continue
-        result = subprocess.run([bash, "-n", str(path)], capture_output=True, text=True)
+        result = subprocess.run([bash, "-n", bash_syntax_path(path, bash)], capture_output=True, text=True)
         if result.returncode != 0:
             errors.append(f"bash-syntax:{path}:{result.stderr.strip()}")
     return errors
+
+
+def bash_syntax_path(path: Path, bash: str) -> str:
+    absolute = str(path.resolve())
+    if os.name != "nt":
+        return absolute
+
+    forward = absolute.replace("\\", "/")
+    bash_path = Path(bash)
+    if bash_path.name.lower() != "bash.exe" or bash_path.parent.name.lower() != "system32":
+        return forward
+
+    wsl = shutil.which("wsl.exe")
+    if not wsl:
+        return forward
+    converted = subprocess.run(
+        [wsl, "--", "wslpath", "-a", forward],
+        capture_output=True,
+        text=True,
+    )
+    if converted.returncode == 0 and converted.stdout.strip():
+        return converted.stdout.strip().splitlines()[0]
+    return forward
 
 
 def check_powershell_syntax(files: list[Path]) -> list[str]:

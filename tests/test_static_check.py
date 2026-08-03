@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-from tools.static_check import powershell_parse_script, powershell_single_quoted
+from tools.static_check import bash_syntax_path, powershell_parse_script, powershell_single_quoted
 
 
 class StaticCheckTests(unittest.TestCase):
@@ -18,6 +19,21 @@ class StaticCheckTests(unittest.TestCase):
         self.assertIn("$path=", script)
         self.assertIn("[System.Management.Automation.Language.Parser]::ParseFile($path", script)
         self.assertIn(str(path.resolve()).replace("'", "''"), script)
+
+    def test_wsl_bash_syntax_path_uses_wslpath_with_forward_slashes(self) -> None:
+        converted = Mock(returncode=0, stdout="/mnt/c/repo/script.sh\n")
+        with (
+            patch("tools.static_check.os.name", "nt"),
+            patch("tools.static_check.shutil.which", return_value="C:\\Windows\\system32\\wsl.exe"),
+            patch("tools.static_check.subprocess.run", return_value=converted) as run,
+        ):
+            result = bash_syntax_path(
+                Path("C:/repo/script.sh"),
+                "C:\\Windows\\system32\\bash.EXE",
+            )
+
+        self.assertEqual(result, "/mnt/c/repo/script.sh")
+        self.assertNotIn("\\", run.call_args.args[0][-1])
 
     def test_runtime_skill_sources_do_not_document_codex_runtime_runner(self) -> None:
         forbidden = (

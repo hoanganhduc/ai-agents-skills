@@ -11,13 +11,11 @@ tested offline); ``render`` runs them. manim + ffmpeg are required at run time.
 
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-from . import scenegen
+from . import scenegen, tools
 from .model import SceneSpec
 
 
@@ -26,17 +24,14 @@ class ToolMissing(RuntimeError):
 
 
 def manim_bin() -> str:
-    cand = os.environ.get("MANIM") or shutil.which("manim")
-    venv = Path(os.path.expanduser("~")) / ".local/share/manim-math-animation-venv/bin/manim"
-    if not cand and venv.exists():
-        cand = str(venv)
+    cand = tools.find_executable("manim", env_var="MANIM", prefer_configured_venv=True)
     if not cand:
         raise ToolMissing("manim not found. Run `setup` to create the venv, or install manim.")
     return cand
 
 
 def ffmpeg_bin() -> str:
-    cand = os.environ.get("FFMPEG") or shutil.which("ffmpeg")
+    cand = tools.find_executable("ffmpeg", env_var="FFMPEG")
     if not cand:
         raise ToolMissing("ffmpeg not found on PATH (LGPL build).")
     return cand

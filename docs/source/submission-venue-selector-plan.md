@@ -8,7 +8,7 @@ Create a runtime-backed skill named `submission-venue-selector` that can run a
 fully automated venue-selection workflow for an existing scholarly draft. The
 final acceptance target is installation across Codex, Claude, DeepSeek,
 explicit Copilot, and OpenClaw, with Linux, macOS, WSL, Windows PowerShell, and
-Windows CMD runtime coverage.
+Windows PowerShell runtime coverage.
 
 Independent review found that current OpenClaw runtime-backed installs are
 blocked by the installer until neutral runtime evidence and target-specific
@@ -243,7 +243,7 @@ Add runtime files under
 - `submission_venue_selector.py`
 - `run_submission_venue_selector.sh`
 - `run_submission_venue_selector.ps1`
-- `run_submission_venue_selector.bat`
+- `run_submission_venue_selector.ps1`
 - fixture files under a safe runtime fixture path, avoiding denied names such
   as `config.*`, `provider*`, `.env`, PDFs, DBs, and archives.
 
@@ -255,7 +255,7 @@ Runtime manifest requirements:
   - `.py`: all platforms, `lf`, `0644`
   - `.sh`: Linux/macOS/WSL, `lf`, `0755`
   - `.ps1`: Windows, `crlf`, `0644`
-  - `.bat`: Windows, `crlf`, `0644`
+  - `.ps1`: Windows, `lf`, `0644`
 - Add a `runtime-smoke.v1` contract with command keys for `linux`, `macos`,
   `wsl`, `windows`, and `windows_ps1`.
 - Add `submission-venue-selector` output validation in
@@ -425,7 +425,7 @@ Native OS verification:
 
 - Linux POSIX runtime smoke.
 - macOS POSIX runtime smoke.
-- Windows CMD runtime smoke.
+- Windows PowerShell runtime smoke.
 - Windows PowerShell runtime smoke.
 - WSL POSIX runtime smoke, or a documented WSL layout-only limitation until a
   real WSL job exists.

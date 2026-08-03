@@ -152,9 +152,7 @@
       ],
       "required_dependencies": [
         "python-runtime",
-        "vnu-eoffice-python-package",
-        "requests-python-package",
-        "beautifulsoup4-python-package"
+        "vnu-eoffice-python-package"
       ],
       "optional_dependencies": [
         "telegram-bot-config"

@@ -44,7 +44,7 @@
       "requirement": "required for Windows bootstrap and Windows wrapper execution",
       "linux": "not required",
       "windows": "PowerShell 5.1+ or PowerShell 7+.",
-      "used_by": ["make.bat", "installer bootstrap", "Windows runtime wrappers"]
+      "used_by": ["./make.ps1", "installer bootstrap", "Windows runtime wrappers"]
     },
     "wsl-runtime": {
       "display_name": "Windows Subsystem for Linux 2",
@@ -176,7 +176,7 @@
       "display_name": "Make or platform wrapper",
       "requirement": "optional convenience entrypoint",
       "linux": "make invokes installer commands.",
-      "windows": "make.bat invokes installer commands without requiring GNU Make.",
+      "windows": "./make.ps1 invokes installer commands without requiring GNU Make.",
       "used_by": ["installation"]
     },
     "ffmpeg": {
@@ -589,6 +589,6 @@
     "SageMath is WSL-backed on the inspected Windows config, not native Windows.",
     "Docling OCR is Windows-native through rapidocr extras; Tesseract is a Linux/WSL option.",
     "Docker is explicitly not required by the inspected Windows Sage config.",
-    "Windows wrapper commands may use PowerShell, .bat launchers, native Python venvs, and WSL in the same workflow."
+    "Windows wrapper commands may use PowerShell scripts, native Python venvs, and WSL in the same workflow; CMD runtime launchers are not published."
   ]
 }

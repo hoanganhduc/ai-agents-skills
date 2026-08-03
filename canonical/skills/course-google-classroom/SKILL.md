@@ -3,7 +3,6 @@ name: course-google-classroom
 description: "Route Google Classroom operations through the course_hoanganhduc gclass agent: preflight, list courses/students, and roster sync. Refuses unenroll, grade, and submission download."
 user-invocable: true
 disable-model-invocation: false
-metadata: {"requires":{"bins":["python3"]}}
 ---
 
 Use this skill when the user asks about Google Classroom: listing courses or students, syncing the Classroom roster into the local student database, or checking credential/token file presence.

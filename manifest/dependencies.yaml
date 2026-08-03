@@ -415,7 +415,71 @@
         "./.venv/bin/python"
       ],
       "windows": [
+        ".agents_skills_venv\\Scripts\\python.exe",
+        ".codex\\.venv\\Scripts\\python.exe",
+        ".claude\\.venv\\Scripts\\python.exe",
+        "python-runtime",
+        ".venv\\Scripts\\python.exe",
+        "C:\\Python3*\\python.exe",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\python.exe",
+        "%PROGRAMFILES%\\Python3*\\python.exe",
+        "%PROGRAMFILES(X86)%\\Python3*\\python.exe"
+      ]
+    },
+    "manim": {
+      "linux": [
+        "~/.local/share/manim-math-animation-venv/bin/python",
+        "~/.agents_skills_venv/bin/python",
+        "python-runtime",
+        "~/.codex/.venv/bin/python",
+        "~/.claude/.venv/bin/python",
+        "./.venv/bin/python"
+      ],
+      "windows": [
+        ".local\\share\\manim-math-animation-venv\\Scripts\\python.exe",
+        ".agents_skills_venv\\Scripts\\python.exe",
+        ".codex\\.venv\\Scripts\\python.exe",
+        ".claude\\.venv\\Scripts\\python.exe",
+        "python-runtime",
+        ".venv\\Scripts\\python.exe",
+        "C:\\Python3*\\python.exe",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\python.exe",
+        "%PROGRAMFILES%\\Python3*\\python.exe",
+        "%PROGRAMFILES(X86)%\\Python3*\\python.exe"
+      ]
+    },
+    "course": {
+      "linux": [
+        "~/.course_venv/bin/python",
+        "~/.agents_skills_venv/bin/python",
+        "~/.codex/.venv/bin/python",
+        "~/.claude/.venv/bin/python",
+        "python-runtime",
+        "./.venv/bin/python"
+      ],
+      "windows": [
         ".course_venv\\Scripts\\python.exe",
+        ".agents_skills_venv\\Scripts\\python.exe",
+        ".codex\\.venv\\Scripts\\python.exe",
+        ".claude\\.venv\\Scripts\\python.exe",
+        "python-runtime",
+        ".venv\\Scripts\\python.exe",
+        "C:\\Python3*\\python.exe",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\python.exe",
+        "%PROGRAMFILES%\\Python3*\\python.exe",
+        "%PROGRAMFILES(X86)%\\Python3*\\python.exe"
+      ]
+    },
+    "vnu-eoffice": {
+      "linux": [
+        "~/.vnu-eoffice_venv/bin/python",
+        "~/.agents_skills_venv/bin/python",
+        "~/.codex/.venv/bin/python",
+        "~/.claude/.venv/bin/python",
+        "python-runtime",
+        "./.venv/bin/python"
+      ],
+      "windows": [
         ".vnu-eoffice_venv\\Scripts\\python.exe",
         ".agents_skills_venv\\Scripts\\python.exe",
         ".codex\\.venv\\Scripts\\python.exe",
@@ -484,7 +548,70 @@
         "~/.local/lib/python*/site-packages"
       ],
       "windows": [
+        ".agents_skills_venv\\Lib\\site-packages",
+        ".codex\\.venv\\Lib\\site-packages",
+        ".claude\\.venv\\Lib\\site-packages",
+        ".venv\\Lib\\site-packages",
+        "C:\\Python3*\\Lib\\site-packages",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES%\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES(X86)%\\Python3*\\Lib\\site-packages",
+        "%APPDATA%\\Python\\Python3*\\site-packages"
+      ]
+    },
+    "manim": {
+      "linux": [
+        "~/.local/share/manim-math-animation-venv/lib/python*/site-packages",
+        "~/.agents_skills_venv/lib/python*/site-packages",
+        "~/.codex/.local/lib/python*/site-packages",
+        "~/.claude/.local/lib/python*/site-packages",
+        "~/.local/lib/python*/site-packages"
+      ],
+      "windows": [
+        ".local\\share\\manim-math-animation-venv\\Lib\\site-packages",
+        ".agents_skills_venv\\Lib\\site-packages",
+        ".codex\\.venv\\Lib\\site-packages",
+        ".claude\\.venv\\Lib\\site-packages",
+        ".venv\\Lib\\site-packages",
+        "C:\\Python3*\\Lib\\site-packages",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES%\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES(X86)%\\Python3*\\Lib\\site-packages",
+        "%APPDATA%\\Python\\Python3*\\site-packages"
+      ]
+    },
+    "course": {
+      "linux": [
+        "~/.course_venv/lib/python*/site-packages",
+        "~/.agents_skills_venv/lib/python*/site-packages",
+        "~/.codex/.local/lib/python*/site-packages",
+        "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
+        "~/.claude/.local/lib/python*/site-packages",
+        "~/.local/lib/python*/site-packages"
+      ],
+      "windows": [
         ".course_venv\\Lib\\site-packages",
+        ".agents_skills_venv\\Lib\\site-packages",
+        ".codex\\.venv\\Lib\\site-packages",
+        ".claude\\.venv\\Lib\\site-packages",
+        ".venv\\Lib\\site-packages",
+        "C:\\Python3*\\Lib\\site-packages",
+        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES%\\Python3*\\Lib\\site-packages",
+        "%PROGRAMFILES(X86)%\\Python3*\\Lib\\site-packages",
+        "%APPDATA%\\Python\\Python3*\\site-packages"
+      ]
+    },
+    "vnu-eoffice": {
+      "linux": [
+        "~/.vnu-eoffice_venv/lib/python*/site-packages",
+        "~/.agents_skills_venv/lib/python*/site-packages",
+        "~/.codex/.local/lib/python*/site-packages",
+        "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
+        "~/.claude/.local/lib/python*/site-packages",
+        "~/.local/lib/python*/site-packages"
+      ],
+      "windows": [
         ".vnu-eoffice_venv\\Lib\\site-packages",
         ".agents_skills_venv\\Lib\\site-packages",
         ".codex\\.venv\\Lib\\site-packages",
@@ -513,8 +640,8 @@
     "requests-python-package": {"type": "python", "module": "requests"},
     "beautifulsoup4-python-package": {"type": "python", "module": "bs4"},
     "feedparser-python-package": {"type": "python", "module": "feedparser"},
-    "vnu-eoffice-python-package": {"type": "python", "module": "vnu_eoffice", "candidate_set": "agent"},
-    "course-hoanganhduc-python-package": {"type": "python", "module": "course_hoanganhduc", "candidate_set": "agent"},
+    "vnu-eoffice-python-package": {"type": "python", "module": "vnu_eoffice", "modules": ["vnu_eoffice", "requests", "bs4"], "candidate_set": "vnu-eoffice", "authoritative_first_existing": true},
+    "course-hoanganhduc-python-package": {"type": "python", "module": "course_hoanganhduc", "candidate_set": "course", "authoritative_first_existing": true},
     "pyzotero-python-package": {"type": "python", "module": "pyzotero"},
     "pypdf2-python-package": {"type": "python", "module": "PyPDF2"},
     "pdfplumber-python-package": {"type": "python", "module": "pdfplumber"},
@@ -559,7 +686,7 @@
     "espeak-ng-system-tool": {"type": "tool", "logical_tool": "espeak-ng-system-tool"},
     "libreoffice-system-tool": {"type": "tool", "logical_tool": "libreoffice-system-tool"},
     "pptx-render-system-tool": {"type": "tool", "logical_tool": "pptx-render-system-tool"},
-    "manim-python-package": {"type": "python", "module": "manim"},
+    "manim-python-package": {"type": "python", "module": "manim", "candidate_set": "manim", "authoritative_first_existing": true},
     "manim-tex-runtime": {"type": "tool", "logical_tool": "manim-tex-runtime"},
     "websocket-client-python-package": {"type": "python", "module": "websocket"},
     "chromium-browser-system-tool": {"type": "tool", "logical_tool": "chromium-browser-system-tool"},

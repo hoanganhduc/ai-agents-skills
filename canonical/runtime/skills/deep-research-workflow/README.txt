@@ -4,28 +4,28 @@ Examples:
 
 doctor:
 
-  & "$env:AAS_RUNTIME_ROOT\run_skill.bat" `
-    "skills\deep-research-workflow\run_deep_research_workflow.bat" doctor
+  & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+    "skills/deep-research-workflow/run_deep_research_workflow.ps1" doctor
 
 init:
 
-  & "$env:AAS_RUNTIME_ROOT\run_skill.bat" `
-    "skills\deep-research-workflow\run_deep_research_workflow.bat" init --dir C:\path\to\workspace
+  & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+    "skills/deep-research-workflow/run_deep_research_workflow.ps1" init --dir C:\path\to\workspace
 
 structured init:
 
-  & "$env:AAS_RUNTIME_ROOT\run_skill.bat" `
-    "skills\deep-research-workflow\run_deep_research_workflow.bat" init --structured --dir C:\path\to\workspace
+  & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+    "skills/deep-research-workflow/run_deep_research_workflow.ps1" init --structured --dir C:\path\to\workspace
 
 validate:
 
-  & "$env:AAS_RUNTIME_ROOT\run_skill.bat" `
-    "skills\deep-research-workflow\run_deep_research_workflow.bat" validate --dir C:\path\to\workspace\research
+  & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+    "skills/deep-research-workflow/run_deep_research_workflow.ps1" validate --dir C:\path\to\workspace\research
 
 selftest:
 
-  & "$env:AAS_RUNTIME_ROOT\run_skill.bat" `
-    "skills\deep-research-workflow\run_deep_research_workflow.bat" selftest
+  & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+    "skills/deep-research-workflow/run_deep_research_workflow.ps1" selftest
 
 PowerShell command target:
 

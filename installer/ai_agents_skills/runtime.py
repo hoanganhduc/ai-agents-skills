@@ -16,7 +16,7 @@ from .discovery import current_platform
 from .manifest import REPO_ROOT
 from .openclaw_target_gate import real_openclaw_path_block_reason
 from .sanitize import has_sensitive_material, sanitize_text
-from .state import artifact_signature, sha256_file
+from .state import artifact_signature, sha256_file, signatures_match
 
 
 RUNTIME_SOURCE_ROOT = REPO_ROOT / "canonical" / "runtime"
@@ -202,6 +202,7 @@ def build_runtime_actions(
     runtime_root: Path | None = None,
     platform: str | None = None,
     backup_replace: bool = False,
+    state: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     if not agents:
         return []
@@ -243,7 +244,108 @@ def build_runtime_actions(
                     seen_targets=seen_targets,
                 )
             )
+    actions.extend(
+        obsolete_runtime_file_actions(
+            root=root,
+            runtime_manifest=runtime_manifest,
+            state=state or {},
+        )
+    )
     return actions
+
+
+def obsolete_runtime_file_actions(
+    *,
+    root: Path,
+    runtime_manifest: dict[str, Any],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Retire previously managed runtime files removed from the manifest.
+
+    The comparison uses every currently declared target on every platform, not
+    only the selected runtime profile or active host.  A partial or cross-host
+    install therefore cannot remove another skill's still-supported runtime
+    files.  Changed legacy files are reported as conflicts and remain both
+    installed and managed.
+    """
+
+    declared_target_relpaths: set[str] = set()
+    entries = list(runtime_manifest.get("runners", []))
+    for spec in runtime_manifest.get("skills", {}).values():
+        if isinstance(spec, dict):
+            entries.extend(spec.get("files", []))
+    for entry in entries:
+        if isinstance(entry, dict):
+            declared_target_relpaths.add(normalize_runtime_relpath(entry["target"]))
+
+    actions: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    artifacts = sorted(
+        (item for item in state.get("artifacts", []) if isinstance(item, dict)),
+        key=lambda item: str(item.get("artifact", "")),
+    )
+    for item in artifacts:
+        if item.get("artifact_type") != "runtime-file" or item.get("managed") is not True:
+            continue
+        artifact = item.get("artifact")
+        if not isinstance(artifact, str) or not artifact:
+            continue
+        path = Path(artifact)
+        path_key = os.path.normcase(os.path.abspath(path))
+        recorded_root = item.get("runtime_root")
+        if not isinstance(recorded_root, str) or not recorded_root:
+            continue
+        recorded_root_path = Path(recorded_root)
+        recorded_root_key = os.path.normcase(os.path.abspath(recorded_root_path))
+        if (
+            path_key == recorded_root_key
+            or not normalized_path_within(root, recorded_root_path)
+            or not normalized_path_within(recorded_root_path, path)
+        ):
+            continue
+        target_relpath = item.get("target_relpath")
+        if not isinstance(target_relpath, str) or not target_relpath:
+            target_relpath = os.path.relpath(path, recorded_root_path)
+        normalized_target_relpath = normalize_runtime_relpath(target_relpath)
+        if normalized_target_relpath in declared_target_relpaths or path_key in seen_paths:
+            continue
+        seen_paths.add(path_key)
+
+        installed_signature = item.get("installed_signature")
+        current_signature = artifact_signature(path)
+        changed = current_signature.get("exists") is True and (
+            not isinstance(installed_signature, dict)
+            or not signatures_match(current_signature, installed_signature)
+        )
+        action = {
+            "kind": "managed-file-remove",
+            "agent": "runtime",
+            "owner": "runtime",
+            "skill": item.get("skill") or "runtime-runner",
+            "path": str(path),
+            "artifact_type": "runtime-file",
+            "artifact_id": item.get("artifact_id"),
+            "artifact_name": item.get("artifact_name") or path.name,
+            "classification": "conflict" if changed else "managed",
+            "operation": "skip" if changed else "remove-obsolete",
+            "installed_signature": installed_signature,
+            "current_signature": current_signature,
+            "source_path": item.get("source_path"),
+            "source_relpath": item.get("source_relpath"),
+            "target_relpath": target_relpath,
+            "runtime_root": str(recorded_root_path),
+            "reason": (
+                "obsolete managed runtime file changed since install; preserving it"
+                if changed
+                else "runtime target is no longer declared"
+            ),
+        }
+        actions.append({key: value for key, value in action.items() if value is not None})
+    return actions
+
+
+def normalize_runtime_relpath(value: str) -> str:
+    return os.path.normcase(value.replace("/", os.sep).replace("\\", os.sep))
 
 
 def runtime_entry_applies(entry: dict[str, Any], platform_name: str) -> bool:

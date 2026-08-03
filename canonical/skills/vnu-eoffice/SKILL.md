@@ -3,7 +3,6 @@ name: vnu-eoffice
 description: "Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram."
 user-invocable: true
 disable-model-invocation: false
-metadata: {"requires":{"bins":["python3"]}}
 ---
 
 Use this skill when the user asks about VNU eOffice, VNU e-office, eoffice.vnu.edu.vn, incoming documents, outgoing documents, document summaries, document searches, or Telegram delivery of eOffice attachments.

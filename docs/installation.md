@@ -4,7 +4,7 @@ This page describes safe installation flows. The installer is conservative:
 planning and dry-run previews are the default workflow, and real home-directory
 writes require both `--apply` and `--real-system`.
 
-Use `make precheck` or `make.bat precheck` first when installing on a new
+Use `make precheck` or `./make.ps1 precheck` first when installing on a new
 machine. The launchers detect a usable runtime instead of requiring a specific
 command name. Use `plan` before `install`. Partial installs are first-class:
 select `--skill`, `--skills`, or `--profile`. Artifact installs are also
@@ -77,7 +77,7 @@ status, and install-plan summaries.
 
 Before running installer commands, clone the repository and run commands from
 the repo root. The launchers need Python 3.10 or newer. On Linux and macOS,
-use `make` or `./installer/bootstrap.sh`; on Windows, use `make.bat`, which
+use `make` or `./installer/bootstrap.sh`; on Windows, use `./make.ps1`, which
 requires `pwsh` or `powershell.exe`. The direct Python entrypoint is useful for
 debugging wrapper behavior:
 
@@ -135,11 +135,11 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 Windows:
 
 ```bat
-make.bat doctor
-make.bat precheck --profile research-core
-make.bat plan --profile research-core
-make.bat install --profile research-core --dry-run
-make.bat lifecycle-test --matrix default --platform-shape windows
+./make.ps1 doctor
+./make.ps1 precheck --profile research-core
+./make.ps1 plan --profile research-core
+./make.ps1 install --profile research-core --dry-run
+./make.ps1 lifecycle-test --matrix default --platform-shape windows
 ```
 
 To test file writes without touching a real agent home, use a fake root:

@@ -278,7 +278,7 @@ cd ai-agents-skills
 ```
 
 Requires Python 3.10 or newer. Linux and macOS examples use `make` and the
-POSIX bootstrap script. Windows examples use `make.bat`, which requires
+POSIX bootstrap script. Windows examples use `./make.ps1`, which requires
 `pwsh` or `powershell.exe`. The installer only plans targets for existing
 agent homes; absent homes are reported and skipped.
 
@@ -303,16 +303,16 @@ command.
 Windows:
 
 ```bat
-make.bat doctor
-make.bat precheck --profile research-core
-make.bat audit-system --profile research-core
-make.bat list-skills
-make.bat list-artifacts
-make.bat plan --profile research-core
-make.bat plan --no-skills --artifact-profile workflow-templates
-make.bat install --profile research-core --dry-run
-make.bat lifecycle-test --matrix default --platform-shape windows
-make.bat fake-root-lifecycle --profile research-core --platform-shape windows
+./make.ps1 doctor
+./make.ps1 precheck --profile research-core
+./make.ps1 audit-system --profile research-core
+./make.ps1 list-skills
+./make.ps1 list-artifacts
+./make.ps1 plan --profile research-core
+./make.ps1 plan --no-skills --artifact-profile workflow-templates
+./make.ps1 install --profile research-core --dry-run
+./make.ps1 lifecycle-test --matrix default --platform-shape windows
+./make.ps1 fake-root-lifecycle --profile research-core --platform-shape windows
 ```
 
 For a shorter first pass, run `doctor`, `precheck`, `plan`, and a dry-run
@@ -351,7 +351,7 @@ dependency-bound artifacts should also install their backing skills.
 ## Command Surfaces
 
 - `make <target> ARGS="..."` is the normal Linux/macOS wrapper.
-- `make.bat <command> ...` is the normal native Windows wrapper.
+- `./make.ps1 <command> ...` is the normal native Windows wrapper.
 - `./installer/bootstrap.sh <command> ...` and
   `python3 -m installer.ai_agents_skills <command> ...` are direct POSIX
   entrypoints for installer CLI commands when debugging wrapper behavior.
@@ -361,7 +361,7 @@ dependency-bound artifacts should also install their backing skills.
   `describe-artifact`.
 - Makefile-only maintainer targets include `docs`, `docs-site`, `docs-check`,
   `static-check`, `sanitize-check`, `test`, and `release-check`; run them
-  through `make` or `make.bat`, not as installer CLI commands.
+  through `make` or `./make.ps1`, not as installer CLI commands.
 
 ## Runtime-Backed Skills
 
@@ -601,7 +601,7 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
         "",
         "- Python 3.10 or newer.",
         "- A shell that can run the launcher: POSIX shell plus `make` on",
-        "  Linux/macOS, or `make.bat` with PowerShell on native Windows.",
+        "  Linux/macOS, or `./make.ps1` with PowerShell on native Windows.",
         "- Existing agent homes for any agents you want to install into. Missing",
         "  agent homes are skipped rather than created implicitly.",
         "",
@@ -634,7 +634,10 @@ def dependencies_text(manifests: dict[str, Any]) -> str:
         lines.extend(["", "## Packages And Services", "", "| Dependency | Type | Detail |", "|---|---|---|"])
         for name in sorted(packages):
             spec = packages[name]
-            detail = spec.get("module") or spec.get("logical_tool") or spec.get("type", "")
+            if spec.get("modules"):
+                detail = ", ".join(spec["modules"])
+            else:
+                detail = spec.get("module") or spec.get("logical_tool") or spec.get("type", "")
             if spec.get("candidate_set"):
                 detail = f"{detail}; candidate set `{spec['candidate_set']}`"
             lines.append(f"| `{name}` | `{spec.get('type')}` | {detail} |")
@@ -1089,8 +1092,9 @@ doctors, and the agent's own diagnostics for those layers.
 
 Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
-On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
-macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
+On Windows it exercises `run_skill.ps1`. CMD runtime entrypoints are not
+published because CMD cannot preserve arbitrary argument vectors safely. On
+Linux and macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
 {runtime_smoke_skills}, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
@@ -1110,7 +1114,7 @@ make runtime-smoke ARGS="--skills self-improving-agent"
 `self-improving-agent` has a portable offline smoke contract for its
 cross-target learning review, command-safety, error-detection, and canonical
 integration-plan helper surface. Native Windows PowerShell/CMD behavior still
-requires running the Windows `make.bat` and runtime runner checks on Windows;
+requires running the Windows `./make.ps1` and runtime runner checks on Windows;
 Linux-hosted Windows platform-shape tests verify install layout, not native
 Windows execution.
 
@@ -1255,7 +1259,7 @@ make openclaw-inventory ARGS="--source-root <fake-openclaw-root> --json"
 ```
 
 ```bat
-make.bat openclaw-inventory --source-root <fake-openclaw-root> --json
+./make.ps1 openclaw-inventory --source-root <fake-openclaw-root> --json
 ```
 
 ## Phase 2 Deliverables
@@ -1291,7 +1295,7 @@ make openclaw-dry-run-manifest ARGS="--inventory <inventory.json> --target-root 
 ```
 
 ```bat
-make.bat openclaw-dry-run-manifest --inventory <inventory.json> --target-root <fake-home-root> --target-agents codex,claude --json
+./make.ps1 openclaw-dry-run-manifest --inventory <inventory.json> --target-root <fake-home-root> --target-agents codex,claude --json
 ```
 
 ## Phase 3 Deliverables
@@ -1328,9 +1332,9 @@ make openclaw-uninstall-manifest ARGS="--target-root <fake-home-root> --manifest
 ```
 
 ```bat
-make.bat openclaw-approve-manifest --manifest <manifest.json> --reviewer <name> --json
-make.bat openclaw-apply-manifest --manifest <approved.json> --target-root <fake-home-root> --apply --json
-make.bat openclaw-uninstall-manifest --target-root <fake-home-root> --manifest-id <manifest_id> --apply --json
+./make.ps1 openclaw-approve-manifest --manifest <manifest.json> --reviewer <name> --json
+./make.ps1 openclaw-apply-manifest --manifest <approved.json> --target-root <fake-home-root> --apply --json
+./make.ps1 openclaw-uninstall-manifest --target-root <fake-home-root> --manifest-id <manifest_id> --apply --json
 ```
 
 ## Phase 4 Deliverables
@@ -1364,8 +1368,8 @@ make openclaw-validate-evidence ARGS="--evidence <evidence.json> --json"
 ```
 
 ```bat
-make.bat openclaw-record-evidence --evidence-type fixture-only --evidence-agent deepseek --evidence-platform ci-container --install-mode reference --path-style posix --observed-behavior "fixture reference docs only" --limitation "not native loader evidence" --json
-make.bat openclaw-validate-evidence --evidence <evidence.json> --json
+./make.ps1 openclaw-record-evidence --evidence-type fixture-only --evidence-agent deepseek --evidence-platform ci-container --install-mode reference --path-style posix --observed-behavior "fixture reference docs only" --limitation "not native loader evidence" --json
+./make.ps1 openclaw-validate-evidence --evidence <evidence.json> --json
 ```
 
 ## Phase 5 Deliverables
@@ -1393,7 +1397,7 @@ make openclaw-persistence-check ARGS="--manifest <manifest.json> --json"
 ```
 
 ```bat
-make.bat openclaw-persistence-check --manifest <manifest.json> --json
+./make.ps1 openclaw-persistence-check --manifest <manifest.json> --json
 ```
 
 ## Risk Fixes
@@ -2357,7 +2361,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
 … force-loop/run_force_loop.sh drain --loop research/run --cancel-dispatch-id <exact-id>
 ```
 
-Windows: `run_skill.bat` / `run_skill.ps1` with
+Windows: `run_skill.ps1` with
 `skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1`.
 
 ### Advanced: raw drive / supervisor
@@ -2968,7 +2972,7 @@ This page describes safe installation flows. The installer is conservative:
 planning and dry-run previews are the default workflow, and real home-directory
 writes require both `--apply` and `--real-system`.
 
-Use `make precheck` or `make.bat precheck` first when installing on a new
+Use `make precheck` or `./make.ps1 precheck` first when installing on a new
 machine. The launchers detect a usable runtime instead of requiring a specific
 command name. Use `plan` before `install`. Partial installs are first-class:
 select `--skill`, `--skills`, or `--profile`. Artifact installs are also
@@ -3041,7 +3045,7 @@ status, and install-plan summaries.
 
 Before running installer commands, clone the repository and run commands from
 the repo root. The launchers need Python 3.10 or newer. On Linux and macOS,
-use `make` or `./installer/bootstrap.sh`; on Windows, use `make.bat`, which
+use `make` or `./installer/bootstrap.sh`; on Windows, use `./make.ps1`, which
 requires `pwsh` or `powershell.exe`. The direct Python entrypoint is useful for
 debugging wrapper behavior:
 
@@ -3099,11 +3103,11 @@ make lifecycle-test ARGS="--matrix default --platform-shape all"
 Windows:
 
 ```bat
-make.bat doctor
-make.bat precheck --profile research-core
-make.bat plan --profile research-core
-make.bat install --profile research-core --dry-run
-make.bat lifecycle-test --matrix default --platform-shape windows
+./make.ps1 doctor
+./make.ps1 precheck --profile research-core
+./make.ps1 plan --profile research-core
+./make.ps1 install --profile research-core --dry-run
+./make.ps1 lifecycle-test --matrix default --platform-shape windows
 ```
 
 To test file writes without touching a real agent home, use a fake root:
@@ -3351,7 +3355,7 @@ reported as primary extra-local inventory.
 When auditing a mounted Windows profile from Linux or WSL, native `.exe`
 programs can often be found but not safely executed. Treat degraded Windows
 tool results as presence checks only. To fully verify Windows-native tools, run
-the same `make.bat precheck --profile ...` command from a native Windows shell
+the same `./make.ps1 precheck --profile ...` command from a native Windows shell
 and compare the output with the mounted-profile audit.
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),
@@ -3719,30 +3723,30 @@ Audit boundary:
 def windows_text() -> str:
     return """# Windows
 
-Windows is multi-substrate. Native Windows, PowerShell/CMD, Git Bash/MSYS, WSL,
+Windows is multi-substrate. Native Windows PowerShell, Git Bash/MSYS, WSL,
 and remote services are checked separately. SageMath is usually WSL-backed and
 must not be treated as a normal Windows package.
 
-Use `make.bat precheck` before installation. The precheck reports whether each
+Use `./make.ps1 precheck` before installation. The precheck reports whether each
 dependency is native Windows, WSL-backed, missing, degraded, or manual. A
 missing DeepSeek home on Windows is not an error; DeepSeek-specific artifacts
 and dependencies are skipped when the agent is absent.
-`make.bat` requires `pwsh` or `powershell.exe`; if neither is available, install
-PowerShell or use the POSIX bootstrap script from a compatible shell.
+`./make.ps1` runs in the current PowerShell 5.1+ or PowerShell 7+ session. If
+PowerShell is unavailable, use the POSIX bootstrap script from a compatible shell.
 
 Common commands from a native Windows shell:
 
-```bat
-make.bat doctor
-make.bat precheck --profile research-core
-make.bat plan --profile research-core
-make.bat install --profile research-core --dry-run
-make.bat lifecycle-test --matrix default --platform-shape windows
-make.bat fake-root-lifecycle --profile research-core --platform-shape windows
-make.bat verify --root <fake-or-real-root>
-make.bat docs
-make.bat sanitize-check
-make.bat test
+```powershell
+./make.ps1 doctor
+./make.ps1 precheck --profile research-core
+./make.ps1 plan --profile research-core
+./make.ps1 install --profile research-core --dry-run
+./make.ps1 lifecycle-test --matrix default --platform-shape windows
+./make.ps1 fake-root-lifecycle --profile research-core --platform-shape windows
+./make.ps1 verify --root <fake-or-real-root>
+./make.ps1 docs
+./make.ps1 sanitize-check
+./make.ps1 test
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected
@@ -3869,7 +3873,7 @@ Common cases:
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
 | Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled this way by default. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
-| Windows wrapper reports no PowerShell runtime | `make.bat` could not find `pwsh` or `powershell.exe`. | Install PowerShell, run from a shell where it is on PATH, or use the POSIX bootstrap script from a compatible environment. |
+| Windows cannot start the PowerShell launcher | The host has no usable PowerShell 5.1+ or PowerShell 7+ session. | Install PowerShell, or use the POSIX bootstrap script from a compatible environment. |
 | Fake-root install has no actions | The fake root does not contain any detected agent homes such as `.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`, or `.gemini/antigravity-cli`. | Create the agent homes you want to test under the fake root, or use `lifecycle-test` to create managed fake roots automatically. |
 | Docs freshness check fails in CI | Generated docs are stale. | Edit `installer/ai_agents_skills/docs.py` or manifests, run `make docs`, and commit the resulting `README.md` and `docs/` changes. |
 | Forced symlink smoke is degraded for Codex or DeepSeek | Current loader evidence does not prove file-symlinked `SKILL.md` loading for those agents. | Use default auto mode or reference mode unless intentionally testing loader behavior. |
@@ -3936,10 +3940,10 @@ make rollback ARGS="--run 20260429-080620"
 Windows dry-run examples:
 
 ```bat
-make.bat uninstall --skill zotero
-make.bat uninstall --artifacts entrypoint-alias:zotero
-make.bat rollback --skill zotero
-make.bat rollback --run 20260429-080620
+./make.ps1 uninstall --skill zotero
+./make.ps1 uninstall --artifacts entrypoint-alias:zotero
+./make.ps1 rollback --skill zotero
+./make.ps1 rollback --run 20260429-080620
 ```
 
 Applied examples:
@@ -3961,9 +3965,9 @@ make verify ARGS="--root <real-root>"
 Windows applied examples:
 
 ```bat
-make.bat uninstall --skill zotero --apply --root <fake-or-real-root>
-make.bat rollback --run 20260429-080620 --apply --root <fake-or-real-root>
-make.bat verify --root <fake-or-real-root>
+./make.ps1 uninstall --skill zotero --apply --root <fake-or-real-root>
+./make.ps1 rollback --run 20260429-080620 --apply --root <fake-or-real-root>
+./make.ps1 verify --root <fake-or-real-root>
 ```
 
 Safety rules:

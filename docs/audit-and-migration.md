@@ -67,7 +67,7 @@ reported as primary extra-local inventory.
 When auditing a mounted Windows profile from Linux or WSL, native `.exe`
 programs can often be found but not safely executed. Treat degraded Windows
 tool results as presence checks only. To fully verify Windows-native tools, run
-the same `make.bat precheck --profile ...` command from a native Windows shell
+the same `./make.ps1 precheck --profile ...` command from a native Windows shell
 and compare the output with the mounted-profile audit.
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),

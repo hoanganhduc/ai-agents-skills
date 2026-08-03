@@ -1527,6 +1527,8 @@ def discover_dependency(
                 root=root,
                 python_candidates=python_candidates_for(package, manifests, platform),
                 site_candidates=python_site_candidates_for(package, manifests, platform),
+                modules=package.get("modules"),
+                authoritative_first_existing=bool(package.get("authoritative_first_existing")),
             )
         elif package.get("type") == "tool":
             logical_tool = package.get("logical_tool")
@@ -1625,6 +1627,8 @@ def install_hint(name: str, result: dict[str, Any]) -> str:
         "svgelements-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install svgelements",
         "numpy-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install numpy",
         "requests-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install requests",
+        "vnu-eoffice-python-package": "install vnu-eoffice, requests, and beautifulsoup4 together in the selected Python environment",
+        "course-hoanganhduc-python-package": "install course-hoanganhduc in the selected Python environment",
         "feedparser-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install feedparser",
         "pyzotero-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install pyzotero",
         "pypdf2-python-package": "install the Python package in the selected Python environment: <selected-python> -m pip install PyPDF2",
@@ -1686,7 +1690,7 @@ def command_help() -> dict[str, Any]:
         "openclaw-target-uninstall-manifest",
     ]
     return {
-        "usage": "make <target> ARGS=\"...\" or make.bat <command> ...",
+        "usage": "make <target> ARGS=\"...\" or ./make.ps1 <command> ...",
         "commands": commands,
         "examples": [
             "make precheck ARGS=\"--profile research-core\"",

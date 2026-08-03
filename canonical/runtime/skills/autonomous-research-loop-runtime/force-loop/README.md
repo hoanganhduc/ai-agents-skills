@@ -19,7 +19,7 @@
 | Linux | Python CLI + `.sh` | **foreground** | `--backend systemd` if user bus works; `--detach` |
 | WSL | same as Linux | **foreground** | avoid assuming full systemd |
 | macOS | Python CLI + `.sh` | **foreground** | `--detach` |
-| Windows | Python CLI + `.ps1` / `.cmd` | **foreground** | no Windows Service in v1 |
+| Windows | Python CLI + `.ps1` | **foreground** | no Windows Service in v1 |
 
 ## Commands
 
@@ -63,7 +63,7 @@ bash "$RUNTIME/run_skill.sh" \
 | `apply_force_loop_defaults.py` | Pin writer + verify |
 | `load_loop_env.py` | Strict env parse |
 | `force_loop_process.py` | Portable start/stop/status |
-| `run_force_loop.sh` / `.ps1` / `.cmd` | Thin runners |
+| `run_force_loop.sh` / `.ps1` | Thin runners |
 | `defaults/` | Non-secret JSON + env.defaults |
 | `profiles/` | formal / general hints |
 

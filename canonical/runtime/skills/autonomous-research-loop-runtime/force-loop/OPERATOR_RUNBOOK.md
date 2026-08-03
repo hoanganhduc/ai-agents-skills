@@ -38,7 +38,7 @@
 
 ### Windows
 
-- Use `run_force_loop.ps1` or `.cmd`.
+- Use `run_force_loop.ps1`.
 - Foreground only in v1. Supervisor shell scripts are POSIX-only; Windows uses `drive` via Python.
 - Failover rotation that depends on `arl_drive_supervisor.sh` is a POSIX convenience; Windows operators set `--provider` or failover offline.
 

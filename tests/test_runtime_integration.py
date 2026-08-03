@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import importlib.util
 import json
@@ -159,12 +160,226 @@ class RuntimeIntegrationTests(unittest.TestCase):
             target_relpaths = {item["target_relpath"] for item in runtime_actions}
 
             self.assertIn("run_skill.ps1", target_relpaths)
-            self.assertIn("run_skill.bat", target_relpaths)
-            self.assertIn("run_python.bat", target_relpaths)
+            self.assertIn("run_python.ps1", target_relpaths)
             self.assertIn("workspace/skills/graph-verifier/graph_verifier.py", target_relpaths)
-            self.assertIn("workspace/skills/graph-verifier/run_graph_verifier.bat", target_relpaths)
+            self.assertFalse(any(path.endswith((".bat", ".cmd")) for path in target_relpaths))
             self.assertNotIn("run_skill.sh", target_relpaths)
             self.assertNotIn("workspace/skills/graph-verifier/run_graph_verifier.sh", target_relpaths)
+
+    def test_windows_upgrade_removes_obsolete_managed_runtime_file_and_rollback_restores_it(self) -> None:
+        manifests = load_manifests()
+        old_manifests = copy.deepcopy(manifests)
+        old_manifests["runtime"]["skills"]["graph-verifier"]["files"].append(
+            {
+                "source": "runners/run_skill.ps1",
+                "target": "workspace/skills/graph-verifier/run_graph_verifier.bat",
+                "type": "text",
+                "platforms": ["windows"],
+                "newline": "crlf",
+                "mode": "0644",
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            agents = detect_agents(root, ["codex"])
+            apply_plan(
+                root,
+                build_plan(root, old_manifests, ["graph-verifier"], agents, platform="windows"),
+                dry_run=False,
+            )
+            obsolete = (
+                root
+                / ".codex"
+                / "runtime"
+                / "workspace"
+                / "skills"
+                / "graph-verifier"
+                / "run_graph_verifier.bat"
+            )
+            self.assertTrue(obsolete.is_file())
+
+            upgrade_plan = build_plan(
+                root, manifests, ["graph-verifier"], agents, platform="windows"
+            )
+            removals = [
+                action
+                for action in upgrade_plan["actions"]
+                if action.get("path") == str(obsolete)
+            ]
+            self.assertEqual(len(removals), 1)
+            self.assertEqual(removals[0]["operation"], "remove-obsolete")
+
+            result = apply_plan(root, upgrade_plan, dry_run=False)
+            self.assertFalse(obsolete.exists())
+            self.assertFalse(
+                any(item.get("artifact") == str(obsolete) for item in load_state(root)["artifacts"])
+            )
+
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertTrue(obsolete.is_file())
+            self.assertTrue(
+                any(item.get("artifact") == str(obsolete) for item in load_state(root)["artifacts"])
+            )
+
+    def test_windows_upgrade_preserves_modified_obsolete_runtime_file(self) -> None:
+        manifests = load_manifests()
+        old_manifests = copy.deepcopy(manifests)
+        old_manifests["runtime"]["skills"]["graph-verifier"]["files"].append(
+            {
+                "source": "runners/run_skill.ps1",
+                "target": "workspace/skills/graph-verifier/run_graph_verifier.bat",
+                "type": "text",
+                "platforms": ["windows"],
+                "newline": "crlf",
+                "mode": "0644",
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            agents = detect_agents(root, ["codex"])
+            apply_plan(
+                root,
+                build_plan(root, old_manifests, ["graph-verifier"], agents, platform="windows"),
+                dry_run=False,
+            )
+            obsolete = (
+                root
+                / ".codex"
+                / "runtime"
+                / "workspace"
+                / "skills"
+                / "graph-verifier"
+                / "run_graph_verifier.bat"
+            )
+            obsolete.write_text("@echo off\r\necho user-edit\r\n", encoding="utf-8")
+
+            upgrade_plan = build_plan(
+                root, manifests, ["graph-verifier"], agents, platform="windows"
+            )
+            conflicts = [
+                action
+                for action in upgrade_plan["actions"]
+                if action.get("path") == str(obsolete)
+            ]
+            self.assertEqual(len(conflicts), 1)
+            self.assertEqual(conflicts[0]["classification"], "conflict")
+            self.assertEqual(conflicts[0]["operation"], "skip")
+
+            apply_plan(root, upgrade_plan, dry_run=False)
+            self.assertIn("user-edit", obsolete.read_text(encoding="utf-8"))
+            self.assertTrue(
+                any(item.get("artifact") == str(obsolete) for item in load_state(root)["artifacts"])
+            )
+
+    def test_windows_upgrade_removes_obsolete_files_from_all_managed_runtime_roots(self) -> None:
+        manifests = load_manifests()
+        old_manifests = copy.deepcopy(manifests)
+        old_manifests["runtime"]["skills"]["graph-verifier"]["files"].append(
+            {
+                "source": "runners/run_skill.ps1",
+                "target": "workspace/skills/graph-verifier/run_graph_verifier.bat",
+                "type": "text",
+                "platforms": ["windows"],
+                "newline": "crlf",
+                "mode": "0644",
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            agents = detect_agents(root, ["codex"])
+            codex_runtime = root / ".codex" / "runtime"
+            shared_runtime = root / "AppData" / "Local" / "ai-agents-skills" / "runtime"
+            for runtime_root in (codex_runtime, shared_runtime):
+                apply_plan(
+                    root,
+                    build_plan(
+                        root,
+                        old_manifests,
+                        ["graph-verifier"],
+                        agents,
+                        platform="windows",
+                        runtime_root=runtime_root,
+                    ),
+                    dry_run=False,
+                )
+
+            obsolete_files = [
+                runtime_root
+                / "workspace"
+                / "skills"
+                / "graph-verifier"
+                / "run_graph_verifier.bat"
+                for runtime_root in (codex_runtime, shared_runtime)
+            ]
+            self.assertTrue(all(path.is_file() for path in obsolete_files))
+
+            upgrade_plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                agents,
+                platform="windows",
+                runtime_root=shared_runtime,
+            )
+            removals = {
+                action["path"]
+                for action in upgrade_plan["actions"]
+                if action.get("operation") == "remove-obsolete"
+            }
+            self.assertTrue({str(path) for path in obsolete_files}.issubset(removals))
+
+            result = apply_plan(root, upgrade_plan, dry_run=False)
+            self.assertTrue(all(not path.exists() for path in obsolete_files))
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertTrue(all(path.is_file() for path in obsolete_files))
+
+    def test_windows_upgrade_preserves_runtime_files_declared_for_other_platforms(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            agents = detect_agents(root, ["codex"])
+            runtime_root = root / "shared-runtime"
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    agents,
+                    platform="linux",
+                    runtime_root=runtime_root,
+                ),
+                dry_run=False,
+            )
+            posix_runner = runtime_root / "run_skill.sh"
+            graph_runner = (
+                runtime_root
+                / "workspace"
+                / "skills"
+                / "graph-verifier"
+                / "run_graph_verifier.sh"
+            )
+            self.assertTrue(posix_runner.is_file() and graph_runner.is_file())
+
+            windows_plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                agents,
+                platform="windows",
+                runtime_root=runtime_root,
+            )
+            removal_paths = {
+                action["path"]
+                for action in windows_plan["actions"]
+                if action.get("operation") == "remove-obsolete"
+            }
+            self.assertNotIn(str(posix_runner), removal_paths)
+            self.assertNotIn(str(graph_runner), removal_paths)
 
     def test_opencode_only_runtime_uses_neutral_shared_root(self) -> None:
         manifests = load_manifests()
@@ -290,6 +505,16 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertNotIn(".codex", str(module.RUN_DIR))
             self.assertNotIn(".codex", str(module.STATE_DIR))
 
+            module.CALIBRE_RUNNER = root / "runtime" / "run_skill.bat"
+            with (
+                patch.object(module.os, "name", "nt"),
+                patch.object(module.subprocess, "run") as subprocess_run,
+            ):
+                result = module.run_calibre(["doctor"])
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error_code"], "powershell_runner_unavailable")
+            subprocess_run.assert_not_called()
+
     def test_tikz_direct_mode_defaults_to_neutral_data_root_outside_codex(self) -> None:
         source = (
             Path(__file__).resolve().parents[1]
@@ -363,15 +588,11 @@ class RuntimeIntegrationTests(unittest.TestCase):
                         )
                         if platform == "windows":
                             self.assertIn("run_skill.ps1", target_relpaths)
-                            self.assertIn("run_skill.bat", target_relpaths)
                             self.assertIn(
                                 "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1",
                                 target_relpaths,
                             )
-                            self.assertIn(
-                                "workspace/skills/submission-venue-selector/run_submission_venue_selector.bat",
-                                target_relpaths,
-                            )
+                            self.assertFalse(any(path.endswith((".bat", ".cmd")) for path in target_relpaths))
                         else:
                             self.assertIn("run_skill.sh", target_relpaths)
                             self.assertIn(
@@ -461,7 +682,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 for entry in runtime["skills"][skill].get("files", [])
                 if (
                     "windows" in entry.get("platforms", [])
-                    and entry["target"].lower().endswith((".bat", ".ps1"))
+                    and entry["target"].lower().endswith((".ps1", ".py"))
                 )
             ]
             if not launchers:
@@ -498,14 +719,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
             windows_targets = [
                 entry["target"].removeprefix("workspace/")
                 for entry in runtime["skills"][skill].get("files", [])
-                if (
-                    "windows" in entry.get("platforms", [])
-                    and entry["target"].lower().endswith((".bat", ".ps1"))
-                )
+                if "windows" in entry.get("platforms", []) and entry["target"].lower().endswith((".ps1", ".py"))
             ]
-            for target in windows_targets:
-                if "run_skill.bat" not in text or target not in text:
-                    missing.append(f"{skill}:{target}")
+            if "run_skill.ps1" not in text or not any(target in text for target in windows_targets):
+                missing.append(skill)
 
         self.assertEqual(missing, [])
 
@@ -519,10 +736,6 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(
             runtime_command_target(manifests, "lean-strict-verification-gate", "linux"),
             "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh",
-        )
-        self.assertEqual(
-            runtime_command_target(manifests, "lean-strict-verification-gate", "windows", "run_skill.bat"),
-            "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.bat",
         )
         self.assertEqual(
             runtime_command_target(manifests, "lean-strict-verification-gate", "windows", "run_skill.ps1"),
@@ -547,10 +760,6 @@ class RuntimeIntegrationTests(unittest.TestCase):
             "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
         )
         self.assertEqual(
-            runtime_command_target(manifests, "axiom-axle-mcp", "windows", "run_skill.bat"),
-            "skills/axiom-axle-mcp/run_axiom_axle_mcp.bat",
-        )
-        self.assertEqual(
             runtime_command_target(manifests, "axiom-axle-mcp", "windows", "run_skill.ps1"),
             "skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
         )
@@ -573,10 +782,6 @@ class RuntimeIntegrationTests(unittest.TestCase):
             "skills/lean-explore-mcp/run_lean_explore_mcp.sh",
         )
         self.assertEqual(
-            runtime_command_target(manifests, "lean-explore-mcp", "windows", "run_skill.bat"),
-            "skills/lean-explore-mcp/run_lean_explore_mcp.bat",
-        )
-        self.assertEqual(
             runtime_command_target(manifests, "lean-explore-mcp", "windows", "run_skill.ps1"),
             "skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
         )
@@ -584,13 +789,14 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_installed_runtime_smoke_uses_scratch_workspace(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
+        smoke_skills = {"formal-skeleton-helper", "get-available-resources", "graph-verifier"}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             create_agent_home(root, "codex")
             plan = build_plan(
                 root,
                 manifests,
-                ["formal-skeleton-helper"],
+                sorted(smoke_skills),
                 detect_agents(root, ["codex"]),
                 platform=platform,
             )
@@ -599,13 +805,18 @@ class RuntimeIntegrationTests(unittest.TestCase):
             result = run_installed_runtime_smoke(
                 root,
                 manifests,
-                skills={"formal-skeleton-helper"},
+                skills=smoke_skills,
                 platform=platform,
                 timeout=30,
             )
 
             self.assertEqual(result["status"], "ok", result)
             self.assertEqual(result["mode"], "installed")
+            if platform == "windows":
+                targets = {item["skill"]: item["command_target"] for item in result["results"]}
+                self.assertEqual(targets["formal-skeleton-helper"], "skills/formal-skeleton-helper/formal_skeleton_helper.py")
+                self.assertEqual(targets["get-available-resources"], "skills/get-available-resources/detect_resources.py")
+                self.assertEqual(targets["graph-verifier"], "skills/graph-verifier/graph_verifier.py")
             self.assertFalse((root / ".codex" / "runtime" / "workspace" / "runtime-smoke").exists())
 
     def test_axiom_axle_helper_does_not_execute_install_or_leak_secret(self) -> None:
@@ -1033,10 +1244,11 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(blocked, [])
             self.assertTrue(runtime_actions)
             self.assertTrue(all(not item["target_relpath"].endswith(".sh") for item in runtime_actions))
-            self.assertIn("run_skill.bat", target_relpaths)
-            self.assertIn("run_python.bat", target_relpaths)
-            self.assertIn("workspace/skills/zotero/run_zot.bat", target_relpaths)
-            self.assertIn("workspace/skills/getscipapers_requester/run_gsp_helper.bat", target_relpaths)
+            self.assertIn("run_skill.ps1", target_relpaths)
+            self.assertIn("run_python.ps1", target_relpaths)
+            self.assertIn("workspace/skills/zotero/zot.py", target_relpaths)
+            self.assertIn("workspace/skills/getscipapers_requester/gsp_openclaw_helper.py", target_relpaths)
+            self.assertFalse(any(path.endswith((".bat", ".cmd")) for path in target_relpaths))
 
         for platform in ("linux", "macos", "wsl"):
             with tempfile.TemporaryDirectory() as tmp:
@@ -1266,8 +1478,11 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 / "graph_verifier.py"
             ).exists())
 
-    @unittest.skipUnless(os.name == "nt", "Windows batch wrapper test")
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
     def test_getscipapers_windows_runner_uses_installed_runtime_workspace(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1292,8 +1507,13 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
             completed = subprocess.run(
                 [
-                    str(runtime_root / "run_skill.bat"),
-                    "skills/getscipapers_requester/run_gsp_helper.bat",
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(runtime_root / "run_skill.ps1"),
+                    "skills/getscipapers_requester/gsp_openclaw_helper.py",
                     "latest-downloads",
                     "--limit",
                     "0",
@@ -1312,14 +1532,16 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertTrue(state_dir.is_dir())
             self.assertFalse((fake_home / ".codex").exists())
 
-    @unittest.skipUnless(os.name == "nt", "Windows batch wrapper test")
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell wrapper test")
     def test_docling_windows_wrapper_forwards_more_than_nine_args(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
         with tempfile.TemporaryDirectory() as tmp:
             runtime_root = Path(tmp) / "runtime"
             docling_dir = runtime_root / "workspace" / "skills" / "docling"
             docling_dir.mkdir(parents=True)
             source_dir = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills" / "docling"
-            shutil.copy2(source_dir / "run_docling.bat", docling_dir / "run_docling.bat")
             shutil.copy2(source_dir / "run_docling.ps1", docling_dir / "run_docling.ps1")
             (docling_dir / "docling_convert.py").write_text(
                 "import json, sys\nprint(json.dumps(sys.argv[1:]))\n",
@@ -1330,7 +1552,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             env["AAS_RUNTIME_PYTHON"] = sys.executable
 
             completed = subprocess.run(
-                [str(docling_dir / "run_docling.bat"), "convert", *args],
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(docling_dir / "run_docling.ps1"), "convert", *args],
                 check=False,
                 text=True,
                 capture_output=True,
@@ -1341,17 +1563,16 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(json.loads(completed.stdout), args)
 
-    @unittest.skipUnless(os.name == "nt", "Windows batch/PowerShell wrapper test")
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell wrapper test")
     def test_docling_windows_wrapper_uses_aas_runtime_python(self) -> None:
-        # Windows counterpart to test_posix_wrapper_uses_aas_runtime_python: the
-        # .bat -> .ps1 wrapper must launch the interpreter named by AAS_RUNTIME_PYTHON,
-        # so the behavior is asserted on Windows rather than only on POSIX.
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
         with tempfile.TemporaryDirectory() as tmp:
             runtime_root = Path(tmp) / "runtime"
             docling_dir = runtime_root / "workspace" / "skills" / "docling"
             docling_dir.mkdir(parents=True)
             source_dir = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills" / "docling"
-            shutil.copy2(source_dir / "run_docling.bat", docling_dir / "run_docling.bat")
             shutil.copy2(source_dir / "run_docling.ps1", docling_dir / "run_docling.ps1")
             (docling_dir / "doctor.py").write_text(
                 "import json, sys\nprint(json.dumps({'executable': sys.executable, 'args': sys.argv[1:]}))\n",
@@ -1362,7 +1583,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             env.pop("DOCLING_PYTHON", None)
 
             completed = subprocess.run(
-                [str(docling_dir / "run_docling.bat"), "doctor", "arg1", "arg2"],
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(docling_dir / "run_docling.ps1"), "doctor", "arg1", "arg2"],
                 check=False,
                 text=True,
                 capture_output=True,
@@ -1534,17 +1755,17 @@ class RuntimeIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             temp = Path(tmp)
             runtime_root = temp / "runtime"
-            workspace_script = runtime_root / "workspace" / "skills" / "demo" / "run.bat"
+            workspace_script = runtime_root / "workspace" / "skills" / "demo" / "run.ps1"
             workspace_script.parent.mkdir(parents=True)
-            workspace_script.write_text("@echo off\r\necho managed-workspace\r\n", encoding="utf-8")
+            workspace_script.write_text("Write-Output 'managed-workspace'\n", encoding="utf-8")
             runner = runtime_root / "run_skill.ps1"
             shutil.copy2(Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_skill.ps1", runner)
 
-            external_script = temp / "external" / "skills" / "demo" / "run.bat"
+            external_script = temp / "external" / "skills" / "demo" / "run.ps1"
             external_script.parent.mkdir(parents=True)
             marker = temp / "external-ran"
             external_script.write_text(
-                f"@echo off\r\necho external-workspace\r\ntype nul > \"{marker}\"\r\n",
+                f"Write-Output 'external-workspace'\nSet-Content -LiteralPath '{marker}' -Value 'ran'\n",
                 encoding="utf-8",
             )
             env = os.environ.copy()
@@ -1559,7 +1780,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     "Bypass",
                     "-File",
                     str(runner),
-                    "skills/demo/run.bat",
+                    "skills/demo/run.ps1",
                 ],
                 check=False,
                 text=True,
@@ -1620,28 +1841,28 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertIn("symlinked runtime command path", completed.stderr)
             self.assertFalse(marker.exists())
 
-    @unittest.skipUnless(os.name == "nt", "Windows batch wrapper test")
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell wrapper test")
     def test_rss_summary_wrapper_propagates_digest_failure(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
         with tempfile.TemporaryDirectory() as tmp:
             runtime_root = Path(tmp) / "runtime"
             workspace = runtime_root / "workspace"
             rss_dir = workspace / "skills" / "rss-news-digest"
             rss_dir.mkdir(parents=True)
             shutil.copy2(
-                Path(__file__).resolve().parents[1]
-                / "canonical"
-                / "runtime"
-                / "skills"
-                / "rss-news-digest"
-                / "run_and_summarize.bat",
-                rss_dir / "run_and_summarize.bat",
+                Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills" / "rss-news-digest" / "run_and_summarize.ps1",
+                rss_dir / "run_and_summarize.ps1",
             )
-            (rss_dir / "run_rss_news_digest.bat").write_text("@echo off\r\nexit /b 7\r\n", encoding="utf-8")
+            (runtime_root / "run_python.ps1").write_text("exit 7\n", encoding="utf-8")
+            (rss_dir / "rss_news_digest.py").write_text("raise SystemExit(99)\n", encoding="utf-8")
             env = os.environ.copy()
+            env["AAS_RUNTIME_ROOT"] = str(runtime_root)
             env["AAS_RUNTIME_WORKSPACE"] = str(workspace)
 
             completed = subprocess.run(
-                [str(rss_dir / "run_and_summarize.bat")],
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(rss_dir / "run_and_summarize.ps1")],
                 check=False,
                 text=True,
                 capture_output=True,
@@ -1663,22 +1884,357 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_windows_python_runner_prefers_path_python_before_py_launcher(self) -> None:
-        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.bat"
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
         text = runner.read_text(encoding="utf-8")
 
-        py_probe = text.index("\nwhere py >nul")
-        self.assertLess(text.index("\nwhere python.exe >nul"), py_probe)
-        self.assertLess(text.index("\nwhere python >nul"), py_probe)
+        candidates = text.index('@("python.exe", "python", "py")')
+        self.assertGreaterEqual(candidates, 0)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_propagates_child_exit_code(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        arguments = [
+            "space value",
+            "bang!value",
+            "amp&value",
+            "pipe|value",
+            "less<value",
+            "greater>value",
+            "caret^value",
+            "percent%value",
+            "left(value",
+            "right)value",
+            'quote"value',
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "fail.py"
+            args_path = Path(tmp) / "args.json"
+            script.write_text(
+                "import json, sys\n"
+                f"from pathlib import Path\nPath({str(args_path)!r}).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n"
+                "raise SystemExit(7)\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["AAS_RUNTIME_SCRIPT"] = str(script)
+            env["AAS_RUNTIME_PYTHON"] = sys.executable
+            env["ERRORLEVEL"] = "0"
+
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner), *arguments],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+            recorded_args = json.loads(args_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(completed.returncode, 7, completed.stderr)
+        self.assertEqual(recorded_args, arguments)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_preserves_explicit_error_codes(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        env = os.environ.copy()
+        env.pop("AAS_RUNTIME_SCRIPT", None)
+        missing_script = subprocess.run(
+            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
+            check=False,
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "ok.py"
+            script.write_text("print('ok')\n", encoding="utf-8")
+            env["AAS_RUNTIME_SCRIPT"] = str(script)
+            env["AAS_RUNTIME_PYTHON"] = str(Path(tmp) / "missing-python.exe")
+            missing_python = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+        self.assertEqual(missing_script.returncode, 2, missing_script.stderr)
+        self.assertEqual(missing_python.returncode, 127, missing_python.stderr)
+
+    def test_windows_python_runner_and_manim_helper_are_declared_runtime_files(self) -> None:
+        manifests = load_manifests()
+        runner_targets = {entry["target"] for entry in manifests["runtime"]["runners"]}
+        manim_sources = {
+            entry["source"] for entry in manifests["runtime"]["skills"]["manim-math-animation"]["files"]
+        }
+
+        self.assertIn("run_python.ps1", runner_targets)
+        self.assertIn("skills/manim-math-animation/mma/tools.py", manim_sources)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_does_not_execute_injected_environment_path(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "ok.py"
+            marker = root / "injected.txt"
+            script.write_text("print('ok')\n", encoding="utf-8")
+            env = os.environ.copy()
+            env["AAS_RUNTIME_SCRIPT"] = str(script)
+            env["AAS_RUNTIME_PYTHON"] = f'missing-python" & echo injected>"{marker}" & rem "'
+
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+        self.assertEqual(completed.returncode, 127)
+        self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell wrapper test")
+    def test_windows_python_fallback_wrappers_propagate_child_exit_code(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runtime_source = Path(__file__).resolve().parents[1] / "canonical" / "runtime"
+        runtime_skills = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills"
+        wrappers = {
+            "deep-research-workflow": ("run_deep_research_workflow.ps1", "deep_research_workflow.py"),
+            "lean-formalization-intake": ("run_lean_formalization_intake.ps1", "lean_formalization_intake.py"),
+            "lean-research-library": ("run_lean_research_library.ps1", "lean_research_library.py"),
+            "lean-strict-verification-gate": (
+                "run_lean_strict_verification_gate.ps1",
+                "lean_strict_verification_gate.py",
+            ),
+            "self-improving-agent": ("run_self_improving_agent.ps1", "self_improving_agent.py"),
+        }
+        arguments = ["space value", "bang!value", "amp&value", "pipe|value", "less<value", "greater>value", "caret^value", "percent%value", "left(value", "right)value", 'quote"value']
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shutil.copy2(runtime_source / "runners" / "run_python.ps1", root / "run_python.ps1")
+            env = os.environ.copy()
+            env.pop("AAS_RUNTIME_PYTHON", None)
+            env["AAS_PYTHON"] = sys.executable
+            env["AAS_RUNTIME_ROOT"] = str(root)
+            for skill, (wrapper_name, script_name) in wrappers.items():
+                with self.subTest(skill=skill):
+                    wrapper = root / wrapper_name
+                    shutil.copy2(runtime_skills / skill / wrapper_name, wrapper)
+                    args_path = root / f"{skill}-args.json"
+                    (root / script_name).write_text(
+                        "import json, sys\n"
+                        f"from pathlib import Path\nPath({str(args_path)!r}).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n"
+                        "raise SystemExit(7)\n",
+                        encoding="utf-8",
+                    )
+                    completed = subprocess.run(
+                        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), *arguments],
+                        check=False,
+                        text=True,
+                        capture_output=True,
+                        env=env,
+                        timeout=30,
+                    )
+                    self.assertEqual(completed.returncode, 7, completed.stderr)
+                    self.assertEqual(json.loads(args_path.read_text(encoding="utf-8")), arguments)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell wrapper test")
+    def test_windows_python_fallback_wrapper_honors_invalid_aas_python(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runtime_source = Path(__file__).resolve().parents[1] / "canonical" / "runtime"
+        source = runtime_source / "skills" / "deep-research-workflow" / "run_deep_research_workflow.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = root / source.name
+            script = root / "deep_research_workflow.py"
+            shutil.copy2(source, wrapper)
+            shutil.copy2(runtime_source / "runners" / "run_python.ps1", root / "run_python.ps1")
+            script.write_text("print('ok')\n", encoding="utf-8")
+            env = os.environ.copy()
+            env["AAS_RUNTIME_ROOT"] = str(root)
+            env.pop("AAS_RUNTIME_PYTHON", None)
+            env["AAS_PYTHON"] = str(root / "missing-python.exe")
+
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper)],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+        self.assertEqual(completed.returncode, 127, completed.stderr)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell wrapper test")
+    def test_windows_python_wrappers_delegate_to_shared_runner(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runtime_skills = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills"
+        wrappers = {
+            "deep-research-workflow": ("run_deep_research_workflow.ps1", "deep_research_workflow.py"),
+            "lean-formalization-intake": ("run_lean_formalization_intake.ps1", "lean_formalization_intake.py"),
+            "lean-research-library": ("run_lean_research_library.ps1", "lean_research_library.py"),
+            "lean-strict-verification-gate": ("run_lean_strict_verification_gate.ps1", "lean_strict_verification_gate.py"),
+            "self-improving-agent": ("run_self_improving_agent.ps1", "self_improving_agent.py"),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record = root / "record.json"
+            (root / "run_python.ps1").write_text(
+                "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments = @())\n"
+                "$payload = @{ script = $env:AAS_RUNTIME_SCRIPT; arguments = [object[]]$Arguments } | ConvertTo-Json -Compress\n"
+                "[IO.File]::WriteAllText($env:AAS_TEST_RECORD, $payload)\n"
+                "exit 23\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["AAS_RUNTIME_ROOT"] = str(root)
+            env["AAS_TEST_RECORD"] = str(record)
+            for skill, (wrapper_name, script_name) in wrappers.items():
+                with self.subTest(skill=skill):
+                    wrapper = root / wrapper_name
+                    shutil.copy2(runtime_skills / skill / wrapper_name, wrapper)
+                    (root / script_name).write_text("raise SystemExit(99)\n", encoding="utf-8")
+                    completed = subprocess.run(
+                        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), "space value", "amp&value"],
+                        check=False,
+                        text=True,
+                        capture_output=True,
+                        env=env,
+                        timeout=30,
+                    )
+                    payload = json.loads(record.read_text(encoding="utf-8"))
+                    self.assertEqual(completed.returncode, 23, completed.stderr)
+                    self.assertEqual(Path(payload["script"]).name, script_name)
+                    self.assertEqual(payload["arguments"], ["space value", "amp&value"])
+
+    def test_windows_runtime_does_not_publish_cmd_entrypoints(self) -> None:
+        runtime = Path(__file__).resolve().parents[1] / "canonical" / "runtime"
+        cmd_entrypoints = [
+            path.relative_to(runtime).as_posix()
+            for path in runtime.rglob("*")
+            if path.is_file() and path.suffix.lower() in {".bat", ".cmd"}
+        ]
+        self.assertEqual(cmd_entrypoints, [])
+
+        manifests = load_manifests()
+        published_targets = [
+            entry["target"]
+            for entry in manifests["runtime"]["runners"]
+        ]
+        for spec in manifests["runtime"]["skills"].values():
+            published_targets.extend(entry["target"] for entry in spec.get("files", []))
+        self.assertFalse(any(target.lower().endswith((".bat", ".cmd")) for target in published_targets))
+        for skill in (
+            "deep-research-workflow",
+            "lean-formalization-intake",
+            "lean-research-library",
+            "lean-strict-verification-gate",
+            "self-improving-agent",
+        ):
+            with self.subTest(active_windows_target=skill):
+                self.assertTrue(runtime_command_target(manifests, skill, "windows").endswith(".ps1"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_run_skill_preserves_hostile_arguments_and_child_exit(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        source = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_skill.ps1"
+        arguments = ["amp&value", "pipe|value", "less<value", "greater>value", "caret^value", "percent%value", "left(value", "right)value", 'quote"value', "bang!value"]
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp)
+            workspace = runtime / "workspace"
+            workspace.mkdir()
+            shutil.copy2(source, runtime / "run_skill.ps1")
+            recorder = workspace / "record.ps1"
+            args_path = runtime / "args.json"
+            recorder.write_text(
+                "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments = @())\n"
+                "[IO.File]::WriteAllText($env:AAS_TEST_ARGS_PATH, (ConvertTo-Json -InputObject ([object[]]$Arguments) -Compress))\n"
+                "exit 7\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["AAS_TEST_ARGS_PATH"] = str(args_path)
+            env["ERRORLEVEL"] = "0"
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runtime / "run_skill.ps1"), "record.ps1", *arguments],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 7, completed.stderr)
+            self.assertEqual(json.loads(args_path.read_text(encoding="utf-8")), arguments)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_run_skill_rejects_cmd_target_metacharacters_before_execution(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        source = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_skill.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime = Path(tmp)
+            workspace = runtime / "workspace"
+            workspace.mkdir()
+            shutil.copy2(source, runtime / "run_skill.ps1")
+            marker = runtime / "injected.txt"
+            target = workspace / "target.bat"
+            target.write_text(f'@echo off\r\necho injected>"{marker}"\r\n', encoding="utf-8")
+            arguments = ["safe-value", "amp&value", "pipe|value", "less<value", "greater>value", "caret^value", "percent%value", "bang!value", "left(value", "right)value", 'quote"value', "line\rbreak", "line\nbreak"]
+            for argument in arguments:
+                with self.subTest(argument=argument):
+                    completed = subprocess.run(
+                        [
+                            powershell,
+                            "-NoProfile",
+                            "-ExecutionPolicy",
+                            "Bypass",
+                            "-File",
+                            str(runtime / "run_skill.ps1"),
+                            "target.bat",
+                            argument,
+                        ],
+                        check=False,
+                        text=True,
+                        capture_output=True,
+                        timeout=30,
+                    )
+
+                    self.assertEqual(completed.returncode, 64, completed.stderr)
+                    self.assertFalse(marker.exists())
 
     def test_runtime_smoke_selects_native_command_targets(self) -> None:
         manifests = load_manifests()
         self.assertEqual(
             runtime_command_target(manifests, "graph-verifier", "windows"),
-            "skills/graph-verifier/run_graph_verifier.bat",
+            "skills/graph-verifier/graph_verifier.py",
         )
         self.assertEqual(
             runtime_command_target(manifests, "graph-verifier", "windows", "run_skill.ps1"),
-            "skills/graph-verifier/run_graph_verifier.bat",
+            "skills/graph-verifier/graph_verifier.py",
         )
         self.assertEqual(
             runtime_command_target(manifests, "lean-strict-verification-gate", "windows", "run_skill.ps1"),

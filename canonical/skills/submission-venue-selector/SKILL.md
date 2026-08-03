@@ -63,11 +63,7 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 & "$runtime\run_skill.ps1" "skills/submission-venue-selector/run_submission_venue_selector.ps1" run --dir "$env:USERPROFILE\venue-run" --draft "$env:USERPROFILE\drafts\paper.tex" --offline
 ```
 
-Windows CMD:
-
-```bat
-"%AAS_RUNTIME_ROOT%\run_skill.bat" skills/submission-venue-selector/run_submission_venue_selector.bat run --dir "%USERPROFILE%\venue-run" --draft "%USERPROFILE%\drafts\paper.tex" --offline
-```
+On Windows, use the PowerShell command above; CMD runtime entrypoints are not published.
 
 Useful commands:
 

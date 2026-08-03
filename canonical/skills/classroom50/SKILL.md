@@ -3,7 +3,7 @@ name: classroom50
 description: "Route Classroom50 (foundation50) instructor workflows through the course_hoanganhduc agent entrypoint: preflight, list classrooms/roster/assignments, roster sync into local DB, and C50 CSV export. Does not invoke raw gh teacher."
 user-invocable: true
 disable-model-invocation: false
-metadata: {"requires":{"bins":["python3","gh"]}}
+metadata: {"requires":{"bins":["gh"]}}
 ---
 
 Use this skill when the user asks about Classroom50, foundation50 classroom tooling, GitHub Classroom alternatives for VNU courses, C50 roster sync, listing C50 classrooms/assignments, or exporting a Classroom50-compatible roster CSV.

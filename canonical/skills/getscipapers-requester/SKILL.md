@@ -14,7 +14,7 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/getscipapers_requester/run_gsp_helper.bat" <args>
+& "$runtime\run_skill.ps1" "skills/getscipapers_requester/gsp_openclaw_helper.py" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
@@ -59,7 +59,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_setu
 On native Windows, use the Windows runner and command target:
 
 ```powershell
-& "$runtime\run_skill.bat" "skills/getscipapers_requester/run_gsp_setup.bat" setup
+& "$runtime\run_skill.ps1" "skills/getscipapers_requester/run_gsp_setup.py" setup
 ```
 
 ## Core commands

@@ -19,6 +19,7 @@ from installer.ai_agents_skills.discovery import (
     split_command,
     substrate_for,
 )
+from installer.ai_agents_skills.cli import discover_dependency
 from installer.ai_agents_skills.manifest import load_manifests
 
 
@@ -54,17 +55,115 @@ class DiscoveryTests(unittest.TestCase):
             candidates_for_platform(site_candidates, "windows"),
         )
 
-    def test_agent_python_candidates_include_local_course_and_eoffice_venvs(self) -> None:
+    def test_package_python_candidates_isolate_course_and_eoffice_venvs(self) -> None:
         manifests = load_manifests()
-        candidates = manifests["dependencies"]["python_candidate_sets"]["agent"]
-        site_candidates = manifests["dependencies"]["python_site_candidate_sets"]["agent"]
-        windows = candidates_for_platform(candidates, "windows")
-        windows_sites = candidates_for_platform(site_candidates, "windows")
+        deps = manifests["dependencies"]
+        candidates = deps["python_candidate_sets"]
+        site_candidates = deps["python_site_candidate_sets"]
 
-        self.assertIn(".course_venv\\Scripts\\python.exe", windows)
-        self.assertIn(".vnu-eoffice_venv\\Scripts\\python.exe", windows)
-        self.assertIn(".course_venv\\Lib\\site-packages", windows_sites)
-        self.assertIn(".vnu-eoffice_venv\\Lib\\site-packages", windows_sites)
+        self.assertEqual(
+            candidates_for_platform(candidates["course"], "windows")[0],
+            ".course_venv\\Scripts\\python.exe",
+        )
+        self.assertEqual(
+            candidates_for_platform(candidates["vnu-eoffice"], "windows")[0],
+            ".vnu-eoffice_venv\\Scripts\\python.exe",
+        )
+        self.assertEqual(
+            candidates_for_platform(candidates["manim"], "windows")[0],
+            ".local\\share\\manim-math-animation-venv\\Scripts\\python.exe",
+        )
+        self.assertEqual(
+            candidates_for_platform(site_candidates["course"], "windows")[0],
+            ".course_venv\\Lib\\site-packages",
+        )
+        self.assertEqual(
+            candidates_for_platform(site_candidates["vnu-eoffice"], "windows")[0],
+            ".vnu-eoffice_venv\\Lib\\site-packages",
+        )
+        self.assertEqual(
+            candidates_for_platform(site_candidates["manim"], "windows")[0],
+            ".local\\share\\manim-math-animation-venv\\Lib\\site-packages",
+        )
+        self.assertNotIn(
+            ".course_venv\\Scripts\\python.exe",
+            candidates_for_platform(candidates["agent"], "windows"),
+        )
+        self.assertNotIn(
+            ".vnu-eoffice_venv\\Scripts\\python.exe",
+            candidates_for_platform(candidates["agent"], "windows"),
+        )
+
+        packages = deps["packages"]
+        self.assertEqual(packages["course-hoanganhduc-python-package"]["candidate_set"], "course")
+        self.assertTrue(packages["course-hoanganhduc-python-package"]["authoritative_first_existing"])
+        vnu = packages["vnu-eoffice-python-package"]
+        self.assertEqual(vnu["candidate_set"], "vnu-eoffice")
+        self.assertEqual(vnu["modules"], ["vnu_eoffice", "requests", "bs4"])
+        self.assertTrue(vnu["authoritative_first_existing"])
+        manim = packages["manim-python-package"]
+        self.assertEqual(manim["candidate_set"], "manim")
+        self.assertTrue(manim["authoritative_first_existing"])
+
+    def test_vnu_dependency_does_not_fall_back_from_partial_dedicated_venv(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dedicated = root / ".vnu-eoffice_venv" / "Scripts" / "python.exe"
+            shared = root / ".agents_skills_venv" / "Scripts" / "python.exe"
+            dedicated.parent.mkdir(parents=True)
+            shared.parent.mkdir(parents=True)
+            dedicated.touch()
+            shared.touch()
+
+            def check(command: str, module: str, _platform: str) -> dict[str, object]:
+                is_dedicated = ".vnu-eoffice_venv" in command
+                ok = not is_dedicated or module != "requests"
+                return {"python": command, "status": "ok" if ok else "missing", "detection": "import"}
+
+            with patch("installer.ai_agents_skills.discovery.check_python_module", side_effect=check):
+                result = discover_dependency(
+                    "vnu-eoffice-python-package",
+                    True,
+                    manifests,
+                    "windows",
+                    "global-python",
+                    root,
+                )
+
+        self.assertEqual(result["status"], "missing")
+        self.assertEqual(len(result["checked"]), 1)
+        self.assertEqual(result["checked"][0]["candidate"], ".vnu-eoffice_venv\\Scripts\\python.exe")
+        self.assertEqual(result["checked"][0]["missing_modules"], ["requests"])
+
+    def test_vnu_dependency_uses_one_fallback_interpreter_when_dedicated_venv_is_absent(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shared = root / ".agents_skills_venv" / "Scripts" / "python.exe"
+            shared.parent.mkdir(parents=True)
+            shared.touch()
+
+            with patch(
+                "installer.ai_agents_skills.discovery.check_python_module",
+                side_effect=lambda command, module, _platform: {
+                    "python": command,
+                    "status": "ok",
+                    "detection": "import",
+                },
+            ) as check:
+                result = discover_dependency(
+                    "vnu-eoffice-python-package",
+                    True,
+                    manifests,
+                    "windows",
+                    "global-python",
+                    root,
+                )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn(".agents_skills_venv", result["python"])
+        self.assertEqual([call.args[1] for call in check.call_args_list], ["vnu_eoffice", "requests", "bs4"])
 
     def test_python_capabilities_probe_ssl_venv_and_pip_independently(self) -> None:
         with (

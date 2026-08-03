@@ -273,7 +273,7 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             runtime_command_target(manifests, "submission-venue-selector", "windows"),
-            "skills/submission-venue-selector/run_submission_venue_selector.bat",
+            "skills/submission-venue-selector/run_submission_venue_selector.ps1",
         )
         self.assertEqual(
             runtime_command_target(manifests, "submission-venue-selector", "windows", "run_skill.ps1"),

@@ -45,7 +45,7 @@ Common cases:
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
 | Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled this way by default. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
-| Windows wrapper reports no PowerShell runtime | `make.bat` could not find `pwsh` or `powershell.exe`. | Install PowerShell, run from a shell where it is on PATH, or use the POSIX bootstrap script from a compatible environment. |
+| Windows cannot start the PowerShell launcher | The host has no usable PowerShell 5.1+ or PowerShell 7+ session. | Install PowerShell, or use the POSIX bootstrap script from a compatible environment. |
 | Fake-root install has no actions | The fake root does not contain any detected agent homes such as `.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`, or `.gemini/antigravity-cli`. | Create the agent homes you want to test under the fake root, or use `lifecycle-test` to create managed fake roots automatically. |
 | Docs freshness check fails in CI | Generated docs are stale. | Edit `installer/ai_agents_skills/docs.py` or manifests, run `make docs`, and commit the resulting `README.md` and `docs/` changes. |
 | Forced symlink smoke is degraded for Codex or DeepSeek | Current loader evidence does not prove file-symlinked `SKILL.md` loading for those agents. | Use default auto mode or reference mode unless intentionally testing loader behavior. |

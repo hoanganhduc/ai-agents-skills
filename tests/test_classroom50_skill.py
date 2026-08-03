@@ -31,7 +31,7 @@ class Classroom50SkillTests(unittest.TestCase):
         pkg = deps["packages"]["course-hoanganhduc-python-package"]
         self.assertEqual(pkg["type"], "python")
         self.assertEqual(pkg["module"], "course_hoanganhduc")
-        self.assertEqual(pkg["candidate_set"], "agent")
+        self.assertEqual(pkg["candidate_set"], "course")
 
     def test_skill_body_agent_entrypoint(self):
         body = (ROOT / "canonical/skills/classroom50/SKILL.md").read_text(encoding="utf-8")
@@ -42,6 +42,9 @@ class Classroom50SkillTests(unittest.TestCase):
                 re.match(r"^\s*`?gh teacher\b", line),
                 msg=f"execution-shaped gh teacher line: {line!r}",
             )
+        frontmatter = body.split("---", 2)[1]
+        self.assertNotIn('"python3"', frontmatter)
+        self.assertIn('"gh"', frontmatter)
 
 
 if __name__ == "__main__":

@@ -14,8 +14,8 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/rss-news-digest/run_and_summarize.bat" <args>
-& "$runtime\run_skill.bat" "skills/rss-news-digest/run_rss_news_digest.bat" <args>
+& "$runtime\run_skill.ps1" "skills/rss-news-digest/run_and_summarize.ps1" <args>
+& "$runtime\run_skill.ps1" "skills/rss-news-digest/rss_news_digest.py" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.

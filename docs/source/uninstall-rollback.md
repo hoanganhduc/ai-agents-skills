@@ -53,10 +53,10 @@ make rollback ARGS="--run 20260429-080620"
 Windows dry-run examples:
 
 ```bat
-make.bat uninstall --skill zotero
-make.bat uninstall --artifacts entrypoint-alias:zotero
-make.bat rollback --skill zotero
-make.bat rollback --run 20260429-080620
+./make.ps1 uninstall --skill zotero
+./make.ps1 uninstall --artifacts entrypoint-alias:zotero
+./make.ps1 rollback --skill zotero
+./make.ps1 rollback --run 20260429-080620
 ```
 
 Applied examples:
@@ -78,9 +78,9 @@ make verify ARGS="--root <real-root>"
 Windows applied examples:
 
 ```bat
-make.bat uninstall --skill zotero --apply --root <fake-or-real-root>
-make.bat rollback --run 20260429-080620 --apply --root <fake-or-real-root>
-make.bat verify --root <fake-or-real-root>
+./make.ps1 uninstall --skill zotero --apply --root <fake-or-real-root>
+./make.ps1 rollback --run 20260429-080620 --apply --root <fake-or-real-root>
+./make.ps1 verify --root <fake-or-real-root>
 ```
 
 Safety rules:

@@ -109,7 +109,7 @@ make openclaw-inventory ARGS="--source-root <fake-openclaw-root> --json"
 ```
 
 ```bat
-make.bat openclaw-inventory --source-root <fake-openclaw-root> --json
+./make.ps1 openclaw-inventory --source-root <fake-openclaw-root> --json
 ```
 
 ## Phase 2 Deliverables
@@ -145,7 +145,7 @@ make openclaw-dry-run-manifest ARGS="--inventory <inventory.json> --target-root 
 ```
 
 ```bat
-make.bat openclaw-dry-run-manifest --inventory <inventory.json> --target-root <fake-home-root> --target-agents codex,claude --json
+./make.ps1 openclaw-dry-run-manifest --inventory <inventory.json> --target-root <fake-home-root> --target-agents codex,claude --json
 ```
 
 ## Phase 3 Deliverables
@@ -182,9 +182,9 @@ make openclaw-uninstall-manifest ARGS="--target-root <fake-home-root> --manifest
 ```
 
 ```bat
-make.bat openclaw-approve-manifest --manifest <manifest.json> --reviewer <name> --json
-make.bat openclaw-apply-manifest --manifest <approved.json> --target-root <fake-home-root> --apply --json
-make.bat openclaw-uninstall-manifest --target-root <fake-home-root> --manifest-id <manifest_id> --apply --json
+./make.ps1 openclaw-approve-manifest --manifest <manifest.json> --reviewer <name> --json
+./make.ps1 openclaw-apply-manifest --manifest <approved.json> --target-root <fake-home-root> --apply --json
+./make.ps1 openclaw-uninstall-manifest --target-root <fake-home-root> --manifest-id <manifest_id> --apply --json
 ```
 
 ## Phase 4 Deliverables
@@ -218,8 +218,8 @@ make openclaw-validate-evidence ARGS="--evidence <evidence.json> --json"
 ```
 
 ```bat
-make.bat openclaw-record-evidence --evidence-type fixture-only --evidence-agent deepseek --evidence-platform ci-container --install-mode reference --path-style posix --observed-behavior "fixture reference docs only" --limitation "not native loader evidence" --json
-make.bat openclaw-validate-evidence --evidence <evidence.json> --json
+./make.ps1 openclaw-record-evidence --evidence-type fixture-only --evidence-agent deepseek --evidence-platform ci-container --install-mode reference --path-style posix --observed-behavior "fixture reference docs only" --limitation "not native loader evidence" --json
+./make.ps1 openclaw-validate-evidence --evidence <evidence.json> --json
 ```
 
 ## Phase 5 Deliverables
@@ -247,7 +247,7 @@ make openclaw-persistence-check ARGS="--manifest <manifest.json> --json"
 ```
 
 ```bat
-make.bat openclaw-persistence-check --manifest <manifest.json> --json
+./make.ps1 openclaw-persistence-check --manifest <manifest.json> --json
 ```
 
 ## Risk Fixes

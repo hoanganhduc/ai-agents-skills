@@ -73,7 +73,7 @@ not claim Copilot or OpenClaw support beyond the current installer contract.
 Treat OS coverage as a matrix, not a slogan:
 
 - Linux, macOS, and WSL use POSIX runtime runners.
-- Native Windows uses PowerShell/CMD runtime runners.
+- Native Windows uses PowerShell runtime runners; CMD runtime entrypoints are not published.
 - Git Bash/MSYS may run POSIX helpers, but the installer target shape is still
   Windows unless the check is deliberately scoped otherwise.
 - A mounted Windows profile inspected from Linux or WSL is not proof that a
@@ -146,11 +146,8 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 & "$runtime\run_skill.ps1" "skills/self-improving-agent/run_self_improving_agent.ps1" review-pending
 ```
 
-Windows CMD example:
-
-```bat
-"%AAS_RUNTIME_ROOT%\run_skill.bat" skills/self-improving-agent/run_self_improving_agent.bat review-pending
-```
+CMD runtime launchers are not published because CMD cannot preserve arbitrary
+argument vectors safely. Use the PowerShell command above on Windows.
 
 Common helper commands:
 
@@ -192,7 +189,7 @@ make runtime-smoke ARGS="--skills self-improving-agent"
 make fake-root-lifecycle ARGS="--skill self-improving-agent --platform-shape all"
 ```
 
-Run native Windows checks with `make.bat` on Windows before claiming native
+Run native Windows checks with `./make.ps1` on Windows before claiming native
 PowerShell/CMD execution. Linux-hosted `--platform-shape windows` checks are
 useful install-shape evidence, not native execution evidence.
 

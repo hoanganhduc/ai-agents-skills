@@ -75,6 +75,32 @@ def validate_manifests(
     packages = dependencies.get("packages", {})
     if not isinstance(packages, dict):
         raise ManifestError("dependencies.yaml packages must be an object")
+    python_candidate_sets = dependencies.get("python_candidate_sets", {})
+    python_site_candidate_sets = dependencies.get("python_site_candidate_sets", {})
+    for name, spec in packages.items():
+        if not isinstance(spec, dict):
+            raise ManifestError(f"dependency package {name} must be an object")
+        if spec.get("type") != "python":
+            continue
+        module = spec.get("module")
+        if not isinstance(module, str) or not module:
+            raise ManifestError(f"Python dependency package {name} must declare a module")
+        modules = spec.get("modules")
+        if modules is not None:
+            if not isinstance(modules, list) or not modules or not all(
+                isinstance(item, str) and item for item in modules
+            ):
+                raise ManifestError(f"Python dependency package {name} modules must be a non-empty string list")
+            if module not in modules:
+                raise ManifestError(f"Python dependency package {name} modules must include its primary module")
+        candidate_set = spec.get("candidate_set", "default")
+        if not isinstance(candidate_set, str) or candidate_set not in python_candidate_sets or candidate_set not in python_site_candidate_sets:
+            raise ManifestError(f"Python dependency package {name} references unknown candidate set {candidate_set}")
+        authoritative = spec.get("authoritative_first_existing")
+        if authoritative is not None and not isinstance(authoritative, bool):
+            raise ManifestError(
+                f"Python dependency package {name} authoritative_first_existing must be boolean"
+            )
     if "artifacts" not in artifacts or not isinstance(artifacts["artifacts"], dict):
         raise ManifestError("artifacts.yaml must contain an artifacts object")
     if "artifact_profiles" not in artifacts or not isinstance(artifacts["artifact_profiles"], dict):

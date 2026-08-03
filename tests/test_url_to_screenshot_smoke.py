@@ -42,8 +42,8 @@ class UrlToScreenshotSmokeContractTests(unittest.TestCase):
             "skills/url-to-screenshot-runtime/run_url_to_screenshot.sh",
         )
         self.assertEqual(
-            runtime_command_target(manifests, "url-to-screenshot-runtime", "windows", "run_skill.bat"),
-            "skills/url-to-screenshot-runtime/run_url_to_screenshot.bat",
+            runtime_command_target(manifests, "url-to-screenshot-runtime", "windows", "run_skill.ps1"),
+            "skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1",
         )
         self.assertEqual(
             runtime_command_target(manifests, "url-to-screenshot-runtime", "windows", "run_skill.ps1"),

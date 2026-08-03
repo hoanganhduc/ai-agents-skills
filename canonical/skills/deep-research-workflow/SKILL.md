@@ -14,7 +14,7 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/deep-research-workflow/run_deep_research_workflow.bat" <args>
+& "$runtime\run_skill.ps1" "skills/deep-research-workflow/run_deep_research_workflow.ps1" <args>
 ```
 
 PowerShell-first runners can use the native PowerShell command target:

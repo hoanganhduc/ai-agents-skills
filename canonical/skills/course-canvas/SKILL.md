@@ -3,7 +3,6 @@ name: course-canvas
 description: "Route Canvas LMS course operations through the course_hoanganhduc canvas agent: preflight, list assignments/members, search users, and roster sync. Refuses unenroll, grade, invite, announce, messages, pages, and bulk download."
 user-invocable: true
 disable-model-invocation: false
-metadata: {"requires":{"bins":["python3"]}}
 ---
 
 Use this skill when the user asks about Canvas LMS for their course: listing assignments or members, searching users, syncing the Canvas roster into the local student database, or checking whether Canvas config is present.

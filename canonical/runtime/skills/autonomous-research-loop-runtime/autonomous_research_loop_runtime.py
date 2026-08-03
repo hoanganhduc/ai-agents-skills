@@ -4414,7 +4414,7 @@ GROK_REMOTE_BINARY_CANDIDATES: dict[str, list[str]] = {
     "linux": ["grok-remote", "~/grok-proxy/grok-remote"],
     "macos": ["grok-remote", "~/grok-proxy/grok-remote"],
     "wsl": ["grok-remote", "~/grok-proxy/grok-remote"],
-    "windows": ["grok-remote.cmd", "grok-remote"],
+    "windows": ["grok-remote.exe"],
 }
 
 GROK_BINARY_CANDIDATES: dict[str, list[str]] = {
@@ -5353,6 +5353,8 @@ def candidate_is_usable(raw: str, environ: dict[str, str]) -> tuple[bool, str]:
     expanded = expand_env_in_path(raw, environ)
     if not expanded:
         return False, raw
+    if os.name == "nt" and Path(expanded).name.lower() == "grok-remote.cmd":
+        return False, expanded
     path = Path(expanded)
     # Absolute / explicit path (after expand): must exist as a file.
     if path.is_absolute() or os.sep in expanded or (os.altsep and os.altsep in expanded):
@@ -5367,6 +5369,8 @@ def candidate_is_usable(raw: str, environ: dict[str, str]) -> tuple[bool, str]:
     path_env = environ.get("PATH")
     located = shutil.which(expanded, path=path_env) if path_env is not None else shutil.which(expanded)
     if located:
+        if os.name == "nt" and Path(located).name.lower() == "grok-remote.cmd":
+            return False, located
         return True, located
     # Relative path that exists as a file (e.g. ./grok)
     try:
@@ -5536,6 +5540,8 @@ def probe_grok_remote_profile(
     timeout: int = 10,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Require exact managed-profile readiness and model match for auto fallback."""
+    if os.name == "nt" and Path(binary).suffix.lower() in {".bat", ".cmd"}:
+        return None, "cmd_entrypoint_unsupported"
     private_umask = provider_subprocess_options("grok")
     try:
         help_result = subprocess.run(

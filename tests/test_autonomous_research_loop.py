@@ -1112,16 +1112,12 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                         )
                         if platform == "windows":
                             self.assertIn("run_skill.ps1", target_relpaths)
-                            self.assertIn("run_skill.bat", target_relpaths)
-                            self.assertIn("run_python.bat", target_relpaths)
+                            self.assertIn("run_python.ps1", target_relpaths)
                             self.assertIn(
                                 "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
                                 target_relpaths,
                             )
-                            self.assertIn(
-                                "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
-                                target_relpaths,
-                            )
+                            self.assertFalse(any(path.endswith((".bat", ".cmd")) for path in target_relpaths))
                             self.assertNotIn(
                                 "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
                                 target_relpaths,
@@ -1130,10 +1126,6 @@ class AutonomousResearchLoopTests(unittest.TestCase):
                             self.assertIn("run_skill.sh", target_relpaths)
                             self.assertIn(
                                 "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
-                                target_relpaths,
-                            )
-                            self.assertNotIn(
-                                "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
                                 target_relpaths,
                             )
 
@@ -1151,10 +1143,6 @@ class AutonomousResearchLoopTests(unittest.TestCase):
         self.assertEqual(
             runtime_command_target(manifests, "autonomous-research-loop-runtime", "windows", "run_skill.ps1"),
             "skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
-        )
-        self.assertEqual(
-            runtime_command_target(manifests, "autonomous-research-loop-runtime", "windows", "run_skill.bat"),
-            "skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
         )
 
         completed = subprocess.run(
@@ -5785,6 +5773,13 @@ def _fake_grok_remote_profile_cli(bindir: Path) -> Path:
     return _fake_cli(bindir, "grok-remote", body)
 
 
+def _fake_native_grok_remote_candidate(bindir: Path) -> Path:
+    """Create a discovery-only native candidate; profile probes are mocked."""
+    candidate = bindir / "grok-remote.exe"
+    candidate.write_bytes(b"MZ")
+    return candidate
+
+
 class GrokProviderResolveTests(unittest.TestCase):
     """Platform-aware grok binary resolution (provider id always 'grok')."""
 
@@ -5839,7 +5834,7 @@ class GrokProviderResolveTests(unittest.TestCase):
     def test_uses_remote_only_after_bare_model_nonconfirmation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bindir = Path(tmp)
-            remote = _fake_grok_remote_profile_cli(bindir)
+            remote = _fake_native_grok_remote_candidate(bindir)
             _fake_grok_models_cli(bindir, "grok-4.4")
             env = {
                 "PATH": str(bindir),
@@ -5849,9 +5844,14 @@ class GrokProviderResolveTests(unittest.TestCase):
                 "AAS_TEST_GROK_PROFILE_JSON": json.dumps(_grok_profile_payload()),
                 "AAS_TEST_GROK_PROFILE_EXIT": "0",
             }
-            binary, found, tried, selection = self.mod.resolve_provider_binary_details(
-                "grok", environ=env, platform=self.plat
-            )
+            with mock.patch.object(
+                self.mod,
+                "probe_grok_remote_profile",
+                return_value=(_grok_profile_payload(), None),
+            ):
+                binary, found, tried, selection = self.mod.resolve_provider_binary_details(
+                    "grok", environ=env, platform=self.plat
+                )
             self.assertTrue(found, tried)
             self.assertEqual(Path(binary).resolve(), remote.resolve())
             self.assertTrue(any(t.startswith("grok-remote") for t in tried), tried)
@@ -5876,7 +5876,7 @@ class GrokProviderResolveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             bindir = Path(tmp)
             _fake_cli(bindir, "grok")
-            remote = _fake_grok_remote_profile_cli(bindir)
+            remote = _fake_native_grok_remote_candidate(bindir)
             env = {
                 "PATH": str(bindir),
                 "HOME": str(bindir),
@@ -5903,6 +5903,11 @@ class GrokProviderResolveTests(unittest.TestCase):
                     "probe_grok_model_membership",
                     return_value=not_confirmed,
                 ) as probe,
+                mock.patch.object(
+                    self.mod,
+                    "probe_grok_remote_profile",
+                    return_value=(_grok_profile_payload(), None),
+                ),
             ):
                 binary, found, tried = self.mod.resolve_provider_binary(
                     "grok", environ=env, platform=self.plat
@@ -6035,7 +6040,7 @@ class GrokProviderResolveTests(unittest.TestCase):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
                 bindir = Path(tmp)
                 _fake_grok_models_cli(bindir, "grok-4.4")
-                _fake_grok_remote_profile_cli(bindir)
+                _fake_native_grok_remote_candidate(bindir)
                 env = {
                     "PATH": str(bindir),
                     "HOME": str(bindir),
@@ -6044,9 +6049,23 @@ class GrokProviderResolveTests(unittest.TestCase):
                     "AAS_TEST_GROK_PROFILE_JSON": json.dumps(payload),
                     "AAS_TEST_GROK_PROFILE_EXIT": exit_code,
                 }
-                _binary, found, _tried, selection = self.mod.resolve_provider_binary_details(
-                    "grok", environ=env, platform=self.plat
-                )
+                if name == "blocked":
+                    profile_result = (
+                        payload,
+                        f"managed_profile_not_ready:{payload['reason_code']}",
+                    )
+                elif name == "mismatch":
+                    profile_result = (payload, "managed_profile_model_mismatch")
+                else:
+                    profile_result = (None, "managed_profile_output_invalid")
+                with mock.patch.object(
+                    self.mod,
+                    "probe_grok_remote_profile",
+                    return_value=profile_result,
+                ):
+                    _binary, found, _tried, selection = self.mod.resolve_provider_binary_details(
+                        "grok", environ=env, platform=self.plat
+                    )
                 self.assertFalse(found, selection)
                 self.assertTrue(selection["reason_code"].startswith(expected_reason), selection)
 
@@ -6101,11 +6120,27 @@ class GrokProviderResolveTests(unittest.TestCase):
             self.assertTrue(found)
             self.assertEqual(Path(binary).resolve(), forced.resolve())
 
-    def test_windows_candidates_include_cmd_and_exe(self) -> None:
+    def test_windows_candidates_exclude_cmd_and_include_native_exe(self) -> None:
         cands = self.mod.provider_binary_candidates("grok", platform="windows")
-        self.assertIn("grok-remote.cmd", cands)
+        self.assertNotIn("grok-remote.cmd", cands)
+        self.assertIn("grok-remote.exe", cands)
         self.assertIn("grok.exe", cands)
         self.assertEqual(cands[0], "%USERPROFILE%\\.grok\\bin\\grok.exe")
+
+    def test_windows_cmd_remote_profile_fails_closed_before_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = Path(tmp) / "grok-remote.cmd"
+            candidate.write_text("@echo off\r\n", encoding="utf-8")
+            with (
+                mock.patch.object(self.mod.os, "name", "nt"),
+                mock.patch.object(self.mod.subprocess, "run") as run,
+            ):
+                profile, error = self.mod.probe_grok_remote_profile(
+                    str(candidate), "grok-test", {}
+                )
+            self.assertIsNone(profile)
+            self.assertEqual(error, "cmd_entrypoint_unsupported")
+            run.assert_not_called()
 
     def test_provider_subprocess_options_preserve_windows_behavior(self) -> None:
         self.assertEqual(self.mod.provider_subprocess_options("claude"), {})

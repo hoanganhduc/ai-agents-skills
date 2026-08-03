@@ -169,6 +169,7 @@ def build_plan(
             runtime_root=runtime_root,
             platform=platform,
             backup_replace=backup_replace,
+            state=state,
         )
     )
     return {"actions": actions, "skipped_agents": skipped_agents, "root": str(root)}

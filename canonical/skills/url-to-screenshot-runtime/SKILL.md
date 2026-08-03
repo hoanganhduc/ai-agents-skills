@@ -23,8 +23,8 @@ use `%LOCALAPPDATA%\ai-agents-skills\runtime`.
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/url-to-screenshot-runtime/run_url_to_screenshot.bat" doctor
-& "$runtime\run_skill.bat" "skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1" doctor
+& "$runtime\run_skill.ps1" "skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1" doctor
+& "$runtime\run_skill.ps1" "skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1" doctor
 ```
 
 POSIX examples below use `run_skill.sh` and the `.sh` command target.

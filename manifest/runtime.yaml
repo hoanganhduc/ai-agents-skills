@@ -153,18 +153,8 @@
       "mode": "0644"
     },
     {
-      "source": "runners/run_skill.bat",
-      "target": "run_skill.bat",
-      "platforms": [
-        "windows"
-      ],
-      "type": "text",
-      "newline": "crlf",
-      "mode": "0644"
-    },
-    {
-      "source": "runners/run_python.bat",
-      "target": "run_python.bat",
+      "source": "runners/run_python.ps1",
+      "target": "run_python.ps1",
       "platforms": [
         "windows"
       ],
@@ -218,16 +208,6 @@
           "type": "text",
           "newline": "lf",
           "mode": "0755"
-        },
-        {
-          "source": "skills/manim-math-animation/run_manim_math_animation.bat",
-          "target": "workspace/skills/manim-math-animation/run_manim_math_animation.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
         },
         {
           "source": "skills/manim-math-animation/run_manim_math_animation.ps1",
@@ -292,6 +272,19 @@
           "mode": "0644"
         },
         {
+          "source": "skills/manim-math-animation/mma/tools.py",
+          "target": "workspace/skills/manim-math-animation/mma/tools.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/manim-math-animation/mma/doctor.py",
           "target": "workspace/skills/manim-math-animation/mma/doctor.py",
           "platforms": [
@@ -325,7 +318,7 @@
           "linux": "workspace/skills/manim-math-animation/run_manim_math_animation.sh",
           "macos": "workspace/skills/manim-math-animation/run_manim_math_animation.sh",
           "wsl": "workspace/skills/manim-math-animation/run_manim_math_animation.sh",
-          "windows": "workspace/skills/manim-math-animation/run_manim_math_animation.bat",
+          "windows": "workspace/skills/manim-math-animation/run_manim_math_animation.ps1",
           "windows_ps1": "workspace/skills/manim-math-animation/run_manim_math_animation.ps1"
         },
         "args": [
@@ -398,16 +391,6 @@
           "mode": "0755"
         },
         {
-          "source": "skills/send-email/run_send_email.bat",
-          "target": "workspace/skills/send-email/run_send_email.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/send-email/run_send_email.ps1",
           "target": "workspace/skills/send-email/run_send_email.ps1",
           "platforms": [
@@ -425,7 +408,7 @@
           "linux": "workspace/skills/send-email/run_send_email.sh",
           "macos": "workspace/skills/send-email/run_send_email.sh",
           "wsl": "workspace/skills/send-email/run_send_email.sh",
-          "windows": "workspace/skills/send-email/run_send_email.bat",
+          "windows": "workspace/skills/send-email/run_send_email.ps1",
           "windows_ps1": "workspace/skills/send-email/run_send_email.ps1"
         },
         "args": [
@@ -576,16 +559,6 @@
           "mode": "0755"
         },
         {
-          "source": "skills/remote-bridge/run_remote_bridge.bat",
-          "target": "workspace/skills/remote-bridge/run_remote_bridge.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/remote-bridge/run_remote_bridge.ps1",
           "target": "workspace/skills/remote-bridge/run_remote_bridge.ps1",
           "platforms": [
@@ -629,7 +602,7 @@
           "linux": "workspace/skills/remote-bridge/run_remote_bridge.sh",
           "macos": "workspace/skills/remote-bridge/run_remote_bridge.sh",
           "wsl": "workspace/skills/remote-bridge/run_remote_bridge.sh",
-          "windows": "workspace/skills/remote-bridge/run_remote_bridge.bat",
+          "windows": "workspace/skills/remote-bridge/run_remote_bridge.ps1",
           "windows_ps1": "workspace/skills/remote-bridge/run_remote_bridge.ps1"
         },
         "args": [
@@ -701,16 +674,6 @@
           "type": "text",
           "newline": "lf",
           "mode": "0755"
-        },
-        {
-          "source": "skills/slides-to-video/run_slides_to_video.bat",
-          "target": "workspace/skills/slides-to-video/run_slides_to_video.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
         },
         {
           "source": "skills/slides-to-video/run_slides_to_video.ps1",
@@ -951,7 +914,7 @@
           "linux": "workspace/skills/slides-to-video/run_slides_to_video.sh",
           "macos": "workspace/skills/slides-to-video/run_slides_to_video.sh",
           "wsl": "workspace/skills/slides-to-video/run_slides_to_video.sh",
-          "windows": "workspace/skills/slides-to-video/run_slides_to_video.bat",
+          "windows": "workspace/skills/slides-to-video/run_slides_to_video.ps1",
           "windows_ps1": "workspace/skills/slides-to-video/run_slides_to_video.ps1"
         },
         "args": [
@@ -1229,16 +1192,6 @@
           "mode": "0755"
         },
         {
-          "source": "skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
-          "target": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
           "target": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
           "platforms": [
@@ -1327,16 +1280,6 @@
         {
           "source": "skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1",
           "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
-          "source": "skills/autonomous-research-loop-runtime/force-loop/run_force_loop.cmd",
-          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.cmd",
           "platforms": [
             "windows"
           ],
@@ -1495,7 +1438,7 @@
           "linux": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
           "macos": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
           "wsl": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh",
-          "windows": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat",
+          "windows": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1",
           "windows_ps1": "workspace/skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1"
         },
         "args": [
@@ -1590,16 +1533,6 @@
           ],
           "type": "text",
           "newline": "lf",
-          "mode": "0644"
-        },
-        {
-          "source": "skills/annotated-review/run_review.bat",
-          "target": "workspace/skills/annotated-review/run_review.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
           "mode": "0644"
         },
         {
@@ -1819,16 +1752,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/calibre/run_cal.bat",
-          "target": "workspace/skills/calibre/run_cal.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/calibre/run_cal.sh",
           "target": "workspace/skills/calibre/run_cal.sh",
           "platforms": [
@@ -1873,16 +1796,6 @@
           ],
           "type": "text",
           "newline": "lf",
-          "mode": "0644"
-        },
-        {
-          "source": "skills/deep-research-workflow/run_deep_research_workflow.bat",
-          "target": "workspace/skills/deep-research-workflow/run_deep_research_workflow.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
           "mode": "0644"
         },
         {
@@ -1955,7 +1868,7 @@
           "macos": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
           "wsl": "workspace/skills/deep-research-workflow/run_deep_research_workflow.sh",
           "windows_ps1": "workspace/skills/deep-research-workflow/run_deep_research_workflow.ps1",
-          "windows": "workspace/skills/deep-research-workflow/run_deep_research_workflow.bat"
+          "windows": "workspace/skills/deep-research-workflow/run_deep_research_workflow.ps1"
         },
         "args": [
           "selftest"
@@ -1995,16 +1908,6 @@
           ],
           "type": "text",
           "newline": "lf",
-          "mode": "0644"
-        },
-        {
-          "source": "skills/digest-bridge/run_digest_bridge.bat",
-          "target": "workspace/skills/digest-bridge/run_digest_bridge.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
           "mode": "0644"
         },
         {
@@ -2146,16 +2049,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/docling/run_docling.bat",
-          "target": "workspace/skills/docling/run_docling.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/docling/run_docling.ps1",
           "target": "workspace/skills/docling/run_docling.ps1",
           "platforms": [
@@ -2200,16 +2093,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/formal-skeleton-helper/run_formal_skeleton.bat",
-          "target": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/formal-skeleton-helper/run_formal_skeleton.sh",
           "target": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.sh",
           "platforms": [
@@ -2229,7 +2112,7 @@
           "linux": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.sh",
           "macos": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.sh",
           "wsl": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.sh",
-          "windows": "workspace/skills/formal-skeleton-helper/run_formal_skeleton.bat"
+          "windows": "workspace/skills/formal-skeleton-helper/formal_skeleton_helper.py"
         },
         "args": [
           "--output-dir",
@@ -2273,16 +2156,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/axiom-axle-mcp/run_axiom_axle_mcp.bat",
-          "target": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
           "target": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
           "platforms": [
@@ -2312,7 +2185,7 @@
           "linux": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
           "macos": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
           "wsl": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.sh",
-          "windows": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.bat",
+          "windows": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1",
           "windows_ps1": "workspace/skills/axiom-axle-mcp/run_axiom_axle_mcp.ps1"
         },
         "args": [
@@ -2356,16 +2229,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/opengauss/run_opengauss.bat",
-          "target": "workspace/skills/opengauss/run_opengauss.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/opengauss/run_opengauss.ps1",
           "target": "workspace/skills/opengauss/run_opengauss.ps1",
           "platforms": [
@@ -2395,7 +2258,7 @@
           "linux": "workspace/skills/opengauss/run_opengauss.sh",
           "macos": "workspace/skills/opengauss/run_opengauss.sh",
           "wsl": "workspace/skills/opengauss/run_opengauss.sh",
-          "windows": "workspace/skills/opengauss/run_opengauss.bat",
+          "windows": "workspace/skills/opengauss/run_opengauss.ps1",
           "windows_ps1": "workspace/skills/opengauss/run_opengauss.ps1"
         },
         "args": [
@@ -2440,16 +2303,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/lean-explore-mcp/run_lean_explore_mcp.bat",
-          "target": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
           "target": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
           "platforms": [
@@ -2479,7 +2332,7 @@
           "linux": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
           "macos": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
           "wsl": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.sh",
-          "windows": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.bat",
+          "windows": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
           "windows_ps1": "workspace/skills/lean-explore-mcp/run_lean_explore_mcp.ps1"
         },
         "args": [
@@ -2523,16 +2376,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/lean-formalization-intake/run_lean_formalization_intake.bat",
-          "target": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/lean-formalization-intake/run_lean_formalization_intake.ps1",
           "target": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.ps1",
           "platforms": [
@@ -2562,7 +2405,7 @@
           "linux": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.sh",
           "macos": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.sh",
           "wsl": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.sh",
-          "windows": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.bat",
+          "windows": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.ps1",
           "windows_ps1": "workspace/skills/lean-formalization-intake/run_lean_formalization_intake.ps1"
         },
         "args": [
@@ -2606,16 +2449,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.bat",
-          "target": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1",
           "target": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1",
           "platforms": [
@@ -2645,7 +2478,7 @@
           "linux": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh",
           "macos": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh",
           "wsl": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh",
-          "windows": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.bat",
+          "windows": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1",
           "windows_ps1": "workspace/skills/lean-strict-verification-gate/run_lean_strict_verification_gate.ps1"
         },
         "args": [
@@ -2689,16 +2522,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/get-available-resources/run_get_available_resources.bat",
-          "target": "workspace/skills/get-available-resources/run_get_available_resources.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/get-available-resources/run_get_available_resources.sh",
           "target": "workspace/skills/get-available-resources/run_get_available_resources.sh",
           "platforms": [
@@ -2718,7 +2541,7 @@
           "linux": "workspace/skills/get-available-resources/run_get_available_resources.sh",
           "macos": "workspace/skills/get-available-resources/run_get_available_resources.sh",
           "wsl": "workspace/skills/get-available-resources/run_get_available_resources.sh",
-          "windows": "workspace/skills/get-available-resources/run_get_available_resources.bat"
+          "windows": "workspace/skills/get-available-resources/detect_resources.py"
         },
         "args": [
           "--output",
@@ -2775,16 +2598,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/getscipapers-requester/run_gsp_helper.bat",
-          "target": "workspace/skills/getscipapers_requester/run_gsp_helper.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/getscipapers-requester/run_gsp_helper.sh",
           "target": "workspace/skills/getscipapers_requester/run_gsp_helper.sh",
           "platforms": [
@@ -2822,16 +2635,6 @@
           "mode": "0755"
         },
         {
-          "source": "skills/getscipapers-requester/run_gsp_setup.bat",
-          "target": "workspace/skills/getscipapers_requester/run_gsp_setup.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/getscipapers-requester/requirements.txt",
           "target": "workspace/skills/getscipapers_requester/requirements.txt",
           "platforms": [
@@ -2867,16 +2670,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/graph-verifier/run_graph_verifier.bat",
-          "target": "workspace/skills/graph-verifier/run_graph_verifier.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/graph-verifier/run_graph_verifier.sh",
           "target": "workspace/skills/graph-verifier/run_graph_verifier.sh",
           "platforms": [
@@ -2896,7 +2689,7 @@
           "linux": "workspace/skills/graph-verifier/run_graph_verifier.sh",
           "macos": "workspace/skills/graph-verifier/run_graph_verifier.sh",
           "wsl": "workspace/skills/graph-verifier/run_graph_verifier.sh",
-          "windows": "workspace/skills/graph-verifier/run_graph_verifier.bat"
+          "windows": "workspace/skills/graph-verifier/graph_verifier.py"
         },
         "args": [],
         "timeout_seconds": 20,
@@ -2937,16 +2730,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/submission-venue-selector/run_submission_venue_selector.bat",
-          "target": "workspace/skills/submission-venue-selector/run_submission_venue_selector.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/submission-venue-selector/run_submission_venue_selector.ps1",
           "target": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1",
           "platforms": [
@@ -2976,7 +2759,7 @@
           "linux": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
           "macos": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
           "wsl": "workspace/skills/submission-venue-selector/run_submission_venue_selector.sh",
-          "windows": "workspace/skills/submission-venue-selector/run_submission_venue_selector.bat",
+          "windows": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1",
           "windows_ps1": "workspace/skills/submission-venue-selector/run_submission_venue_selector.ps1"
         },
         "args": [
@@ -3050,16 +2833,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/venue-ranking-evidence/run_venue_ranking_evidence.bat",
-          "target": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/venue-ranking-evidence/run_venue_ranking_evidence.ps1",
           "target": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.ps1",
           "platforms": [
@@ -3089,7 +2862,7 @@
           "linux": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.sh",
           "macos": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.sh",
           "wsl": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.sh",
-          "windows": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.bat",
+          "windows": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.ps1",
           "windows_ps1": "workspace/skills/venue-ranking-evidence/run_venue_ranking_evidence.ps1"
         },
         "args": [
@@ -3135,16 +2908,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/self-improving-agent/run_self_improving_agent.bat",
-          "target": "workspace/skills/self-improving-agent/run_self_improving_agent.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/self-improving-agent/run_self_improving_agent.ps1",
           "target": "workspace/skills/self-improving-agent/run_self_improving_agent.ps1",
           "platforms": [
@@ -3174,7 +2937,7 @@
           "linux": "workspace/skills/self-improving-agent/run_self_improving_agent.sh",
           "macos": "workspace/skills/self-improving-agent/run_self_improving_agent.sh",
           "wsl": "workspace/skills/self-improving-agent/run_self_improving_agent.sh",
-          "windows": "workspace/skills/self-improving-agent/run_self_improving_agent.bat",
+          "windows": "workspace/skills/self-improving-agent/run_self_improving_agent.ps1",
           "windows_ps1": "workspace/skills/self-improving-agent/run_self_improving_agent.ps1"
         },
         "args": [
@@ -3215,16 +2978,6 @@
           ],
           "type": "text",
           "newline": "lf",
-          "mode": "0644"
-        },
-        {
-          "source": "skills/modal-research-compute/run_modal_research_compute.bat",
-          "target": "workspace/skills/modal-research-compute/run_modal_research_compute.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
           "mode": "0644"
         },
         {
@@ -3470,16 +3223,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/hetzner-research-compute/run_hetzner_research_compute.bat",
-          "target": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/hetzner-research-compute/run_hetzner_research_compute.sh",
           "target": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.sh",
           "platforms": [
@@ -3566,16 +3309,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/kaggle-research-compute/run_kaggle_research_compute.bat",
-          "target": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/kaggle-research-compute/run_kaggle_research_compute.sh",
           "target": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.sh",
           "platforms": [
@@ -3607,16 +3340,6 @@
           ],
           "type": "text",
           "newline": "lf",
-          "mode": "0644"
-        },
-        {
-          "source": "skills/research-digest-wrapper/run_research_digest.bat",
-          "target": "workspace/skills/research-digest-wrapper/run_research_digest.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
           "mode": "0644"
         },
         {
@@ -3654,16 +3377,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/rss-news-digest/run_and_summarize.bat",
-          "target": "workspace/skills/rss-news-digest/run_and_summarize.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/rss-news-digest/run_and_summarize.sh",
           "target": "workspace/skills/rss-news-digest/run_and_summarize.sh",
           "platforms": [
@@ -3676,8 +3389,8 @@
           "mode": "0755"
         },
         {
-          "source": "skills/rss-news-digest/run_rss_news_digest.bat",
-          "target": "workspace/skills/rss-news-digest/run_rss_news_digest.bat",
+          "source": "skills/rss-news-digest/run_and_summarize.ps1",
+          "target": "workspace/skills/rss-news-digest/run_and_summarize.ps1",
           "platforms": [
             "windows"
           ],
@@ -3707,8 +3420,8 @@
       },
       "files": [
         {
-          "source": "skills/sagemath/run_sage.bat",
-          "target": "workspace/skills/sagemath/run_sage.bat",
+          "source": "skills/sagemath/run_sage.ps1",
+          "target": "workspace/skills/sagemath/run_sage.ps1",
           "platforms": [
             "windows"
           ],
@@ -4115,16 +3828,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/tikz-draw/run_tikz_draw.bat",
-          "target": "workspace/skills/tikz-draw/run_tikz_draw.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/tikz-draw/run_tikz_draw.sh",
           "target": "workspace/skills/tikz-draw/run_tikz_draw.sh",
           "platforms": [
@@ -4197,16 +3900,6 @@
         "reason": "Vietnam Thu Quan discovery/download flows are network and library-profile gated."
       },
       "files": [
-        {
-          "source": "skills/vnthuquan/run_vnthuquan.bat",
-          "target": "workspace/skills/vnthuquan/run_vnthuquan.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
         {
           "source": "skills/vnthuquan/run_vnthuquan.ps1",
           "target": "workspace/skills/vnthuquan/run_vnthuquan.ps1",
@@ -4473,16 +4166,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/zotero/run_zot.bat",
-          "target": "workspace/skills/zotero/run_zot.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/zotero/run_zot.sh",
           "target": "workspace/skills/zotero/run_zot.sh",
           "platforms": [
@@ -4639,16 +4322,6 @@
           "type": "text",
           "newline": "lf",
           "mode": "0755"
-        },
-        {
-          "source": "skills/url-to-screenshot-runtime/run_url_to_screenshot.bat",
-          "target": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
         },
         {
           "source": "skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1",
@@ -4954,7 +4627,7 @@
           "linux": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.sh",
           "macos": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.sh",
           "wsl": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.sh",
-          "windows": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.bat",
+          "windows": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1",
           "windows_ps1": "workspace/skills/url-to-screenshot-runtime/run_url_to_screenshot.ps1"
         },
         "args": [
@@ -5002,16 +4675,6 @@
           "mode": "0644"
         },
         {
-          "source": "skills/lean-research-library/run_lean_research_library.bat",
-          "target": "workspace/skills/lean-research-library/run_lean_research_library.bat",
-          "platforms": [
-            "windows"
-          ],
-          "type": "text",
-          "newline": "crlf",
-          "mode": "0644"
-        },
-        {
           "source": "skills/lean-research-library/run_lean_research_library.ps1",
           "target": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
           "platforms": [
@@ -5041,7 +4704,7 @@
           "linux": "workspace/skills/lean-research-library/run_lean_research_library.sh",
           "macos": "workspace/skills/lean-research-library/run_lean_research_library.sh",
           "wsl": "workspace/skills/lean-research-library/run_lean_research_library.sh",
-          "windows": "workspace/skills/lean-research-library/run_lean_research_library.bat",
+          "windows": "workspace/skills/lean-research-library/run_lean_research_library.ps1",
           "windows_ps1": "workspace/skills/lean-research-library/run_lean_research_library.ps1"
         },
         "args": [
