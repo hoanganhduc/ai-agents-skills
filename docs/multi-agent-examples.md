@@ -54,7 +54,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
 … force-loop/run_force_loop.sh drain --loop research/run --cancel-dispatch-id <exact-id>
 ```
 
-Windows: `run_skill.bat` / `run_skill.ps1` with
+Windows: `run_skill.ps1` with
 `skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1`.
 
 ### Advanced: raw drive / supervisor

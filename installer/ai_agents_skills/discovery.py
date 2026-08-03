@@ -648,11 +648,14 @@ def discover_python_package(
     root: Path | None = None,
     python_candidates: list[str] | None = None,
     site_candidates: list[str] | None = None,
+    modules: list[str] | None = None,
+    authoritative_first_existing: bool = False,
 ) -> dict[str, Any]:
     platform = current_platform(platform)
     root = root or Path.home()
     candidates = python_candidates or (["python-runtime"] if python_command else [])
     site_candidates = site_candidates or []
+    required_modules = list(dict.fromkeys(modules or [module]))
     checked: list[dict[str, Any]] = []
     if not candidates and not site_candidates:
         return {
@@ -660,10 +663,11 @@ def discover_python_package(
             "status": "missing",
             "reason": "python runtime unavailable",
             "module": module,
+            "modules": required_modules,
             "checked": checked,
         }
 
-    for raw in candidates:
+    for index, raw in enumerate(candidates):
         command = python_command if raw == "python-runtime" else None
         if raw != "python-runtime":
             expanded = expand_candidate(raw, root, platform)
@@ -671,7 +675,7 @@ def discover_python_package(
         if not command:
             checked.append({"candidate": raw, "status": "missing"})
             continue
-        check = check_python_module(command, module, platform)
+        check = check_python_modules(command, required_modules, platform)
         check["candidate"] = raw
         checked.append(check)
         if check["status"] == "ok":
@@ -679,38 +683,56 @@ def discover_python_package(
                 "logical_name": package_name,
                 "type": "python",
                 "module": module,
+                "modules": required_modules,
                 "status": "ok",
                 "python": command,
                 "detection": check.get("detection"),
                 "checked": checked,
             }
+        if authoritative_first_existing and index == 0:
+            return {
+                "logical_name": package_name,
+                "type": "python",
+                "module": module,
+                "modules": required_modules,
+                "status": "missing",
+                "reason": "authoritative Python environment is present but required modules are missing",
+                "checked": checked,
+            }
 
-    for raw in site_candidates:
+    for index, raw in enumerate(site_candidates):
         site_paths = resolve_site_candidate(raw, root, platform)
         if not site_paths:
             checked.append({"candidate": raw, "type": "site-packages", "status": "missing"})
             continue
         found_in_candidate = False
+        missing_modules: set[str] = set(required_modules)
         for site_path in site_paths:
-            hit = module_marker(site_path, module)
-            if hit:
+            hits = {name: module_marker(site_path, name) for name in required_modules}
+            missing = [name for name, hit in hits.items() if hit is None]
+            if not missing:
                 checked.append(
                     {
                         "candidate": raw,
                         "type": "site-packages",
                         "status": "ok",
-                        "site_package": str(hit),
+                        "site_package": str(hits[module]),
+                        "module_paths": {name: str(hit) for name, hit in hits.items() if hit is not None},
                     }
                 )
                 return {
                     "logical_name": package_name,
                     "type": "python",
                     "module": module,
+                    "modules": required_modules,
                     "status": "ok",
                     "detection": "site-packages",
-                    "site_package": str(hit),
+                    "site_package": str(hits[module]),
+                    "module_paths": {name: str(hit) for name, hit in hits.items() if hit is not None},
                     "checked": checked,
                 }
+            if len(missing) < len(missing_modules):
+                missing_modules = set(missing)
             if site_path.exists():
                 found_in_candidate = True
         checked.append(
@@ -721,16 +743,42 @@ def discover_python_package(
                 "reason": "site-packages path exists but module marker was not found"
                 if found_in_candidate
                 else "site-packages path not found",
+                "missing_modules": sorted(missing_modules),
             }
         )
+        if authoritative_first_existing and index == 0 and site_paths:
+            return {
+                "logical_name": package_name,
+                "type": "python",
+                "module": module,
+                "modules": required_modules,
+                "status": "missing",
+                "reason": "authoritative Python environment is present but required modules are missing",
+                "checked": checked,
+            }
 
     return {
         "logical_name": package_name,
         "type": "python",
         "module": module,
+        "modules": required_modules,
         "status": "missing",
         "reason": "module not found in any checked Python environment",
         "checked": checked,
+    }
+
+
+def check_python_modules(command: str, modules: list[str], platform: str) -> dict[str, Any]:
+    module_checks = {module: check_python_module(command, module, platform) for module in modules}
+    missing = [module for module, check in module_checks.items() if check["status"] != "ok"]
+    detections = {check.get("detection") for check in module_checks.values() if check.get("detection")}
+    detection = next(iter(detections)) if len(detections) == 1 else ("mixed" if detections else None)
+    return {
+        "python": command,
+        "status": "missing" if missing else "ok",
+        "detection": detection,
+        "module_checks": module_checks,
+        "missing_modules": missing,
     }
 
 

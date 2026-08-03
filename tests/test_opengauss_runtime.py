@@ -195,8 +195,8 @@ class OpenGaussManifestTests(unittest.TestCase):
             "skills/opengauss/run_opengauss.sh",
         )
         self.assertEqual(
-            runtime_command_target(manifests, "opengauss", "windows", "run_skill.bat"),
-            "skills/opengauss/run_opengauss.bat",
+            runtime_command_target(manifests, "opengauss", "windows", "run_skill.ps1"),
+            "skills/opengauss/run_opengauss.ps1",
         )
         self.assertEqual(
             runtime_command_target(manifests, "opengauss", "windows", "run_skill.ps1"),

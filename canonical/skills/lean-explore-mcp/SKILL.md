@@ -11,7 +11,7 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/lean-explore-mcp/run_lean_explore_mcp.bat" doctor
+& "$runtime\run_skill.ps1" "skills/lean-explore-mcp/run_lean_explore_mcp.ps1" doctor
 ```
 
 PowerShell runner target:

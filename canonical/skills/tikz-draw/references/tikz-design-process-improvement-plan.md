@@ -336,7 +336,7 @@ Local checks for runtime changes:
 Cross-platform checks:
 
 - exercise POSIX and Windows command shapes in the semantic regression runner;
-- keep `.sh` launchers LF/executable and `.bat` launchers CRLF/Windows-only;
+- keep `.sh` launchers LF/executable and `.ps1` launchers CRLF/Windows-only;
 - test installer manifest coverage for schemas, suite files, scripts, and
   native launchers.
 

@@ -81,12 +81,12 @@ exists or route through the compute-lane skills.
 Runtime helpers live under the shared runtime root. From PowerShell:
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_skill.bat" "skills/lean-research-library/run_lean_research_library.bat" doctor
+& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" "skills/lean-research-library/run_lean_research_library.ps1" doctor
 ```
 
-or directly: `skills/lean-research-library/run_lean_research_library.bat`
+or directly from PowerShell: `skills/lean-research-library/run_lean_research_library.ps1`
 and `skills/lean-research-library/run_lean_research_library.ps1` (both
-resolve Python via `run_python.bat`/`AAS_RUNTIME_PYTHON`). On POSIX:
+resolve Python via `run_python.ps1`/`AAS_RUNTIME_PYTHON`). On POSIX:
 
 ```bash
 bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/lean-research-library/run_lean_research_library.sh doctor

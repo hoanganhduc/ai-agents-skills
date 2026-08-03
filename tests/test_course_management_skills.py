@@ -42,6 +42,7 @@ class CourseManagementSkillsTests(unittest.TestCase):
     def test_package_dep(self):
         pkg = self.deps["packages"]["course-hoanganhduc-python-package"]
         self.assertEqual(pkg["module"], "course_hoanganhduc")
+        self.assertEqual(pkg["candidate_set"], "course")
 
     def test_skill_bodies_and_entrypoints(self):
         expected = {
@@ -56,6 +57,7 @@ class CourseManagementSkillsTests(unittest.TestCase):
             body = path.read_text(encoding="utf-8")
             self.assertIn(f"name: {sk}", body)
             self.assertIn(entry, body)
+            self.assertNotIn('"python3"', body.split("---", 2)[1])
             for line in body.splitlines():
                 self.assertIsNone(
                     re.match(r"^\s*`?gh teacher\b", line),

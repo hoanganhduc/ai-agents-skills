@@ -192,7 +192,7 @@ cd ai-agents-skills
 ```
 
 Requires Python 3.10 or newer. Linux and macOS examples use `make` and the
-POSIX bootstrap script. Windows examples use `make.bat`, which requires
+POSIX bootstrap script. Windows examples use `./make.ps1`, which requires
 `pwsh` or `powershell.exe`. The installer only plans targets for existing
 agent homes; absent homes are reported and skipped.
 
@@ -217,16 +217,16 @@ command.
 Windows:
 
 ```bat
-make.bat doctor
-make.bat precheck --profile research-core
-make.bat audit-system --profile research-core
-make.bat list-skills
-make.bat list-artifacts
-make.bat plan --profile research-core
-make.bat plan --no-skills --artifact-profile workflow-templates
-make.bat install --profile research-core --dry-run
-make.bat lifecycle-test --matrix default --platform-shape windows
-make.bat fake-root-lifecycle --profile research-core --platform-shape windows
+./make.ps1 doctor
+./make.ps1 precheck --profile research-core
+./make.ps1 audit-system --profile research-core
+./make.ps1 list-skills
+./make.ps1 list-artifacts
+./make.ps1 plan --profile research-core
+./make.ps1 plan --no-skills --artifact-profile workflow-templates
+./make.ps1 install --profile research-core --dry-run
+./make.ps1 lifecycle-test --matrix default --platform-shape windows
+./make.ps1 fake-root-lifecycle --profile research-core --platform-shape windows
 ```
 
 For a shorter first pass, run `doctor`, `precheck`, `plan`, and a dry-run
@@ -265,7 +265,7 @@ dependency-bound artifacts should also install their backing skills.
 ## Command Surfaces
 
 - `make <target> ARGS="..."` is the normal Linux/macOS wrapper.
-- `make.bat <command> ...` is the normal native Windows wrapper.
+- `./make.ps1 <command> ...` is the normal native Windows wrapper.
 - `./installer/bootstrap.sh <command> ...` and
   `python3 -m installer.ai_agents_skills <command> ...` are direct POSIX
   entrypoints for installer CLI commands when debugging wrapper behavior.
@@ -275,7 +275,7 @@ dependency-bound artifacts should also install their backing skills.
   `describe-artifact`.
 - Makefile-only maintainer targets include `docs`, `docs-site`, `docs-check`,
   `static-check`, `sanitize-check`, `test`, and `release-check`; run them
-  through `make` or `make.bat`, not as installer CLI commands.
+  through `make` or `./make.ps1`, not as installer CLI commands.
 
 ## Runtime-Backed Skills
 

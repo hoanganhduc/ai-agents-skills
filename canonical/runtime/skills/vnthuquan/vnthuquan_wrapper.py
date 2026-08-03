@@ -422,15 +422,28 @@ def parse_optional_json(text: str) -> Any:
 
 def calibre_display_command(args: list[str]) -> list[str]:
     if os.name == "nt":
-        ps_runner = CALIBRE_RUNNER.with_suffix(".ps1")
-        if ps_runner.is_file():
-            return ["pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_runner), CALIBRE_SCRIPT, *args]
-        return ["cmd.exe", "/c", str(CALIBRE_RUNNER), CALIBRE_SCRIPT, *args]
+        ps_runner = CALIBRE_RUNNER if CALIBRE_RUNNER.suffix.lower() == ".ps1" else CALIBRE_RUNNER.with_suffix(".ps1")
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe")
+        if not ps_runner.is_file():
+            raise RuntimeError(f"PowerShell Calibre runner not found: {ps_runner}")
+        if not powershell:
+            raise RuntimeError("PowerShell executable not found for Calibre handoff")
+        return [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps_runner), CALIBRE_SCRIPT, *args]
     return ["bash", str(CALIBRE_RUNNER), CALIBRE_SCRIPT, *args]
 
 
 def run_calibre(args: list[str], *, timeout: int = CALIBRE_TIMEOUT_SECONDS) -> dict[str, Any]:
-    cmd = calibre_display_command(args)
+    try:
+        cmd = calibre_display_command(args)
+    except RuntimeError as exc:
+        return {
+            "ok": False,
+            "returncode": 127,
+            "command": [],
+            "stdout": "",
+            "stderr": str(exc),
+            "error_code": "powershell_runner_unavailable",
+        }
     try:
         proc = subprocess.run(
             cmd,

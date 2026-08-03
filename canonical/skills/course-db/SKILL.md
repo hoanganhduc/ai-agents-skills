@@ -3,7 +3,6 @@ name: course-db
 description: "Route local course student-database operations through the course_hoanganhduc db agent: search, details, domain/duplicate/missing-id lists, roster and email export. Refuses interactive modify, restore, and destructive import apply."
 user-invocable: true
 disable-model-invocation: false
-metadata: {"requires":{"bins":["python3"]}}
 ---
 
 Use this skill when the user asks about the local course student database / roster file: search students, show details, list by email domain, find duplicate names or missing IDs, export roster CSV or emails, or count students.

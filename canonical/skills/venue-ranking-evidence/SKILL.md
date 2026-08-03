@@ -71,11 +71,7 @@ Windows PowerShell:
   lookup --dir "$env:TEMP\venue-ranking-run" --query "TCS" --offline
 ```
 
-Windows CMD:
-
-```bat
-"%AAS_RUNTIME_ROOT%\run_skill.bat" "skills/venue-ranking-evidence/run_venue_ranking_evidence.bat" smoke
-```
+On Windows, use the PowerShell command above; CMD runtime entrypoints are not published.
 
 The POSIX wrapper honors `VENUE_RANKING_EVIDENCE_PYTHON`, then
 `AAS_RUNTIME_PYTHON`, before falling back to `python3` and `python`. Browser

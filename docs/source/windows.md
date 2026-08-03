@@ -1,29 +1,29 @@
 # Windows
 
-Windows is multi-substrate. Native Windows, PowerShell/CMD, Git Bash/MSYS, WSL,
+Windows is multi-substrate. Native Windows PowerShell, Git Bash/MSYS, WSL,
 and remote services are checked separately. SageMath is usually WSL-backed and
 must not be treated as a normal Windows package.
 
-Use `make.bat precheck` before installation. The precheck reports whether each
+Use `./make.ps1 precheck` before installation. The precheck reports whether each
 dependency is native Windows, WSL-backed, missing, degraded, or manual. A
 missing DeepSeek home on Windows is not an error; DeepSeek-specific artifacts
 and dependencies are skipped when the agent is absent.
-`make.bat` requires `pwsh` or `powershell.exe`; if neither is available, install
-PowerShell or use the POSIX bootstrap script from a compatible shell.
+`./make.ps1` runs in the current PowerShell 5.1+ or PowerShell 7+ session. If
+PowerShell is unavailable, use the POSIX bootstrap script from a compatible shell.
 
 Common commands from a native Windows shell:
 
-```bat
-make.bat doctor
-make.bat precheck --profile research-core
-make.bat plan --profile research-core
-make.bat install --profile research-core --dry-run
-make.bat lifecycle-test --matrix default --platform-shape windows
-make.bat fake-root-lifecycle --profile research-core --platform-shape windows
-make.bat verify --root <fake-or-real-root>
-make.bat docs
-make.bat sanitize-check
-make.bat test
+```powershell
+./make.ps1 doctor
+./make.ps1 precheck --profile research-core
+./make.ps1 plan --profile research-core
+./make.ps1 install --profile research-core --dry-run
+./make.ps1 lifecycle-test --matrix default --platform-shape windows
+./make.ps1 fake-root-lifecycle --profile research-core --platform-shape windows
+./make.ps1 verify --root <fake-or-real-root>
+./make.ps1 docs
+./make.ps1 sanitize-check
+./make.ps1 test
 ```
 
 Use `--real-system` only when you intentionally want to write to the detected

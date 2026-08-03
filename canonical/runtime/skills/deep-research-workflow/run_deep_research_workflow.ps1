@@ -1,6 +1,6 @@
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$Args = @()
+    [string[]]$Arguments = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,28 +9,24 @@ $OutputEncoding = [Console]::OutputEncoding
 
 $script = Join-Path $PSScriptRoot "deep_research_workflow.py"
 if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
-    Write-Error "runtime helper not found: $script"
+    [Console]::Error.WriteLine("runtime helper not found: $script")
     exit 127
 }
 
-if ($env:AAS_RUNTIME_PYTHON) {
-    & $env:AAS_RUNTIME_PYTHON $script @Args
-    exit $LASTEXITCODE
+$runnerCandidates = @()
+if ($env:AAS_RUNTIME_ROOT) {
+    $runnerCandidates += Join-Path $env:AAS_RUNTIME_ROOT "run_python.ps1"
+}
+$runnerCandidates += Join-Path $PSScriptRoot "..\..\..\run_python.ps1"
+$runnerCandidates += Join-Path $PSScriptRoot "..\..\run_python.ps1"
+$runner = $runnerCandidates |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+    Select-Object -First 1
+if (-not $runner) {
+    [Console]::Error.WriteLine("shared runtime runner not found: run_python.ps1")
+    exit 127
 }
 
-$candidates = @("python.exe", "python", "py")
-foreach ($candidate in $candidates) {
-    $command = Get-Command $candidate -ErrorAction SilentlyContinue
-    if ($null -eq $command) {
-        continue
-    }
-    if ($candidate -eq "py") {
-        & $command.Source -3 $script @Args
-    } else {
-        & $command.Source $script @Args
-    }
-    exit $LASTEXITCODE
-}
-
-Write-Error "error: no usable Python runtime found. Set AAS_RUNTIME_PYTHON or install Python 3."
-exit 127
+$env:AAS_RUNTIME_SCRIPT = $script
+& $runner @Arguments
+exit $LASTEXITCODE

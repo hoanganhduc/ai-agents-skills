@@ -20,8 +20,7 @@ the animation timing and is rendered silent.
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/manim-math-animation/run_manim_math_animation.bat" <args>
-& "$runtime\run_skill.bat" "skills/manim-math-animation/run_manim_math_animation.ps1" <args>
+& "$runtime\run_skill.ps1" "skills/manim-math-animation/run_manim_math_animation.ps1" <args>
 ```
 
 ## When to use

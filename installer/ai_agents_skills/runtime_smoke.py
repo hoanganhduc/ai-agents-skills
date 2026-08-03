@@ -267,7 +267,6 @@ def runner_invocations(runtime_root: Path, platform: str) -> list[dict[str, Any]
                     str(runtime_root / "run_skill.ps1"),
                 ],
             })
-        runners.append({"name": "run_skill.bat", "argv": [str(runtime_root / "run_skill.bat")]})
         return runners
     return [{"name": "run_skill.sh", "argv": [str(runtime_root / "run_skill.sh")]}]
 
@@ -424,7 +423,7 @@ def runtime_command_target(
     if contract_target is not None:
         return contract_target
     if platform == "windows":
-        suffixes = (".ps1", ".bat") if runner_name == "run_skill.ps1" else (".bat", ".ps1")
+        suffixes = (".ps1", ".py")
     else:
         suffixes = (".sh",)
     spec = manifests["runtime"]["skills"][skill]
@@ -450,9 +449,9 @@ def runtime_contract_command_target(
     if isinstance(command, dict):
         keys: tuple[str, ...]
         if platform == "windows" and runner_name == "run_skill.ps1":
-            keys = ("windows_ps1", "windows", "windows_bat")
+            keys = ("windows_ps1", "windows")
         elif platform == "windows":
-            keys = ("windows_bat", "windows")
+            keys = ("windows", "windows_ps1")
         else:
             keys = (platform,)
         target = next((command.get(key) for key in keys if command.get(key)), None)

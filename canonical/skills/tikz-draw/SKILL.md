@@ -14,7 +14,7 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/tikz-draw/run_tikz_draw.bat" <args>
+& "$runtime\run_skill.ps1" "skills/tikz-draw/tikz_draw.py" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
@@ -59,8 +59,8 @@ On Windows, use:
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" `
-  "skills\tikz-draw\run_tikz_draw.bat" doctor
+& "$runtime\run_skill.ps1" `
+  "skills/tikz-draw/tikz_draw.py" doctor
 ```
 
 ```bash
@@ -167,7 +167,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   --work-dir /abs/path/to/work-dir
 ```
 
-On native Windows, use the same verb through `run_skill.bat` and `run_tikz_draw.bat`.
+On native Windows, use the same verb through `run_skill.ps1` and `tikz_draw.py`.
 
 The only final approval is `approve` exiting `0` with:
 
@@ -249,7 +249,7 @@ cases that guard against graph-hardness requests becoming flowcharts.
 On Windows, use:
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_python.bat" `
+& "$env:AAS_RUNTIME_ROOT\run_python.ps1" `
   "skills/tikz-draw/semantic_regression_runner.py" --platform codex
 ```
 

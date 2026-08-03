@@ -5,6 +5,8 @@ import io
 import json
 import math
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 try:
@@ -204,20 +206,17 @@ class ManifestTests(unittest.TestCase):
         targets = set(files)
         self.assertIn("workspace/skills/getscipapers_requester/run_gsp_setup.py", targets)
         self.assertIn("workspace/skills/getscipapers_requester/run_gsp_setup.sh", targets)
-        self.assertIn("workspace/skills/getscipapers_requester/run_gsp_setup.bat", targets)
         self.assertIn("workspace/skills/getscipapers_requester/requirements.txt", targets)
+        self.assertFalse(any(target.endswith((".bat", ".cmd")) for target in targets))
         self.assertEqual(
             set(files["workspace/skills/getscipapers_requester/run_gsp_setup.py"]["platforms"]),
             {"linux", "macos", "windows", "wsl"},
         )
-        # run_skill.sh execs its target, so the .py is launched via the executable
-        # 0755 .sh wrapper; the .bat wrapper drives the Windows run_python.bat chain.
+        # POSIX uses the executable .sh wrapper; Windows routes the .py target
+        # through run_skill.ps1 and the shared run_python.ps1 interpreter contract.
         sh_entry = files["workspace/skills/getscipapers_requester/run_gsp_setup.sh"]
         self.assertEqual(set(sh_entry["platforms"]), {"linux", "macos", "wsl"})
         self.assertEqual(sh_entry["mode"], "0755")
-        bat_entry = files["workspace/skills/getscipapers_requester/run_gsp_setup.bat"]
-        self.assertEqual(set(bat_entry["platforms"]), {"windows"})
-        self.assertEqual(bat_entry["newline"], "crlf")
 
     def test_autonomous_research_loop_runbook_template_registered(self) -> None:
         manifests = load_manifests()
@@ -376,6 +375,37 @@ class ManifestTests(unittest.TestCase):
         validate_manifests(skills2, manifests["profiles"], manifests["dependencies"],
                            manifests["artifacts"], manifests["system_dependencies"],
                            manifests["runtime"], manifests["delegation"])
+
+    def test_python_dependency_affinity_fields_reject_invalid_schema(self) -> None:
+        import copy
+        from installer.ai_agents_skills.manifest import ManifestError, validate_manifests
+
+        manifests = load_manifests()
+
+        def validate(dependencies: dict[str, object]) -> None:
+            validate_manifests(
+                manifests["skills"],
+                manifests["profiles"],
+                dependencies,
+                manifests["artifacts"],
+                manifests["system_dependencies"],
+                manifests["runtime"],
+                manifests["delegation"],
+            )
+
+        mutations = [
+            ("modules", []),
+            ("modules", ["requests"]),
+            ("candidate_set", "missing-candidate-set"),
+            ("candidate_set", []),
+            ("authoritative_first_existing", "yes"),
+        ]
+        for field, value in mutations:
+            with self.subTest(field=field, value=value):
+                dependencies = copy.deepcopy(manifests["dependencies"])
+                dependencies["packages"]["vnu-eoffice-python-package"][field] = value
+                with self.assertRaises(ManifestError):
+                    validate(dependencies)
 
     def test_default_profile_resolves_research_core(self) -> None:
         manifests = load_manifests()
@@ -2783,28 +2813,51 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("Runtime smoke coverage", text)
         self.assertIn("manual-native", text)
 
-    def test_make_bat_prefers_pwsh_and_forwards_all_args(self) -> None:
-        text = (REPO_ROOT / "make.bat").read_text(encoding="utf-8")
-        self.assertIn("where pwsh", text)
-        self.assertIn("where powershell.exe", text)
-        self.assertIn("%*", text)
-        self.assertIn('if "%~1"=="help"', text)
+    def test_make_ps1_forwards_argument_arrays_without_cmd(self) -> None:
+        text = (REPO_ROOT / "make.ps1").read_text(encoding="utf-8")
+        self.assertFalse((REPO_ROOT / "make.bat").exists())
+        self.assertIn("& $Bootstrap @args", text)
+        self.assertIn('$Command -ceq "help"', text)
         self.assertIn("list-artifacts", text)
         self.assertIn("runtime-smoke", text)
         self.assertIn("docs-check", text)
         self.assertIn("static-check", text)
-        self.assertIn('if /I "%~1"=="sanitize-check"', text)
-        self.assertIn('if /I "%~1"=="docs-check"', text)
-        self.assertIn('if /I "%~1"=="static-check"', text)
-        self.assertIn('if /I "%~1"=="test"', text)
+        self.assertIn('"sanitize-check"', text)
+        self.assertIn('"docs-check"', text)
+        self.assertIn('"static-check"', text)
+        self.assertIn('"test"', text)
         self.assertIn("--run-python tools/sanitization_check.py", text)
         self.assertIn("--run-python tools/static_check.py", text)
         self.assertIn("--run-python -m unittest discover -s tests -v", text)
-        self.assertIn("no PowerShell runtime found", text)
-        self.assertLess(text.index("where pwsh"), text.index("where powershell.exe"))
-        self.assertIn("set \"AAS_PS=pwsh\"", text)
-        self.assertIn("set \"AAS_PS=powershell.exe\"", text)
-        self.assertNotIn("if %ERRORLEVEL% EQU 0 (\n", text)
+        self.assertNotIn("cmd.exe", text.lower())
+        self.assertNotIn("%*", text)
+
+    @unittest.skipUnless(os.name == "nt", "native PowerShell launcher test")
+    def test_make_ps1_does_not_reparse_cmd_metacharacters(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = Path(tmp) / "injected.txt"
+            hostile = f"help&whoami>{marker}"
+            completed = subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(REPO_ROOT / "make.ps1"),
+                    hostile,
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertFalse(marker.exists())
 
     def test_makefile_uses_bootstrap_python_contract_for_tests(self) -> None:
         text = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")

@@ -13,8 +13,8 @@ variable). The console script is then resolvable at
 ``<venv>\\Scripts\\getscipapers.exe`` on Windows, which the run scripts export
 as ``GETSCIPAPERS_BIN`` and ``gsp_openclaw_helper.find_getscipapers`` discovers.
 
-Invoke via the managed runner through the executable wrapper (run_skill.sh
-execs its target, so the 0644 .py is launched via the 0755 .sh/.bat wrapper):
+Invoke via the managed runner. POSIX uses the executable shell wrapper; Windows
+passes the Python target to ``run_skill.ps1``, which delegates to ``run_python.ps1``:
   bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_setup.sh setup
 """
 

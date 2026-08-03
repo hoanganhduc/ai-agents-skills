@@ -54,7 +54,7 @@ A helper command documented with a POSIX `bash` path failed for a native Windows
 - Relevant inputs or parameters: Windows target, reference install mode
 
 ### Suggested Fix
-Move the helper behind the managed runtime with `.sh`, `.ps1`, and `.bat` wrappers, or document that the helper is POSIX-only.
+Move the helper behind the managed runtime with `.sh` and `.ps1` wrappers, or document that the helper is POSIX-only.
 
 ### Canonical Integration Plan
 - Related Skills: self-improving-agent
@@ -63,7 +63,7 @@ Move the helper behind the managed runtime with `.sh`, `.ps1`, and `.bat` wrappe
 - Affected OS/Substrates: linux, macos, windows, wsl, git-bash-msys
 - Canonical Repo Change: add portable runtime helper files under `canonical/runtime/skills/self-improving-agent/`
 - Docs And Generated Outputs: update generated installation/verification docs and run `make docs`
-- Verification Plan: `make runtime-smoke ARGS="--skills self-improving-agent"` plus native Windows `make.bat` checks before claiming native execution
+- Verification Plan: `make runtime-smoke ARGS="--skills self-improving-agent"` plus native Windows `./make.ps1` checks before claiming native execution
 - Blocked Or Unsupported Targets: mounted Windows profile checks do not prove native Windows execution
 
 ### Metadata

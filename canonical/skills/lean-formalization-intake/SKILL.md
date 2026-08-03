@@ -11,7 +11,7 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/lean-formalization-intake/run_lean_formalization_intake.bat" doctor
+& "$runtime\run_skill.ps1" "skills/lean-formalization-intake/run_lean_formalization_intake.ps1" doctor
 ```
 
 PowerShell runner target:

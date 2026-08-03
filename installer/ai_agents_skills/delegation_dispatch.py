@@ -69,7 +69,7 @@ class PromptBudgetError(ValueError):
 
 
 DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
-GROK_REMOTE_EXECUTABLES = {"grok-remote", "grok-remote.cmd"}
+GROK_REMOTE_EXECUTABLES = {"grok-remote", "grok-remote.exe"}
 GROK_PROFILE_STATUS_SCHEMA = "grok-remote.profile-status.v1"
 GROK_PROFILE_STATUS_FIELDS = {
     "schema_version",
@@ -644,6 +644,20 @@ def evaluate_grok_selection(
     resolved_model: str | None,
     env: dict[str, str],
 ) -> dict[str, Any]:
+    try:
+        command_parts = split_dispatch_command(command)
+    except ValueError:
+        command_parts = []
+    if (
+        os.name == "nt"
+        and command_parts
+        and Path(command_parts[0]).name.lower() == "grok-remote.cmd"
+    ):
+        return {
+            "status": "blocked",
+            "source": source,
+            "reason": "CMD grok-remote entrypoints are unsupported; configure grok-remote.exe",
+        }
     if grok_command_is_remote(command):
         return {"status": "ok", "source": source, "command": command}
     if resolved_model is None:
@@ -732,6 +746,8 @@ def probe_grok_remote_profile(
     if not parts:
         return None, "grok-remote profile readiness command is empty"
     executable = parts[0]
+    if os.name == "nt" and Path(executable).suffix.lower() in {".bat", ".cmd"}:
+        return None, "CMD grok-remote entrypoints are unsupported"
     executable_name = re.split(r"[\\/]", executable)[-1].lower()
     if executable_name not in GROK_REMOTE_EXECUTABLES:
         return None, None

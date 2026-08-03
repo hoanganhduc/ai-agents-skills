@@ -70,6 +70,24 @@ if (-not $env:PYTHONIOENCODING) { $env:PYTHONIOENCODING = "utf-8" }
 $env:OPENCLAW_WORKSPACE = $env:AAS_RUNTIME_WORKSPACE
 $env:OPENCLAW_SECRETS_FILE = $env:AAS_SECRETS_FILE
 
+$commandExtension = [System.IO.Path]::GetExtension($commandResolved)
+if ($commandExtension -eq ".py") {
+    $pythonRunner = Join-Path $runtimeRoot "run_python.ps1"
+    if (-not (Test-Path -LiteralPath $pythonRunner -PathType Leaf)) {
+        [Console]::Error.WriteLine("Shared Python runner not found: $pythonRunner")
+        exit 127
+    }
+    $env:AAS_RUNTIME_SCRIPT = $commandResolved
+    & $pythonRunner @SkillArgs
+    exit $LASTEXITCODE
+}
+if ($commandExtension -in @(".bat", ".cmd")) {
+    [Console]::Error.WriteLine(
+        "CMD targets are not supported; use a PowerShell, Python, or native executable target."
+    )
+    exit 64
+}
+
 & $commandResolved @SkillArgs
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

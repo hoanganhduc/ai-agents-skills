@@ -8,7 +8,7 @@ Windows:
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 $env:AAS_SAGE_WSL_DISTRO = "Ubuntu-24.04"
 $env:AAS_SAGE_BIN = "/path/to/sage-10.4/sage"  # use this when sage is not on the non-interactive WSL PATH
-& "$runtime\run_skill.bat" "skills/sagemath/run_sage.bat" "print(2+2)"
+& "$runtime\run_skill.ps1" "skills/sagemath/run_sage.ps1" "print(2+2)"
 ```
 
 Linux/WSL:

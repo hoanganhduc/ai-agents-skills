@@ -34,8 +34,8 @@ usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/send-email/run_send_email.bat" <args>
-& "$runtime\run_skill.bat" "skills/send-email/run_send_email.ps1" <args>
+& "$runtime\run_skill.ps1" "skills/send-email/run_send_email.ps1" <args>
+& "$runtime\run_skill.ps1" "skills/send-email/run_send_email.ps1" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and the `.sh` command target; use the

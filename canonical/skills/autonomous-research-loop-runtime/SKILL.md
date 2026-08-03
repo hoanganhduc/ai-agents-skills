@@ -125,11 +125,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   start --loop research/run --root "$PWD" --provider claude
 ```
 
-Windows (`.bat` or `.ps1`):
-
-```bat
-%AAS_RUNTIME_ROOT%\run_skill.bat skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1 bootstrap --loop research\run --root %CD% --profile formal --goal "..."
-```
+Windows (PowerShell only):
 
 ```powershell
 & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1 bootstrap --loop research\run --root $PWD --profile formal --goal "..."
@@ -145,7 +141,7 @@ Start a raw unattended `drive` (POSIX, advanced):
 bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh drive --dir research/run --provider claude
 ```
 
-On Windows use `%AAS_RUNTIME_ROOT%\run_skill.bat ... run_autonomous_research_loop.bat drive --dir research\run --provider codex`.
+On Windows use `& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" ... run_autonomous_research_loop.ps1 drive --dir research\run --provider codex`.
 Wrap with a persistent user service or Task Scheduler for multi-day runs. A
 managed executor may reap ordinary `nohup` descendants when its command ends;
 on Linux, prefer a `systemd-run --user` service whose command is a loop-owned
@@ -671,10 +667,6 @@ the loop directory. It does not run Lean, Coq, SageMath, or another checker
 itself.
 
 On Windows, use the installed runtime runner with the native launcher target:
-
-```bat
-%AAS_RUNTIME_ROOT%\run_skill.bat skills/autonomous-research-loop-runtime/run_autonomous_research_loop.bat selftest
-```
 
 ```powershell
 & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1 selftest

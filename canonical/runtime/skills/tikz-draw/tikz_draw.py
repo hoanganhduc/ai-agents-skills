@@ -46,7 +46,7 @@ CHECKS_DIR = ASSETS_DIR / "checks"
 STYLES_DIR = ASSETS_DIR / "styles"
 TEMPLATES_DIR = ASSETS_DIR / "templates" / "tikz-snippets"
 IS_WINDOWS = os.name == "nt"
-CLI_PROG = "run_tikz_draw.bat" if IS_WINDOWS else "run_tikz_draw.sh"
+CLI_PROG = "tikz_draw.py" if IS_WINDOWS else "run_tikz_draw.sh"
 
 
 def detect_platform_name(script_dir: Path) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -62,7 +63,7 @@ SUPPORTED_GRAPH_LAYOUTS = BASELINE_GRAPH_LAYOUTS + SAGE_ASSISTED_GRAPH_LAYOUTS
 
 
 def candidate_sage_scripts() -> list[Path]:
-    suffixes = (".bat", ".sh") if IS_WINDOWS else (".sh", ".bat")
+    suffixes = (".ps1", ".sh") if IS_WINDOWS else (".sh", ".ps1")
     candidates: list[Path] = []
     platform_local_root = SCRIPT_DIR.parent / "sagemath"
     fallback_root = (
@@ -374,7 +375,10 @@ def run_sage_graph_query(query: dict[str, Any]) -> dict[str, Any]:
         **dict(os.environ),
         "OPENCLAW_WORKSPACE": str(SAGE_WORKSPACE),
     }
-    if script.suffix.lower() == ".bat":
+    if script.suffix.lower() == ".ps1":
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            raise route_error("SAGE_BACKEND_UNAVAILABLE", "PowerShell is required for the Windows Sage wrapper")
         temp_dir = SAGE_WORKSPACE / "data" / "research" / "sagemath" / "tmp"
         temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
@@ -389,7 +393,7 @@ def run_sage_graph_query(query: dict[str, Any]) -> dict[str, Any]:
             temp_file = Path(handle.name)
         try:
             proc = subprocess.run(
-                [str(script), "--file", str(temp_file)],
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "--file", str(temp_file)],
                 text=True,
                 capture_output=True,
                 env=env,

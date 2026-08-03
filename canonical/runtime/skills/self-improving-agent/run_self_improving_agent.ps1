@@ -1,27 +1,32 @@
+param(
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Arguments = @()
+)
+
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 
 $script = Join-Path $PSScriptRoot "self_improving_agent.py"
-if (-not (Test-Path -LiteralPath $script)) {
-  Write-Error "runtime helper not found: $script"
-  exit 127
+if (-not (Test-Path -LiteralPath $script -PathType Leaf)) {
+    [Console]::Error.WriteLine("runtime helper not found: $script")
+    exit 127
 }
 
-if ($env:AAS_RUNTIME_PYTHON) {
-  & $env:AAS_RUNTIME_PYTHON $script @args
-  exit $LASTEXITCODE
+$runnerCandidates = @()
+if ($env:AAS_RUNTIME_ROOT) {
+    $runnerCandidates += Join-Path $env:AAS_RUNTIME_ROOT "run_python.ps1"
+}
+$runnerCandidates += Join-Path $PSScriptRoot "..\..\..\run_python.ps1"
+$runnerCandidates += Join-Path $PSScriptRoot "..\..\run_python.ps1"
+$runner = $runnerCandidates |
+    Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+    Select-Object -First 1
+if (-not $runner) {
+    [Console]::Error.WriteLine("shared runtime runner not found: run_python.ps1")
+    exit 127
 }
 
-$python = Get-Command python3 -ErrorAction SilentlyContinue
-if (-not $python) { $python = Get-Command python -ErrorAction SilentlyContinue }
-if (-not $python) { $python = Get-Command py -ErrorAction SilentlyContinue }
-if (-not $python) {
-  Write-Error "error: no usable Python runtime found. Set AAS_RUNTIME_PYTHON or install Python 3."
-  exit 127
-}
-
-if ($python.Name -eq "py.exe" -or $python.Name -eq "py") {
-  & $python.Source -3 $script @args
-} else {
-  & $python.Source $script @args
-}
+$env:AAS_RUNTIME_SCRIPT = $script
+& $runner @Arguments
 exit $LASTEXITCODE

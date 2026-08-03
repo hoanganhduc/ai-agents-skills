@@ -12,8 +12,8 @@ $runtimeRoot = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { (Reso
 $runtimeWorkspace = if ($env:AAS_RUNTIME_WORKSPACE) { $env:AAS_RUNTIME_WORKSPACE } else { Join-Path $runtimeRoot "workspace" }
 $env:VNTHUQUAN_TARGET = if ($env:VNTHUQUAN_TARGET) { $env:VNTHUQUAN_TARGET } else { "windows-ai-agents-skills" }
 $env:VNTHUQUAN_ASSISTANT_HOME = if ($env:VNTHUQUAN_ASSISTANT_HOME) { $env:VNTHUQUAN_ASSISTANT_HOME } else { $runtimeRoot }
-$env:VNTHUQUAN_CALIBRE_RUNNER = if ($env:VNTHUQUAN_CALIBRE_RUNNER) { $env:VNTHUQUAN_CALIBRE_RUNNER } else { Join-Path $runtimeRoot "run_skill.bat" }
-$env:VNTHUQUAN_CALIBRE_SCRIPT = if ($env:VNTHUQUAN_CALIBRE_SCRIPT) { $env:VNTHUQUAN_CALIBRE_SCRIPT } else { "skills\calibre\run_cal.bat" }
+$env:VNTHUQUAN_CALIBRE_RUNNER = if ($env:VNTHUQUAN_CALIBRE_RUNNER) { $env:VNTHUQUAN_CALIBRE_RUNNER } else { Join-Path $runtimeRoot "run_skill.ps1" }
+$env:VNTHUQUAN_CALIBRE_SCRIPT = if ($env:VNTHUQUAN_CALIBRE_SCRIPT) { $env:VNTHUQUAN_CALIBRE_SCRIPT } else { "skills/calibre/cal.py" }
 $env:VNTHUQUAN_CALIBRE_CACHE_PATH = if ($env:VNTHUQUAN_CALIBRE_CACHE_PATH) { $env:VNTHUQUAN_CALIBRE_CACHE_PATH } else { Join-Path $runtimeWorkspace "data\calibre\cache\library.json" }
 
 $python = Join-Path $env:USERPROFILE ".vnthuquan_venv\Scripts\python.exe"

@@ -163,8 +163,9 @@ doctors, and the agent's own diagnostics for those layers.
 
 Use `runtime-smoke` to install the portable runtime files into a temporary
 Codex root and execute the installed native runtime runner for the current host.
-On Windows it exercises both `run_skill.ps1` and `run_skill.bat`; on Linux and
-macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
+On Windows it exercises `run_skill.ps1`. CMD runtime entrypoints are not
+published because CMD cannot preserve arbitrary argument vectors safely. On
+Linux and macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
 `autonomous-research-loop-runtime`, `axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-research-library`, `lean-strict-verification-gate`, `manim-math-animation`, `opengauss`, `remote-bridge`, `self-improving-agent`, `send-email`, `slides-to-video`, `submission-venue-selector`, `url-to-screenshot-runtime`, `venue-ranking-evidence`, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
@@ -218,7 +219,7 @@ make runtime-smoke ARGS="--skills self-improving-agent"
 `self-improving-agent` has a portable offline smoke contract for its
 cross-target learning review, command-safety, error-detection, and canonical
 integration-plan helper surface. Native Windows PowerShell/CMD behavior still
-requires running the Windows `make.bat` and runtime runner checks on Windows;
+requires running the Windows `./make.ps1` and runtime runner checks on Windows;
 Linux-hosted Windows platform-shape tests verify install layout, not native
 Windows execution.
 

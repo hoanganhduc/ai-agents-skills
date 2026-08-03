@@ -14,7 +14,7 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.bat" "skills/sagemath/run_sage.bat" <args>
+& "$runtime\run_skill.ps1" "skills/sagemath/run_sage.ps1" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
@@ -28,7 +28,7 @@ visible to the Windows runtime wrapper.
 ```powershell
 $env:AAS_SAGE_WSL_DISTRO = "Ubuntu-24.04"
 $env:AAS_SAGE_BIN = "/path/to/sage-10.4/sage"
-& "$runtime\run_skill.bat" "skills/sagemath/run_sage.bat" "print(2+2)"
+& "$runtime\run_skill.ps1" "skills/sagemath/run_sage.ps1" "print(2+2)"
 ```
 
 Alternatively, make `sage` a real executable in WSL:
