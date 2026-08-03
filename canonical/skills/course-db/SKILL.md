@@ -16,6 +16,8 @@ Use this skill when the user asks about the local course student database / rost
 python3 -m course_hoanganhduc.db_agent <command> [options]
 ```
 
+- On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.db_agent <command> [options]` in PowerShell.
+
 - Read/search/export only. Do **not** run interactive modify, DB restore, or bulk import apply from this skill.
 - Default DB path is `students.db` in the working directory; pass `--db` when needed.
 - If `course_hoanganhduc` is not importable, report the missing package.

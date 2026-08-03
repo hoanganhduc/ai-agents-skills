@@ -21,7 +21,7 @@ Core rules:
 
 Execution surface:
 - Prefer the installed package CLI: `python3 -m vnu_eoffice <command>` or `vnu-eoffice <command>`.
-- On native Windows, if the dedicated local venv exists, prefer `%USERPROFILE%\.vnu-eoffice_venv\Scripts\vnu-eoffice.exe <command>` or `%USERPROFILE%\.vnu-eoffice_venv\Scripts\python.exe -m vnu_eoffice <command>`.
+- On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.vnu-eoffice_venv\Scripts\vnu-eoffice.exe" <command>` or `& "$env:USERPROFILE\.vnu-eoffice_venv\Scripts\python.exe" -m vnu_eoffice <command>` in PowerShell.
 - On native Windows consoles, set `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` before commands that may print Vietnamese text.
 - This skill requires an importable `vnu_eoffice` package/checkout or `vnu-eoffice` executable. If neither is available, report the missing dependency instead of claiming eOffice access.
 - If the package is not importable, use the target's normal project checkout mechanism to make `vnu_eoffice` importable. Do not hardcode a user-specific checkout path into the skill.

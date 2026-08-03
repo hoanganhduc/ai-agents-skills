@@ -17,6 +17,8 @@ Use this skill when the user asks about Classroom50, foundation50 classroom tool
 python3 -m course_hoanganhduc.c50_agent <command> [options]
 ```
 
+- On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.c50_agent <command> [options]` in PowerShell.
+
 - Do **not** run raw `gh teacher` or `gh student` from this skill (humans may use them outside the skill).
 - Do **not** download submissions via this skill (human-only; not agent-safe).
 - Do **not** push roster, invite, unenroll, teardown, or pass confirm-skip flags.

@@ -16,6 +16,8 @@ Use this skill when the user asks about Canvas LMS for their course: listing ass
 python3 -m course_hoanganhduc.canvas_agent <command> [options]
 ```
 
+- On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.canvas_agent <command> [options]` in PowerShell.
+
 - Do **not** call unconstrained `course --unenroll-canvas`, `--grade-canvas-assignment`, invites, announcements, page edits, or bulk downloads from this skill.
 - In agent mode, if a course id is used, set:
 
