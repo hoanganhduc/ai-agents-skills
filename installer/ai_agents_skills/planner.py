@@ -172,7 +172,12 @@ def build_plan(
             state=state,
         )
     )
-    return {"actions": actions, "skipped_agents": skipped_agents, "root": str(root)}
+    return {
+        "actions": actions,
+        "skipped_agents": skipped_agents,
+        "root": str(root),
+        "platform": current_platform(platform),
+    }
 
 
 def plannable_agents(root: Path, agents: list[AgentTarget]) -> tuple[list[AgentTarget], list[dict[str, str]]]:
@@ -639,6 +644,8 @@ def artifact_action(
             path=path,
             artifact_type=artifact_type,
             reason="Antigravity global skill alias name conflicts with a managed skill file",
+            declared_exclusion=True,
+            exclusion_code="antigravity-managed-skill-alias-collision",
         )
         action["artifact_id"] = f"{artifact_type}:{name}"
         action["artifact_name"] = name
@@ -732,6 +739,12 @@ def support_file_actions(
         path = agent.support_dir_for(skill) / relative
         platform_reason = support_file_platform_block_reason(relative, platform)
         if platform_reason is not None:
+            declared_exclusion = support_file_platform_exclusion_declared(
+                manifests,
+                skill,
+                relative,
+                platform,
+            )
             actions.append(
                 blocked_file_action(
                     agent=agent.name,
@@ -741,6 +754,12 @@ def support_file_actions(
                     reason=platform_reason,
                     install_mode=install_mode,
                     source_path=source,
+                    declared_exclusion=declared_exclusion,
+                    exclusion_code=(
+                        "platform-inapplicable-support-file"
+                        if declared_exclusion
+                        else None
+                    ),
                 )
             )
             continue
@@ -768,6 +787,23 @@ def support_file_platform_block_reason(relative: Path, platform: str | None = No
     if platform_name in {"linux", "macos", "wsl"} and suffix in {".bat", ".cmd", ".ps1"}:
         return "Windows support file is not installed for POSIX targets"
     return None
+
+
+def support_file_platform_exclusion_declared(
+    manifests: dict[str, Any],
+    skill: str,
+    relative: Path,
+    platform: str | None = None,
+) -> bool:
+    skill_spec = manifests.get("skills", {}).get("skills", {}).get(skill, {})
+    declarations = skill_spec.get("neutral_platform_support_files", {})
+    if not isinstance(declarations, dict):
+        return False
+    declared_paths = declarations.get(current_platform(platform), [])
+    if not isinstance(declared_paths, list):
+        return False
+    relative_text = str(relative).replace("\\", "/")
+    return relative_text in declared_paths
 
 
 def openclaw_support_file_actions(
@@ -814,6 +850,8 @@ def blocked_file_action(
     reason: str,
     install_mode: str = "copy",
     source_path: Path | None = None,
+    declared_exclusion: bool = False,
+    exclusion_code: str | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         "kind": "file",
@@ -828,6 +866,9 @@ def blocked_file_action(
     }
     if source_path is not None:
         result["source_path"] = str(source_path)
+    if declared_exclusion:
+        result["declared_exclusion"] = True
+        result["exclusion_code"] = exclusion_code
     return result
 
 

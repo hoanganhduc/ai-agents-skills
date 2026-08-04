@@ -8,7 +8,13 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from .agents import agent_home_statuses, agent_supports_manifest_entry, all_agent_names, detect_agents
+from .agents import (
+    agent_home_statuses,
+    agent_supports_manifest_entry,
+    all_agent_names,
+    detect_agents,
+    target_for,
+)
 from .antigravity_fixup import antigravity_fixup
 from .apply import apply_plan
 from .capabilities import looks_like_real_system_root
@@ -53,11 +59,17 @@ from .openclaw_target_manifest import (
     load_target_manifest,
 )
 from .openclaw_target_paths import OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE
-from .planner import build_plan, openclaw_skill_content_block_reason, openclaw_skill_support_block_reason
+from .planner import (
+    build_plan,
+    openclaw_skill_content_block_reason,
+    openclaw_skill_support_block_reason,
+    support_file_platform_block_reason,
+    support_file_platform_exclusion_declared,
+)
 from .post_install_smoke import POST_INSTALL_SMOKE_MODES, run_post_install_smoke, smoke_state
-from .render import MANAGED_MARKER, canonical_skill_path, render_skill_md
+from .render import MANAGED_MARKER, canonical_skill_dir, canonical_skill_path, render_skill_md
 from .runtime import runtime_inventory
-from .runtime_smoke import run_runtime_smoke
+from .runtime_smoke import run_installed_runtime_smoke, run_runtime_smoke
 from .selectors import (
     artifact_dependency_skills,
     canonical_artifact_name,
@@ -74,6 +86,12 @@ from .verify import verify as verify_state
 
 INSTALL_CONFIRMATION_PHRASE = "I understand the installation and uninstall process"
 INSTALL_CONFIRMATION_ENV = "AAS_INSTALL_CONFIRM"
+DECLARED_INSTALL_EXCLUSION_CODES = frozenset(
+    {
+        "antigravity-managed-skill-alias-collision",
+        "platform-inapplicable-support-file",
+    }
+)
 
 
 def verify_install_confirmation(operation: str) -> None:
@@ -144,6 +162,16 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_smoke_parser.add_argument("--skill")
     runtime_smoke_parser.add_argument("--skills")
     runtime_smoke_parser.add_argument("--timeout", type=int, default=60)
+
+    installed_runtime_smoke_parser = sub.add_parser("installed-runtime-smoke")
+    installed_runtime_smoke_parser.add_argument("--skill")
+    installed_runtime_smoke_parser.add_argument("--skills")
+    installed_runtime_smoke_parser.add_argument("--timeout", type=int, default=60)
+    installed_runtime_smoke_parser.add_argument(
+        "--require-complete-coverage",
+        action="store_true",
+        help="fail unless every runtime skill declared by this revision has managed runtime files",
+    )
 
     delegate_agent = sub.add_parser("delegate-agent")
     delegate_agent.add_argument("--provider", default="auto", help="provider name or auto")
@@ -369,6 +397,11 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--apply", action="store_true")
     install.add_argument("--real-system", action="store_true")
     install.add_argument(
+        "--require-complete-install",
+        action="store_true",
+        help="fail before apply when any planned action is skipped, and fail if apply races produce skipped actions",
+    )
+    install.add_argument(
         "--post-install-smoke",
         choices=POST_INSTALL_SMOKE_MODES,
         default="auto",
@@ -457,6 +490,11 @@ def add_selection_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--runtime-root", type=Path, help="runtime root for managed runtime files")
     parser.add_argument("--no-runtime", action="store_true", help="do not install runtime files")
+    parser.add_argument(
+        "--require-all-requested-agents",
+        action="store_true",
+        help="fail when any explicitly requested --agent or --agents home is unavailable",
+    )
 
 
 def add_conflict_args(parser: argparse.ArgumentParser) -> None:
@@ -511,6 +549,8 @@ def run(args: argparse.Namespace) -> int:
         return output(runtime_inventory(args.source_root, max_entries=args.max_entries), args)
     if args.command == "runtime-smoke":
         return runtime_smoke(args, manifests)
+    if args.command == "installed-runtime-smoke":
+        return installed_runtime_smoke(args, manifests)
     if args.command == "delegate-agent":
         return output(dispatch_external_agents(args, manifests), args)
     if args.command == "validate-delegation-packet":
@@ -753,13 +793,37 @@ def run(args: argparse.Namespace) -> int:
         return audit_system(args, manifests)
     if args.command == "plan":
         plan = make_plan(args, manifests)
-        return output(summarize_plan(plan), args)
+        return output(summarize_plan(plan, manifests), args)
     if args.command == "install":
         ensure_apply_allowed(args)
         plan = make_plan(args, manifests)
+        if args.require_complete_install:
+            require_complete_install_plan(plan, manifests, platform=args.platform)
         confirm_install_process_understood(args, plan)
         result = apply_plan(args.root, plan, dry_run=not args.apply)
         exit_code = 0
+        if args.require_complete_install:
+            incomplete = incomplete_install_actions(
+                result.get("actions", []),
+                manifests,
+                platform=args.platform,
+                root=args.root,
+            )
+            declared_exclusions = declared_install_exclusion_actions(
+                result.get("actions", []),
+                manifests,
+                platform=args.platform,
+                root=args.root,
+            )
+            result["complete_install"] = {
+                "status": "failed" if incomplete else "ok",
+                "incomplete_action_count": len(incomplete),
+                "incomplete_actions": incomplete,
+                "declared_exclusion_count": len(declared_exclusions),
+                "declared_exclusions": declared_exclusions,
+            }
+            if incomplete:
+                exit_code = 1
         if args.apply:
             selected, _ = resolve_install_selection(args, manifests)
             agents = set(split_csv(args.agents)) if args.agents else None
@@ -863,11 +927,31 @@ def skipped_agent_names(root: Path, requested_agents: list[str] | None, agents: 
     ]
 
 
+def resolve_agent_targets(args: argparse.Namespace) -> tuple[list[str] | None, list[Any]]:
+    requested_agents = split_csv(args.agents) if args.agents else None
+    agents = detect_agents(args.root, requested_agents)
+    if not getattr(args, "require_all_requested_agents", False):
+        return requested_agents, agents
+    if not requested_agents:
+        raise ValueError("--require-all-requested-agents requires --agent or --agents")
+    unavailable = [
+        status
+        for status in agent_home_statuses(args.root, requested_agents)
+        if not status["eligible"]
+    ]
+    if unavailable:
+        details = ", ".join(
+            f"{status['agent']} ({status['reason']})"
+            for status in unavailable
+        )
+        raise ValueError(f"required agent targets are unavailable: {details}")
+    return requested_agents, agents
+
+
 def doctor(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     platform = current_platform(args.platform)
     selected, selected_artifacts = resolve_install_selection(args, manifests)
-    agent_filter = split_csv(args.agents) if args.agents else None
-    agents = detect_agents(args.root, agent_filter)
+    agent_filter, agents = resolve_agent_targets(args)
     detected_agent_names = {agent.name for agent in agents}
     active_skills = [
         skill for skill in selected
@@ -914,8 +998,7 @@ def precheck(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
 def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, Any]:
     platform = current_platform(args.platform)
     selected, selected_artifacts = resolve_install_selection(args, manifests)
-    agent_filter = split_csv(args.agents) if args.agents else None
-    agents = detect_agents(args.root, agent_filter)
+    agent_filter, agents = resolve_agent_targets(args)
     detected_agent_names = {agent.name for agent in agents}
     active_skills = [
         skill for skill in selected
@@ -994,8 +1077,7 @@ def build_precheck_result(args: argparse.Namespace, manifests: dict[str, Any]) -
 
 def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, Any]:
     selected, selected_artifacts = resolve_install_selection(args, manifests)
-    agent_filter = split_csv(args.agents) if args.agents else None
-    agents = detect_agents(args.root, agent_filter)
+    agent_filter, agents = resolve_agent_targets(args)
     runtime_profile = "none" if getattr(args, "no_runtime", False) else args.runtime_profile
     return build_plan(
         args.root,
@@ -1014,11 +1096,190 @@ def make_plan(args: argparse.Namespace, manifests: dict[str, Any]) -> dict[str, 
     )
 
 
+def incomplete_install_actions(
+    actions: list[dict[str, Any]],
+    manifests: dict[str, Any] | None = None,
+    *,
+    platform: str | None = None,
+    root: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Return actions that would leave a requested install surface unresolved."""
+    return [
+        {
+            "agent": action.get("agent"),
+            "skill": action.get("skill"),
+            "artifact_id": action.get("artifact_id"),
+            "path": action.get("path"),
+            "classification": action.get("classification"),
+            "operation": action.get("operation"),
+            "reason": action.get("reason"),
+        }
+        for action in actions
+        if action.get("operation") in {"skip", "skip-conflict"}
+        and not declared_install_exclusion(
+            action,
+            manifests,
+            platform=platform,
+            root=root,
+        )
+    ]
+
+
+def declared_install_exclusion(
+    action: dict[str, Any],
+    manifests: dict[str, Any] | None = None,
+    *,
+    platform: str | None = None,
+    root: Path | None = None,
+) -> bool:
+    if (
+        action.get("operation") != "skip"
+        or action.get("classification") != "blocked"
+        or action.get("declared_exclusion") is not True
+        or action.get("exclusion_code") not in DECLARED_INSTALL_EXCLUSION_CODES
+    ):
+        return False
+    code = action["exclusion_code"]
+    if code == "antigravity-managed-skill-alias-collision":
+        name = action.get("artifact_name")
+        structurally_valid = (
+            action.get("agent") == "antigravity"
+            and action.get("artifact_type") == "entrypoint-alias"
+            and isinstance(name, str)
+            and bool(name)
+            and action.get("skill") == name
+            and action.get("artifact_id") == f"entrypoint-alias:{name}"
+            and action.get("reason")
+            == "Antigravity global skill alias name conflicts with a managed skill file"
+        )
+        if not structurally_valid or manifests is None or root is None:
+            return False
+        skill_specs = manifests.get("skills", {}).get("skills", {})
+        alias_specs = (
+            manifests.get("artifacts", {})
+            .get("artifacts", {})
+            .get("entrypoint-alias", {})
+        )
+        alias_spec = alias_specs.get(name) if isinstance(alias_specs, dict) else None
+        if not (
+            name in skill_specs
+            and isinstance(alias_spec, dict)
+            and "antigravity" in alias_spec.get("supported_agents", [])
+        ):
+            return False
+        expected_path = target_for(root, "antigravity").target_dir_for(
+            "entrypoint-alias"
+        ) / f"{name}.md"
+        return install_target_paths_match(action.get("path"), expected_path)
+    if code != "platform-inapplicable-support-file":
+        return False
+    skill = action.get("skill")
+    source_path = action.get("source_path")
+    if (
+        action.get("artifact_type") != "skill-support-file"
+        or not isinstance(skill, str)
+        or not skill
+        or not isinstance(source_path, str)
+        or not source_path
+    ):
+        return False
+    source = Path(source_path)
+    try:
+        skill_root = canonical_skill_dir(skill).resolve(strict=True)
+        relative = source.resolve(strict=True).relative_to(skill_root)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    expected_reason = support_file_platform_block_reason(relative, platform)
+    if expected_reason is None or action.get("reason") != expected_reason:
+        return False
+    if manifests is None or root is None:
+        return False
+    skill_spec = manifests.get("skills", {}).get("skills", {}).get(skill)
+    agent_name = action.get("agent")
+    if (
+        not isinstance(skill_spec, dict)
+        or not isinstance(agent_name, str)
+        or not agent_supports_manifest_entry(
+            agent_name,
+            skill_spec.get("supported_agents", []),
+        )
+    ):
+        return False
+    if not support_file_platform_exclusion_declared(
+        manifests,
+        skill,
+        relative,
+        platform,
+    ):
+        return False
+    try:
+        expected_path = target_for(root, agent_name).support_dir_for(skill) / relative
+    except ValueError:
+        return False
+    return install_target_paths_match(action.get("path"), expected_path)
+
+
+def install_target_paths_match(actual: Any, expected: Path) -> bool:
+    if not isinstance(actual, str) or not actual:
+        return False
+    return os.path.normcase(os.path.abspath(actual)) == os.path.normcase(
+        os.path.abspath(str(expected))
+    )
+
+
+def declared_install_exclusion_actions(
+    actions: list[dict[str, Any]],
+    manifests: dict[str, Any] | None = None,
+    *,
+    platform: str | None = None,
+    root: Path | None = None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "agent": action.get("agent"),
+            "skill": action.get("skill"),
+            "artifact_id": action.get("artifact_id"),
+            "artifact_type": action.get("artifact_type"),
+            "exclusion_code": action.get("exclusion_code"),
+            "reason": action.get("reason"),
+        }
+        for action in actions
+        if declared_install_exclusion(
+            action,
+            manifests,
+            platform=platform,
+            root=root,
+        )
+    ]
+
+
+def require_complete_install_plan(
+    plan: dict[str, Any],
+    manifests: dict[str, Any] | None = None,
+    *,
+    platform: str | None = None,
+) -> None:
+    skipped_agents = plan.get("skipped_agents", [])
+    incomplete = incomplete_install_actions(
+        plan.get("actions", []),
+        manifests,
+        platform=platform or plan.get("platform"),
+        root=Path(plan["root"]) if isinstance(plan.get("root"), str) else None,
+    )
+    if not skipped_agents and not incomplete:
+        return
+    details: list[str] = []
+    if skipped_agents:
+        details.append(f"{len(skipped_agents)} requested agent target(s) skipped")
+    if incomplete:
+        details.append(f"{len(incomplete)} install action(s) unresolved")
+    raise ValueError("complete install requirement failed: " + "; ".join(details))
+
+
 def audit_system(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
     platform = current_platform(args.platform)
     selected, selected_artifacts = resolve_install_selection(args, manifests)
-    agent_filter = split_csv(args.agents) if args.agents else None
-    agents = detect_agents(args.root, agent_filter)
+    agent_filter, agents = resolve_agent_targets(args)
     precheck_result = build_precheck_result(args, manifests)
     runtime_profile = "none" if getattr(args, "no_runtime", False) else args.runtime_profile
     default_plan = build_plan(
@@ -1318,6 +1579,8 @@ def selected_scope_args(args: argparse.Namespace) -> str:
         parts.append(f"--artifacts {args.artifacts}")
     if getattr(args, "artifact_profile", None):
         parts.append(f"--artifact-profile {args.artifact_profile}")
+    if getattr(args, "require_all_requested_agents", False):
+        parts.append("--require-all-requested-agents")
     return " ".join(parts) or "--profile research-core"
 
 
@@ -1336,10 +1599,21 @@ def resolve_install_selection(
     return sorted(selected_skills), selected_artifacts
 
 
-def summarize_plan(plan: dict[str, Any]) -> dict[str, Any]:
+def summarize_plan(
+    plan: dict[str, Any],
+    manifests: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    declared_exclusions = declared_install_exclusion_actions(
+        plan["actions"],
+        manifests,
+        platform=plan.get("platform"),
+        root=Path(plan["root"]) if isinstance(plan.get("root"), str) else None,
+    )
     return {
         "root": plan["root"],
         "action_count": len(plan["actions"]),
+        "declared_exclusion_count": len(declared_exclusions),
+        "declared_exclusions": declared_exclusions,
         "actions": [
             {
                 key: action.get(key)
@@ -1369,6 +1643,8 @@ def summarize_plan(plan: dict[str, Any]) -> dict[str, Any]:
                     "newline_policy",
                     "file_type",
                     "runtime_root",
+                    "declared_exclusion",
+                    "exclusion_code",
                 )
             }
             for action in plan["actions"]
@@ -1426,6 +1702,20 @@ def runtime_smoke(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
         skills=resolve_skill_filter(args, manifests),
         platform=args.platform,
         timeout=args.timeout,
+    )
+    output(result, args)
+    return 0 if result["status"] == "ok" else 1
+
+
+def installed_runtime_smoke(args: argparse.Namespace, manifests: dict[str, Any]) -> int:
+    result = run_installed_runtime_smoke(
+        args.root,
+        manifests,
+        skills=resolve_skill_filter(args, manifests),
+        agents=set(split_csv(args.agents)) if args.agents else None,
+        platform=args.platform,
+        timeout=args.timeout,
+        require_complete_coverage=args.require_complete_coverage,
     )
     output(result, args)
     return 0 if result["status"] == "ok" else 1
@@ -1666,6 +1956,7 @@ def command_help() -> dict[str, Any]:
         "fake-root-lifecycle",
         "lifecycle-test",
         "runtime-smoke",
+        "installed-runtime-smoke",
         "runtime-inventory",
         "delegate-agent",
         "validate-delegation-packet",

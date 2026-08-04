@@ -1438,6 +1438,13 @@
     },
     "self-improving-agent": {
       "description": "Log durable learnings and propose canonical repo integration plans across install targets.",
+      "neutral_platform_support_files": {
+        "windows": [
+          "scripts/check_command_safety.sh",
+          "scripts/detect_common_errors.sh",
+          "scripts/review_pending.sh"
+        ]
+      },
       "profiles": [
         "full-research"
       ],

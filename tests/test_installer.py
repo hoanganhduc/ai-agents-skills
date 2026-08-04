@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import json
 import math
@@ -18,14 +19,25 @@ from unittest.mock import patch
 from pathlib import Path
 
 from installer.ai_agents_skills.apply import apply_plan, replace_with_text
-from installer.ai_agents_skills.agents import KNOWN_AGENT_NAMES, target_for
-from installer.ai_agents_skills.cli import INSTALL_CONFIRMATION_PHRASE, main, resolve_install_selection
+from installer.ai_agents_skills.agents import KNOWN_AGENT_NAMES, detect_agents, target_for
+from installer.ai_agents_skills.cli import (
+    INSTALL_CONFIRMATION_PHRASE,
+    main,
+    require_complete_install_plan,
+    resolve_install_selection,
+    summarize_plan,
+)
 from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS
 from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
 from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.docs import check_docs_current, generate_docs, render_docs
 from installer.ai_agents_skills.lifecycle import apply_uninstall_action, plan_uninstall_action, rollback, uninstall
-from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
+from installer.ai_agents_skills.manifest import (
+    REPO_ROOT,
+    ManifestError,
+    load_manifests,
+    validate_manifests,
+)
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.render import render_artifact_content, render_reference_skill_md
 from installer.ai_agents_skills.selectors import artifact_dependency_skills, resolve_artifacts, resolve_skills
@@ -96,6 +108,341 @@ class ManifestTests(unittest.TestCase):
             for profile_name in spec["profiles"]:
                 if profile_name in explicit_profiles:
                     self.assertIn(skill, explicit_profiles[profile_name])
+
+    def test_complete_restore_profile_expands_to_every_declared_skill(self) -> None:
+        manifests = load_manifests()
+        args = Args()
+        args.profile = "complete-restore"
+
+        self.assertEqual(
+            manifests["profiles"]["profiles"]["complete-restore"]["skills"],
+            ["*"],
+        )
+        self.assertEqual(
+            set(resolve_skills(args, manifests)),
+            set(manifests["skills"]["skills"]),
+        )
+
+    def test_workflow_artifacts_profile_is_exhaustive(self) -> None:
+        manifests = load_manifests()
+        args = Args()
+        args.no_skills = True
+        args.artifact_profile = "workflow-artifacts"
+        declared = {
+            (artifact_type, name)
+            for artifact_type, specs in manifests["artifacts"]["artifacts"].items()
+            for name in specs
+        }
+
+        self.assertEqual(set(resolve_artifacts(args, manifests)), declared)
+
+    def test_complete_restore_plan_covers_every_requested_non_openclaw_target(self) -> None:
+        manifests = load_manifests()
+        requested_agents = [
+            "codex",
+            "claude",
+            "deepseek",
+            "copilot",
+            "opencode",
+            "antigravity",
+            "grok",
+            "kimi",
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, *requested_agents)
+            args = Args()
+            args.profile = "complete-restore"
+            args.artifact_profile = "workflow-artifacts"
+            selected_skills = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected_skills,
+                detect_agents(root, requested_agents),
+                artifacts=resolve_artifacts(args, manifests),
+                runtime_profile="full",
+                platform="linux",
+                requested_agents=requested_agents,
+            )
+            installed_skill_pairs = {
+                (action["agent"], action["skill"])
+                for action in plan["actions"]
+                if action["artifact_type"] == "skill-file"
+            }
+
+            self.assertEqual(
+                installed_skill_pairs,
+                {
+                    (agent, skill)
+                    for agent in requested_agents
+                    for skill in manifests["skills"]["skills"]
+                },
+            )
+            self.assertEqual(plan["skipped_agents"], [])
+
+    def test_complete_install_gate_accepts_clean_cross_platform_closure_plans(self) -> None:
+        manifests = load_manifests()
+        requested_agents = [
+            "codex",
+            "claude",
+            "deepseek",
+            "copilot",
+            "opencode",
+            "antigravity",
+            "grok",
+            "kimi",
+        ]
+        for platform in ("linux", "macos", "windows"):
+            with self.subTest(platform=platform), fake_root() as tmp:
+                root = Path(tmp)
+                create_agent_homes(root, *requested_agents)
+                args = Args()
+                args.profile = "complete-restore"
+                args.artifact_profile = "workflow-artifacts"
+                plan = build_plan(
+                    root,
+                    manifests,
+                    resolve_skills(args, manifests),
+                    detect_agents(root, requested_agents),
+                    artifacts=resolve_artifacts(args, manifests),
+                    runtime_profile="full",
+                    platform=platform,
+                    requested_agents=requested_agents,
+                )
+
+                require_complete_install_plan(plan, manifests, platform=platform)
+                declared = [
+                    action
+                    for action in plan["actions"]
+                    if action.get("declared_exclusion") is True
+                ]
+                self.assertTrue(declared)
+                self.assertTrue(all(action.get("exclusion_code") for action in declared))
+                summary = summarize_plan(plan, manifests)
+                self.assertEqual(summary["declared_exclusion_count"], len(declared))
+                self.assertEqual(len(summary["declared_exclusions"]), len(declared))
+                summarized_declared = [
+                    action
+                    for action in summary["actions"]
+                    if action.get("declared_exclusion") is True
+                ]
+                self.assertEqual(len(summarized_declared), len(declared))
+                self.assertTrue(all(action.get("exclusion_code") for action in summarized_declared))
+                aliases = {
+                    "calibre",
+                    "docling",
+                    "manim-math-animation",
+                    "slides-to-video",
+                    "url-to-screenshot",
+                    "vnthuquan",
+                    "zotero",
+                }
+                expected_exclusions = {
+                    (
+                        "antigravity-managed-skill-alias-collision",
+                        "antigravity",
+                        alias,
+                        "entrypoint-alias",
+                        alias,
+                        f".gemini/antigravity-cli/skills/{alias}.md",
+                    )
+                    for alias in aliases
+                }
+                if platform == "windows":
+                    expected_exclusions.update(
+                        (
+                            "platform-inapplicable-support-file",
+                            agent,
+                            "self-improving-agent",
+                            "skill-support-file",
+                            f"scripts/{script}",
+                            {
+                                "claude": ".claude/skills",
+                                "opencode": ".config/opencode/skills",
+                                "antigravity": (
+                                    ".gemini/antigravity-cli/plugins/"
+                                    "ai-agents-skills/skills"
+                                ),
+                                "grok": ".grok/skills",
+                                "kimi": ".kimi-code/skills",
+                            }[agent]
+                            + f"/self-improving-agent/scripts/{script}",
+                        )
+                        for agent in ("claude", "opencode", "antigravity", "grok", "kimi")
+                        for script in (
+                            "check_command_safety.sh",
+                            "detect_common_errors.sh",
+                            "review_pending.sh",
+                        )
+                    )
+                actual_exclusions = set()
+                for action in declared:
+                    if action["artifact_type"] == "skill-support-file":
+                        label = Path(action["source_path"]).relative_to(
+                            REPO_ROOT / "canonical" / "skills" / action["skill"]
+                        ).as_posix()
+                    else:
+                        label = action["artifact_name"]
+                    actual_exclusions.add(
+                        (
+                            action["exclusion_code"],
+                            action["agent"],
+                            action["skill"],
+                            action["artifact_type"],
+                            label,
+                            Path(action["path"]).relative_to(root).as_posix(),
+                        )
+                    )
+                self.assertEqual(actual_exclusions, expected_exclusions)
+            self.assertNotIn("openclaw", {action.get("agent") for action in plan["actions"]})
+
+    def test_complete_install_gate_rejects_forged_exclusion_labels(self) -> None:
+        manifests = load_manifests()
+        plan = {
+            "root": "/tmp/ai-agents-skills-forged-plan",
+            "platform": "windows",
+            "skipped_agents": [],
+            "actions": [
+                {
+                    "operation": "skip",
+                    "classification": "blocked",
+                    "declared_exclusion": True,
+                    "exclusion_code": "antigravity-managed-skill-alias-collision",
+                    "agent": "antigravity",
+                    "skill": "zotero",
+                    "artifact_type": "skill-file",
+                    "artifact_id": "entrypoint-alias:zotero",
+                    "artifact_name": "zotero",
+                    "reason": "Antigravity global skill alias name conflicts with a managed skill file",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "1 install action.*unresolved"):
+            require_complete_install_plan(plan, manifests, platform="windows")
+
+    def test_complete_install_gate_rejects_forged_exclusion_paths(self) -> None:
+        manifests = load_manifests()
+        requested_agents = ["claude", "antigravity"]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, *requested_agents)
+            args = Args()
+            args.profile = "complete-restore"
+            args.artifact_profile = "workflow-artifacts"
+            plan = build_plan(
+                root,
+                manifests,
+                resolve_skills(args, manifests),
+                detect_agents(root, requested_agents),
+                artifacts=resolve_artifacts(args, manifests),
+                runtime_profile="full",
+                platform="windows",
+                requested_agents=requested_agents,
+            )
+            alias = next(
+                action
+                for action in plan["actions"]
+                if action.get("exclusion_code")
+                == "antigravity-managed-skill-alias-collision"
+            )
+            support = next(
+                action
+                for action in plan["actions"]
+                if action.get("exclusion_code")
+                == "platform-inapplicable-support-file"
+            )
+
+            for action in (alias, support):
+                with self.subTest(exclusion_code=action["exclusion_code"]):
+                    forged_plan = {
+                        **plan,
+                        "actions": [
+                            {
+                                **action,
+                                "path": str(root / "forged" / "unrelated-required-file"),
+                            }
+                        ],
+                    }
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "1 install action.*unresolved",
+                    ):
+                        require_complete_install_plan(
+                            forged_plan,
+                            manifests,
+                            platform="windows",
+                        )
+
+    def test_complete_install_gate_rejects_undeclared_platform_support_exclusion(self) -> None:
+        manifests = copy.deepcopy(load_manifests())
+        manifests["skills"]["skills"]["self-improving-agent"].pop(
+            "neutral_platform_support_files"
+        )
+        requested_agents = [
+            "codex",
+            "claude",
+            "deepseek",
+            "copilot",
+            "opencode",
+            "antigravity",
+            "grok",
+            "kimi",
+        ]
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, *requested_agents)
+            args = Args()
+            args.profile = "complete-restore"
+            args.artifact_profile = "workflow-artifacts"
+            plan = build_plan(
+                root,
+                manifests,
+                resolve_skills(args, manifests),
+                detect_agents(root, requested_agents),
+                artifacts=resolve_artifacts(args, manifests),
+                runtime_profile="full",
+                platform="windows",
+                requested_agents=requested_agents,
+            )
+
+        undeclared = [
+            action
+            for action in plan["actions"]
+            if action.get("skill") == "self-improving-agent"
+            and action.get("artifact_type") == "skill-support-file"
+            and action.get("operation") == "skip"
+            and action.get("declared_exclusion") is not True
+        ]
+        self.assertTrue(undeclared)
+        with self.assertRaisesRegex(ValueError, "complete install requirement failed"):
+            require_complete_install_plan(plan, manifests, platform="windows")
+
+    def test_manifest_validates_neutral_platform_support_file_declarations(self) -> None:
+        base = load_manifests()
+        invalid_cases = (
+            ({"plan9": ["scripts/check_command_safety.sh"]}, "unknown platform"),
+            ({"windows": ["scripts/missing.sh"]}, "does not exist"),
+            ({"windows": ["scripts/check_command_safety.sh"] * 2}, "duplicate"),
+            ({"windows": ["SKILL.md"]}, "cannot be excluded"),
+        )
+        for declarations, expected_error in invalid_cases:
+            with self.subTest(declarations=declarations):
+                manifests = copy.deepcopy(base)
+                manifests["skills"]["skills"]["self-improving-agent"][
+                    "neutral_platform_support_files"
+                ] = declarations
+                with self.assertRaisesRegex(ManifestError, expected_error):
+                    validate_manifests(
+                        manifests["skills"],
+                        manifests["profiles"],
+                        manifests["dependencies"],
+                        manifests["artifacts"],
+                        manifests["system_dependencies"],
+                        manifests["runtime"],
+                        manifests["delegation"],
+                    )
 
     def test_slides_to_video_skill_and_runtime_registered(self) -> None:
         manifests = load_manifests()
@@ -2812,6 +3159,22 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("runtime smoke for installed runtime-backed skills", text.replace("\n  ", " "))
         self.assertIn("Runtime smoke coverage", text)
         self.assertIn("manual-native", text)
+        self.assertIn("--require-complete-coverage", text)
+        self.assertIn("missing_managed_runtime_count", text)
+
+    def test_public_closure_restore_recipe_is_fail_closed(self) -> None:
+        for relative in (
+            "README.md",
+            "docs/installation.md",
+            "docs/source/installation.md",
+        ):
+            with self.subTest(relative=relative):
+                text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+                self.assertIn("--require-complete-install", text)
+                self.assertIn(
+                    'installed-runtime-smoke ARGS="--require-complete-coverage"',
+                    text,
+                )
 
     def test_make_ps1_forwards_argument_arrays_without_cmd(self) -> None:
         text = (REPO_ROOT / "make.ps1").read_text(encoding="utf-8")
@@ -3082,6 +3445,30 @@ class DocsAndLauncherTests(unittest.TestCase):
                 [{"agent": "openclaw", "reason": "agent home not detected"}],
             )
             self.assertFalse((root / ".openclaw").exists())
+
+    def test_cli_plan_fails_closed_when_a_required_agent_home_is_missing(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "codex,claude",
+                    "plan",
+                    "--skill",
+                    "zotero",
+                    "--require-all-requested-agents",
+                ])
+
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "error")
+            self.assertIn("required agent targets are unavailable", payload["error"])
+            self.assertIn("claude (agent home not detected)", payload["error"])
 
     def test_cli_install_rejects_dry_run_with_apply(self) -> None:
         with fake_root() as tmp:
@@ -3946,6 +4333,104 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertTrue(payload["dry_run"])
             self.assertNotIn("post_install", payload)
             self.assertFalse((root / ".ai-agents-skills").exists())
+
+    def test_cli_complete_install_rejects_runtime_conflict_before_apply(self) -> None:
+        manifests = load_manifests()
+        graph_target = next(
+            entry["target"]
+            for entry in manifests["runtime"]["skills"]["graph-verifier"]["files"]
+            if entry["target"].endswith("graph_verifier.py")
+        )
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            conflict = root / ".codex" / "runtime" / graph_target
+            conflict.mkdir(parents=True)
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "codex",
+                    "install",
+                    "--skills",
+                    "formal-skeleton-helper,graph-verifier",
+                    "--runtime-profile",
+                    "full",
+                    "--backup-replace",
+                    "--require-all-requested-agents",
+                    "--require-complete-install",
+                    "--apply",
+                ])
+
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["status"], "error")
+            self.assertIn("install action(s) unresolved", payload["error"])
+            self.assertFalse(
+                (root / ".codex" / "skills" / "formal-skeleton-helper" / "SKILL.md").exists()
+            )
+
+    def test_cli_complete_install_reports_apply_time_skip_conflict(self) -> None:
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+            apply_result = {
+                "status": "partial",
+                "dry_run": False,
+                "run_id": "apply-race-test",
+                "actions": [
+                    {
+                        "operation": "skip-conflict",
+                        "classification": "conflict",
+                        "agent": "codex",
+                        "skill": "zotero",
+                        "artifact_type": "skill-file",
+                        "artifact_id": None,
+                        "path": str(root / ".codex" / "skills" / "zotero" / "SKILL.md"),
+                        "reason": "target changed after planning",
+                    }
+                ],
+            }
+            stream = io.StringIO()
+            with (
+                patch(
+                    "installer.ai_agents_skills.cli.apply_plan",
+                    return_value=apply_result,
+                ),
+                patch.dict(
+                    os.environ,
+                    {"AAS_INSTALL_CONFIRM": INSTALL_CONFIRMATION_PHRASE},
+                ),
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "--agents",
+                    "codex",
+                    "install",
+                    "--skill",
+                    "zotero",
+                    "--require-complete-install",
+                    "--post-install-smoke",
+                    "off",
+                    "--apply",
+                ])
+
+            self.assertEqual(code, 1)
+            payload = json.loads(stream.getvalue())
+            self.assertEqual(payload["complete_install"]["status"], "failed")
+            self.assertEqual(payload["complete_install"]["incomplete_action_count"], 1)
+            self.assertEqual(
+                payload["complete_install"]["incomplete_actions"][0]["operation"],
+                "skip-conflict",
+            )
+            self.assertEqual(payload["complete_install"]["declared_exclusion_count"], 0)
 
     def test_cli_install_strict_post_install_failure_preserves_apply_json(self) -> None:
         with fake_root() as tmp:

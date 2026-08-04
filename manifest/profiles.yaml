@@ -201,6 +201,12 @@
         "url-to-screenshot-runtime"
       ]
     },
+    "complete-restore": {
+      "description": "Every skill declared by this pinned repository revision for closure-complete restoration of supported non-OpenClaw targets.",
+      "skills": [
+        "*"
+      ]
+    },
     "media": {
       "description": "Narrated, captioned presentation and lecture videos from prepared slides, with optional Manim math animation.",
       "skills": [

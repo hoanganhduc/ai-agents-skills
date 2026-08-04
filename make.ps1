@@ -10,7 +10,7 @@ $ExitCode = 0
 if ($Command -ceq "help") {
     Write-Output "Usage: ./make.ps1 <command> [args...]"
     Write-Output "Common commands: doctor precheck audit-system plan install verify smoke rollback uninstall"
-    Write-Output "Test commands: fake-root-lifecycle lifecycle-test runtime-smoke docs-check static-check sanitize-check test"
+    Write-Output "Test commands: fake-root-lifecycle lifecycle-test runtime-smoke installed-runtime-smoke docs-check static-check sanitize-check test"
     Write-Output "Listing commands: list-skills list-artifacts describe describe-artifact"
     Write-Output "Docs commands: docs docs-check"
     Write-Output "Runtime commands: runtime-inventory delegate-agent validate-delegation-packet"

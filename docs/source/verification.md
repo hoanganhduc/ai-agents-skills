@@ -42,6 +42,7 @@ make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill self-improving-agent --platform-shape all"
 make runtime-smoke
 make runtime-smoke ARGS="--skills self-improving-agent"
+make installed-runtime-smoke
 make install ARGS="--profile research-core --apply --root <fake-root> --post-install-smoke strict"
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
@@ -107,8 +108,9 @@ Result meanings:
 - `no-managed-artifacts`: the selected scope has no installer-managed files to check.
 - `missing` or failed checks: a managed file, marker, block, or format-specific condition no longer matches recorded state.
 
-CLI exit codes: `verify`, `smoke`, `runtime-smoke`, `lifecycle-test`, and
-`docs-check` exit `0` only for `ok`. Status values such as
+CLI exit codes: `verify`, `smoke`, `runtime-smoke`,
+`installed-runtime-smoke`, `lifecycle-test`, and `docs-check` exit `0` only
+for `ok`. Status values such as
 `no-managed-artifacts`, `degraded`, `stale`, or `failed` are nonzero unless a
 higher-level lifecycle scenario intentionally records them as expected.
 
@@ -214,6 +216,35 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
 make runtime-smoke ARGS="--skills self-improving-agent"
+```
+
+Use `installed-runtime-smoke` after dependencies have been restored to test
+the managed runtime already installed under the selected root. With no skill
+filter it executes every installed `offline-smoke` contract. Declared
+`manual-native`, `doctor-only`, and `static-only` coverage entries are reported
+as neutral exclusions; they do not hide an offline-contract failure. A missing
+or unknown coverage class is a hard failure, so newly added runtime skills
+cannot silently escape the restore verification gate. A missing native runtime
+runner also fails when an installed offline contract needs to execute. For a
+closure restore, `--require-complete-coverage` additionally requires managed
+runtime files for every runtime-backed skill declared by the pinned revision.
+Before execution, managed-state integrity is verified; runtime files are then
+descriptor-read, SHA-256 checked, copied into an isolated scratch runtime, and
+only the verified scratch runner is executed.
+
+Every installed-runtime report, including an early `skipped` result, uses the
+stable top-level schema `ai-agents-skills.installed-runtime-smoke.v1` with
+`schema_version: 1`. Restore orchestrators must require that exact schema and
+version, `status: ok`, `unknown_coverage_count: 0`, and
+`missing_managed_runtime_count: 0`; a `skipped` report is
+not readiness evidence. Declared exclusions remain visible through
+`declared_exclusion_count` and `declared_exclusions` and are the only neutral
+non-executed coverage class.
+
+```bash
+make installed-runtime-smoke
+make installed-runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
+make installed-runtime-smoke ARGS="--require-complete-coverage"
 ```
 
 `self-improving-agent` has a portable offline smoke contract for its

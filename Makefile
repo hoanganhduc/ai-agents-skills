@@ -1,4 +1,4 @@
-.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check openclaw-target-probe openclaw-target-dry-run-manifest openclaw-target-approve-manifest openclaw-target-apply-manifest openclaw-target-uninstall-manifest plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke runtime-inventory delegate-agent validate-delegation-packet list-skills list-artifacts describe describe-artifact docs docs-check generate-docs docs-site static-check sanitize-check release-check test
+.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check openclaw-target-probe openclaw-target-dry-run-manifest openclaw-target-approve-manifest openclaw-target-apply-manifest openclaw-target-uninstall-manifest plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke installed-runtime-smoke runtime-inventory delegate-agent validate-delegation-packet list-skills list-artifacts describe describe-artifact docs docs-check generate-docs docs-site static-check sanitize-check release-check test
 
 ARGS ?=
 
@@ -82,6 +82,9 @@ lifecycle-test:
 
 runtime-smoke:
 	./installer/bootstrap.sh runtime-smoke $(ARGS)
+
+installed-runtime-smoke:
+	./installer/bootstrap.sh installed-runtime-smoke $(ARGS)
 
 runtime-inventory:
 	./installer/bootstrap.sh runtime-inventory $(ARGS)

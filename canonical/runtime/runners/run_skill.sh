@@ -71,8 +71,42 @@ export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 export OPENCLAW_WORKSPACE="$AAS_RUNTIME_WORKSPACE"
 export OPENCLAW_SECRETS_FILE="$AAS_SECRETS_FILE"
 
-if command -v python3 >/dev/null 2>&1; then
-  py_ver="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+python_command=""
+explicit_python=0
+if [ -n "${AAS_RUNTIME_PYTHON:-}" ]; then
+  explicit_python=1
+  case "$AAS_RUNTIME_PYTHON" in
+    /*) python_command="$AAS_RUNTIME_PYTHON" ;;
+    */*)
+      printf 'AAS_RUNTIME_PYTHON must be an absolute path or command name.\n' >&2
+      exit 127
+      ;;
+    *) python_command="$(command -v "$AAS_RUNTIME_PYTHON" 2>/dev/null || true)" ;;
+  esac
+  if [ -z "$python_command" ] || [ ! -f "$python_command" ] || [ ! -x "$python_command" ]; then
+    printf 'AAS_RUNTIME_PYTHON does not name an executable file or command.\n' >&2
+    exit 127
+  fi
+elif command -v python3 >/dev/null 2>&1; then
+  python_command="$(command -v python3)"
+fi
+
+if [ -n "$python_command" ]; then
+  python_bin="$(cd -- "$(dirname -- "$python_command")" && pwd -P)"
+  python_command="$python_bin/$(basename -- "$python_command")"
+  py_ver="$("$python_command" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+  python_version_ok=0
+  if [[ "$py_ver" =~ ^([0-9]{1,3})\.([0-9]{1,3})$ ]]; then
+    py_major=$((10#${BASH_REMATCH[1]}))
+    py_minor=$((10#${BASH_REMATCH[2]}))
+    if (( py_major > 3 || (py_major == 3 && py_minor >= 10) )); then
+      python_version_ok=1
+    fi
+  fi
+  if [ "$python_version_ok" -ne 1 ]; then
+    printf 'Selected Python runtime must report version 3.10 or newer.\n' >&2
+    exit 127
+  fi
   if [ -n "$py_ver" ]; then
     site_packages="$workspace_real/.local/lib/python${py_ver}/site-packages"
     dist_packages="$workspace_real/.local/local/lib/python${py_ver}/dist-packages"
@@ -81,7 +115,10 @@ if command -v python3 >/dev/null 2>&1; then
     mkdir -p "$site_packages" "$dist_packages" "$local_bin" "$alt_bin"
     python_path_entries="$site_packages:$dist_packages:$workspace_real/.local"
     path_entries="$local_bin:$alt_bin"
-    if [ -n "${HOME:-}" ]; then
+    if [ "$explicit_python" -eq 1 ]; then
+      path_entries="$python_bin:$path_entries"
+    fi
+    if [ "$explicit_python" -eq 0 ] && [ -n "${HOME:-}" ]; then
       for candidate in \
         "$HOME/.local/lib/python${py_ver}/site-packages" \
         "$HOME/.codex/runtime/workspace/.local/lib/python${py_ver}/site-packages" \
@@ -104,6 +141,9 @@ if command -v python3 >/dev/null 2>&1; then
           path_entries="$candidate:$path_entries"
         fi
       done
+    fi
+    if [ "$explicit_python" -eq 1 ]; then
+      export AAS_RUNTIME_PYTHON="$python_command"
     fi
     export PYTHONPATH="$python_path_entries:${PYTHONPATH:-}"
     export PATH="$path_entries:${PATH}"

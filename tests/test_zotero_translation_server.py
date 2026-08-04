@@ -30,6 +30,7 @@ AMD64_IMAGE = (
 COMPOSE_IMAGE = "${ZOTERO_TS_IMAGE:?ZOTERO_TS_IMAGE must be set}"
 
 
+@unittest.skipIf(os.name == "nt", "Translation Server container startup is Linux-only")
 class ZoteroTranslationServerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()

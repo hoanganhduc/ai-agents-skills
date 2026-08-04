@@ -25,12 +25,15 @@ from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with_runtime_file, runtime_denied_patterns, runtime_inventory
 from installer.ai_agents_skills.runtime_smoke import (
     run_installed_runtime_smoke,
+    run_runtime_smoke,
+    run_smoke_case,
     runtime_command_target,
     runtime_smoke_coverage_rows,
+    runtime_smoke_skill_names,
     selected_runtime_skills,
 )
 from installer.ai_agents_skills.sanitize import has_sensitive_material
-from installer.ai_agents_skills.state import load_state
+from installer.ai_agents_skills.state import artifact_signature, load_state, save_state, sha256_file
 from installer.ai_agents_skills.verify import verify
 
 
@@ -802,22 +805,1055 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             apply_plan(root, plan, dry_run=False)
 
-            result = run_installed_runtime_smoke(
-                root,
-                manifests,
-                skills=smoke_skills,
-                platform=platform,
-                timeout=30,
-            )
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.run_smoke_case",
+                wraps=run_smoke_case,
+            ) as smoke_case:
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills=smoke_skills,
+                    platform=platform,
+                    timeout=30,
+                )
 
             self.assertEqual(result["status"], "ok", result)
+            self.assertEqual(
+                result["schema"],
+                "ai-agents-skills.installed-runtime-smoke.v1",
+            )
+            self.assertEqual(result["schema_version"], 1)
+            self.assertEqual(result["unknown_coverage_count"], 0)
             self.assertEqual(result["mode"], "installed")
             if platform == "windows":
                 targets = {item["skill"]: item["command_target"] for item in result["results"]}
                 self.assertEqual(targets["formal-skeleton-helper"], "skills/formal-skeleton-helper/formal_skeleton_helper.py")
                 self.assertEqual(targets["get-available-resources"], "skills/get-available-resources/detect_resources.py")
                 self.assertEqual(targets["graph-verifier"], "skills/graph-verifier/graph_verifier.py")
+            installed_runtime = str(root / ".codex" / "runtime")
+            self.assertTrue(smoke_case.call_args_list)
+            for call in smoke_case.call_args_list:
+                runner_path = str(call.kwargs["runner"]["argv"][-1])
+                self.assertIn("aas-installed-runtime-smoke-", runner_path)
+                self.assertFalse(runner_path.startswith(installed_runtime))
             self.assertFalse((root / ".codex" / "runtime" / "workspace" / "runtime-smoke").exists())
+
+    def test_installed_runtime_smoke_rejects_null_runtime_root_without_omitting_sibling(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        selected = {"deep-research-workflow", "graph-verifier"}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    sorted(selected),
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            state = load_state(root)
+            malformed = next(
+                item
+                for item in state["artifacts"]
+                if item.get("artifact_type") == "runtime-file"
+                and item.get("skill") == "deep-research-workflow"
+            )
+            malformed["runtime_root"] = None
+            save_state(root, state)
+
+            with (
+                patch("installer.ai_agents_skills.runtime_smoke.verify") as managed_verify,
+                patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case,
+            ):
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills=selected,
+                    platform=platform,
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["runtime_state_coverage_status"], "failed")
+            self.assertGreater(result["runtime_boundary_violation_count"], 0)
+            self.assertIn(
+                "runtime-root-missing",
+                {item["kind"] for item in result["runtime_boundary_violations"]},
+            )
+            self.assertEqual({item["skill"] for item in result["results"]}, selected)
+            managed_verify.assert_not_called()
+            smoke_case.assert_not_called()
+
+    def test_installed_runtime_smoke_recomputes_complete_offline_and_exclusion_closures(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        cases = (
+            ("deep-research-workflow", "offline-smoke"),
+            ("annotated-review", "manual-native"),
+        )
+        for skill, coverage in cases:
+            with self.subTest(skill=skill), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                create_agent_home(root, "codex")
+                apply_plan(
+                    root,
+                    build_plan(
+                        root,
+                        manifests,
+                        [skill],
+                        detect_agents(root, ["codex"]),
+                        platform=platform,
+                    ),
+                    dry_run=False,
+                )
+                state = load_state(root)
+                removed = next(
+                    item
+                    for item in state["artifacts"]
+                    if item.get("artifact_type") == "runtime-file"
+                    and item.get("skill") == skill
+                    and str(item.get("target_relpath", "")).endswith(".py")
+                )
+                Path(removed["artifact"]).unlink()
+                state["artifacts"].remove(removed)
+                save_state(root, state)
+
+                with (
+                    patch("installer.ai_agents_skills.runtime_smoke.verify") as managed_verify,
+                    patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case,
+                ):
+                    result = run_installed_runtime_smoke(
+                        root,
+                        manifests,
+                        skills={skill},
+                        platform=platform,
+                    )
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["runtime_state_missing_count"], 1)
+                self.assertEqual(
+                    result["runtime_state_missing_records"][0]["target_relpath"],
+                    removed["target_relpath"],
+                )
+                self.assertEqual({item["skill"] for item in result["results"]}, {skill})
+                self.assertEqual(
+                    manifests["runtime"]["skills"][skill]["smoke_coverage"]["status"],
+                    coverage,
+                )
+                self.assertEqual(result["declared_exclusion_count"], 0)
+                managed_verify.assert_not_called()
+                smoke_case.assert_not_called()
+
+    def test_installed_runtime_smoke_rejects_forged_runner_hash_before_verify_or_execution(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        runner_name = "run_skill.ps1" if platform == "windows" else "run_skill.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            state = load_state(root)
+            runner = next(
+                item
+                for item in state["artifacts"]
+                if item.get("artifact_type") == "runtime-file"
+                and item.get("skill") == "runtime-runner"
+                and item.get("target_relpath") == runner_name
+            )
+            runner_path = Path(runner["artifact"])
+            runner_path.write_text("forged installed runner\n", encoding="utf-8")
+            forged_hash = sha256_file(runner_path)
+            runner["source_sha256"] = forged_hash
+            runner["canonical_source_sha256"] = forged_hash
+            runner["installed_signature"] = artifact_signature(runner_path)
+            runner["new_hash"] = forged_hash
+            save_state(root, state)
+
+            with (
+                patch("installer.ai_agents_skills.runtime_smoke.verify") as managed_verify,
+                patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case,
+            ):
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertGreater(result["runtime_state_mismatched_count"], 0)
+            runner_mismatches = [
+                item
+                for item in result["runtime_state_mismatched_records"]
+                if item.get("skill") == "runtime-runner"
+                and item.get("target_relpath") == runner_name
+            ]
+            self.assertEqual(len(runner_mismatches), 1)
+            self.assertIn("source_sha256", runner_mismatches[0]["fields"])
+            managed_verify.assert_not_called()
+            smoke_case.assert_not_called()
+
+    def test_installed_runtime_smoke_rejects_extra_and_duplicate_records_before_verify(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        for mutation, count_field in (
+            ("extra", "runtime_state_extra_count"),
+            ("duplicate", "runtime_state_duplicate_count"),
+        ):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                create_agent_home(root, "codex")
+                apply_plan(
+                    root,
+                    build_plan(
+                        root,
+                        manifests,
+                        ["graph-verifier"],
+                        detect_agents(root, ["codex"]),
+                        platform=platform,
+                    ),
+                    dry_run=False,
+                )
+                state = load_state(root)
+                record = next(
+                    item
+                    for item in state["artifacts"]
+                    if item.get("artifact_type") == "runtime-file"
+                    and item.get("skill") == "graph-verifier"
+                )
+                forged = copy.deepcopy(record)
+                if mutation == "extra":
+                    target_relpath = "workspace/skills/graph-verifier/extra.py"
+                    forged["target_relpath"] = target_relpath
+                    forged["artifact"] = str(Path(forged["runtime_root"]) / target_relpath)
+                    forged["artifact_id"] = f"runtime-file:graph-verifier:{target_relpath}"
+                    forged["artifact_name"] = target_relpath
+                state["artifacts"].append(forged)
+                save_state(root, state)
+
+                with (
+                    patch("installer.ai_agents_skills.runtime_smoke.verify") as managed_verify,
+                    patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case,
+                ):
+                    result = run_installed_runtime_smoke(
+                        root,
+                        manifests,
+                        skills={"graph-verifier"},
+                        platform=platform,
+                    )
+
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result[count_field], 1)
+                managed_verify.assert_not_called()
+                smoke_case.assert_not_called()
+
+    def test_installed_runtime_smoke_returns_stable_failure_for_unreadable_state(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        payloads = {
+            "malformed-json": "{not-json",
+            "unsupported-schema": json.dumps({
+                "schema_version": 999,
+                "artifacts": [],
+                "runs": [],
+                "uninstall_records": [],
+            }),
+        }
+        for label, payload in payloads.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                state_path = root / ".ai-agents-skills" / "state.json"
+                state_path.parent.mkdir(parents=True)
+                state_path.write_text(payload, encoding="utf-8")
+
+                with (
+                    patch("installer.ai_agents_skills.runtime_smoke.verify") as managed_verify,
+                    patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case,
+                ):
+                    result = run_installed_runtime_smoke(
+                        root,
+                        manifests,
+                        skills={"graph-verifier"},
+                        platform=platform,
+                    )
+
+                self.assertEqual(
+                    result["schema"],
+                    "ai-agents-skills.installed-runtime-smoke.v1",
+                )
+                self.assertEqual(result["schema_version"], 1)
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["failure_kind"], "invalid-managed-state")
+                self.assertEqual(result["reason"], "installer state could not be loaded")
+                self.assertEqual(result["managed_state_verify_status"], "not-run-invalid-state")
+                self.assertEqual(
+                    [(item["skill"], item["failure_kind"]) for item in result["results"]],
+                    [("graph-verifier", "invalid-managed-state")],
+                )
+                managed_verify.assert_not_called()
+                smoke_case.assert_not_called()
+
+    def test_installed_runtime_smoke_rejects_mixed_non_runtime_request(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+
+            result = run_installed_runtime_smoke(
+                root,
+                manifests,
+                skills={"graph-verifier", "paper-review"},
+                platform=platform,
+            )
+
+            self.assertEqual(result["schema"], "ai-agents-skills.installed-runtime-smoke.v1")
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(
+                {item["skill"] for item in result["results"]},
+                {"graph-verifier", "paper-review"},
+            )
+            paper = next(item for item in result["results"] if item["skill"] == "paper-review")
+            self.assertEqual(paper["failure_kind"], "not-runtime-backed")
+
+    def test_installed_runtime_smoke_rejects_malformed_skill_records_at_selected_root(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        cases = ((None, True), ("", True), (7, True), (None, False))
+        for malformed_skill, keep_runtime_root in cases:
+            with self.subTest(
+                skill=malformed_skill,
+                keep_runtime_root=keep_runtime_root,
+            ), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                create_agent_home(root, "codex")
+                apply_plan(
+                    root,
+                    build_plan(
+                        root,
+                        manifests,
+                        ["graph-verifier"],
+                        detect_agents(root, ["codex"]),
+                        platform=platform,
+                    ),
+                    dry_run=False,
+                )
+                state = load_state(root)
+                malformed = copy.deepcopy(next(
+                    item
+                    for item in state["artifacts"]
+                    if item.get("artifact_type") == "runtime-file"
+                    and item.get("skill") == "graph-verifier"
+                ))
+                malformed["skill"] = malformed_skill
+                if not keep_runtime_root:
+                    malformed["runtime_root"] = None
+                state["artifacts"].append(malformed)
+                save_state(root, state)
+
+                with patch("installer.ai_agents_skills.runtime_smoke.verify") as managed_verify:
+                    result = run_installed_runtime_smoke(
+                        root,
+                        manifests,
+                        platform=platform,
+                    )
+
+                self.assertEqual(result["schema"], "ai-agents-skills.installed-runtime-smoke.v1")
+                self.assertEqual(result["status"], "failed")
+                self.assertGreater(result["runtime_state_mismatched_count"], 0)
+                self.assertIn(
+                    "runtime-record-identity-invalid",
+                    {item["kind"] for item in result["runtime_state_mismatched_records"]},
+                )
+                managed_verify.assert_not_called()
+
+    def test_installed_runtime_smoke_preflight_faults_preserve_report_schema(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        for patched_name in ("runtime_expected_sha256", "resolved_path_within"):
+            with self.subTest(patched=patched_name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                create_agent_home(root, "codex")
+                apply_plan(
+                    root,
+                    build_plan(
+                        root,
+                        manifests,
+                        ["graph-verifier"],
+                        detect_agents(root, ["codex"]),
+                        platform=platform,
+                    ),
+                    dry_run=False,
+                )
+
+                with (
+                    patch(
+                        f"installer.ai_agents_skills.runtime_smoke.{patched_name}",
+                        side_effect=PermissionError("test-only preflight denial"),
+                    ),
+                    patch("installer.ai_agents_skills.runtime_smoke.verify") as managed_verify,
+                ):
+                    result = run_installed_runtime_smoke(
+                        root,
+                        manifests,
+                        skills={"graph-verifier"},
+                        platform=platform,
+                    )
+
+                self.assertEqual(result["schema"], "ai-agents-skills.installed-runtime-smoke.v1")
+                self.assertEqual(result["schema_version"], 1)
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["runtime_state_coverage_status"], "failed")
+                managed_verify.assert_not_called()
+
+    def test_installed_runtime_smoke_timeout_bytes_preserve_report_schema(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            timeout_error = subprocess.TimeoutExpired(
+                cmd=["runtime-smoke"],
+                timeout=1,
+                output=b"partial-stdout-\xff",
+                stderr=b"partial-stderr-\xfe",
+            )
+
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.run_smoke_process",
+                side_effect=timeout_error,
+            ):
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["schema"], "ai-agents-skills.installed-runtime-smoke.v1")
+            self.assertEqual(result["status"], "failed")
+            self.assertIsInstance(result["results"][0]["stdout_tail"], str)
+            self.assertIsInstance(result["results"][0]["stderr_tail"], str)
+            json.dumps(result)
+
+    def test_installed_runtime_smoke_deep_research_fallback_parse_error_preserves_schema(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        runner_name = "run_skill.ps1" if platform == "windows" else "run_skill.sh"
+        process_results = [
+            subprocess.CompletedProcess(
+                args=["runtime-smoke", "selftest"],
+                returncode=2,
+                stdout="",
+                stderr="invalid choice: 'selftest'",
+            ),
+            subprocess.CompletedProcess(
+                args=["runtime-smoke", "init"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["runtime-smoke", "validate"],
+                returncode=0,
+                stdout="not-json",
+                stderr="",
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["deep-research-workflow"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            with (
+                patch(
+                    "installer.ai_agents_skills.runtime_smoke.runner_invocations",
+                    return_value=[{"name": runner_name, "argv": ["fake-runner"]}],
+                ),
+                patch(
+                    "installer.ai_agents_skills.runtime_smoke.run_smoke_process",
+                    side_effect=process_results,
+                ),
+            ):
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"deep-research-workflow"},
+                    platform=platform,
+                )
+
+        self.assertEqual(result["schema"], "ai-agents-skills.installed-runtime-smoke.v1")
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(
+            any(
+                check["name"] == "output-validation" and not check["ok"]
+                for check in result["results"][0]["checks"]
+            )
+        )
+        json.dumps(result)
+
+    def test_installed_runtime_smoke_filter_excludes_unrelated_scratch_files(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["digest-bridge", "graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            state = load_state(root)
+            unrelated = next(
+                item
+                for item in state["artifacts"]
+                if item.get("artifact_type") == "runtime-file"
+                and item.get("skill") == "digest-bridge"
+            )
+            Path(unrelated["artifact"]).write_text("tampered unrelated file\n", encoding="utf-8")
+
+            def assert_filtered_scratch(*args: Any, **kwargs: Any) -> dict[str, Any]:
+                relative = str(unrelated["target_relpath"]).removeprefix("workspace/")
+                self.assertFalse((kwargs["workspace"] / relative).exists())
+                return {
+                    "status": "ok",
+                    "mode": "installed",
+                    "runtime_root": str(root / ".codex" / "runtime"),
+                    "skill": "graph-verifier",
+                    "runner": "run_skill.sh",
+                }
+
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.run_smoke_case",
+                side_effect=assert_filtered_scratch,
+            ) as smoke_case:
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["status"], "ok", result)
+            self.assertEqual({item["skill"] for item in result["results"]}, {"graph-verifier"})
+            self.assertEqual(smoke_case.call_count, 1)
+
+    def test_installed_runtime_smoke_refuses_tampered_code_before_execution(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            state = load_state(root)
+            graph_artifact = next(
+                item
+                for item in state["artifacts"]
+                if item.get("artifact_type") == "runtime-file"
+                and item.get("skill") == "graph-verifier"
+            )
+            Path(graph_artifact["artifact"]).write_text("tampered\n", encoding="utf-8")
+
+            with patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case:
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["checked"], 0)
+            self.assertEqual(result["managed_state_verify_status"], "failed")
+            self.assertIn("integrity verification failed", result["reason"])
+            smoke_case.assert_not_called()
+
+    @unittest.skipIf(os.name == "nt", "POSIX executable-mode regression")
+    def test_installed_runtime_smoke_rejects_non_executable_scoped_runner(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            runner = root / ".codex" / "runtime" / "run_skill.sh"
+            runner.chmod(0o644)
+
+            with patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case:
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["schema"], "ai-agents-skills.installed-runtime-smoke.v1")
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["managed_state_verify_status"], "failed")
+            self.assertIn("integrity verification failed", result["reason"])
+            smoke_case.assert_not_called()
+
+    def test_installed_runtime_smoke_descriptor_copy_rechecks_source_hash(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            state = load_state(root)
+            graph_artifact = next(
+                item
+                for item in state["artifacts"]
+                if item.get("artifact_type") == "runtime-file"
+                and item.get("skill") == "graph-verifier"
+            )
+            Path(graph_artifact["artifact"]).write_text("tampered-after-verify\n", encoding="utf-8")
+
+            with (
+                patch(
+                    "installer.ai_agents_skills.runtime_smoke.verify",
+                    return_value={"status": "ok", "checked": 1, "results": []},
+                ),
+                patch(
+                    "installer.ai_agents_skills.runtime_smoke.verify_artifact",
+                    return_value={"status": "ok", "checks": []},
+                ),
+                patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case,
+            ):
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["status"], "failed")
+            smoke_case.assert_not_called()
+            copy_checks = [
+                check
+                for item in result["results"]
+                for check in item.get("checks", [])
+            ]
+            self.assertTrue(any(check["name"].endswith(":source-hash") and not check["ok"] for check in copy_checks))
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor-mode regression")
+    def test_installed_runtime_smoke_descriptor_copy_rechecks_source_mode(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            runner = root / ".codex" / "runtime" / "run_skill.sh"
+            runner.chmod(0o644)
+
+            with (
+                patch(
+                    "installer.ai_agents_skills.runtime_smoke.verify",
+                    return_value={"status": "ok", "checked": 1, "results": []},
+                ),
+                patch(
+                    "installer.ai_agents_skills.runtime_smoke.verify_artifact",
+                    return_value={"status": "ok", "checks": []},
+                ),
+                patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case,
+            ):
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["status"], "failed")
+            smoke_case.assert_not_called()
+            copy_checks = [
+                check
+                for item in result["results"]
+                for check in item.get("checks", [])
+            ]
+            self.assertTrue(
+                any(
+                    check["name"].endswith(":descriptor-copy") and not check["ok"]
+                    for check in copy_checks
+                )
+            )
+
+    def test_installed_runtime_smoke_complete_coverage_rejects_omitted_runtime_skill(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["formal-skeleton-helper"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.run_smoke_case",
+                return_value={"status": "ok", "skill": "formal-skeleton-helper"},
+            ):
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    platform=platform,
+                    require_complete_coverage=True,
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertGreater(result["missing_managed_runtime_count"], 0)
+            self.assertIn("graph-verifier", result["missing_managed_runtime_skills"])
+            missing = {
+                item["skill"]
+                for item in result["results"]
+                if item.get("failure_kind") == "missing-managed-runtime"
+            }
+            self.assertIn("graph-verifier", missing)
+
+    def test_installed_runtime_smoke_rejects_state_paths_outside_selected_root(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_root = base / "old-root"
+            new_root = base / "new-root"
+            create_agent_home(old_root, "codex")
+            apply_plan(
+                old_root,
+                build_plan(
+                    old_root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(old_root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            (new_root / ".ai-agents-skills").mkdir(parents=True)
+            shutil.copy2(
+                old_root / ".ai-agents-skills" / "state.json",
+                new_root / ".ai-agents-skills" / "state.json",
+            )
+
+            with patch("installer.ai_agents_skills.runtime_smoke.run_smoke_case") as smoke_case:
+                result = run_installed_runtime_smoke(
+                    new_root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["checked"], 0)
+            self.assertGreater(result["runtime_boundary_violation_count"], 0)
+            self.assertIn("escapes the selected root", result["reason"])
+            smoke_case.assert_not_called()
+
+    def test_installed_runtime_smoke_launch_error_preserves_report_schema(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    ["graph-verifier"],
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                ),
+                dry_run=False,
+            )
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.run_smoke_process",
+                side_effect=PermissionError("test-only launch denial"),
+            ):
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills={"graph-verifier"},
+                    platform=platform,
+                )
+
+            self.assertEqual(result["schema"], "ai-agents-skills.installed-runtime-smoke.v1")
+            self.assertEqual(result["schema_version"], 1)
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["results"][0]["failure_kind"], "launch-error")
+
+    def test_installed_runtime_smoke_runs_all_offline_contracts_and_reports_declared_exclusions(self) -> None:
+        manifests = load_manifests()
+        platform = current_platform(None)
+        offline_skills = set(runtime_smoke_skill_names(manifests))
+        declared_exclusion_statuses = {"manual-native", "doctor-only", "static-only"}
+        excluded_skills = {
+            skill
+            for skill, spec in manifests["runtime"]["skills"].items()
+            if spec["smoke_coverage"]["status"] in declared_exclusion_statuses
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            apply_plan(
+                root,
+                build_plan(
+                    root,
+                    manifests,
+                    [],
+                    detect_agents(root, ["codex"]),
+                    runtime_profile="full",
+                    platform=platform,
+                    requested_agents=["codex"],
+                ),
+                dry_run=False,
+            )
+
+            def successful_smoke(*args: Any, **kwargs: Any) -> dict[str, Any]:
+                return {
+                    "status": "ok",
+                    "mode": kwargs["mode"],
+                    "runtime_root": str(kwargs["runtime_root"]),
+                    "skill": kwargs["skill"],
+                    "runner": kwargs["runner"]["name"],
+                }
+
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.run_smoke_case",
+                side_effect=successful_smoke,
+            ) as smoke_case:
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    platform=platform,
+                )
+
+            self.assertEqual(result["status"], "ok", result)
+            self.assertEqual(
+                result["schema"],
+                "ai-agents-skills.installed-runtime-smoke.v1",
+            )
+            self.assertEqual(result["schema_version"], 1)
+            self.assertEqual(result["unknown_coverage_count"], 0)
+            self.assertEqual(
+                {call.kwargs["skill"] for call in smoke_case.call_args_list},
+                offline_skills,
+            )
+            self.assertEqual(
+                {item["skill"] for item in result["declared_exclusions"]},
+                excluded_skills,
+            )
+            self.assertEqual(result["declared_exclusion_count"], len(excluded_skills))
+            self.assertEqual(
+                {item["coverage"] for item in result["declared_exclusions"]},
+                declared_exclusion_statuses,
+            )
+
+            unknown_manifests = copy.deepcopy(manifests)
+            unknown_skill = sorted(excluded_skills)[0]
+            unknown_manifests["runtime"]["skills"][unknown_skill]["smoke_coverage"] = {
+                "status": "future-unknown",
+                "reason": "test-only unknown coverage class",
+            }
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.run_smoke_case",
+                side_effect=successful_smoke,
+            ):
+                unknown_result = run_installed_runtime_smoke(
+                    root,
+                    unknown_manifests,
+                    platform=platform,
+                )
+
+            self.assertEqual(unknown_result["status"], "failed")
+            self.assertEqual(unknown_result["unknown_coverage_count"], 1)
+            unknown_rows = [
+                item for item in unknown_result["results"]
+                if item["skill"] == unknown_skill
+            ]
+            self.assertEqual(len(unknown_rows), 1)
+            self.assertEqual(unknown_rows[0]["status"], "failed")
+            self.assertEqual(unknown_rows[0]["failure_kind"], "unknown-coverage")
+            self.assertIn("unknown smoke coverage", unknown_rows[0]["reason"])
+
+            with patch(
+                "installer.ai_agents_skills.runtime_smoke.runner_invocations",
+                return_value=[],
+            ):
+                no_runner_result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    platform=platform,
+                )
+
+            self.assertEqual(no_runner_result["status"], "failed")
+            self.assertEqual(no_runner_result["unknown_coverage_count"], 0)
+            no_runner_failures = {
+                item["skill"]
+                for item in no_runner_result["results"]
+                if item["status"] == "failed"
+            }
+            self.assertEqual(no_runner_failures, offline_skills)
+            self.assertEqual(
+                {item["skill"] for item in no_runner_result["declared_exclusions"]},
+                excluded_skills,
+            )
+
+    def test_installed_runtime_smoke_schema_covers_skipped_reports(self) -> None:
+        manifests = load_manifests()
+        host_platform = current_platform(None)
+        other_platform = "windows" if host_platform != "windows" else "linux"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reports = [
+                run_installed_runtime_smoke(root, manifests),
+                run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    platform=other_platform,
+                ),
+            ]
+
+        for report in reports:
+            self.assertEqual(report["status"], "skipped")
+            self.assertEqual(
+                report["schema"],
+                "ai-agents-skills.installed-runtime-smoke.v1",
+            )
+            self.assertEqual(report["schema_version"], 1)
+            self.assertEqual(report["unknown_coverage_count"], 0)
+
+    def test_installed_runtime_smoke_is_a_public_cli_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stream = io.StringIO()
+            expected = {
+                "schema": "ai-agents-skills.installed-runtime-smoke.v1",
+                "schema_version": 1,
+                "status": "ok",
+                "mode": "installed",
+                "platform": current_platform(None),
+                "checked": 0,
+                "results": [],
+            }
+            with (
+                contextlib.redirect_stdout(stream),
+                patch(
+                    "installer.ai_agents_skills.cli.run_installed_runtime_smoke",
+                    return_value=expected,
+                ) as installed_smoke,
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "installed-runtime-smoke",
+                    "--skills",
+                    "graph-verifier",
+                ])
+
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(stream.getvalue()), expected)
+            self.assertEqual(installed_smoke.call_args.args[0], root)
+            self.assertEqual(installed_smoke.call_args.kwargs["skills"], {"graph-verifier"})
 
     def test_axiom_axle_helper_does_not_execute_install_or_leak_secret(self) -> None:
         helper = (
@@ -1891,6 +2927,53 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(candidates, 0)
 
     @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_uses_only_first_duplicate_path_command(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first_dir = root / "first"
+            second_dir = root / "second"
+            first_dir.mkdir()
+            second_dir.mkdir()
+            child = root / "child.py"
+            child.write_text("print('unused')\n", encoding="utf-8")
+            first_log = root / "first.log"
+            second_log = root / "second.log"
+            for directory, log_path in (
+                (first_dir, first_log),
+                (second_dir, second_log),
+            ):
+                escaped_log = str(log_path).replace("'", "''")
+                (directory / "python.ps1").write_text(
+                    "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args = @())\n"
+                    f"Add-Content -LiteralPath '{escaped_log}' -Value ($Args -join '|')\n"
+                    "if ($Args.Count -ge 2 -and $Args[0] -eq '-c') { Write-Output '3.11'; exit 0 }\n"
+                    "exit 0\n",
+                    encoding="utf-8",
+                )
+            env = os.environ.copy()
+            env["PATH"] = str(first_dir) + os.pathsep + str(second_dir)
+            env["AAS_RUNTIME_SCRIPT"] = str(child)
+            env.pop("AAS_RUNTIME_PYTHON", None)
+            env.pop("AAS_PYTHON", None)
+
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(len(first_log.read_text(encoding="utf-8").splitlines()), 2)
+            self.assertFalse(second_log.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
     def test_windows_python_runner_propagates_child_exit_code(self) -> None:
         powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
         if not powershell:
@@ -1968,6 +3051,110 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
         self.assertEqual(missing_script.returncode, 2, missing_script.stderr)
         self.assertEqual(missing_python.returncode, 127, missing_python.stderr)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_rejects_non_python_and_python_39(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        non_python = shutil.which("cmd.exe") or os.environ.get("COMSPEC")
+        if not non_python:
+            self.skipTest("cmd.exe is unavailable")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "child.py"
+            script.write_text("print('child-ran')\n", encoding="utf-8")
+            old_python = root / "old-python.ps1"
+            old_python.write_text("Write-Output '3.9'\nexit 0\n", encoding="utf-8")
+
+            for candidate in (non_python, str(old_python)):
+                with self.subTest(candidate=candidate):
+                    env = os.environ.copy()
+                    env["AAS_RUNTIME_SCRIPT"] = str(script)
+                    env["AAS_RUNTIME_PYTHON"] = candidate
+                    completed = subprocess.run(
+                        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
+                        check=False,
+                        text=True,
+                        capture_output=True,
+                        env=env,
+                        timeout=30,
+                    )
+
+                    self.assertEqual(completed.returncode, 127, completed.stderr)
+                    self.assertIn("version 3.10 or newer", completed.stderr)
+                    self.assertNotIn("child-ran", completed.stdout)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_explicit_py_uses_python3_launcher_flag(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "child.py"
+            script.write_text("print('unused')\n", encoding="utf-8")
+            args_path = root / "py-args.txt"
+            fake_py = root / "py.ps1"
+            escaped_args_path = str(args_path).replace("'", "''")
+            fake_py.write_text(
+                "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args = @())\n"
+                f"Add-Content -LiteralPath '{escaped_args_path}' -Value ($Args -join '|')\n"
+                "if ($Args.Count -ge 3 -and $Args[0] -eq '-3' -and $Args[1] -eq '-c') {\n"
+                "  Write-Output '3.11'\n"
+                "  exit 0\n"
+                "}\n"
+                "if ($Args.Count -ge 2 -and $Args[0] -eq '-3') { exit 0 }\n"
+                "exit 91\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PATH"] = str(root) + os.pathsep + env.get("PATH", "")
+            env["AAS_RUNTIME_SCRIPT"] = str(script)
+            env["AAS_RUNTIME_PYTHON"] = "py"
+
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            invocations = args_path.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(invocations), 2)
+            self.assertTrue(all(line.startswith("-3|") for line in invocations), invocations)
+            self.assertIn("|-c|", invocations[0])
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_runtime_override_beats_stale_py_fallback(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            script = Path(tmp) / "child.py"
+            script.write_text("print('runtime-override-won')\n", encoding="utf-8")
+            env = os.environ.copy()
+            env["AAS_RUNTIME_SCRIPT"] = str(script)
+            env["AAS_RUNTIME_PYTHON"] = sys.executable
+            env["AAS_PYTHON"] = "py"
+
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("runtime-override-won", completed.stdout)
 
     def test_windows_python_runner_and_manim_helper_are_declared_runtime_files(self) -> None:
         manifests = load_manifests()
@@ -2266,6 +3453,22 @@ class RuntimeIntegrationTests(unittest.TestCase):
         manifests = load_manifests()
         with self.assertRaisesRegex(ValueError, "zotero"):
             selected_runtime_skills(manifests, {"zotero"})
+
+    def test_runtime_smoke_fails_closed_when_no_native_runner_is_available(self) -> None:
+        manifests = load_manifests()
+        with patch(
+            "installer.ai_agents_skills.runtime_smoke.runner_invocations",
+            return_value=[],
+        ):
+            result = run_runtime_smoke(
+                manifests,
+                skills={"graph-verifier"},
+                platform=current_platform(None),
+            )
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["checked"], 0)
+        self.assertEqual(result["results"][0]["failure_kind"], "runner-unavailable")
 
     def test_runtime_smoke_coverage_classifies_non_offline_skills(self) -> None:
         manifests = load_manifests()

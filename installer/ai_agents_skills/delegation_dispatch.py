@@ -621,12 +621,14 @@ def resolve_grok_dispatch_command(
     remote = discover_tool("grok-cli", GROK_REMOTE_CLI_TOOL_SPEC, platform, root)
     remote_command = remote.get("command") if remote.get("status") in {"ok", "degraded"} else None
     if remote_command:
-        return {
-            "status": "ok",
-            "source": "remote-fallback-after-bare-nonconfirmation",
-            "command": default_dispatch_command("grok", str(remote_command)),
-            "model_probe": model_probe,
-        }
+        selection = evaluate_grok_selection(
+            default_dispatch_command("grok", str(remote_command)),
+            source="remote-fallback-after-bare-nonconfirmation",
+            resolved_model=None,
+            env=env,
+        )
+        selection["model_probe"] = model_probe
+        return selection
     return {
         "status": "blocked",
         "source": "remote-fallback-after-bare-nonconfirmation",
@@ -648,15 +650,16 @@ def evaluate_grok_selection(
         command_parts = split_dispatch_command(command)
     except ValueError:
         command_parts = []
-    if (
-        os.name == "nt"
-        and command_parts
-        and Path(command_parts[0]).name.lower() == "grok-remote.cmd"
+    if os.name == "nt" and command_parts and windows_grok_remote_entrypoint_is_unsafe(
+        Path(command_parts[0]).name.lower()
     ):
         return {
             "status": "blocked",
             "source": source,
-            "reason": "CMD grok-remote entrypoints are unsupported; configure grok-remote.exe",
+            "reason": (
+                "Windows grok-remote requires an explicit grok-remote.exe; "
+                "BAT/CMD and PATHEXT-ambiguous bare entrypoints are unsupported"
+            ),
         }
     if grok_command_is_remote(command):
         return {"status": "ok", "source": source, "command": command}
@@ -698,6 +701,13 @@ def grok_command_is_remote(command: str) -> bool:
         return False
     executable_name = re.split(r"[\\/]", parts[0])[-1].lower()
     return executable_name in GROK_REMOTE_EXECUTABLES
+
+
+def windows_grok_remote_entrypoint_is_unsafe(executable_name: str) -> bool:
+    """On Windows only an explicit native grok-remote.exe is admissible."""
+    name = executable_name.lower()
+    denotes_remote = name == "grok-remote" or name.startswith("grok-remote.")
+    return denotes_remote and name != "grok-remote.exe"
 
 
 def public_grok_selection(selection: dict[str, Any]) -> dict[str, Any]:
@@ -746,9 +756,12 @@ def probe_grok_remote_profile(
     if not parts:
         return None, "grok-remote profile readiness command is empty"
     executable = parts[0]
-    if os.name == "nt" and Path(executable).suffix.lower() in {".bat", ".cmd"}:
-        return None, "CMD grok-remote entrypoints are unsupported"
     executable_name = re.split(r"[\\/]", executable)[-1].lower()
+    if os.name == "nt" and windows_grok_remote_entrypoint_is_unsafe(executable_name):
+        return None, (
+            "Windows grok-remote requires an explicit grok-remote.exe; "
+            "BAT/CMD and PATHEXT-ambiguous bare entrypoints are unsupported"
+        )
     if executable_name not in GROK_REMOTE_EXECUTABLES:
         return None, None
     private_umask = provider_subprocess_options("grok")

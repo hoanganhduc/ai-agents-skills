@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -14,8 +16,14 @@ from .apply import apply_plan
 from .capabilities import normalized_path_within, resolved_path_within
 from .discovery import current_platform
 from .planner import build_plan
-from .state import load_state
-from .verify import verify
+from .runtime import (
+    RUNTIME_SOURCE_ROOT,
+    runtime_dependency_closure,
+    runtime_entry_applies,
+    runtime_expected_sha256,
+)
+from .state import load_state, sha256_file
+from .verify import verify, verify_artifact
 
 
 RUNTIME_SMOKE_SKILLS = (
@@ -31,6 +39,21 @@ RUNTIME_SMOKE_SKILLS = (
     "lean-strict-verification-gate",
     "self-improving-agent",
 )
+
+DECLARED_RUNTIME_EXCLUSION_STATUSES = frozenset(
+    {"manual-native", "doctor-only", "static-only"}
+)
+INSTALLED_RUNTIME_SMOKE_SCHEMA = "ai-agents-skills.installed-runtime-smoke.v1"
+INSTALLED_RUNTIME_SMOKE_SCHEMA_VERSION = 1
+
+
+def installed_runtime_smoke_report(**fields: Any) -> dict[str, Any]:
+    report = {
+        "schema": INSTALLED_RUNTIME_SMOKE_SCHEMA,
+        "schema_version": INSTALLED_RUNTIME_SMOKE_SCHEMA_VERSION,
+    }
+    report.update(fields)
+    return report
 
 
 def run_runtime_smoke(
@@ -60,8 +83,32 @@ def run_runtime_smoke(
         verify_result = verify(root)
         runtime_root = root / ".codex" / "runtime"
         workspace = runtime_root / "workspace"
+        runners = runner_invocations(runtime_root, host_platform)
+        if not runners:
+            return {
+                "status": "failed",
+                "platform": host_platform,
+                "selected_skills": selected_skills,
+                "coverage": runtime_smoke_coverage_rows(manifests),
+                "install_action_count": len(install_result.get("actions", [])),
+                "verify_status": verify_result["status"],
+                "checked": 0,
+                "results": [
+                    {
+                        "status": "failed",
+                        "mode": "temporary",
+                        "runner": None,
+                        "skill": skill,
+                        "checked": 0,
+                        "results": [],
+                        "failure_kind": "runner-unavailable",
+                        "reason": "no native runtime runner is available on this host",
+                    }
+                    for skill in selected_skills
+                ],
+            }
         results = []
-        for runner in runner_invocations(runtime_root, host_platform):
+        for runner in runners:
             for skill in selected_skills:
                 results.append(run_smoke_case(
                     manifests,
@@ -92,56 +139,424 @@ def run_installed_runtime_smoke(
     agents: set[str] | None = None,
     platform: str | None = None,
     timeout: int = 60,
+    require_complete_coverage: bool = False,
 ) -> dict[str, Any]:
     target_platform = current_platform(platform)
     host_platform = current_platform(None)
+    runtime_specs = manifests.get("runtime", {}).get("skills", {})
+    declared_runtime_skills = set(runtime_specs) if isinstance(runtime_specs, dict) else set()
+    explicit_skills = set(skills or ())
+    requested_report_skills = (
+        explicit_skills | declared_runtime_skills
+        if require_complete_coverage
+        else explicit_skills
+    )
+    requested_runtime_skills = requested_report_skills & declared_runtime_skills
     if target_platform != host_platform:
-        return {
-            "status": "skipped",
-            "mode": "installed",
-            "platform": target_platform,
-            "host_platform": host_platform,
-            "checked": 0,
-            "results": [],
-            "reason": "installed runtime smoke only runs on the current host platform",
-        }
-    state = load_state(root)
-    runtime_artifacts = [
-        item for item in state.get("artifacts", [])
-        if item.get("artifact_type") == "runtime-file"
-        and item.get("managed")
-        and item.get("skill") != "runtime-runner"
-        and (not skills or item.get("skill") in skills)
-    ]
-    installed_skills = sorted({str(item.get("skill")) for item in runtime_artifacts if item.get("skill")})
-    if not installed_skills:
-        return {
-            "status": "skipped",
-            "mode": "installed",
-            "platform": target_platform,
-            "checked": 0,
-            "results": [],
-            "reason": "no managed runtime-backed skills matched this scope",
-        }
+        return installed_runtime_smoke_report(
+            status="skipped",
+            mode="installed",
+            platform=target_platform,
+            host_platform=host_platform,
+            checked=0,
+            unknown_coverage_count=0,
+            missing_managed_runtime_count=0,
+            declared_exclusion_count=0,
+            declared_exclusions=[],
+            results=[],
+            reason="installed runtime smoke only runs on the current host platform",
+        )
+    try:
+        state = load_state(root)
+    except (OSError, RuntimeError, ValueError):
+        result_skills = sorted(requested_report_skills)
+        return installed_runtime_smoke_report(
+            status="failed",
+            mode="installed",
+            platform=target_platform,
+            selected_skills=result_skills,
+            coverage=runtime_smoke_coverage_rows(manifests),
+            checked=0,
+            unknown_coverage_count=0,
+            missing_managed_runtime_count=0,
+            declared_exclusion_count=0,
+            declared_exclusions=[],
+            results=installed_runtime_failure_rows(
+                result_skills,
+                failure_kind="invalid-managed-state",
+                reason="installer state could not be loaded",
+            ),
+            managed_state_verify_status="not-run-invalid-state",
+            managed_state_checked=0,
+            runtime_state_coverage_status="not-run-invalid-state",
+            runtime_state_expected_count=0,
+            runtime_state_selected_record_count=0,
+            runtime_state_missing_count=0,
+            runtime_state_extra_count=0,
+            runtime_state_duplicate_count=0,
+            runtime_state_mismatched_count=0,
+            runtime_boundary_violation_count=0,
+            failure_kind="invalid-managed-state",
+            reason="installer state could not be loaded",
+        )
+    state_artifacts = state.get("artifacts")
+    if not isinstance(state_artifacts, list) or any(
+        not isinstance(item, dict) for item in state_artifacts
+    ):
+        result_skills = sorted(requested_report_skills)
+        return installed_runtime_smoke_report(
+            status="failed",
+            mode="installed",
+            platform=target_platform,
+            selected_skills=result_skills,
+            coverage=runtime_smoke_coverage_rows(manifests),
+            checked=0,
+            unknown_coverage_count=0,
+            missing_managed_runtime_count=0,
+            declared_exclusion_count=0,
+            declared_exclusions=[],
+            results=installed_runtime_failure_rows(
+                result_skills,
+                failure_kind="invalid-managed-state",
+                reason="managed artifact state shape is invalid",
+            ),
+            managed_state_verify_status="not-run-invalid-state",
+            managed_state_checked=0,
+            runtime_state_coverage_status="not-run-invalid-state",
+            runtime_state_expected_count=0,
+            runtime_state_selected_record_count=0,
+            runtime_state_missing_count=0,
+            runtime_state_extra_count=0,
+            runtime_state_duplicate_count=0,
+            runtime_state_mismatched_count=0,
+            runtime_boundary_violation_count=0,
+            failure_kind="invalid-managed-state",
+            reason="managed artifact state shape is invalid",
+        )
 
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for item in state.get("artifacts", []):
-        if item.get("artifact_type") != "runtime-file" or not item.get("managed") or not item.get("runtime_root"):
+    managed_runtime_artifacts = [
+        item for item in state_artifacts
+        if item.get("artifact_type") == "runtime-file"
+        and bool(item.get("managed"))
+    ]
+    globally_unscoped_runtime_artifacts = [
+        item
+        for item in managed_runtime_artifacts
+        if not isinstance(item.get("skill"), str)
+        or not item.get("skill")
+        or not isinstance(item.get("runtime_root"), str)
+        or not item.get("runtime_root")
+    ]
+    installed_from_runtime = {
+        item["skill"]
+        for item in managed_runtime_artifacts
+        if isinstance(item.get("skill"), str)
+        and item.get("skill")
+        and item.get("skill") != "runtime-runner"
+    }
+    installed_from_managed_state = {
+        item["skill"]
+        for item in state_artifacts
+        if bool(item.get("managed"))
+        and isinstance(item.get("skill"), str)
+        and item.get("skill") in declared_runtime_skills
+    }
+    if skills is None:
+        result_skill_set = installed_from_runtime | installed_from_managed_state
+    else:
+        result_skill_set = set(explicit_skills)
+    if require_complete_coverage:
+        result_skill_set.update(declared_runtime_skills)
+        result_skill_set.update(installed_from_runtime)
+    result_skills = sorted(result_skill_set)
+    if not result_skills:
+        if globally_unscoped_runtime_artifacts:
+            violations = runtime_state_boundary_violations(
+                root,
+                set(),
+                globally_unscoped_runtime_artifacts,
+            )
+            return installed_runtime_smoke_report(
+                status="failed",
+                mode="installed",
+                platform=target_platform,
+                selected_skills=[],
+                coverage=runtime_smoke_coverage_rows(manifests),
+                checked=0,
+                unknown_coverage_count=0,
+                missing_managed_runtime_count=0,
+                declared_exclusion_count=0,
+                declared_exclusions=[],
+                results=[
+                    {
+                        "status": "failed",
+                        "mode": "installed",
+                        "runtime_root": item.get("runtime_root"),
+                        "skill": item.get("skill"),
+                        "runner": None,
+                        "checked": 0,
+                        "results": [],
+                        "failure_kind": "unscoped-runtime-record",
+                        "reason": "managed runtime record cannot be safely scoped",
+                    }
+                    for item in globally_unscoped_runtime_artifacts
+                ],
+                managed_state_verify_status="not-run-runtime-state-coverage-failure",
+                managed_state_checked=0,
+                runtime_state_coverage_status="failed",
+                runtime_state_expected_count=0,
+                runtime_state_selected_record_count=len(globally_unscoped_runtime_artifacts),
+                runtime_state_missing_count=0,
+                runtime_state_extra_count=0,
+                runtime_state_duplicate_count=0,
+                runtime_state_mismatched_count=len(globally_unscoped_runtime_artifacts),
+                runtime_boundary_violation_count=len(violations),
+                runtime_boundary_violations=violations,
+                failure_kind="runtime-state-coverage",
+                reason="managed runtime state contains records that cannot be safely scoped",
+            )
+        return installed_runtime_smoke_report(
+            status="skipped",
+            mode="installed",
+            platform=target_platform,
+            selected_skills=[],
+            coverage=runtime_smoke_coverage_rows(manifests),
+            checked=0,
+            unknown_coverage_count=0,
+            missing_managed_runtime_count=0,
+            declared_exclusion_count=0,
+            declared_exclusions=[],
+            results=[],
+            reason="no managed runtime-backed skills matched this scope",
+        )
+
+    direct_runtime_artifacts = [
+        item
+        for item in managed_runtime_artifacts
+        if item.get("skill") in result_skill_set
+        and item.get("skill") != "runtime-runner"
+    ]
+    skills_with_runtime_records = {
+        str(item.get("skill"))
+        for item in direct_runtime_artifacts
+        if isinstance(item.get("skill"), str) and item.get("skill")
+    }
+    missing_managed_runtime = sorted(
+        (result_skill_set & declared_runtime_skills) - skills_with_runtime_records
+    )
+
+    root_result_skills: dict[str, set[str]] = {}
+    for item in direct_runtime_artifacts:
+        runtime_root_text = valid_selected_runtime_root(root, item)
+        skill = item.get("skill")
+        if runtime_root_text is not None and isinstance(skill, str):
+            root_result_skills.setdefault(runtime_root_text, set()).add(skill)
+
+    root_closure_skills: dict[str, set[str]] = {}
+    manifest_closure_issues: list[dict[str, Any]] = []
+    for runtime_root_text, root_skills in sorted(root_result_skills.items()):
+        known_root_skills = sorted(root_skills & declared_runtime_skills)
+        try:
+            closure = runtime_dependency_closure(known_root_skills, runtime_specs)
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            manifest_closure_issues.append({
+                "kind": "invalid-runtime-dependency-closure",
+                "runtime_root": runtime_root_text,
+                "reason": str(exc),
+            })
+            closure = known_root_skills
+        root_closure_skills[runtime_root_text] = set(closure)
+
+    selected_record_ids = {
+        id(item)
+        for item in [*direct_runtime_artifacts, *globally_unscoped_runtime_artifacts]
+    }
+    for item in managed_runtime_artifacts:
+        runtime_root_text = item.get("runtime_root")
+        if not isinstance(runtime_root_text, str):
             continue
-        if item.get("runtime_root") not in {artifact.get("runtime_root") for artifact in runtime_artifacts}:
+        closure = root_closure_skills.get(runtime_root_text)
+        if closure is None:
             continue
-        grouped.setdefault(str(item["runtime_root"]), []).append(item)
+        item_skill = item.get("skill")
+        malformed_or_unknown_skill = (
+            not isinstance(item_skill, str)
+            or not item_skill
+            or item_skill not in declared_runtime_skills
+        )
+        if item_skill == "runtime-runner" or item_skill in closure or malformed_or_unknown_skill:
+            selected_record_ids.add(id(item))
+    scoped_runtime_artifacts = [
+        item for item in managed_runtime_artifacts if id(item) in selected_record_ids
+    ]
+    selected_runtime_roots = set(root_result_skills)
+    boundary_violations = runtime_state_boundary_violations(
+        root,
+        selected_runtime_roots,
+        scoped_runtime_artifacts,
+    )
+
+    expected_by_root: dict[str, list[dict[str, Any]]] = {}
+    canonical_source_issues: list[dict[str, Any]] = []
+    for runtime_root_text, closure in sorted(root_closure_skills.items()):
+        expected, issues = expected_runtime_state_records(
+            manifests,
+            runtime_root=Path(runtime_root_text),
+            skills=closure,
+            platform=target_platform,
+        )
+        expected_by_root[runtime_root_text] = expected
+        canonical_source_issues.extend(issues)
+    expected_runtime_artifacts = [
+        item
+        for runtime_root_text in sorted(expected_by_root)
+        for item in expected_by_root[runtime_root_text]
+    ]
+    comparison = compare_runtime_state_records(
+        scoped_runtime_artifacts,
+        expected_runtime_artifacts,
+    )
+    invalid_requested_skills = sorted(explicit_skills - declared_runtime_skills)
+    unknown_installed_skills = sorted(
+        (result_skill_set & installed_from_runtime) - declared_runtime_skills
+    )
+    preflight_failed = any((
+        missing_managed_runtime,
+        invalid_requested_skills,
+        unknown_installed_skills,
+        boundary_violations,
+        manifest_closure_issues,
+        canonical_source_issues,
+        comparison["missing"],
+        comparison["extra"],
+        comparison["duplicates"],
+        comparison["mismatched"],
+    ))
+    if preflight_failed:
+        if boundary_violations:
+            reason = "managed runtime state escapes the selected root or has malformed paths"
+        elif invalid_requested_skills:
+            reason = "requested skills include entries without a managed runtime surface"
+        elif unknown_installed_skills:
+            reason = "managed runtime state contains undeclared runtime skills"
+        else:
+            reason = "managed runtime state does not match the current manifest closure"
+        rows = installed_runtime_failure_rows(
+            result_skills,
+            failure_kind="runtime-state-coverage",
+            reason=reason,
+            missing_skills=set(missing_managed_runtime),
+            unknown_skills=set(unknown_installed_skills),
+            not_runtime_skills=set(invalid_requested_skills),
+            roots_by_skill=runtime_roots_by_skill(direct_runtime_artifacts),
+        )
+        return installed_runtime_smoke_report(
+            status="failed",
+            mode="installed",
+            platform=target_platform,
+            selected_skills=result_skills,
+            coverage=runtime_smoke_coverage_rows(manifests),
+            checked=0,
+            unknown_coverage_count=0,
+            missing_managed_runtime_count=len(missing_managed_runtime),
+            missing_managed_runtime_skills=missing_managed_runtime,
+            declared_exclusion_count=0,
+            declared_exclusions=[],
+            results=rows,
+            managed_state_verify_status="not-run-runtime-state-coverage-failure",
+            managed_state_checked=0,
+            runtime_state_coverage_status="failed",
+            runtime_state_expected_count=len(expected_runtime_artifacts),
+            runtime_state_selected_record_count=len(scoped_runtime_artifacts),
+            runtime_state_missing_count=len(comparison["missing"]),
+            runtime_state_missing_records=comparison["missing"],
+            runtime_state_extra_count=len(comparison["extra"]),
+            runtime_state_extra_records=comparison["extra"],
+            runtime_state_duplicate_count=len(comparison["duplicates"]),
+            runtime_state_duplicate_records=comparison["duplicates"],
+            runtime_state_mismatched_count=(
+                len(comparison["mismatched"])
+                + len(manifest_closure_issues)
+                + len(canonical_source_issues)
+            ),
+            runtime_state_mismatched_records=[
+                *comparison["mismatched"],
+                *manifest_closure_issues,
+                *canonical_source_issues,
+            ],
+            runtime_boundary_violation_count=len(boundary_violations),
+            runtime_boundary_violations=boundary_violations,
+            failure_kind="runtime-state-coverage",
+            reason=reason,
+        )
+
+    try:
+        managed_integrity = verify(root, skill_filter=skills, agent_filter=agents)
+        scoped_integrity_results = [
+            verify_artifact(artifact) for artifact in scoped_runtime_artifacts
+        ]
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError):
+        integrity = {"status": "error", "checked": 0, "results": []}
+    else:
+        managed_status = managed_integrity.get("status")
+        scoped_ok = bool(scoped_integrity_results) and all(
+            item.get("status") == "ok" for item in scoped_integrity_results
+        )
+        integrity = {
+            "status": (
+                "ok"
+                if managed_status in {"ok", "no-managed-artifacts"} and scoped_ok
+                else "failed"
+            ),
+            "checked": int(managed_integrity.get("checked", 0)) + len(scoped_integrity_results),
+            "results": [
+                *managed_integrity.get("results", []),
+                *scoped_integrity_results,
+            ],
+        }
+    if integrity.get("status") != "ok":
+        reason = "managed artifact integrity verification failed before runtime execution"
+        return installed_runtime_smoke_report(
+            status="failed",
+            mode="installed",
+            platform=target_platform,
+            selected_skills=result_skills,
+            coverage=runtime_smoke_coverage_rows(manifests),
+            checked=0,
+            unknown_coverage_count=0,
+            missing_managed_runtime_count=len(missing_managed_runtime),
+            missing_managed_runtime_skills=missing_managed_runtime,
+            declared_exclusion_count=0,
+            declared_exclusions=[],
+            results=installed_runtime_failure_rows(
+                result_skills,
+                failure_kind="managed-state-integrity",
+                reason=reason,
+                roots_by_skill=runtime_roots_by_skill(direct_runtime_artifacts),
+            ),
+            managed_state_verify_status=integrity.get("status"),
+            managed_state_checked=integrity.get("checked", 0),
+            runtime_state_coverage_status="ok",
+            runtime_state_expected_count=len(expected_runtime_artifacts),
+            runtime_state_selected_record_count=len(scoped_runtime_artifacts),
+            runtime_state_missing_count=0,
+            runtime_state_missing_records=[],
+            runtime_state_extra_count=0,
+            runtime_state_extra_records=[],
+            runtime_state_duplicate_count=0,
+            runtime_state_duplicate_records=[],
+            runtime_state_mismatched_count=0,
+            runtime_state_mismatched_records=[],
+            runtime_boundary_violation_count=0,
+            runtime_boundary_violations=[],
+            failure_kind="managed-state-integrity",
+            reason=reason,
+        )
 
     results: list[dict[str, Any]] = []
-    for runtime_root_text, artifacts in sorted(grouped.items()):
+    for runtime_root_text, artifacts in sorted(expected_by_root.items()):
         runtime_root = Path(runtime_root_text)
-        selected_for_root = sorted(
-            {
-                str(item.get("skill"))
-                for item in artifacts
-                if item.get("skill") in installed_skills and item.get("skill") != "runtime-runner"
-            }
-        )
+        selected_for_root = sorted(root_result_skills.get(runtime_root_text, set()))
         if not selected_for_root:
             continue
         with tempfile.TemporaryDirectory(prefix="aas-installed-runtime-smoke-") as tmp:
@@ -159,21 +574,44 @@ def run_installed_runtime_smoke(
                         "reason": copy_result["reason"],
                     })
                 continue
-            for runner in runner_invocations(runtime_root, target_platform):
-                for skill in selected_for_root:
-                    if not has_runtime_smoke_contract(manifests, skill):
-                        results.append({
-                            "status": "unsupported",
-                            "mode": "installed",
-                            "runtime_root": str(runtime_root),
-                            "skill": skill,
-                            "coverage": runtime_smoke_coverage_status(manifests, skill),
-                            "runner": runner["name"],
-                            "checked": 0,
-                            "results": [],
-                            "reason": runtime_smoke_coverage_reason(manifests, skill),
-                        })
-                        continue
+            # Execute only the descriptor-read, hash-verified scratch copy.  In
+            # particular, never invoke a runner from the mutable installed
+            # runtime root after its integrity check.
+            runners = runner_invocations(scratch_workspace.parent, target_platform)
+            for skill in selected_for_root:
+                if not has_runtime_smoke_contract(manifests, skill):
+                    coverage = runtime_smoke_coverage_status(manifests, skill)
+                    declared_exclusion = coverage in DECLARED_RUNTIME_EXCLUSION_STATUSES
+                    results.append({
+                        "status": "declared-exclusion" if declared_exclusion else "failed",
+                        "mode": "installed",
+                        "runtime_root": str(runtime_root),
+                        "skill": skill,
+                        "coverage": coverage,
+                        "failure_kind": None if declared_exclusion else "unknown-coverage",
+                        "runner": None,
+                        "checked": 0,
+                        "results": [],
+                        "reason": (
+                            runtime_smoke_coverage_reason(manifests, skill)
+                            if declared_exclusion
+                            else f"runtime skill has unknown smoke coverage: {coverage}"
+                        ),
+                    })
+                    continue
+                if not runners:
+                    results.append({
+                        "status": "failed",
+                        "mode": "installed",
+                        "runtime_root": str(runtime_root),
+                        "skill": skill,
+                        "runner": None,
+                        "checked": 0,
+                        "results": [],
+                        "reason": "no native runtime runner is available on this host",
+                    })
+                    continue
+                for runner in runners:
                     results.append(run_smoke_case(
                         manifests,
                         skill=skill,
@@ -184,15 +622,366 @@ def run_installed_runtime_smoke(
                         mode="installed",
                         runtime_root=runtime_root,
                     ))
+    reported_skills = {
+        str(item.get("skill")) for item in results if isinstance(item.get("skill"), str)
+    }
+    for skill in sorted(result_skill_set - reported_skills):
+        results.append({
+            "status": "failed",
+            "mode": "installed",
+            "runtime_root": None,
+            "skill": skill,
+            "runner": None,
+            "checked": 0,
+            "results": [],
+            "failure_kind": "result-row-omitted",
+            "reason": "installed runtime smoke did not produce a result row for the selected skill",
+        })
+    unknown_coverage_failures = [
+        item
+        for item in results
+        if item.get("failure_kind") == "unknown-coverage"
+    ]
     status = aggregate_runtime_status(results)
+    if unknown_coverage_failures:
+        status = "failed"
+    declared_exclusions = [
+        {
+            "skill": item["skill"],
+            "runtime_root": item["runtime_root"],
+            "coverage": item["coverage"],
+            "reason": item["reason"],
+        }
+        for item in results
+        if item.get("status") == "declared-exclusion"
+    ]
+    return installed_runtime_smoke_report(
+        status=status,
+        mode="installed",
+        platform=target_platform,
+        selected_skills=result_skills,
+        coverage=runtime_smoke_coverage_rows(manifests),
+        checked=len([item for item in results if item.get("status") != "declared-exclusion"]),
+        unknown_coverage_count=len(unknown_coverage_failures),
+        missing_managed_runtime_count=len(missing_managed_runtime),
+        missing_managed_runtime_skills=missing_managed_runtime,
+        managed_state_verify_status=integrity.get("status"),
+        managed_state_checked=integrity.get("checked", 0),
+        runtime_state_coverage_status="ok",
+        runtime_state_expected_count=len(expected_runtime_artifacts),
+        runtime_state_selected_record_count=len(scoped_runtime_artifacts),
+        runtime_state_missing_count=0,
+        runtime_state_missing_records=[],
+        runtime_state_extra_count=0,
+        runtime_state_extra_records=[],
+        runtime_state_duplicate_count=0,
+        runtime_state_duplicate_records=[],
+        runtime_state_mismatched_count=0,
+        runtime_state_mismatched_records=[],
+        runtime_boundary_violation_count=0,
+        runtime_boundary_violations=[],
+        declared_exclusion_count=len(declared_exclusions),
+        declared_exclusions=declared_exclusions,
+        results=results,
+    )
+
+
+RUNTIME_STATE_DESCRIPTOR_FIELDS = (
+    "artifact_type",
+    "managed",
+    "agent",
+    "owner",
+    "skill",
+    "artifact_id",
+    "artifact_name",
+    "runtime_root",
+    "artifact",
+    "target_relpath",
+    "source_relpath",
+    "source_sha256",
+    "canonical_source_sha256",
+    "mode",
+    "newline_policy",
+    "file_type",
+    "platforms",
+)
+
+
+def installed_runtime_failure_rows(
+    skills: list[str],
+    *,
+    failure_kind: str,
+    reason: str,
+    missing_skills: set[str] | None = None,
+    unknown_skills: set[str] | None = None,
+    not_runtime_skills: set[str] | None = None,
+    roots_by_skill: dict[str, list[str]] | None = None,
+) -> list[dict[str, Any]]:
+    missing = missing_skills or set()
+    unknown = unknown_skills or set()
+    not_runtime = not_runtime_skills or set()
+    roots = roots_by_skill or {}
+    rows: list[dict[str, Any]] = []
+    for skill in skills:
+        skill_roots = roots.get(skill, [])
+        row_failure_kind = failure_kind
+        row_reason = reason
+        if skill in missing:
+            row_failure_kind = "missing-managed-runtime"
+            row_reason = "requested runtime skill has no managed runtime files"
+        elif skill in not_runtime:
+            row_failure_kind = "not-runtime-backed"
+            row_reason = "requested skill has no managed runtime surface"
+        elif skill in unknown:
+            row_failure_kind = "unknown-runtime-skill"
+            row_reason = "managed runtime state names a skill absent from the current manifest"
+        rows.append({
+            "status": "failed",
+            "mode": "installed",
+            "runtime_root": skill_roots[0] if len(skill_roots) == 1 else None,
+            "runtime_roots": skill_roots,
+            "skill": skill,
+            "runner": None,
+            "checked": 0,
+            "results": [],
+            "failure_kind": row_failure_kind,
+            "reason": row_reason,
+        })
+    return rows
+
+
+def valid_selected_runtime_root(root: Path, artifact: dict[str, Any]) -> str | None:
+    runtime_root_text = artifact.get("runtime_root")
+    if not isinstance(runtime_root_text, str) or not runtime_root_text.strip():
+        return None
+    runtime_root = Path(runtime_root_text)
+    try:
+        safe = (
+            runtime_root.is_absolute()
+            and normalized_path_within(root, runtime_root)
+            and resolved_path_within(root, runtime_root)
+        )
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not safe:
+        return None
+    return runtime_root_text
+
+
+def runtime_roots_by_skill(
+    artifacts: list[dict[str, Any]],
+) -> dict[str, list[str]]:
+    grouped: dict[str, set[str]] = {}
+    for artifact in artifacts:
+        skill = artifact.get("skill")
+        runtime_root_text = artifact.get("runtime_root")
+        if (
+            isinstance(skill, str)
+            and isinstance(runtime_root_text, str)
+            and runtime_root_text.strip()
+            and Path(runtime_root_text).is_absolute()
+        ):
+            grouped.setdefault(skill, set()).add(runtime_root_text)
+    return {skill: sorted(runtime_roots) for skill, runtime_roots in grouped.items()}
+
+
+def expected_runtime_state_records(
+    manifests: dict[str, Any],
+    *,
+    runtime_root: Path,
+    skills: set[str],
+    platform: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    runtime_manifest = manifests.get("runtime", {})
+    runtime_specs = runtime_manifest.get("skills", {})
+    entries: list[tuple[str, dict[str, Any], str]] = []
+    issues: list[dict[str, Any]] = []
+    runners = runtime_manifest.get("runners", [])
+    if not isinstance(runners, list):
+        issues.append({"kind": "invalid-runtime-runner-manifest"})
+        runners = []
+    for entry in runners:
+        if not isinstance(entry, dict):
+            issues.append({"kind": "invalid-runtime-runner-entry"})
+            continue
+        if runtime_entry_applies(entry, platform):
+            target = entry.get("target")
+            artifact_name = PurePosixPath(target).name if isinstance(target, str) else ""
+            entries.append(("runtime-runner", entry, artifact_name))
+    for skill in sorted(skills):
+        spec = runtime_specs.get(skill) if isinstance(runtime_specs, dict) else None
+        if not isinstance(spec, dict) or not isinstance(spec.get("files", []), list):
+            issues.append({"kind": "invalid-runtime-skill-manifest", "skill": skill})
+            continue
+        for entry in spec.get("files", []):
+            if not isinstance(entry, dict):
+                issues.append({"kind": "invalid-runtime-skill-entry", "skill": skill})
+                continue
+            if runtime_entry_applies(entry, platform):
+                target = entry.get("target")
+                entries.append((skill, entry, target if isinstance(target, str) else ""))
+
+    expected: list[dict[str, Any]] = []
+    seen_targets: set[str] = set()
+    for skill, entry, artifact_name in entries:
+        source_relpath = entry.get("source")
+        target_relpath = entry.get("target")
+        if (
+            not isinstance(source_relpath, str)
+            or not source_relpath
+            or not isinstance(target_relpath, str)
+            or not target_relpath
+        ):
+            issues.append({
+                "kind": "invalid-current-manifest-runtime-descriptor",
+                "skill": skill,
+            })
+            continue
+        source_relative = PurePosixPath(source_relpath)
+        target_relative = PurePosixPath(target_relpath)
+        if (
+            source_relative.is_absolute()
+            or ".." in source_relative.parts
+            or target_relative.is_absolute()
+            or ".." in target_relative.parts
+        ):
+            issues.append({
+                "kind": "unsafe-current-manifest-runtime-descriptor",
+                "skill": skill,
+                "target_relpath": target_relpath,
+            })
+            continue
+        target_key = os.path.normcase(target_relpath.replace("/", os.sep))
+        if target_key in seen_targets:
+            issues.append({
+                "kind": "duplicate-current-manifest-runtime-target",
+                "skill": skill,
+                "target_relpath": target_relpath,
+            })
+            continue
+        seen_targets.add(target_key)
+        source = RUNTIME_SOURCE_ROOT.joinpath(*source_relative.parts)
+        try:
+            installed_hash = runtime_expected_sha256(source, entry)
+            canonical_hash = sha256_file(source)
+        except (OSError, RuntimeError, ValueError):
+            installed_hash = None
+            canonical_hash = None
+        if installed_hash is None or canonical_hash is None:
+            issues.append({
+                "kind": "canonical-runtime-source-unavailable",
+                "skill": skill,
+                "target_relpath": target_relpath,
+            })
+        artifact_path = runtime_root.joinpath(*target_relative.parts)
+        expected.append({
+            "artifact_type": "runtime-file",
+            "managed": True,
+            "agent": "runtime",
+            "owner": "runtime",
+            "skill": skill,
+            "artifact_id": f"runtime-file:{skill}:{artifact_name}",
+            "artifact_name": artifact_name,
+            "runtime_root": str(runtime_root),
+            "artifact": str(artifact_path),
+            "target_relpath": target_relpath,
+            "source_path": str(source),
+            "source_relpath": source_relpath,
+            "source_sha256": installed_hash,
+            "canonical_source_sha256": canonical_hash,
+            "mode": entry.get("mode", "0644"),
+            "newline_policy": entry.get("newline"),
+            "file_type": entry.get("type", "text"),
+            "platforms": entry.get("platforms", []),
+        })
+    return expected, issues
+
+
+def runtime_state_record_key(
+    artifact: dict[str, Any],
+) -> tuple[str, str, str] | None:
+    values = (
+        artifact.get("runtime_root"),
+        artifact.get("skill"),
+        artifact.get("target_relpath"),
+    )
+    if not all(isinstance(value, str) and value for value in values):
+        return None
+    return values  # type: ignore[return-value]
+
+
+def runtime_state_record_summary(artifact: dict[str, Any]) -> dict[str, Any]:
     return {
-        "status": status,
-        "mode": "installed",
-        "platform": target_platform,
-        "selected_skills": installed_skills,
-        "coverage": runtime_smoke_coverage_rows(manifests),
-        "checked": len([item for item in results if item.get("status") != "unsupported"]),
-        "results": results,
+        "runtime_root": artifact.get("runtime_root"),
+        "skill": artifact.get("skill"),
+        "target_relpath": artifact.get("target_relpath"),
+    }
+
+
+def compare_runtime_state_records(
+    actual: list[dict[str, Any]],
+    expected: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    actual_by_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    expected_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    mismatched: list[dict[str, Any]] = []
+    for artifact in actual:
+        key = runtime_state_record_key(artifact)
+        if key is None:
+            mismatched.append({
+                "kind": "runtime-record-identity-invalid",
+                **runtime_state_record_summary(artifact),
+            })
+            continue
+        actual_by_key.setdefault(key, []).append(artifact)
+    for artifact in expected:
+        key = runtime_state_record_key(artifact)
+        if key is not None:
+            expected_by_key[key] = artifact
+
+    missing = [
+        runtime_state_record_summary(expected_by_key[key])
+        for key in sorted(set(expected_by_key) - set(actual_by_key))
+    ]
+    extra = [
+        runtime_state_record_summary(actual_by_key[key][0])
+        for key in sorted(set(actual_by_key) - set(expected_by_key))
+    ]
+    duplicates = [
+        {
+            **runtime_state_record_summary(actual_by_key[key][0]),
+            "count": len(actual_by_key[key]),
+        }
+        for key in sorted(actual_by_key)
+        if len(actual_by_key[key]) > 1
+    ]
+    for key in sorted(set(actual_by_key) & set(expected_by_key)):
+        expected_artifact = expected_by_key[key]
+        for actual_artifact in actual_by_key[key]:
+            fields = [
+                field
+                for field in RUNTIME_STATE_DESCRIPTOR_FIELDS
+                if actual_artifact.get(field) != expected_artifact.get(field)
+            ]
+            if fields:
+                mismatched.append({
+                    "kind": "runtime-record-descriptor-mismatch",
+                    **runtime_state_record_summary(expected_artifact),
+                    "fields": fields,
+                })
+    mismatched.sort(
+        key=lambda item: (
+            str(item.get("runtime_root", "")),
+            str(item.get("skill", "")),
+            str(item.get("target_relpath", "")),
+            str(item.get("kind", "")),
+        )
+    )
+    return {
+        "missing": missing,
+        "extra": extra,
+        "duplicates": duplicates,
+        "mismatched": mismatched,
     }
 
 
@@ -300,6 +1089,8 @@ def run_smoke_case(
         else:
             completed = run_smoke_process(command, args=args, timeout=effective_timeout, env=env)
     except subprocess.TimeoutExpired as exc:
+        stdout = smoke_output_text(exc.stdout)
+        stderr = smoke_output_text(exc.stderr)
         return {
             "status": "failed",
             "mode": mode,
@@ -311,10 +1102,30 @@ def run_smoke_case(
             "returncode": None,
             "checks": [
                 {"name": "completed-before-timeout", "ok": False},
-                *canary_checks(manifests, skill, exc.stdout or "", exc.stderr or ""),
+                *canary_checks(manifests, skill, stdout, stderr),
             ],
-            "stdout_tail": (exc.stdout or "")[-2000:],
-            "stderr_tail": (exc.stderr or "")[-2000:],
+            "stdout_tail": stdout[-2000:],
+            "stderr_tail": stderr[-2000:],
+            **({"runtime_root": str(runtime_root)} if runtime_root is not None else {}),
+        }
+    except OSError as exc:
+        return {
+            "status": "failed",
+            "mode": mode,
+            "runner": runner["name"],
+            "skill": skill,
+            "command_target": command_target,
+            "args": args,
+            "timeout_seconds": effective_timeout,
+            "returncode": None,
+            "failure_kind": "launch-error",
+            "checks": [
+                {"name": "process-launched", "ok": False, "reason": type(exc).__name__},
+                *canary_checks(manifests, skill, "", ""),
+            ],
+            "stdout_tail": "",
+            "stderr_tail": f"runtime smoke launch failed: {type(exc).__name__}",
+            **({"runtime_root": str(runtime_root)} if runtime_root is not None else {}),
         }
     try:
         checks = validate_smoke_output(manifests, skill, completed, args) if checks_override is None else checks_override
@@ -398,7 +1209,18 @@ def run_deep_research_workflow_smoke(
         "2",
     ]
     validate_result = run_smoke_process(command, args=validate_args, timeout=timeout, env=env)
-    validate_checks = validate_smoke_output({}, "deep-research-workflow", validate_result, validate_args)
+    try:
+        validate_checks = validate_smoke_output(
+            {},
+            "deep-research-workflow",
+            validate_result,
+            validate_args,
+        )
+    except Exception as exc:
+        validate_checks = [
+            {"name": "exit-zero", "ok": validate_result.returncode == 0},
+            {"name": "output-validation", "ok": False, "reason": str(exc)},
+        ]
     checks.extend(validate_checks)
     return validate_result, checks
 
@@ -824,28 +1646,60 @@ def copy_installed_runtime_workspace(
             continue
         source = Path(str(artifact.get("artifact", "")))
         check_prefix = f"copy:{target_relpath}"
-        if source.is_symlink():
-            checks.append({"name": f"{check_prefix}:not-symlink", "ok": False})
-            continue
-        if not source.is_file():
-            checks.append({"name": f"{check_prefix}:source-file", "ok": False})
-            continue
-        source_scope = runtime_workspace if target_relpath.startswith("workspace/") else runtime_root
-        if not normalized_path_within(source_scope, source) or not resolved_path_within(source_scope, source):
-            checks.append({"name": f"{check_prefix}:contained", "ok": False})
-            continue
-        if target_relpath.startswith("workspace/"):
-            rel = PurePosixPath(target_relpath).relative_to("workspace")
-            dest = scratch_workspace.joinpath(*rel.parts)
-        else:
-            rel = PurePosixPath(target_relpath)
-            dest = scratch_workspace.parent.joinpath(*rel.parts)
-        if not normalized_path_within(scratch_workspace.parent, dest):
-            checks.append({"name": f"{check_prefix}:scratch-contained", "ok": False})
-            continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, dest)
-        checks.append({"name": f"{check_prefix}:copied", "ok": True})
+        try:
+            source_scope = runtime_workspace if target_relpath.startswith("workspace/") else runtime_root
+            if not normalized_path_within(source_scope, source) or not resolved_path_within(source_scope, source):
+                checks.append({"name": f"{check_prefix}:contained", "ok": False})
+                continue
+            if target_relpath.startswith("workspace/"):
+                rel = PurePosixPath(target_relpath).relative_to("workspace")
+                dest = scratch_workspace.joinpath(*rel.parts)
+            else:
+                rel = PurePosixPath(target_relpath)
+                dest = scratch_workspace.parent.joinpath(*rel.parts)
+            if not normalized_path_within(scratch_workspace.parent, dest):
+                checks.append({"name": f"{check_prefix}:scratch-contained", "ok": False})
+                continue
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_BINARY", 0)
+            )
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(source, flags)
+            try:
+                information = os.fstat(descriptor)
+                if not stat.S_ISREG(information.st_mode):
+                    raise OSError("source is not a regular file")
+                expected_mode = artifact.get("mode")
+                if (
+                    os.name != "nt"
+                    and isinstance(expected_mode, str)
+                    and stat.S_IMODE(information.st_mode) != int(expected_mode, 8)
+                ):
+                    raise OSError("source mode changed after integrity verification")
+                digest = hashlib.sha256()
+                payload = bytearray()
+                while True:
+                    block = os.read(descriptor, 64 * 1024)
+                    if not block:
+                        break
+                    digest.update(block)
+                    payload.extend(block)
+            finally:
+                os.close(descriptor)
+            expected_hash = artifact.get("source_sha256")
+            if not isinstance(expected_hash, str) or "sha256:" + digest.hexdigest() != expected_hash:
+                checks.append({"name": f"{check_prefix}:source-hash", "ok": False})
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(payload)
+            if isinstance(expected_mode, str):
+                os.chmod(dest, int(expected_mode, 8))
+            checks.append({"name": f"{check_prefix}:copied-verified", "ok": True})
+        except (OSError, RuntimeError, ValueError):
+            checks.append({"name": f"{check_prefix}:descriptor-copy", "ok": False})
     if not checks:
         return {
             "status": "failed",
@@ -857,6 +1711,77 @@ def copy_installed_runtime_workspace(
     return {"status": "ok", "checks": checks}
 
 
+def runtime_state_boundary_violations(
+    root: Path,
+    runtime_roots: set[str],
+    artifacts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Reject copied/forged state that points runtime execution outside root."""
+    violations: list[dict[str, Any]] = []
+    safe_roots: dict[str, Path] = {}
+    for runtime_root_text in sorted(runtime_roots):
+        runtime_root = Path(runtime_root_text)
+        try:
+            safe = (
+                bool(runtime_root_text.strip())
+                and runtime_root.is_absolute()
+                and normalized_path_within(root, runtime_root)
+                and resolved_path_within(root, runtime_root)
+            )
+        except (OSError, RuntimeError, ValueError):
+            safe = False
+        if not safe:
+            violations.append({
+                "kind": "runtime-root-outside-selected-root",
+                "runtime_root": runtime_root_text,
+            })
+            continue
+        safe_roots[runtime_root_text] = runtime_root
+    for artifact in artifacts:
+        summary = runtime_state_record_summary(artifact)
+        if artifact.get("managed") is not True:
+            violations.append({"kind": "runtime-managed-flag-invalid", **summary})
+        runtime_root_value = artifact.get("runtime_root")
+        if not isinstance(runtime_root_value, str) or not runtime_root_value.strip():
+            violations.append({"kind": "runtime-root-missing", **summary})
+            continue
+        runtime_root_text = runtime_root_value
+        runtime_root = safe_roots.get(runtime_root_text)
+        if runtime_root is None:
+            violations.append({"kind": "runtime-root-outside-selected-root", **summary})
+            continue
+        artifact_value = artifact.get("artifact")
+        if not isinstance(artifact_value, str) or not artifact_value.strip():
+            violations.append({"kind": "runtime-artifact-missing", **summary})
+            continue
+        artifact_path = Path(artifact_value)
+        target_relpath = artifact.get("target_relpath")
+        if not isinstance(target_relpath, str) or not target_relpath:
+            violations.append({"kind": "runtime-artifact-target-missing", **summary})
+            continue
+        relative = PurePosixPath(target_relpath)
+        if relative.is_absolute() or ".." in relative.parts or relative == PurePosixPath("."):
+            violations.append({"kind": "runtime-artifact-target-unsafe", **summary})
+            continue
+        expected_artifact = runtime_root.joinpath(*relative.parts)
+        if artifact_path != expected_artifact:
+            violations.append({"kind": "runtime-artifact-path-mismatch", **summary})
+            continue
+        try:
+            contained = (
+                artifact_path.is_absolute()
+                and normalized_path_within(root, artifact_path)
+                and resolved_path_within(root, artifact_path)
+                and normalized_path_within(runtime_root, artifact_path)
+                and resolved_path_within(runtime_root, artifact_path)
+            )
+        except (OSError, RuntimeError, ValueError):
+            contained = False
+        if not contained:
+            violations.append({"kind": "runtime-artifact-outside-selected-root", **summary})
+    return violations
+
+
 def aggregate_runtime_status(results: list[dict[str, Any]]) -> str:
     if not results:
         return "skipped"
@@ -866,6 +1791,12 @@ def aggregate_runtime_status(results: list[dict[str, Any]]) -> str:
     if statuses & {"degraded", "unsupported"}:
         return "degraded"
     return "ok"
+
+
+def smoke_output_text(value: str | bytes | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
 
 
 def parse_json_stdout(stdout: str) -> dict[str, Any]:
