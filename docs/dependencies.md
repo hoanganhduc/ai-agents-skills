@@ -43,6 +43,7 @@ Status vocabulary used by `precheck`:
 |---|---|
 | `calibre-cli` | Calibre command line tools for ebook metadata and conversion. |
 | `chromium-browser-system-tool` | Chromium/Chrome/Edge for CDP-driven page screenshots and browser-print PDF evidence. |
+| `classroom50-teacher-extension` | Classroom50 instructor GitHub CLI extension executable. Install with `gh extension install foundation50/gh-teacher`; release pins belong to the restoring system's artifact lock. |
 | `espeak-ng-system-tool` | eSpeak NG phonemizer used by offline TTS engines (Kokoro/Piper). |
 | `ffmpeg-system-tool` | FFmpeg/ffprobe for video encoding, audio normalization, and duration probing. |
 | `gauss-cli` | Optional OpenGauss gauss CLI for manual live formal workflows. |

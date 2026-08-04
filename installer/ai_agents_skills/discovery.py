@@ -304,6 +304,18 @@ def check_capabilities(name: str, command: str, platform: str | None = None) -> 
         return {"script-execution": True, "utf8-output": True}
     if name == "node-runtime":
         return {"npm": shutil.which("npm") is not None or shutil.which("npm.cmd") is not None}
+    if name == "classroom50-teacher-extension":
+        try:
+            result = subprocess.run(
+                ["gh", "teacher", "--help"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return {"teacher-help": False}
+        return {"teacher-help": result.returncode == 0}
     return {"executable": True}
 
 

@@ -9,13 +9,18 @@ Use this skill when the user asks about Google Classroom: listing courses or stu
 
 ## Core rules
 
-- Always use the agent entrypoint:
+- Always use the agent entrypoint through the dedicated course environment:
 
 ```bash
-python3 -m course_hoanganhduc.gclass_agent <command> [options]
+course_python="$HOME/.course_venv/bin/python"
+if [ ! -x "$course_python" ]; then
+  printf '%s\n' 'TECHNICAL_FAIL: dedicated course interpreter is missing' >&2
+  exit 1
+fi
+"$course_python" -m course_hoanganhduc.gclass_agent <command> [options]
 ```
 
-- On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.gclass_agent <command> [options]` in PowerShell.
+- On native Windows, require `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.gclass_agent <command> [options]` in PowerShell.
 
 - Do **not** run `course --unenroll-google-classroom`, `--grade-google-classroom`, or `--download-google-classroom-submissions` from this skill.
 - When a course id is required in agent mode, set:
@@ -30,10 +35,10 @@ export GCLASS_COURSE_ALLOWLIST=<course-id>[,other-ids]
 ## Common commands
 
 ```bash
-python3 -m course_hoanganhduc.gclass_agent preflight
-python3 -m course_hoanganhduc.gclass_agent list-courses [--credentials PATH] [--token PATH]
-python3 -m course_hoanganhduc.gclass_agent list-students --course-id ID
-python3 -m course_hoanganhduc.gclass_agent sync --course-id ID [--db students.db]
+"$course_python" -m course_hoanganhduc.gclass_agent preflight
+"$course_python" -m course_hoanganhduc.gclass_agent list-courses [--credentials PATH] [--token PATH]
+"$course_python" -m course_hoanganhduc.gclass_agent list-students --course-id ID
+"$course_python" -m course_hoanganhduc.gclass_agent sync --course-id ID [--db students.db]
 ```
 
 Refused: `unenroll`, `grade`, `download`.

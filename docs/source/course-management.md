@@ -24,20 +24,21 @@ Or select skills explicitly:
 make plan ARGS="--skills classroom50,course-canvas,course-google-classroom,course-db"
 ```
 
-**Package dependency:** the host Python environment used by the agent must be
-able to import `course_hoanganhduc` (for example
-`pip install -e /path/to/course_management_toolkit`). Classroom50 also needs
-GitHub CLI with the Classroom50 **teacher** extension installed for live
-`gh teacher` calls.
+**Package dependency:** the dedicated `~/.course_venv` environment must be able
+to import `course_hoanganhduc`. On native Windows the matching path is
+`%USERPROFILE%\.course_venv\Scripts\python.exe`. Classroom50 also needs GitHub
+CLI with the Classroom50 **teacher** extension installed. Restoration systems
+should install a pinned extension release; the manual upstream command is
+`gh extension install foundation50/gh-teacher`.
 
 ## Skills and entrypoints
 
 | Skill | Entrypoint | Typical use |
 |-------|------------|-------------|
-| `classroom50` | `python3 -m course_hoanganhduc.c50_agent` | foundation50 Classroom50 roster list/sync/export |
-| `course-canvas` | `python3 -m course_hoanganhduc.canvas_agent` | Canvas list/sync/search (read-oriented) |
-| `course-google-classroom` | `python3 -m course_hoanganhduc.gclass_agent` | Google Classroom list/sync |
-| `course-db` | `python3 -m course_hoanganhduc.db_agent` | Local students.db search and export |
+| `classroom50` | `~/.course_venv/bin/python -m course_hoanganhduc.c50_agent` | foundation50 Classroom50 roster list/sync/export |
+| `course-canvas` | `~/.course_venv/bin/python -m course_hoanganhduc.canvas_agent` | Canvas list/sync/search (read-oriented) |
+| `course-google-classroom` | `~/.course_venv/bin/python -m course_hoanganhduc.gclass_agent` | Google Classroom list/sync |
+| `course-db` | `~/.course_venv/bin/python -m course_hoanganhduc.db_agent` | Local students.db search and export |
 
 See each skill’s `SKILL.md` under `canonical/skills/<name>/` for full command
 lists and natural-language routing.
@@ -45,29 +46,33 @@ lists and natural-language routing.
 ### Example agent commands
 
 ```bash
+course_python="$HOME/.course_venv/bin/python"
+test -x "$course_python" || { printf '%s\n' 'dedicated course interpreter missing' >&2; exit 1; }
+
 # Classroom50
-python3 -m course_hoanganhduc.c50_agent preflight
-python3 -m course_hoanganhduc.c50_agent list-classrooms --org ORG
-python3 -m course_hoanganhduc.c50_agent sync --org ORG --classroom SHORT --db students.db
-python3 -m course_hoanganhduc.c50_agent export --db students.db --out classroom50_roster.csv
+"$course_python" -m course_hoanganhduc.c50_agent preflight
+"$course_python" -m course_hoanganhduc.c50_agent list-classrooms --org ORG
+"$course_python" -m course_hoanganhduc.c50_agent sync --org ORG --classroom SHORT --db students.db
+"$course_python" -m course_hoanganhduc.c50_agent export --db students.db --out classroom50_roster.csv
 
 # Canvas
-python3 -m course_hoanganhduc.canvas_agent preflight
-python3 -m course_hoanganhduc.canvas_agent list-members [--course-id ID]
-python3 -m course_hoanganhduc.canvas_agent sync [--course-id ID]
+"$course_python" -m course_hoanganhduc.canvas_agent preflight
+"$course_python" -m course_hoanganhduc.canvas_agent list-members [--course-id ID]
+"$course_python" -m course_hoanganhduc.canvas_agent sync [--course-id ID]
 
 # Google Classroom
-python3 -m course_hoanganhduc.gclass_agent preflight
-python3 -m course_hoanganhduc.gclass_agent list-courses
-python3 -m course_hoanganhduc.gclass_agent sync --course-id ID
+"$course_python" -m course_hoanganhduc.gclass_agent preflight
+"$course_python" -m course_hoanganhduc.gclass_agent list-courses
+"$course_python" -m course_hoanganhduc.gclass_agent sync --course-id ID
 
 # Local DB
-python3 -m course_hoanganhduc.db_agent search "keyword"
-python3 -m course_hoanganhduc.db_agent export-roster --db students.db
+"$course_python" -m course_hoanganhduc.db_agent search "keyword"
+"$course_python" -m course_hoanganhduc.db_agent export-roster --db students.db
 ```
 
-Agent modules set `COURSE_AGENT_MODE=1` automatically. Do not invoke raw
-`gh teacher` / `gh student` from the Classroom50 skill.
+Agent modules set `COURSE_AGENT_MODE=1` automatically. The Classroom50 skill
+may invoke exactly `gh teacher --help` as a non-mutating readiness check; all
+other raw `gh teacher` and every raw `gh student` invocation remain forbidden.
 
 ## Allowlists (agent mode)
 
@@ -94,7 +99,8 @@ Empty allowlist with a required id fails closed.
 
 - [Skills catalog](skills.md)
 - [Profiles](profiles.md)
-- [Dependencies](dependencies.md) (`course-hoanganhduc-python-package`, `github-cli`)
+- [Dependencies](dependencies.md) (`course-hoanganhduc-python-package`,
+  `github-cli`, `classroom50-teacher-extension`)
 - Upstream toolkit (human CLI + agent modules):
   <https://github.com/hoanganhduc/course_management_toolkit>
 - Toolkit usage notes: README and `docs/usage.rst` in that repository

@@ -202,6 +202,21 @@
       },
       "capabilities": ["github"]
     },
+    "classroom50-teacher-extension": {
+      "description": "Classroom50 instructor GitHub CLI extension executable. Install with `gh extension install foundation50/gh-teacher`; release pins belong to the restoring system's artifact lock.",
+      "version_constraint": "any",
+      "candidates": {
+        "linux": [
+          "${XDG_DATA_HOME}/gh/extensions/gh-teacher/gh-teacher",
+          "~/.local/share/gh/extensions/gh-teacher/gh-teacher"
+        ],
+        "windows": [
+          "%LOCALAPPDATA%\\GitHub CLI\\extensions\\gh-teacher\\gh-teacher.exe",
+          "%APPDATA%\\GitHub CLI\\extensions\\gh-teacher\\gh-teacher.exe"
+        ]
+      },
+      "capabilities": ["classroom50-teacher"]
+    },
     "hcloud-cli": {
       "description": "Hetzner Cloud CLI used by the hetzner-research-compute lane to provision, run on, and DESTROY disposable compute servers.",
       "version_constraint": "any",
@@ -450,24 +465,10 @@
     },
     "course": {
       "linux": [
-        "~/.course_venv/bin/python",
-        "~/.agents_skills_venv/bin/python",
-        "~/.codex/.venv/bin/python",
-        "~/.claude/.venv/bin/python",
-        "python-runtime",
-        "./.venv/bin/python"
+        "~/.course_venv/bin/python"
       ],
       "windows": [
-        ".course_venv\\Scripts\\python.exe",
-        ".agents_skills_venv\\Scripts\\python.exe",
-        ".codex\\.venv\\Scripts\\python.exe",
-        ".claude\\.venv\\Scripts\\python.exe",
-        "python-runtime",
-        ".venv\\Scripts\\python.exe",
-        "C:\\Python3*\\python.exe",
-        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\python.exe",
-        "%PROGRAMFILES%\\Python3*\\python.exe",
-        "%PROGRAMFILES(X86)%\\Python3*\\python.exe"
+        ".course_venv\\Scripts\\python.exe"
       ]
     },
     "vnu-eoffice": {
@@ -582,24 +583,10 @@
     },
     "course": {
       "linux": [
-        "~/.course_venv/lib/python*/site-packages",
-        "~/.agents_skills_venv/lib/python*/site-packages",
-        "~/.codex/.local/lib/python*/site-packages",
-        "~/.codex/runtime/workspace/.local/lib/python*/site-packages",
-        "~/.claude/.local/lib/python*/site-packages",
-        "~/.local/lib/python*/site-packages"
+        "~/.course_venv/lib/python*/site-packages"
       ],
       "windows": [
-        ".course_venv\\Lib\\site-packages",
-        ".agents_skills_venv\\Lib\\site-packages",
-        ".codex\\.venv\\Lib\\site-packages",
-        ".claude\\.venv\\Lib\\site-packages",
-        ".venv\\Lib\\site-packages",
-        "C:\\Python3*\\Lib\\site-packages",
-        "%LOCALAPPDATA%\\Programs\\Python\\Python3*\\Lib\\site-packages",
-        "%PROGRAMFILES%\\Python3*\\Lib\\site-packages",
-        "%PROGRAMFILES(X86)%\\Python3*\\Lib\\site-packages",
-        "%APPDATA%\\Python\\Python3*\\site-packages"
+        ".course_venv\\Lib\\site-packages"
       ]
     },
     "vnu-eoffice": {

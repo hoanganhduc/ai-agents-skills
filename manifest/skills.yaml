@@ -170,7 +170,7 @@
       ]
     },
     "classroom50": {
-      "description": "Route Classroom50 (foundation50) instructor workflows through the course_hoanganhduc agent entrypoint: preflight, list classrooms/roster/assignments, roster sync into local DB, and C50 CSV export. Does not invoke raw gh teacher.",
+      "description": "Route Classroom50 (foundation50) instructor workflows through the course_hoanganhduc agent entrypoint: preflight, list classrooms/roster/assignments, roster sync into local DB, and C50 CSV export. Raw gh teacher is limited to a non-mutating help probe.",
       "profiles": [
         "course-management"
       ],
@@ -181,11 +181,14 @@
         "copilot",
         "opencode",
         "antigravity",
+        "grok",
+        "kimi",
         "openclaw"
       ],
       "required_dependencies": [
         "python-runtime",
         "github-cli",
+        "classroom50-teacher-extension",
         "course-hoanganhduc-python-package"
       ],
       "optional_dependencies": [],
