@@ -60,7 +60,7 @@ readonly COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 [[ -f "$COMPOSE_FILE" && ! -L "$COMPOSE_FILE" ]] || \
     fail "Compose file must be a regular, non-symlink file: $COMPOSE_FILE"
 
-mapfile -t compose_images < <(
+compose_images="$(
     awk '
         /^[[:space:]]*image[[:space:]]*:/ {
             line = $0
@@ -69,10 +69,11 @@ mapfile -t compose_images < <(
             print line
         }
     ' "$COMPOSE_FILE"
-)
-[[ "${#compose_images[@]}" -eq 1 ]] || \
+)"
+compose_image_count="$(printf '%s\n' "$compose_images" | awk 'NF { count++ } END { print count + 0 }')"
+[[ "$compose_image_count" -eq 1 ]] || \
     fail "Compose file must contain exactly one image declaration"
-[[ "${compose_images[0]}" == "image: $REQUIRED_COMPOSE_IMAGE" ]] || \
+[[ "$compose_images" == "image: $REQUIRED_COMPOSE_IMAGE" ]] || \
     fail "Compose image must be exactly: image: $REQUIRED_COMPOSE_IMAGE"
 if grep -Eq '^[[:space:]]*build[[:space:]]*:' "$COMPOSE_FILE"; then
     fail "Compose file must not contain a build declaration"
@@ -82,10 +83,9 @@ command -v docker >/dev/null 2>&1 || fail "docker is required"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
 cd "$SCRIPT_DIR"
-mapfile -t resolved_images < <(
-    docker compose -f "$COMPOSE_FILE" config --images | awk 'NF { print }'
-)
-[[ "${#resolved_images[@]}" -eq 1 && "${resolved_images[0]}" == "$ZOTERO_TS_IMAGE" ]] || \
+resolved_images="$(docker compose -f "$COMPOSE_FILE" config --images | awk 'NF { print }')"
+resolved_image_count="$(printf '%s\n' "$resolved_images" | awk 'NF { count++ } END { print count + 0 }')"
+[[ "$resolved_image_count" -eq 1 && "$resolved_images" == "$ZOTERO_TS_IMAGE" ]] || \
     fail "Compose resolved an image other than the selected digest-pinned reference"
 
 readonly HEALTH_URL="${ZOTERO_TS_HEALTH_URL:-http://localhost:1969/}"

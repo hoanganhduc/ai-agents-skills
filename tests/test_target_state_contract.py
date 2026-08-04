@@ -55,6 +55,10 @@ class TargetStateContractTests(unittest.TestCase):
         self.assertEqual(surfaces[0]["cli_candidates"], ["agy"])
         self.assertEqual(surfaces[1]["cli_candidates"], ["gemini"])
 
+    def test_openclaw_generic_readiness_does_not_claim_aas_writer_provenance(self) -> None:
+        readiness = self.data["targets"]["openclaw"]["readiness"]
+        self.assertNotIn("restricted-target-evidence", readiness)
+
     def test_secret_values_are_forbidden(self) -> None:
         self.assertFalse(self.data["scope"]["credential_values_allowed"])
         serialized = MANIFEST.read_text(encoding="utf-8").lower()

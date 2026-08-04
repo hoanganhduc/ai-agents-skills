@@ -76,13 +76,16 @@ def check_shell_syntax(files: list[Path]) -> list[str]:
 
 
 def bash_syntax_path(path: Path, bash: str) -> str:
-    absolute = str(path.resolve())
+    # Do not instantiate a platform-selected pathlib class after inspecting a
+    # simulated target OS.  Unit tests deliberately exercise Windows routing
+    # on POSIX, where pathlib.WindowsPath cannot be instantiated.
+    absolute = os.path.abspath(os.fspath(path))
     if os.name != "nt":
         return absolute
 
     forward = absolute.replace("\\", "/")
-    bash_path = Path(bash)
-    if bash_path.name.lower() != "bash.exe" or bash_path.parent.name.lower() != "system32":
+    bash_parts = str(bash).replace("\\", "/").rstrip("/").split("/")
+    if len(bash_parts) < 2 or bash_parts[-1].lower() != "bash.exe" or bash_parts[-2].lower() != "system32":
         return forward
 
     wsl = shutil.which("wsl.exe")

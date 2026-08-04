@@ -75,7 +75,12 @@ class ZoteroTranslationServerTests(unittest.TestCase):
             printf '%s|' "$@" >> "$ZOTERO_TEST_LOG"
             printf '\n' >> "$ZOTERO_TEST_LOG"
             case " $* " in
-                *" config --images "*) printf '%s\n' "$ZOTERO_TS_IMAGE" ;;
+                *" config --images "*)
+                    printf '%s\n' "$ZOTERO_TS_IMAGE"
+                    if [[ -n "${ZOTERO_TEST_EXTRA_RESOLVED_IMAGE:-}" ]]; then
+                        printf '%s\n' "$ZOTERO_TEST_EXTRA_RESOLVED_IMAGE"
+                    fi
+                    ;;
             esac
             """,
         )
@@ -187,6 +192,30 @@ class ZoteroTranslationServerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must not contain a build", result.stderr)
         self.assertEqual(self.read_log(), "")
+
+    def test_multiple_compose_image_declarations_are_rejected(self) -> None:
+        compose = self.skill_dir / "docker-compose.yml"
+        compose.write_text(
+            compose.read_text(encoding="utf-8")
+            + "  unexpected-service:\n"
+            + f"    image: {COMPOSE_IMAGE}\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_script()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one image declaration", result.stderr)
+        self.assertEqual(self.read_log(), "")
+
+    def test_multiple_resolved_images_are_rejected_before_start(self) -> None:
+        result = self.run_script(
+            ZOTERO_TEST_EXTRA_RESOLVED_IMAGE="registry.example.test/other@sha256:" + ("2" * 64)
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("resolved an image other than", result.stderr)
+        self.assertNotIn("|up|-d|", self.read_log())
 
     def test_health_check_is_bounded_and_timeout_fails(self) -> None:
         result = self.run_script(

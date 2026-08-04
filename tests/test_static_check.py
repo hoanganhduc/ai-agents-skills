@@ -22,13 +22,14 @@ class StaticCheckTests(unittest.TestCase):
 
     def test_wsl_bash_syntax_path_uses_wslpath_with_forward_slashes(self) -> None:
         converted = Mock(returncode=0, stdout="/mnt/c/repo/script.sh\n")
+        script_path = Path("C:/repo/script.sh")
         with (
             patch("tools.static_check.os.name", "nt"),
             patch("tools.static_check.shutil.which", return_value="C:\\Windows\\system32\\wsl.exe"),
             patch("tools.static_check.subprocess.run", return_value=converted) as run,
         ):
             result = bash_syntax_path(
-                Path("C:/repo/script.sh"),
+                script_path,
                 "C:\\Windows\\system32\\bash.EXE",
             )
 
