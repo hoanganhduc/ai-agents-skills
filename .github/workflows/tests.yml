@@ -7,7 +7,7 @@ on:
       - ".github/scripts/**"
       - ".github/workflows/docs.yml"
       - "Makefile"
-      - "make.bat"
+      - "make.ps1"
       - "README.md"
       - "docs/**"
       - "installer/**"
@@ -24,7 +24,7 @@ on:
       - ".github/scripts/**"
       - ".github/workflows/docs.yml"
       - "Makefile"
-      - "make.bat"
+      - "make.ps1"
       - "README.md"
       - "docs/**"
       - "installer/**"
@@ -73,11 +73,11 @@ jobs:
       - name: Install and report containment support
         run: .github/scripts/containment-support.sh
 
-      - name: Run unit tests
-        run: make test
-
       - name: Install runtime smoke dependencies
         run: python -m pip install networkx psutil
+
+      - name: Run unit tests
+        run: make test
 
       - name: Run runtime smoke
         run: make runtime-smoke
@@ -182,7 +182,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Python compatibility dependencies
-        run: python -m pip install 'tomli>=2; python_version < "3.11"'
+        run: python -m pip install 'tomli>=2; python_version < "3.11"' networkx psutil
 
       - name: Run sanitizer checks
         run: make sanitize-check
@@ -217,11 +217,11 @@ jobs:
       - name: Run static checks
         run: make static-check
 
-      - name: Run unit tests
-        run: make test
-
       - name: Install runtime smoke dependencies
         run: python -m pip install networkx psutil
+
+      - name: Run unit tests
+        run: make test
 
       - name: Run runtime smoke
         run: make runtime-smoke
@@ -250,53 +250,54 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Check command help
-        shell: cmd
-        run: make.bat help
-
-      - name: List artifacts
-        shell: cmd
-        run: make.bat list-artifacts
-
-      - name: Check make.bat propagates command failures
-        shell: cmd
-        run: |
-          call make.bat definitely-not-a-command
-          if not errorlevel 1 exit /b 1
-          exit /b 0
-
-      - name: Run sanitizer checks
-        shell: cmd
-        run: make.bat sanitize-check
-
-      - name: Run static checks
-        shell: cmd
-        run: make.bat static-check
-
-      - name: Run unit tests
-        shell: cmd
-        run: make.bat test
-
       - name: Install runtime smoke dependencies
-        shell: cmd
         run: python -m pip install networkx psutil
 
+      - name: Check command help
+        shell: pwsh
+        run: ./make.ps1 help
+
+      - name: List artifacts
+        shell: pwsh
+        run: ./make.ps1 list-artifacts
+
+      - name: Check make.ps1 propagates command failures
+        shell: pwsh
+        run: |
+          $child = Start-Process pwsh `
+            -ArgumentList '-NoProfile', '-NonInteractive', '-File', './make.ps1', 'definitely-not-a-command' `
+            -Wait -PassThru -NoNewWindow
+          if ($child.ExitCode -eq 0) { throw "make.ps1 swallowed a command failure" }
+          exit 0
+
+      - name: Run sanitizer checks
+        shell: pwsh
+        run: ./make.ps1 sanitize-check
+
+      - name: Run static checks
+        shell: pwsh
+        run: ./make.ps1 static-check
+
+      - name: Run unit tests
+        shell: pwsh
+        run: ./make.ps1 test
+
       - name: Run runtime smoke
-        shell: cmd
-        run: make.bat runtime-smoke
+        shell: pwsh
+        run: ./make.ps1 runtime-smoke
 
       - name: Verify generated docs are current
-        shell: cmd
-        run: make.bat docs-check
+        shell: pwsh
+        run: ./make.ps1 docs-check
 
       - name: Run platform lifecycle smoke
-        shell: cmd
-        run: make.bat lifecycle-test --matrix default --platform-shape windows
+        shell: pwsh
+        run: ./make.ps1 lifecycle-test --matrix default --platform-shape windows
 
       - name: Run Antigravity-only lifecycle smoke
-        shell: cmd
-        run: make.bat lifecycle-test --scenario antigravity-only-auto --platform-shape windows
+        shell: pwsh
+        run: ./make.ps1 lifecycle-test --scenario antigravity-only-auto --platform-shape windows
 
       - name: Run Kimi-only lifecycle smoke
-        shell: cmd
-        run: make.bat lifecycle-test --scenario kimi-only-auto --platform-shape windows
+        shell: pwsh
+        run: ./make.ps1 lifecycle-test --scenario kimi-only-auto --platform-shape windows

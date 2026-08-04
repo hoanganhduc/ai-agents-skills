@@ -137,7 +137,7 @@
         {"kind": "directory", "path": ".openclaw/identity", "restore_policy": "portable-session"},
         {"kind": "glob", "path": ".openclaw/agents/*/agent/auth-profiles.json", "restore_policy": "authority"}
       ],
-      "readiness": ["cli-version", "managed-skill-visibility", "restricted-target-evidence", "runtime-smoke", "mcp-handshake", "scheduler-canary", "auth-structural"]
+      "readiness": ["cli-version", "managed-skill-visibility", "runtime-smoke", "mcp-handshake", "scheduler-canary", "auth-structural"]
     }
   }
 }

@@ -5775,8 +5775,13 @@ def _fake_grok_remote_profile_cli(bindir: Path) -> Path:
 
 def _fake_native_grok_remote_candidate(bindir: Path) -> Path:
     """Create a discovery-only native candidate; profile probes are mocked."""
-    candidate = bindir / "grok-remote.exe"
-    candidate.write_bytes(b"MZ")
+    if os.name == "nt":
+        candidate = bindir / "grok-remote.exe"
+        candidate.write_bytes(b"MZ")
+    else:
+        candidate = bindir / "grok-remote"
+        candidate.write_text("#!/bin/sh\nexit 97\n", encoding="utf-8")
+        candidate.chmod(0o755)
     return candidate
 
 

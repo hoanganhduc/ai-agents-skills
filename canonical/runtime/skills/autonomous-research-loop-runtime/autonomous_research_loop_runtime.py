@@ -5540,7 +5540,7 @@ def probe_grok_remote_profile(
     timeout: int = 10,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Require exact managed-profile readiness and model match for auto fallback."""
-    if os.name == "nt" and Path(binary).suffix.lower() in {".bat", ".cmd"}:
+    if os.name == "nt" and os.path.splitext(str(binary))[1].lower() in {".bat", ".cmd"}:
         return None, "cmd_entrypoint_unsupported"
     private_umask = provider_subprocess_options("grok")
     try:
