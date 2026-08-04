@@ -31,6 +31,13 @@ CLI with the Classroom50 **teacher** extension installed. Restoration systems
 should install a pinned extension release; the manual upstream command is
 `gh extension install foundation50/gh-teacher`.
 
+OpenClaw's locked sandbox uses
+`/opt/coding-system/python-closure/course-management/bin/python` rather than
+the host venv. The restoring system must bake that environment into the image
+and project the locked teacher extension and private GitHub CLI configuration
+into their normal paths below `/workspace`; the skill never copies or prints
+those credentials itself.
+
 ## Skills and entrypoints
 
 | Skill | Entrypoint | Typical use |
@@ -46,7 +53,11 @@ lists and natural-language routing.
 ### Example agent commands
 
 ```bash
-course_python="$HOME/.course_venv/bin/python"
+if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; then
+  course_python=/opt/coding-system/python-closure/course-management/bin/python
+else
+  course_python="$HOME/.course_venv/bin/python"
+fi
 test -x "$course_python" || { printf '%s\n' 'dedicated course interpreter missing' >&2; exit 1; }
 
 # Classroom50

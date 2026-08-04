@@ -15,6 +15,13 @@ COURSE_SKILLS = (
     "course-google-classroom",
     "course-db",
 )
+OPENCLAW_COURSE_SELECTOR = """\
+if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; then
+  course_python=/opt/coding-system/python-closure/course-management/bin/python
+else
+  course_python="$HOME/.course_venv/bin/python"
+fi
+"""
 
 
 class CourseManagementSkillsTests(unittest.TestCase):
@@ -72,8 +79,17 @@ class CourseManagementSkillsTests(unittest.TestCase):
 
     def test_skill_bodies_prefer_dedicated_windows_venv(self):
         for sk in COURSE_SKILLS:
-            body = (ROOT / "canonical" / "skills" / sk / "SKILL.md").read_text(encoding="utf-8")
+            body = (ROOT / "canonical" / "skills" / sk / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
             self.assertIn(r'$env:USERPROFILE\.course_venv\Scripts\python.exe', body)
+
+    def test_skill_bodies_use_image_local_openclaw_course_environment(self):
+        for sk in COURSE_SKILLS:
+            body = (ROOT / "canonical" / "skills" / sk / "SKILL.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertIn(OPENCLAW_COURSE_SELECTOR, body, sk)
 
     def test_course_dependency_uses_only_the_documented_dedicated_venv(self):
         self.assertEqual(
