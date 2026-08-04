@@ -110,18 +110,28 @@ The local Translation Server should be available at:
 
 - `http://localhost:1969`
 
-This system uses a locally owned GHCR image built from the fork:
+Linux startup uses architecture-specific, immutable OCI references:
 
-- repo: `https://github.com/hoanganhduc/translation-server`
-- image: `ghcr.io/hoanganhduc/translation-server:latest`
+- `arm64`: `zotero/translation-server@sha256:a80abfaaab0d84c8cc4b0ef79e4fde94b391420ee3a1e69d680fc89a18bff115`
+- `amd64`: `ghcr.io/hoanganhduc/translation-server@sha256:6bb209778e0403d81285404fc9ca5bd142f91e090d14a5541ac33018531c1329`
+- fork repo for the amd64 image: `https://github.com/hoanganhduc/translation-server`
 - container: `zotero-translation-server`
 - port mapping: `1969:1969`
 - restart policy: `unless-stopped`
 
-Do not assume the Docker Hub image is usable on this host. On this AMD64 Linux
-system, `zotero/translation-server:latest` pulled as ARM64 and failed with
-`exec format error`. Prefer the GHCR image above unless the host-specific image
-support has been rechecked.
+Do not replace these with tags such as `latest`. The startup helper accepts a
+`ZOTERO_TS_IMAGE` override only when it is an untagged image name followed by an
+exact lowercase `@sha256:` digest. Its runtime directory must contain a regular,
+non-symlink `docker-compose.yml` with exactly one image declaration:
+
+```yaml
+image: ${ZOTERO_TS_IMAGE:?ZOTERO_TS_IMAGE must be set}
+```
+
+The helper rejects a missing Compose file, static/tagged/defaulted image values,
+extra image declarations, and Compose builds before starting Docker. The Compose
+file is supplied by the system-restoration layer rather than this portable
+runtime manifest. The helper creates no cron or systemd registration.
 
 Status checks:
 
