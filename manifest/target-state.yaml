@@ -1,0 +1,143 @@
+{
+  "schema": "ai-agents-skills.target-state.v3",
+  "schema_version": 3,
+  "scope": {
+    "purpose": "Target-neutral restore and readiness contract for installed agent skill surfaces.",
+    "credential_values_allowed": false,
+    "software_installation_owner": "host restoration system",
+    "skill_installation_owner": "ai-agents-skills installer"
+  },
+  "status_vocabulary": [
+    "PASS",
+    "TECHNICAL_FAIL",
+    "AUTH_INVALID",
+    "REAUTH_REQUIRED",
+    "CREDIT_BLOCKED",
+    "NOT_CONFIGURED",
+    "NOT_APPLICABLE"
+  ],
+  "targets": {
+    "codex": {
+      "aliases": [],
+      "home": ".codex",
+      "cli_candidates": ["codex"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["python-runtime", "git-cli", "node-runtime"],
+      "credential_authorities": [
+        {"kind": "file", "path": ".codex/auth.json", "restore_policy": "portable-session"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "runtime-smoke", "auth-structural"]
+    },
+    "claude": {
+      "aliases": [],
+      "home": ".claude",
+      "cli_candidates": ["claude"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["python-runtime", "git-cli", "node-runtime"],
+      "credential_authorities": [
+        {"kind": "file", "path": ".claude/.credentials.json", "restore_policy": "portable-session"},
+        {"kind": "file", "path": ".claude/secrets.json", "restore_policy": "authority"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "runtime-smoke", "auth-structural"]
+    },
+    "deepseek": {
+      "aliases": ["codewhale"],
+      "home": ".deepseek",
+      "cli_candidates": ["codewhale", "deepseek-tui"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["python-runtime", "git-cli"],
+      "credential_authorities": [
+        {"kind": "file", "path": ".deepseek/config.toml", "restore_policy": "authority"},
+        {"kind": "directory", "path": ".deepseek/secrets", "restore_policy": "authority"},
+        {"kind": "file", "path": ".codewhale/config.toml", "restore_policy": "authority"},
+        {"kind": "directory", "path": ".codewhale/secrets", "restore_policy": "authority"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "auth-structural"]
+    },
+    "copilot": {
+      "aliases": [],
+      "home": ".copilot",
+      "cli_candidates": ["copilot"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["git-cli", "github-cli", "node-runtime"],
+      "credential_authorities": [
+        {"kind": "native-store", "path": ".copilot", "restore_policy": "reauth-if-nonportable"},
+        {"kind": "environment", "path": "GH_TOKEN", "restore_policy": "projection"},
+        {"kind": "environment", "path": "GITHUB_TOKEN", "restore_policy": "projection"},
+        {"kind": "environment", "path": "COPILOT_GITHUB_TOKEN", "restore_policy": "projection"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "auth-native"]
+    },
+    "opencode": {
+      "aliases": [],
+      "home": ".config/opencode",
+      "cli_candidates": ["opencode"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["python-runtime", "git-cli", "node-runtime"],
+      "credential_authorities": [
+        {"kind": "file", "path": ".local/share/opencode/auth.json", "restore_policy": "portable-session"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "runtime-smoke", "auth-structural"]
+    },
+    "antigravity": {
+      "aliases": [],
+      "home": ".gemini/antigravity-cli",
+      "runtime_requirements": ["python-runtime", "git-cli", "node-runtime"],
+      "surfaces": [
+        {
+          "id": "antigravity",
+          "cli_candidates": ["agy"],
+          "version_argv": ["--version"],
+          "credential_authorities": [
+            {"kind": "file", "path": ".gemini/antigravity-cli/antigravity-oauth-token", "restore_policy": "portable-session"}
+          ]
+        },
+        {
+          "id": "gemini",
+          "cli_candidates": ["gemini"],
+          "version_argv": ["--version"],
+          "credential_authorities": [
+            {"kind": "file", "path": ".gemini/oauth_creds.json", "restore_policy": "portable-session"}
+          ]
+        }
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "auth-native"]
+    },
+    "grok": {
+      "aliases": [],
+      "home": ".grok",
+      "cli_candidates": ["grok"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["git-cli"],
+      "credential_authorities": [
+        {"kind": "file", "path": ".grok/auth.json", "restore_policy": "portable-session"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "auth-native"]
+    },
+    "kimi": {
+      "aliases": [],
+      "home": ".kimi-code",
+      "cli_candidates": ["kimi"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["python-runtime", "git-cli"],
+      "credential_authorities": [
+        {"kind": "file", "path": ".kimi-code/config.toml", "restore_policy": "authority"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "auth-structural"]
+    },
+    "openclaw": {
+      "aliases": [],
+      "home": ".openclaw",
+      "cli_candidates": ["openclaw"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["python-runtime", "git-cli", "node-runtime", "sagemath"],
+      "credential_authorities": [
+        {"kind": "file", "path": ".openclaw/secrets.json", "restore_policy": "authority"},
+        {"kind": "directory", "path": ".openclaw/credentials", "restore_policy": "portable-session"},
+        {"kind": "directory", "path": ".openclaw/identity", "restore_policy": "portable-session"},
+        {"kind": "glob", "path": ".openclaw/agents/*/agent/auth-profiles.json", "restore_policy": "authority"}
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "restricted-target-evidence", "runtime-smoke", "mcp-handshake", "scheduler-canary", "auth-structural"]
+    }
+  }
+}

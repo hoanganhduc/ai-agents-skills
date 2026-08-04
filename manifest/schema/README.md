@@ -4,6 +4,16 @@ The current installer validates its existing manifests in Python and keeps
 manifest files in JSON-compatible YAML so the bootstrap does not need external
 dependencies.
 
+## Target-state v3
+
+`manifest/target-state.yaml` is a value-free interface for host restoration
+systems.  It declares every installer target's home, native CLI candidates,
+logical runtime requirements, credential authority locations and restore
+policies, and readiness evidence.  It deliberately does not install software or
+store credential values: host restoration owns those operations, while this
+repository owns skill rendering and loader verification.  The target set must
+remain equal to `DEFAULT_AGENT_NAMES`, and new targets require a contract test.
+
 OpenClaw integration started with schema contracts only. The schemas under
 `openclaw/` define the shape of inventory, denylist, redaction, alias,
 evidence, and dry-run/apply manifests. The Phase 1 scanner emits only the
