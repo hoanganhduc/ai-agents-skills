@@ -9,13 +9,19 @@ Use this skill when the user asks about Canvas LMS for their course: listing ass
 
 ## Core rules
 
-- Always use the agent entrypoint (sets agent mode):
+- Always use the agent entrypoint (sets agent mode) through the dedicated
+  course environment:
 
 ```bash
-python3 -m course_hoanganhduc.canvas_agent <command> [options]
+course_python="$HOME/.course_venv/bin/python"
+if [ ! -x "$course_python" ]; then
+  printf '%s\n' 'TECHNICAL_FAIL: dedicated course interpreter is missing' >&2
+  exit 1
+fi
+"$course_python" -m course_hoanganhduc.canvas_agent <command> [options]
 ```
 
-- On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.canvas_agent <command> [options]` in PowerShell.
+- On native Windows, require `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.canvas_agent <command> [options]` in PowerShell.
 
 - Do **not** call unconstrained `course --unenroll-canvas`, `--grade-canvas-assignment`, invites, announcements, page edits, or bulk downloads from this skill.
 - In agent mode, if a course id is used, set:
@@ -31,11 +37,11 @@ Empty allowlist fails closed when a course id is required.
 ## Common commands
 
 ```bash
-python3 -m course_hoanganhduc.canvas_agent preflight
-python3 -m course_hoanganhduc.canvas_agent list-assignments [--course-id ID] [--category NAME]
-python3 -m course_hoanganhduc.canvas_agent list-members [--course-id ID]
-python3 -m course_hoanganhduc.canvas_agent search-user "name or email" [--course-id ID]
-python3 -m course_hoanganhduc.canvas_agent sync [--course-id ID] [--db students.db]
+"$course_python" -m course_hoanganhduc.canvas_agent preflight
+"$course_python" -m course_hoanganhduc.canvas_agent list-assignments [--course-id ID] [--category NAME]
+"$course_python" -m course_hoanganhduc.canvas_agent list-members [--course-id ID]
+"$course_python" -m course_hoanganhduc.canvas_agent search-user "name or email" [--course-id ID]
+"$course_python" -m course_hoanganhduc.canvas_agent sync [--course-id ID] [--db students.db]
 ```
 
 Refused by design: `unenroll`, `grade`, `invite`, `announce`, `download`, `messages`, `pages`.

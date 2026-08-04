@@ -9,13 +9,18 @@ Use this skill when the user asks about the local course student database / rost
 
 ## Core rules
 
-- Always use the agent entrypoint:
+- Always use the agent entrypoint through the dedicated course environment:
 
 ```bash
-python3 -m course_hoanganhduc.db_agent <command> [options]
+course_python="$HOME/.course_venv/bin/python"
+if [ ! -x "$course_python" ]; then
+  printf '%s\n' 'TECHNICAL_FAIL: dedicated course interpreter is missing' >&2
+  exit 1
+fi
+"$course_python" -m course_hoanganhduc.db_agent <command> [options]
 ```
 
-- On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.db_agent <command> [options]` in PowerShell.
+- On native Windows, require `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.db_agent <command> [options]` in PowerShell.
 
 - Read/search/export only. Do **not** run interactive modify, DB restore, or bulk import apply from this skill.
 - Default DB path is `students.db` in the working directory; pass `--db` when needed.
@@ -24,14 +29,14 @@ python3 -m course_hoanganhduc.db_agent <command> [options]
 ## Common commands
 
 ```bash
-python3 -m course_hoanganhduc.db_agent count [--db students.db]
-python3 -m course_hoanganhduc.db_agent search "keyword" [--db students.db]
-python3 -m course_hoanganhduc.db_agent details "name|id|email" [--db students.db]
-python3 -m course_hoanganhduc.db_agent list-email-domain gmail.com
-python3 -m course_hoanganhduc.db_agent list-duplicate-names
-python3 -m course_hoanganhduc.db_agent list-missing-ids [--which all|google|canvas|student]
-python3 -m course_hoanganhduc.db_agent export-roster [--out classroom_roster.csv]
-python3 -m course_hoanganhduc.db_agent export-emails [--out emails.txt]
+"$course_python" -m course_hoanganhduc.db_agent count [--db students.db]
+"$course_python" -m course_hoanganhduc.db_agent search "keyword" [--db students.db]
+"$course_python" -m course_hoanganhduc.db_agent details "name|id|email" [--db students.db]
+"$course_python" -m course_hoanganhduc.db_agent list-email-domain gmail.com
+"$course_python" -m course_hoanganhduc.db_agent list-duplicate-names
+"$course_python" -m course_hoanganhduc.db_agent list-missing-ids [--which all|google|canvas|student]
+"$course_python" -m course_hoanganhduc.db_agent export-roster [--out classroom_roster.csv]
+"$course_python" -m course_hoanganhduc.db_agent export-emails [--out emails.txt]
 ```
 
 Refused: `modify`, `restore-db`, `import-apply`, `delete`.

@@ -651,7 +651,7 @@ def evaluate_grok_selection(
     except ValueError:
         command_parts = []
     if os.name == "nt" and command_parts and windows_grok_remote_entrypoint_is_unsafe(
-        Path(command_parts[0]).name.lower()
+        re.split(r"[\\/]", command_parts[0])[-1].lower()
     ):
         return {
             "status": "blocked",

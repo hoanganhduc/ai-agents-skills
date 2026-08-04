@@ -59,15 +59,37 @@ class CourseManagementSkillsTests(unittest.TestCase):
             self.assertIn(entry, body)
             self.assertNotIn('"python3"', body.split("---", 2)[1])
             for line in body.splitlines():
-                self.assertIsNone(
-                    re.match(r"^\s*`?gh teacher\b", line),
-                    msg=f"{sk}: forbidden line {line!r}",
-                )
+                match = re.match(r"^\s*gh teacher\b", line)
+                if match:
+                    self.assertIn(
+                        line.strip(),
+                        {
+                            "gh teacher --help >/dev/null || {",
+                            "gh teacher --help *> $null",
+                        },
+                        msg=f"{sk}: forbidden line {line!r}",
+                    )
 
     def test_skill_bodies_prefer_dedicated_windows_venv(self):
         for sk in COURSE_SKILLS:
             body = (ROOT / "canonical" / "skills" / sk / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn(r'$env:USERPROFILE\.course_venv\Scripts\python.exe', body)
+
+    def test_course_dependency_uses_only_the_documented_dedicated_venv(self):
+        self.assertEqual(
+            self.deps["python_candidate_sets"]["course"],
+            {
+                "linux": ["~/.course_venv/bin/python"],
+                "windows": [r".course_venv\Scripts\python.exe"],
+            },
+        )
+        self.assertEqual(
+            self.deps["python_site_candidate_sets"]["course"],
+            {
+                "linux": ["~/.course_venv/lib/python*/site-packages"],
+                "windows": [r".course_venv\Lib\site-packages"],
+            },
+        )
 
     def test_required_deps_include_package(self):
         for sk in COURSE_SKILLS:
@@ -75,6 +97,10 @@ class CourseManagementSkillsTests(unittest.TestCase):
             self.assertIn("python-runtime", deps)
             self.assertIn("course-hoanganhduc-python-package", deps)
         self.assertIn("github-cli", self.skills["classroom50"]["required_dependencies"])
+        self.assertIn(
+            "classroom50-teacher-extension",
+            self.skills["classroom50"]["required_dependencies"],
+        )
 
 
 if __name__ == "__main__":

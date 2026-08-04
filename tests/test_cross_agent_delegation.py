@@ -909,33 +909,23 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             default_dispatch_command("grok", "grok-remote --host windows"),
             "grok-remote --host windows --prompt-file /dev/stdin",
         )
-        self.assertEqual(
-            dispatch_command(
-                "grok",
-                REPO_ROOT,
-                "linux",
-                {"AAS_GROK_DISPATCH_COMMAND": "grok-remote --prompt-file /dev/stdin"},
-            ),
-            "grok-remote --prompt-file /dev/stdin",
-        )
-        self.assertEqual(
-            dispatch_command(
-                "grok",
-                REPO_ROOT,
-                "linux",
-                {"AAS_GROK_DISPATCH_COMMAND": "grok-remote --ios iphone-xr --prompt-file /dev/stdin"},
-            ),
-            "grok-remote --ios iphone-xr --prompt-file /dev/stdin",
-        )
-        self.assertEqual(
-            dispatch_command(
-                "grok",
-                REPO_ROOT,
-                "linux",
-                {"AAS_GROK_DISPATCH_COMMAND": "grok-remote --vpn --prompt-file /dev/stdin"},
-            ),
-            "grok-remote --vpn --prompt-file /dev/stdin",
-        )
+        remote_entrypoint = "grok-remote.exe" if os.name == "nt" else "grok-remote"
+        for arguments in (
+            "--prompt-file /dev/stdin",
+            "--ios iphone-xr --prompt-file /dev/stdin",
+            "--vpn --prompt-file /dev/stdin",
+        ):
+            with self.subTest(arguments=arguments):
+                command = f"{remote_entrypoint} {arguments}"
+                self.assertEqual(
+                    dispatch_command(
+                        "grok",
+                        REPO_ROOT,
+                        "linux",
+                        {"AAS_GROK_DISPATCH_COMMAND": command},
+                    ),
+                    command,
+                )
 
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1135,6 +1125,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(command_executable(selection["command"]), bare)
             self.assertNotIn("grok-remote", selection["command"])
 
+    @unittest.skipIf(os.name == "nt", "POSIX script fixture; native Windows behavior is covered separately")
     def test_grok_auto_resolution_uses_remote_only_after_bare_nonconfirmation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
