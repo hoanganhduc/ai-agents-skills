@@ -12,10 +12,15 @@ Use this skill when the user asks about Classroom50, foundation50 classroom tool
 
 - Do not fork or reimplement Classroom50 / `gh teacher` in this skill.
 - On POSIX, require the dedicated course environment and use it for every
-  adapter command:
+  adapter command. OpenClaw's locked sandbox owns an image-local environment;
+  normal host agents use the restored home environment:
 
 ```bash
-course_python="$HOME/.course_venv/bin/python"
+if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; then
+  course_python=/opt/coding-system/python-closure/course-management/bin/python
+else
+  course_python="$HOME/.course_venv/bin/python"
+fi
 if [ ! -x "$course_python" ]; then
   printf '%s\n' 'TECHNICAL_FAIL: dedicated course interpreter is missing' >&2
   exit 1
@@ -187,4 +192,8 @@ Prefer the agent entrypoint for agent sessions.
 ## Target notes
 
 - This skill is target-adaptable; do not hardcode user-specific checkout paths.
+- In OpenClaw's `/workspace` sandbox, the restoring system must provide the
+  image-local course environment, the teacher extension below
+  `/workspace/.local/share/gh/extensions/`, and a private GitHub CLI config
+  projection below `/workspace/.config/gh/`.
 - Secrets and GitHub auth come from the existing `gh` login / environment; this skill does not provide secret setup instructions.

@@ -13,7 +13,11 @@ Use this skill when the user asks about Canvas LMS for their course: listing ass
   course environment:
 
 ```bash
-course_python="$HOME/.course_venv/bin/python"
+if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; then
+  course_python=/opt/coding-system/python-closure/course-management/bin/python
+else
+  course_python="$HOME/.course_venv/bin/python"
+fi
 if [ ! -x "$course_python" ]; then
   printf '%s\n' 'TECHNICAL_FAIL: dedicated course interpreter is missing' >&2
   exit 1
@@ -57,4 +61,7 @@ Refused by design: `unenroll`, `grade`, `invite`, `announce`, `download`, `messa
 ## Target notes
 
 - Canvas URL/token/course defaults come from the toolkit config/settings, not this skill body.
+- OpenClaw's locked sandbox uses the image-local course environment under
+  `/opt/coding-system/python-closure/course-management`; its restoring system
+  owns any private course-config projection into the workspace.
 - Do not hardcode user-specific paths.

@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from installer.ai_agents_skills.agents import detect_agents, target_for
-from installer.ai_agents_skills.discovery import discover_tool
+from installer.ai_agents_skills.discovery import discover_tool, split_command
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
 
@@ -86,9 +86,11 @@ class Classroom50SkillTests(unittest.TestCase):
         manifests = load_manifests()
         spec = manifests["dependencies"]["tools"]["classroom50-teacher-extension"]
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            # Exercise the command renderer's quoting on every host, not only
+            # when a native Windows temporary-directory path happens to need it.
+            root = Path(tmp) / "agent root with spaces"
             bin_dir = root / "bin"
-            bin_dir.mkdir()
+            bin_dir.mkdir(parents=True)
             gh = bin_dir / "gh"
             gh.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
             gh.chmod(0o755)
@@ -141,7 +143,9 @@ class Classroom50SkillTests(unittest.TestCase):
                     )
 
         self.assertEqual(present["status"], "ok")
-        self.assertEqual(Path(present["command"]), extension)
+        selected = split_command(present["command"])
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(Path(selected[0]), extension)
 
     def test_nonfunctional_teacher_extension_is_degraded(self):
         manifests = load_manifests()
@@ -203,6 +207,11 @@ class Classroom50SkillTests(unittest.TestCase):
     def test_skill_uses_dedicated_posix_course_interpreter(self):
         body = (ROOT / "canonical/skills/classroom50/SKILL.md").read_text(encoding="utf-8")
         self.assertIn('course_python="$HOME/.course_venv/bin/python"', body)
+        self.assertIn(
+            "course_python=/opt/coding-system/python-closure/course-management/bin/python",
+            body,
+        )
+        self.assertIn('[ "${OPENCLAW_WORKSPACE:-}" = /workspace ]', body)
         self.assertIn('"$course_python" -m course_hoanganhduc.c50_agent', body)
         self.assertNotIn("python3 -m course_hoanganhduc.c50_agent", body)
         self.assertIn("TECHNICAL_FAIL: dedicated course interpreter is missing", body)

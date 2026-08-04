@@ -12,7 +12,11 @@ Use this skill when the user asks about Google Classroom: listing courses or stu
 - Always use the agent entrypoint through the dedicated course environment:
 
 ```bash
-course_python="$HOME/.course_venv/bin/python"
+if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; then
+  course_python=/opt/coding-system/python-closure/course-management/bin/python
+else
+  course_python="$HOME/.course_venv/bin/python"
+fi
 if [ ! -x "$course_python" ]; then
   printf '%s\n' 'TECHNICAL_FAIL: dedicated course interpreter is missing' >&2
   exit 1
@@ -53,4 +57,7 @@ Refused: `unenroll`, `grade`, `download`.
 ## Target notes
 
 - Default credential/token paths follow the toolkit (`gclassroom_credentials.json`, `token.pickle`) unless overridden.
+- OpenClaw's locked sandbox uses the image-local course environment under
+  `/opt/coding-system/python-closure/course-management`; its restoring system
+  owns any private credential projection into the workspace.
 - Do not hardcode user-specific absolute paths into the skill body.
