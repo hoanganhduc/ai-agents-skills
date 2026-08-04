@@ -164,6 +164,36 @@ make install ARGS="--profile research-core --apply --real-system"
 make install ARGS="--profile research-core --apply --real-system --post-install-smoke strict"
 ```
 
+## Closure-Complete Non-OpenClaw Restore
+
+`complete-restore` expands to every skill declared by the checked-out repo
+revision, including skills added in future revisions. `workflow-artifacts` is
+the exhaustive portable artifact bundle, and `--runtime-profile full` installs
+all declared portable runtime files. Exact target and complete-action
+enforcement prevent a mistyped/missing agent home or unresolved target conflict
+from becoming a false-success partial restore. Explicit platform-inapplicable
+support files and Antigravity aliases that collide with the managed skill
+surface remain visible as declared neutral exclusions:
+
+```bash
+export AAS_RESTORE_AGENTS="codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi"
+make precheck ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
+make plan ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
+make install ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents --require-complete-install --apply --real-system --post-install-smoke verify"
+```
+
+The integrity-only post-install mode is appropriate when an outer restoration
+workflow installs the declared software/Python closure immediately afterward.
+Once that closure is present, run
+`make installed-runtime-smoke ARGS="--require-complete-coverage"`; it requires
+every declared runtime skill to be managed, executes every offline contract
+from a verified scratch copy, neutrally reports declared manual-native,
+doctor-only, and static-only exclusions, and fails on unknown coverage.
+
+OpenClaw is deliberately absent from the command above. Real OpenClaw writes
+remain delegated to its separate reviewed component and manifest workflow;
+this complete-restore flow does not write `.openclaw`.
+
 ## Runtime Files
 
 `--runtime-profile auto` is the default. When a selected skill has declared

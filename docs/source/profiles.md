@@ -1,6 +1,6 @@
 # Profiles
 
-A profile is a named bundle of skills. Profiles are the easiest way to install a coherent workflow without listing every skill manually. The default profile is `research-core`; the broadest profile is `full-research`.
+A profile is a named bundle of skills. Profiles are the easiest way to install a coherent workflow without listing every skill manually. The default profile is `research-core`; `full-research` is the broadest curated research bundle. `complete-restore` uses a wildcard so it expands to every current or future skill declared by the pinned repo revision.
 
 Profiles do not automatically install optional artifacts. Add `--artifact-profile ...` when you also want templates, personas, entrypoint aliases, or management notices.
 
@@ -11,10 +11,14 @@ make precheck ARGS="--profile research-core"
 make plan ARGS="--profile research-core"
 make install ARGS="--profile research-core --dry-run"
 make plan ARGS="--profile library --artifact-profile research-entrypoints --with-deps"
+make plan ARGS="--agents codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
 ```
+
+The complete-restore target list deliberately excludes OpenClaw. Real OpenClaw restoration is delegated to the separately reviewed OpenClaw component and manifest flow.
 
 | Profile | Description | Skills |
 |---|---|---|
+| `complete-restore` | Every skill declared by this pinned repository revision for closure-complete restoration of supported non-OpenClaw targets. | `*` |
 | `course-management` | Course management toolkit skills: Classroom50, Canvas, Google Classroom, and local student DB agents. | `classroom50`, `course-canvas`, `course-google-classroom`, `course-db` |
 | `digest` | Tracked-topic and RSS digest workflows. | `research-digest-wrapper`, `rss-news-digest`, `digest-bridge` |
 | `document` | Document conversion and structured database lookup. | `docling`, `database-lookup` |

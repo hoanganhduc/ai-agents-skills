@@ -20,6 +20,21 @@ class StaticCheckTests(unittest.TestCase):
         self.assertIn("[System.Management.Automation.Language.Parser]::ParseFile($path", script)
         self.assertIn(str(path.resolve()).replace("'", "''"), script)
 
+    def test_windows_python_runner_selects_one_command_when_path_has_duplicates(self) -> None:
+        text = Path("canonical/runtime/runners/run_python.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("$commands = @(Get-Command", text)
+        self.assertIn("return [string]($commands[0].Source)", text)
+        self.assertIn("$python = [string]($commands[0].Source)", text)
+        self.assertNotIn("$python = $command.Source", text)
+
+    def test_installed_runtime_copy_uses_portable_open_flags(self) -> None:
+        text = Path("installer/ai_agents_skills/runtime_smoke.py").read_text(encoding="utf-8")
+
+        self.assertIn('getattr(os, "O_CLOEXEC", 0)', text)
+        self.assertIn('getattr(os, "O_BINARY", 0)', text)
+        self.assertNotIn("os.O_RDONLY | os.O_CLOEXEC", text)
+
     def test_wsl_bash_syntax_path_uses_wslpath_with_forward_slashes(self) -> None:
         converted = Mock(returncode=0, stdout="/mnt/c/repo/script.sh\n")
         script_path = Path("C:/repo/script.sh")

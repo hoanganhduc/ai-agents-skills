@@ -11,6 +11,12 @@ from .target_surfaces import validate_target_surfaces
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_DIR = REPO_ROOT / "manifest"
+SUPPORT_FILE_EXCLUSION_SUFFIXES = {
+    "windows": frozenset({".sh"}),
+    "linux": frozenset({".bat", ".cmd", ".ps1"}),
+    "macos": frozenset({".bat", ".cmd", ".ps1"}),
+    "wsl": frozenset({".bat", ".cmd", ".ps1"}),
+}
 
 
 class ManifestError(ValueError):
@@ -134,6 +140,7 @@ def validate_manifests(
         for template_slug in spec.get("recommended_templates", []):
             if template_slug not in declared_templates:
                 raise ManifestError(f"skill {name} recommends unknown template {template_slug}")
+        validate_neutral_platform_support_files(name, spec)
 
     for profile_name, spec in profiles["profiles"].items():
         if not isinstance(spec, dict):
@@ -206,6 +213,63 @@ def validate_manifests(
             validate_runtime_smoke_contract(skill, spec["smoke"])
 
     validate_delegation_manifest(delegation)
+
+
+def validate_neutral_platform_support_files(
+    skill: str,
+    spec: dict[str, Any],
+) -> None:
+    declarations = spec.get("neutral_platform_support_files")
+    if declarations is None:
+        return
+    if not isinstance(declarations, dict):
+        raise ManifestError(
+            f"skill {skill} neutral_platform_support_files must be an object"
+        )
+    unknown_platforms = set(declarations) - set(SUPPORT_FILE_EXCLUSION_SUFFIXES)
+    if unknown_platforms:
+        raise ManifestError(
+            f"skill {skill} neutral_platform_support_files references unknown platform(s): "
+            + ", ".join(sorted(unknown_platforms))
+        )
+    skill_root = REPO_ROOT / "canonical" / "skills" / skill
+    for platform, declared_paths in declarations.items():
+        if not isinstance(declared_paths, list) or not all(
+            isinstance(item, str) and item for item in declared_paths
+        ):
+            raise ManifestError(
+                f"skill {skill} neutral_platform_support_files.{platform} "
+                "must be a non-empty-string list"
+            )
+        if len(declared_paths) != len(set(declared_paths)):
+            raise ManifestError(
+                f"skill {skill} neutral_platform_support_files.{platform} "
+                "must not contain duplicate paths"
+            )
+        for declared_path in declared_paths:
+            relative = PurePosixPath(declared_path)
+            if (
+                relative.is_absolute()
+                or relative == PurePosixPath(".")
+                or ".." in relative.parts
+                or "\\" in declared_path
+                or relative.as_posix() != declared_path
+            ):
+                raise ManifestError(
+                    f"skill {skill} neutral platform support path must be a safe "
+                    f"canonical relative path: {declared_path}"
+                )
+            source = skill_root.joinpath(*relative.parts)
+            if not source.is_file():
+                raise ManifestError(
+                    f"skill {skill} neutral platform support file does not exist: "
+                    f"{declared_path}"
+                )
+            if relative.suffix.lower() not in SUPPORT_FILE_EXCLUSION_SUFFIXES[platform]:
+                raise ManifestError(
+                    f"skill {skill} neutral platform support file is applicable on "
+                    f"{platform} and cannot be excluded: {declared_path}"
+                )
 
 
 def validate_delegation_manifest(delegation: dict[str, Any]) -> None:

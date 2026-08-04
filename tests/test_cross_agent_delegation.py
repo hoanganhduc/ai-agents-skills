@@ -37,6 +37,7 @@ from installer.ai_agents_skills.delegation_dispatch import (
     dispatch_external_agents,
     dispatch_failure_code,
     dispatch_command,
+    evaluate_grok_selection,
     ensure_run_dir,
     expand_auto_providers,
     resolve_grok_dispatch_command,
@@ -1229,6 +1230,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(command_executable(plan[0]["command"]), bare)
             self.assertIn("--model grok-4.5", plan[0]["command"])
 
+    @unittest.skipIf(os.name == "nt", "requires a native grok-remote.exe fixture, not blocked CMD")
     def test_grok_research_auto_falls_back_remote_after_bare_nonconfirmation(self):
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1276,6 +1278,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual(command_executable(plan[0]["command"]), remote)
             self.assertIn("--model grok-4.5", plan[0]["command"])
 
+    @unittest.skipIf(os.name == "nt", "requires a native grok-remote.exe fixture, not blocked CMD")
     def test_grok_remote_profile_probe_accepts_ready_and_degraded_contracts(self):
         with tempfile.TemporaryDirectory() as tmp:
             grok_remote = write_fake_grok_remote(Path(tmp) / "grok-remote")
@@ -1293,6 +1296,110 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
                     )
                     self.assertIsNone(error)
                     self.assertEqual(observed, payload)
+
+    @unittest.skipUnless(os.name == "nt", "Windows CMD entrypoint classification")
+    def test_windows_grok_profile_probe_rejects_unsafe_remote_entrypoint_shapes(self):
+        observed, error = probe_grok_remote_profile(
+            r'"C:\test-bin\grok.cmd" --prompt-file NUL',
+            {},
+        )
+        self.assertIsNone(observed)
+        self.assertIsNone(error)
+
+        for entrypoint in (
+            r'C:\test-bin\grok-remote.cmd',
+            r'C:\test-bin\grok-remote.bat',
+            r'C:\test-bin\grok-remote.com',
+            "grok-remote",
+        ):
+            with self.subTest(entrypoint=entrypoint):
+                observed, error = probe_grok_remote_profile(
+                    f'"{entrypoint}" --prompt-file NUL',
+                    {},
+                )
+                self.assertIsNone(observed)
+                self.assertIn("explicit grok-remote.exe", error or "")
+
+    def test_windows_grok_selection_rejects_bat_cmd_and_pathext_ambiguous_bare_remote(self):
+        with patch("installer.ai_agents_skills.delegation_dispatch.os.name", "nt"):
+            for entrypoint in (
+                r'C:\test-bin\grok-remote.cmd',
+                r'C:\test-bin\grok-remote.bat',
+                r'C:\test-bin\grok-remote.com',
+                "grok-remote",
+            ):
+                with self.subTest(entrypoint=entrypoint):
+                    selection = evaluate_grok_selection(
+                        f'"{entrypoint}" --prompt-file NUL',
+                        source="test",
+                        resolved_model=None,
+                        env={},
+                    )
+                    self.assertEqual(selection["status"], "blocked")
+                    self.assertIn("explicit grok-remote.exe", selection["reason"])
+
+            allowed = evaluate_grok_selection(
+                r'"C:\test-bin\grok-remote.exe" --prompt-file NUL',
+                source="test",
+                resolved_model=None,
+                env={},
+            )
+            self.assertEqual(allowed["status"], "ok")
+
+    def test_windows_grok_profile_probe_accepts_native_exe_contract(self):
+        payload = grok_profile_status_payload("ready")
+        executable = r"C:\test-bin\grok-remote.exe"
+        with (
+            patch("installer.ai_agents_skills.delegation_dispatch.os.name", "nt"),
+            patch(
+                "installer.ai_agents_skills.delegation_dispatch.subprocess.run",
+                side_effect=[
+                    SimpleNamespace(
+                        returncode=0,
+                        stdout="grok-remote doctor --json\n",
+                        stderr="",
+                    ),
+                    SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(payload),
+                        stderr="",
+                    ),
+                ],
+            ) as run,
+        ):
+            observed, error = probe_grok_remote_profile(
+                f'"{executable}" --prompt-file NUL',
+                {},
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(observed, payload)
+        self.assertEqual(run.call_args_list[0].args[0], [executable, "--help"])
+        self.assertEqual(run.call_args_list[1].args[0], [executable, "doctor", "--json"])
+
+    def test_windows_grok_auto_fallback_rejects_discovered_cmd_remote(self):
+        root = Path("C:/test-root")
+        with (
+            patch("installer.ai_agents_skills.delegation_dispatch.os.name", "nt"),
+            patch(
+                "installer.ai_agents_skills.delegation_dispatch.discover_tool",
+                side_effect=[
+                    {"status": "missing"},
+                    {"status": "ok", "command": r"C:\bin\grok-remote.cmd"},
+                ],
+            ),
+        ):
+            selection = resolve_grok_dispatch_command(
+                root,
+                "windows",
+                {},
+                "grok-4.5",
+            )
+
+        self.assertEqual(selection["status"], "blocked")
+        self.assertIn("explicit grok-remote.exe", selection["reason"])
+        self.assertEqual(selection["source"], "remote-fallback-after-bare-nonconfirmation")
+        self.assertEqual(selection["model_probe"]["reason_code"], "bare_cli_missing")
 
     @unittest.skipUnless(os.name == "posix", "POSIX umask behavior")
     def test_grok_remote_help_and_doctor_use_private_posix_umask(self):
@@ -1334,6 +1441,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertEqual((cache_dir / "help-cache").stat().st_mode & 0o777, 0o600)
             self.assertEqual((cache_dir / "doctor-cache").stat().st_mode & 0o777, 0o600)
 
+    @unittest.skipIf(os.name == "nt", "requires a native grok-remote.exe fixture, not blocked CMD")
     def test_grok_remote_profile_probe_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             grok_remote = write_fake_grok_remote(Path(tmp) / "grok-remote")
@@ -1440,6 +1548,7 @@ class DeepSeekEndpointDispatchTests(unittest.TestCase):
             self.assertIsNone(observed)
             self.assertEqual(error, "grok-remote does not support managed-profile readiness")
 
+    @unittest.skipIf(os.name == "nt", "requires a native grok-remote.exe fixture, not blocked CMD")
     def test_grok_dispatch_requires_matching_managed_profile(self):
         manifests = load_manifests()
         prechecks = build_external_agent_prechecks(

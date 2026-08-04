@@ -198,7 +198,7 @@ lighter platform-specific guidance than Linux and Windows.
   docs, personas, and
   entrypoint aliases.
 - [docs/profiles.md](docs/profiles.md): selectable profiles such as
-  `research-core`, `full-research`, and `course-management`.
+  `research-core`, `full-research`, `complete-restore`, and `course-management`.
 - [docs/course-management.md](docs/course-management.md): Classroom50, Canvas,
   Google Classroom, and local roster DB agent skills (manual page).
 - [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
@@ -334,6 +334,26 @@ After reviewing `plan` output, a real install uses both write gates:
 make install ARGS="--profile research-core --apply --real-system"
 ```
 
+For the closure-complete, non-OpenClaw component of a machine restoration, use
+the wildcard `complete-restore` profile, the exhaustive `workflow-artifacts`
+profile, the full portable runtime, exact target enforcement, and complete
+action enforcement. The command fails before writing if any requested agent
+home is absent or any requested action has an unresolved conflict. Explicit
+manifest-declared platform-inapplicable support files and Antigravity alias collisions with the
+managed skill surface are recorded as declared neutral exclusions:
+
+```bash
+export AAS_RESTORE_AGENTS="codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi"
+make plan ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
+make install ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents --require-complete-install --apply --real-system --post-install-smoke verify"
+```
+
+An outer restoration system should close software and Python dependencies next,
+then run `make installed-runtime-smoke ARGS="--require-complete-coverage"`.
+OpenClaw is intentionally excluded
+from this target list: real OpenClaw restoration remains delegated to its
+reviewed component/manifests and is not written by this complete-restore flow.
+
 Skills install in `--install-mode auto` by default so the repo remains the
 single maintained source without hiding agent-loader differences. `plan --json`
 shows the effective mode, agent policy evidence, apply-time symlink fallback,
@@ -357,8 +377,8 @@ dependency-bound artifacts should also install their backing skills.
   entrypoints for installer CLI commands when debugging wrapper behavior.
 - Installer CLI commands include `doctor`, `precheck`, `audit-system`, `plan`,
   `install`, `verify`, `smoke`, `rollback`, `uninstall`, `runtime-smoke`,
-  `lifecycle-test`, `list-skills`, `list-artifacts`, `describe`, and
-  `describe-artifact`.
+  `installed-runtime-smoke`, `lifecycle-test`, `list-skills`, `list-artifacts`,
+  `describe`, and `describe-artifact`.
 - Makefile-only maintainer targets include `docs`, `docs-site`, `docs-check`,
   `static-check`, `sanitize-check`, `test`, and `release-check`; run them
   through `make` or `./make.ps1`, not as installer CLI commands.
@@ -561,8 +581,10 @@ def profiles_text(manifests: dict[str, Any]) -> str:
         "# Profiles\n\n"
         "A profile is a named bundle of skills. Profiles are the easiest way to "
         "install a coherent workflow without listing every skill manually. The "
-        "default profile is `research-core`; the broadest profile is "
-        "`full-research`.\n\n"
+        "default profile is `research-core`; `full-research` is the broadest "
+        "curated research bundle. `complete-restore` uses a wildcard so it "
+        "expands to every current or future skill declared by the pinned repo "
+        "revision.\n\n"
         "Profiles do not automatically install optional artifacts. Add "
         "`--artifact-profile ...` when you also want templates, personas, "
         "entrypoint aliases, or management notices.\n\n"
@@ -572,7 +594,11 @@ def profiles_text(manifests: dict[str, Any]) -> str:
         "make plan ARGS=\"--profile research-core\"\n"
         "make install ARGS=\"--profile research-core --dry-run\"\n"
         "make plan ARGS=\"--profile library --artifact-profile research-entrypoints --with-deps\"\n"
+        "make plan ARGS=\"--agents codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents\"\n"
         "```\n\n"
+        "The complete-restore target list deliberately excludes OpenClaw. "
+        "Real OpenClaw restoration is delegated to the separately reviewed "
+        "OpenClaw component and manifest flow.\n\n"
         + profiles_table_text(manifests)
         + "\n\n"
         "Related pages: [Skills](skills.md), [Optional Artifacts](artifacts.md), "
@@ -971,6 +997,7 @@ make fake-root-lifecycle ARGS="--skill zotero --platform-shape linux"
 make fake-root-lifecycle ARGS="--skill self-improving-agent --platform-shape all"
 make runtime-smoke
 make runtime-smoke ARGS="--skills self-improving-agent"
+make installed-runtime-smoke
 make install ARGS="--profile research-core --apply --root <fake-root> --post-install-smoke strict"
 make verify ARGS="--root <fake-or-real-root>"
 make verify ARGS="--skill zotero --root <fake-or-real-root>"
@@ -1036,8 +1063,9 @@ Result meanings:
 - `no-managed-artifacts`: the selected scope has no installer-managed files to check.
 - `missing` or failed checks: a managed file, marker, block, or format-specific condition no longer matches recorded state.
 
-CLI exit codes: `verify`, `smoke`, `runtime-smoke`, `lifecycle-test`, and
-`docs-check` exit `0` only for `ok`. Status values such as
+CLI exit codes: `verify`, `smoke`, `runtime-smoke`,
+`installed-runtime-smoke`, `lifecycle-test`, and `docs-check` exit `0` only
+for `ok`. Status values such as
 `no-managed-artifacts`, `degraded`, `stale`, or `failed` are nonzero unless a
 higher-level lifecycle scenario intentionally records them as expected.
 
@@ -1109,6 +1137,35 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 make runtime-smoke
 make runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
 make runtime-smoke ARGS="--skills self-improving-agent"
+```
+
+Use `installed-runtime-smoke` after dependencies have been restored to test
+the managed runtime already installed under the selected root. With no skill
+filter it executes every installed `offline-smoke` contract. Declared
+`manual-native`, `doctor-only`, and `static-only` coverage entries are reported
+as neutral exclusions; they do not hide an offline-contract failure. A missing
+or unknown coverage class is a hard failure, so newly added runtime skills
+cannot silently escape the restore verification gate. A missing native runtime
+runner also fails when an installed offline contract needs to execute. For a
+closure restore, `--require-complete-coverage` additionally requires managed
+runtime files for every runtime-backed skill declared by the pinned revision.
+Before execution, managed-state integrity is verified; runtime files are then
+descriptor-read, SHA-256 checked, copied into an isolated scratch runtime, and
+only the verified scratch runner is executed.
+
+Every installed-runtime report, including an early `skipped` result, uses the
+stable top-level schema `ai-agents-skills.installed-runtime-smoke.v1` with
+`schema_version: 1`. Restore orchestrators must require that exact schema and
+version, `status: ok`, `unknown_coverage_count: 0`, and
+`missing_managed_runtime_count: 0`; a `skipped` report is
+not readiness evidence. Declared exclusions remain visible through
+`declared_exclusion_count` and `declared_exclusions` and are the only neutral
+non-executed coverage class.
+
+```bash
+make installed-runtime-smoke
+make installed-runtime-smoke ARGS="--skills graph-verifier,formal-skeleton-helper"
+make installed-runtime-smoke ARGS="--require-complete-coverage"
 ```
 
 `self-improving-agent` has a portable offline smoke contract for its
@@ -3131,6 +3188,36 @@ Real-system writes should be a final step after reviewing `plan` output:
 make install ARGS="--profile research-core --apply --real-system"
 make install ARGS="--profile research-core --apply --real-system --post-install-smoke strict"
 ```
+
+## Closure-Complete Non-OpenClaw Restore
+
+`complete-restore` expands to every skill declared by the checked-out repo
+revision, including skills added in future revisions. `workflow-artifacts` is
+the exhaustive portable artifact bundle, and `--runtime-profile full` installs
+all declared portable runtime files. Exact target and complete-action
+enforcement prevent a mistyped/missing agent home or unresolved target conflict
+from becoming a false-success partial restore. Explicit platform-inapplicable
+support files and Antigravity aliases that collide with the managed skill
+surface remain visible as declared neutral exclusions:
+
+```bash
+export AAS_RESTORE_AGENTS="codex,claude,deepseek,copilot,opencode,antigravity,grok,kimi"
+make precheck ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
+make plan ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents"
+make install ARGS="--agents $AAS_RESTORE_AGENTS --profile complete-restore --artifact-profile workflow-artifacts --runtime-profile full --require-all-requested-agents --require-complete-install --apply --real-system --post-install-smoke verify"
+```
+
+The integrity-only post-install mode is appropriate when an outer restoration
+workflow installs the declared software/Python closure immediately afterward.
+Once that closure is present, run
+`make installed-runtime-smoke ARGS="--require-complete-coverage"`; it requires
+every declared runtime skill to be managed, executes every offline contract
+from a verified scratch copy, neutrally reports declared manual-native,
+doctor-only, and static-only exclusions, and fails on unknown coverage.
+
+OpenClaw is deliberately absent from the command above. Real OpenClaw writes
+remain delegated to its separate reviewed component and manifest workflow;
+this complete-restore flow does not write `.openclaw`.
 
 ## Runtime Files
 

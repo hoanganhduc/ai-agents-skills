@@ -439,6 +439,9 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         "file_type",
         "platforms",
         "runtime_root",
+        "reason",
+        "declared_exclusion",
+        "exclusion_code",
     ):
         if key in action:
             result[key] = action[key]
