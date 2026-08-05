@@ -178,10 +178,30 @@ def _send_file(
         # Fallback: just report path
         return {"status": "ok", "file_path": file_path, "note": "send_file.sh not available"}
 
+    request = json.dumps(
+        {
+            "channel": channel,
+            "target": target,
+            "media": file_path,
+            "caption": title or os.path.basename(file_path),
+        },
+        ensure_ascii=False,
+    )
+    delivery_env = {
+        key: os.environ[key]
+        for key in (
+            "HOME", "LANG", "LC_ALL", "TZ", "AAS_RUNTIME_WORKSPACE",
+            "OPENCLAW_WORKSPACE", "AAS_FILE_DELIVERY_SECRETS_FILE",
+            "AAS_ZOTERO_DELIVERY_DIR",
+        )
+        if os.environ.get(key)
+    }
+    delivery_env["PATH"] = "/usr/bin:/bin"
     try:
         proc = subprocess.run(
-            [script, channel, target, file_path, title or os.path.basename(file_path)],
-            capture_output=True, text=True, timeout=180,
+            [script],
+            input=request, capture_output=True, text=True, timeout=180,
+            env=delivery_env,
         )
         try:
             return json.loads(proc.stdout.strip())

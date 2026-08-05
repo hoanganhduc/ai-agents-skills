@@ -7,8 +7,8 @@ from typing import Any
 AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
     "codex": {
         "symlink_skill_file": False,
-        "default_mode": "reference",
-        "reason": "Codex user skill discovery is known to ignore file-symlinked SKILL.md files.",
+        "default_mode": "copy",
+        "reason": "Codex user skill discovery needs regular SKILL.md files; copy mode also keeps skills and support files self-contained from the source checkout.",
     },
     "claude": {
         "symlink_skill_file": True,

@@ -34,6 +34,7 @@ from .runtime import (
     runtime_expected_sha256,
     runtime_source_content_hash,
 )
+from .windows_security import require_handle_bound_mutation
 
 
 def gather_runtime_files(skill: str, manifests: dict[str, Any]) -> list[dict[str, Any]]:
@@ -232,6 +233,8 @@ def apply_runtime_target_manifest_file(
     .openclaw/skills/<skill>/ and runtime (S4) files under the neutral root, each via
     a verify-before-write gate (live source must match the approved source_sha256).
     The live broker registration/serve is host-gated and only PLANNED here."""
+    if not dry_run:
+        require_handle_bound_mutation("OpenClaw runtime-target apply")
     manifest = load_runtime_target_manifest(Path(manifest_path))
     validate_runtime_target_manifest(manifest, require_approved=True)
     root, rroot = validate_runtime_target_apply_paths(manifest, root=root, runtime_root=runtime_root)

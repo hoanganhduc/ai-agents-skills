@@ -30,6 +30,44 @@ import panel_parent as pp  # noqa: E402
 import provider_resources as pr  # noqa: E402
 
 
+class PanelProviderCredentialScopeTests(unittest.TestCase):
+    def test_each_attested_provider_receives_only_its_explicit_secret_keys(self) -> None:
+        expected = {
+            "claude": {
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "CLAUDE_API_KEY",
+                "CLAUDE_CODE_OAUTH_TOKEN",
+            },
+            "codex": {"OPENAI_API_KEY"},
+            "codewhale": {"DEEPSEEK_API_KEY"},
+            "deepseek": {"DEEPSEEK_API_KEY"},
+            "grok": {"GROK_API_KEY", "XAI_API_KEY"},
+            "antigravity": {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+            "copilot": {"COPILOT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"},
+            "kimi": {"KIMI_API_KEY", "MOONSHOT_API_KEY"},
+            "opencode": {"OPENCODE_API_KEY"},
+        }
+        self.assertEqual(
+            {provider: set(keys) for provider, keys in pp.PANEL_PROVIDER_AUTH_ENV.items()},
+            expected,
+        )
+        all_keys = set().union(*expected.values())
+        source = {key: f"restored-{key.lower()}" for key in all_keys}
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            for provider, allowed in expected.items():
+                with self.subTest(provider=provider), mock.patch.dict(
+                    os.environ, source, clear=True
+                ):
+                    child = pp._panel_child_environment(
+                        provider,
+                        work,
+                        {"provider": provider},
+                    )
+                self.assertEqual(set(child) & all_keys, allowed)
+
+
 _TEST_PROVIDER_FAMILIES = {
     "codex": "openai",
     "claude": "anthropic",
@@ -598,9 +636,35 @@ class PanelParentUnitTests(unittest.TestCase):
     def test_only_verified_providers_are_prompt_only(self) -> None:
         self.assertEqual(
             pp.PROMPT_ONLY_PROVIDERS,
-            frozenset({"claude", "codex", "codewhale", "deepseek"}),
+            frozenset({"claude", "codex", "codewhale", "deepseek", "grok"}),
         )
-        self.assertNotIn("grok", pp.PROMPT_ONLY_PROVIDERS)
+
+    def test_grok_private_prompt_transport_uses_dev_stdin(self) -> None:
+        prompt = "bounded Grok review prompt"
+        command = [
+            "/usr/bin/grok",
+            "-p",
+            prompt,
+            "--permission-mode",
+            "plan",
+        ]
+
+        secured, stdin_prompt = pp._panel_private_prompt_transport(
+            "grok", command, prompt
+        )
+
+        self.assertEqual(stdin_prompt, prompt)
+        self.assertEqual(
+            secured,
+            [
+                "/usr/bin/grok",
+                "--prompt-file",
+                "/dev/stdin",
+                "--permission-mode",
+                "plan",
+            ],
+        )
+        self.assertNotIn(prompt, secured)
 
     def test_panel_commands_use_native_read_only_modes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
@@ -865,6 +929,51 @@ class PanelParentUnitTests(unittest.TestCase):
         self.assertEqual(result["prompt_transport"], "stdin")
         self.assertEqual(result["isolation_mode"], "trusted_local_resource_limited")
         self.assertEqual(result["resource_limits"]["tasks_max"], 64)
+
+    @unittest.skipUnless(
+        _trusted_resource_enforcement_works(),
+        "trusted-local transport requires a working bubblewrap and a systemd user scope",
+    )
+    def test_trusted_local_grok_panel_uses_private_stdin_transport(self) -> None:
+        prompt = "bounded Grok review prompt"
+        observed: dict[str, object] = {}
+
+        def bounded_runner(cmd, env, cwd, timeout_s, **kwargs):  # noqa: ANN001
+            observed.update({"cmd": cmd, **kwargs})
+            return 0, "PANEL_SMOKE_OK", ""
+
+        with _ProviderAttestationFixture() as fixture, tempfile.TemporaryDirectory(
+            dir=str(Path.home())
+        ) as tmp, mock.patch.dict(
+            os.environ,
+            {
+                **fixture.environment,
+                "AAS_AUTOLOOP_PROVIDER_TRANSPORT": "trusted-local",
+                "AAS_AUTOLOOP_EXTERNAL_PANEL_EGRESS": "allow",
+            },
+            clear=False,
+        ), mock.patch.object(
+            pp, "_default_runner", side_effect=bounded_runner
+        ), mock.patch.object(
+            pp, "cleanup_resource_scope", return_value=None
+        ):
+            base = Path(tmp)
+            root = base / "project"
+            raw_dir = base / "raw"
+            root.mkdir(mode=0o700)
+            raw_dir.mkdir(mode=0o700)
+            result = pp.run_one("grok", prompt, root, raw_dir, "smoke", 120)
+
+        command = observed["cmd"]
+        self.assertNotIn(prompt, command)
+        self.assertIn("--prompt-file", command)
+        prompt_file_index = command.index("--prompt-file")
+        self.assertEqual(command[prompt_file_index + 1], "/dev/stdin")
+        self.assertEqual(observed["stdin_text"], prompt)
+        self.assertTrue(result["usable"], result)
+        self.assertEqual(result["provider_family"], "xai")
+        self.assertEqual(result["prompt_transport"], "stdin")
+        self.assertEqual(result["provider_transport"], "trusted-local")
 
     def test_trusted_local_invalid_limits_deny_before_provider_spawn(self) -> None:
         with _ProviderAttestationFixture() as fixture, tempfile.TemporaryDirectory(

@@ -13,8 +13,10 @@ Real-system OpenClaw writes are available only through the separate
 `openclaw-target-*` command family. That path supports approved v2 manifests
 for `copy` writes to `.openclaw/skills/<skill>/SKILL.md` only, with existing
 `.openclaw/skills`, native target evidence, immutable approval, immediate
-pre-state recheck, an OpenClaw-specific confirmation phrase, and hash-based
-uninstall.
+pre-state recheck, an OpenClaw-specific confirmation phrase, and receipt-based
+uninstall. If the approved rendered bytes already exist, the target apply path
+records a canonical-source/content/identity attestation without rewriting the
+file; uninstall later forgets that adopted file rather than deleting it.
 
 OpenClaw receives only the artifacts that are safe for the fake-root target.
 Runtime-backed skills are blocked unless neutral runtime evidence exists, and
@@ -40,12 +42,12 @@ installed by normal `openclaw-target-*` skill copies.
 | Source of truth | `canonical/runtime/skills/remote-bridge/` in this repo |
 | Publish status | **Blocked**: installed publisher name is an inert revocation stub |
 | Legacy tree | `~/.openclaw/workspace/skills/aas-remote-bridge/` |
-| Secrets | `~/.openclaw/workspace/secrets/remote-bridge/secrets.json` |
+| Secrets | `~/.openclaw/workspace/.config/remote-bridge/secrets.json` |
 | State | `~/.openclaw/workspace/.remote-bridge-state` |
 
 The adapter has **no automatic or bidirectional synchronization** with host
 remote-bridge secrets or state. `/aas` dispatch uses its separate
-workspace-owned paths, passes a narrow credential-free child environment, and
+workspace-owned paths, passes a narrow child environment, and
 never imports or runs the legacy sync helper.
 Operators must provision the workspace secrets explicitly; changes do not
 propagate between host and workspace configurations. Replacing an older managed

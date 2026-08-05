@@ -25,6 +25,20 @@ Windows: `run_force_loop.ps1` via `run_skill.ps1`.
 - **notify** auto/on
 - Foreground start on all OS
 
+Notification defaults remain Zulip-primary with optional Telegram fallback.
+For a campaign that must never use Telegram, export
+`AAS_REMOTE_STRICT_NOTIFY_CHANNEL=zulip` in the launching environment; the
+bridge then enforces Zulip at every send boundary.
+The Zulip stream (`zulip.control_stream` in the remote-bridge secrets) must
+name an **existing** channel — the bridge never creates streams; verify it and
+optionally live-auth in a launch preflight (see the pack `OPERATOR_RUNBOOK.md`,
+"Notify channel and launch preflight").
+
+Under trusted-local attestation the whole provider package tree must be
+host-controlled (no group/other write, no symlinks); npm installs usually need
+a one-time `chmod -R go-w` (see `OPERATOR_RUNBOOK.md`, "Trusted-local
+attestation preflight").
+
 See the pack `README.md` and `OPERATOR_RUNBOOK.md`.
 
 ## Not this kit

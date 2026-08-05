@@ -1924,10 +1924,30 @@ def _channel_ready(cfg: BridgeConfig, channel: str) -> bool:
     return False
 
 
+STRICT_NOTIFY_CHANNEL_ENV = "AAS_REMOTE_STRICT_NOTIFY_CHANNEL"
+
+
+def strict_notify_channel(
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Return a campaign-wide single-channel boundary, or no restriction."""
+
+    source = os.environ if environ is None else environ
+    value = str(source.get(STRICT_NOTIFY_CHANNEL_ENV) or "").strip().lower()
+    if not value:
+        return None
+    if value not in {"zulip", "telegram"}:
+        raise ValueError(
+            f"{STRICT_NOTIFY_CHANNEL_ENV} must be zulip, telegram, or empty"
+        )
+    return value
+
+
 def resolve_notify_channel_order(
     cfg: BridgeConfig,
     *,
     requested: str | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Ordered channels for a send.
 
@@ -1939,6 +1959,11 @@ def resolve_notify_channel_order(
     token = (requested or "").strip().lower() or None
     if token in {"", "auto", "both", "default"}:
         token = None
+    strict_channel = strict_notify_channel(environ)
+    if strict_channel is not None:
+        if token not in {None, strict_channel}:
+            return []
+        return [strict_channel] if _channel_ready(cfg, strict_channel) else []
     if token == "telegram":
         return ["telegram"] if _channel_ready(cfg, "telegram") else []
     # zulip primary (+ telegram fallback when available)
@@ -1976,6 +2001,7 @@ def notify_channels(
     dry_run: bool = False,
     html: str | None = None,
     stop_on_first_success: bool = True,
+    environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Send notify text.
 
@@ -1991,7 +2017,9 @@ def notify_channels(
     safe_job_id = sanitize_notify_job(job_id, cfg)
 
     if channels is None:
-        chans = resolve_notify_channel_order(cfg, requested=None)
+        chans = resolve_notify_channel_order(
+            cfg, requested=None, environ=environ
+        )
     else:
         # Preserve caller order but still drop unready channels
         chans = [c for c in channels if _channel_ready(cfg, c) or c not in {"zulip", "telegram"}]
@@ -2000,8 +2028,12 @@ def notify_channels(
             chans = [c for c in ("zulip", "telegram") if c in chans] + [
                 c for c in chans if c not in {"zulip", "telegram"}
             ]
+    strict_channel = strict_notify_channel(environ)
+    if strict_channel is not None:
+        chans = [channel for channel in chans if channel == strict_channel]
     if not chans and channels is None:
-        chans = list(cfg.notify_channels) or [cfg.default_channel]
+        if strict_channel is None:
+            chans = list(cfg.notify_channels) or [cfg.default_channel]
     results: dict[str, Any] = {}
     for ch in chans:
         try:

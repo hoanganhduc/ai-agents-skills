@@ -8,6 +8,7 @@ from typing import Any
 
 from . import github_actions_backend, hetzner_backend, kaggle_backend
 from .config import DEFAULT_ROUTING_ORDER, SUPPORTED_BACKENDS, routing_order_error
+from .state import validate_job_id
 
 # Runtime-watchdog verdicts (plan §5).
 WATCH_OK = "completed"
@@ -163,6 +164,7 @@ def backends_allowlist_value(policy: dict[str, Any]) -> tuple[list[str] | None, 
 def normalize_job(job: dict[str, Any], *, config: Any) -> dict[str, Any]:
     normalized = dict(job)
     normalized.setdefault("job_id", make_job_id())
+    normalized["job_id"] = validate_job_id(normalized["job_id"])
     normalized.setdefault("environment_name", config.modal_environment)
     normalized.setdefault("deployment_alias", config.deployment_alias)
     normalized.setdefault("template_version", "v1")

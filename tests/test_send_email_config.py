@@ -30,6 +30,7 @@ def _import_send_email():
 def _write_json(path: Path, data: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
+    path.chmod(0o600)
     return path
 
 
@@ -93,25 +94,18 @@ class SendEmailConfigTests(unittest.TestCase):
         self.assertEqual(cfg.host, "xdg.example")
         self.assertEqual(cfg.secrets_source, "platform_default")
 
-    def test_legacy_shared_file_is_used_only_when_send_email_shaped(self) -> None:
+    def test_broad_shared_secret_selectors_are_not_send_email_authorities(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             shaped = _write_json(root / "shared.json", {"smtp": {"host": "shared.example"}})
-            unrelated = _write_json(root / "zotero.json", {"zotero": {"library_id": "1"}})
             with mock.patch.dict(os.environ, {
                 "AAS_SECRETS_FILE": str(shaped),
-                "HOME": str(root / "home1"),
+                "OPENCLAW_SECRETS_FILE": str(shaped),
+                "HOME": str(root / "home"),
             }, clear=True):
                 cfg = self.se.load_config(self.se._selftest_namespace())
-            with mock.patch.dict(os.environ, {
-                "AAS_SECRETS_FILE": str(unrelated),
-                "HOME": str(root / "home2"),
-            }, clear=True):
-                ignored = self.se.load_config(self.se._selftest_namespace())
-        self.assertEqual(cfg.host, "shared.example")
-        self.assertEqual(cfg.secrets_source, "AAS_SECRETS_FILE")
-        self.assertIsNone(ignored.host)
-        self.assertEqual(ignored.secrets_source, "none")
+        self.assertIsNone(cfg.host)
+        self.assertEqual(cfg.secrets_source, "none")
 
     def test_explicit_invalid_json_returns_config_error_without_secret_contents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -122,6 +116,69 @@ class SendEmailConfigTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(out["error_code"], "config_error")
         self.assertNotIn("CANARY_SECRET", json.dumps(out))
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor and mode semantics")
+    def test_secret_authority_rejects_symlink_hardlink_permissive_and_oversized_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            private = _write_json(root / "private.json", {"smtp": {"host": "safe.example"}})
+            symlink = root / "symlink.json"
+            symlink.symlink_to(private)
+            hardlink = root / "hardlink.json"
+            os.link(private, hardlink)
+            permissive = _write_json(root / "permissive.json", {"smtp": {"host": "unsafe.example"}})
+            permissive.chmod(0o644)
+            oversized = root / "oversized.json"
+            oversized.write_bytes(b"{" + b" " * (self.se.MAX_SECRETS_FILE_BYTES + 1) + b"}")
+            oversized.chmod(0o600)
+
+            for candidate in (symlink, hardlink, permissive, oversized):
+                with self.subTest(candidate=candidate.name):
+                    rc, out = self._run(["show-config", "--secrets-file", str(candidate)])
+                    rendered = json.dumps(out)
+                    self.assertEqual(rc, 1)
+                    self.assertEqual(out["error_code"], "config_error")
+                    self.assertNotIn(str(root), rendered)
+                    self.assertNotIn("safe.example", rendered)
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor identity semantics")
+    def test_secret_authority_replacement_between_stat_and_open_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            selected = _write_json(root / "selected.json", {"smtp": {"host": "safe.example"}})
+            saved = root / "saved.json"
+            real_open = self.se.os.open
+            replaced = False
+
+            def swapping_open(path, flags, mode=0o777, *, dir_fd=None):
+                nonlocal replaced
+                if dir_fd is not None and path == selected.name and not replaced:
+                    replaced = True
+                    selected.rename(saved)
+                    _write_json(selected, {"smtp": {"password": "CANARY_REPLACEMENT"}})
+                return real_open(path, flags, mode, dir_fd=dir_fd)
+
+            with mock.patch.object(self.se.os, "open", side_effect=swapping_open):
+                rc, out = self._run(["show-config", "--secrets-file", str(selected)])
+
+        rendered = json.dumps(out)
+        self.assertTrue(replaced)
+        self.assertEqual(rc, 1)
+        self.assertEqual(out["error_code"], "config_error")
+        self.assertNotIn("CANARY_REPLACEMENT", rendered)
+        self.assertNotIn(str(root), rendered)
+
+    def test_secret_authority_rejects_duplicate_json_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            selected = Path(tmp) / "duplicates.json"
+            selected.write_text(
+                '{"smtp":{"host":"first.example","host":"second.example"}}',
+                encoding="utf-8",
+            )
+            selected.chmod(0o600)
+            rc, out = self._run(["show-config", "--secrets-file", str(selected)])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out["error_code"], "config_error")
 
     def test_show_config_and_accounts_do_not_print_password_or_passphrase(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

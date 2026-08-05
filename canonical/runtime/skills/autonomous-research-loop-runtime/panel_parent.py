@@ -129,7 +129,7 @@ DEFAULT_MAX_ATTEMPTS = 3
 PROVIDER_TRANSPORT_ENV = "AAS_AUTOLOOP_PROVIDER_TRANSPORT"
 TRUSTED_LOCAL_TRANSPORT = "trusted-local"
 STRICT_ISOLATED_TRANSPORT = "strict-isolated"
-PRIVATE_STDIN_PROVIDERS = frozenset({"claude", "codex"})
+PRIVATE_STDIN_PROVIDERS = frozenset({"claude", "codex", "grok"})
 MAX_CODEWHALE_ARGV_PROMPT_BYTES = 100_000
 MAX_PANEL_PROVIDERS = 8
 
@@ -156,6 +156,7 @@ PROMPT_ONLY_PROVIDERS = frozenset(
         "codex",
         "codewhale",
         "deepseek",
+        "grok",
     }
 )
 NATIVE_READ_ONLY_PROVIDERS = PROMPT_ONLY_PROVIDERS
@@ -229,11 +230,21 @@ PANEL_BASE_ENV_ALLOWLIST = frozenset(
 )
 PANEL_PROVIDER_AUTH_ENV: dict[str, frozenset[str]] = {
     "claude": frozenset(
-        {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"}
+        {
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        }
     ),
     "codex": frozenset({"OPENAI_API_KEY"}),
     "codewhale": frozenset({"DEEPSEEK_API_KEY"}),
     "deepseek": frozenset({"DEEPSEEK_API_KEY"}),
+    "grok": frozenset({"GROK_API_KEY", "XAI_API_KEY"}),
+    "antigravity": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
+    "copilot": frozenset({"COPILOT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}),
+    "kimi": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY"}),
+    "opencode": frozenset({"OPENCODE_API_KEY"}),
 }
 
 STRUCTURED_PHASE_SCHEMAS = {
@@ -2388,6 +2399,23 @@ def _panel_private_prompt_transport(
     elif provider == "codex":
         secured = [*cmd]
         secured[index] = "-"
+    elif provider == "grok":
+        # Host-proved: grok -p does not read stdin; --prompt-file /dev/stdin
+        # does (the same private transport used by the primary driver).
+        if index > 0 and cmd[index - 1] in {"-p", "--single"}:
+            secured = [
+                *cmd[: index - 1],
+                "--prompt-file",
+                "/dev/stdin",
+                *cmd[index + 1 :],
+            ]
+        else:
+            secured = [
+                *cmd[:index],
+                "--prompt-file",
+                "/dev/stdin",
+                *cmd[index + 1 :],
+            ]
     else:
         raise PanelIsolationError(
             f"provider {provider} has no verified non-argv prompt transport"

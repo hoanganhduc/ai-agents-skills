@@ -85,6 +85,17 @@ class BrokerConfig:
     hetzner_allowed_locations: list[str] = field(default_factory=lambda: ["nbg1", "hel1", "sin"])
     hetzner_location: str | None = "nbg1"
     hetzner_image: str | None = None
+    # Dedicated operator-approved staging root for portable bundles uploaded to Hetzner.
+    # Live `up`/`push`/`oneshot` fail closed when this is unset or non-absolute.
+    hetzner_bundle_root: str | None = None
+    # Exact, non-secret Hetzner project identity used to bind broad inventory/deletion and
+    # detached-reaper evidence. Project-wide operations fail closed when this is absent.
+    hetzner_project_identity: str | None = None
+    # Root/operator-produced, short-lived JSON evidence for the detached scheduler. The agent
+    # process must not own or be able to rewrite this file or its immediate parent.
+    hetzner_reaper_lease_file: str | None = None
+    hetzner_reaper_scheduler_id: str | None = None
+    hetzner_reaper_lease_max_age_seconds: int = 900
     # Kaggle Kernels lane (disabled by default; configured under [kaggle]). CPU is free and
     # quota-free; GPU is gated by a self-imposed weekly GPU-hour cap (local ledger). Kernels
     # auto-stop at the session cap and cost nothing, so there is no cost gate and no reaper.
@@ -206,6 +217,13 @@ def load_config(path: Path | None = None) -> BrokerConfig:
         hetzner_allowed_locations=list(hetzner.get("allowed_locations", ["nbg1", "hel1", "sin"])),
         hetzner_location=hetzner.get("location", "nbg1"),
         hetzner_image=hetzner.get("image"),
+        hetzner_bundle_root=hetzner.get("bundle_root"),
+        hetzner_project_identity=hetzner.get("project_identity"),
+        hetzner_reaper_lease_file=hetzner.get("reaper_lease_file"),
+        hetzner_reaper_scheduler_id=hetzner.get("reaper_scheduler_id"),
+        hetzner_reaper_lease_max_age_seconds=int(
+            hetzner.get("reaper_lease_max_age_seconds", 900)
+        ),
         kaggle_enabled=bool(kaggle.get("enabled", False)),
         kaggle_weekly_gpu_hours_cap=float(kaggle.get("weekly_gpu_hours_cap", 18.0)),
         kaggle_max_runs=int(kaggle.get("max_runs", 5)),

@@ -437,9 +437,28 @@ def cmd_get(args):
         target = parts[1] if len(parts) > 1 else ""
         caption = f"{book['title']} — {', '.join(book['authors'])}"
         if os.path.exists(send_script):
+            request = json.dumps(
+                {
+                    "channel": channel,
+                    "target": target,
+                    "media": local_path,
+                    "caption": caption,
+                },
+                ensure_ascii=False,
+            )
+            delivery_env = {
+                key: os.environ[key]
+                for key in (
+                    "HOME", "LANG", "LC_ALL", "TZ", "AAS_RUNTIME_WORKSPACE",
+                    "OPENCLAW_WORKSPACE", "AAS_FILE_DELIVERY_SECRETS_FILE",
+                    "AAS_ZOTERO_DELIVERY_DIR",
+                )
+                if os.environ.get(key)
+            }
+            delivery_env["PATH"] = "/usr/bin:/bin"
             proc = subprocess.run(
-                ["bash", send_script, channel, target, local_path, caption],
-                capture_output=True, text=True
+                [send_script],
+                input=request, capture_output=True, text=True, env=delivery_env
             )
             try:
                 result["send_result"] = json.loads(proc.stdout)

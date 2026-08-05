@@ -145,8 +145,22 @@ On Windows use `& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" ... run_autonomous_resea
 Wrap with a persistent user service or Task Scheduler for multi-day runs. A
 managed executor may reap ordinary `nohup` descendants when its command ends;
 on Linux, prefer a `systemd-run --user` service whose command is a loop-owned
-wrapper. Load credentials inside that wrapper, never through token-valued
-`--setenv` arguments or unit properties.
+wrapper. The managed force-loop backend writes one private mode-`0600`,
+allowlisted environment file below `XDG_RUNTIME_DIR`, passes only that file's
+path to `systemd-run`, and removes it through `ExecStopPost`. Never put token
+values in `--setenv` arguments or unit properties.
+
+The direct `drive` wrappers consume the restored launcher pointers
+`AAS_PROVIDER_SECRETS_FILE` and `AAS_COMPUTE_SECRETS_FILE` through the same
+strict managed loaders as the default force-loop kit. Provider authority uses
+the documented provider allowlist, including `COPILOT_PROVIDER_API_KEY` and
+`COPILOT_PROVIDER_BEARER_TOKEN`; compute authority accepts only
+`HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS`, `KAGGLE_API_TOKEN`, and
+`KAGGLE_CONFIG_DIR`. A protected authority replaces stale ambient values in its
+class, and both pointers are removed before the managed drive starts. The
+runtime's attested provider/host-pinned lane filters still decide which values
+enter each primary or panel child. Never place either pointer or credential
+assignment in the loop directory's env file.
 
 Driver behavior:
 
@@ -484,6 +498,14 @@ root. Compute the executable digest only after resolving any launcher symlink,
 and review/re-pin after every provider update. The runtime hashes the bounded
 dependency closure and revalidates the complete identity immediately before
 each spawn; a command override or endpoint-family override still fails closed.
+The tree must also be host-controlled: the executable and every file under
+the dependency root must be owned by the invoking user or root, with no
+group/other write bits and no symlinks, and ancestor directories must be
+symlink-free and not group/other writable.
+npm-installed CLIs commonly ship `775`/`664` modes and fail this gate
+("provider executable parent is group/other writable" or "provider dependency
+is not host-controlled"); fix with `chmod -R go-w` on the package root, which
+leaves the pinned digests unchanged, and re-check after reinstalls.
 
 Trusted-local resource defaults are 4 GiB primary / 3 GiB panel memory, zero
 swap, 64 GiB address space, 100% aggregate CPU quota, 128 primary / 64 panel

@@ -20,6 +20,18 @@
 #            (async, no reboot-persistence needed).
 # ---------------------------------------------------------------------------
 write_files:
+  # Per-job host identity generated locally before create. The controller pins the matching
+  # public key before its first SSH connection; no trust-on-first-use path exists.
+  - path: /etc/ssh/ssh_host_ed25519_key
+    permissions: '0600'
+    owner: root:root
+    encoding: b64
+    content: {{SSH_HOST_PRIVATE_KEY_B64}}
+  - path: /etc/ssh/ssh_host_ed25519_key.pub
+    permissions: '0644'
+    owner: root:root
+    encoding: b64
+    content: {{SSH_HOST_PUBLIC_KEY_B64}}
   - path: /etc/systemd/system/aas-deadman.service
     permissions: '0644'
     content: |
@@ -35,6 +47,8 @@ write_files:
       TimeoutStopSec=60
 
 runcmd:
+  # Discard any image-generated host identity and expose only the controller-pinned key.
+  - [ /bin/sh, -c, "find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*_key' ! -name 'ssh_host_ed25519_key' -delete && find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*_key.pub' ! -name 'ssh_host_ed25519_key.pub' -delete && systemctl restart ssh" ]
   # Arm 1a: boot-relative absolute halt at the compute cap.
   - [ /bin/sh, -c, "shutdown -h +{{MAX_MINUTES}} 'ai-agents-skills dead-man switch: compute cap {{MAX_MINUTES}} min'" ]
   # Arm 1b: start the RuntimeMaxSec backstop unit asynchronously (--no-block so cloud-init

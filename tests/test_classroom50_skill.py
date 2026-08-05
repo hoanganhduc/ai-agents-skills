@@ -29,7 +29,7 @@ ALL_AGENT_TARGETS = (
     "openclaw",
 )
 RESTORE_TARGET_MODES = {
-    "codex": "reference",
+    "codex": "copy",
     "claude": "symlink",
     "deepseek": "reference",
     "copilot": "reference",

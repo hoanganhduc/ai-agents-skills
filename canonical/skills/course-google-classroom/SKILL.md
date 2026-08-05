@@ -17,14 +17,34 @@ if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; t
 else
   course_python="$HOME/.course_venv/bin/python"
 fi
+if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; then
+  classroom_credentials=/workspace/.config/course/google-classroom/credentials.json
+  classroom_token=/workspace/.config/course/google-classroom/token.pickle
+else
+  classroom_credentials="$HOME/.config/course/google-classroom/credentials.json"
+  classroom_token="$HOME/.config/course/google-classroom/token.pickle"
+fi
 if [ ! -x "$course_python" ]; then
   printf '%s\n' 'TECHNICAL_FAIL: dedicated course interpreter is missing' >&2
   exit 1
 fi
+export GOOGLE_CLASSROOM_CREDENTIALS="${GOOGLE_CLASSROOM_CREDENTIALS:-$classroom_credentials}"
+export GOOGLE_CLASSROOM_TOKEN="${GOOGLE_CLASSROOM_TOKEN:-$classroom_token}"
 "$course_python" -m course_hoanganhduc.gclass_agent <command> [options]
 ```
 
-- On native Windows, require `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.gclass_agent <command> [options]` in PowerShell.
+- On native Windows, use the same host-owned defaults before invoking the
+  dedicated interpreter:
+
+```powershell
+if (-not $env:GOOGLE_CLASSROOM_CREDENTIALS) {
+  $env:GOOGLE_CLASSROOM_CREDENTIALS = "$env:USERPROFILE\.config\course\google-classroom\credentials.json"
+}
+if (-not $env:GOOGLE_CLASSROOM_TOKEN) {
+  $env:GOOGLE_CLASSROOM_TOKEN = "$env:USERPROFILE\.config\course\google-classroom\token.pickle"
+}
+& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.gclass_agent <command> [options]
+```
 
 - Do **not** run `course --unenroll-google-classroom`, `--grade-google-classroom`, or `--download-google-classroom-submissions` from this skill.
 - When a course id is required in agent mode, set:
@@ -56,8 +76,11 @@ Refused: `unenroll`, `grade`, `download`.
 
 ## Target notes
 
-- Default credential/token paths follow the toolkit (`gclassroom_credentials.json`, `token.pickle`) unless overridden.
+- Host agents default to `~/.config/course/google-classroom/credentials.json`
+  and `~/.config/course/google-classroom/token.pickle` unless the corresponding
+  environment variables are already set.
 - OpenClaw's locked sandbox uses the image-local course environment under
-  `/opt/coding-system/python-closure/course-management`; its restoring system
-  owns any private credential projection into the workspace.
+  `/opt/coding-system/python-closure/course-management` and defaults to the
+  restored `/workspace/.config/course/google-classroom/{credentials.json,token.pickle}`
+  projection.
 - Do not hardcode user-specific absolute paths into the skill body.

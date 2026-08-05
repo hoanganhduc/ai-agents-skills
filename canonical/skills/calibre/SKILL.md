@@ -52,6 +52,9 @@ This uses the managed ai-agents-skills runtime copy of the Calibre workflow.
 - `$AAS_RUNTIME_WORKSPACE/skills/calibre/`
 
 Use the managed runtime runner rather than invoking `run_cal.sh` directly.
+The runner selects the restored target-neutral authority through
+`AAS_SECRETS_FILE`; the direct compatibility wrapper accepts the same selector
+before the historical `OPENCLAW_SECRETS_FILE` fallback.
 
 Shared runner:
 

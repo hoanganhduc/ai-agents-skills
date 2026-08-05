@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import re
+import stat
 from pathlib import Path, PurePosixPath
 
 from .state import existing_contained_parents
+from .windows_security import private_directory_issue, private_file_issue
 
 
 OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE = "I understand OpenClaw real-system skill-file writes"
 OPENCLAW_REAL_WRITE_ACTION_CLASSES = ("canary-skill-file", "managed-skill-file")
 SAFE_SKILL_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
+OPENCLAW_SKILL_FILE_MAX_BYTES = 4 * 1024 * 1024
 
 
 def openclaw_home(root: Path) -> Path:
@@ -52,6 +57,104 @@ def openclaw_target_path(root: Path, relative_path: str, *, action_class: str) -
     return openclaw_home(root) / Path(checked)
 
 
+def openclaw_skill_file_attestation(path: Path) -> dict[str, object]:
+    """Return a stable, no-follow identity and content signature for a skill file."""
+    try:
+        initial = os.lstat(path)
+    except FileNotFoundError:
+        return {"exists": False, "kind": "missing"}
+    if stat.S_ISLNK(initial.st_mode):
+        return {"exists": True, "kind": "symlink", "target": os.readlink(path)}
+    if stat.S_ISDIR(initial.st_mode):
+        return {"exists": True, "kind": "directory"}
+    if not stat.S_ISREG(initial.st_mode):
+        return {"exists": True, "kind": "other"}
+    if initial.st_size > OPENCLAW_SKILL_FILE_MAX_BYTES:
+        raise ValueError("OpenClaw target skill file exceeds the attestation size limit")
+
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except FileNotFoundError as exc:
+        raise ValueError("OpenClaw target skill file changed while being attested") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode) or _file_identity(initial) != _file_identity(before):
+            raise ValueError("OpenClaw target skill file changed while being attested")
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 65536)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > OPENCLAW_SKILL_FILE_MAX_BYTES:
+                raise ValueError("OpenClaw target skill file exceeds the attestation size limit")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if _file_identity(before) != _file_identity(after) or total != after.st_size:
+        raise ValueError("OpenClaw target skill file changed while being attested")
+    return {
+        "exists": True,
+        "kind": "file",
+        "hash": "sha256:" + digest.hexdigest(),
+        "device": int(after.st_dev),
+        "inode": int(after.st_ino),
+        "size": int(after.st_size),
+        "mode": stat.S_IMODE(after.st_mode),
+        "uid": int(getattr(after, "st_uid", 0)),
+        "nlink": int(after.st_nlink),
+        "mtime_ns": int(getattr(after, "st_mtime_ns", after.st_mtime * 1_000_000_000)),
+        "ctime_ns": int(getattr(after, "st_ctime_ns", after.st_ctime * 1_000_000_000)),
+    }
+
+
+def openclaw_skill_file_attestation_issue(
+    root: Path,
+    signature: dict[str, object],
+    *,
+    path: Path | None = None,
+) -> str | None:
+    if signature.get("exists") is not True:
+        return None
+    if signature.get("kind") != "file":
+        return f"target path is a {signature.get('kind', 'non-file')}"
+    if signature.get("nlink") != 1:
+        return "target skill file must have exactly one hard link"
+    mode = signature.get("mode")
+    if not isinstance(mode, int) or mode & 0o022:
+        return "target skill file must not be group/world writable"
+    if os.name == "posix":
+        try:
+            owner_uid = os.lstat(root).st_uid
+        except FileNotFoundError:
+            return "target root is missing"
+        if signature.get("uid") != owner_uid:
+            return "target skill file owner does not match target root owner"
+    elif os.name == "nt" and path is not None:
+        issue = private_file_issue(path)
+        if issue is not None:
+            return issue
+    return None
+
+
+def _file_identity(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        int(metadata.st_mode),
+        int(metadata.st_nlink),
+        int(getattr(metadata, "st_uid", 0)),
+        int(metadata.st_size),
+        int(getattr(metadata, "st_mtime_ns", metadata.st_mtime * 1_000_000_000)),
+        int(getattr(metadata, "st_ctime_ns", metadata.st_ctime * 1_000_000_000)),
+    )
+
+
 def validate_openclaw_target_home(root: Path) -> dict[str, str]:
     expanded = root.expanduser()
     home = openclaw_home(expanded)
@@ -68,11 +171,22 @@ def validate_openclaw_target_home(root: Path) -> dict[str, str]:
         raise ValueError("OpenClaw real-system writes require an existing .openclaw/skills directory")
     if skills_dir.is_symlink():
         raise ValueError("OpenClaw target .openclaw/skills directory must not be a symlink")
+    expected_uid = os.lstat(expanded).st_uid if os.name == "posix" else None
     for parent in existing_contained_parents(skills_dir, expanded):
         if parent.is_symlink():
             raise ValueError(f"OpenClaw target path has a symlinked parent: {parent}")
         if not parent.is_dir():
             raise ValueError(f"OpenClaw target path has a non-directory parent: {parent}")
+        if os.name == "posix":
+            metadata = os.lstat(parent)
+            if metadata.st_uid != expected_uid:
+                raise ValueError(f"OpenClaw target path owner differs from target root: {parent}")
+            if stat.S_IMODE(metadata.st_mode) & 0o022:
+                raise ValueError(f"OpenClaw target path is group/world writable: {parent}")
+        elif os.name == "nt":
+            issue = private_directory_issue(parent)
+            if issue is not None:
+                raise ValueError(f"OpenClaw target path DACL is unsafe: {parent}: {issue}")
     return {
         "home_realpath": str(home.resolve(strict=False)),
         "managed_skills_realpath": str(skills_dir.resolve(strict=False)),

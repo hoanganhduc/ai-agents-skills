@@ -75,13 +75,9 @@ make rollback ARGS="--run 20260429-080620 --apply --real-system"
 make verify ARGS="--root <real-root>"
 ```
 
-Windows applied examples:
-
-```bat
-./make.ps1 uninstall --skill zotero --apply --root <fake-or-real-root>
-./make.ps1 rollback --run 20260429-080620 --apply --root <fake-or-real-root>
-./make.ps1 verify --root <fake-or-real-root>
-```
+Native Windows applied lifecycle commands intentionally fail closed until
+mutation is handle-bound. Use the dry-run commands above; do not treat a
+mounted-profile test from Linux/WSL as native Windows mutation proof.
 
 Safety rules:
 

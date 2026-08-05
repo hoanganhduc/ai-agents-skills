@@ -79,6 +79,7 @@ from .selectors import (
     skill_recommended_templates,
     split_csv,
 )
+from .state import sha256_file
 from .state import load_state, preflight_state_path, write_text_atomic
 from .target_prechecks import build_target_prechecks
 from .verify import verify as verify_state
@@ -268,7 +269,11 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_persistence.add_argument("--manifest", type=Path, required=True)
 
     openclaw_target_probe = sub.add_parser("openclaw-target-probe")
-    openclaw_target_probe.add_argument("--openclaw-bin", default="openclaw")
+    openclaw_target_probe.add_argument(
+        "--openclaw-bin",
+        required=True,
+        help="absolute owner-controlled OpenClaw executable; PATH lookup is forbidden",
+    )
     openclaw_target_probe.add_argument("--skill", help="skill path to include in target-pre-state evidence")
     openclaw_target_probe.add_argument("--include-canary", action="store_true")
     openclaw_target_probe.add_argument(
@@ -303,6 +308,10 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_target_apply.add_argument("--manifest", type=Path, required=True)
     openclaw_target_apply.add_argument("--apply", action="store_true")
     openclaw_target_apply.add_argument("--real-system", action="store_true")
+    openclaw_target_apply.add_argument(
+        "--openclaw-bin",
+        help="absolute attested OpenClaw executable required for a real-system native post-check",
+    )
     openclaw_target_apply.add_argument(
         "--confirm-openclaw-real-write",
         help=f"exact confirmation phrase: {OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE}",
@@ -656,12 +665,16 @@ def run(args: argparse.Namespace) -> int:
             raise ValueError(support_reason)
         spec = manifests["skills"]["skills"][skill]
         content = render_skill_md(skill, spec, "openclaw")
+        canonical_source_hash = sha256_file(canonical_skill_path(skill))
+        if canonical_source_hash is None:
+            raise ValueError(f"canonical OpenClaw skill source is unavailable: {skill}")
         evidence_items = [load_target_evidence(path) for path in args.evidence]
         return output(
             build_skill_file_target_manifest(
                 root=args.root,
                 skill=skill,
                 content=content,
+                canonical_source_hash=canonical_source_hash,
                 evidence_items=evidence_items,
                 action_class=args.action_class,
                 created_at=args.created_at,
@@ -686,6 +699,7 @@ def run(args: argparse.Namespace) -> int:
                 real_system=args.real_system,
                 confirm_phrase=args.confirm_openclaw_real_write,
                 post_apply_check=is_real_system_root(args.root),
+                openclaw_bin=args.openclaw_bin,
             ),
             args,
         )

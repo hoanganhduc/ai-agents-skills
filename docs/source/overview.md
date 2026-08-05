@@ -13,11 +13,11 @@ keeps reusable skill bodies, dependency metadata, profiles, optional artifacts,
 and target-specific rendering logic in one source tree. Agent homes such as
 `~/.codex`, `~/.claude`, `~/.deepseek`, `~/.config/opencode`, `~/.grok`, and
 `~/.kimi-code` are runtime targets. Default skill installs use auto mode:
-Claude links back to the canonical repo files, Codex and DeepSeek receive
-reference adapters, and OpenCode, Grok, and Kimi receive copied native skill
-files plus support files unless native loader evidence justifies a different
-policy. Explicit symlink, reference, and copy modes are available when you need
-to force one strategy.
+Claude links back to the canonical repo files; Codex, OpenCode, Grok, and Kimi
+receive copied native skill files plus support files; and DeepSeek receives
+reference adapters unless native loader evidence justifies a different policy.
+Explicit symlink, reference, and copy modes are available when you need to force
+one strategy.
 
 Most checked-in documentation is generated from
 `installer/ai_agents_skills/docs.py`, with manifest-derived tables inserted
@@ -47,10 +47,11 @@ from `manifest/`. Maintainers should edit the generator or manifests and run
 - `precheck` detects tools and Python packages from the current substrate.
 - `plan` and `install --dry-run` preview writes before anything is changed.
 - `--install-mode auto` is the default and resolves per agent. Claude uses
-  symlinked skill files. Codex uses reference adapters because current Codex
-  discovery ignores file-symlinked user `SKILL.md` files, DeepSeek uses
-  reference adapters because native symlinked skill loading has not been
-  verified, and OpenCode, Grok, and Kimi use copied native skill files.
+  symlinked skill files. Codex copies complete skill trees because current Codex
+  discovery ignores file-symlinked user `SKILL.md` files and installed skills
+  must not depend on the source checkout. DeepSeek uses reference adapters
+  because native symlinked skill loading has not been verified, and OpenCode,
+  Grok, and Kimi use copied native skill files.
   `symlink`, `reference`, and `copy` force one strategy for every agent.
 - Real home-directory writes require explicit `--apply --real-system`.
 - Verification checks only installed managed artifacts.

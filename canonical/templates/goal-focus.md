@@ -18,6 +18,23 @@ machine-readable portfolio of approaches, and records every direction decision.
 `loop_state.next_preferred_path`, and the managed block in `recovery.md` are
 compatibility views. They never override the four files above.
 
+## Compute policy
+
+A strict heavy-compute allowlist lives in three places that must agree:
+
+| Location | Role |
+|---|---|
+| `{loop_dir}/compute_policy.json` | Authoritative operator pin (`policy.backends` allowlist, `policy.forbidden_services`) |
+| `current_plan.json` → `compute_policy` | Reviewed sticky copy the replan flow maintains (`allowed_services`, `user_allowed_services`, `forbidden_services`) |
+| `loop_state.standing_orders.compute` | Prompt-visible mirror for drive and panel agents |
+
+The enforce runtime sources sticky pins from `compute_policy.json`, refuses a
+replan that narrows the allowlist without a structured file, and fails
+validation when the plan-level copy is missing or inconsistent. When editing an
+allowlist, update the operator pin first and let replan/reconcile refresh the
+plan copy; with an active restriction, unreported compute provenance cannot be
+banked.
+
 ## Modes
 
 - `off` — Goal Focus v2 is not active.

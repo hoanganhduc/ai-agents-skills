@@ -7,10 +7,11 @@ Subcommands:
   show-config  print the resolved configuration with the password redacted
   selftest     offline smoke (no network): build, serialize, and re-parse messages in memory
 
-Configuration is resolved in increasing precedence from (1) a JSON secrets file
-selected by --secrets-file, SEND_EMAIL_SECRETS_FILE, send-email defaults, or a
-legacy runtime secrets file (its "smtp" object, or top-level SMTP_* keys),
-(2) environment variables, then (3) explicit command-line flags. Connection
+Configuration is resolved in increasing precedence from (1) a dedicated JSON
+secrets file selected by --secrets-file, SEND_EMAIL_SECRETS_FILE, or send-email
+defaults, (2) environment variables for direct-module compatibility, then (3)
+explicit command-line flags. The managed shell/PowerShell boundary scrubs ambient
+SMTP variables and generic secret pointers before launch. Connection
 settings: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM,
 SMTP_SECURITY, SMTP_TIMEOUT. Pre-defined sender identity (all optional):
 SMTP_FROM_NAME, SMTP_REPLY_TO, SMTP_CC, SMTP_BCC, SMTP_SIGNATURE,
@@ -35,6 +36,7 @@ import os
 import shutil
 import smtplib
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -53,6 +55,7 @@ VALID_SECURITY = ("ssl", "starttls", "plain")
 SIGNATURE_DELIMITER = "-- "  # RFC 3676 signature separator (trailing space is intentional)
 PGP_DIGEST = "SHA256"
 PGP_MICALG = "pgp-sha256"  # must match PGP_DIGEST per RFC 3156
+MAX_SECRETS_FILE_BYTES = 65_536
 
 
 def _emit(obj: dict) -> None:
@@ -141,6 +144,10 @@ class ConfigError(Exception):
     """Configuration file errors that should be reported as structured JSON."""
 
 
+class _DuplicateJsonKey(ValueError):
+    """A protected JSON authority contains an ambiguous duplicate key."""
+
+
 @dataclass(frozen=True)
 class _SecretsCandidate:
     path: Path
@@ -218,12 +225,6 @@ def _secret_candidates(args: argparse.Namespace | None = None) -> list[_SecretsC
         _SecretsCandidate(path, "platform_default", invalid_is_error=True)
         for path in _platform_default_secret_paths()
     )
-    for source in ("AAS_SECRETS_FILE", "OPENCLAW_SECRETS_FILE"):
-        value = os.environ.get(source)
-        if value:
-            candidates.append(_SecretsCandidate(
-                _path_from_string(value), source, require_send_email_shape=True
-            ))
     return candidates
 
 
@@ -233,20 +234,123 @@ def _is_send_email_config(data: dict) -> bool:
     return bool(_SEND_EMAIL_SECRET_KEYS.intersection(_normalize(data)))
 
 
-def _config_error(path: Path, detail: str) -> ConfigError:
-    return ConfigError(f"{detail}: {path}")
+def _config_error(_path: Path, detail: str) -> ConfigError:
+    # Secret authority paths and platform exception strings can disclose user
+    # names or other host details. Keep user-facing failures path-independent.
+    return ConfigError(detail)
+
+
+def _open_directory_nofollow(path: Path) -> int:
+    absolute = Path(os.path.abspath(path))
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(absolute.anchor or os.sep, flags)
+    try:
+        for component in absolute.parts[1:]:
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _secret_stability(info: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(info.st_dev),
+        int(info.st_ino),
+        int(info.st_mode),
+        int(info.st_uid),
+        int(info.st_nlink),
+        int(info.st_size),
+        int(info.st_mtime_ns),
+        int(info.st_ctime_ns),
+    )
+
+
+def _read_private_secret_bytes(path: Path) -> bytes | None:
+    """Read one private authority through a stable, no-follow descriptor."""
+
+    if os.name == "nt":  # pragma: no cover - the PowerShell authority guard owns this path
+        # Native Windows callers are admitted only through run_skill.ps1, which
+        # validates and binds the selected authority before child launch.
+        if os.environ.get("AAS_WINDOWS_AUTHORITY_BOUND") != "1":
+            raise OSError("native Windows authority is not bound")
+        return path.read_bytes()
+
+    absolute = Path(os.path.abspath(path))
+    parent_descriptor: int | None = None
+    file_descriptor: int | None = None
+    try:
+        parent_descriptor = _open_directory_nofollow(absolute.parent)
+        path_info = os.stat(absolute.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        file_descriptor = os.open(absolute.name, flags, dir_fd=parent_descriptor)
+        before = os.fstat(file_descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or int(before.st_uid) != int(os.geteuid())
+            or stat.S_IMODE(before.st_mode) & 0o077
+            or int(before.st_nlink) != 1
+            or int(before.st_size) > MAX_SECRETS_FILE_BYTES
+            or (int(path_info.st_dev), int(path_info.st_ino))
+            != (int(before.st_dev), int(before.st_ino))
+        ):
+            raise OSError("secret authority is not a private bounded single-link file")
+        chunks: list[bytes] = []
+        remaining = MAX_SECRETS_FILE_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(file_descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(file_descriptor)
+        if len(payload) > MAX_SECRETS_FILE_BYTES:
+            raise OSError("secret authority is oversized")
+        if _secret_stability(before) != _secret_stability(after):
+            raise OSError("secret authority changed while reading")
+        return payload
+    except FileNotFoundError:
+        return None
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        if parent_descriptor is not None:
+            os.close(parent_descriptor)
+
+
+def _reject_duplicate_json_pairs(pairs: list[tuple[str, object]]) -> dict:
+    value: dict = {}
+    for key, item in pairs:
+        if key in value:
+            raise _DuplicateJsonKey("duplicate key")
+        value[key] = item
+    return value
 
 
 def _read_json_candidate(candidate: _SecretsCandidate) -> tuple[dict | None, _SecretsSelection | None]:
-    if not candidate.path.is_file():
-        if candidate.missing_is_error:
-            raise _config_error(candidate.path, "secrets file not found")
-        return None, None
     try:
-        data = json.loads(candidate.path.read_text(encoding="utf-8"))
-    except (ValueError, OSError) as exc:
+        payload = _read_private_secret_bytes(candidate.path)
+        if payload is None:
+            if candidate.missing_is_error:
+                raise _config_error(candidate.path, "secrets file not found")
+            return None, None
+        data = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_json_pairs,
+        )
+    except ConfigError:
+        raise
+    except (UnicodeDecodeError, ValueError, OSError):
         if candidate.invalid_is_error:
-            raise _config_error(candidate.path, f"cannot read secrets file ({exc})")
+            raise _config_error(candidate.path, "cannot securely read secrets file")
         return None, None
     if not isinstance(data, dict):
         if candidate.invalid_is_error:

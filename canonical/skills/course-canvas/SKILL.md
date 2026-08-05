@@ -15,8 +15,10 @@ Use this skill when the user asks about Canvas LMS for their course: listing ass
 ```bash
 if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; then
   course_python=/opt/coding-system/python-closure/course-management/bin/python
+  export CANVAS_CONFIG_PATH=/workspace/.config/course/canvas/config.json
 else
   course_python="$HOME/.course_venv/bin/python"
+  export CANVAS_CONFIG_PATH="${CANVAS_CONFIG_PATH:-$HOME/.config/course/canvas/config.json}"
 fi
 if [ ! -x "$course_python" ]; then
   printf '%s\n' 'TECHNICAL_FAIL: dedicated course interpreter is missing' >&2
@@ -25,7 +27,9 @@ fi
 "$course_python" -m course_hoanganhduc.canvas_agent <command> [options]
 ```
 
-- On native Windows, require `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.canvas_agent <command> [options]` in PowerShell.
+- On native Windows, set `$env:CANVAS_CONFIG_PATH` to
+  `$env:USERPROFILE\.config\course\canvas\config.json` when it is unset, then
+  require `& "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.canvas_agent <command> [options]` in PowerShell.
 
 - Do **not** call unconstrained `course --unenroll-canvas`, `--grade-canvas-assignment`, invites, announcements, page edits, or bulk downloads from this skill.
 - In agent mode, if a course id is used, set:
@@ -60,7 +64,9 @@ Refused by design: `unenroll`, `grade`, `invite`, `announce`, `download`, `messa
 
 ## Target notes
 
-- Canvas URL/token/course defaults come from the toolkit config/settings, not this skill body.
+- Native targets default `CANVAS_CONFIG_PATH` to
+  `$HOME/.config/course/canvas/config.json`. OpenClaw defaults it to
+  `/workspace/.config/course/canvas/config.json`.
 - OpenClaw's locked sandbox uses the image-local course environment under
   `/opt/coding-system/python-closure/course-management`; its restoring system
   owns any private course-config projection into the workspace.

@@ -564,7 +564,7 @@ class RemoteBridgeNotifyFallback(unittest.TestCase):
                 # Build without a literal email token so sanitize-check stays clean.
                 "email": "bot" + chr(64) + "example.com",
                 "api_key": "k",
-                "control_stream": "Research",
+                "control_stream": "ops-notify",
                 "topic_prefix": "job/",
             },
             telegram={
@@ -657,6 +657,55 @@ class RemoteBridgeNotifyFallback(unittest.TestCase):
         self.assertTrue(ts.called)
         self.assertTrue(results["telegram"]["ok"])
 
+    def test_strict_zulip_policy_disables_telegram_fallback(self) -> None:
+        from unittest import mock
+
+        mod = self._mod()
+        cfg = self._cfg(mod)
+        strict_env = {"AAS_REMOTE_STRICT_NOTIFY_CHANNEL": "zulip"}
+
+        self.assertEqual(
+            mod.resolve_notify_channel_order(
+                cfg, requested="zulip", environ=strict_env
+            ),
+            ["zulip"],
+        )
+        self.assertEqual(
+            mod.resolve_notify_channel_order(
+                cfg, requested="telegram", environ=strict_env
+            ),
+            [],
+        )
+        with mock.patch.object(
+            mod,
+            "zulip_send",
+            return_value={"ok": False, "channel": "zulip", "error": "boom"},
+        ) as zs, mock.patch.object(
+            mod, "telegram_send", return_value={"ok": True, "channel": "telegram"}
+        ) as ts:
+            results = mod.notify_channels(
+                cfg,
+                text="hi",
+                job_id="j",
+                channels=["zulip", "telegram"],
+                stop_on_first_success=True,
+                environ=strict_env,
+            )
+
+        self.assertTrue(zs.called)
+        self.assertFalse(ts.called)
+        self.assertEqual(list(results), ["zulip"])
+
+    def test_invalid_strict_notify_channel_fails_closed(self) -> None:
+        mod = self._mod()
+        cfg = self._cfg(mod)
+        with self.assertRaises(ValueError):
+            mod.resolve_notify_channel_order(
+                cfg,
+                requested="auto",
+                environ={"AAS_REMOTE_STRICT_NOTIFY_CHANNEL": "fallback"},
+            )
+
     def test_transport_exception_redacts_unconfigured_bearer_token(self) -> None:
         from unittest import mock
 
@@ -670,7 +719,7 @@ class RemoteBridgeNotifyFallback(unittest.TestCase):
                 "site": "https://example.invalid",
                 "email": "bot" + chr(64) + "example.invalid",
                 "api_key": "configured-secret",
-                "control_stream": "Research",
+                "control_stream": "ops-notify",
             },
         )
         bearer = "credential-fixture-sentinel-53961"
@@ -802,7 +851,7 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
                         "site": "https://example.zulipchat.com",
                         "email": "bot" + chr(64) + "example.com",
                         "api_key": "not-a-real-key",
-                        "control_stream": "Research",
+                        "control_stream": "ops-notify",
                         "topic_prefix": "job/",
                     },
                     "telegram": {

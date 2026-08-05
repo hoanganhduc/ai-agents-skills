@@ -696,7 +696,7 @@ class CrossAgentDelegationInstallerTests(unittest.TestCase):
                 if action.get("artifact_type") == "skill-file"
             }
             self.assertEqual(set(skill_files), {"codex", "claude", "deepseek"})
-            self.assertEqual(skill_files["codex"]["install_mode"], "reference")
+            self.assertEqual(skill_files["codex"]["install_mode"], "copy")
             self.assertEqual(skill_files["claude"]["install_mode"], "symlink")
             self.assertEqual(skill_files["deepseek"]["install_mode"], "reference")
             support_agents = {
@@ -704,7 +704,7 @@ class CrossAgentDelegationInstallerTests(unittest.TestCase):
                 for action in plan["actions"]
                 if action.get("artifact_type") == "skill-support-file"
             }
-            self.assertEqual(support_agents, {"claude"})
+            self.assertEqual(support_agents, {"codex", "claude"})
             support_relpaths = {
                 str(Path(action["path"]).relative_to(root / f".{action['agent']}" / "skills" / SKILL)).replace("\\", "/")
                 for action in plan["actions"]

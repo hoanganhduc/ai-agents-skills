@@ -50,7 +50,7 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
 
 ```bash
-bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/remote-bridge/run_remote_bridge.sh <command> [args...]
 ```
 
@@ -149,10 +149,16 @@ Optional job id for topic routing / channel override:
 export AAS_REMOTE_JOB_ID=example-job
 # default when secrets present: Zulip primary, Telegram only if Zulip fails
 # export AAS_AUTOLOOP_NOTIFY=zulip     # same as default primary
+# export AAS_REMOTE_STRICT_NOTIFY_CHANNEL=zulip  # forbid every Telegram fallback
 # export AAS_AUTOLOOP_NOTIFY=telegram  # Telegram only
 # export AAS_AUTOLOOP_NOTIFY=both      # alias for primary+fallback (not dual)
 # export AAS_AUTOLOOP_NOTIFY=off       # silence
 ```
+
+`AAS_REMOTE_STRICT_NOTIFY_CHANNEL=zulip` is a send-boundary restriction, not
+just a launch preference: explicit Telegram requests and Telegram credentials
+added later are ignored while it is set. An invalid strict-channel value fails
+closed.
 
 Events notified (best-effort, never abort the loop): `drive_start`,
 `drive_stop`, `iteration_ok` / `iteration_failed`, `quota_wait`, `paused`,

@@ -20,6 +20,17 @@ This is the legacy v1 compatibility contract. Its executable defaults are
 `"enabled": false` and `"discipline_mode": "soft"`. New loops should use Goal
 Focus v2 in `enforce` mode; see the `goal-focus` template.
 
+v1 is not only a pre-migration state: the scripted force-loop kit installs
+`goal_priority` **enabled/hard alongside** Goal Focus v2 `enforce` as its
+default pair (`force-loop/defaults/goal_priority.base.json`), and its
+`apply-defaults` validator rejects `enabled: false` on a force-loop. On such
+loops v1 supplies the campaign registry, closed-campaign discipline, and
+goal-EV prompt text while v2 owns dispatch and review-before-bank. Migrating to
+v2 merges — it does not disable — an existing `goal_priority.json`.
+`goal-priority.example.json` shows the standalone (non-force-loop) defaults;
+copying it onto a force-loop requires flipping `enabled`/`discipline_mode` to
+the kit's pins.
+
 - File: `{loop_dir}/goal_priority.json`
 - Or: `loop_state.standing_orders.goal_priority`
 - Env: `AAS_AUTOLOOP_GOAL_PRIORITY=on|off|1|0|true|false|yes|no`
@@ -60,6 +71,32 @@ Defaults are opt-in: `"enabled": false`, `"discipline_mode": "soft"`.
 - `formalize` — Lean/formal gate progress
 - `operational` — infra only
 - `advance` — allowed; discouraged as sole label in advise+
+
+## Closed campaigns
+
+`closed_campaigns` entries are objects, not bare ids:
+
+```json
+{
+  "id": "finished-subproblem",
+  "kind": "certified_host_classification",
+  "forbid_as_sole_primary": true,
+  "note": "Result certified and independently audited; keep only for regression."
+}
+```
+
+With `forbid_as_sole_primary: true`, the host warns when the latest ledger
+row's `campaign_id` (or the configured primary campaign) is a closed campaign.
+REPLAN_REQUIRED itself is triggered by the committed path targeting closed
+residual-inventory leaves or by the local streak cap, not by `closed_campaigns`
+membership. `kind` and `note` are provenance for reviewers; the host reads only
+`id` and `forbid_as_sole_primary`.
+
+Two related fields ride the same config: `panel_rank_by_goal_ev` (default
+`true`) asks panel target advice to rank candidate paths by expected
+contribution to `loop_state.goal` rather than local interest, and
+`next_campaigns_ordered` is the merged machine campaign order described under
+Residual inventory below.
 
 ## Residual inventory (optional)
 

@@ -22,7 +22,7 @@ PowerShell runner target:
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
 
-Use this skill only for explicit optional LeanExplore MCP setup. It never installs packages, starts an MCP server, writes MCP/client config, stores credentials, downloads local data, or calls LeanExplore services. It reports local readiness and emits manual configuration snippets with placeholders.
+Use this skill only for explicit optional LeanExplore MCP setup. It never installs packages, writes MCP/client config, stores credentials, downloads local data, or calls LeanExplore services during doctor, config, or smoke. On POSIX, its explicit `serve` command can start the reviewed in-process adapter for exactly `lean-explore==1.2.1`.
 
 ## Runtime Helper
 
@@ -49,7 +49,17 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/lean-explore-mcp/run_lean_explore_mcp.sh smoke
 ```
 
-The emitted local stdio snippet uses command `lean-explore` and args `["mcp", "serve", "--backend", "api"]` or `["mcp", "serve", "--backend", "local"]`. API mode uses placeholder `LEANEXPLORE_API_KEY`; local mode assumes a user-managed LeanExplore cache such as `~/.lean_explore/cache/`.
+The emitted local stdio snippet uses the absolute managed `run_lean_explore_mcp.sh` wrapper with args `["serve", "--backend", "api"]` or `["serve", "--backend", "local"]`. Set `AAS_LEANEXPLORE_SITE_PACKAGES` to an absolute, owner-protected site-packages directory containing exactly `lean-explore==1.2.1`. API mode also uses the placeholder `LEANEXPLORE_API_KEY`; local mode assumes a user-managed LeanExplore cache such as `~/.lean_explore/cache/`.
+
+Never add `--api-key` or `--api-key=<value>` to the MCP command: process
+arguments are observable outside the child. The managed POSIX wrapper captures
+and removes `LEANEXPLORE_API_KEY` before helper/interpreter discovery and moves
+it to a private inherited descriptor. The Python adapter consumes and closes
+that descriptor before importing LeanExplore. It instantiates the 1.2.1 API
+client and FastMCP app in-process; it never invokes the broken upstream CLI
+bridge. Native Windows `serve` fails explicitly because private-descriptor
+credential transport is not implemented there. Doctor, smoke, and placeholder
+config generation remain available on Windows.
 
 ## Research Evidence Policy
 

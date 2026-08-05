@@ -14,7 +14,7 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.ps1" "skills/kaggle-research-compute/kaggle_research_compute.py" <args>
+& "$runtime\run_skill.ps1" "skills/kaggle-research-compute/run_kaggle_research_compute.ps1" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
@@ -95,7 +95,7 @@ Windows:
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.ps1" `
-  "skills/kaggle-research-compute/kaggle_research_compute.py" `
+  "skills/kaggle-research-compute/run_kaggle_research_compute.ps1" `
   doctor
 ```
 
@@ -103,6 +103,10 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 
 - The broker is the decision boundary. Push kernels on Kaggle only when the router chose this lane.
 - Auth is the new single Kaggle API token, read from `KAGGLE_API_TOKEN` (or `~/.kaggle/access_token`) at runtime (env-first, never argv, never logged) — NOT the legacy `KAGGLE_USERNAME` + `KAGGLE_KEY` pair. `bootstrap` validates/primes via kagglehub (`kagglehub.whoami()` proves the token and yields the username the kaggle CLI uses for kernel ops). Do not write a `kaggle.json` into the repo or a kernel; a redaction filter covers surfaced output.
+- When `AAS_COMPUTE_SECRETS_FILE` names the shared protected compute authority,
+  the managed wrapper validates its full schema but projects only
+  `KAGGLE_API_TOKEN` and `KAGGLE_CONFIG_DIR`; Hetzner values and the pointer are
+  removed before the Kaggle child starts.
 - Caps live under `[kaggle]` in `research-compute.toml`: `weekly_gpu_hours_cap`, `max_runs`, `concurrency`, `session_hours`, and the free-tier `kernel_cores` / `kernel_ram_gb`. CPU work is free and quota-free; GPU work passes a fail-closed weekly GPU-hour gate that reserves the estimate in a local usage ledger before the first push, so concurrent GPU submits cannot collectively blow the weekly cap.
 - The 12h session cap is the reason for the multi-run resume loop. A job that needs more wall time spans multiple kernel runs: push a chunk-batch across up to ~5 concurrent kernels, download checkpoints, and re-push the remaining chunks with the checkpoints re-attached (as a Kaggle Dataset input) until DONE. `max_runs` bounds the loop.
 - No reaper, no dead-man's-switch, no teardown: kernels auto-stop at the 12h session cap and cost nothing, so this lane is materially lower-risk than a paid rented-server lane. There is no cost gate — Kaggle is free.

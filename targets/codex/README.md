@@ -5,11 +5,13 @@ Generated Codex artifacts use canonical skill names and the Codex-compatible
 setup. `.agents/skills` is treated as an optional workspace or compatibility
 location when it is explicitly detected or requested.
 
-In auto mode, Codex skill files are rendered as reference adapters by default
-because current Codex discovery loads regular user `SKILL.md` files but does
-not reliably discover file-symlinked user `SKILL.md` files. Codex personas are
-TOML custom-agent files, and entrypoint aliases are installed as reference
-documents under `instructions/entrypoints` rather than native slash commands.
+In auto mode, Codex skill files and their support files are copied by default.
+Current Codex discovery loads regular user `SKILL.md` files but does not
+reliably discover file-symlinked user `SKILL.md` files, and copied skill trees
+remain usable without the source checkout. Explicit reference mode remains
+available. Codex personas are TOML custom-agent files, and entrypoint aliases
+are installed as reference documents under `instructions/entrypoints` rather
+than native slash commands.
 
 Zotero and Calibre integrations must call the shared profile-aware runtime
 commands. Codex target files should not hardcode Zotero or Calibre library

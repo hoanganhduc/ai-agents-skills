@@ -6,10 +6,12 @@ import io
 import importlib.util
 import json
 import os
+import select
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -792,7 +794,9 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_installed_runtime_smoke_uses_scratch_workspace(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
-        smoke_skills = {"formal-skeleton-helper", "get-available-resources", "graph-verifier"}
+        # Source-only installer tests do not borrow packages from an ambient
+        # system Python. Graph smoke has a separate managed-closure gate below.
+        smoke_skills = {"formal-skeleton-helper", "get-available-resources"}
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             create_agent_home(root, "codex")
@@ -829,7 +833,6 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 targets = {item["skill"]: item["command_target"] for item in result["results"]}
                 self.assertEqual(targets["formal-skeleton-helper"], "skills/formal-skeleton-helper/formal_skeleton_helper.py")
                 self.assertEqual(targets["get-available-resources"], "skills/get-available-resources/detect_resources.py")
-                self.assertEqual(targets["graph-verifier"], "skills/graph-verifier/graph_verifier.py")
             installed_runtime = str(root / ".codex" / "runtime")
             self.assertTrue(smoke_case.call_args_list)
             for call in smoke_case.call_args_list:
@@ -837,6 +840,59 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.assertIn("aas-installed-runtime-smoke-", runner_path)
                 self.assertFalse(runner_path.startswith(installed_runtime))
             self.assertFalse((root / ".codex" / "runtime" / "workspace" / "runtime-smoke").exists())
+
+    def test_installed_graph_runtime_smoke_requires_managed_shared_python(self) -> None:
+        expected_python = (
+            Path.home()
+            / ".local"
+            / "share"
+            / "coding-system"
+            / "python-closure"
+            / "shared"
+            / "bin"
+            / "python"
+        )
+        configured = os.environ.get("AAS_RUNTIME_PYTHON")
+        if configured != str(expected_python) or not expected_python.is_file():
+            self.skipTest(
+                "source-only validation: managed shared Python closure is not installed/selected"
+            )
+        dependency_probe = subprocess.run(
+            [str(expected_python), "-I", "-c", "import networkx"],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(
+            dependency_probe.returncode,
+            0,
+            "selected managed shared Python closure does not provide networkx",
+        )
+
+        manifests = load_manifests()
+        platform = current_platform(None)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                detect_agents(root, ["codex"]),
+                platform=platform,
+            )
+            apply_plan(root, plan, dry_run=False)
+            result = run_installed_runtime_smoke(
+                root,
+                manifests,
+                skills={"graph-verifier"},
+                platform=platform,
+                timeout=30,
+            )
+
+        self.assertEqual(result["status"], "ok", result)
+        self.assertEqual([item["skill"] for item in result["results"]], ["graph-verifier"])
 
     def test_installed_runtime_smoke_rejects_null_runtime_root_without_omitting_sibling(self) -> None:
         manifests = load_manifests()
@@ -1979,14 +2035,275 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     self.assertEqual(payload["auth_status"], "present")
                 if command == ("config-snippet", "--backend", "api"):
                     command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
-                    self.assertEqual(command_payload["args"], ["mcp", "serve", "--backend", "api"])
+                    self.assertTrue(command_payload["command"].endswith("run_lean_explore_mcp.sh"))
+                    self.assertEqual(command_payload["args"], ["serve", "--backend", "api"])
                     self.assertEqual(command_payload["env"]["LEANEXPLORE_API_KEY"], "<LEANEXPLORE_API_KEY>")
+                    self.assertEqual(
+                        command_payload["env"]["AAS_LEANEXPLORE_SITE_PACKAGES"],
+                        "<ABSOLUTE_LEANEXPLORE_1_2_1_SITE_PACKAGES>",
+                    )
                 if command == ("config-snippet", "--backend", "local"):
                     command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
-                    self.assertEqual(command_payload["args"], ["mcp", "serve", "--backend", "local"])
-                    self.assertNotIn("env", command_payload)
+                    self.assertEqual(command_payload["args"], ["serve", "--backend", "local"])
+                    self.assertNotIn("LEANEXPLORE_API_KEY", command_payload["env"])
 
             self.assertFalse(marker.exists())
+
+    @unittest.skipUnless(
+        os.name == "posix" and Path("/proc/self/cmdline").is_file(),
+        "requires POSIX /proc process-argument inspection",
+    )
+    def test_lean_explore_posix_wrapper_keeps_key_out_of_process_argv(self) -> None:
+        source_dir = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-explore-mcp"
+        )
+        canary = "LEANEXPLORE-PROCESS-ARGV-CANARY"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skill_dir = root / "runtime" / "workspace" / "skills" / "lean-explore-mcp"
+            skill_dir.mkdir(parents=True)
+            wrapper = skill_dir / "run_lean_explore_mcp.sh"
+            helper = skill_dir / "lean_explore_mcp.py"
+            shutil.copy2(source_dir / wrapper.name, wrapper)
+            wrapper.chmod(0o755)
+            marker = root / "child-ready"
+            capture_marker = root / "key-captured"
+            leaf_helper = root / "lean-explore-leaf.py"
+            leaf_helper.write_text(
+                "import time\ntime.sleep(10)\n",
+                encoding="utf-8",
+            )
+            bridge_helper = root / "lean-explore-bridge.py"
+            bridge_helper.write_text(
+                "import os, subprocess\n"
+                "from pathlib import Path\n"
+                f"leaf = subprocess.Popen(['/usr/bin/python3', {str(leaf_helper)!r}])\n"
+                f"Path({str(marker)!r}).write_text("
+                "str(os.getpid()) + '|' + str(leaf.pid) + '|' + "
+                "('present' if os.environ.get('LEANEXPLORE_API_KEY') else 'missing'), "
+                "encoding='utf-8')\n"
+                "leaf.wait()\n",
+                encoding="utf-8",
+            )
+            helper.write_text(
+                "import os, subprocess\n"
+                "fd = int(os.environ.pop('AAS_LEANEXPLORE_KEY_FD'))\n"
+                "key = os.read(fd, 4098).rstrip(b'\\n')\n"
+                "os.close(fd)\n"
+                f"open({str(capture_marker)!r}, 'wb').write(b'present' if key else b'missing')\n"
+                "key = b''\n"
+                f"bridge = subprocess.Popen(['/usr/bin/python3', {str(bridge_helper)!r}])\n"
+                "bridge.wait()\n",
+                encoding="utf-8",
+            )
+            helper.chmod(0o600)
+            env = {
+                "HOME": str(root),
+                "PATH": "/usr/bin:/bin",
+                "AAS_RUNTIME_PYTHON": "/usr/bin/python3",
+                "LEANEXPLORE_API_KEY": canary,
+                "PYTHONDONTWRITEBYTECODE": "1",
+            }
+            process = subprocess.Popen(
+                ["/bin/bash", str(wrapper), "doctor"],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            descendant_pids: list[int] = []
+            try:
+                for _ in range(250):
+                    if marker.is_file() or process.poll() is not None:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(marker.is_file(), "LeanExplore child did not reach its ready state")
+                self.assertEqual(capture_marker.read_text(encoding="utf-8"), "present")
+                bridge_text, leaf_text, key_status = marker.read_text(
+                    encoding="utf-8"
+                ).split("|", 2)
+                descendant_pids = [int(bridge_text), int(leaf_text)]
+                self.assertEqual(key_status, "missing")
+                for pid in [process.pid, *descendant_pids]:
+                    cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+                    self.assertFalse(
+                        canary.encode() in cmdline,
+                        "LeanExplore credential appeared in descendant process arguments",
+                    )
+                    self.assertFalse(
+                        b"--api-key" in cmdline,
+                        "LeanExplore descendant used the forbidden API-key argv flag",
+                    )
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                for pid in reversed(descendant_pids):
+                    try:
+                        os.kill(pid, 15)
+                    except ProcessLookupError:
+                        pass
+                process.communicate(timeout=10)
+
+    @unittest.skipUnless(os.name == "nt", "native Windows process-argument inspection")
+    def test_lean_explore_windows_wrapper_keeps_key_out_of_process_argv(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell is unavailable")
+        if importlib.util.find_spec("psutil") is None:
+            self.skipTest("psutil is required for native Windows argv inspection")
+        import psutil  # type: ignore[import-not-found]
+
+        source_dir = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-explore-mcp"
+        )
+        canary = "LEANEXPLORE-WINDOWS-ARGV-CANARY"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime = root / "runtime"
+            skill_dir = runtime / "workspace" / "skills" / "lean-explore-mcp"
+            skill_dir.mkdir(parents=True)
+            wrapper = skill_dir / "run_lean_explore_mcp.ps1"
+            helper = skill_dir / "lean_explore_mcp.py"
+            shutil.copy2(source_dir / wrapper.name, wrapper)
+            marker = root / "child-ready"
+            helper.write_text(
+                "import os, time\n"
+                "from pathlib import Path\n"
+                f"Path({str(marker)!r}).write_text("
+                "str(os.getpid()) + '|' + "
+                "('present' if os.environ.get('LEANEXPLORE_API_KEY') else 'missing'), "
+                "encoding='utf-8')\n"
+                "time.sleep(10)\n",
+                encoding="utf-8",
+            )
+            (runtime / "run_python.ps1").write_text(
+                "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)\n"
+                "& $env:TEST_AAS_PYTHON $env:AAS_RUNTIME_SCRIPT @Args\n"
+                "exit $LASTEXITCODE\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AAS_RUNTIME_ROOT": str(runtime),
+                    "LEANEXPLORE_API_KEY": canary,
+                    "TEST_AAS_PYTHON": sys.executable,
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                }
+            )
+            process = subprocess.Popen(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(wrapper),
+                    "doctor",
+                ],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            child_pid: int | None = None
+            try:
+                for _ in range(500):
+                    if marker.is_file() or process.poll() is not None:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(marker.is_file(), "LeanExplore Windows child did not become ready")
+                pid_text, key_status = marker.read_text(encoding="utf-8").split("|", 1)
+                child_pid = int(pid_text)
+                self.assertEqual(key_status, "present")
+                child_argv = "\0".join(psutil.Process(child_pid).cmdline())
+                self.assertFalse(
+                    canary in child_argv,
+                    "LeanExplore credential appeared in Windows child process arguments",
+                )
+                self.assertFalse(
+                    "--api-key" in child_argv,
+                    "LeanExplore Windows child used the forbidden API-key argv flag",
+                )
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                try:
+                    process.communicate(timeout=12)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate(timeout=5)
+                if child_pid is not None:
+                    try:
+                        child = psutil.Process(child_pid)
+                        if child.is_running():
+                            child.terminate()
+                            child.wait(timeout=5)
+                    except (psutil.NoSuchProcess, psutil.TimeoutExpired):
+                        pass
+
+    def test_lean_explore_wrappers_scrub_key_before_discovery_and_never_build_key_argv(self) -> None:
+        source_dir = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-explore-mcp"
+        )
+        posix = (source_dir / "run_lean_explore_mcp.sh").read_text(encoding="utf-8")
+        capture = 'lean_explore_api_key="${LEANEXPLORE_API_KEY:-}"'
+        scrub = "unset LEANEXPLORE_API_KEY"
+        discovery = 'script_path="${BASH_SOURCE[0]:-$0}"'
+        self.assertLess(posix.index(capture), posix.index(scrub))
+        self.assertLess(posix.index(scrub), posix.index(discovery))
+        self.assertNotIn('"--api-key",', posix)
+
+        helper = (source_dir / "lean_explore_mcp.py").read_text(encoding="utf-8")
+        self.assertLess(
+            helper.index('os.environ.pop("LEANEXPLORE_API_KEY", None)'),
+            helper.index("def tool_status"),
+        )
+        self.assertEqual(helper.count('"--api-key"'), 0)
+        self.assertNotIn("import subprocess", helper)
+        self.assertIn('SUPPORTED_LEAN_EXPLORE_VERSION = "1.2.1"', helper)
+        self.assertIn('mcp_app.run(transport="stdio")', helper)
+
+        windows = (source_dir / "run_lean_explore_mcp.ps1").read_text(encoding="utf-8")
+        self.assertLess(
+            windows.index('$leanExploreApiKey = [Environment]::GetEnvironmentVariable('),
+            windows.index('$script = Join-Path $PSScriptRoot "lean_explore_mcp.py"'),
+        )
+        self.assertIn('if ($SkillArgs.Count -gt 0 -and $SkillArgs[0] -ieq "serve")', windows)
+        self.assertLess(
+            windows.index(
+                '[Environment]::SetEnvironmentVariable(\n'
+                '    "LEANEXPLORE_API_KEY",\n'
+                '    $null,'
+            ),
+            windows.index('$script = Join-Path $PSScriptRoot "lean_explore_mcp.py"'),
+        )
+
+        python_runner = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "runners"
+            / "run_python.ps1"
+        ).read_text(encoding="utf-8")
+        self.assertLess(
+            python_runner.index('$leanExploreApiKey = [Environment]::GetEnvironmentVariable('),
+            python_runner.index("function Resolve-ExplicitPython"),
+        )
+        self.assertIn("$leanExploreHelper", python_runner)
+        self.assertNotIn('"--api-key"', python_runner)
 
     def test_lean_explore_mcp_helper_does_not_write_config_or_state(self) -> None:
         helper = (
@@ -2019,6 +2336,119 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 0, completed.stderr)
 
             self.assertEqual(list(root.rglob("*")), [])
+
+    @unittest.skipUnless(os.name == "posix", "LeanExplore private-FD adapter is POSIX-only")
+    def test_lean_explore_121_adapter_performs_real_offline_mcp_handshake(self) -> None:
+        helper = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "lean-explore-mcp"
+            / "lean_explore_mcp.py"
+        )
+        candidates: list[Path] = []
+        configured = os.environ.get("AAS_LEANEXPLORE_TEST_SITE_PACKAGES", "")
+        if configured:
+            candidates.append(Path(configured))
+        candidates.extend(
+            sorted(
+                (
+                    Path.home()
+                    / ".codex"
+                    / "runtime"
+                    / "workspace"
+                    / ".venvs"
+                    / "lean-explore"
+                    / "lib"
+                ).glob("python*/site-packages")
+            )
+        )
+        site_packages = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate.is_dir()
+                and any(candidate.glob("lean_explore-1.2.1.dist-info"))
+            ),
+            None,
+        )
+        if site_packages is None:
+            self.skipTest("an exact lean-explore 1.2.1 site-packages closure is unavailable")
+
+        site_fd = os.open(site_packages, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        key_read, key_write = os.pipe()
+        canary = b"LEANEXPLORE-OFFLINE-HANDSHAKE-CANARY"
+        os.write(key_write, canary)
+        os.close(key_write)
+        env = {
+            "HOME": str(Path.home()),
+            "PATH": "/usr/bin:/bin",
+            "LANG": "C.UTF-8",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "AAS_LEANEXPLORE_SITE_FD": str(site_fd),
+            "AAS_LEANEXPLORE_KEY_FD": str(key_read),
+        }
+        process = subprocess.Popen(
+            ["/usr/bin/python3", "-I", str(helper), "serve", "--backend", "api"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            pass_fds=(site_fd, key_read),
+            bufsize=1,
+        )
+        os.close(site_fd)
+        os.close(key_read)
+        try:
+            if Path(f"/proc/{process.pid}/cmdline").is_file():
+                self.assertNotIn(canary, Path(f"/proc/{process.pid}/cmdline").read_bytes())
+                self.assertNotIn(canary, Path(f"/proc/{process.pid}/environ").read_bytes())
+            requests = (
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": "aas-offline-test", "version": "1"},
+                    },
+                },
+                {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            )
+            assert process.stdin is not None
+            for request in requests:
+                process.stdin.write(json.dumps(request) + "\n")
+                process.stdin.flush()
+            responses: dict[int, dict[str, Any]] = {}
+            deadline = time.monotonic() + 15
+            assert process.stdout is not None
+            while time.monotonic() < deadline and len(responses) < 2:
+                ready, _, _ = select.select([process.stdout], [], [], 0.25)
+                if not ready:
+                    continue
+                line = process.stdout.readline()
+                if not line:
+                    break
+                response = json.loads(line)
+                if isinstance(response.get("id"), int):
+                    responses[response["id"]] = response
+            self.assertEqual(responses[1]["result"]["protocolVersion"], "2025-03-26")
+            tool_names = {tool["name"] for tool in responses[2]["result"]["tools"]}
+            self.assertTrue({"search", "search_summary", "get_source_code"}.issubset(tool_names))
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate(timeout=5)
 
     def test_formal_runtime_doctor_does_not_execute_or_install_toolchain_commands(self) -> None:
         helper_paths = [
@@ -2751,7 +3181,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertFalse(marker.exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX runtime runner is not a native Windows runtime target")
-    def test_bash_runtime_runner_ignores_external_secrets_file_without_opt_in(self) -> None:
+    def test_bash_runtime_runner_scrubs_legacy_broad_secrets_selectors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             temp = Path(tmp)
             runtime_root = temp / "runtime"
@@ -2778,9 +3208,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 env=env,
             )
 
-            expected = str((runtime_root / "workspace" / ".secrets.json").resolve())
             self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertEqual(completed.stdout, f"{expected}|{expected}\n")
+            self.assertEqual(completed.stdout, "|\n")
 
     @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
     def test_powershell_runtime_runner_ignores_external_workspace_without_opt_in(self) -> None:

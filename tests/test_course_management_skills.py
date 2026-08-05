@@ -22,6 +22,15 @@ else
   course_python="$HOME/.course_venv/bin/python"
 fi
 """
+CANVAS_COURSE_SELECTOR = """\
+if [ "${HOME:-}" = /workspace ] && [ "${OPENCLAW_WORKSPACE:-}" = /workspace ]; then
+  course_python=/opt/coding-system/python-closure/course-management/bin/python
+  export CANVAS_CONFIG_PATH=/workspace/.config/course/canvas/config.json
+else
+  course_python="$HOME/.course_venv/bin/python"
+  export CANVAS_CONFIG_PATH="${CANVAS_CONFIG_PATH:-$HOME/.config/course/canvas/config.json}"
+fi
+"""
 
 
 class CourseManagementSkillsTests(unittest.TestCase):
@@ -89,7 +98,8 @@ class CourseManagementSkillsTests(unittest.TestCase):
             body = (ROOT / "canonical" / "skills" / sk / "SKILL.md").read_text(
                 encoding="utf-8"
             )
-            self.assertIn(OPENCLAW_COURSE_SELECTOR, body, sk)
+            expected = CANVAS_COURSE_SELECTOR if sk == "course-canvas" else OPENCLAW_COURSE_SELECTOR
+            self.assertIn(expected, body, sk)
 
     def test_course_dependency_uses_only_the_documented_dedicated_venv(self):
         self.assertEqual(
@@ -105,6 +115,44 @@ class CourseManagementSkillsTests(unittest.TestCase):
                 "linux": ["~/.course_venv/lib/python*/site-packages"],
                 "windows": [r".course_venv\Lib\site-packages"],
             },
+        )
+
+    def test_google_classroom_uses_restored_target_specific_credentials(self):
+        body = (
+            ROOT / "canonical" / "skills" / "course-google-classroom" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'classroom_credentials="$HOME/.config/course/google-classroom/credentials.json"',
+            body,
+        )
+        self.assertIn(
+            'classroom_token="$HOME/.config/course/google-classroom/token.pickle"',
+            body,
+        )
+        self.assertIn(
+            "classroom_credentials=/workspace/.config/course/google-classroom/credentials.json",
+            body,
+        )
+        self.assertIn(
+            "classroom_token=/workspace/.config/course/google-classroom/token.pickle",
+            body,
+        )
+        self.assertIn("GOOGLE_CLASSROOM_CREDENTIALS", body)
+        self.assertIn("GOOGLE_CLASSROOM_TOKEN", body)
+        self.assertNotIn("mat1204", body.lower())
+
+    def test_canvas_uses_target_specific_portable_config_defaults(self):
+        body = (ROOT / "canonical" / "skills" / "course-canvas" / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'export CANVAS_CONFIG_PATH="${CANVAS_CONFIG_PATH:-$HOME/.config/course/canvas/config.json}"',
+            body,
+        )
+        self.assertIn(
+            "export CANVAS_CONFIG_PATH=/workspace/.config/course/canvas/config.json",
+            body,
         )
 
     def test_required_deps_include_package(self):

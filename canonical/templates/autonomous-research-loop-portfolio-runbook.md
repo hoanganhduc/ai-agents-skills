@@ -44,7 +44,10 @@ and credit checks.
 Status values: `planned`, `running`, `paused`, `blocked`, `completed`,
 `abandoned`. `paused` is used for a credit/quota outage or a user-gated block
 (resume when cleared); `abandoned` means the parent or user cancelled the run
-before a terminal stop condition fired.
+before a terminal stop condition fired. A loop stopped at an iteration boundary
+legitimately keeps `loop_state.json` `status: running` (resume semantics);
+audit liveness from the driver lock/pid and the last ledger decision, not the
+status field alone.
 
 `loop_mode` is the skill-level mode (`monitor`, `bounded-research`,
 `implementation-support`, `panel-loop`, `recovery`) and is distinct from
@@ -133,8 +136,8 @@ budget and credit state stay in this runbook.
 | `max_portfolio_approaches` |  | Max distinct live approaches held at once in portfolio mode. |
 | `max_child_workers` |  | Max concurrent subagents per loop (portfolio fan-out cap; from `budget.json`). |
 | `max_wall_minutes` |  |  |
-| `max_usd` |  | Hard spend cap; hitting it is terminal condition (c). |
-| `max_tokens` |  | Hard token cap; hitting it is terminal condition (c). |
+| `max_usd` |  | Hard spend cap; hitting it is terminal condition (c). `0.0` or null is the uncapped sentinel: (c) cannot fire on it even when `spent_usd` is positive. |
+| `max_tokens` |  | Hard token cap; hitting it is terminal condition (c). Same sentinel rule: `0` or null means uncapped. |
 | `compute_backend` |  | Recommended order: `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique. |
 | `compute_guard_status` |  | Record each attempted lane and its applicable guard: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle CPU is free/quota-free. A failed lane falls through to the next permitted lane. |
 | `credit_checked_at` |  | Timestamp of the last applicable budget, quota, or teardown-guard check. |

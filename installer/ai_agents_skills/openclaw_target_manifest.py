@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,12 +19,14 @@ from .openclaw_target_paths import (
     checked_skill_slug,
     openclaw_home,
     openclaw_managed_skills_dir,
+    openclaw_skill_file_attestation,
+    openclaw_skill_file_attestation_issue,
     openclaw_target_path,
     path_leak_block_reason,
     skill_file_relative_path,
     validate_openclaw_target_home,
 )
-from .state import artifact_signature, sha256_text
+from .state import sha256_text
 
 
 MANIFEST_SCHEMA_VERSION_V1 = "openclaw.target-manifest.v1"
@@ -36,6 +39,7 @@ PHASE = "phase1-non-authorizing"
 PHASE_V2 = "phase2-authorizing"
 TARGET_AGENTS = ("openclaw",)
 ACTION_CLASSES = ("diagnostic-only", "blocked-real-write")
+SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def load_target_manifest(path: Path) -> dict[str, Any]:
@@ -82,6 +86,7 @@ def build_skill_file_target_manifest(
     root: Path,
     skill: str,
     content: str,
+    canonical_source_hash: str,
     evidence_items: list[dict[str, Any]],
     action_class: str = "managed-skill-file",
     created_at: str | None = None,
@@ -92,6 +97,8 @@ def build_skill_file_target_manifest(
         raise ValueError("OpenClaw target action class is not allowed for real writes")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("OpenClaw target skill content is required")
+    if not isinstance(canonical_source_hash, str) or SHA256_RE.fullmatch(canonical_source_hash) is None:
+        raise ValueError("OpenClaw target canonical source hash is required")
     encoded = content.encode("utf-8")
     if b"\x00" in encoded:
         raise ValueError("OpenClaw target skill content must be text")
@@ -99,16 +106,20 @@ def build_skill_file_target_manifest(
     relative_path = skill_file_relative_path(checked_skill)
     target_path = openclaw_target_path(root, relative_path, action_class=action_class)
     expected_hash = sha256_text(content)
-    pre_state = artifact_signature(target_path)
+    pre_state = openclaw_skill_file_attestation(target_path)
     if pre_state.get("exists") is True:
         if pre_state.get("kind") != "file" or pre_state.get("hash") != expected_hash:
             raise ValueError("OpenClaw target skill file already exists and is not this managed content")
+        issue = openclaw_skill_file_attestation_issue(root, pre_state, path=target_path)
+        if issue is not None:
+            raise ValueError(f"OpenClaw target skill file cannot be safely attested: {issue}")
         operation = "no-op"
     else:
         operation = "create"
     action_seed = json.dumps(
         {
             "action_class": action_class,
+            "canonical_source_hash": canonical_source_hash,
             "expected_hash": expected_hash,
             "relative_path": relative_path,
             "skill": checked_skill,
@@ -133,6 +144,7 @@ def build_skill_file_target_manifest(
         "install_mode": "copy",
         "skill": checked_skill,
         "content": content,
+        "canonical_source_hash": canonical_source_hash,
         "expected_hash": expected_hash,
         "pre_state": pre_state,
         "rollback_policy": "delete-only-if-unchanged",
@@ -376,6 +388,7 @@ def validate_target_manifest_action_v2(action: dict[str, Any], manifest: dict[st
         "install_mode",
         "skill",
         "content",
+        "canonical_source_hash",
         "expected_hash",
         "pre_state",
         "rollback_policy",
@@ -424,8 +437,44 @@ def validate_target_manifest_action_v2(action: dict[str, Any], manifest: dict[st
         raise ValueError(f"OpenClaw target manifest action content leaks machine-specific paths: {leak}")
     if sha256_text(action["content"]) != action["expected_hash"]:
         raise ValueError("OpenClaw target manifest action content hash does not match expected_hash")
+    if (
+        not isinstance(action["canonical_source_hash"], str)
+        or SHA256_RE.fullmatch(action["canonical_source_hash"]) is None
+    ):
+        raise ValueError("OpenClaw target manifest canonical source hash is invalid")
     if not isinstance(action["pre_state"], dict):
         raise ValueError("OpenClaw target manifest action pre_state must be an object")
+    missing_signature = {"exists": False, "kind": "missing"}
+    if action["operation"] == "create" and action["pre_state"] != missing_signature:
+        raise ValueError("OpenClaw target create action must have a missing pre_state")
+    if action["operation"] == "no-op":
+        pre_state = action["pre_state"]
+        required_attestation_fields = {
+            "exists",
+            "kind",
+            "hash",
+            "device",
+            "inode",
+            "size",
+            "mode",
+            "uid",
+            "nlink",
+            "mtime_ns",
+            "ctime_ns",
+        }
+        if (
+            set(pre_state) != required_attestation_fields
+            or pre_state.get("exists") is not True
+            or pre_state.get("kind") != "file"
+            or pre_state.get("hash") != action["expected_hash"]
+            or any(
+                isinstance(pre_state.get(field), bool)
+                or not isinstance(pre_state.get(field), int)
+                or pre_state.get(field, -1) < 0
+                for field in required_attestation_fields - {"exists", "kind", "hash"}
+            )
+        ):
+            raise ValueError("OpenClaw target no-op action must carry an exact file attestation")
     if str(manifest.get("target_realpath", "")) != str(openclaw_home(Path(manifest["home_root_realpath"])).resolve(strict=False)):
         raise ValueError("OpenClaw target manifest target_realpath does not match home root")
     if str(manifest.get("managed_skills_realpath", "")) != str(openclaw_managed_skills_dir(Path(manifest["home_root_realpath"])).resolve(strict=False)):

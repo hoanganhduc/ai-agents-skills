@@ -17,6 +17,8 @@ import signal
 import subprocess
 import sys
 import time
+import stat
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -377,7 +379,109 @@ def build_supervisor_command(
     supervisor = pack_parent / "arl_drive_supervisor.sh"
     if not supervisor.is_file() or os.name == "nt":
         return None
-    return ["bash", str(supervisor)]
+    return ["/bin/bash", str(supervisor)]
+
+
+@dataclass
+class BoundChildCommand:
+    argv: list[str]
+    pass_fds: tuple[int, ...]
+
+    def close(self) -> None:
+        for fd in self.pass_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _open_bound_regular(path: Path) -> int:
+    absolute = Path(os.path.abspath(path))
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    parent_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    parent = os.open(absolute.anchor or os.sep, parent_flags)
+    try:
+        for component in absolute.parts[1:-1]:
+            child = os.open(component, parent_flags, dir_fd=parent)
+            info = os.fstat(child)
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or int(info.st_uid) not in {0, os.geteuid()}
+                or (
+                    stat.S_IMODE(info.st_mode) & 0o022
+                    and not (int(info.st_uid) == 0 and info.st_mode & stat.S_ISVTX)
+                )
+            ):
+                os.close(child)
+                raise ValueError("child command ancestor is not owner-controlled")
+            os.close(parent)
+            parent = child
+        fd = os.open(absolute.name, flags, dir_fd=parent)
+    finally:
+        os.close(parent)
+    info = os.fstat(fd)
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or int(info.st_uid) not in {0, os.geteuid()}
+        or stat.S_IMODE(info.st_mode) & 0o022
+        or (int(info.st_uid) != 0 and int(info.st_nlink) != 1)
+    ):
+        os.close(fd)
+        raise ValueError("child command is not an owner-controlled regular file")
+    os.set_inheritable(fd, True)
+    return fd
+
+
+def _fd_path(fd: int) -> str:
+    for prefix in ("/proc/self/fd", "/dev/fd"):
+        candidate = f"{prefix}/{fd}"
+        if os.path.exists(candidate):
+            return candidate
+    raise ValueError("descriptor execution paths are unavailable")
+
+
+def bind_child_command(argv: list[str]) -> BoundChildCommand:
+    """Bind interpreter and script identities before credentials are loaded."""
+    if not argv:
+        raise ValueError("child command is empty")
+    if os.name == "nt":  # pragma: no cover - PowerShell owns native binding
+        return BoundChildCommand(list(argv), ())
+    executable = argv[0]
+    if executable == "/bin/bash":
+        canonical = Path("/bin/bash").resolve()
+        if canonical not in {Path("/bin/bash"), Path("/usr/bin/bash")}:
+            raise ValueError("/bin/bash resolves outside the system tool root")
+        executable_path = canonical
+        executable_fd = _open_bound_regular(executable_path)
+    else:
+        executable_path = Path(executable)
+        if not executable_path.is_absolute():
+            raise ValueError("child interpreter must be an absolute path")
+        if executable.startswith("/proc/self/fd/") or executable.startswith("/dev/fd/"):
+            try:
+                original_fd = int(executable.rsplit("/", 1)[1])
+                executable_fd = os.dup(original_fd)
+                os.set_inheritable(executable_fd, True)
+            except (OSError, ValueError) as exc:
+                raise ValueError("could not bind inherited child interpreter") from exc
+        else:
+            executable_fd = _open_bound_regular(executable_path)
+    descriptors = [executable_fd]
+    bound_argv = [_fd_path(executable_fd), *argv[1:]]
+    if len(argv) > 1 and Path(argv[1]).is_absolute() and Path(argv[1]).suffix in {".py", ".sh"}:
+        try:
+            script_fd = _open_bound_regular(Path(argv[1]))
+        except Exception:
+            os.close(executable_fd)
+            raise
+        descriptors.append(script_fd)
+        bound_argv[1] = _fd_path(script_fd)
+    return BoundChildCommand(bound_argv, tuple(descriptors))
 
 
 def run_foreground(
@@ -385,6 +489,7 @@ def run_foreground(
     *,
     loop_dir: Path,
     env: dict[str, str] | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> int:
     """Run supervisor/drive in foreground while holding exclusive lock."""
     _ensure_driver_dirs(loop_dir)
@@ -400,6 +505,7 @@ def run_foreground(
                 env=env,
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
+                pass_fds=pass_fds,
             )
             pid_path(loop_dir).write_text(f"{proc.pid}\n", encoding="utf-8")
             try:
@@ -418,6 +524,7 @@ def run_posix_detach(
     *,
     loop_dir: Path,
     env: dict[str, str] | None = None,
+    pass_fds: tuple[int, ...] = (),
 ) -> int:
     """Start process with nohup-style detach + pidfile (POSIX)."""
     if os.name == "nt":
@@ -439,6 +546,7 @@ def run_posix_detach(
             stdout=log_handle,
             stderr=subprocess.STDOUT,
             start_new_session=True,
+            pass_fds=pass_fds,
         )
         pid_path(loop_dir).write_text(f"{proc.pid}\n", encoding="utf-8")
         log_handle.close()
@@ -453,6 +561,7 @@ __all__ = [
     "SupervisorLock",
     "build_drive_command",
     "build_supervisor_command",
+    "bind_child_command",
     "find_loop_pids",
     "run_foreground",
     "run_posix_detach",

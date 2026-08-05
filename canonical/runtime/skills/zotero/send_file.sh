@@ -1,272 +1,93 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 set -euo pipefail
 
-# Unified file sender for Telegram, WhatsApp, Google Chat, and Zulip.
-# Usage: send_file.sh <channel> <target> <file_path> [caption]
-#
-# Telegram: sends directly via Bot API (fast).
-# WhatsApp/Google Chat: writes a job to the send queue, waits for host worker.
-# Zulip: uploads via /api/v1/user_uploads then sends message with attachment link.
-#   Target format (Zulip):
-#     bare-name               → look up correct capitalization in "Research" stream
-#     stream:topic           → stream + topic (topic may contain colons)
-#     user:123               → private message to user ID
-#
-#   The bare-name lookup normalizes to URL slug before comparing topics,
-#   so both "$k$-Path Vertex Cover..." and "$k$-path-vertex-cover..." resolve correctly.
+# Agent-facing file-delivery entrypoint. Every channel crosses the authenticated
+# host queue; network credentials and delivery CLIs remain exclusively on the
+# host-worker side of that boundary.
 
-CHANNEL="${1:?Usage: send_file.sh <channel> <target> <file_path> [caption]}"
-TARGET="${2:?Usage: send_file.sh <channel> <target> <file_path> [caption]}"
-FILE_PATH="${3:?Usage: send_file.sh <channel> <target> <file_path> [caption]}"
-CAPTION="${4:-}"
-
-WS="${OPENCLAW_WORKSPACE:-/workspace}"
-SECRETS_FILE="${OPENCLAW_SECRETS_FILE:-$WS/.secrets.json}"
-QUEUE_DIR="$WS/data/send-queue"
-
-if [[ ! -f "$FILE_PATH" ]]; then
-  echo '{"status":"error","message":"File not found: '"$FILE_PATH"'"}'
-  exit 1
+if [ "$#" -ne 0 ]; then
+  printf '%s\n' '{"status":"error","message":"send_file.sh accepts one bounded JSON request on stdin, never delivery metadata in argv"}'
+  exit 2
 fi
+delivery_dir_hint="${AAS_ZOTERO_DELIVERY_DIR:-}"
+request_fd="${AAS_FILE_DELIVERY_REQUEST_FD:-}"
+queue_authority="${AAS_FILE_DELIVERY_SECRETS_FILE:-}"
+runtime_workspace="${AAS_RUNTIME_WORKSPACE:-${OPENCLAW_WORKSPACE:-/workspace}}"
+runtime_home="${HOME:-}"
+runtime_lang="${LANG:-}"
+runtime_lc_all="${LC_ALL:-}"
+runtime_tz="${TZ:-}"
 
-FILE_SIZE=$(python3 - "$FILE_PATH" <<'PYEOF'
-import os
-import sys
+# Generic, provider, skill, and channel credentials must never reach the
+# producer. The only retained authority is the exact queue capability pointer.
+unset AAS_SECRETS_FILE OPENCLAW_SECRETS_FILE AAS_SKILL_SECRETS_FILE
+unset AAS_PROVIDER_SECRETS_FILE AAS_COMPUTE_SECRETS_FILE
+unset AAS_ZOTERO_SECRETS_FILE REMOTE_BRIDGE_SECRETS_FILE SEND_EMAIL_SECRETS_FILE
+unset AAS_ZOTERO_DELIVERY_DIR
+unset AAS_FILE_DELIVERY_REQUEST_FD
+unset HCLOUD_TOKEN HCLOUD_SSH_KEYS KAGGLE_API_TOKEN
+unset TELEGRAM_BOT_TOKEN ZULIP_API_KEY ZULIP_EMAIL ZULIP_ORG_URL ZULIP_SITE
+unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS PYTHONBREAKPOINT
+unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH
+unset BASH_ENV ENV CDPATH GLOBIGNORE NODE_OPTIONS NODE_PATH 2>/dev/null || true
 
-print(os.path.getsize(sys.argv[1]))
-PYEOF
-)
-
-# ---------------------------------------------------------------------------
-# Telegram
-# ---------------------------------------------------------------------------
-if [[ "$CHANNEL" == "telegram" ]]; then
-  MAX_SIZE=52428800
-  if [[ "$FILE_SIZE" -gt "$MAX_SIZE" ]]; then
-    echo '{"status":"error","message":"File too large for Telegram"}'
-    exit 1
-  fi
-  BOT_TOKEN=$(python3 -c "import json; print(json.load(open('$SECRETS_FILE'))['TELEGRAM_BOT_TOKEN'])" 2>/dev/null)
-  if [[ -z "$BOT_TOKEN" ]]; then
-    echo '{"status":"error","message":"TELEGRAM_BOT_TOKEN not found"}'
-    exit 1
-  fi
-  API_URL="https://api.telegram.org/bot${BOT_TOKEN}/sendDocument"
-  if [[ -n "$CAPTION" ]]; then
-    RESPONSE=$(curl -s -X POST "$API_URL" \
-      -F "chat_id=$TARGET" -F "document=@$FILE_PATH" -F "caption=$CAPTION" --max-time 120)
-  else
-    RESPONSE=$(curl -s -X POST "$API_URL" \
-      -F "chat_id=$TARGET" -F "document=@$FILE_PATH" --max-time 120)
-  fi
-  OK=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ok',False))" 2>/dev/null || echo "False")
-  if [[ "$OK" == "True" ]]; then
-    echo "{\"status\":\"ok\",\"channel\":\"telegram\",\"file\":\"$(basename "$FILE_PATH")\",\"size\":$FILE_SIZE}"
-  else
-    echo "{\"status\":\"error\",\"channel\":\"telegram\",\"response\":$RESPONSE}"
-    exit 1
-  fi
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Zulip
-# ---------------------------------------------------------------------------
-if [[ "$CHANNEL" == "zulip" ]]; then
-
-  ZULIP_ORG_URL=$(python3 -c "import json; print(json.load(open('$SECRETS_FILE'))['ZULIP_ORG_URL'])" 2>/dev/null)
-  ZULIP_EMAIL=$(python3 -c "import json; print(json.load(open('$SECRETS_FILE'))['ZULIP_EMAIL'])" 2>/dev/null)
-  ZULIP_API_KEY=$(python3 -c "import json; print(json.load(open('$SECRETS_FILE'))['ZULIP_API_KEY'])" 2>/dev/null)
-
-  if [[ -z "$ZULIP_ORG_URL" || -z "$ZULIP_EMAIL" || -z "$ZULIP_API_KEY" ]]; then
-    echo '{"status":"error","message":"Zulip credentials missing"}'
-    exit 1
-  fi
-  ZULIP_ORG_URL="${ZULIP_ORG_URL%/}"
-  AUTH="${ZULIP_EMAIL}:${ZULIP_API_KEY}"
-
-  # --- Step 1: upload file ---
-  UPLOAD_RESP=$(curl -s -X POST \
-    "${ZULIP_ORG_URL}/api/v1/user_uploads" \
-    -u "$AUTH" -F "file=@${FILE_PATH}" --max-time 120)
-  URI=$(echo "$UPLOAD_RESP" | python3 -c \
-    "import sys,json; print(json.load(sys.stdin).get('uri',''))" 2>/dev/null || echo "")
-  if [[ -z "$URI" ]]; then
-    echo "{\"status\":\"error\",\"channel\":\"zulip\",\"step\":\"upload\",\"response\":$UPLOAD_RESP}"
-    exit 1
-  fi
-
-  # --- Build content ---
-  BASENAME=$(basename "$FILE_PATH")
-  FILE_LINK="[${BASENAME}](${URI})"
-  if [[ -n "$CAPTION" ]]; then
-    CONTENT="${CAPTION}"$'\n\n'"${FILE_LINK}"
-  else
-    CONTENT="${FILE_LINK}"
-  fi
-
-  # --- Parse target and resolve topic capitalization via Python ---
-  # (Python avoids shell $ expansion on special topic chars)
-  TARGET_JSON=$(python3 - "$TARGET" "$CONTENT" "$ZULIP_ORG_URL" "$AUTH" << 'PYEOF'
-import sys, json, subprocess, re
-
-target   = sys.argv[1]
-content  = sys.argv[2]
-org_url  = sys.argv[3]
-auth     = sys.argv[4]
-
-def curl_get(url, params):
-    r = subprocess.run(
-        ['curl', '-s', '-G', url, '-u', auth] + params,
-        capture_output=True, text=True)
-    return json.loads(r.stdout)
-
-def slug(t):
-    """Normalize topic to URL slug for comparison: keeps $...$ math as-is,
-    lowercases the rest, removes punctuation, collapses spaces to hyphens."""
-    def keep_math(m): return m.group(0)
-    s = re.sub(r'\$[^$]*\$', keep_math, t.lower())
-    s = re.sub(r'[^\$a-z0-9 _-]', '', s)
-    s = re.sub(r'[\s_]+', '-', s).strip('-')
-    return s
-
-def resolve_topic(org_url, auth, hint):
-    """Search Recent Converations in 'Research' stream for a topic whose
-    slug matches the hint (case-insensitive + punctuation-insensitive)."""
-    hint_slug = slug(hint)
-    resp = curl_get(
-        f'{org_url}/api/v1/messages',
-        ['--data-urlencode', 'stream=Research',
-         '--data-urlencode', 'anchor=newest',
-         '--data-urlencode', 'num_before=200',
-         '--data-urlencode', 'num_after=0',
-         '--data-urlencode', 'apply_markdown=false'])
-    for m in resp.get('messages', []):
-        t = m.get('subject', '')
-        if slug(t) == hint_slug:
-            return t      # return correctly-capitalized topic
-    return None           # no match found
-
-# Parse target
-msg_type = None; to_field = None; topic = None
-
-if target.startswith('user:'):
-    msg_type = 'private'; to_field = target[5:]
-
-elif target.startswith('stream:'):
-    rest = target[7:]
-    msg_type = 'stream'
-    if rest == ':':
-        to_field, topic = 'general', ''
-    elif rest.startswith(':'):
-        to_field, topic = 'general', rest[1:]
-    elif ':' in rest:
-        to_field, topic = rest.rsplit(':', 1)
-    else:
-        to_field, topic = rest, None
-
-else:
-    # Bare name — try disambiguation
-    msg_type = 'stream'
-    if target == ':':
-        to_field, topic = 'general', ''
-    elif target.startswith(':'):
-        to_field, topic = 'general', target[1:]
-    elif ':' in target:
-        # stream:topic  (last colon splits them)
-        to_field, topic = target.rsplit(':', 1)
-    else:
-        # Bare name — look up correct capitalization in Research stream
-        found = resolve_topic(org_url, auth, target)
-        if found:
-            to_field, topic = 'Research', found
-        else:
-            # No match — still use Research stream with the bare name as topic
-            to_field, topic = 'Research', target
-
-# Resolve empty topic
-if msg_type == 'stream' and not topic:
-    topic = 'file delivery'
-
-
-result = {'type': msg_type, 'to': to_field, 'topic': topic, 'content': content}
-print(json.dumps(result))
-PYEOF
-)
-
-  MSG_TYPE=$(echo "$TARGET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['type'])" 2>/dev/null)
-  TO_FIELD=$(echo "$TARGET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['to'])" 2>/dev/null)
-  TOPIC=$(echo "$TARGET_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['topic'])" 2>/dev/null)
-
-  # --- Step 2: send message ---
-  if [[ "$MSG_TYPE" == "private" ]]; then
-    MSG_RESP=$(curl -s -X POST "${ZULIP_ORG_URL}/api/v1/messages" \
-      -u "$AUTH" \
-      --data-urlencode "type=private" \
-      --data-urlencode "to=${TO_FIELD}" \
-      --data-urlencode "content=${CONTENT}" \
-      --max-time 30)
-  else
-    MSG_RESP=$(curl -s -X POST "${ZULIP_ORG_URL}/api/v1/messages" \
-      -u "$AUTH" \
-      --data-urlencode "type=stream" \
-      --data-urlencode "to=${TO_FIELD}" \
-      --data-urlencode "topic=${TOPIC}" \
-      --data-urlencode "content=${CONTENT}" \
-      --max-time 30)
-  fi
-
-  MSG_ID=$(echo "$MSG_RESP" | python3 -c \
-    "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
-
-  if [[ -n "$MSG_ID" ]]; then
-    echo "{\"status\":\"ok\",\"channel\":\"zulip\",\"target\":\"$TARGET\",\"file\":\"$BASENAME\",\"topic\":\"$TOPIC\",\"uri\":\"$URI\",\"msg_id\":\"$MSG_ID\",\"size\":$FILE_SIZE}"
-  else
-    echo "{\"status\":\"error\",\"channel\":\"zulip\",\"step\":\"send_message\",\"response\":$MSG_RESP}"
-    exit 1
-  fi
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# Google Chat / Zalo: GDrive link fallback
-# ---------------------------------------------------------------------------
-if [[ "$CHANNEL" == "googlechat" || "$CHANNEL" == "zalo" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-  BASENAME=$(basename "$FILE_PATH")
-  LINK=$(python3 "$SCRIPT_DIR/zot.py" --json get --link "$BASENAME" 2>/dev/null \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('link',''))" 2>/dev/null || echo "")
-  if [[ -n "$LINK" ]]; then
-    echo "{\"status\":\"ok\",\"channel\":\"$CHANNEL\",\"method\":\"gdrive_link\",\"link\":\"$LINK\",\"file\":\"$BASENAME\"}"
-  else
-    echo "{\"status\":\"error\",\"channel\":\"$CHANNEL\",\"message\":\"GDrive link failed\"}"
-    exit 1
-  fi
-  exit 0
-fi
-
-# ---------------------------------------------------------------------------
-# WhatsApp / unknown: send queue
-# ---------------------------------------------------------------------------
-mkdir -p "$QUEUE_DIR"
-JOB_ID="$(date -u +%Y%m%dT%H%M%S)-$$"
-JOB_FILE="$QUEUE_DIR/${JOB_ID}.json"
-RESULT_FILE="$QUEUE_DIR/${JOB_ID}.result"
-
-python3 -c "
-import json
-with open('$JOB_FILE', 'w') as f:
-    json.dump({'id':'$JOB_ID','channel':'$CHANNEL','target':'$TARGET','media':'$FILE_PATH','caption':'$CAPTION','status':'pending'}, f)
-"
-
-WAITED=0
-while [[ $WAITED -lt 60 ]]; do
-  if [[ -f "$RESULT_FILE" ]]; then
-    cat "$RESULT_FILE"; rm -f "$JOB_FILE" "$RESULT_FILE"
-    exit 0
-  fi
-  sleep 2; WAITED=$((WAITED + 2))
+# Remove every exported caller value, including provider credentials whose
+# names this package does not know. Re-export only the queue capability and the
+# small set of non-secret runtime values needed below.
+for exported_name in $(compgen -e); do
+  unset "$exported_name" 2>/dev/null || true
 done
-rm -f "$JOB_FILE"
-echo "{\"status\":\"error\",\"message\":\"Send queue timeout\",\"channel\":\"$CHANNEL\",\"job_id\":\"$JOB_ID\"}"
-exit 1
+if [ -n "$runtime_home" ]; then export HOME="$runtime_home"; fi
+if [ -n "$runtime_lang" ]; then export LANG="$runtime_lang"; fi
+if [ -n "$runtime_lc_all" ]; then export LC_ALL="$runtime_lc_all"; fi
+if [ -n "$runtime_tz" ]; then export TZ="$runtime_tz"; fi
+if [ -n "$queue_authority" ]; then
+  export AAS_FILE_DELIVERY_SECRETS_FILE="$queue_authority"
+fi
+
+export PATH=/usr/bin:/bin
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+runtime_command_fd="${AAS_RUNTIME_COMMAND_FD:-}"
+if [[ "$runtime_command_fd" =~ ^[0-9]+$ ]] && \
+   { [ "$SCRIPT_PATH" = "/proc/self/fd/$runtime_command_fd" ] || [ "$SCRIPT_PATH" = "/dev/fd/$runtime_command_fd" ]; }; then
+  SCRIPT_PATH="${AAS_RUNTIME_COMMAND_PATH:-$SCRIPT_PATH}"
+fi
+unset AAS_RUNTIME_COMMAND_FD AAS_RUNTIME_COMMAND_PATH
+if [ -n "$delivery_dir_hint" ]; then
+  case "$delivery_dir_hint" in /*) SCRIPT_PARENT="$delivery_dir_hint" ;; *) SCRIPT_PARENT=__invalid__ ;; esac
+else
+  case "$SCRIPT_PATH" in
+    */*) SCRIPT_PARENT="${SCRIPT_PATH%/*}" ;;
+    *) SCRIPT_PARENT=. ;;
+  esac
+fi
+SCRIPT_DIR="$(cd -- "$SCRIPT_PARENT" && pwd -P)"
+WORKSPACE="$runtime_workspace"
+SCRIPT="$SCRIPT_DIR/send_queue.py"
+
+trusted_regular_file() {
+  local candidate="$1" metadata owner mode links kind current_uid
+  metadata="$(/usr/bin/stat -c '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || true)"
+  IFS=: read -r owner mode links kind <<< "$metadata"
+  current_uid="$(/usr/bin/id -u)"
+  case "$owner" in 0|"$current_uid") ;; *) return 1 ;; esac
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  (( (8#$mode & 8#022) == 0 )) || return 1
+  [ "$links" -eq 1 ] && [ "$kind" = "regular file" ]
+}
+
+PYTHON="$(/usr/bin/readlink -f -- /usr/bin/python3 2>/dev/null || true)"
+case "$PYTHON" in /usr/bin/python3|/usr/bin/python3.*) ;; *) PYTHON= ;; esac
+if [ -z "$PYTHON" ] || ! trusted_regular_file "$PYTHON" || [ ! -x "$PYTHON" ]; then
+  printf '%s\n' '{"status":"error","message":"Attested system Python runtime is unavailable"}'
+  exit 127
+fi
+
+secure_loader='import os,stat,sys; p=os.path.abspath(sys.argv[1]); q=os.stat(p,follow_symlinks=False); f=os.open(p,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_NONBLOCK",0)|getattr(os,"O_CLOEXEC",0)); b=os.fstat(f); ok=stat.S_ISREG(b.st_mode) and b.st_nlink==1 and b.st_uid in {0,os.geteuid()} and not (stat.S_IMODE(b.st_mode)&0o022) and (q.st_dev,q.st_ino)==(b.st_dev,b.st_ino) and b.st_size<=16777216; ok or (_ for _ in ()).throw(RuntimeError("runtime helper is unavailable or untrusted")); d=b""; rem=b.st_size; exec("while rem:\n c=os.read(f,min(65536,rem))\n c or (_ for _ in ()).throw(RuntimeError(\"runtime helper was truncated\"))\n d+=c; rem-=len(c)"); a=os.fstat(f); (b.st_dev,b.st_ino,b.st_size,b.st_mtime_ns,b.st_ctime_ns,b.st_nlink)==(a.st_dev,a.st_ino,a.st_size,a.st_mtime_ns,a.st_ctime_ns,a.st_nlink) or (_ for _ in ()).throw(RuntimeError("runtime helper changed while reading")); c=compile(d,p,"exec"); sys.argv=[p,*sys.argv[2:]]; g={"__name__":"__main__","__file__":p,"__package__":None,"__cached__":None}; exec(c,g,g)'
+if [ -n "$request_fd" ]; then
+  case "$request_fd" in *[!0-9]*|0|1|2) printf '%s\n' '{"status":"error","message":"invalid private request descriptor"}'; exit 2 ;; esac
+  exec "$PYTHON" -I -c "$secure_loader" "$SCRIPT" submit \
+    --workspace "$WORKSPACE" --request-json-stdin <&"$request_fd"
+fi
+exec "$PYTHON" -I -c "$secure_loader" "$SCRIPT" submit \
+  --workspace "$WORKSPACE" --request-json-stdin

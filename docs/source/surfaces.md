@@ -8,7 +8,7 @@ OpenClaw source/import evidence and OpenClaw install-target behavior are separat
 
 | Target | Surface | State | Mechanism | Scope | Claim Basis | Notes |
 |---|---|---|---|---|---|---|
-| `codex` | `skill-file` | `supported` | `reference-adapter` | agent-visible regular SKILL.md adapter pointing at canonical source | `policy` | Auto mode uses reference adapters because symlinked Codex skill loading is not assumed. |
+| `codex` | `skill-file` | `supported` | `copy` | agent-visible regular SKILL.md file with copied support files | `policy` | Auto mode copies canonical skills and support files because symlinked Codex skill loading is not assumed and installed skills must remain self-contained. |
 | `claude` | `skill-file` | `supported` | `symlink` | native Claude skill file | `policy` | Auto mode links to canonical SKILL.md with apply-time fallback. |
 | `deepseek` | `skill-file` | `supported` | `reference-adapter` | agent-visible regular SKILL.md adapter pointing at canonical source | `policy` | Auto mode uses reference adapters because native symlink loading is not verified. |
 | `copilot` | `skill-file` | `supported` | `reference-adapter` | personal GitHub Copilot skill adapter | `policy` | Copilot receives personal skill/persona surfaces only; commands/templates are unsupported. |

@@ -22,7 +22,7 @@ def download(metadata, config, accept_short=False):
 
     Args:
         metadata: dict with _input_type, _normalized_id, DOI, _arxiv_id, title, etc.
-        config: loaded config dict (staging_dir, semantic_scholar_api_key, etc.)
+        config: loaded config dict (staging_dir, SEMANTIC_SCHOLAR_API_KEY, etc.)
         accept_short: pass through to verifier
 
     Returns:
@@ -169,7 +169,7 @@ def _run_getscipapers(staging_dir, args, identifier):
 
 def _semantic_scholar(staging_dir, doi, config):
     """Search Semantic Scholar for open access PDF."""
-    api_key = config.get("semantic_scholar_api_key", "")
+    api_key = config.get("SEMANTIC_SCHOLAR_API_KEY", "")
     headers = {}
     if api_key:
         headers["x-api-key"] = api_key
