@@ -44,7 +44,17 @@ case "$script_path" in
   */*) runtime_parent="${script_path%/*}" ;;
   *) runtime_parent=. ;;
 esac
-runtime_root="$(cd -- "$runtime_parent" && builtin pwd -P)"
+# Installed runtimes place this launcher at the runtime root.  CSR's immutable
+# exact-pin generation retains the canonical source layout, where the launcher
+# lives in ``runners/`` beside ``workspace/``.  Credential launches use only
+# the latter; mutable installed copies remain available for noncredential work.
+runtime_parent_real="$(cd -- "$runtime_parent" && builtin pwd -P)"
+if [ "${runtime_parent_real##*/}" = runners ] && \
+   [ -d "$runtime_parent_real/../workspace" ]; then
+  runtime_root="$(cd -- "$runtime_parent_real/.." && builtin pwd -P)"
+else
+  runtime_root="$runtime_parent_real"
+fi
 default_workspace="$runtime_root/workspace"
 workspace="$default_workspace"
 if [ "${AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE:-}" = "1" ] && [ -n "${AAS_RUNTIME_WORKSPACE:-}" ]; then
@@ -261,6 +271,53 @@ fi
 if [ "$credential_contract" -eq 0 ] && { [ -n "$compute_pointer" ] || [ -n "$provider_pointer" ]; }; then
   credential_contract=1
 fi
+
+# This literal is intentionally patchable only in ephemeral unit-test copies.
+# Production launchers must execute credential consumers from CSR's root-owned,
+# content-addressed AAS component generation, never a same-UID runtime copy.
+credential_runtime_enforcement=1
+
+root_owned_metadata() {
+  local candidate="$1" expected_type="$2" metadata owner mode links actual_type
+  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || true)"
+  IFS=: read -r owner mode links actual_type <<< "$metadata"
+  [ "$owner" = 0 ] || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  (( (8#$mode & 8#022) == 0 )) || return 1
+  [[ "$links" =~ ^[0-9]+$ ]] || return 1
+  if [ "$expected_type" = file ]; then
+    [ "$actual_type" = "regular file" ] && [ "$links" -eq 1 ]
+  else
+    [ "$actual_type" = directory ]
+  fi
+}
+
+trusted_credential_runtime_generation() {
+  local component_root pin manifest current expected
+  if ! [[ "$runtime_real" =~ ^/usr/local/libexec/coding-system/components/ai-agents-skills/([0-9a-f]{40})/canonical/runtime$ ]]; then
+    return 1
+  fi
+  pin="${BASH_REMATCH[1]}"
+  component_root="${runtime_real%/canonical/runtime}"
+  [ "${component_root##*/}" = "$pin" ] || return 1
+  manifest="$component_root/manifest/credential-runtime.json"
+  root_owned_metadata "$manifest" file || return 1
+  for expected in "$runtime_real" "$workspace_real" "$command_path"; do
+    current="$expected"
+    while :; do
+      [ ! -L "$current" ] || return 1
+      if [ "$current" = "$command_path" ]; then
+        root_owned_metadata "$current" file || return 1
+      else
+        root_owned_metadata "$current" directory || return 1
+      fi
+      [ "$current" = "$component_root" ] && break
+      current="${current%/*}"
+      [ -n "$current" ] || return 1
+      case "$current/" in "$component_root"/|"$component_root"/*) ;; *) return 1 ;; esac
+    done
+  done
+}
 
 trusted_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links current_uid
