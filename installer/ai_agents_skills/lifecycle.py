@@ -9,6 +9,7 @@ from typing import Any
 
 from .capabilities import normalized_path_within, resolved_path_within
 from .json_merge import extract_hook_entry, load_json_object, remove_hook_entry
+from .managed_permissions import restore_managed_modes
 from .openclaw_target_gate import real_openclaw_path_block_reason
 from .state import (
     artifact_signature,
@@ -21,6 +22,7 @@ from .state import (
     validate_run_id,
     write_text_atomic,
 )
+from .windows_security import require_handle_bound_mutation
 
 
 def uninstall(
@@ -30,6 +32,8 @@ def uninstall(
     artifacts: set[str] | None = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
+    if not dry_run:
+        require_handle_bound_mutation("installer uninstall")
     state = load_state(root)
     targets = filter_artifacts(lifecycle_records(state), skills, agents, artifacts)
     actions = [plan_uninstall_action(item, root) for item in targets]
@@ -43,6 +47,10 @@ def uninstall(
     created_parent_dirs: list[str] = []
     for action in actions:
         result = apply_uninstall_action(action, root)
+        if result.get("completed"):
+            result["restored_permission_modes"] = restore_managed_modes(
+                root, action.get("permission_origin", [])
+            )
         results.append(result)
         if result.get("completed"):
             completed_keys.add(action.get("key"))
@@ -69,6 +77,8 @@ def rollback(
     artifacts: set[str] | None = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
+    if not dry_run:
+        require_handle_bound_mutation("installer rollback")
     state = load_state(root)
     lifecycle_scope = state.get("artifacts", [])
     if run_id:
@@ -87,6 +97,17 @@ def rollback(
     created_parent_dirs: list[str] = []
     for item in targets:
         rollback_artifact(item, root)
+        item["restored_permission_modes"] = restore_managed_modes(
+            root,
+            [
+                *item.get("normalized_parent_modes", []),
+                *(
+                    [item["normalized_file_mode"]]
+                    if isinstance(item.get("normalized_file_mode"), dict)
+                    else []
+                ),
+            ],
+        )
         restored.append(item)
         created_parent_dirs.extend(item.get("created_parent_dirs", []))
     remaining = [

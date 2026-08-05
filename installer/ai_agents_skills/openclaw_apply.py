@@ -8,6 +8,7 @@ from typing import Any
 from .capabilities import looks_like_real_system_root, normalized_path_within, resolved_path_within
 from .openclaw_manifest import load_manifest, target_precondition, validate_manifest
 from .state import existing_contained_parents, now_run_id, preflight_state_path, sha256_text, write_text_atomic
+from .windows_security import require_handle_bound_mutation
 
 
 OPENCLAW_STATE_VERSION = 1
@@ -20,6 +21,8 @@ def apply_manifest_file(manifest_path: Path, target_root: Path, *, dry_run: bool
 
 
 def apply_manifest(manifest: dict[str, Any], target_root: Path, *, dry_run: bool = True) -> dict[str, Any]:
+    if not dry_run:
+        require_handle_bound_mutation("OpenClaw review-target apply")
     validate_manifest(manifest, require_approved=not dry_run)
     root = checked_fake_target_root(target_root)
     planned = [plan_apply_action(root, manifest, action) for action in manifest["actions"]]
@@ -73,6 +76,8 @@ def uninstall_manifest(
     manifest_id: str | None = None,
     dry_run: bool = True,
 ) -> dict[str, Any]:
+    if not dry_run:
+        require_handle_bound_mutation("OpenClaw review-target uninstall")
     root = checked_fake_target_root(target_root)
     state = load_openclaw_state(root)
     records = [

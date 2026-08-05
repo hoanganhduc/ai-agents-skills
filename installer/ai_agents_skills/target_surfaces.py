@@ -50,10 +50,10 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "codex",
         "skill-file",
         "supported",
-        "reference-adapter",
-        "agent-visible regular SKILL.md adapter pointing at canonical source",
+        "copy",
+        "agent-visible regular SKILL.md file with copied support files",
         "policy",
-        "Auto mode uses reference adapters because symlinked Codex skill loading is not assumed.",
+        "Auto mode copies canonical skills and support files because symlinked Codex skill loading is not assumed and installed skills must remain self-contained.",
     ),
     TargetSurface(
         "claude",

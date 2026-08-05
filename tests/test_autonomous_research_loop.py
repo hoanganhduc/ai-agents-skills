@@ -1946,6 +1946,55 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
 
         return arl, gf
 
+    def test_primary_provider_credentials_are_explicitly_scoped_by_provider(self) -> None:
+        arl, _gf = self._runtime_modules()
+        expected = {
+            "claude": {
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_AUTH_TOKEN",
+                "CLAUDE_API_KEY",
+                "CLAUDE_CODE_OAUTH_TOKEN",
+            },
+            "codex": {"OPENAI_API_KEY"},
+            "codewhale": {"DEEPSEEK_API_KEY"},
+            "deepseek": {"DEEPSEEK_API_KEY"},
+            "grok": {"GROK_API_KEY", "XAI_API_KEY"},
+            "antigravity": {"GEMINI_API_KEY", "GOOGLE_API_KEY"},
+            "copilot": {
+                "COPILOT_GITHUB_TOKEN",
+                "COPILOT_PROVIDER_API_KEY",
+                "COPILOT_PROVIDER_BEARER_TOKEN",
+                "GITHUB_TOKEN",
+                "GH_TOKEN",
+            },
+            "kimi": {"KIMI_API_KEY", "MOONSHOT_API_KEY"},
+            "opencode": {"OPENCODE_API_KEY"},
+        }
+        all_keys = set().union(*expected.values())
+        source = {key: f"restored-{key.lower()}" for key in all_keys}
+        for provider, allowed in expected.items():
+            with self.subTest(provider=provider):
+                child = arl.build_primary_child_env(
+                    provider,
+                    executable_attestation={
+                        "provider": provider,
+                        "source": "trusted_operator_provider_identity.v1",
+                    },
+                    control={"AUTOLOOP_DIR": "/bounded-loop"},
+                    environ=source,
+                    include_provider_credentials=True,
+                )
+                self.assertEqual(set(child) & all_keys, allowed)
+
+                unattested = arl.build_primary_child_env(
+                    provider,
+                    executable_attestation=None,
+                    control={"AUTOLOOP_DIR": "/bounded-loop"},
+                    environ=source,
+                    include_provider_credentials=True,
+                )
+                self.assertFalse(set(unattested) & all_keys)
+
     def _trusted_registry_root(self, label: str) -> Path:
         root = self.provider_fixture.root / f"registry-{label}"
         root.mkdir(mode=0o700)
@@ -6892,6 +6941,10 @@ class NotifyPolicyTests(unittest.TestCase):
         }
         with tempfile.TemporaryDirectory() as tmp:
             loop = Path(tmp) / "loop"
+            home = Path(tmp) / "home"
+            authority = home / ".config" / "remote-bridge" / "secrets.json"
+            authority.parent.mkdir(parents=True)
+            authority.write_text("{}\n", encoding="utf-8")
             init_args = mod.selftest_init_args(loop, max_iterations=1)
             init_args.goal_focus_mode = "enforce"
             mod.init_loop(init_args)
@@ -6901,6 +6954,13 @@ class NotifyPolicyTests(unittest.TestCase):
                 {
                     "AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS": "allow",
                     "AAS_ALLOW_RAW_NOTIFY_CMD": "1",
+                    "HOME": str(home),
+                    "AAS_COMPUTE_SECRETS_FILE": "/canary/compute-pointer",
+                    "AAS_PROVIDER_SECRETS_FILE": "/canary/provider-pointer",
+                    "REMOTE_BRIDGE_SECRETS_FILE": "/canary/remote-pointer",
+                    "KAGGLE_API_TOKEN": "kaggle-token-must-not-cross",
+                    "OPENAI_API_KEY": "provider-token-must-not-cross",
+                    "ZULIP_API_KEY": "ambient-zulip-must-not-cross",
                 },
                 clear=False,
             ), mock.patch.object(
@@ -6936,10 +6996,78 @@ class NotifyPolicyTests(unittest.TestCase):
             resolve.assert_called_once()
             self.assertTrue(resolve.call_args.kwargs["event_json_stdin"])
             transport.assert_called_once()
+            child_env = transport.call_args.kwargs["env"]
+            self.assertEqual(child_env["REMOTE_BRIDGE_SECRETS_FILE"], str(authority))
+            self.assertEqual(child_env["HOME"], str(home))
+            for forbidden in (
+                "AAS_COMPUTE_SECRETS_FILE",
+                "AAS_PROVIDER_SECRETS_FILE",
+                "KAGGLE_API_TOKEN",
+                "OPENAI_API_KEY",
+                "ZULIP_API_KEY",
+            ):
+                self.assertNotIn(forbidden, child_env)
+            self.assertNotEqual(
+                child_env["REMOTE_BRIDGE_SECRETS_FILE"], "/canary/remote-pointer"
+            )
             outbound = json.loads(transport.call_args.kwargs["input"])
             self.assertEqual(outbound, payload["notification"])
             self.assertEqual(outbound["compute"], {"reported": True, "runs": []})
             raw_hook.assert_called_once()
+
+    def test_raw_notify_hook_receives_only_base_os_and_autoloop_event_environment(self) -> None:
+        mod = self._mod()
+        payload = {
+            "AUTOLOOP_EVENT": "iteration_ok",
+            "AUTOLOOP_TEXT": "bounded progress",
+        }
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ,
+            {
+                "HOME": tmp,
+                "REMOTE_BRIDGE_SECRETS_FILE": "/canary/remote-pointer",
+                "AAS_COMPUTE_SECRETS_FILE": "/canary/compute-pointer",
+                "AAS_PROVIDER_SECRETS_FILE": "/canary/provider-pointer",
+                "KAGGLE_API_TOKEN": "kaggle-token-must-not-cross",
+                "OPENAI_API_KEY": "provider-token-must-not-cross",
+                "ZULIP_API_KEY": "zulip-token-must-not-cross",
+            },
+            clear=False,
+        ), mock.patch.object(mod.subprocess, "run") as run:
+            mod.watch_notify("operator-approved-hook", payload)
+
+        run.assert_called_once()
+        child_env = run.call_args.kwargs["env"]
+        self.assertEqual(child_env["AUTOLOOP_EVENT"], "iteration_ok")
+        self.assertEqual(child_env["AUTOLOOP_TEXT"], "bounded progress")
+        self.assertEqual(child_env["HOME"], tmp)
+        for forbidden in (
+            "REMOTE_BRIDGE_SECRETS_FILE",
+            "AAS_COMPUTE_SECRETS_FILE",
+            "AAS_PROVIDER_SECRETS_FILE",
+            "KAGGLE_API_TOKEN",
+            "OPENAI_API_KEY",
+            "ZULIP_API_KEY",
+        ):
+            self.assertNotIn(forbidden, child_env)
+
+    def test_remote_notify_argv_uses_managed_wrapper_not_runtime_selector(self) -> None:
+        mod = self._mod()
+        with mock.patch.dict(
+            os.environ,
+            {"AAS_RUNTIME_PYTHON": "/hostile/python-selector"},
+            clear=False,
+        ):
+            argv = mod.resolve_remote_notify_argv(
+                "zulip",
+                "unused structured body",
+                event_json_stdin=True,
+            )
+        self.assertIsNotNone(argv)
+        assert argv is not None
+        self.assertTrue(argv[0].endswith("remote-bridge/run_remote_bridge.sh"))
+        self.assertNotIn("/hostile/python-selector", argv)
+        self.assertEqual(argv[1:4], ["send", "--event-json", "-"])
 
     def test_iteration_key_dedupes_timestamp_changed_body_for_window(self) -> None:
         mod = self._mod()

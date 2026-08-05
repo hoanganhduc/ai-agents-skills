@@ -183,3 +183,10 @@ kg run --job ./bundle --confirm      # multi-run resume loop across concurrent k
 hz preflight --job ./bundle --json   # the Hetzner plan (no server)
 hz oneshot --job ./bundle --confirm  # provision -> run -> fetch -> destroy (teardown guaranteed)
 ```
+
+When restoration configures `AAS_COMPUTE_SECRETS_FILE`, the managed broker and
+Hetzner wrappers strictly load its exact four-key compute authority
+(`HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS`, `KAGGLE_API_TOKEN`, `KAGGLE_CONFIG_DIR`)
+into only their child process tree. Keep the pointer in the launcher
+environment; never copy it or its assignments into a job manifest or
+agent-writable loop env.

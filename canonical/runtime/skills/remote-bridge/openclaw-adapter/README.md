@@ -49,15 +49,19 @@ The adapter reads and writes only its selected OpenClaw workspace by default:
 
 | Data | Default host path |
 |------|-------------------|
-| Secrets | `~/.openclaw/workspace/secrets/remote-bridge/secrets.json` |
+| Secrets | `~/.openclaw/workspace/.config/remote-bridge/secrets.json` |
 | State | `~/.openclaw/workspace/.remote-bridge-state` |
 
-Inside the sandbox these are `/workspace/secrets/remote-bridge/secrets.json`
+Inside the sandbox these are `/workspace/.config/remote-bridge/secrets.json`
 and `/workspace/.remote-bridge-state`. `OPENCLAW_WORKSPACE` or
 `AAS_OPENCLAW_WORKSPACE` can select another root for the adapter parent. The
 child receives a narrow environment and always uses that workspace's private
 secrets/state paths; it does not inherit host path overrides or unrelated
 provider/cloud credentials.
+
+The `.config/remote-bridge/secrets.json` location is the adapter's single
+credential authority. Restoration and launch must converge there rather than
+creating a second `secrets/remote-bridge/` tree.
 
 There is **no automatic or bidirectional synchronization** with host
 remote-bridge config/state. `dispatch_aas.py` and `remote_bridge.py` do not

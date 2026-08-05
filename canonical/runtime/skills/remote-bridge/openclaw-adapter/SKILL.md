@@ -17,14 +17,14 @@ The adapter uses its own OpenClaw workspace paths:
 
 | Data | Sandbox path | Host view of the same workspace |
 |------|--------------|---------------------------------|
-| Secrets | `/workspace/secrets/remote-bridge/secrets.json` | `~/.openclaw/workspace/secrets/remote-bridge/secrets.json` |
+| Secrets | `/workspace/.config/remote-bridge/secrets.json` | `~/.openclaw/workspace/.config/remote-bridge/secrets.json` |
 | State | `/workspace/.remote-bridge-state` | `~/.openclaw/workspace/.remote-bridge-state` |
 
 There is **no automatic or bidirectional synchronization** with host
 `~/.config/remote-bridge` or `~/.local/share/ai-agents-skills/remote-bridge`.
 `dispatch_aas.py` never imports or runs the legacy sync helper. Host and
-workspace configurations are independent; an operator must provision the
-workspace-owned secrets file explicitly.
+workspace configurations are independent; restoration must provision the
+single workspace-owned secrets authority at the path above.
 
 `OPENCLAW_WORKSPACE` or `AAS_OPENCLAW_WORKSPACE` may select a different
 workspace root for the adapter parent. The child receives a narrow environment

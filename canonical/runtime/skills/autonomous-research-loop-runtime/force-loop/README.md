@@ -53,7 +53,31 @@ bash "$RUNTIME/run_skill.sh" \
 
 - **Never** shell-`source` agent-writable loop env files.
 - Host pin file: `{loop}/driver/force_loop.env` (strict KEY=VALUE via `load_loop_env.py`).
-- Secrets: `AAS_COMPUTE_SECRETS_FILE` (or process env) **outside** the loop tree.
+- Secrets may be exported directly in the launcher process, or loaded from the
+  absolute path in launcher variable `AAS_COMPUTE_SECRETS_FILE`. Do not put
+  that pointer in `force_loop.env`.
+- The compute secrets file must be a bounded, single-link regular file with no
+  symlink in its path. On POSIX it must be owned by the effective user and mode
+  `0600` (or stricter). Only `HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS`,
+  `KAGGLE_API_TOKEN`, and `KAGGLE_CONFIG_DIR` are accepted. The restored class
+  replaces stale ambient values and the pointer is removed before child launch;
+  values are never included in CLI output.
+- Provider fallback credentials use a separate absolute launcher pointer,
+  `AAS_PROVIDER_SECRETS_FILE`. Its file has the same strict path, ownership,
+  size, syntax, duplicate, and empty-value checks. It accepts only
+  `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_API_KEY`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, `COPILOT_GITHUB_TOKEN`,
+  `COPILOT_PROVIDER_API_KEY`, `COPILOT_PROVIDER_BEARER_TOKEN`, `DEEPSEEK_API_KEY`,
+  `GEMINI_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`, `GOOGLE_API_KEY`,
+  `GROK_API_KEY`, `KIMI_API_KEY`, `MOONSHOT_API_KEY`, `OPENAI_API_KEY`,
+  `OPENCODE_API_KEY`, and `XAI_API_KEY`. The restored values override ambient
+  values only inside the launcher/child process tree; strict primary and panel
+  children receive only the keys explicitly allowed for their selected
+  provider. Never put this pointer in `force_loop.env`.
+- `AAS_REMOTE_STRICT_NOTIFY_CHANNEL` accepts only `zulip`, `telegram`, or an
+  empty value. The start path validates it and includes the normalized policy in
+  the private systemd environment file so a detached unit cannot lose the
+  campaign-wide send boundary.
 
 ## Layout
 

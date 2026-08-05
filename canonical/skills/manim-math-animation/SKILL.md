@@ -49,8 +49,8 @@ Manim 0.20.1; Python 3.10 receives Manim 0.19.1, the latest compatible line
 for that interpreter.
 
 ```bash
-bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/manim-math-animation/run_manim_math_animation.sh setup
-bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/manim-math-animation/run_manim_math_animation.sh doctor
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/manim-math-animation/run_manim_math_animation.sh setup
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/manim-math-animation/run_manim_math_animation.sh doctor
 ```
 
 `doctor` reports readiness; it never installs anything.

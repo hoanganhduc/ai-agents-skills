@@ -82,7 +82,7 @@ def _child_environment(parent: dict[str, str], workspace: Path) -> dict[str, str
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONUTF8": "1",
         "REMOTE_BRIDGE_SECRETS_FILE": str(
-            workspace / "secrets" / "remote-bridge" / "secrets.json"
+            workspace / ".config" / "remote-bridge" / "secrets.json"
         ),
         "AAS_REMOTE_BRIDGE_STATE": str(workspace / ".remote-bridge-state"),
         "AAS_REMOTE_JOB_ID": str(parent.get("AAS_REMOTE_JOB_ID") or "example-job"),

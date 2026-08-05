@@ -181,7 +181,7 @@ def target_notes(target: AgentTarget) -> list[str]:
         ]
     if target.name == "codex":
         return [
-            "Codex auto mode uses reference adapters because symlinked SKILL.md discovery is not assumed.",
+            "Codex auto mode copies regular SKILL.md files and support files because symlinked discovery is not assumed and the installed skill must remain self-contained.",
         ]
     if target.name == "deepseek":
         return [

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -27,6 +33,263 @@ class StaticCheckTests(unittest.TestCase):
         self.assertIn("return [string]($commands[0].Source)", text)
         self.assertIn("$python = [string]($commands[0].Source)", text)
         self.assertNotIn("$python = $command.Source", text)
+
+    def test_windows_secret_launchers_ignore_forged_environment_folder_roots(self) -> None:
+        paths = (
+            Path("canonical/runtime/runners/run_python.ps1"),
+            Path(
+                "canonical/runtime/skills/hetzner-research-compute/"
+                "run_hetzner_research_compute.ps1"
+            ),
+            Path(
+                "canonical/runtime/skills/hetzner-research-compute/"
+                "run_hetzner_reaper.ps1"
+            ),
+        )
+        for path in paths:
+            with self.subTest(path=str(path)):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn("[System.Environment]::SystemDirectory", text)
+                self.assertIn("GetFolderPath", text)
+                self.assertIn("SpecialFolderOption]::DoNotVerify", text)
+                self.assertNotRegex(
+                    text,
+                    r"\$env:(?:USERPROFILE|ProgramFiles|ProgramW6432|SystemRoot|WINDIR)",
+                )
+                self.assertIn("[System.IO.FileShare]::Read", text)
+
+    def test_managed_runtime_runners_disable_python_bytecode_writes(self) -> None:
+        expected = '$env:PYTHONDONTWRITEBYTECODE = "1"'
+        for relative_path in (
+            "canonical/runtime/runners/run_skill.ps1",
+            "canonical/runtime/runners/run_python.ps1",
+        ):
+            with self.subTest(path=relative_path):
+                text = Path(relative_path).read_text(encoding="utf-8")
+                self.assertIn(expected, text)
+
+        posix = Path("canonical/runtime/runners/run_skill.sh").read_text(encoding="utf-8")
+        self.assertIn("export PYTHONDONTWRITEBYTECODE=1", posix)
+
+    def test_managed_skill_secret_loader_has_exact_cross_platform_allowlist(self) -> None:
+        expected = {
+            "AXLE_API_KEY",
+            "LEANEXPLORE_API_KEY",
+            "OCR_SPACE_API_KEY",
+            "OCR_SPACE_KEY",
+            "OCRSPACE_API_KEY",
+            "OCRSPACE_KEY",
+            "OPENCLAW_S2_API_KEY",
+            "SEMANTIC_SCHOLAR_API_KEY",
+            "UNPAYWALL_EMAIL",
+            "ZENODO_TOKEN",
+        }
+        posix = Path("canonical/runtime/runners/run_skill.sh").read_text(encoding="utf-8")
+        projection_blocks = []
+        lines = posix.splitlines()
+        for index, line in enumerate(lines):
+            if "select_flat_projection AAS_SKILL_SECRETS_FILE env" not in line:
+                continue
+            block = line
+            while block.rstrip().endswith("\\"):
+                index += 1
+                block += "\n" + lines[index]
+            projection_blocks.append(block.split(" env", 1)[1])
+        projected = set(
+            re.findall(r"\b[A-Z][A-Z0-9_]*\b", "\n".join(projection_blocks))
+        )
+        self.assertEqual(projected, expected)
+        self.assertIn(
+            'for key in "${projection_allow_keys[@]}"; do loader_args+=(--allow-key "$key"); done',
+            posix,
+        )
+        self.assertIn(
+            'for key in "${projection_export_keys[@]}"; do loader_args+=(--export-key "$key"); done',
+            posix,
+        )
+
+        run_skill = Path("canonical/runtime/runners/run_skill.ps1").read_text(
+            encoding="utf-8"
+        )
+        contract_text = run_skill.split("$flatContracts = @{", 1)[1].split(
+            "$normalizedLower", 1
+        )[0]
+        skill_contracts = re.findall(
+            r'Pointer = "AAS_SKILL_SECRETS_FILE"; Format = "env"; Keys = @\((.*?)\)\s*}',
+            contract_text,
+            re.DOTALL,
+        )
+        windows_projected = set(
+            re.findall(r'"([A-Z][A-Z0-9_]*)"', "\n".join(skill_contracts))
+        )
+        self.assertEqual(windows_projected, expected)
+        self.assertIn(
+            '-AllowedKeys ([string[]]$flatProjection["Keys"])', run_skill
+        )
+        self.assertIn(
+            '-ExportKeys ([string[]]$flatProjection["Keys"])', run_skill
+        )
+
+        run_python = Path("canonical/runtime/runners/run_python.ps1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "AAS_SKILL_SECRETS_FILE must be projected by run_skill.ps1 before Python launch.",
+            run_python,
+        )
+        self.assertNotIn(
+            'Import-AasSecretEnvFile -PointerEnv "AAS_SKILL_SECRETS_FILE"',
+            run_python,
+        )
+
+    def test_secret_loader_files_are_manifested_with_platform_hardening(self) -> None:
+        data = json.loads(Path("manifest/runtime.yaml").read_text(encoding="utf-8"))
+        runners = {entry["target"]: entry for entry in data["runners"]}
+        self.assertEqual(
+            set(runners["load_secret_env.py"]["platforms"]),
+            {"linux", "macos", "wsl"},
+        )
+        self.assertEqual(runners["load_secret_env.ps1"]["platforms"], ["windows"])
+        helper = Path("canonical/runtime/runners/load_secret_env.ps1").read_text(
+            encoding="utf-8"
+        )
+        for token in (
+            "ReparsePoint",
+            "CreateFileW",
+            "GetSecurityInfo",
+            "GetFileInformationByHandle",
+            "GetFileInformationByHandleEx",
+            "ChangeTime",
+            "ReadSnapshot",
+            "GetDirectoryDescriptor",
+            "NumberOfLinks",
+            "WindowsIdentity",
+            "ReadFile",
+            "RawSecurityDescriptor",
+            "EnvironmentVariableTarget]::Process",
+        ):
+            self.assertIn(token, helper)
+        self.assertNotIn("[System.IO.File]::ReadAllBytes", helper)
+        self.assertNotIn("Get-Acl -LiteralPath $absolute", helper)
+
+    def test_windows_broker_state_uses_handle_bound_owner_dacl_guards(self) -> None:
+        manifest = json.loads(Path("manifest/runtime.yaml").read_text(encoding="utf-8"))
+        runtime_targets = {
+            entry["target"]
+            for skill in manifest["skills"].values()
+            for entry in skill.get("files", [])
+        }
+        self.assertIn("workspace/research_compute/windows_acl.py", runtime_targets)
+
+        guard = Path(
+            "canonical/runtime/workspace/research_compute/windows_acl.py"
+        ).read_text(encoding="utf-8")
+        for token in (
+            "CreateFileW",
+            "GetSecurityInfo",
+            "GetFileInformationByHandle",
+            "FILE_SHARE_READ",
+            "OPEN_REPARSE",
+            "current_sid_string",
+            "owner_value != current_sid",
+            "owner/SYSTEM/Administrators",
+        ):
+            self.assertIn(token, guard)
+
+        state = Path(
+            "canonical/runtime/workspace/research_compute/state.py"
+        ).read_text(encoding="utf-8")
+        budget = Path(
+            "canonical/runtime/workspace/research_compute/budget_ledger.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("with private_path_guard(path, directory=False)", state)
+        self.assertIn("with private_path_guard(path, directory=False)", budget)
+        self.assertIn("with private_path_guard(lock_path, directory=False)", budget)
+
+    def test_windows_force_loop_uses_native_acl_loader_for_provider_secrets(self) -> None:
+        expected = {
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_API_KEY",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "COPILOT_GITHUB_TOKEN",
+            "COPILOT_PROVIDER_API_KEY",
+            "COPILOT_PROVIDER_BEARER_TOKEN",
+            "DEEPSEEK_API_KEY",
+            "GEMINI_API_KEY",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GOOGLE_API_KEY",
+            "GROK_API_KEY",
+            "KIMI_API_KEY",
+            "MOONSHOT_API_KEY",
+            "OPENAI_API_KEY",
+            "OPENCODE_API_KEY",
+            "XAI_API_KEY",
+        }
+        text = Path(
+            "canonical/runtime/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1"
+        ).read_text(encoding="utf-8")
+        block = text.split('Import-AasSecretEnvFile -PointerEnv "AAS_PROVIDER_SECRETS_FILE"', 1)[1]
+        block = block.split(")", 1)[0]
+        self.assertEqual(set(re.findall(r'"([A-Z][A-Z0-9_]*)"', block)), expected)
+        self.assertIn("Remove-Item Env:AAS_PROVIDER_SECRETS_FILE", text)
+
+    @unittest.skipUnless(os.name == "nt", "native PowerShell secret loader test")
+    def test_windows_secret_loader_projects_private_file_into_process_only(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell")
+        self.assertIsNotNone(powershell)
+        loader = Path("canonical/runtime/runners/load_secret_env.ps1").resolve()
+        with tempfile.TemporaryDirectory() as tmp:
+            secret = Path(tmp) / "skill.env"
+            secret.write_text("AXLE_API_KEY=restored-windows-value\n", encoding="utf-8")
+
+            def quoted(path: Path) -> str:
+                return str(path).replace("'", "''")
+
+            command = f"""
+. '{quoted(loader)}'
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$parentAcl = [System.Security.AccessControl.DirectorySecurity]::new()
+$parentAcl.SetOwner($identity.User)
+$parentRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+    $identity.User,
+    [System.Security.AccessControl.FileSystemRights]::FullControl,
+    [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit,
+    [System.Security.AccessControl.PropagationFlags]::None,
+    [System.Security.AccessControl.AccessControlType]::Allow
+)
+[void]$parentAcl.AddAccessRule($parentRule)
+Set-Acl -LiteralPath '{quoted(secret.parent)}' -AclObject $parentAcl
+$acl = [System.Security.AccessControl.FileSecurity]::new()
+$acl.SetOwner($identity.User)
+$rule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+    $identity.User,
+    [System.Security.AccessControl.FileSystemRights]::Read,
+    [System.Security.AccessControl.AccessControlType]::Allow
+)
+[void]$acl.AddAccessRule($rule)
+Set-Acl -LiteralPath '{quoted(secret)}' -AclObject $acl
+$env:AAS_SKILL_SECRETS_FILE = '{quoted(secret)}'
+$env:ZENODO_TOKEN = 'stale-ambient-zenodo'
+Import-AasSecretEnvFile `
+    -PointerEnv 'AAS_SKILL_SECRETS_FILE' `
+    -AllowedKeys @('AXLE_API_KEY', 'ZENODO_TOKEN') `
+    -ExportKeys @('AXLE_API_KEY')
+[Console]::Out.Write(
+    "$($env:AXLE_API_KEY)|$($env:ZENODO_TOKEN)|$($env:AAS_SKILL_SECRETS_FILE)"
+)
+"""
+            completed = subprocess.run(
+                [str(powershell), "-NoProfile", "-NonInteractive", "-Command", command],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(completed.stdout, "restored-windows-value||")
 
     def test_installed_runtime_copy_uses_portable_open_flags(self) -> None:
         text = Path("installer/ai_agents_skills/runtime_smoke.py").read_text(encoding="utf-8")
@@ -70,6 +333,7 @@ class StaticCheckTests(unittest.TestCase):
     def test_canonical_skill_runtime_guidance_avoids_codex_runtime_paths(self) -> None:
         forbidden = (
             "bash ~/.codex/runtime/run_skill.sh",
+            "bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh",
             "~/.codex/runtime/workspace",
             "$HOME/.codex/runtime",
             "$env:USERPROFILE\\.codex\\runtime",
@@ -83,6 +347,17 @@ class StaticCheckTests(unittest.TestCase):
             for token in forbidden:
                 with self.subTest(path=str(path), token=token):
                     self.assertNotIn(token, text)
+
+    def test_codex_auto_install_is_self_contained(self) -> None:
+        from installer.ai_agents_skills.capabilities import effective_install_mode_with_evidence
+        from installer.ai_agents_skills.render import canonical_skill_path
+
+        source = canonical_skill_path("remote-bridge")
+        mode, reason, evidence = effective_install_mode_with_evidence("codex", "auto", source)
+
+        self.assertEqual(mode, "copy")
+        self.assertIn("self-contained", reason)
+        self.assertEqual(evidence["agent_policy"]["default_mode"], "copy")
 
 
 if __name__ == "__main__":

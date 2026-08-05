@@ -56,6 +56,17 @@ No Goal/Results/Decision trailer, no agent/compute noise.
 
 Supervisor no longer remote-notifies “driving with primary=…” immediately before drive; **`drive_start`** is the single start-class remote event.
 
+## Channel policy (pointer)
+
+This template owns the **body**; channel selection is remote-bridge policy.
+Strict single-channel campaigns set `AAS_REMOTE_STRICT_NOTIFY_CHANNEL` in the
+loop env (see remote-bridge `SKILL.md` and the force-loop `OPERATOR_RUNBOOK.md`).
+The Zulip target stream is `zulip.control_stream` in the remote-bridge secrets
+and must be an **existing** channel — the bridge never creates streams. A
+launch preflight with a read-only live-auth check is the only step that
+catches credentials that resolve structurally but fail authentication
+(`OPERATOR_RUNBOOK.md`, "Notify channel and launch preflight").
+
 ## Profile selection
 
 1. `notify.json` → `body_profile`  

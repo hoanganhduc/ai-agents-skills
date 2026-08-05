@@ -183,9 +183,12 @@ record the agent policy and fallback behavior used to choose symlink,
 reference, or copy mode. Copy mode remains available when an agent or
 filesystem must have regular files inside the settings directory.
 
-Platform support is Linux and Windows first, with core installer flows also
-covered on macOS in CI. macOS users should expect POSIX-style behavior but
-lighter platform-specific guidance than Linux and Windows.
+Planning, prechecks, and runtime wrappers support Linux and Windows, with core
+POSIX installer flows also covered on macOS in CI. Native Windows target
+mutation is currently dry-run-only: apply, uninstall, rollback, OpenClaw target
+writes, and Antigravity settings writes fail closed until the mutation remains
+bound to the validated Windows handle. macOS users should expect POSIX-style
+behavior but lighter platform-specific guidance.
 
 ## Documentation
 
@@ -478,11 +481,12 @@ unchanged.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets follow auto mode: Claude links to `canonical/skills`, Codex and
-DeepSeek receive reference adapters, OpenCode, Grok, and Kimi Code receive
-copied native skill files plus support files (Grok installs under `~/.grok` and
+targets follow auto mode: Claude links to `canonical/skills`; Codex, OpenCode,
+Grok, and Kimi Code receive copied native skill files plus support files;
+Grok installs under `~/.grok` and
 disables its `[compat.claude]` ride-along for a self-contained view; Kimi
-installs under `~/.kimi-code` and does not auto-edit `config.toml`), and
+installs under `~/.kimi-code` and does not auto-edit `config.toml`. DeepSeek
+receives reference adapters, and
 Antigravity receives flat global Markdown adapters plus native plugin/config
 scaffolds unless native loader evidence
 justifies a different policy. Explicit `symlink`, `reference`, and `copy`
@@ -521,10 +525,11 @@ def skills_text(manifests: dict[str, Any]) -> str:
         "that skill, its support files when the selected install mode needs "
         "them, and the managed instruction block for that installed or adopted "
         "skill. Skipped skills do not receive instruction blocks. Default "
-        "`auto` mode links Claude skill files to `canonical/skills`, while "
-        "Codex, DeepSeek, and Copilot receive reference adapters unless native "
-        "loader evidence justifies a different policy. OpenCode, Grok, Kimi "
-        "Code, and Antigravity receive copied regular files by default. Explicit "
+        "`auto` mode links Claude skill files to `canonical/skills`; Codex, "
+        "OpenCode, Grok, Kimi Code, and Antigravity receive copied regular files "
+        "and support files by default. DeepSeek and Copilot receive reference "
+        "adapters unless native loader evidence justifies a different policy. "
+        "Explicit "
         "`symlink`, `reference`, and `copy` modes force the same strategy for every "
         "agent. In `reference` mode, the installed `SKILL.md` is an adapter "
         "that points back to this repo; support files remain in "
@@ -1677,8 +1682,12 @@ Implemented fail-closed behavior:
 - `openclaw-target-apply-manifest` requires an approved immutable v2 manifest,
   immediate target pre-state recheck, an OpenClaw-specific confirmation phrase,
   and `--real-system` for real home roots
-- v2 uninstall deletes only unchanged files recorded by
-  `.ai-agents-skills/openclaw-target-state.json`
+- an already-present byte-identical managed skill is not rewritten: apply
+  adopts it only after the approved canonical-source digest, rendered-content
+  digest, owner, file identity, timestamps, link count, and mode all recheck;
+  the attestation is recorded in `.ai-agents-skills/openclaw-target-state.json`
+- v2 uninstall deletes only unchanged files created by target apply; it forgets
+  adopted pre-existing files without deleting them
 - OpenClaw instruction blocks and management notices are not generated
 - symlink and reference install modes are blocked for OpenClaw
 - manifest runtime-backed skills are blocked until neutral runtime evidence
@@ -2246,8 +2255,12 @@ Real-system gate:
 - real apply and uninstall must fail closed unless OpenClaw is stopped, locked,
   or otherwise quiescent; target pre-state and write policy must be rechecked
   immediately before writes
-- v2 uninstall deletes only unchanged files recorded by the OpenClaw target
-  state journal and cleans only recorded empty parent directories
+- an identical pre-existing skill becomes managed only through an approved
+  canonical-source/rendered-content digest and exact file-identity attestation;
+  it is never rewritten by the no-op adoption path
+- v2 uninstall deletes only unchanged files created by target apply, forgets
+  adopted pre-existing files without deleting them, and cleans only recorded
+  empty parent directories
 
 ## Acceptance Criteria
 
@@ -2880,7 +2893,7 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, DeepSeek, and Copilot skill files resolve to reference adapters because symlinked skill loading is not assumed for those targets. OpenCode, Antigravity, Grok, and Kimi copy the full canonical skill body and support files by default; Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`, and Kimi writes directory-layout `SKILL.md` files under `~/.kimi-code/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, OpenCode, Antigravity, Grok, and Kimi copy the full canonical skill body and support files by default; Codex uses copied regular files because symlinked discovery is not assumed and its install must remain self-contained. DeepSeek and Copilot resolve to reference adapters. Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`, and Kimi writes directory-layout `SKILL.md` files under `~/.kimi-code/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
@@ -3029,6 +3042,13 @@ This page describes safe installation flows. The installer is conservative:
 planning and dry-run previews are the default workflow, and real home-directory
 writes require both `--apply` and `--real-system`.
 
+Native Windows mutation is temporarily fail-closed. Planning, prechecks, and
+dry-runs remain available, but install/apply, uninstall, rollback, OpenClaw
+target writes, and Antigravity settings writes are rejected until replacement
+and deletion operate against the same Windows handle used for reparse-point,
+owner, and DACL validation. WSL/Linux mutation of a mounted Windows profile is a
+different substrate and must follow its own mounted-profile safety policy.
+
 Use `make precheck` or `./make.ps1 precheck` first when installing on a new
 machine. The launchers detect a usable runtime instead of requiring a specific
 command name. Use `plan` before `install`. Partial installs are first-class:
@@ -3110,6 +3130,41 @@ debugging wrapper behavior:
 python3 -m installer.ai_agents_skills help
 python3 -m installer.ai_agents_skills describe zotero
 ```
+
+## Restored runtime secret projection
+
+Managed runtime skills can receive restored API credentials from a strict
+launcher-only env file. Set `AAS_SKILL_SECRETS_FILE` to an explicit absolute
+path before invoking `run_skill.sh` or `run_skill.ps1`. The file accepts only
+comments, blank lines, and unique non-empty `KEY=value` records for
+`AXLE_API_KEY`, `LEANEXPLORE_API_KEY`, `OCR_SPACE_API_KEY`, `OCR_SPACE_KEY`,
+`OCRSPACE_API_KEY`, `OCRSPACE_KEY`, `OPENCLAW_S2_API_KEY`,
+`PATENTSVIEW_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, `UNPAYWALL_EMAIL`, and
+`ZENODO_TOKEN`.
+
+The loader does not shell-source or evaluate the file. It rejects relative or
+linked paths, oversized or multiply linked files, unknown/duplicate/empty
+records, and unsafe permissions without printing values. On POSIX the file
+must be owned by the effective user with mode `0600` (or stricter). On Windows
+the PowerShell loader requires current-user ownership, allows access only to
+that user, SYSTEM, and Administrators, and rejects reparse points before and
+after its bounded read. The resulting values override inherited values only in
+the managed launcher/child process tree; they are not exported back into the
+calling shell.
+
+Autonomous research-loop provider fallbacks use the separate
+`AAS_PROVIDER_SECRETS_FILE` launcher pointer documented in the force-loop
+operator runbook. This keeps general skill credentials distinct from provider
+credentials and lets strict primary and panel children receive only their
+selected provider's explicit allowlist. Both the default force-loop and the
+advanced direct `drive` wrappers consume that pointer.
+
+Broker-routed compute uses `AAS_COMPUTE_SECRETS_FILE`, whose protected env file
+accepts exactly `HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS`, `KAGGLE_API_TOKEN`, and
+`KAGGLE_CONFIG_DIR`. The managed unified-broker and standalone Hetzner wrappers
+consume it directly, and ARL `drive` passes only host-pinned eligible lane keys
+to an attested primary. Keep both pointers in the launcher environment, never
+in agent-writable loop env files or job manifests.
 
 Use `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` to
 inspect manifest content without planning writes. Use `make docs` to
@@ -3271,7 +3326,9 @@ adapters and support files fall back to copied files.
 
 Codex, DeepSeek, Copilot, OpenCode, and Antigravity are compatibility
 exceptions. Current Codex skill discovery loads regular user `SKILL.md` files
-but ignores file-symlinked user `SKILL.md` files. DeepSeek native symlinked
+but ignores file-symlinked user `SKILL.md` files, so auto mode copies complete
+Codex skill trees rather than retaining a source-checkout dependency. DeepSeek
+native symlinked
 `SKILL.md` loading has not been verified. Copilot agent skills are regular
 `SKILL.md` files in `~/.copilot/skills` or `.github/skills`; symlinked skill
 loading is not assumed. OpenCode native skills are regular files under
@@ -3280,9 +3337,9 @@ support files for cross-platform parity. Antigravity global skills are flat
 Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, so auto
 mode copies the full canonical skill body into that native global skill
 directory and creates the managed Antigravity plugin/config scaffolds. In
-default auto mode, Codex, DeepSeek, and Copilot resolve skill files to reference
-adapters that point at the canonical repo skill, while OpenCode and Antigravity
-resolve to copy mode. `plan --json` shows the effective `install_mode`, `mode_reason`,
+default auto mode, Codex, OpenCode, and Antigravity resolve to copy mode, while
+DeepSeek and Copilot resolve skill files to reference adapters that point at
+the canonical repo skill. `plan --json` shows the effective `install_mode`, `mode_reason`,
 `capability_evidence`, and fallback mode for each target before anything is
 written.
 
@@ -3361,7 +3418,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters, while OpenCode and Antigravity use copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, OpenCode, and Antigravity skill files to copied regular files, while DeepSeek and Copilot use reference adapters. Use `--install-mode reference` to force adapters for every agent or `copy` for a self-contained install. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Antigravity gets plugin-scoped Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |
@@ -3821,6 +3878,11 @@ and dependencies are skipped when the agent is absent.
 `./make.ps1` runs in the current PowerShell 5.1+ or PowerShell 7+ session. If
 PowerShell is unavailable, use the POSIX bootstrap script from a compatible shell.
 
+Native Windows is currently dry-run-only for installer-managed target mutation.
+Commands that request apply, uninstall, rollback, OpenClaw target writes, or
+Antigravity settings writes fail closed until the pathname mutation is bound to
+the same Windows handle used for reparse-point, owner, and DACL validation.
+
 Common commands from a native Windows shell:
 
 ```powershell
@@ -3836,11 +3898,10 @@ Common commands from a native Windows shell:
 ./make.ps1 test
 ```
 
-Use `--real-system` only when you intentionally want to write to the detected
-Windows agent homes. The installer detects only agent homes that already exist
-under `--root`, so fake-root tests must create `.codex`, `.claude`, or
-`.deepseek` before planning or applying. A fake root with no detected agent
-homes produces no install actions and does not create managed installer state.
+Do not use `--apply` or `--real-system` on native Windows while this gate is in
+place. The installer still detects only agent homes that already exist under
+`--root`, so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek`
+before planning. A fake root with no detected agent homes produces no actions.
 
 For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`
@@ -3929,9 +3990,10 @@ installer found a compatibility or alias path and will skip it unless
 and removes the legacy alias directory.
 
 Default installs use `--install-mode auto`, resolved per agent. Claude receives
-symlinked skill files when the filesystem supports them. Codex, DeepSeek, and
-Copilot receive reference adapters by default because their symlinked skill
-loading is not assumed. OpenCode and Antigravity receive copied regular files;
+symlinked skill files when the filesystem supports them. Codex receives copied
+regular skill trees by default because symlinked skill loading is not assumed
+and the installed skills must remain self-contained. DeepSeek and Copilot receive
+reference adapters. OpenCode and Antigravity receive copied regular files;
 Antigravity uses documented flat global Markdown skill files under
 `~/.gemini/antigravity-cli/skills/`. Use
 `--install-mode symlink` only when you intentionally want to force links for
@@ -3959,11 +4021,11 @@ Common cases:
 | Dependency is degraded | The tool or install root was found but not fully executable from this substrate. | Re-run precheck from the native substrate, such as Windows or WSL. |
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
-| Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled this way by default. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
+| Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled with self-contained copy mode by default. | Use the target's default auto mode, or explicitly choose `reference` or `copy` after reviewing the source-checkout dependency. |
 | Windows cannot start the PowerShell launcher | The host has no usable PowerShell 5.1+ or PowerShell 7+ session. | Install PowerShell, or use the POSIX bootstrap script from a compatible environment. |
 | Fake-root install has no actions | The fake root does not contain any detected agent homes such as `.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`, or `.gemini/antigravity-cli`. | Create the agent homes you want to test under the fake root, or use `lifecycle-test` to create managed fake roots automatically. |
 | Docs freshness check fails in CI | Generated docs are stale. | Edit `installer/ai_agents_skills/docs.py` or manifests, run `make docs`, and commit the resulting `README.md` and `docs/` changes. |
-| Forced symlink smoke is degraded for Codex or DeepSeek | Current loader evidence does not prove file-symlinked `SKILL.md` loading for those agents. | Use default auto mode or reference mode unless intentionally testing loader behavior. |
+| Forced symlink smoke is degraded for Codex or DeepSeek | Current loader evidence does not prove file-symlinked `SKILL.md` loading for those agents. | Use default auto mode unless intentionally testing loader behavior; Codex defaults to copy and DeepSeek defaults to reference. |
 | Verify returns `no-managed-artifacts` | The selected scope has no state recorded by this installer. | Run install/adopt/migrate first, or verify a different scope. |
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),
@@ -4049,13 +4111,9 @@ make rollback ARGS="--run 20260429-080620 --apply --real-system"
 make verify ARGS="--root <real-root>"
 ```
 
-Windows applied examples:
-
-```bat
-./make.ps1 uninstall --skill zotero --apply --root <fake-or-real-root>
-./make.ps1 rollback --run 20260429-080620 --apply --root <fake-or-real-root>
-./make.ps1 verify --root <fake-or-real-root>
-```
+Native Windows applied lifecycle commands intentionally fail closed until
+mutation is handle-bound. Use the dry-run commands above; do not treat a
+mounted-profile test from Linux/WSL as native Windows mutation proof.
 
 Safety rules:
 

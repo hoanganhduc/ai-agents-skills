@@ -4,6 +4,13 @@ This page describes safe installation flows. The installer is conservative:
 planning and dry-run previews are the default workflow, and real home-directory
 writes require both `--apply` and `--real-system`.
 
+Native Windows mutation is temporarily fail-closed. Planning, prechecks, and
+dry-runs remain available, but install/apply, uninstall, rollback, OpenClaw
+target writes, and Antigravity settings writes are rejected until replacement
+and deletion operate against the same Windows handle used for reparse-point,
+owner, and DACL validation. WSL/Linux mutation of a mounted Windows profile is a
+different substrate and must follow its own mounted-profile safety policy.
+
 Use `make precheck` or `./make.ps1 precheck` first when installing on a new
 machine. The launchers detect a usable runtime instead of requiring a specific
 command name. Use `plan` before `install`. Partial installs are first-class:
@@ -85,6 +92,41 @@ debugging wrapper behavior:
 python3 -m installer.ai_agents_skills help
 python3 -m installer.ai_agents_skills describe zotero
 ```
+
+## Restored runtime secret projection
+
+Managed runtime skills can receive restored API credentials from a strict
+launcher-only env file. Set `AAS_SKILL_SECRETS_FILE` to an explicit absolute
+path before invoking `run_skill.sh` or `run_skill.ps1`. The file accepts only
+comments, blank lines, and unique non-empty `KEY=value` records for
+`AXLE_API_KEY`, `LEANEXPLORE_API_KEY`, `OCR_SPACE_API_KEY`, `OCR_SPACE_KEY`,
+`OCRSPACE_API_KEY`, `OCRSPACE_KEY`, `OPENCLAW_S2_API_KEY`,
+`PATENTSVIEW_API_KEY`, `SEMANTIC_SCHOLAR_API_KEY`, `UNPAYWALL_EMAIL`, and
+`ZENODO_TOKEN`.
+
+The loader does not shell-source or evaluate the file. It rejects relative or
+linked paths, oversized or multiply linked files, unknown/duplicate/empty
+records, and unsafe permissions without printing values. On POSIX the file
+must be owned by the effective user with mode `0600` (or stricter). On Windows
+the PowerShell loader requires current-user ownership, allows access only to
+that user, SYSTEM, and Administrators, and rejects reparse points before and
+after its bounded read. The resulting values override inherited values only in
+the managed launcher/child process tree; they are not exported back into the
+calling shell.
+
+Autonomous research-loop provider fallbacks use the separate
+`AAS_PROVIDER_SECRETS_FILE` launcher pointer documented in the force-loop
+operator runbook. This keeps general skill credentials distinct from provider
+credentials and lets strict primary and panel children receive only their
+selected provider's explicit allowlist. Both the default force-loop and the
+advanced direct `drive` wrappers consume that pointer.
+
+Broker-routed compute uses `AAS_COMPUTE_SECRETS_FILE`, whose protected env file
+accepts exactly `HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS`, `KAGGLE_API_TOKEN`, and
+`KAGGLE_CONFIG_DIR`. The managed unified-broker and standalone Hetzner wrappers
+consume it directly, and ARL `drive` passes only host-pinned eligible lane keys
+to an attested primary. Keep both pointers in the launcher environment, never
+in agent-writable loop env files or job manifests.
 
 Use `list-skills`, `list-artifacts`, `describe`, and `describe-artifact` to
 inspect manifest content without planning writes. Use `make docs` to
@@ -246,7 +288,9 @@ adapters and support files fall back to copied files.
 
 Codex, DeepSeek, Copilot, OpenCode, and Antigravity are compatibility
 exceptions. Current Codex skill discovery loads regular user `SKILL.md` files
-but ignores file-symlinked user `SKILL.md` files. DeepSeek native symlinked
+but ignores file-symlinked user `SKILL.md` files, so auto mode copies complete
+Codex skill trees rather than retaining a source-checkout dependency. DeepSeek
+native symlinked
 `SKILL.md` loading has not been verified. Copilot agent skills are regular
 `SKILL.md` files in `~/.copilot/skills` or `.github/skills`; symlinked skill
 loading is not assumed. OpenCode native skills are regular files under
@@ -255,9 +299,9 @@ support files for cross-platform parity. Antigravity global skills are flat
 Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, so auto
 mode copies the full canonical skill body into that native global skill
 directory and creates the managed Antigravity plugin/config scaffolds. In
-default auto mode, Codex, DeepSeek, and Copilot resolve skill files to reference
-adapters that point at the canonical repo skill, while OpenCode and Antigravity
-resolve to copy mode. `plan --json` shows the effective `install_mode`, `mode_reason`,
+default auto mode, Codex, OpenCode, and Antigravity resolve to copy mode, while
+DeepSeek and Copilot resolve skill files to reference adapters that point at
+the canonical repo skill. `plan --json` shows the effective `install_mode`, `mode_reason`,
 `capability_evidence`, and fallback mode for each target before anything is
 written.
 
@@ -336,7 +380,7 @@ Scenario summary:
 | Skill already managed | Files are updated or left unchanged according to hashes. |
 | Skill exists unmanaged | Default plan skips it; use `--adopt` or `--backup-replace` explicitly. |
 | Legacy alias exists | Default plan skips; `--migrate` installs the canonical target, backs up the legacy alias directory, and removes the legacy alias directory. |
-| Agent rejects symlinked skills | Auto mode already resolves Codex, DeepSeek, and Copilot skill files to reference adapters, while OpenCode and Antigravity use copy mode. Use `--install-mode reference` to force adapters for every agent; use `copy` only if regular files are unavoidable. |
+| Agent rejects symlinked skills | Auto mode already resolves Codex, OpenCode, and Antigravity skill files to copied regular files, while DeepSeek and Copilot use reference adapters. Use `--install-mode reference` to force adapters for every agent or `copy` for a self-contained install. |
 | Top-level management notice selected | Adds a removable managed block explaining repo/source ownership boundaries. |
 | Dependency-bound artifact selected without dependency | Artifact is blocked and skipped until the backing skill is managed or selected with `--with-deps`. |
 | Persona selected | Codex gets TOML, Claude and OpenCode get Markdown frontmatter, Antigravity gets plugin-scoped Markdown frontmatter, Copilot gets `.agent.md`, and DeepSeek gets a reference prompt. |

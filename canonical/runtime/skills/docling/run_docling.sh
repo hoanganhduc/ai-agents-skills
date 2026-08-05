@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd -- "$(dirname -- "$0")" && pwd)"
+script_path="${BASH_SOURCE[0]:-$0}"
+runtime_command_fd="${AAS_RUNTIME_COMMAND_FD:-}"
+if [[ "$runtime_command_fd" =~ ^[0-9]+$ ]] && \
+   { [ "$script_path" = "/proc/self/fd/$runtime_command_fd" ] || [ "$script_path" = "/dev/fd/$runtime_command_fd" ]; }; then
+  script_path="${AAS_RUNTIME_COMMAND_PATH:-$script_path}"
+fi
+unset AAS_RUNTIME_COMMAND_FD AAS_RUNTIME_COMMAND_PATH
+ROOT="$(cd -- "$(dirname -- "$script_path")" && pwd)"
 select_python() {
   if [[ -n "${DOCLING_PYTHON:-}" ]]; then
     printf '%s\n' "$DOCLING_PYTHON"

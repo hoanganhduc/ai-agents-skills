@@ -12,9 +12,12 @@ sys.dont_write_bytecode = True  # never write __pycache__ into the canonical run
 
 import json
 import os
+import stat
 import subprocess
 import tempfile
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -26,6 +29,7 @@ if str(WORKSPACE) not in sys.path:
 
 # (a) imports clean -- a failure here fails the whole module, which is the signal.
 from research_compute import budget_ledger, hetzner_backend, planner  # noqa: E402
+from research_compute import state as rc_state  # noqa: E402
 from research_compute import cli as broker_cli  # noqa: E402
 from research_compute import config as rc_config  # noqa: E402
 from research_compute import github_actions_backend as gha  # noqa: E402
@@ -38,6 +42,18 @@ if str(SKILL_DIR) not in sys.path:
 import hetzner_driver  # noqa: E402
 import hetzner_audit  # noqa: E402
 import hetzner_reaper  # noqa: E402
+
+TEST_INSTALL_SCOPE = hetzner_driver.install_scope(mock.Mock(install_id="test-install"))
+TEST_PROJECT_IDENTITY = "test-project-123"
+TEST_PROJECT_SCOPE = hetzner_driver.project_scope_label(
+    mock.Mock(hetzner_project_identity=TEST_PROJECT_IDENTITY)
+)
+TEST_HOST_PUBLIC_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOfflineHostKey"
+TEST_HOST_PRIVATE_KEY = (
+    "-----BEGIN OPENSSH " + "PRIVATE KEY-----\n"
+    + "TEST\n"
+    + "-----END OPENSSH " + "PRIVATE KEY-----\n"
+)
 
 
 CONFIG_TOML = """\
@@ -55,6 +71,7 @@ local_wall_budget_h = 2.0
 
 [hetzner]
 enabled = true
+project_identity = "test-project-123"
 location = "nbg1"
 allowed_locations = ["nbg1", "hel1", "sin"]
 image = "ubuntu-24.04"
@@ -171,7 +188,12 @@ def _plan(ws: Path, job: dict, *, token: bool = True) -> dict:
 def _config(tmp: Path) -> rc_config.BrokerConfig:
     cfg = tmp / "research-compute.toml"
     cfg.write_text(CONFIG_TOML, encoding="utf-8")
-    return rc_config.load_config(cfg)
+    config = rc_config.load_config(cfg)
+    config.hetzner_bundle_root = str(tmp.resolve())
+    config.hetzner_project_identity = TEST_PROJECT_IDENTITY
+    config.hetzner_reaper_lease_file = str((tmp / "reaper-lease.json").resolve())
+    config.hetzner_reaper_scheduler_id = "aas-hetzner-reaper.timer"
+    return config
 
 
 def _gha_config(tmp: Path) -> rc_config.BrokerConfig:
@@ -1637,6 +1659,149 @@ class LivenessAndCapTests(unittest.TestCase):
         self.assertEqual(budget_ledger.outstanding(state, "gha"), 200.0)
 
 
+@unittest.skipIf(os.name == "nt", "POSIX no-follow ledger tests")
+class BudgetLedgerSecurityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.state = self.root / "state"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_lock_symlink_cannot_truncate_victim(self) -> None:
+        self.state.mkdir(mode=0o700)
+        victim = self.root / "victim.txt"
+        victim.write_text("do-not-truncate", encoding="utf-8")
+        (self.state / "hetzner-reservations.lock").symlink_to(victim)
+
+        with self.assertRaises(OSError):
+            budget_ledger.reserve(self.state, "hetzner", "job-1", 1.0, "eur")
+
+        self.assertEqual(victim.read_text(encoding="utf-8"), "do-not-truncate")
+
+    def test_ledger_symlink_cannot_be_read_or_replaced(self) -> None:
+        self.state.mkdir(mode=0o700)
+        victim = self.root / "victim.jsonl"
+        victim.write_text('{"state":"reserved"}\n', encoding="utf-8")
+        ledger = self.state / "hetzner-reservations.jsonl"
+        ledger.symlink_to(victim)
+
+        self.assertIsNone(
+            budget_ledger.authoritative_reserved_job_ids(self.state, "hetzner")
+        )
+        with self.assertRaises(OSError):
+            budget_ledger.reserve(self.state, "hetzner", "job-1", 1.0, "eur")
+        self.assertEqual(victim.read_text(encoding="utf-8"), '{"state":"reserved"}\n')
+
+    def test_authoritative_read_rejects_nonprivate_ledger(self) -> None:
+        self.state.mkdir(mode=0o700)
+        ledger = self.state / "hetzner-reservations.jsonl"
+        ledger.write_text(
+            '{"job_id":"job-1","state":"reserved"}\n',
+            encoding="utf-8",
+        )
+        ledger.chmod(0o644)
+
+        self.assertIsNone(
+            budget_ledger.authoritative_reserved_job_ids(self.state, "hetzner")
+        )
+
+    def test_authoritative_read_detects_ctime_mutation_with_restored_mtime(self) -> None:
+        budget_ledger.reserve(self.state, "hetzner", "job-1", 1.0, "eur")
+        ledger = self.state / "hetzner-reservations.jsonl"
+        original_stat = ledger.stat()
+        original_read = os.read
+        mutated = False
+
+        def mutate_after_read(descriptor: int, size: int) -> bytes:
+            nonlocal mutated
+            payload = original_read(descriptor, size)
+            if payload and not mutated:
+                mutated = True
+                with ledger.open("r+b") as handle:
+                    current = handle.read()
+                    handle.seek(0)
+                    handle.write(current.replace(b"job-1", b"job-x", 1))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.utime(
+                    ledger,
+                    ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+                )
+            return payload
+
+        with mock.patch.object(budget_ledger.os, "read", side_effect=mutate_after_read):
+            self.assertIsNone(
+                budget_ledger.authoritative_reserved_job_ids(self.state, "hetzner")
+            )
+
+
+@unittest.skipIf(os.name == "nt", "POSIX no-follow state tests")
+class BrokerStateSecurityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.state = self.root / "state"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_job_and_attempt_identifiers_reject_path_traversal(self) -> None:
+        config = mock.Mock(modal_environment="main", deployment_alias="research")
+        for job_id in ("../escape", "/absolute", "job/child", "-leading", ""):
+            with self.subTest(job_id=job_id):
+                with self.assertRaises(ValueError):
+                    planner.normalize_job({"job_id": job_id}, config=config)
+                with self.assertRaises(ValueError):
+                    rc_state.job_dir(self.state, job_id)
+        for attempt_id in ("../attempt-001", "attempt-1", "attempt-001/child"):
+            with self.subTest(attempt_id=attempt_id):
+                with self.assertRaises(ValueError):
+                    rc_state.attempt_dir(self.state, "job-1", attempt_id)
+        self.assertFalse((self.root / "escape").exists())
+
+    def test_state_parent_symlink_cannot_escape_root(self) -> None:
+        self.state.mkdir(mode=0o700)
+        victim = self.root / "victim"
+        victim.mkdir()
+        (self.state / "jobs").symlink_to(victim, target_is_directory=True)
+
+        with self.assertRaises(OSError):
+            rc_state.write_json(
+                rc_state.status_path(self.state, "job-1"),
+                {"status": "must-not-write"},
+            )
+
+        self.assertEqual(list(victim.iterdir()), [])
+
+    def test_state_file_symlink_cannot_overwrite_victim(self) -> None:
+        status = rc_state.status_path(self.state, "job-1")
+        rc_state.ensure_root(status.parent)
+        victim = self.root / "victim.json"
+        victim.write_text('{"safe":true}\n', encoding="utf-8")
+        status.symlink_to(victim)
+
+        with self.assertRaises(OSError):
+            rc_state.write_json(status, {"safe": False})
+
+        self.assertEqual(victim.read_text(encoding="utf-8"), '{"safe":true}\n')
+
+    def test_next_attempt_id_is_atomically_unique_under_concurrency(self) -> None:
+        def allocate(_index: int) -> str:
+            return rc_state.next_attempt_id(self.state, "job-1")
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            attempt_ids = list(pool.map(allocate, range(32)))
+
+        self.assertEqual(len(attempt_ids), len(set(attempt_ids)))
+        attempts = rc_state.job_dir(self.state, "job-1") / "attempts"
+        self.assertEqual(
+            {path.name for path in attempts.iterdir() if path.is_dir()},
+            set(attempt_ids),
+        )
+
+
 class GpuRoutingTests(unittest.TestCase):
     """Offline, credential-free GPU-routing tests (plan §5.1) over the existing lanes. These
     exercise the router-wide GPU policy across the full matrix {CPU, GPU} x {auto-signal,
@@ -1907,7 +2072,13 @@ DRIVER_TOKEN = "SECRET-HCLOUD-TOKEN-offline-do-not-log"
 def _make_bundle(tmp: Path, manifest: dict) -> Path:
     bundle = tmp / "bundle"
     bundle.mkdir(parents=True, exist_ok=True)
-    (bundle / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    bundle.chmod(0o700)
+    manifest_path = bundle / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    manifest_path.chmod(0o600)
+    run_script = bundle / "run.sh"
+    run_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    run_script.chmod(0o700)
     return bundle
 
 
@@ -1936,6 +2107,19 @@ class _FakeRunner:
         self.ssh_keys = ["research-key"] if ssh_keys is None else list(ssh_keys)
         # What `server list` returns; pass [] for "this job has no server".
         self.servers = servers
+        self.bundle_digest: str | None = None
+
+    def _managed_labels(self) -> dict[str, str]:
+        labels = {
+            "managed-by": "ai-agents-skills",
+            "project-scope": TEST_PROJECT_SCOPE,
+            "install-scope": TEST_INSTALL_SCOPE,
+            "job-id": "jobX",
+        }
+        if self.bundle_digest:
+            labels[hetzner_driver.BUNDLE_DIGEST_LABEL_HIGH] = self.bundle_digest[:32]
+            labels[hetzner_driver.BUNDLE_DIGEST_LABEL_LOW] = self.bundle_digest[32:]
+        return labels
 
     def __call__(self, argv, *, env, timeout):
         joined = " ".join(argv)
@@ -1943,6 +2127,11 @@ class _FakeRunner:
                            "env_has_token": bool(env.get("HCLOUD_TOKEN"))})
         if self.fail_on and self.fail_on in joined:
             return {"returncode": 1, "stdout": "", "stderr": "simulated failure"}
+        if argv and argv[0] == "ssh-keygen":
+            key_path = Path(argv[argv.index("-f") + 1])
+            key_path.write_text(TEST_HOST_PRIVATE_KEY, encoding="ascii")
+            key_path.with_suffix(".pub").write_text(TEST_HOST_PUBLIC_KEY + "\n", encoding="ascii")
+            return {"returncode": 0, "stdout": "", "stderr": ""}
         if "ssh-key" in argv and "list" in argv:
             return {"returncode": 0, "stdout": "\n".join(self.ssh_keys), "stderr": ""}
         if "datacenter" in argv and "list" in argv:
@@ -1952,8 +2141,25 @@ class _FakeRunner:
         if "server" in argv and "list" in argv:
             servers = self.servers if self.servers is not None else [
                 {"id": 4242, "name": "ai-agents-skills-jobX", "status": "running",
+                 "labels": self._managed_labels(),
                  "public_net": {"ipv4": {"ip": self.ip}}}]
             return {"returncode": 0, "stdout": json.dumps(servers), "stderr": ""}
+        if "server" in argv and "create" in argv:
+            server = {
+                "id": 4242,
+                "name": "ai-agents-skills-jobX",
+                "labels": self._managed_labels(),
+                "public_net": {"ipv4": {"ip": self.ip}},
+            }
+            return {"returncode": 0, "stdout": json.dumps(server), "stderr": ""}
+        if "server" in argv and "describe" in argv:
+            server = {
+                "id": 4242,
+                "name": "ai-agents-skills-jobX",
+                "labels": self._managed_labels(),
+                "public_net": {"ipv4": {"ip": self.ip}},
+            }
+            return {"returncode": 0, "stdout": json.dumps(server), "stderr": ""}
         stdout = f"leaked {env.get('HCLOUD_TOKEN')} value" if self.echo_token else "ok"
         return {"returncode": 0, "stdout": stdout, "stderr": ""}
 
@@ -1970,17 +2176,28 @@ class _ReaperRunner:
     `server list` and success for `server delete`, recording the deleted ids, so the reaper's
     delete set can be asserted exactly. Reused for the reconcile-before-create guard."""
 
-    def __init__(self, servers: list[dict]):
+    def __init__(self, servers: list[dict], *, fail_delete_ids: set[str] | None = None):
         self.servers = servers
         self.calls: list[dict] = []
         self.deleted: list[str] = []
+        self.fail_delete_ids = set(fail_delete_ids or set())
 
     def __call__(self, argv, *, env, timeout):
         self.calls.append({"argv": list(argv), "joined": " ".join(argv),
                            "env_has_token": bool(env.get("HCLOUD_TOKEN"))})
         if "list" in argv:
             return {"returncode": 0, "stdout": json.dumps(self.servers), "stderr": ""}
+        if "describe" in argv:
+            target = str(argv[argv.index("describe") + 1])
+            server = next(
+                (entry for entry in self.servers
+                 if str(entry.get("id") or entry.get("name")) == target),
+                {},
+            )
+            return {"returncode": 0, "stdout": json.dumps(server), "stderr": ""}
         if "delete" in argv:
+            if argv[-1] in self.fail_delete_ids:
+                return {"returncode": 1, "stdout": "", "stderr": "simulated delete failure"}
             self.deleted.append(argv[-1])
             return {"returncode": 0, "stdout": "ok", "stderr": ""}
         return {"returncode": 0, "stdout": "ok", "stderr": ""}
@@ -1996,12 +2213,29 @@ class HetznerDriverTests(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.config = _config(self.tmp)
         self.state = self.tmp / "state"
+        self.state.mkdir(mode=0o700)
+        self.config.broker_state_root = str(self.state)
         self._prev_runner = hetzner_driver.COMMAND_RUNNER
         # preflight consults hetzner_backend.probe -> the account-usable liveness hook;
         # replace it so the offline driver tests never make a real hcloud API call.
         self._prev_liveness = hetzner_backend.ACCOUNT_LIVENESS_PROBE
         hetzner_backend.ACCOUNT_LIVENESS_PROBE = lambda config, **k: {"usable": True, "reason": "test"}
         self._prev_token = os.environ.pop("HCLOUD_TOKEN", None)
+        self._prev_ssh_keys = os.environ.get("HCLOUD_SSH_KEYS")
+        os.environ["HCLOUD_SSH_KEYS"] = "research-key"
+        self._prev_reaper_verifier = hetzner_driver.REAPER_LEASE_VERIFIER
+        hetzner_driver.REAPER_LEASE_VERIFIER = lambda config: {
+            "project_identity": TEST_PROJECT_IDENTITY,
+            "install_scope": hetzner_driver.install_scope(config),
+            "scheduler": {"kind": "systemd", "id": "aas-hetzner-reaper.timer"},
+        }
+        hetzner_driver._write_known_hosts(
+            config=self.config,
+            state_root=self.state,
+            job_id="jobX",
+            ip="203.0.113.9",
+            public_key=TEST_HOST_PUBLIC_KEY,
+        )
 
     def tearDown(self) -> None:
         hetzner_driver.COMMAND_RUNNER = self._prev_runner
@@ -2010,6 +2244,11 @@ class HetznerDriverTests(unittest.TestCase):
             os.environ["HCLOUD_TOKEN"] = self._prev_token
         else:
             os.environ.pop("HCLOUD_TOKEN", None)
+        if self._prev_ssh_keys is not None:
+            os.environ["HCLOUD_SSH_KEYS"] = self._prev_ssh_keys
+        else:
+            os.environ.pop("HCLOUD_SSH_KEYS", None)
+        hetzner_driver.REAPER_LEASE_VERIFIER = self._prev_reaper_verifier
         self._tmp.cleanup()
 
     def _bundle(self, **over) -> Path:
@@ -2017,6 +2256,40 @@ class HetznerDriverTests(unittest.TestCase):
                     "memory_mb": 8192, "arch": "x86"}
         manifest.update(over)
         return _make_bundle(self.tmp, manifest)
+
+    @staticmethod
+    def _approved_digest(bundle: Path) -> str:
+        return hetzner_driver._bundle_digest(bundle)
+
+    def _up(self, **kwargs):
+        approved = self._approved_digest(Path(kwargs["job_dir"]))
+        kwargs.setdefault("approved_bundle_sha256", approved)
+        if isinstance(hetzner_driver.COMMAND_RUNNER, _FakeRunner):
+            hetzner_driver.COMMAND_RUNNER.bundle_digest = approved
+        return hetzner_driver.up(**kwargs)
+
+    def _push(self, **kwargs):
+        approved = self._approved_digest(Path(kwargs["job_dir"]))
+        kwargs.setdefault("approved_bundle_sha256", approved)
+        if isinstance(hetzner_driver.COMMAND_RUNNER, _FakeRunner):
+            hetzner_driver.COMMAND_RUNNER.bundle_digest = approved
+        return hetzner_driver.push(**kwargs)
+
+    def _oneshot(self, **kwargs):
+        approved = self._approved_digest(Path(kwargs["job_dir"]))
+        kwargs.setdefault("approved_bundle_sha256", approved)
+        if isinstance(hetzner_driver.COMMAND_RUNNER, _FakeRunner):
+            hetzner_driver.COMMAND_RUNNER.bundle_digest = approved
+        return hetzner_driver.oneshot(**kwargs)
+
+    def _project_confirmation(self) -> str:
+        plan = hetzner_driver.down(
+            config=self.config,
+            state_root=self.state,
+            all_tagged=True,
+            dry_run=True,
+        )
+        return plan["required_confirmation"]
 
     def test_preflight_plans_without_provisioning(self) -> None:
         runner = _FakeRunner()
@@ -2034,6 +2307,81 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertTrue(any("datacenter list" in j for j in joined))
         self.assertTrue(all("create" not in j and "delete" not in j for j in joined))
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # reserves nothing
+
+    def test_bundle_approval_uses_the_full_preflight_digest_and_fails_before_network(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        bundle = self._bundle()
+        plan = hetzner_driver.preflight(
+            job_dir=bundle,
+            config=self.config,
+            state_root=self.state,
+            availability={"nbg1": ["cpx62"]},
+        )
+        approved = plan["required_bundle_sha256"]
+        self.assertRegex(approved, r"^[0-9a-f]{64}$")
+        verified = hetzner_driver.preflight(
+            job_dir=bundle,
+            config=self.config,
+            state_root=self.state,
+            availability={"nbg1": ["cpx62"]},
+            approved_bundle_sha256=approved,
+        )
+        self.assertTrue(verified["bundle_approval_verified"])
+
+        (bundle / "run.sh").write_text("#!/bin/sh\necho changed\n", encoding="utf-8")
+        (bundle / "run.sh").chmod(0o700)
+        runner.calls.clear()
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError,
+            "differs from the exact preflight-approved",
+        ):
+            hetzner_driver.up(
+                job_dir=bundle,
+                config=self.config,
+                state_root=self.state,
+                dry_run=True,
+                approved_bundle_sha256=approved,
+            )
+        self.assertEqual(runner.calls, [])
+
+    def test_up_requires_bundle_approval_and_splits_all_64_hex_into_labels(self) -> None:
+        bundle = self._bundle()
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError,
+            "bundle-sha256 approval",
+        ):
+            hetzner_driver.up(
+                job_dir=bundle,
+                config=self.config,
+                state_root=self.state,
+                dry_run=True,
+            )
+
+        out = self._up(
+            job_dir=bundle,
+            config=self.config,
+            state_root=self.state,
+            dry_run=True,
+        )
+        labels = out["labels"]
+        reconstructed = (
+            labels[hetzner_driver.BUNDLE_DIGEST_LABEL_HIGH]
+            + labels[hetzner_driver.BUNDLE_DIGEST_LABEL_LOW]
+        )
+        self.assertEqual(reconstructed, out["bundle_digest"])
+        self.assertEqual(len(reconstructed), 64)
+        self.assertNotIn("bundle-digest", labels)
+
+    def test_live_cli_requires_bundle_digest_for_create_and_upload(self) -> None:
+        parser = hetzner_driver.build_parser()
+        for argv in (
+            ["up", "--job", "/approved/job"],
+            ["push", "jobX", "--job", "/approved/job"],
+            ["oneshot", "--job", "/approved/job"],
+        ):
+            with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                parser.parse_args(argv)
 
     def test_parse_availability_maps_ids_and_unions_datacenters(self) -> None:
         """parse_availability resolves numeric server-type ids to names and unions the orderable
@@ -2110,7 +2458,7 @@ class HetznerDriverTests(unittest.TestCase):
         ])
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        out = hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        out = self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         self.assertTrue(out["provisioned"])
         self.assertEqual(out["server_type"], "cpx62")
         self.assertEqual(out["location"], "hel1")  # fell back from the stocked-out nbg1
@@ -2127,37 +2475,159 @@ class HetznerDriverTests(unittest.TestCase):
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_backend.HetznerBudgetError):
-            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+            self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         self.assertTrue(all("create" not in c["joined"] for c in runner.calls))  # gated before create
 
     def test_up_dry_run_no_reservation_no_call_no_token_on_argv(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
-        out = hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, dry_run=True)
+        out = self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, dry_run=True)
         self.assertTrue(out["dry_run"])
         self.assertFalse(out["provisioned"])
         self.assertEqual(out["command"][:3], ["hcloud", "server", "create"])
         joined = " ".join(out["command"])
         self.assertNotIn(DRIVER_TOKEN, joined)
         self.assertIn("managed-by=ai-agents-skills", joined)
+        self.assertIn(f"install-scope={TEST_INSTALL_SCOPE}", joined)
+        self.assertNotIn("test-install", joined)
         self.assertIn("job-id=jobX", joined)
         self.assertEqual(runner.calls, [])
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())
 
+    def test_install_scope_separates_two_runtime_roots_with_the_same_install_id(self) -> None:
+        config = mock.Mock(install_id="same-hostname")
+        with mock.patch.dict(os.environ, {"AAS_RUNTIME_WORKSPACE": str(self.tmp / "runtime-a")}):
+            first = hetzner_driver.install_scope(config)
+        with mock.patch.dict(os.environ, {"AAS_RUNTIME_WORKSPACE": str(self.tmp / "runtime-b")}):
+            second = hetzner_driver.install_scope(config)
+
+        self.assertNotEqual(first, second)
+        self.assertNotIn("same-hostname", first + second)
+
     def test_up_refuses_without_token_and_without_confirm(self) -> None:
         hetzner_driver.COMMAND_RUNNER = _FakeRunner()
         with self.assertRaises(hetzner_driver.HetznerDriverError):  # no token
-            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+            self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_driver.HetznerDriverError):  # token but no confirm
-            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=False)
+            self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=False)
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # fail-closed: no reservation
+
+    def test_native_windows_live_provisioning_fails_closed_without_durable_reaper(self) -> None:
+        with mock.patch.object(hetzner_driver.os, "name", "nt"):
+            with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
+                hetzner_driver._require_durable_reaper_for_live_provisioning(self.config)
+        self.assertIn("durable Task Scheduler reaper", str(ctx.exception))
+
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        refusal = hetzner_driver.HetznerDriverError("durable reaper unavailable")
+        with mock.patch.object(
+            hetzner_driver,
+            "_require_durable_reaper_for_live_provisioning",
+            side_effect=refusal,
+        ) as gate:
+            with self.assertRaises(hetzner_driver.HetznerDriverError):
+                self._up(
+                    job_dir=self._bundle(), config=self.config, state_root=self.state,
+                    confirm=True,
+                )
+        gate.assert_called_once_with(self.config)
+        self.assertTrue(all("create" not in call["joined"] for call in runner.calls))
+
+    def test_posix_live_provisioning_requires_operator_reaper_attestation(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with mock.patch.object(
+            hetzner_driver,
+            "REAPER_LEASE_VERIFIER",
+            side_effect=hetzner_driver.HetznerDriverError("durable reaper lease is stale"),
+        ):
+            with self.assertRaisesRegex(
+                hetzner_driver.HetznerDriverError,
+                "reaper lease is stale",
+            ):
+                self._up(
+                    job_dir=self._bundle(),
+                    config=self.config,
+                    state_root=self.state,
+                    confirm=True,
+                )
+
+        self.assertEqual(runner.calls, [])
+
+    def test_reaper_lease_is_fresh_project_scope_and_scheduler_bound(self) -> None:
+        from datetime import datetime, timezone
+
+        lease_path = Path(self.config.hetzner_reaper_lease_file)
+        now = time.time()
+        payload = {
+            "version": 1,
+            "project_identity": TEST_PROJECT_IDENTITY,
+            "install_scope": hetzner_driver.install_scope(self.config),
+            "config_digest": hetzner_driver._reaper_config_digest(self.config),
+            "scheduler": {
+                "kind": "systemd",
+                "id": self.config.hetzner_reaper_scheduler_id,
+                "active": True,
+            },
+            "issued_at": datetime.fromtimestamp(now, tz=timezone.utc).isoformat(),
+            "expires_at": datetime.fromtimestamp(now + 300, tz=timezone.utc).isoformat(),
+        }
+        lease_path.write_text(json.dumps(payload), encoding="utf-8")
+        lease_path.chmod(0o644)
+        real_fstat = os.fstat
+
+        def root_owned_fstat(descriptor):
+            info = real_fstat(descriptor)
+            return mock.Mock(
+                st_uid=0,
+                st_mode=info.st_mode,
+                st_nlink=info.st_nlink,
+                st_dev=info.st_dev,
+                st_ino=info.st_ino,
+                st_size=info.st_size,
+                st_mtime=info.st_mtime,
+                st_mtime_ns=info.st_mtime_ns,
+                st_ctime_ns=info.st_ctime_ns,
+            )
+
+        with (
+            mock.patch.object(hetzner_driver.os, "geteuid", return_value=1000),
+            mock.patch.object(
+                hetzner_driver,
+                "_require_root_protected_parent_chain",
+            ),
+            mock.patch.object(hetzner_driver.os, "fstat", side_effect=root_owned_fstat),
+        ):
+            evidence = hetzner_driver._verify_durable_reaper_lease(self.config)
+        self.assertEqual(evidence["project_identity"], TEST_PROJECT_IDENTITY)
+        self.assertEqual(
+            evidence["scheduler"]["id"], self.config.hetzner_reaper_scheduler_id
+        )
+
+        payload["scheduler"]["id"] = "wrong-scheduler"
+        lease_path.write_text(json.dumps(payload), encoding="utf-8")
+        lease_path.chmod(0o644)
+        with (
+            mock.patch.object(hetzner_driver.os, "geteuid", return_value=1000),
+            mock.patch.object(
+                hetzner_driver,
+                "_require_root_protected_parent_chain",
+            ),
+            mock.patch.object(hetzner_driver.os, "fstat", side_effect=root_owned_fstat),
+            self.assertRaisesRegex(
+                hetzner_driver.HetznerDriverError, "active scheduler"
+            ),
+        ):
+            hetzner_driver._verify_durable_reaper_lease(self.config)
 
     def test_up_confirm_reserves_budget_and_keeps_token_off_argv(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        out = hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        out = self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         self.assertTrue(out["provisioned"])
         self.assertEqual(out["server_type"], "cpx62")
         self.assertEqual(out["location"], "nbg1")
@@ -2167,6 +2637,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertNotIn(DRIVER_TOKEN, create["joined"])  # token never on argv
         self.assertTrue(create["env_has_token"])          # token travels via env
         self.assertIn("managed-by=ai-agents-skills", create["joined"])
+        self.assertIn(f"install-scope={TEST_INSTALL_SCOPE}", create["joined"])
         self.assertIn("job-id=jobX", create["joined"])
 
     def test_run_hcloud_passes_token_via_env_and_redacts_output(self) -> None:
@@ -2184,12 +2655,98 @@ class HetznerDriverTests(unittest.TestCase):
         with self.assertRaises(hetzner_driver.HetznerDriverError):
             hetzner_driver.run_hcloud(["version"])
 
+    def test_subprocess_environments_are_minimal_and_token_is_hcloud_only(self) -> None:
+        calls: list[dict] = []
+
+        def runner(argv, *, env, timeout):
+            calls.append({"argv": list(argv), "env": dict(env), "timeout": timeout})
+            return {"returncode": 0, "stdout": "ok", "stderr": ""}
+
+        hetzner_driver.COMMAND_RUNNER = runner
+        sensitive = {
+            "HCLOUD_TOKEN",
+            "AXLE_API_KEY",
+            "ZENODO_TOKEN",
+            "OPENAI_API_KEY",
+            "KAGGLE_API_TOKEN",
+            "AAS_COMPUTE_SECRETS_FILE",
+            "AAS_SKILL_SECRETS_FILE",
+        }
+        with mock.patch.dict(
+            os.environ,
+            {
+                "HCLOUD_TOKEN": DRIVER_TOKEN,
+                "AXLE_API_KEY": "unrelated-axle",
+                "ZENODO_TOKEN": "unrelated-zenodo",
+                "OPENAI_API_KEY": "unrelated-provider",
+                "KAGGLE_API_TOKEN": "cross-lane",
+                "AAS_COMPUTE_SECRETS_FILE": "/private/compute.env",
+                "AAS_SKILL_SECRETS_FILE": "/private/skill.env",
+                "PATH": "/tmp/hostile-path",
+            },
+            clear=False,
+        ):
+            hetzner_driver.run_hcloud(["version"])
+            hetzner_driver._run(["ssh", "-V"])
+
+        hcloud_env = calls[0]["env"]
+        ssh_env = calls[1]["env"]
+        self.assertEqual(sensitive & set(hcloud_env), {"HCLOUD_TOKEN"})
+        self.assertEqual(hcloud_env["HCLOUD_TOKEN"], DRIVER_TOKEN)
+        self.assertFalse(sensitive & set(ssh_env))
+        self.assertNotIn("/tmp/hostile-path", hcloud_env.get("PATH", ""))
+        self.assertNotIn("/tmp/hostile-path", ssh_env.get("PATH", ""))
+
+    def test_default_runner_uses_pinned_absolute_tool_not_path(self) -> None:
+        pinned = self.tmp / "trusted-ssh"
+        pinned.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        pinned.chmod(0o755)
+        completed = mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.dict(
+            os.environ,
+            {"AAS_HETZNER_SSH_BIN": str(pinned)},
+            clear=False,
+        ), mock.patch("subprocess.run", return_value=completed) as run_mock:
+            hetzner_driver._default_command_runner(
+                ["ssh", "-V"],
+                env={"PATH": "/tmp/hostile-path"},
+                timeout=5.0,
+            )
+
+        invoked = run_mock.call_args.args[0]
+        self.assertEqual(invoked[0], str(pinned.resolve()))
+        self.assertNotEqual(invoked[0], "ssh")
+
+    def test_server_list_shapes_fail_closed_for_count_and_down(self) -> None:
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        for payload in ("not-json", "{}", "null", '[{"id": 1}, "bad-record"]'):
+            with self.subTest(payload=payload):
+                calls: list[list[str]] = []
+
+                def runner(argv, *, env, timeout):
+                    calls.append(list(argv))
+                    return {"returncode": 0, "stdout": payload, "stderr": ""}
+
+                hetzner_driver.COMMAND_RUNNER = runner
+                with self.assertRaises(hetzner_driver.HetznerDriverError):
+                    hetzner_driver.count_managed_servers(self.config)
+                with self.assertRaises(hetzner_driver.HetznerDriverError):
+                    hetzner_driver.down(
+                        config=self.config,
+                        job_id="jobX",
+                        confirm=True,
+                        allow_unfetched=True,
+                    )
+                self.assertFalse(any("delete" in argv for argv in calls))
+
     def test_down_dry_run_and_confirm_paths(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
         dry = hetzner_driver.down(config=self.config, job_id="jobX", dry_run=True)
         self.assertTrue(dry["dry_run"])
-        self.assertEqual(dry["selector"], "job-id=jobX")
+        self.assertEqual(
+            dry["selector"], hetzner_driver.managed_selector(self.config, job_id="jobX")
+        )
         self.assertEqual(runner.calls, [])
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         # allow_unfetched: this covers the delete plumbing, not the results interlock.
@@ -2241,19 +2798,147 @@ class HetznerDriverTests(unittest.TestCase):
                                   confirm=True, allow_unfetched=True)
         self.assertTrue(out["destroyed"])
 
-    def test_kill_switches_are_never_blocked_by_the_interlock(self) -> None:
-        """`--all` and `--orphans` stop billing and must never be gated on data safety.
-
-        An interlock that can strand a paid server running forever is a worse defect than
-        the one it prevents, so the exemption is part of the contract, not an oversight.
-        """
+    def test_explicit_all_kill_switch_is_never_blocked_by_the_interlock(self) -> None:
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        for kwargs in ({"all_tagged": True}, {"orphans": True}):
-            runner = _FakeRunner()
-            hetzner_driver.COMMAND_RUNNER = runner
-            out = hetzner_driver.down(config=self.config, state_root=self.state, confirm=True, **kwargs)
-            self.assertTrue(out["destroyed"], kwargs)
-            self.assertTrue(any("delete" in c["joined"] for c in runner.calls), kwargs)
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        out = hetzner_driver.down(
+            config=self.config,
+            state_root=self.state,
+            confirm=True,
+            all_tagged=True,
+            project_confirmation=self._project_confirmation(),
+        )
+        self.assertTrue(out["destroyed"])
+        self.assertTrue(any("delete" in c["joined"] for c in runner.calls))
+
+    def test_down_orphans_deletes_only_current_scope_jobs_absent_from_authoritative_ledger(self) -> None:
+        other_scope = hetzner_driver.install_scope(mock.Mock(install_id="other-install"))
+        servers = [
+            {"id": 81, "labels": {
+                "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "active-job"}},
+            {"id": 82, "labels": {
+                "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "orphan-job"}},
+            {"id": 83, "labels": {
+                "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": other_scope,
+                "job-id": "foreign-job"}},
+        ]
+        runner = _ReaperRunner(servers)
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        budget_ledger.reserve(self.state, "hetzner", "active-job", 1.0, "eur")
+
+        out = hetzner_driver.down(
+            config=self.config,
+            state_root=self.state,
+            orphans=True,
+            confirm=True,
+        )
+
+        self.assertEqual(runner.deleted, ["82"])
+        self.assertEqual(out["destroyed"], ["82"])
+        self.assertTrue(any("server list" in call["joined"] for call in runner.calls))
+
+    def test_down_orphans_fails_closed_without_authoritative_ledger(self) -> None:
+        runner = _ReaperRunner([{
+            "id": 91,
+            "labels": {
+                "managed-by": "ai-agents-skills",
+                "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "maybe-active",
+            },
+        }])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+
+        with self.assertRaises(hetzner_driver.HetznerDriverError):
+            hetzner_driver.down(
+                config=self.config,
+                state_root=self.state,
+                orphans=True,
+                confirm=True,
+            )
+
+        self.assertEqual(runner.deleted, [])
+
+    def test_down_server_id_refuses_a_server_from_another_install(self) -> None:
+        other_scope = hetzner_driver.install_scope(mock.Mock(install_id="other-install"))
+        runner = _ReaperRunner([{
+            "id": 88,
+            "name": "other-install-server",
+            "labels": {
+                "managed-by": "ai-agents-skills",
+                "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": other_scope,
+            },
+        }])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+
+        with self.assertRaises(hetzner_driver.HetznerDriverError):
+            hetzner_driver.down(
+                config=self.config, state_root=self.state, server_id="88", confirm=True
+            )
+
+        self.assertTrue(all("delete" not in call["joined"] for call in runner.calls))
+
+    def test_down_job_locally_rechecks_exact_job_label(self) -> None:
+        servers = [
+            {"id": 71, "name": "requested", "labels": {
+                "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "requested-job"}},
+            {"id": 72, "name": "same-install-other-job", "labels": {
+                "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "other-job"}},
+        ]
+        # This fake deliberately ignores hcloud's selector and returns both records. The local
+        # defense must still keep the job-scoped teardown from broadening within the install.
+        runner = _ReaperRunner(servers)
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+
+        out = hetzner_driver.down(
+            config=self.config, state_root=self.state, job_id="requested-job",
+            confirm=True, allow_unfetched=True,
+        )
+
+        self.assertEqual(runner.deleted, ["71"])
+        self.assertEqual(out["destroyed"], ["71"])
+
+    def test_down_audit_failure_reconciles_and_continues(self) -> None:
+        servers = [
+            {"id": 11, "name": "first", "labels": {
+                "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "first-job"}},
+            {"id": 12, "name": "second", "labels": {
+                "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "second-job"}},
+        ]
+        runner = _ReaperRunner(servers)
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        budget_ledger.reserve(self.state, "hetzner", "first-job", 1.0, "eur")
+        budget_ledger.reserve(self.state, "hetzner", "second-job", 1.0, "eur")
+
+        with mock.patch.object(hetzner_audit, "append", side_effect=OSError("read-only audit")):
+            out = hetzner_driver.down(
+                config=self.config, state_root=self.state, all_tagged=True, confirm=True,
+                project_confirmation=self._project_confirmation(),
+            )
+
+        self.assertEqual(runner.deleted, ["11", "12"])
+        self.assertEqual(budget_ledger.outstanding(self.state, "hetzner"), 0.0)
+        self.assertEqual([error["stage"] for error in out["errors"]], ["audit", "audit"])
 
     def test_fetch_writes_an_audit_record_only_after_results_arrive(self) -> None:
         runner = _FakeRunner()
@@ -2290,7 +2975,7 @@ class HetznerDriverTests(unittest.TestCase):
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         bundle = self._bundle(job_id="tsgham_iter002_lace_b")
         with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
-            hetzner_driver.up(job_dir=bundle, config=self.config, state_root=self.state, confirm=True)
+            self._up(job_dir=bundle, config=self.config, state_root=self.state, confirm=True)
         self.assertIn("tsgham_iter002_lace_b", str(ctx.exception))
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # nothing committed
         self.assertTrue(all("create" not in c["joined"] for c in runner.calls))
@@ -2326,7 +3011,7 @@ class HetznerDriverTests(unittest.TestCase):
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_driver.HetznerDriverError):
-            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+            self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         self.assertEqual(budget_ledger.outstanding(self.state, "hetzner"), 0.0)
         rows = [json.loads(line) for line in
                 (self.state / "hetzner-reservations.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -2340,22 +3025,22 @@ class HetznerDriverTests(unittest.TestCase):
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_driver.HetznerDriverError):
-            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+            self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         self.assertGreater(budget_ledger.outstanding(self.state, "hetzner"), 0.0)
 
     # -- root SSH access + the cloud-init boot race ---------------------------
 
-    def test_up_attaches_a_project_ssh_key_to_the_create(self) -> None:
+    def test_up_attaches_only_the_explicit_project_verified_ssh_key(self) -> None:
         """A create with no `--ssh-key` yields a server whose root login the stock Ubuntu
         image rejects (`Permission denied (publickey)`), so every later verb -- push, run,
         fetch -- fails against a server that still bills. The keys are looked up read-only."""
         runner = _FakeRunner(ssh_keys=["research-key", "laptop"])
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         create = next(c for c in runner.calls if "create" in c["joined"])
         self.assertIn("--ssh-key research-key", create["joined"])
-        self.assertIn("--ssh-key laptop", create["joined"])
+        self.assertNotIn("--ssh-key laptop", create["joined"])
 
     def test_up_refuses_when_the_project_has_no_ssh_key(self) -> None:
         """Provisioning an unreachable server is pure cost, so `up` aborts before spending."""
@@ -2363,8 +3048,8 @@ class HetznerDriverTests(unittest.TestCase):
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
-            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
-        self.assertIn("SSH key", str(ctx.exception))
+            self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        self.assertIn("absent from the current Hetzner project", str(ctx.exception))
         # Fail-closed: no create, and no budget reserved for a server that was never made.
         self.assertTrue(all("create" not in c["joined"] for c in runner.calls))
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())
@@ -2375,19 +3060,39 @@ class HetznerDriverTests(unittest.TestCase):
         hetzner_driver.COMMAND_RUNNER = _FakeRunner(fail_on="ssh-key list")
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
-            hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+            self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         self.assertIn("could not list", str(ctx.exception))
         self.assertNotIn("no SSH key", str(ctx.exception))
 
     def test_ssh_key_names_can_be_pinned_by_env(self) -> None:
-        """A shared project may hold keys this agent must not use; the env pin wins and
-        skips the live query entirely."""
-        runner = _FakeRunner(ssh_keys=["someone-elses-key"])
+        """A shared project may hold keys this agent must not use; only the explicit
+        allowlist is returned after every name is verified against live project inventory."""
+        runner = _FakeRunner(
+            ssh_keys=["someone-elses-key", "research-key", "second-key"]
+        )
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with mock.patch.dict(os.environ, {"HCLOUD_SSH_KEYS": "research-key, second-key"}):
             self.assertEqual(hetzner_driver.list_ssh_key_names(), ["research-key", "second-key"])
-        self.assertEqual(runner.calls, [])  # pinned: no hcloud call at all
+        self.assertEqual(len(runner.calls), 1)
+        self.assertIn("ssh-key list", runner.calls[0]["joined"])
+
+    def test_ssh_key_selection_has_no_attach_all_or_legacy_fallback(self) -> None:
+        runner = _FakeRunner(ssh_keys=["project-default-key"])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with mock.patch.dict(
+            os.environ,
+            {"HETZNER_SSH_KEYS": "project-default-key"},
+            clear=False,
+        ):
+            os.environ.pop("HCLOUD_SSH_KEYS", None)
+            with self.assertRaisesRegex(
+                hetzner_driver.HetznerDriverError,
+                "explicit HCLOUD_SSH_KEYS",
+            ):
+                hetzner_driver.list_ssh_key_names()
+        self.assertEqual(runner.calls, [])
 
     def test_push_waits_for_sshd_before_rsync(self) -> None:
         """hcloud reports `running` as soon as the VM boots, well before cloud-init starts
@@ -2395,11 +3100,136 @@ class HetznerDriverTests(unittest.TestCase):
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        hetzner_driver.push(job_id="jobX", job_dir=self._bundle(), config=self.config, confirm=True)
+        self._push(job_id="jobX", job_dir=self._bundle(), config=self.config, confirm=True)
         kinds = [c["argv"][0] for c in runner.calls]
         probe = next(i for i, c in enumerate(runner.calls)
                      if c["argv"][0] == "ssh" and c["argv"][-1] == "true")
         self.assertLess(probe, kinds.index("rsync"))  # probed first, then copied
+
+    def test_push_refetches_exact_server_and_rechecks_full_digest_before_rsync(self) -> None:
+        class RelabelledBeforeUpload(_FakeRunner):
+            def __call__(self, argv, *, env, timeout):
+                result = super().__call__(argv, env=env, timeout=timeout)
+                if "server" in argv and "describe" in argv:
+                    server = json.loads(result["stdout"])
+                    server["labels"][hetzner_driver.BUNDLE_DIGEST_LABEL_LOW] = "0" * 32
+                    result["stdout"] = json.dumps(server)
+                return result
+
+        runner = RelabelledBeforeUpload()
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError,
+            "exact approved bundle",
+        ):
+            self._push(
+                job_id="jobX",
+                job_dir=self._bundle(),
+                config=self.config,
+                state_root=self.state,
+                confirm=True,
+            )
+        self.assertTrue(any("server describe 4242" in c["joined"] for c in runner.calls))
+        self.assertTrue(all(c["argv"][0] != "rsync" for c in runner.calls))
+
+    def test_push_rejects_bundle_outside_operator_approved_root(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        with tempfile.TemporaryDirectory() as outside:
+            bundle = _make_bundle(
+                Path(outside),
+                {"job_id": "jobX", "core_hours": 1, "parallelism": 1},
+            )
+            with self.assertRaisesRegex(
+                hetzner_driver.HetznerDriverError,
+                "outside approved bundle_root",
+            ):
+                self._push(
+                    job_id="jobX",
+                    job_dir=bundle,
+                    config=self.config,
+                    dry_run=True,
+                )
+        self.assertEqual(runner.calls, [])
+
+    def test_push_rejects_symlinked_bundle_content_before_network(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        bundle = self._bundle()
+        authority = self.tmp / "compute.env"
+        authority.write_text("HCLOUD_TOKEN=must-not-upload\n", encoding="utf-8")
+        (bundle / "payload.txt").symlink_to(authority)
+
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError,
+            "link or special file",
+        ):
+            self._push(
+                job_id="jobX",
+                job_dir=bundle,
+                config=self.config,
+                dry_run=True,
+            )
+
+        self.assertEqual(runner.calls, [])
+
+    def test_push_rejects_protected_authority_inode_before_network(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        bundle = self._bundle()
+        authority = bundle / "authority.txt"
+        authority.write_text("HCLOUD_TOKEN=must-not-upload\n", encoding="utf-8")
+        authority.chmod(0o600)
+        info = authority.stat()
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                hetzner_driver.PROTECTED_SECRET_IDENTITIES_ENV:
+                    f"{int(info.st_dev)}:{int(info.st_ino)}"
+            },
+        ):
+            with self.assertRaisesRegex(
+                hetzner_driver.HetznerDriverError,
+                "overlaps a protected secret authority",
+            ):
+                self._push(
+                    job_id="jobX",
+                    job_dir=bundle,
+                    config=self.config,
+                    dry_run=True,
+                )
+
+        self.assertEqual(runner.calls, [])
+
+    def test_push_rejects_manifest_job_mismatch_before_network(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError,
+            "manifest job_id does not match",
+        ):
+            self._push(
+                job_id="different-job",
+                job_dir=self._bundle(),
+                config=self.config,
+                dry_run=True,
+            )
+        self.assertEqual(runner.calls, [])
+
+    def test_server_ip_rejects_non_ipv4_destination_text(self) -> None:
+        runner = _FakeRunner(ip="-oProxyCommand=cat /private/compute.env")
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError,
+            "invalid public IPv4 literal",
+        ):
+            hetzner_driver._server_ip("jobX", self.config)
+
+        self.assertTrue(all(call["argv"][0] == "hcloud" for call in runner.calls))
 
     def test_push_does_not_rsync_into_a_server_whose_sshd_never_came_up(self) -> None:
         runner = _FakeRunner(fail_on="root@")
@@ -2408,30 +3238,153 @@ class HetznerDriverTests(unittest.TestCase):
         with mock.patch.object(hetzner_driver, "SSH_READY_TIMEOUT", 0.05), \
                 mock.patch.object(hetzner_driver, "SSH_READY_INTERVAL", 0.01):
             with self.assertRaises(hetzner_driver.HetznerDriverError):
-                hetzner_driver.push(job_id="jobX", job_dir=self._bundle(), config=self.config, confirm=True)
+                self._push(job_id="jobX", job_dir=self._bundle(), config=self.config, confirm=True)
         self.assertTrue(all(c["argv"][0] != "rsync" for c in runner.calls))
 
     def test_wait_for_ssh_gives_up_with_a_diagnosable_error(self) -> None:
         hetzner_driver.COMMAND_RUNNER = _FakeRunner(fail_on="root@")
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        options = hetzner_driver._ssh_options(
+            config=self.config, state_root=self.state, job_id="jobX", ip="203.0.113.9"
+        )
         with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
-            hetzner_driver.wait_for_ssh("203.0.113.9", timeout=0.05, interval=0.01)
+            hetzner_driver.wait_for_ssh(
+                "203.0.113.9", ssh_options=options, timeout=0.05, interval=0.01
+            )
         self.assertIn("203.0.113.9", str(ctx.exception))
         self.assertIn("simulated failure", str(ctx.exception))  # carries the last transport error
 
-    def test_ssh_opts_tolerate_a_recycled_address(self) -> None:
-        """Disposable servers recycle IPv4 addresses, so a remembered host key for a
-        destroyed server would block the next job on a changed-key error; the lane must not
-        persist host keys. `BatchMode` keeps a missing key from hanging on a prompt, and
-        `ConnectTimeout` bounds a black-holed address."""
-        self.assertIn("UserKnownHostsFile=/dev/null", hetzner_driver.SSH_OPTS)
-        self.assertIn("BatchMode=yes", hetzner_driver.SSH_OPTS)
-        self.assertTrue(any(o.startswith("ConnectTimeout=") for o in hetzner_driver.SSH_OPTS))
+    def test_ssh_opts_pin_the_exact_per_job_host_key(self) -> None:
+        options = hetzner_driver._ssh_options(
+            config=self.config, state_root=self.state, job_id="jobX", ip="203.0.113.9"
+        )
+        self.assertIn("StrictHostKeyChecking=yes", options)
+        self.assertNotIn("StrictHostKeyChecking=accept-new", options)
+        self.assertNotIn("UserKnownHostsFile=/dev/null", options)
+        self.assertTrue(any(o.startswith("UserKnownHostsFile=") for o in options))
+        self.assertIn("BatchMode=yes", options)
+        self.assertTrue(any(o.startswith("ConnectTimeout=") for o in options))
+
+    def test_oneshot_holds_one_immutable_bundle_snapshot_through_up_and_push(self) -> None:
+        runner = _FakeRunner()
+        hetzner_driver.COMMAND_RUNNER = runner
+        original = hetzner_driver._copy_bundle_snapshot
+        with mock.patch.object(
+            hetzner_driver, "_copy_bundle_snapshot", wraps=original
+        ) as snapshot_copy:
+            out = self._oneshot(
+                job_dir=self._bundle(), config=self.config, state_root=self.state, dry_run=True
+            )
+        self.assertEqual(snapshot_copy.call_count, 1)
+        self.assertEqual(out["bundle_digest"], out["up"]["bundle_digest"])
+
+    def test_oneshot_teardown_uses_actual_created_server_identity(self) -> None:
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        seen: dict[str, object] = {}
+
+        def capture_down(**kwargs):
+            seen.update(kwargs)
+            return {"errors": [], "destroyed": [kwargs.get("server_id")]}
+
+        with (
+            mock.patch.object(
+                hetzner_driver, "up", return_value={"server_id": "actual-server-4242"}
+            ),
+            mock.patch.object(hetzner_driver, "push", return_value={}),
+            mock.patch.object(hetzner_driver, "run", return_value={}),
+            mock.patch.object(hetzner_driver, "wait", return_value={"status": "completed"}),
+            mock.patch.object(hetzner_driver, "fetch", return_value={}),
+            mock.patch.object(hetzner_driver, "down", side_effect=capture_down),
+            mock.patch.object(hetzner_driver, "_install_teardown_signals", return_value={}),
+        ):
+            out = self._oneshot(
+                job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True
+            )
+        self.assertEqual(seen.get("server_id"), "actual-server-4242")
+        self.assertNotIn("job_id", seen)
+        self.assertEqual(out["steps"]["down"]["destroyed"], ["actual-server-4242"])
+
+    def test_down_selectors_are_exclusive(self) -> None:
+        invalid = (
+            {},
+            {"job_id": "jobX", "server_id": "42"},
+            {"job_id": "jobX", "all_tagged": True},
+            {"server_id": "42", "orphans": True},
+            {"all_tagged": True, "orphans": True},
+        )
+        for selectors in invalid:
+            with self.subTest(selectors=selectors):
+                with self.assertRaisesRegex(
+                    hetzner_driver.HetznerDriverError, "exactly one"
+                ):
+                    hetzner_driver.down(config=self.config, dry_run=True, **selectors)
+
+    def test_project_wide_confirmation_is_bound_to_exact_target_set(self) -> None:
+        servers = [{
+            "id": 1,
+            "labels": {
+                "managed-by": "ai-agents-skills",
+                "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "one",
+            },
+        }]
+        runner = _ReaperRunner(servers)
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        old_phrase = self._project_confirmation()
+        runner.servers.append({
+            "id": 2,
+            "labels": {
+                "managed-by": "ai-agents-skills",
+                "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "job-id": "two",
+            },
+        })
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError, "exact inventory-bound confirmation"
+        ):
+            hetzner_driver.down(
+                config=self.config, state_root=self.state, all_tagged=True,
+                confirm=True, project_confirmation=old_phrase,
+            )
+        self.assertEqual(runner.deleted, [])
+
+    def test_project_wide_dry_run_does_not_require_reaper_lease(self) -> None:
+        runner = _ReaperRunner([])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        with mock.patch.object(
+            hetzner_driver,
+            "REAPER_LEASE_VERIFIER",
+            side_effect=AssertionError("dry-run must not verify a live lease"),
+        ):
+            result = hetzner_driver.down(
+                config=self.config,
+                state_root=self.state,
+                all_tagged=True,
+                dry_run=True,
+            )
+
+        self.assertTrue(result["dry_run"])
+        self.assertIn("required_confirmation", result)
+
+    def test_group_writable_bundle_authority_is_rejected_before_network(self) -> None:
+        bundle = self._bundle()
+        bundle.chmod(0o770)
+        hetzner_driver.COMMAND_RUNNER = _FakeRunner()
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError, "group/world writable"
+        ):
+            self._push(
+                job_id="jobX", job_dir=bundle, config=self.config, dry_run=True
+            )
 
     def test_oneshot_dry_run_shows_full_sequence_without_calls(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
-        out = hetzner_driver.oneshot(job_dir=self._bundle(), config=self.config, state_root=self.state, dry_run=True)
+        out = self._oneshot(job_dir=self._bundle(), config=self.config, state_root=self.state, dry_run=True)
         self.assertTrue(out["dry_run"])
         self.assertEqual(out["sequence"], ["up", "push", "run", "wait", "fetch", "down"])
         self.assertIn("trap", out["teardown"])
@@ -2443,10 +3396,55 @@ class HetznerDriverTests(unittest.TestCase):
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_driver.HetznerDriverError):
-            hetzner_driver.oneshot(job_dir=self._bundle(), config=self.config, state_root=self.state,
+            self._oneshot(job_dir=self._bundle(), config=self.config, state_root=self.state,
                                    confirm=True, dest=self.tmp / "out")
         self.assertTrue(any("delete" in c["joined"] for c in runner.calls))  # guaranteed teardown ran
         self.assertTrue(all(DRIVER_TOKEN not in c["joined"] for c in runner.calls))  # token never on argv
+
+    def test_oneshot_finally_retries_a_teardown_that_threw_on_signal_path(self) -> None:
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        captured: dict[str, object] = {}
+
+        def capture_teardown(callback):
+            captured["teardown"] = callback
+            return {}
+
+        def interrupted_run(**_kwargs):
+            callback = captured["teardown"]
+            assert callable(callback)
+            callback("signal-test")
+
+        first_failure = hetzner_driver.HetznerDriverError("first teardown failed")
+        with (
+            mock.patch.object(hetzner_driver, "_install_teardown_signals", capture_teardown),
+            mock.patch.object(
+                hetzner_driver, "up", return_value={"ok": True, "server_id": "server-1"}
+            ),
+            mock.patch.object(hetzner_driver, "push", return_value={"ok": True}),
+            mock.patch.object(hetzner_driver, "run", side_effect=interrupted_run),
+            mock.patch.object(
+                hetzner_driver,
+                "fetch",
+                return_value={"status": "salvaged"},
+            ),
+            mock.patch.object(
+                hetzner_driver,
+                "down",
+                side_effect=[first_failure, {"errors": [], "destroyed": ["server-1"]}],
+            ) as down,
+        ):
+            with self.assertRaisesRegex(
+                hetzner_driver.HetznerDriverError,
+                "first teardown failed",
+            ):
+                self._oneshot(
+                    job_dir=self._bundle(),
+                    config=self.config,
+                    state_root=self.state,
+                    confirm=True,
+                )
+
+        self.assertEqual(down.call_count, 2)
 
     # -- Phase C: cloud-init dead-man's-switch --------------------------------
 
@@ -2454,7 +3452,14 @@ class HetznerDriverTests(unittest.TestCase):
         """The rendered dead-man's-switch has the boot-relative shutdown AND the systemd
         RuntimeMaxSec backstop, no unrendered placeholders, and NO token on the server."""
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        ci = hetzner_driver.render_cloud_init(self.config, 6.0)  # max_server_hours = 6
+        ci = hetzner_driver.render_cloud_init(
+            self.config,
+            6.0,
+            host_identity=hetzner_driver.HostIdentity(
+                private_key=TEST_HOST_PRIVATE_KEY,
+                public_key=TEST_HOST_PUBLIC_KEY,
+            ),
+        )  # max_server_hours = 6
         self.assertIn("shutdown -h +360", ci)     # 6h -> 360 min, boot-relative
         self.assertIn("RuntimeMaxSec=21600", ci)  # 6h -> 21600 s backstop
         self.assertNotIn("{{", ci)                 # fully rendered
@@ -2464,22 +3469,32 @@ class HetznerDriverTests(unittest.TestCase):
     def test_up_dry_run_reports_dead_mans_switch(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
-        out = hetzner_driver.up(job_dir=self._bundle(), config=self.config,
+        out = self._up(job_dir=self._bundle(), config=self.config,
                                 state_root=self.state, dry_run=True)
         self.assertTrue(out["dead_mans_switch"])
         self.assertEqual(out["cloud_init_shutdown_minutes"], 360)
         self.assertIn("--user-data-from-file", out["command"])
         self.assertEqual(runner.calls, [])  # dry-run makes no call and provisions nothing
 
-    def test_up_user_data_override_disables_auto_switch(self) -> None:
+    def test_up_rejects_caller_selected_user_data_and_keeps_auto_switch_mandatory(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
-        ud = self.tmp / "operator-cloud-init.yaml"
-        ud.write_text("#cloud-config\n", encoding="utf-8")
-        out = hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state,
-                                dry_run=True, user_data=str(ud))
-        self.assertFalse(out["dead_mans_switch"])  # operator-supplied user-data wins
-        self.assertIn(str(ud), " ".join(out["command"]))
+        authority = self.tmp / "compute.env"
+        authority.write_text("HCLOUD_TOKEN=must-not-upload\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            hetzner_driver.HetznerDriverError,
+            "custom --user-data is disabled",
+        ):
+            self._up(
+                job_dir=self._bundle(),
+                config=self.config,
+                state_root=self.state,
+                dry_run=True,
+                user_data=str(authority),
+            )
+
+        self.assertEqual(runner.calls, [])
 
     # -- Phase C: reconcile-before-create runaway-loop guard ------------------
 
@@ -2487,16 +3502,43 @@ class HetznerDriverTests(unittest.TestCase):
         """Two live tagged servers already exist and max_concurrent_servers is 2, so one more
         would exceed the cap: `up` aborts BEFORE reserving budget or creating (fail-closed)."""
         runner = _ReaperRunner([
-            {"id": 1, "name": "a", "status": "running", "labels": {"managed-by": "ai-agents-skills"}},
-            {"id": 2, "name": "b", "status": "running", "labels": {"managed-by": "ai-agents-skills"}},
+            {"id": 1, "name": "a", "status": "running",
+             "labels": {"managed-by": "ai-agents-skills", "install-scope": TEST_INSTALL_SCOPE}},
+            {"id": 2, "name": "b", "status": "running",
+             "labels": {"managed-by": "ai-agents-skills", "install-scope": TEST_INSTALL_SCOPE}},
         ])
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         with self.assertRaises(hetzner_driver.HetznerDriverError):
-            hetzner_driver.up(job_dir=self._bundle(), config=self.config,
+            self._up(job_dir=self._bundle(), config=self.config,
                               state_root=self.state, confirm=True)
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # no reservation
         self.assertTrue(all("create" not in c["joined"] for c in runner.calls))  # no create
+
+    def test_runaway_guard_counts_older_and_foreign_install_scopes(self) -> None:
+        """A restore/path move must not hide already-billing AAS servers from the cap."""
+        other_scope = hetzner_driver.install_scope(mock.Mock(install_id="other-install"))
+        runner = _ReaperRunner([
+            {"id": 1, "name": "old-scope", "status": "running", "labels": {
+                "managed-by": "ai-agents-skills", "install-scope": other_scope}},
+            {"id": 2, "name": "legacy", "status": "running", "labels": {
+                "managed-by": "ai-agents-skills"}},
+            {"id": 3, "name": "unrelated", "status": "running", "labels": {
+                "managed-by": "someone-else"}},
+        ])
+        hetzner_driver.COMMAND_RUNNER = runner
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+
+        with self.assertRaises(hetzner_driver.HetznerDriverError):
+            self._up(
+                job_dir=self._bundle(), config=self.config,
+                state_root=self.state, confirm=True,
+            )
+
+        selector_call = next(call for call in runner.calls if "server list" in call["joined"])
+        self.assertIn("managed-by=ai-agents-skills", selector_call["joined"])
+        self.assertNotIn("install-scope=", selector_call["joined"])
+        self.assertTrue(all("create" not in call["joined"] for call in runner.calls))
 
     # -- Phase C: audit log ---------------------------------------------------
 
@@ -2504,7 +3546,7 @@ class HetznerDriverTests(unittest.TestCase):
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
-        hetzner_driver.up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
+        self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         records = hetzner_audit.read(self.state)
         prov = [r for r in records if r["event"] == "provision"]
         self.assertTrue(prov)
@@ -2545,11 +3587,17 @@ class HetznerReaperTests(unittest.TestCase):
         self.config = _config(self.tmp)
         self.state = self.tmp / "state"
         self._prev_runner = hetzner_driver.COMMAND_RUNNER
+        self._prev_reaper_verifier = hetzner_driver.REAPER_LEASE_VERIFIER
+        hetzner_driver.REAPER_LEASE_VERIFIER = lambda config: {
+            "project_identity": TEST_PROJECT_IDENTITY,
+            "install_scope": TEST_INSTALL_SCOPE,
+        }
         self._prev_token = os.environ.pop("HCLOUD_TOKEN", None)
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
 
     def tearDown(self) -> None:
         hetzner_driver.COMMAND_RUNNER = self._prev_runner
+        hetzner_driver.REAPER_LEASE_VERIFIER = self._prev_reaper_verifier
         if self._prev_token is not None:
             os.environ["HCLOUD_TOKEN"] = self._prev_token
         else:
@@ -2557,7 +3605,9 @@ class HetznerReaperTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _servers(self, now: float) -> list[dict]:
-        base = {"managed-by": "ai-agents-skills", "ttl": "6h"}
+        base = {"managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                "install-scope": TEST_INSTALL_SCOPE,
+                "ttl": "6h"}
         return [
             {"id": 1, "name": "keep", "status": "running", "created": _iso(now - 60),
              "labels": {**base, "job-id": "J-active"}},
@@ -2568,6 +3618,36 @@ class HetznerReaperTests(unittest.TestCase):
             {"id": 4, "name": "orphan", "status": "running", "created": _iso(now - 60),
              "labels": {**base, "job-id": "J-ghost"}},
         ]
+
+    def _kill_confirmation(self) -> str:
+        return hetzner_reaper.kill_switch(
+            config=self.config,
+            state_root=self.state,
+            dry_run=True,
+        )["required_confirmation"]
+
+    def test_root_attestation_publishes_agent_readable_root_only_writable_lease(self) -> None:
+        lease_path = Path(self.config.hetzner_reaper_lease_file)
+        with (
+            mock.patch.object(hetzner_reaper.os, "geteuid", return_value=0),
+            mock.patch.object(
+                hetzner_driver,
+                "_require_root_protected_parent_chain",
+            ) as protected_chain,
+        ):
+            payload = hetzner_reaper.write_reaper_lease(
+                config=self.config,
+                scheduler_kind="systemd",
+                scheduler_id=self.config.hetzner_reaper_scheduler_id,
+            )
+
+        self.assertEqual(stat.S_IMODE(lease_path.stat().st_mode), 0o644)
+        self.assertEqual(
+            json.loads(lease_path.read_text(encoding="utf-8")), payload
+        )
+        protected_chain.assert_called_once_with(
+            lease_path.parent, label="reaper lease"
+        )
 
     def test_reaper_deletes_expired_poweredoff_orphans_keeps_active(self) -> None:
         now = 2_000_000.0
@@ -2583,6 +3663,64 @@ class HetznerReaperTests(unittest.TestCase):
         self.assertIn("past_ttl", reasons["3"])
         self.assertIn("orphaned", reasons["4"])
 
+    def test_reaper_refetches_exact_id_and_recomputes_predicate_before_delete(self) -> None:
+        now = 2_000_000.0
+        initial = self._servers(now)[1]  # initially powered off
+
+        class RestartedServerRunner(_ReaperRunner):
+            def __call__(self, argv, *, env, timeout):
+                if "describe" in argv:
+                    refreshed = {
+                        **self.servers[0],
+                        "status": "running",
+                        "created": _iso(now - 60),
+                    }
+                    self.calls.append({
+                        "argv": list(argv),
+                        "joined": " ".join(argv),
+                        "env_has_token": bool(env.get("HCLOUD_TOKEN")),
+                    })
+                    return {
+                        "returncode": 0,
+                        "stdout": json.dumps(refreshed),
+                        "stderr": "",
+                    }
+                return super().__call__(argv, env=env, timeout=timeout)
+
+        runner = RestartedServerRunner([initial])
+        hetzner_driver.COMMAND_RUNNER = runner
+        out = hetzner_reaper.reap(
+            config=self.config,
+            state_root=None,
+            now=now,
+        )
+        self.assertEqual(runner.deleted, [])
+        self.assertEqual(out["deleted"], [])
+        self.assertTrue(any("server describe 2" in c["joined"] for c in runner.calls))
+
+    def test_reaper_refetch_rejects_server_that_left_project_scope(self) -> None:
+        now = 2_000_000.0
+        initial = self._servers(now)[1]
+
+        class RelabelledServerRunner(_ReaperRunner):
+            def __call__(self, argv, *, env, timeout):
+                result = super().__call__(argv, env=env, timeout=timeout)
+                if "describe" in argv:
+                    refreshed = json.loads(result["stdout"])
+                    refreshed["labels"]["project-scope"] = "v1-foreign"
+                    result["stdout"] = json.dumps(refreshed)
+                return result
+
+        runner = RelabelledServerRunner([initial])
+        hetzner_driver.COMMAND_RUNNER = runner
+        out = hetzner_reaper.reap(
+            config=self.config,
+            state_root=None,
+            now=now,
+        )
+        self.assertEqual(runner.deleted, [])
+        self.assertTrue(out["errors"])
+
     def test_reaper_dry_run_deletes_nothing(self) -> None:
         now = 2_000_000.0
         runner = _ReaperRunner(self._servers(now))
@@ -2592,10 +3730,26 @@ class HetznerReaperTests(unittest.TestCase):
         self.assertTrue(all("delete" not in c["joined"] for c in runner.calls))
         self.assertTrue(out["planned"])  # it still reports what WOULD be reaped
 
+    def test_reaper_rejects_malformed_or_non_list_server_inventory(self) -> None:
+        for payload in ("not-json", "{}", "null", '[{"id": 1}, "bad-record"]'):
+            with self.subTest(payload=payload):
+                def runner(argv, *, env, timeout):
+                    return {"returncode": 0, "stdout": payload, "stderr": ""}
+
+                hetzner_driver.COMMAND_RUNNER = runner
+                with self.assertRaises(RuntimeError):
+                    hetzner_reaper.reap(
+                        config=self.config,
+                        state_root=self.state,
+                        now=2_000_000.0,
+                    )
+
     def test_reaper_stale_heartbeat(self) -> None:
         now = 2_000_000.0
         servers = [{"id": 9, "name": "hb", "status": "running", "created": _iso(now - 60),
-                    "labels": {"managed-by": "ai-agents-skills", "job-id": "J-active",
+                    "labels": {"managed-by": "ai-agents-skills",
+                               "project-scope": TEST_PROJECT_SCOPE,
+                               "install-scope": TEST_INSTALL_SCOPE, "job-id": "J-active",
                                "ttl": "6h", "heartbeat": str(now - 3600)}}]
         runner = _ReaperRunner(servers)
         hetzner_driver.COMMAND_RUNNER = runner
@@ -2616,14 +3770,217 @@ class HetznerReaperTests(unittest.TestCase):
         self.assertNotIn("4", runner.deleted)  # orphan check disabled without a ledger
         self.assertEqual(sorted(runner.deleted), ["2", "3"])  # only off + past-TTL
 
+    def test_reaper_orphan_check_off_when_configured_ledger_is_absent(self) -> None:
+        now = 2_000_000.0
+        runner = _ReaperRunner(self._servers(now))
+        hetzner_driver.COMMAND_RUNNER = runner
+        self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())
+
+        hetzner_reaper.reap(config=self.config, state_root=self.state, now=now)
+
+        self.assertNotIn("4", runner.deleted)
+        self.assertEqual(sorted(runner.deleted), ["2", "3"])
+
+    def test_reaper_orphan_check_off_when_ledger_is_malformed(self) -> None:
+        now = 2_000_000.0
+        self.state.mkdir(parents=True)
+        (self.state / "hetzner-reservations.jsonl").write_text("not-json\n", encoding="utf-8")
+        server = self._servers(now)[3]
+        runner = _ReaperRunner([server])
+        hetzner_driver.COMMAND_RUNNER = runner
+
+        out = hetzner_reaper.reap(config=self.config, state_root=self.state, now=now)
+
+        self.assertEqual(runner.deleted, [])
+        self.assertEqual(out["planned"], [])
+
+    def test_reaper_orphan_check_off_when_ledger_row_schema_is_malformed(self) -> None:
+        now = 2_000_000.0
+        self.state.mkdir(parents=True)
+        (self.state / "hetzner-reservations.jsonl").write_text(
+            '{"state":"reserved"}\n', encoding="utf-8"
+        )
+        runner = _ReaperRunner([self._servers(now)[3]])
+        hetzner_driver.COMMAND_RUNNER = runner
+
+        out = hetzner_reaper.reap(config=self.config, state_root=self.state, now=now)
+
+        self.assertEqual(runner.deleted, [])
+        self.assertEqual(out["planned"], [])
+
+    def test_reaper_rereads_ledger_after_list_and_immediately_before_orphan_delete(self) -> None:
+        now = 2_000_000.0
+        server = self._servers(now)[3]
+        runner = _ReaperRunner([server])
+        hetzner_driver.COMMAND_RUNNER = runner
+        authority_reads = iter([set(), {"J-ghost"}])
+
+        def authoritative_after_list(*_args):
+            self.assertTrue(runner.calls)
+            self.assertIn("server list", runner.calls[0]["joined"])
+            return next(authority_reads)
+
+        with mock.patch.object(
+            budget_ledger,
+            "authoritative_reserved_job_ids",
+            side_effect=authoritative_after_list,
+        ) as read_authority:
+            out = hetzner_reaper.reap(config=self.config, state_root=self.state, now=now)
+
+        self.assertEqual(read_authority.call_count, 2)
+        self.assertEqual(runner.deleted, [])
+        self.assertEqual(out["planned"], [])
+
+    def test_reaper_fails_closed_without_install_scope_config(self) -> None:
+        runner = _ReaperRunner(self._servers(2_000_000.0))
+        hetzner_driver.COMMAND_RUNNER = runner
+
+        with self.assertRaises(hetzner_driver.HetznerDriverError):
+            hetzner_reaper.reap(config=None, state_root=self.state)
+
+        self.assertEqual(runner.calls, [])
+
     def test_kill_switch_deletes_all_tagged(self) -> None:
         now = 2_000_000.0
         runner = _ReaperRunner(self._servers(now))
         hetzner_driver.COMMAND_RUNNER = runner
         budget_ledger.reserve(self.state, "hetzner", "J-active", 1.0, "eur")  # active is killed too
-        out = hetzner_reaper.kill_switch(config=self.config, state_root=self.state)
+        out = hetzner_reaper.kill_switch(
+            config=self.config,
+            state_root=self.state,
+            confirm_project_wide=self._kill_confirmation(),
+        )
         self.assertEqual(sorted(runner.deleted), ["1", "2", "3", "4"])
         self.assertEqual(len(out["killed"]), 4)
+
+    def test_kill_cli_labels_its_scope_as_project_wide(self) -> None:
+        help_text = hetzner_reaper.build_parser().format_help()
+        self.assertIn("Project-wide kill switch", help_text)
+        self.assertIn("this Hetzner project", help_text)
+        self.assertIn("exact phrase emitted by `kill --dry-run`", help_text)
+
+    def test_kill_switch_refuses_without_project_wide_confirmation(self) -> None:
+        runner = _ReaperRunner(self._servers(2_000_000.0))
+        hetzner_driver.COMMAND_RUNNER = runner
+
+        with self.assertRaisesRegex(
+            hetzner_reaper.HetznerReaperError,
+            "project-wide kill requires exact inventory-bound confirmation",
+        ):
+            hetzner_reaper.kill_switch(
+                config=self.config,
+                state_root=self.state,
+            )
+
+        self.assertTrue(any("server list" in call["joined"] for call in runner.calls))
+        self.assertEqual(runner.deleted, [])
+
+    def test_kill_switch_requires_fresh_protected_reaper_evidence(self) -> None:
+        runner = _ReaperRunner(self._servers(2_000_000.0))
+        hetzner_driver.COMMAND_RUNNER = runner
+        phrase = self._kill_confirmation()
+        with (
+            mock.patch.object(
+                hetzner_driver,
+                "REAPER_LEASE_VERIFIER",
+                side_effect=hetzner_driver.HetznerDriverError("reaper lease is stale"),
+            ),
+            self.assertRaisesRegex(
+                hetzner_driver.HetznerDriverError, "reaper lease is stale"
+            ),
+        ):
+            hetzner_reaper.kill_switch(
+                config=self.config,
+                state_root=self.state,
+                confirm_project_wide=phrase,
+            )
+
+        self.assertEqual(runner.deleted, [])
+
+    def test_kill_switch_reaches_other_and_legacy_install_scopes(self) -> None:
+        now = 2_000_000.0
+        own = self._servers(now)[0]
+        other_scope = hetzner_driver.install_scope(mock.Mock(install_id="other-install"))
+        other = {
+            "id": 8, "name": "other", "status": "off", "created": _iso(now - 60),
+            "labels": {"managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                       "install-scope": other_scope,
+                       "job-id": "other-job", "ttl": "6h"},
+        }
+        legacy = {
+            "id": 9, "name": "legacy", "status": "off", "created": _iso(now - 60),
+            "labels": {"managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                       "job-id": "legacy-job", "ttl": "6h"},
+        }
+        runner = _ReaperRunner([own, other, legacy])
+        hetzner_driver.COMMAND_RUNNER = runner
+
+        out = hetzner_reaper.kill_switch(
+            config=self.config,
+            state_root=self.state,
+            confirm_project_wide=self._kill_confirmation(),
+        )
+
+        self.assertEqual(runner.deleted, ["1", "8", "9"])
+        self.assertEqual(out["scanned"], 3)
+        selector_call = next(call for call in runner.calls if "server list" in call["joined"])
+        self.assertIn("managed-by=ai-agents-skills", selector_call["joined"])
+        self.assertNotIn("install-scope=", selector_call["joined"])
+        self.assertNotIn("test-install", selector_call["joined"])
+
+    def test_foreign_scope_is_ttl_reaped_but_not_orphaned_or_locally_reconciled(self) -> None:
+        now = 2_000_000.0
+        other_scope = hetzner_driver.install_scope(mock.Mock(install_id="other-install"))
+        foreign_job = "same-job-id"
+        servers = [
+            {"id": 8, "name": "foreign-active", "status": "running",
+             "created": _iso(now - 60), "labels": {
+                 "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                 "install-scope": other_scope,
+                 "job-id": foreign_job, "ttl": "6h"}},
+            {"id": 9, "name": "foreign-expired", "status": "running",
+             "created": _iso(now - 7 * 3600), "labels": {
+                 "managed-by": "ai-agents-skills", "project-scope": TEST_PROJECT_SCOPE,
+                 "install-scope": other_scope,
+                 "job-id": foreign_job, "ttl": "6h"}},
+        ]
+        runner = _ReaperRunner(servers)
+        hetzner_driver.COMMAND_RUNNER = runner
+        budget_ledger.reserve(self.state, "hetzner", foreign_job, 1.0, "eur")
+
+        out = hetzner_reaper.reap(config=self.config, state_root=self.state, now=now)
+
+        self.assertEqual(runner.deleted, ["9"])
+        self.assertEqual(out["deleted"][0]["reasons"], ["past_ttl"])
+        self.assertEqual(budget_ledger.outstanding(self.state, "hetzner"), 1.0)
+
+    def test_audit_failure_does_not_skip_reconcile_or_later_deletes(self) -> None:
+        now = 2_000_000.0
+        servers = [self._servers(now)[1], self._servers(now)[2]]
+        runner = _ReaperRunner(servers)
+        hetzner_driver.COMMAND_RUNNER = runner
+        budget_ledger.reserve(self.state, "hetzner", "J-active", 1.0, "eur")
+        budget_ledger.reserve(self.state, "hetzner", "J-second", 1.0, "eur")
+        servers[1]["labels"]["job-id"] = "J-second"
+
+        with mock.patch.object(hetzner_audit, "append", side_effect=OSError("read-only audit")):
+            out = hetzner_reaper.reap(config=self.config, state_root=self.state, now=now)
+
+        self.assertEqual(runner.deleted, ["2", "3"])
+        self.assertEqual(budget_ledger.outstanding(self.state, "hetzner"), 0.0)
+        self.assertEqual([error["stage"] for error in out["errors"]], ["audit", "audit"])
+
+    def test_delete_failure_does_not_strand_later_billable_servers(self) -> None:
+        now = 2_000_000.0
+        servers = [self._servers(now)[1], self._servers(now)[2]]
+        runner = _ReaperRunner(servers, fail_delete_ids={"2"})
+        hetzner_driver.COMMAND_RUNNER = runner
+
+        out = hetzner_reaper.reap(config=self.config, state_root=self.state, now=now)
+
+        self.assertEqual(runner.deleted, ["3"])
+        self.assertEqual(out["errors"][0]["server"], "2")
+        self.assertEqual(out["errors"][0]["stage"], "delete")
 
     def test_reaper_writes_redacted_audit(self) -> None:
         now = 2_000_000.0

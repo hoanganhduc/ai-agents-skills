@@ -409,7 +409,7 @@ def command_submit_gha(
                 "reason": f"GHA readiness failed: {ready_reason}"}
 
     nonce = secrets.token_hex(16)
-    attempt_id = f"{next_attempt_id(state_root, job_id)}-{nonce[:8]}"
+    attempt_id = next_attempt_id(state_root, job_id, suffix=nonce[:8])
     dispatch_id = f"gha-{nonce}"
     attempt_root = ensure_root(attempt_dir(state_root, job_id, attempt_id))
     workflow = repo_cfg.get("workflow", "experiment.yml")

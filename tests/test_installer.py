@@ -258,6 +258,7 @@ class ManifestTests(unittest.TestCase):
                             "skill-support-file",
                             f"scripts/{script}",
                             {
+                                "codex": ".codex/skills",
                                 "claude": ".claude/skills",
                                 "opencode": ".config/opencode/skills",
                                 "antigravity": (
@@ -269,7 +270,7 @@ class ManifestTests(unittest.TestCase):
                             }[agent]
                             + f"/self-improving-agent/scripts/{script}",
                         )
-                        for agent in ("claude", "opencode", "antigravity", "grok", "kimi")
+                        for agent in ("codex", "claude", "opencode", "antigravity", "grok", "kimi")
                         for script in (
                             "check_command_safety.sh",
                             "detect_common_errors.sh",
@@ -1163,7 +1164,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").is_symlink())
             codex_skill = root / ".codex" / "skills" / "zotero" / "SKILL.md"
             self.assertFalse(codex_skill.is_symlink())
-            self.assertIn("Install mode: reference", codex_skill.read_text(encoding="utf-8"))
+            self.assertIn("Managed by ai-agents-skills", codex_skill.read_text(encoding="utf-8"))
+            self.assertNotIn("Canonical skill source:", codex_skill.read_text(encoding="utf-8"))
             self.assertFalse((root / ".claude" / "skills" / "tikz-draw" / "SKILL.md").exists())
 
             result = verify(root)
@@ -1286,10 +1288,14 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             from installer.ai_agents_skills.agents import detect_agents
 
-            plan = build_plan(root, manifests, selected, detect_agents(root, ["codex", "claude"]), install_mode="copy")
-
-            with self.assertRaisesRegex(ValueError, "non-directory parent"):
-                apply_plan(root, plan, dry_run=False)
+            with self.assertRaisesRegex(ValueError, "not a real directory"):
+                build_plan(
+                    root,
+                    manifests,
+                    selected,
+                    detect_agents(root, ["codex", "claude"]),
+                    install_mode="copy",
+                )
 
             self.assertFalse((root / ".codex" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertFalse((root / ".ai-agents-skills" / "state.json").exists())
@@ -1528,7 +1534,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             legacy_removal_actions = [a for a in plan["actions"] if a["operation"] == "remove-legacy"]
             self.assertEqual(file_actions[0]["classification"], "legacy")
             self.assertEqual(file_actions[0]["operation"], "migrate-install")
-            self.assertEqual(file_actions[0]["install_mode"], "reference")
+            self.assertEqual(file_actions[0]["install_mode"], "copy")
             self.assertEqual(file_actions[0]["legacy_path"], str(legacy))
             self.assertEqual(len(legacy_removal_actions), 1)
             self.assertEqual(legacy_removal_actions[0]["path"], str(legacy.parent))
@@ -1537,7 +1543,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
             target = root / ".codex" / "skills" / "research-digest-wrapper" / "SKILL.md"
             self.assertTrue(target.exists())
             self.assertFalse(target.is_symlink())
-            self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
+            self.assertIn("Managed by ai-agents-skills", target.read_text(encoding="utf-8"))
+            self.assertNotIn("Canonical skill source:", target.read_text(encoding="utf-8"))
             self.assertFalse(legacy.parent.exists())
             remove_results = [a for a in apply_result["actions"] if a["operation"] == "remove-legacy"]
             self.assertEqual(len(remove_results), 1)
@@ -1566,7 +1573,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("Managed by ai-agents-skills", target.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
-    def test_codex_existing_canonical_symlink_is_replaced_with_reference_adapter(self) -> None:
+    def test_codex_existing_canonical_symlink_is_replaced_with_self_contained_copy(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
             root = Path(tmp)
@@ -1583,12 +1590,42 @@ class PlanInstallVerifyTests(unittest.TestCase):
             file_actions = [a for a in plan["actions"] if a["kind"] == "file" and a["artifact_type"] == "skill-file"]
             self.assertEqual(file_actions[0]["classification"], "managed")
             self.assertEqual(file_actions[0]["operation"], "update")
-            self.assertEqual(file_actions[0]["install_mode"], "reference")
+            self.assertEqual(file_actions[0]["install_mode"], "copy")
             apply_plan(root, plan, dry_run=False)
 
             self.assertTrue(target.exists())
             self.assertFalse(target.is_symlink())
-            self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
+            self.assertIn("Managed by ai-agents-skills", target.read_text(encoding="utf-8"))
+            self.assertNotIn("Canonical skill source:", target.read_text(encoding="utf-8"))
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_codex_auto_install_copies_skill_support_tree_without_checkout_references(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "codex")
+
+            args = Args()
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            skill_actions = [
+                action for action in plan["actions"]
+                if action.get("agent") == "codex"
+                and action.get("artifact_type") in {"skill-file", "skill-support-file"}
+            ]
+            self.assertTrue(skill_actions)
+            self.assertTrue(all(action.get("install_mode") == "copy" for action in skill_actions))
+
+            apply_plan(root, plan, dry_run=False)
+            skill_root = root / ".codex" / "skills" / "deep-research-workflow"
+            installed = skill_root / "SKILL.md"
+            support = skill_root / "references" / "output-structure.md"
+            self.assertTrue(installed.is_file())
+            self.assertFalse(installed.is_symlink())
+            self.assertTrue(support.is_file())
+            self.assertFalse(support.is_symlink())
+            self.assertNotIn(REPO_ROOT.as_posix(), installed.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
     def test_codex_force_symlink_mode_keeps_canonical_link(self) -> None:
@@ -1990,7 +2027,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(
                 modes,
                 {
-                    "codex": "reference",
+                    "codex": "copy",
                     "claude": "symlink",
                     "deepseek": "reference",
                     "copilot": "reference",
@@ -2091,7 +2128,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
             apply_plan(root, migrate_plan, dry_run=False)
             target = root / ".codex" / "skills" / "research-digest-wrapper" / "SKILL.md"
             self.assertFalse(target.is_symlink())
-            self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
+            self.assertIn("Managed by ai-agents-skills", target.read_text(encoding="utf-8"))
+            self.assertNotIn("Canonical skill source:", target.read_text(encoding="utf-8"))
             self.assertFalse(legacy.parent.exists())
             self.assertEqual(verify(root)["status"], "ok")
 
@@ -2113,7 +2151,8 @@ class PlanInstallVerifyTests(unittest.TestCase):
             auto_plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="auto")
             result = apply_plan(root, auto_plan, dry_run=False)
             self.assertFalse(target.is_symlink())
-            self.assertIn("Install mode: reference", target.read_text(encoding="utf-8"))
+            self.assertIn("Managed by ai-agents-skills", target.read_text(encoding="utf-8"))
+            self.assertNotIn("Canonical skill source:", target.read_text(encoding="utf-8"))
 
             rollback(root, run_id=result["run_id"], dry_run=False)
             self.assertTrue(target.is_symlink())
@@ -3971,7 +4010,7 @@ class DocsAndLauncherTests(unittest.TestCase):
                         self.assertTrue(target["target_home"]["path"].startswith(str(root)))
                         self.assertFalse(target["read_policy"]["secret_values_read"])
                         self.assert_target_precheck_schema(target)
-                    self.assertEqual(by_target["codex"]["capabilities"]["default_install_mode"], "reference")
+                    self.assertEqual(by_target["codex"]["capabilities"]["default_install_mode"], "copy")
                     self.assertEqual(by_target["claude"]["capabilities"]["default_install_mode"], "symlink")
                     self.assertEqual(by_target["deepseek"]["capabilities"]["default_install_mode"], "reference")
                     self.assertEqual(by_target["opencode"]["status"], "ready")

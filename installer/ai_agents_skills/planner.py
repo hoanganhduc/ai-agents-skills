@@ -9,6 +9,7 @@ from .agents import AgentTarget, agent_home_statuses, agent_supports_manifest_en
 from .capabilities import effective_install_mode_with_evidence
 from .discovery import current_platform
 from .manifest import REPO_ROOT
+from .managed_permissions import plan_managed_parent_chain
 from .openclaw_target_gate import openclaw_target_block_reason
 from .openclaw_target_paths import path_leak_block_reason
 from .render import (
@@ -172,6 +173,10 @@ def build_plan(
             state=state,
         )
     )
+    for action in actions:
+        planned_modes = plan_managed_parent_chain(root, action)
+        if planned_modes:
+            action["planned_parent_mode_changes"] = planned_modes
     return {
         "actions": actions,
         "skipped_agents": skipped_agents,
@@ -866,6 +871,7 @@ def blocked_file_action(
     }
     if source_path is not None:
         result["source_path"] = str(source_path)
+        result["canonical_source_sha256"] = sha256_file(source_path)
     if declared_exclusion:
         result["declared_exclusion"] = True
         result["exclusion_code"] = exclusion_code
@@ -962,6 +968,7 @@ def classify_file_action(
     }
     if source_path is not None:
         result["source_path"] = str(source_path)
+        result["canonical_source_sha256"] = sha256_file(source_path)
     if install_mode == "symlink":
         result["fallback_mode"] = "reference" if artifact_type == "skill-file" else "copy"
         if fallback_content is not None:

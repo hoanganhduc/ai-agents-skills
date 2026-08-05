@@ -9,8 +9,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import secrets as random_secrets
+import shutil
+import stat
 import subprocess
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +31,7 @@ from apply_force_loop_defaults import (  # noqa: E402
     verify_effective,
 )
 from force_loop_process import (  # noqa: E402
+    bind_child_command,
     build_drive_command,
     build_supervisor_command,
     run_foreground,
@@ -35,7 +41,131 @@ from force_loop_process import (  # noqa: E402
     stop_loop_processes,
     systemd_user_available,
 )
-from load_loop_env import EnvLoadError, apply_to_environ, load_env_file, merge_env_files  # noqa: E402
+from load_loop_env import (  # noqa: E402
+    EnvLoadError,
+    apply_to_environ,
+    load_env_file,
+)
+
+
+COMPUTE_SECRETS_ENV = "AAS_COMPUTE_SECRETS_FILE"
+POLICY_FILE_ENV = "AAS_FORCE_LOOP_POLICY_FILE"
+COMPUTE_SECRET_KEYS = frozenset(
+    {
+        "HCLOUD_TOKEN",
+        "HCLOUD_SSH_KEYS",
+        "KAGGLE_API_TOKEN",
+        "KAGGLE_CONFIG_DIR",
+    }
+)
+PROVIDER_SECRETS_ENV = "AAS_PROVIDER_SECRETS_FILE"
+PROVIDER_SECRET_KEYS = frozenset(
+    {
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "CLAUDE_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "COPILOT_GITHUB_TOKEN",
+        "COPILOT_PROVIDER_API_KEY",
+        "COPILOT_PROVIDER_BEARER_TOKEN",
+        "DEEPSEEK_API_KEY",
+        "GEMINI_API_KEY",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "GOOGLE_API_KEY",
+        "GROK_API_KEY",
+        "KIMI_API_KEY",
+        "MOONSHOT_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENCODE_API_KEY",
+        "XAI_API_KEY",
+    }
+)
+PROVIDER_KEY_MAP: dict[str, frozenset[str]] = {
+    "anthropic": frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}),
+    "claude": frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}),
+    "copilot": frozenset({"COPILOT_GITHUB_TOKEN", "COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BEARER_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}),
+    "deepseek": frozenset({"DEEPSEEK_API_KEY"}),
+    "gemini": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
+    "google": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
+    "grok": frozenset({"GROK_API_KEY", "XAI_API_KEY"}),
+    "xai": frozenset({"GROK_API_KEY", "XAI_API_KEY"}),
+    "kimi": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY"}),
+    "moonshot": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY"}),
+    "openai": frozenset({"OPENAI_API_KEY"}),
+    "opencode": frozenset({"OPENCODE_API_KEY"}),
+}
+COMPUTE_LANE_KEYS: dict[str, frozenset[str]] = {
+    "hetzner": frozenset({"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS"}),
+    "kaggle": frozenset({"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}),
+}
+BASE_ENV_KEYS = frozenset(
+    {
+        "AAS_RUNTIME_PYTHON", "AAS_RUNTIME_ROOT", "AAS_RUNTIME_WORKSPACE",
+        "AAS_REMOTE_STRICT_NOTIFY_CHANNEL", "REMOTE_BRIDGE_SECRETS_FILE",
+        "AUTOLOOP_DISABLE", "CLAUDE_CONFIG_DIR", "CODEWHALE_HOME", "CODEX_HOME",
+        "GEMINI_CONFIG_DIR", "GROK_CONFIG_DIR", "HOME", "KIMI_CONFIG_DIR",
+        "LANG", "LC_ALL", "LOGNAME", "OPENCODE_CONFIG_DIR", "TZ", "USER",
+        "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR",
+    }
+)
+STRICT_NOTIFY_CHANNEL_ENV = "AAS_REMOTE_STRICT_NOTIFY_CHANNEL"
+STRICT_NOTIFY_CHANNELS = frozenset({"zulip", "telegram"})
+SYSTEMD_ENV_MAX_BYTES = 262_144
+SYSTEMD_ENV_DIR_NAME = "aas-force-loop"
+SYSTEMD_ENV_FIXED_KEYS = frozenset(
+    {
+        "AAS_REMOTE_STRICT_NOTIFY_CHANNEL",
+        "AAS_RUNTIME_PYTHON",
+        "AAS_RUNTIME_ROOT",
+        "AAS_RUNTIME_WORKSPACE",
+        "AUTOLOOP_DISABLE",
+        "CLAUDE_CONFIG_DIR",
+        "CODEWHALE_HOME",
+        "CODEX_HOME",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "DRIVE_EXTRA_ARGS",
+        "FAILOVER_JSON",
+        "GEMINI_CONFIG_DIR",
+        "GROK_CONFIG_DIR",
+        "HOME",
+        "KIMI_CONFIG_DIR",
+        "LANG",
+        "LC_ALL",
+        "LOGNAME",
+        "LOOP_DIR",
+        "OPENCODE_CONFIG_DIR",
+        "PATH",
+        "PROJECT_ROOT",
+        "PYTHONPATH",
+        "RUNTIME_PY",
+        "SHELL",
+        "SUPERVISOR",
+        "TZ",
+        "USER",
+        "VIRTUAL_ENV",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_RUNTIME_DIR",
+    }
+)
+SYSTEMD_ENV_PREFIXES = ("AAS_AUTOLOOP_",)
+SYSTEMD_CLIENT_ENV_KEYS = frozenset(
+    {
+        "DBUS_SESSION_BUS_ADDRESS",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LOGNAME",
+        "PATH",
+        "TZ",
+        "USER",
+        "XDG_RUNTIME_DIR",
+    }
+)
+SYSTEMD_CLIENT_ENV_PREFIXES = ("LC_", "SYSTEMD_")
+SYSTEMD_SAFE_PATH = re.compile(r"/[A-Za-z0-9_./-]+\Z")
 
 
 def _python() -> str:
@@ -52,12 +182,26 @@ def _run_runtime(args: list[str], *, env: dict[str, str] | None = None) -> int:
     return int(proc.returncode)
 
 
+def _policy_file_from_args(args: argparse.Namespace) -> Path:
+    value = str(getattr(args, "policy_file", None) or os.environ.get(POLICY_FILE_ENV) or "")
+    if not value:
+        raise SystemExit(
+            f"an explicit --policy-file or {POLICY_FILE_ENV} is required"
+        )
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise SystemExit("force-loop policy file must be absolute")
+    return Path(os.path.abspath(path))
+
+
 def cmd_apply_defaults(args: argparse.Namespace) -> int:
+    policy_file = _policy_file_from_args(args)
     result = apply_defaults(
         Path(args.loop),
         profile=args.profile,
         research_title=args.research_title,
         backup=not args.no_backup,
+        policy_file=policy_file,
     )
     print(json.dumps(result, indent=2))
     return 0 if result.get("ok") else 1
@@ -101,13 +245,15 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             print(json.dumps({"ok": False, "error": "init failed", "rc": rc}, indent=2))
             return rc
 
+    policy_file = _policy_file_from_args(args)
     result = apply_defaults(
         loop,
         profile=args.profile,
         research_title=args.research_title,
         backup=not args.no_backup,
+        policy_file=policy_file,
     )
-    smoke = _smoke_checks(loop, args.profile, root=root, live=False)
+    smoke = _smoke_checks(loop, args.profile, root=root, live=False, policy_file=policy_file)
     out = {
         "ok": bool(result.get("ok") and smoke.get("ok")),
         "bootstrap": result,
@@ -120,33 +266,391 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     return 0 if out["ok"] else 1
 
 
-def _load_start_env(loop: Path) -> dict[str, str]:
-    env = os.environ.copy()
-    pack_defaults = PACK_DIR / "defaults" / "env.defaults"
-    host_env = loop / "driver" / "force_loop.env"
+def _open_directory_nofollow(path: Path) -> int:
+    """Open an absolute POSIX directory path without following any link."""
+
+    absolute = Path(os.path.abspath(path))
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    fd = os.open(absolute.anchor or os.sep, flags)
     try:
-        merged = merge_env_files([pack_defaults, host_env])
+        for component in absolute.parts[1:]:
+            next_fd = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _load_managed_secrets(
+    pointer_env: str,
+    *,
+    allowed_keys: frozenset[str],
+    environ: dict[str, str],
+) -> dict[str, str]:
+    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+        raise EnvLoadError(
+            "Windows secret pointers must be loaded by run_force_loop.ps1"
+        )
+    runtime_root = next(
+        (parent for parent in PACK_DIR.parents if parent.name == "runtime"),
+        None,
+    )
+    candidates: list[Path] = []
+    if runtime_root is not None:
+        candidates.extend(
+            [
+                runtime_root / "load_secret_env.py",
+                runtime_root / "runners" / "load_secret_env.py",
+            ]
+        )
+    loader_path = next((path for path in candidates if path.is_file()), None)
+    if loader_path is None:
+        raise EnvLoadError("managed secret loader is unavailable")
+    parent_fd: int | None = None
+    loader_fd: int | None = None
+    try:
+        parent_fd = _open_directory_nofollow(loader_path.parent)
+        loader_fd = os.open(
+            loader_path.name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=parent_fd,
+        )
+        before = os.fstat(loader_fd)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or int(before.st_uid) not in {0, os.geteuid()}
+            or stat.S_IMODE(before.st_mode) & 0o022
+            or (int(before.st_uid) != 0 and int(before.st_nlink) != 1)
+            or int(before.st_size) > 1_000_000
+        ):
+            raise EnvLoadError("managed secret loader is not owner-controlled")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(loader_fd, 65_536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(loader_fd)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise EnvLoadError("managed secret loader changed while reading")
+        module = types.ModuleType("aas_force_loop_secret_env_loader")
+        module.__file__ = str(loader_path)
+        exec(compile(b"".join(chunks), str(loader_path), "exec"), module.__dict__)
+        return module.load_pointer_secret_env(
+            pointer_env,
+            allowed_keys=allowed_keys,
+            environ=environ,
+        )
+    except Exception as exc:
+        error_type = getattr(locals().get("module"), "SecretEnvError", ())
+        if error_type and isinstance(exc, error_type):
+            raise EnvLoadError(str(exc)) from exc
+        if isinstance(exc, EnvLoadError):
+            raise
+        raise EnvLoadError("managed secret loader failed") from exc
+    finally:
+        if loader_fd is not None:
+            os.close(loader_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
+
+
+def _load_start_env(loop: Path, policy_file: Path) -> dict[str, str]:
+    """Build a scrubbed non-secret environment from one protected host policy."""
+    env = {
+        key: str(value)
+        for key, value in os.environ.items()
+        if key in BASE_ENV_KEYS or key.startswith("LC_")
+    }
+    if os.name == "nt" and (
+        os.environ.get(COMPUTE_SECRETS_ENV) or os.environ.get(PROVIDER_SECRETS_ENV)
+    ):  # pragma: no cover - exercised on Windows CI
+        raise SystemExit(
+            "env load failed: Windows secret pointers must be loaded by "
+            "run_force_loop.ps1"
+        )
+    try:
+        legacy = loop / "driver" / "force_loop.env"
+        if legacy.exists() or legacy.is_symlink():
+            raise EnvLoadError(
+                "legacy loop-local driver/force_loop.env is forbidden; use the host policy file"
+            )
+        merged = load_env_file(policy_file, forbidden_root=loop)
+        apply_to_environ(merged, env, override=True)
+        strict_notify_channel = _normalize_strict_notify_channel(env)
+        if strict_notify_channel:
+            env[STRICT_NOTIFY_CHANNEL_ENV] = strict_notify_channel
+        else:
+            env.pop(STRICT_NOTIFY_CHANNEL_ENV, None)
     except EnvLoadError as exc:
         raise SystemExit(f"env load failed: {exc}") from exc
-    apply_to_environ(merged, env, override=True)
-    # Secrets file path only — never parse secrets into logs.
-    secrets = env.get("AAS_COMPUTE_SECRETS_FILE", "").strip()
-    if secrets:
-        # Operator may source secrets outside this loader; we only ensure path is set.
-        env["AAS_COMPUTE_SECRETS_FILE"] = secrets
+    env["PATH"] = "/usr/bin:/bin"
+    env["SHELL"] = "/bin/bash"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     env["LOOP_DIR"] = str(loop)
     return env
+
+
+def _provider_keys(provider: str | None) -> frozenset[str]:
+    value = str(provider or "").strip().lower()
+    if not value:
+        return frozenset()
+    name = re.split(r"[:/]", value, maxsplit=1)[0]
+    return PROVIDER_KEY_MAP.get(name, frozenset())
+
+
+def _compute_keys(policy: dict[str, str]) -> frozenset[str]:
+    raw = str(policy.get("AAS_FORCE_LOOP_COMPUTE_LANES") or "")
+    if not raw:
+        return frozenset()
+    selected: set[str] = set()
+    for lane in raw.split(","):
+        name = lane.strip().lower()
+        if not name or name not in COMPUTE_LANE_KEYS:
+            raise EnvLoadError("host policy contains an unsupported compute lane")
+        selected.update(COMPUTE_LANE_KEYS[name])
+    return frozenset(selected)
+
+
+def _load_selected_credentials(
+    env: dict[str, str],
+    *,
+    provider: str | None,
+) -> dict[str, str]:
+    """Load only policy/provider-selected credentials after argv binding."""
+    for key in COMPUTE_SECRET_KEYS | PROVIDER_SECRET_KEYS:
+        env.pop(key, None)
+    compute_pointer = str(os.environ.get(COMPUTE_SECRETS_ENV) or "")
+    provider_pointer = str(os.environ.get(PROVIDER_SECRETS_ENV) or "")
+    try:
+        compute_keys = _compute_keys(env)
+        provider_keys = _provider_keys(provider)
+        if provider and not provider_keys:
+            raise EnvLoadError("selected provider has no credential projection contract")
+        if compute_pointer and not compute_keys:
+            raise EnvLoadError("compute secret pointer requires policy-selected compute lanes")
+        if provider_pointer and not provider_keys:
+            raise EnvLoadError("provider secret pointer requires an explicit supported provider")
+        if compute_keys:
+            pointer_env = {COMPUTE_SECRETS_ENV: compute_pointer}
+            loaded = _load_managed_secrets(
+                COMPUTE_SECRETS_ENV,
+                allowed_keys=compute_keys,
+                environ=pointer_env,
+            )
+            apply_to_environ({key: value for key, value in loaded.items() if key in compute_keys}, env)
+        if provider_keys:
+            pointer_env = {PROVIDER_SECRETS_ENV: provider_pointer}
+            loaded = _load_managed_secrets(
+                PROVIDER_SECRETS_ENV,
+                allowed_keys=provider_keys,
+                environ=pointer_env,
+            )
+            apply_to_environ({key: value for key, value in loaded.items() if key in provider_keys}, env)
+    except EnvLoadError as exc:
+        raise SystemExit(f"env load failed: {exc}") from exc
+    return env
+
+
+def _normalize_strict_notify_channel(env: dict[str, str]) -> str:
+    value = str(env.get(STRICT_NOTIFY_CHANNEL_ENV) or "").strip().lower()
+    if value and value not in STRICT_NOTIFY_CHANNELS:
+        raise EnvLoadError(
+            f"{STRICT_NOTIFY_CHANNEL_ENV} must be zulip, telegram, or empty"
+        )
+    return value
+
+
+def _systemd_environment_values(
+    env: dict[str, str],
+    *,
+    loop: Path,
+    root: Path,
+) -> dict[str, str]:
+    source = dict(env)
+    source["LOOP_DIR"] = str(loop)
+    source["PROJECT_ROOT"] = str(root)
+    strict_notify_channel = _normalize_strict_notify_channel(source)
+    if strict_notify_channel:
+        source[STRICT_NOTIFY_CHANNEL_ENV] = strict_notify_channel
+    else:
+        source.pop(STRICT_NOTIFY_CHANNEL_ENV, None)
+    return {
+        key: str(value)
+        for key, value in source.items()
+        if value
+        and (
+            key in SYSTEMD_ENV_FIXED_KEYS
+            or any(key.startswith(prefix) for prefix in SYSTEMD_ENV_PREFIXES)
+        )
+    }
+
+
+def _quote_systemd_environment_value(value: str) -> str:
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise EnvLoadError("systemd environment values must not contain controls")
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _open_private_systemd_environment_directory(env: dict[str, str]) -> tuple[Path, int]:
+    runtime_value = str(env.get("XDG_RUNTIME_DIR") or "")
+    if not runtime_value:
+        runtime_value = f"/run/user/{os.geteuid()}"
+    if runtime_value != runtime_value.strip():
+        raise EnvLoadError("XDG_RUNTIME_DIR has surrounding whitespace")
+    runtime_dir = Path(runtime_value)
+    if not runtime_dir.is_absolute():
+        raise EnvLoadError("XDG_RUNTIME_DIR must name an absolute path")
+    runtime_dir = Path(os.path.abspath(runtime_dir))
+    base_fd: int | None = None
+    child_fd: int | None = None
+    try:
+        base_fd = _open_directory_nofollow(runtime_dir)
+        base_info = os.fstat(base_fd)
+        if (
+            int(base_info.st_uid) != int(os.geteuid())
+            or stat.S_IMODE(base_info.st_mode) & 0o077
+        ):
+            raise EnvLoadError("XDG_RUNTIME_DIR must be current-user private")
+        try:
+            os.mkdir(SYSTEMD_ENV_DIR_NAME, mode=0o700, dir_fd=base_fd)
+        except FileExistsError:
+            pass
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        child_fd = os.open(SYSTEMD_ENV_DIR_NAME, flags, dir_fd=base_fd)
+        child_info = os.fstat(child_fd)
+        if (
+            not stat.S_ISDIR(child_info.st_mode)
+            or int(child_info.st_uid) != int(os.geteuid())
+            or stat.S_IMODE(child_info.st_mode) & 0o077
+        ):
+            raise EnvLoadError("systemd environment directory must be owner-private")
+        return runtime_dir / SYSTEMD_ENV_DIR_NAME, child_fd
+    except EnvLoadError:
+        if child_fd is not None:
+            os.close(child_fd)
+        raise
+    except OSError as exc:
+        if child_fd is not None:
+            os.close(child_fd)
+        raise EnvLoadError("could not prepare private systemd environment") from exc
+    finally:
+        if base_fd is not None:
+            os.close(base_fd)
+
+
+def _write_systemd_environment_file(
+    env: dict[str, str],
+    *,
+    unit: str,
+    loop: Path,
+    root: Path,
+) -> Path:
+    values = _systemd_environment_values(env, loop=loop, root=root)
+    lines: list[str] = []
+    for key in sorted(values):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise EnvLoadError("systemd environment contains an invalid key")
+        lines.append(f"{key}={_quote_systemd_environment_value(values[key])}")
+    payload = (("\n".join(lines) + "\n") if lines else "").encode("utf-8")
+    if len(payload) > SYSTEMD_ENV_MAX_BYTES:
+        raise EnvLoadError("systemd environment file is oversized")
+
+    directory, directory_fd = _open_private_systemd_environment_directory(env)
+    file_fd: int | None = None
+    filename = ""
+    try:
+        flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        for _attempt in range(10):
+            filename = f"{unit}-{random_secrets.token_hex(8)}.env"
+            try:
+                file_fd = os.open(filename, flags, 0o600, dir_fd=directory_fd)
+                break
+            except FileExistsError:
+                continue
+        if file_fd is None:
+            raise EnvLoadError("could not allocate private systemd environment file")
+        os.fchmod(file_fd, 0o600)
+        view = memoryview(payload)
+        while view:
+            written = os.write(file_fd, view)
+            if written <= 0:
+                raise OSError("short systemd environment write")
+            view = view[written:]
+        os.fsync(file_fd)
+        info = os.fstat(file_fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or int(getattr(info, "st_nlink", 1)) != 1
+            or int(info.st_uid) != int(os.geteuid())
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or int(info.st_size) != len(payload)
+        ):
+            raise EnvLoadError("systemd environment file failed private-file checks")
+    except (OSError, EnvLoadError):
+        if filename:
+            try:
+                os.unlink(filename, dir_fd=directory_fd)
+            except OSError:
+                pass
+        raise
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        os.close(directory_fd)
+    path = directory / filename
+    if not SYSTEMD_SAFE_PATH.fullmatch(str(path)):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        raise EnvLoadError("systemd environment path contains unsupported characters")
+    return path
+
+
+def _systemd_client_environment(env: dict[str, str]) -> dict[str, str]:
+    return {
+        key: str(value)
+        for key, value in env.items()
+        if value
+        and (
+            key in SYSTEMD_CLIENT_ENV_KEYS
+            or any(key.startswith(prefix) for prefix in SYSTEMD_CLIENT_ENV_PREFIXES)
+        )
+    }
 
 
 def cmd_start(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else loop.parent
+    policy_file = _policy_file_from_args(args)
     if not loop.is_dir():
         print(json.dumps({"ok": False, "error": f"loop not found: {loop}"}, indent=2))
         return 2
 
     # Ensure pins present before start.
-    errors = verify_effective(loop, args.profile)
+    errors = verify_effective(loop, args.profile, policy_file)
     if errors and not args.skip_defaults_check:
         print(
             json.dumps(
@@ -166,7 +670,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 2
 
-    env = _load_start_env(loop)
+    env = _load_start_env(loop, policy_file)
     env["PROJECT_ROOT"] = str(root)
     if not env.get("AAS_RUNTIME_ROOT"):
         # Best-effort: installed layout is runtime/workspace/skills/<skill>
@@ -220,10 +724,31 @@ def cmd_start(args: argparse.Namespace) -> int:
         )
     )
 
-    if backend == "foreground":
-        return run_foreground(argv, loop_dir=loop, env=env)
-    if backend == "posix_detach":
-        return run_posix_detach(argv, loop_dir=loop, env=env)
+    if backend == "systemd_user" and (
+        args.provider
+        or os.environ.get(COMPUTE_SECRETS_ENV)
+        or os.environ.get(PROVIDER_SECRETS_ENV)
+        or env.get("AAS_FORCE_LOOP_COMPUTE_LANES")
+    ):
+        print(json.dumps({"ok": False, "error": "systemd_user does not support descriptor-bound credential handoff"}, indent=2))
+        return 2
+    try:
+        binding = bind_child_command(argv)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": f"child binding failed: {exc}"}, indent=2))
+        return 2
+    try:
+        _load_selected_credentials(env, provider=args.provider)
+        if backend == "foreground":
+            return run_foreground(
+                binding.argv, loop_dir=loop, env=env, pass_fds=binding.pass_fds
+            )
+        if backend == "posix_detach":
+            return run_posix_detach(
+                binding.argv, loop_dir=loop, env=env, pass_fds=binding.pass_fds
+            )
+    finally:
+        binding.close()
     if backend == "systemd_user":
         return _start_systemd_user(argv, loop=loop, root=root, env=env)
     print(json.dumps({"ok": False, "error": f"backend not implemented: {backend}"}, indent=2))
@@ -237,10 +762,53 @@ def _start_systemd_user(
     root: Path,
     env: dict[str, str],
 ) -> int:
-    unit = f"aas-force-loop-{loop.name}".replace("/", "-")[:100]
-    # Transient unit: paths only in command; no secrets via --setenv.
+    unit_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", loop.name).strip(".-") or "loop"
+    unit = f"aas-force-loop-{unit_slug}"[:100]
+    systemd_run_binary = shutil.which("systemd-run", path="/usr/bin:/bin")
+    rm_binary = shutil.which("rm", path="/usr/bin:/bin")
+    if (
+        not systemd_run_binary
+        or not SYSTEMD_SAFE_PATH.fullmatch(systemd_run_binary)
+        or not rm_binary
+        or not SYSTEMD_SAFE_PATH.fullmatch(rm_binary)
+    ):
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "unit": unit,
+                    "rc": 2,
+                    "error": "trusted systemd submission tools are unavailable",
+                },
+                indent=2,
+            )
+        )
+        return 2
+    try:
+        environment_file = _write_systemd_environment_file(
+            env,
+            unit=unit,
+            loop=loop,
+            root=root,
+        )
+    except EnvLoadError as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "unit": unit,
+                    "rc": 2,
+                    "error": str(exc),
+                },
+                indent=2,
+            )
+        )
+        return 2
+
+    # The transient unit reads a private bounded EnvironmentFile. Only its path,
+    # never token values, crosses the systemd-run argv boundary.
     cmd = [
-        "systemd-run",
+        systemd_run_binary,
         "--user",
         "--quiet",
         "--collect",
@@ -251,11 +819,46 @@ def _start_systemd_user(
         f"--working-directory={root}",
         "--property=KillMode=control-group",
         "--property=TimeoutStopSec=20s",
+        f"--property=EnvironmentFile={environment_file}",
+        f"--property=ExecStopPost={rm_binary} -f -- {environment_file}",
         *argv,
     ]
-    # Pass non-secret env that supervisor needs via file already written.
-    proc = subprocess.run(cmd, env=env, check=False)
-    print(json.dumps({"ok": proc.returncode == 0, "unit": unit, "rc": proc.returncode}, indent=2))
+    client_env = _systemd_client_environment(env)
+    client_env["PATH"] = "/usr/bin:/bin"
+    try:
+        proc = subprocess.run(
+            cmd,
+            env=client_env,
+            check=False,
+        )
+    except OSError as exc:
+        try:
+            environment_file.unlink()
+        except OSError:
+            pass
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "unit": unit,
+                    "rc": 2,
+                    "error": f"systemd-run failed: {exc}",
+                },
+                indent=2,
+            )
+        )
+        return 2
+    if proc.returncode != 0:
+        try:
+            environment_file.unlink()
+        except OSError:
+            pass
+    print(
+        json.dumps(
+            {"ok": proc.returncode == 0, "unit": unit, "rc": proc.returncode},
+            indent=2,
+        )
+    )
     return int(proc.returncode)
 
 
@@ -275,6 +878,7 @@ def cmd_replace(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
+    policy_file = _policy_file_from_args(args)
     snap = status_snapshot(loop)
     # Best-effort goal-focus status
     gf: dict[str, Any] = {}
@@ -294,9 +898,7 @@ def cmd_status(args: argparse.Namespace) -> int:
                     gf = {"raw_preview": proc.stdout[:500]}
         except (subprocess.TimeoutExpired, OSError) as exc:
             gf = {"error": str(exc)}
-    errors = verify_effective(loop, args.profile) if (loop / "driver" / "force_loop.env").is_file() else [
-        "force-loop defaults not applied"
-    ]
+    errors = verify_effective(loop, args.profile, policy_file)
     out = {
         "process": snap,
         "defaults_ok": not errors,
@@ -371,18 +973,21 @@ def _smoke_checks(
     *,
     root: Path | None = None,
     live: bool = False,
+    policy_file: Path | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     if not _runtime_py().is_file():
         errors.append(f"runtime missing: {_runtime_py()}")
-    defaults_errors = verify_effective(loop, profile) if loop.is_dir() else ["loop missing"]
+    defaults_errors = (
+        verify_effective(loop, profile, policy_file) if loop.is_dir() else ["loop missing"]
+    )
     errors.extend(defaults_errors)
 
     # Env loader self-check
     try:
         from load_loop_env import parse_env_text
 
-        parse_env_text("FOO=bar\n")
+        parse_env_text("AAS_AUTOLOOP_NOTIFY=auto\n")
         try:
             parse_env_text("BAD=$(whoami)\n")
             errors.append("env loader accepted unsafe value")
@@ -414,7 +1019,13 @@ def _smoke_checks(
 def cmd_smoke(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve() if args.loop else Path.cwd()
     root = Path(args.root).expanduser().resolve() if args.root else loop.parent
-    out = _smoke_checks(loop, args.profile, root=root, live=bool(args.live))
+    out = _smoke_checks(
+        loop,
+        args.profile,
+        root=root,
+        live=bool(args.live),
+        policy_file=_policy_file_from_args(args),
+    )
     print(json.dumps(out, indent=2))
     return 0 if out.get("ok") else 1
 
@@ -433,6 +1044,11 @@ def build_parser() -> argparse.ArgumentParser:
             "--profile",
             default="formal",
             choices=["formal", "general"],
+        )
+        sp.add_argument(
+            "--policy-file",
+            default=None,
+            help=f"absolute protected host policy (or {POLICY_FILE_ENV})",
         )
 
     b = sub.add_parser("bootstrap", help="init if needed + apply defaults + smoke")

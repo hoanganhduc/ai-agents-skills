@@ -11,9 +11,11 @@ from .capabilities import (
     resolved_path_within,
 )
 from .json_merge import load_json_object, merge_hook_entry
+from .managed_permissions import normalize_managed_parent_chain, restore_managed_modes
 from .openclaw_target_gate import real_openclaw_path_block_reason
 from .render import replace_or_append_block
 from .runtime import apply_runtime_file_action, preflight_runtime_action
+from .source_integrity import AttestedSource, open_attested_source
 from .state import (
     artifact_signature,
     backup_file,
@@ -29,6 +31,7 @@ from .state import (
     write_text_atomic,
     write_run_record,
 )
+from .windows_security import require_handle_bound_mutation
 
 
 def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[str, Any]:
@@ -37,6 +40,7 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
     if dry_run:
         preflight_plan(root, plan["actions"])
         return {"run_id": run_id, "dry_run": True, "actions": plan["actions"]}
+    require_handle_bound_mutation("install apply")
     if not plan["actions"]:
         return {"run_id": run_id, "dry_run": False, "actions": []}
 
@@ -48,6 +52,12 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
         recorded_result = dict(result)
         if previous_state_artifact is not None:
             recorded_result["previous_state_artifact"] = previous_state_artifact
+        recorded_result["permission_origin"] = merge_permission_origin(
+            previous_state_artifact,
+            recorded_result,
+        )
+        if not recorded_result["permission_origin"]:
+            recorded_result.pop("permission_origin")
         recorded_result["uninstall"] = uninstall_origin(recorded_result, previous_state_artifact)
         applied.append(recorded_result)
         if recorded_result.get("state_operation") == "remove":
@@ -76,21 +86,81 @@ def find_state_artifact(state: dict[str, Any], action: dict[str, Any]) -> dict[s
 
 
 def apply_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[str, Any]:
-    if action["kind"] == "file":
-        return apply_file_action(root, run_id, action)
-    if action["kind"] == "runtime-file":
-        return apply_runtime_file_action(root, run_id, action, base_result(run_id, action))
-    if action["kind"] == "managed-block":
-        return apply_block_action(root, run_id, action)
-    if action["kind"] == "legacy-dir":
-        return apply_legacy_dir_action(root, run_id, action)
-    if action["kind"] == "managed-file-remove":
-        return apply_managed_file_remove_action(root, run_id, action)
-    if action["kind"] == "json-merge":
-        return apply_json_merge_action(root, run_id, action)
-    if action["kind"] == "toml-merge":
-        return apply_toml_merge_action(root, run_id, action)
-    raise ValueError(f"unknown action kind: {action['kind']}")
+    expected_repairs = action.get("planned_parent_mode_changes")
+    repairs = normalize_managed_parent_chain(
+        root,
+        action,
+        create=True,
+        expected=expected_repairs if isinstance(expected_repairs, list) else None,
+    )
+    normalized_created_dirs = [
+        Path(item["path"]).relative_to(root).as_posix()
+        for item in repairs
+        if item.get("created_directory")
+    ]
+    result: dict[str, Any] | None = None
+    try:
+        if action["kind"] == "file":
+            result = apply_file_action(root, run_id, action)
+        elif action["kind"] == "runtime-file":
+            result = apply_runtime_file_action(root, run_id, action, base_result(run_id, action))
+        elif action["kind"] == "managed-block":
+            result = apply_block_action(root, run_id, action)
+        elif action["kind"] == "legacy-dir":
+            result = apply_legacy_dir_action(root, run_id, action)
+        elif action["kind"] == "managed-file-remove":
+            result = apply_managed_file_remove_action(root, run_id, action)
+        elif action["kind"] == "json-merge":
+            result = apply_json_merge_action(root, run_id, action)
+        elif action["kind"] == "toml-merge":
+            result = apply_toml_merge_action(root, run_id, action)
+        else:
+            raise ValueError(f"unknown action kind: {action['kind']}")
+        repairs.extend(normalize_managed_parent_chain(root, action, create=False))
+    except Exception:
+        if result and result.get("normalized_file_mode"):
+            restore_managed_modes(root, [result["normalized_file_mode"]])
+        restore_managed_modes(root, repairs)
+        cleanup_created_parent_dirs(root, normalized_created_dirs)
+        raise
+    if normalized_created_dirs:
+        result["created_parent_dirs"] = list(
+            dict.fromkeys([*result.get("created_parent_dirs", []), *normalized_created_dirs])
+        )
+    if repairs:
+        unique = {item["path"]: item for item in repairs}
+        result["normalized_parent_modes"] = list(unique.values())
+    return result
+
+
+def merge_permission_origin(
+    previous_state_artifact: dict[str, Any] | None,
+    result: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Preserve the earliest reversible mode while advancing installed mode."""
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    if previous_state_artifact:
+        for item in previous_state_artifact.get("permission_origin", []):
+            if isinstance(item, dict) and item.get("path"):
+                key = (str(item.get("object_type") or "directory"), str(item["path"]))
+                merged[key] = dict(item)
+    changes = list(result.get("normalized_parent_modes", []))
+    if isinstance(result.get("normalized_file_mode"), dict):
+        file_change = {"object_type": "file", **result["normalized_file_mode"]}
+        changes.append(file_change)
+    for item in changes:
+        if not isinstance(item, dict) or not item.get("path"):
+            continue
+        normalized = {"object_type": item.get("object_type", "directory"), **item}
+        key = (str(normalized["object_type"]), str(normalized["path"]))
+        if key in merged:
+            existing = merged[key]
+            existing["installed_mode"] = normalized.get("installed_mode", existing.get("installed_mode"))
+            if normalized.get("created_directory"):
+                existing["created_directory"] = True
+        else:
+            merged[key] = normalized
+    return list(merged.values())
 
 
 def preflight_plan(root: Path, actions: list[dict[str, Any]]) -> None:
@@ -156,19 +226,53 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
         result["installed_signature"] = artifact_signature(path)
         return result
     if op == "adopt":
+        if action.get("source_path"):
+            with open_attested_source(
+                Path(action["source_path"]), action.get("canonical_source_sha256")
+            ):
+                pass
         result["managed"] = True
         result["applied"] = False
         result["adopted"] = True
         result["new_hash"] = sha256_file(path)
         result["installed_signature"] = artifact_signature(path)
         return result
+    source_path = action.get("source_path")
+    if not source_path:
+        return _apply_file_write(root, run_id, action, result, None)
+    with open_attested_source(
+        Path(source_path), action.get("canonical_source_sha256")
+    ) as attested:
+        return _apply_file_write(root, run_id, action, result, attested)
+
+
+def _apply_file_write(
+    root: Path,
+    run_id: str,
+    action: dict[str, Any],
+    result: dict[str, Any],
+    attested: AttestedSource | None,
+) -> dict[str, Any]:
+    path = Path(action["path"])
     backup = backup_file(root, run_id, path)
     created_parent_dirs = missing_parent_dirs(root, path.parent)
     path.parent.mkdir(parents=True, exist_ok=True)
     actual_mode = action.get("install_mode", "copy")
     try:
         if actual_mode == "symlink":
+            if attested is None:
+                raise ValueError("symlink installation requires an attested canonical source")
+            if not attested.matches_path(Path(action["source_path"])):
+                raise ValueError("canonical symlink source changed before link creation")
             replace_with_symlink(path, Path(action["source_path"]))
+            if not attested.matches_path(path):
+                if path.exists() or path.is_symlink():
+                    path.unlink()
+                if backup is not None:
+                    from .lifecycle import restore_backup
+
+                    restore_backup(backup, path)
+                raise ValueError("canonical symlink target changed while the link was installed")
         else:
             replace_with_text(path, action["content"])
     except OSError as exc:
@@ -183,6 +287,10 @@ def apply_file_action(root: Path, run_id: str, action: dict[str, Any]) -> dict[s
     result["backup"] = str(backup) if backup else None
     result["new_hash"] = sha256_file(path)
     result["install_mode"] = actual_mode
+    if attested is not None:
+        result["source_binding"] = (
+            "mutable-symlink" if actual_mode == "symlink" else "held-descriptor"
+        )
     result["installed_signature"] = artifact_signature(path)
     if created_parent_dirs:
         result["created_parent_dirs"] = [item.as_posix() for item in created_parent_dirs]

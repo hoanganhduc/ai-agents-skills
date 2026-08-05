@@ -113,7 +113,20 @@ class RemoteBridgeDispatchBoundary(unittest.TestCase):
             self.assertIsInstance(dispatched_env, dict)
             self.assertEqual(
                 dispatched_env["REMOTE_BRIDGE_SECRETS_FILE"],
-                str(workspace / "secrets" / "remote-bridge" / "secrets.json"),
+                str(
+                    workspace
+                    / ".config"
+                    / "remote-bridge"
+                    / "secrets.json"
+                ),
+            )
+            self.assertEqual(
+                dispatched_env["REMOTE_BRIDGE_SECRETS_FILE"],
+                str(
+                    Path(dispatched_env["XDG_CONFIG_HOME"])
+                    / "remote-bridge"
+                    / "secrets.json"
+                ),
             )
             self.assertEqual(
                 dispatched_env["AAS_REMOTE_BRIDGE_STATE"],
@@ -128,6 +141,27 @@ class RemoteBridgeDispatchBoundary(unittest.TestCase):
                 "OPENCLAW_WORKSPACE",
             ):
                 self.assertNotIn(name, dispatched_env)
+
+    def test_adapter_docs_name_only_the_restored_workspace_authority(self) -> None:
+        docs = (
+            REPO
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "remote-bridge"
+            / "openclaw-adapter"
+        )
+        texts = (
+            docs / "SKILL.md",
+            docs / "README.md",
+            REPO / "targets" / "openclaw" / "README.md",
+        )
+        text = "\n".join(path.read_text(encoding="utf-8") for path in texts)
+        self.assertIn("/workspace/.config/remote-bridge/secrets.json", text)
+        self.assertNotIn("/workspace/secrets/remote-bridge/secrets.json", text)
+        self.assertNotIn(
+            "~/.openclaw/workspace/secrets/remote-bridge/secrets.json", text
+        )
 
     def test_legacy_sync_compatibility_shim_is_inert(self) -> None:
         mod = self._mod()

@@ -956,7 +956,17 @@ def example_goal_priority_json() -> str:
                 "non_goals": ["Unbounded local sampling without goal reduction"],
             }
         },
-        "closed_campaigns": [],
+        "closed_campaigns": [
+            {
+                "id": "example-closed",
+                "kind": "certified_host_classification",
+                "forbid_as_sole_primary": True,
+                "note": (
+                    "Replace or delete: a finished campaign hard mode must not "
+                    "re-target as sole primary."
+                ),
+            }
+        ],
         "next_campaigns_ordered": ["main"],
         "max_consecutive_local_without_goal_delta": 3,
         "local_without_goal_delta_tags": list(GENERIC_LOCAL_TAGS),

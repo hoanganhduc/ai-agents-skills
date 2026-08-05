@@ -14,9 +14,10 @@ installer found a compatibility or alias path and will skip it unless
 and removes the legacy alias directory.
 
 Default installs use `--install-mode auto`, resolved per agent. Claude receives
-symlinked skill files when the filesystem supports them. Codex, DeepSeek, and
-Copilot receive reference adapters by default because their symlinked skill
-loading is not assumed. OpenCode and Antigravity receive copied regular files;
+symlinked skill files when the filesystem supports them. Codex receives copied
+regular skill trees by default because symlinked skill loading is not assumed
+and the installed skills must remain self-contained. DeepSeek and Copilot receive
+reference adapters. OpenCode and Antigravity receive copied regular files;
 Antigravity uses documented flat global Markdown skill files under
 `~/.gemini/antigravity-cli/skills/`. Use
 `--install-mode symlink` only when you intentionally want to force links for
@@ -44,11 +45,11 @@ Common cases:
 | Dependency is degraded | The tool or install root was found but not fully executable from this substrate. | Re-run precheck from the native substrate, such as Windows or WSL. |
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
 | Plan skips legacy aliases | A skill exists under an old or alternate name. | Review `--migrate` output before applying migration. |
-| Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled this way by default. | Reinstall that scope with `--install-mode reference`; use `copy` only if the adapter is insufficient. |
+| Agent does not load symlinked skills | The filesystem or agent loader does not follow symlinks. Codex is handled with self-contained copy mode by default. | Use the target's default auto mode, or explicitly choose `reference` or `copy` after reviewing the source-checkout dependency. |
 | Windows cannot start the PowerShell launcher | The host has no usable PowerShell 5.1+ or PowerShell 7+ session. | Install PowerShell, or use the POSIX bootstrap script from a compatible environment. |
 | Fake-root install has no actions | The fake root does not contain any detected agent homes such as `.codex`, `.claude`, `.deepseek`, `.copilot`, `.config/opencode`, or `.gemini/antigravity-cli`. | Create the agent homes you want to test under the fake root, or use `lifecycle-test` to create managed fake roots automatically. |
 | Docs freshness check fails in CI | Generated docs are stale. | Edit `installer/ai_agents_skills/docs.py` or manifests, run `make docs`, and commit the resulting `README.md` and `docs/` changes. |
-| Forced symlink smoke is degraded for Codex or DeepSeek | Current loader evidence does not prove file-symlinked `SKILL.md` loading for those agents. | Use default auto mode or reference mode unless intentionally testing loader behavior. |
+| Forced symlink smoke is degraded for Codex or DeepSeek | Current loader evidence does not prove file-symlinked `SKILL.md` loading for those agents. | Use default auto mode unless intentionally testing loader behavior; Codex defaults to copy and DeepSeek defaults to reference. |
 | Verify returns `no-managed-artifacts` | The selected scope has no state recorded by this installer. | Run install/adopt/migrate first, or verify a different scope. |
 
 Related pages: [Installation](installation.md), [Dependencies](dependencies.md),

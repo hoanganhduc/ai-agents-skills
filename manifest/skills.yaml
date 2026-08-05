@@ -139,7 +139,7 @@
       ]
     },
     "vnu-eoffice": {
-      "description": "Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram.",
+      "description": "Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and hand explicit file delivery to the authenticated host queue.",
       "profiles": [],
       "supported_agents": [
         "codex",
@@ -154,12 +154,10 @@
         "python-runtime",
         "vnu-eoffice-python-package"
       ],
-      "optional_dependencies": [
-        "telegram-bot-config"
-      ],
+      "optional_dependencies": [],
       "optional_capabilities": [
         "vnu-eoffice-monitoring",
-        "telegram-document-delivery",
+        "authenticated-host-file-delivery",
         "multi-page-fetch",
         "numbered-document-selection"
       ],

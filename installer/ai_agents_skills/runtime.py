@@ -17,6 +17,7 @@ from .manifest import REPO_ROOT
 from .openclaw_target_gate import real_openclaw_path_block_reason
 from .sanitize import has_sensitive_material, sanitize_text
 from .state import artifact_signature, sha256_file, signatures_match
+from .source_integrity import open_attested_source
 
 
 RUNTIME_SOURCE_ROOT = REPO_ROOT / "canonical" / "runtime"
@@ -425,6 +426,19 @@ def runtime_file_action(
         "platforms": entry.get("platforms", []),
         "runtime_root": str(runtime_root),
     }
+    if operation == "noop" and os.name != "nt" and target.is_file() and not target.is_symlink():
+        try:
+            expected_mode = int(str(action["mode"]), 8)
+            current_mode = stat.S_IMODE(target.stat().st_mode)
+        except (OSError, TypeError, ValueError):
+            expected_mode = current_mode = 0
+        if expected_mode and current_mode != expected_mode:
+            action["planned_file_mode_change"] = {
+                "object_type": "file",
+                "path": str(target),
+                "previous_mode": f"{current_mode:04o}",
+                "installed_mode": f"{expected_mode:04o}",
+            }
     if reason:
         action["reason"] = reason
     return action
@@ -555,26 +569,43 @@ def apply_runtime_file_action(root: Path, run_id: str, action: dict[str, Any], b
     if action.get("operation") in {"skip", "noop"}:
         result["managed"] = action.get("operation") == "noop"
         result["applied"] = False
+        if action.get("operation") == "noop":
+            planned_mode = action.get("planned_file_mode_change")
+            if planned_mode:
+                current = stat.S_IMODE(target.stat().st_mode)
+                if f"{current:04o}" != planned_mode.get("previous_mode"):
+                    raise ValueError("runtime target mode changed after planning")
+                apply_mode(target, action.get("mode"))
+                result["normalized_file_mode"] = dict(planned_mode)
+            elif not runtime_mode_ok(target, action.get("mode")):
+                raise ValueError("runtime target mode drift was not present in the reviewed plan")
         result["installed_signature"] = artifact_signature(target)
         copy_runtime_metadata(action, result)
         return result
     if action.get("operation") != "create" and action.get("operation") != "backup-replace":
         raise ValueError(f"unsupported runtime file operation: {action.get('operation')}")
-    expected_source = action.get("source_sha256")
-    if expected_source is not None:
-        actual_source = runtime_source_content_hash(source, action)
-        if actual_source != expected_source:
-            raise ValueError(
-                "runtime source content changed before write: "
-                f"{action.get('source_relpath') or source} "
-                f"(approved {expected_source}, found {actual_source})"
-            )
-    from .state import backup_file
+    try:
+        with open_attested_source(source, action.get("canonical_source_sha256")) as attested:
+            expected_source = action.get("source_sha256")
+            actual_source = runtime_source_content_hash_bytes(attested.data, action)
+            if not isinstance(expected_source, str) or actual_source != expected_source:
+                raise ValueError(
+                    "runtime source content changed before write: "
+                    f"{action.get('source_relpath') or source} "
+                    f"(approved {expected_source}, found {actual_source})"
+                )
+            from .state import backup_file
 
-    backup = backup_file(root, run_id, target)
-    created_parent_dirs = missing_parent_dirs(root, target.parent)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    replace_with_runtime_file(source, target, action)
+            backup = backup_file(root, run_id, target)
+            created_parent_dirs = missing_parent_dirs(root, target.parent)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            replace_with_runtime_file(source, target, action, source_data=attested.data)
+    except ValueError as exc:
+        if "canonical source changed after planning" in str(exc):
+            raise ValueError(
+                f"runtime source content changed before write: {action.get('source_relpath') or source}"
+            ) from exc
+        raise
     result["managed"] = True
     result["applied"] = True
     result["backup"] = str(backup) if backup else None
@@ -586,7 +617,13 @@ def apply_runtime_file_action(root: Path, run_id: str, action: dict[str, Any], b
     return result
 
 
-def replace_with_runtime_file(source: Path, target: Path, action: dict[str, Any]) -> None:
+def replace_with_runtime_file(
+    source: Path,
+    target: Path,
+    action: dict[str, Any],
+    *,
+    source_data: bytes | None = None,
+) -> None:
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{target.name}.runtime.",
         suffix=".tmp",
@@ -594,8 +631,9 @@ def replace_with_runtime_file(source: Path, target: Path, action: dict[str, Any]
     )
     tmp = Path(tmp_name)
     try:
+        data = source.read_bytes() if source_data is None else source_data
         if action.get("file_type") == "text":
-            text = source.read_text(encoding="utf-8")
+            text = data.decode("utf-8")
             newline = "\r\n" if action.get("newline_policy") == "crlf" else "\n"
             handle = os.fdopen(fd, "w", encoding="utf-8", newline="")
             fd = -1
@@ -604,8 +642,8 @@ def replace_with_runtime_file(source: Path, target: Path, action: dict[str, Any]
         else:
             handle = os.fdopen(fd, "wb")
             fd = -1
-            with handle, source.open("rb") as source_handle:
-                shutil.copyfileobj(source_handle, handle)
+            with handle:
+                handle.write(data)
         apply_mode(tmp, action.get("mode"))
         os.replace(tmp, target)
     finally:
@@ -641,15 +679,21 @@ def runtime_source_content_hash(source: Path, action: dict[str, Any]) -> str | N
     """
     if not source.is_file():
         return None
+    try:
+        data = source.read_bytes()
+    except OSError:
+        return None
+    return runtime_source_content_hash_bytes(data, action)
+
+
+def runtime_source_content_hash_bytes(data: bytes, action: dict[str, Any]) -> str | None:
     if action.get("file_type", "text") == "text":
         try:
-            text = source.read_text(encoding="utf-8")
+            text = data.decode("utf-8")
         except UnicodeDecodeError:
             return None
         newline = "\r\n" if action.get("newline_policy") == "crlf" else "\n"
         data = text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", newline).encode("utf-8")
-    else:
-        data = source.read_bytes()
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 

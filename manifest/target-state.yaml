@@ -16,6 +16,43 @@
     "NOT_CONFIGURED",
     "NOT_APPLICABLE"
   ],
+  "runtime_credential_authorities": {
+    "file-delivery-queue": {
+      "kind": "strict-json-file",
+      "path": ".config/ai-agents-skills/file-delivery-queue.json",
+      "pointer_env": "AAS_FILE_DELIVERY_SECRETS_FILE",
+      "schema_version": 1,
+      "exact_keys": [
+        "version",
+        "hmac_key_hex",
+        "allowed",
+        "max_job_age_seconds",
+        "max_media_bytes",
+        "replay_ledger_dir",
+        "replay_retention_seconds",
+        "max_replay_entries"
+      ],
+      "restore_policy": "authority",
+      "generation_policy": "explicit-allowlist-required",
+      "replay_ledger_field": {
+        "exact_value": "aas-host-state:file-delivery-replay",
+        "resolution": "authority-home/.local/state/ai-agents-skills/file-delivery-replay",
+        "legacy_migration": "rewrite-old-default-only-preserve-other-fields-reject-conflicts"
+      },
+      "replay_ledger": {
+        "default_path": ".local/state/ai-agents-skills/file-delivery-replay",
+        "must_be_outside_agent_workspace": true,
+        "mode": "0700",
+        "restore_policy": "state-continuity",
+        "backup_required": true,
+        "retention_contract": "used_at+replay_retention_seconds-strictly-before-now",
+        "retention_minimum": "max_job_age_seconds+60",
+        "entry_bound_field": "max_replay_entries"
+      },
+      "distinct_from": ".openclaw/workspace/.config/file-delivery/secrets.json",
+      "readiness_when_absent": "NOT_CONFIGURED"
+    }
+  },
   "targets": {
     "codex": {
       "aliases": [],
@@ -62,11 +99,72 @@
       "runtime_requirements": ["git-cli", "github-cli", "node-runtime"],
       "credential_authorities": [
         {"kind": "native-store", "path": ".copilot", "restore_policy": "reauth-if-nonportable"},
-        {"kind": "environment", "path": "GH_TOKEN", "restore_policy": "projection"},
-        {"kind": "environment", "path": "GITHUB_TOKEN", "restore_policy": "projection"},
-        {"kind": "environment", "path": "COPILOT_GITHUB_TOKEN", "restore_policy": "projection"}
+        {
+          "kind": "strict-env-file",
+          "path": ".config/ai-agents-skills/providers/copilot.env",
+          "allowed_keys": [
+            "COPILOT_GITHUB_TOKEN",
+            "COPILOT_PROVIDER_API_KEY",
+            "COPILOT_PROVIDER_BEARER_TOKEN",
+            "GH_TOKEN",
+            "GITHUB_TOKEN"
+          ],
+          "keys": [
+            "COPILOT_GITHUB_TOKEN",
+            "COPILOT_PROVIDER_API_KEY",
+            "COPILOT_PROVIDER_BEARER_TOKEN",
+            "GH_TOKEN",
+            "GITHUB_TOKEN"
+          ],
+          "restore_policy": "target-scoped-projection"
+        }
       ],
-      "readiness": ["cli-version", "managed-skill-visibility", "auth-native"]
+      "credential_projection": {
+        "launcher": ".local/bin/copilot",
+        "launcher_source": "system/bin/copilot",
+        "closure_loader": ".npm-global/closures/sha256-{source_sha256}-{tree_sha256}/node_modules/@github/copilot/npm-loader.js",
+        "compatibility_loader": ".npm-global/lib/node_modules/@github/copilot/npm-loader.js",
+        "authority": ".config/ai-agents-skills/providers/copilot.env",
+        "pointer_env": "AAS_PROVIDER_SECRETS_FILE",
+        "argv": ["--csr-credential-probe"],
+        "closure_contract": {
+          "kind": "content-addressed-npm-tree-v1",
+          "required_digest_evidence": [
+            "launcher_source_sha256",
+            "rendered_launcher_sha256",
+            "node_executable_sha256",
+            "npm_source_sha256",
+            "npm_tree_sha256",
+            "npm_loader_sha256"
+          ],
+          "verification_timing": "immediately-before-exec",
+          "missing_status": "NOT_CONFIGURED",
+          "drift_status": "TECHNICAL_FAIL"
+        },
+        "final_environment": {
+          "inheritance": "deny",
+          "fixed": {"PATH": "/usr/local/bin:/usr/bin:/bin"},
+          "copy_if_set": [
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "NO_COLOR",
+            "TERM",
+            "TZ",
+            "USER",
+            "XDG_CONFIG_HOME"
+          ],
+          "credential_keys": [
+            "COPILOT_GITHUB_TOKEN",
+            "COPILOT_PROVIDER_API_KEY",
+            "COPILOT_PROVIDER_BEARER_TOKEN",
+            "GH_TOKEN",
+            "GITHUB_TOKEN"
+          ],
+          "pointer_reaches_child": false
+        }
+      },
+      "readiness": ["cli-version", "managed-skill-visibility", "auth-native", "credential-projection"]
     },
     "opencode": {
       "aliases": [],
@@ -135,9 +233,94 @@
         {"kind": "file", "path": ".openclaw/secrets.json", "restore_policy": "authority"},
         {"kind": "directory", "path": ".openclaw/credentials", "restore_policy": "portable-session"},
         {"kind": "directory", "path": ".openclaw/identity", "restore_policy": "portable-session"},
-        {"kind": "glob", "path": ".openclaw/agents/*/agent/auth-profiles.json", "restore_policy": "authority"}
+        {
+          "kind": "glob",
+          "path": ".openclaw/agents/*/agent/openclaw-agent.sqlite",
+          "restore_policy": "authority",
+          "evidence": "agent-auth-closure"
+        }
       ],
-      "readiness": ["cli-version", "managed-skill-visibility", "runtime-smoke", "mcp-handshake", "scheduler-canary", "auth-structural"]
+      "evidence_contracts": {
+        "agent-auth-closure": {
+          "source": "openclaw-runtime-report",
+          "source_schema_version": 1,
+          "source_profile": "full",
+          "source_status": "passed",
+          "payload_key": "agent_auth",
+          "report_schema": "openclaw.agent-auth-closure/v2",
+          "expected_runtime_version": "2026.7.1-2",
+          "report_status": "PASS",
+          "verification_mode": "offline-structural-only",
+          "openclaw_executed": false,
+          "network_enabled": false,
+          "report_fields": [
+            "schema",
+            "status",
+            "runtimeVersion",
+            "verificationMode",
+            "openclawExecuted",
+            "networkEnabled",
+            "agents",
+            "failureCount",
+            "failures"
+          ],
+          "agent_fields": ["agentId", "status", "canonicalStore", "reasons"],
+          "canonical_store_fields": [
+            "exists",
+            "integrity",
+            "schemaVersion",
+            "appVersion",
+            "authStoreRows",
+            "profileCount",
+            "configured",
+            "authorityJsonValid",
+            "executableSecretRefFree",
+            "credentialSourceKinds",
+            "redactionSentinelFree",
+            "device",
+            "inode",
+            "size",
+            "mtimeNs",
+            "ctimeNs"
+          ],
+          "canonical_store_schema_version": 1,
+          "canonical_store_app_version_policy": "null-or-exact-runtime-version",
+          "credential_source_kinds_allowed": ["env", "file"],
+          "provider_calls_allowed": false
+        }
+      },
+      "readiness": ["cli-version", "managed-skill-visibility", "runtime-smoke", "mcp-handshake", "scheduler-canary", "auth-structural", "agent-auth-closure"]
+    },
+    "aider": {
+      "aliases": ["aider-chat"],
+      "home": ".aider",
+      "cli_candidates": ["aider"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["python-runtime", "git-cli"],
+      "inventory_only": true,
+      "credential_authorities": [],
+      "credential_state": "native-unconfigured",
+      "restore_policy": "reauth-native-configuration",
+      "readiness_when_authority_absent": "NOT_CONFIGURED",
+      "readiness": ["cli-version", "auth-native"]
+    }
+  },
+  "software_integrations": {
+    "github-cli": {
+      "cli_candidates": ["gh"],
+      "version_argv": ["--version"],
+      "classification": "non-agent-integration",
+      "credential_authorities": [
+        {
+          "kind": "file",
+          "path": ".config/gh/hosts.yml",
+          "structure": "github-hosts-v1",
+          "restore_policy": "portable-session",
+          "fallback_policy": "reauth-if-nonportable"
+        }
+      ],
+      "readiness": ["cli-version", "auth-structural"],
+      "declared_exclusion": "non-agent integration; managed-skill visibility is not applicable"
     }
   }
 }

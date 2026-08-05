@@ -111,6 +111,14 @@ location = "nbg1"             # default provisioning location; preflight availab
                              # live datacenter list and picks an orderable location from the allow-list
 allowed_locations = ["nbg1", "hel1", "sin"]  # current orderable regions (fsn1 has no orderable types)
 image = "ubuntu-24.04"
+bundle_root = "/absolute/path/to/operator-approved/hetzner-bundles" # required upload root;
+                                                                 # every job is an immediate child
+project_identity = "replace-with-stable-dedicated-project-identity" # exact non-secret operator identity;
+                                                                    # binds labels, leases, and broad deletion
+reaper_lease_file = "/etc/ai-agents-skills/hetzner-reaper-lease.json" # root-owned 0644 lease under a
+                                                                       # fully root-controlled parent chain
+reaper_scheduler_id = "hetzner-reaper.timer" # exact detached scheduler identity written into the lease
+reaper_lease_max_age_seconds = 900            # hard maximum is 15 minutes; stale evidence fails closed
 monthly_eur_cap = 0.0         # 0 = rely on the per-job / per-day caps only
 max_eur_per_job = 3.0         # auto-approve envelope: worst-case <= EUR 3/job (larger needs human confirm)
 max_eur_per_day = 3.0         # append-only day ledger halts provisioning at this cap

@@ -20,6 +20,53 @@ WRAPPER_VERSION = "0.1.0"
 DOWNLOADABLE_FORMATS = {"epub", "pdf", "text", "audio"}
 DISCOVERY_FORMATS = {*DOWNLOADABLE_FORMATS, "image"}
 
+CREDENTIAL_POINTER_KEYS = {
+    "AAS_SECRETS_FILE",
+    "OPENCLAW_SECRETS_FILE",
+    "AAS_SKILL_SECRETS_FILE",
+    "AAS_COMPUTE_SECRETS_FILE",
+    "AAS_PROVIDER_SECRETS_FILE",
+    "AAS_CALIBRE_SECRETS_FILE",
+    "AAS_ZOTERO_SECRETS_FILE",
+    "AAS_FILE_DELIVERY_SECRETS_FILE",
+    "REMOTE_BRIDGE_SECRETS_FILE",
+    "SEND_EMAIL_SECRETS_FILE",
+}
+AMBIENT_CREDENTIAL_KEYS = {
+    "GDRIVE_CREDENTIALS",
+    "CALIBRE_GDRIVE_FOLDER_ID",
+    "ZOTERO_API_KEY",
+    "WEBDAV_PASSWORD",
+    "SEMANTIC_SCHOLAR_API_KEY",
+    "HCLOUD_TOKEN",
+    "HCLOUD_SSH_KEYS",
+    "KAGGLE_API_TOKEN",
+    "KAGGLE_USERNAME",
+    "KAGGLE_KEY",
+    "MODAL_TOKEN_ID",
+    "MODAL_TOKEN_SECRET",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "COPILOT_GITHUB_TOKEN",
+    "COPILOT_PROVIDER_API_KEY",
+    "COPILOT_PROVIDER_BEARER_TOKEN",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "XAI_API_KEY",
+    "GROK_API_KEY",
+    "KIMI_API_KEY",
+    "MOONSHOT_API_KEY",
+    "OPENCODE_API_KEY",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "TELEGRAM_BOT_TOKEN",
+    "ZULIP_API_KEY",
+}
+
 
 def configure_utf8_stdio() -> None:
     for stream in (sys.stdout, sys.stderr):
@@ -34,13 +81,22 @@ def configure_utf8_stdio() -> None:
 
 def subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
+    for key in CREDENTIAL_POINTER_KEYS | AMBIENT_CREDENTIAL_KEYS:
+        env.pop(key, None)
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
     return env
 
 
 def nested_runner_env() -> dict[str, str]:
-    env = subprocess_env()
+    env = os.environ.copy()
+    for key in AMBIENT_CREDENTIAL_KEYS:
+        env.pop(key, None)
+    allowed_pointers = {"AAS_CALIBRE_SECRETS_FILE"}
+    for key in CREDENTIAL_POINTER_KEYS - allowed_pointers:
+        env.pop(key, None)
+    env.setdefault("PYTHONUTF8", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     prefixes = ("CODEX_RUN_SKILL_ARG_", "VNTHUQUAN_RUN_ARG_", "CLAUDE_RUN_ARG_")
     exact = {
         "CODEX_RUN_SKILL_ARG_COUNT",

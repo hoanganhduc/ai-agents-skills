@@ -66,8 +66,8 @@ budget and credit state stay in this runbook.
 |---|---|---|
 | `max_iterations` (= user `N`) |  | Set via the ASK gate above. |
 | `max_wall_minutes` |  |  |
-| `max_usd` |  |  |
-| `max_tokens` |  |  |
+| `max_usd` |  | `0.0` or null is the **uncapped sentinel**: condition (c) cannot fire on it even when `spent_usd` is positive. Set a positive value for a real cap. |
+| `max_tokens` |  | Same sentinel rule: `0` or null means uncapped. |
 | `compute_backend` |  | Recommended order: `local > Kaggle > Modal > Hetzner > GitHub Actions`; a valid custom configured order is honored, with local first and remote lanes unique. |
 | `compute_guard_status` |  | Record each attempted lane and its applicable guard: `Kaggle GPU-hours`, `Modal USD`, `Hetzner EUR`, `Hetzner teardown`, or `GitHub Actions minutes`. Kaggle CPU is free/quota-free. A failed lane falls through to the next permitted lane. |
 | `spent_iterations` |  |  |
@@ -268,6 +268,13 @@ can continue from the last valid node.
 | Credit / budget remaining |  |
 
 ## Runtime Helper Note
+
+A loop stopped at an iteration boundary (kill switch, supervisor exit, host
+restart) legitimately leaves `loop_state.json` `status` as `running`: the
+runtime writes a terminal status only when an iteration records that decision,
+so a boundary stop stays resumable. When auditing whether a loop is live, trust
+the driver lock/pid and the last `iterations.jsonl` decision, not the `status`
+field alone.
 
 Prefer `autonomous-research-loop-runtime` to init, append, validate, and report
 status on the ledger files (`loop_state.json`, `budget.json`,

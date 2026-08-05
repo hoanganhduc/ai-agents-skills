@@ -23,8 +23,10 @@ Use this skill when the user wants to send a message, mail a file, deliver a
 report or notification by email, or test SMTP credentials. For document delivery
 over Telegram use `vnu-eoffice`; this skill is email/SMTP only.
 
-Credentials are never hardcoded, printed, or committed: they are read from
-environment variables or a JSON secrets file, and redacted out of any error.
+Credentials are never hardcoded, printed, or committed. Managed launches read
+them only from a dedicated send-email JSON authority and redact them from errors;
+ambient `SMTP_*`, generic AAS secret pointers, Python startup hooks, and dynamic
+loader variables are removed before interpreter selection.
 
 ## Windows Runtime Commands
 
@@ -35,7 +37,6 @@ usually use `%LOCALAPPDATA%\ai-agents-skills\runtime`. Then run:
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.ps1" "skills/send-email/run_send_email.ps1" <args>
-& "$runtime\run_skill.ps1" "skills/send-email/run_send_email.ps1" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and the `.sh` command target; use the
@@ -43,18 +44,16 @@ Windows command target above on native Windows.
 
 ## Configuration
 
-Settings resolve in increasing precedence: secrets file, then environment
-variables, then explicit command-line flags. The secrets file is selected in
-this order: `--secrets-file PATH`, `SEND_EMAIL_SECRETS_FILE`, send-email's
-documented default locations, then a legacy shared runtime secrets file if it
-contains send-email settings.
+The managed runtime selects the secrets file in this order:
+`--secrets-file PATH`, `SEND_EMAIL_SECRETS_FILE`, then send-email's documented
+dedicated default locations. It never falls back to `AAS_SECRETS_FILE`,
+`OPENCLAW_SECRETS_FILE`, or a shared workspace secrets document. Non-secret CLI
+identity/message options may override file values; do not put passwords on argv.
 
-- Connection environment variables: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
-  `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_SECURITY` (`ssl` | `starttls` | `plain`),
-  `SMTP_TIMEOUT`.
-- Pre-defined sender identity (all optional): `SMTP_FROM_NAME`, `SMTP_REPLY_TO`,
-  `SMTP_CC`, `SMTP_BCC` (comma-separated), `SMTP_SIGNATURE`, `SMTP_SIGNATURE_HTML`,
-  `SMTP_REPLY_TO_SELF`, `SMTP_BCC_SELF`.
+- Connection fields: `host`, `port`, `user`, `password`, `from`, `security`
+  (`ssl` | `starttls` | `plain`), and `timeout`.
+- Pre-defined sender identity fields (all optional): `from_name`, `reply_to`,
+  `cc`, `bcc`, `signature`, `signature_html`, `reply_to_self`, and `bcc_self`.
 A ready-to-edit sample ships at `skills/send-email/send-email.example.json`
 (installed to `<runtime_root>/workspace/skills/send-email/send-email.example.json`).
 Copy its `smtp` (or `accounts`) block into your secrets file and replace the
@@ -131,20 +130,13 @@ For a custom location, pass `--secrets-file PATH` for one command or set
 `SEND_EMAIL_SECRETS_FILE=PATH` in the environment used for send-email. These are
 send-email-specific and do not redirect other runtime-backed skills.
 
-The managed runner still provides a legacy shared runtime secrets file at
-`$AAS_RUNTIME_WORKSPACE/.secrets.json` (Windows:
-`%AAS_RUNTIME_WORKSPACE%\.secrets.json`). Send-email will use it only when it
-contains send-email-shaped data such as `smtp`, `accounts`, or top-level
-`SMTP_*` keys, preserving older setups without making that file the preferred
-configuration path.
-
 Do not put a send-email-only path in global `AAS_SECRETS_FILE` or permanent
-`AAS_ALLOW_EXTERNAL_SECRETS_FILE` settings. `AAS_SECRETS_FILE` is shared runtime
-state; setting it globally can redirect Zotero, Calibre, RSS, or other runtime
-skills away from their own expected workspace secrets. Prefer
-`SEND_EMAIL_SECRETS_FILE`, `--secrets-file`, or environment variables such as
-`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_FROM_NAME`, and
-`SMTP_ACCOUNT`.
+`AAS_ALLOW_EXTERNAL_SECRETS_FILE` settings. Use `SEND_EMAIL_SECRETS_FILE`,
+`--secrets-file`, or a dedicated default file. On POSIX the selected authority
+must be a bounded regular, single-link file owned by the current user with no
+group/world permission bits; it is opened without following links and its
+identity is checked before and after the bounded read. Native Windows admission
+is owned by the managed PowerShell authority/DACL gate.
 
 Never write a real address, password, or token into a tracked file; pass them via
 the environment or the secrets file. Use `show-config` to confirm what resolved;
@@ -156,7 +148,7 @@ default cc/bcc, and the selected config path.
 Run via the managed runner (POSIX shown; see Windows Runtime Commands above):
 
 ```bash
-bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/send-email/run_send_email.sh <command> [args...]
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/send-email/run_send_email.sh <command> [args...]
 ```
 
 - `send` -- compose and send. Recipients (`--to`, `--cc`, `--bcc`) are repeatable
@@ -189,16 +181,16 @@ Examples:
 
 ```bash
 # preview without sending
-bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/send-email/run_send_email.sh \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/send-email/run_send_email.sh \
   send --to <recipient> --subject "Report" --body "See attached." --attach ~/report.pdf --dry-run
 
 # send a text + HTML message to several recipients
-bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/send-email/run_send_email.sh \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/send-email/run_send_email.sh \
   send --to <recipient> --cc <reviewer> --subject "Update" \
   --body "Plain fallback." --html "<p>Rich <b>body</b>.</p>"
 
 # test the server and credentials
-bash ~/.local/share/ai-agents-skills/runtime/run_skill.sh skills/send-email/run_send_email.sh verify
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/send-email/run_send_email.sh verify
 ```
 
 Every command prints a single JSON object. On success it includes `"ok": true`;

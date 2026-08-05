@@ -11,6 +11,11 @@ and dependencies are skipped when the agent is absent.
 `./make.ps1` runs in the current PowerShell 5.1+ or PowerShell 7+ session. If
 PowerShell is unavailable, use the POSIX bootstrap script from a compatible shell.
 
+Native Windows is currently dry-run-only for installer-managed target mutation.
+Commands that request apply, uninstall, rollback, OpenClaw target writes, or
+Antigravity settings writes fail closed until the pathname mutation is bound to
+the same Windows handle used for reparse-point, owner, and DACL validation.
+
 Common commands from a native Windows shell:
 
 ```powershell
@@ -26,11 +31,10 @@ Common commands from a native Windows shell:
 ./make.ps1 test
 ```
 
-Use `--real-system` only when you intentionally want to write to the detected
-Windows agent homes. The installer detects only agent homes that already exist
-under `--root`, so fake-root tests must create `.codex`, `.claude`, or
-`.deepseek` before planning or applying. A fake root with no detected agent
-homes produces no install actions and does not create managed installer state.
+Do not use `--apply` or `--real-system` on native Windows while this gate is in
+place. The installer still detects only agent homes that already exist under
+`--root`, so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek`
+before planning. A fake root with no detected agent homes produces no actions.
 
 For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`

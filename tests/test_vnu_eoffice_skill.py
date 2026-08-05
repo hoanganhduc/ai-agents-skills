@@ -32,6 +32,20 @@ class VnuEofficeSkillTests(unittest.TestCase):
         self.assertEqual(dependencies[name]["candidate_set"], "vnu-eoffice")
         self.assertTrue(dependencies[name]["authoritative_first_existing"])
 
+    def test_delivery_is_queue_only_and_no_bot_authority_reaches_package(self) -> None:
+        body = (ROOT / "canonical" / "skills" / "vnu-eoffice" / "SKILL.md").read_text(encoding="utf-8")
+        skills = json.loads((ROOT / "manifest" / "skills.yaml").read_text(encoding="utf-8"))["skills"]
+
+        self.assertIn("authenticated host queue", body)
+        self.assertIn("never invoke its `send` command", body)
+        self.assertIn("AAS_FILE_DELIVERY_SECRETS_FILE", body)
+        self.assertNotIn("python3 -m vnu_eoffice send", body)
+        self.assertNotIn("telegram-bot-config", skills["vnu-eoffice"]["optional_dependencies"])
+        self.assertIn(
+            "authenticated-host-file-delivery",
+            skills["vnu-eoffice"]["optional_capabilities"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

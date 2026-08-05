@@ -34,6 +34,8 @@ SHARED_RUNTIME_EVIDENCE = (
 def _mk_root(tmp: Path) -> Path:
     root = tmp / "home"
     (root / ".openclaw" / "skills").mkdir(parents=True)
+    for directory in (root, root / ".openclaw", root / ".openclaw" / "skills"):
+        directory.chmod(0o700)
     return root
 
 
@@ -173,6 +175,12 @@ class RuntimeCliTest(unittest.TestCase):
             root = _mk_root(tmp)
             other_root = tmp / "other-home"
             (other_root / ".openclaw" / "skills").mkdir(parents=True)
+            for directory in (
+                other_root,
+                other_root / ".openclaw",
+                other_root / ".openclaw" / "skills",
+            ):
+                directory.chmod(0o700)
             rroot = tmp / "neutral-runtime"
             apath = _approved_manifest_file(tmp, root, rroot)
 

@@ -6,6 +6,7 @@ from typing import Any
 
 from .selectors import split_csv
 from .state import write_text_atomic
+from .windows_security import require_handle_bound_mutation
 
 
 def antigravity_settings_path(root: Path) -> Path:
@@ -13,6 +14,8 @@ def antigravity_settings_path(root: Path) -> Path:
 
 
 def antigravity_fixup(root: Path, *, workspace: str | None = None, workspaces: str | None = None, apply: bool = False) -> dict[str, Any]:
+    if apply:
+        require_handle_bound_mutation("Antigravity settings apply")
     target = antigravity_settings_path(root)
     selected_workspaces = resolve_workspace_paths(workspace=workspace, workspaces=workspaces)
     before, existed = load_settings(target)

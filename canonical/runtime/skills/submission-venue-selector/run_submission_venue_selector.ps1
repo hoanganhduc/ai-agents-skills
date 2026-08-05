@@ -23,19 +23,16 @@ if ($env:SVS_RUN_ARG_COUNT -match '^\d+$') {
   $SkillArgs = $envArgs.ToArray()
 }
 
-$python = $env:SUBMISSION_VENUE_SELECTOR_PYTHON
-if (-not $python) { $python = $env:AAS_RUNTIME_PYTHON }
-
-if ($python) {
-  & $python $script @SkillArgs
-} elseif (Get-Command py -ErrorAction SilentlyContinue) {
-  & py -3 $script @SkillArgs
-} elseif (Get-Command python.exe -ErrorAction SilentlyContinue) {
-  & python.exe $script @SkillArgs
-} elseif (Get-Command python -ErrorAction SilentlyContinue) {
-  & python $script @SkillArgs
+$runtimeRoot = if ($env:AAS_RUNTIME_ROOT) {
+  $env:AAS_RUNTIME_ROOT
 } else {
-  Write-Error "error: no usable Python runtime found. Set SUBMISSION_VENUE_SELECTOR_PYTHON or install Python 3."
+  (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..\..")).Path
+}
+$runner = Join-Path $runtimeRoot "run_python.ps1"
+if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
+  Write-Error "shared runtime runner not found: $runner"
   exit 127
 }
+$env:AAS_RUNTIME_SCRIPT = $script
+& $runner @SkillArgs
 exit $LASTEXITCODE

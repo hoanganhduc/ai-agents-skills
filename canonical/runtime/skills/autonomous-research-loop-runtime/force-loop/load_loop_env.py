@@ -1,89 +1,167 @@
 #!/usr/bin/env python3
-"""Strict KEY=VALUE env loader for force-loop (no shell source).
-
-Parses UTF-8 (CRLF-tolerant) files of the form:
-  KEY=VALUE
-  # comments and blank lines allowed
-  export KEY=VALUE   # optional leading export stripped
-
-Rejects:
-  - shell metacharacters that imply expansion/injection ($ ` ; | & < > ( ) { } \\)
-  - multi-line values
-  - keys that are not [A-Za-z_][A-Za-z0-9_]*
-  - empty keys
-  - assignment without =
-
-Does not expand variables, run subshells, or evaluate quotes beyond optional
-matching single/double quotes around the entire value.
-"""
+"""Descriptor-bound strict policy loader for force-loop."""
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Mapping
 
-_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-# Characters that must not appear unquoted in values for this strict loader.
-_UNSAFE_VALUE = re.compile(r"[`$|;&<>(){}\\]")
+MAX_POLICY_BYTES = 16_384
+POLICY_KEYS = frozenset(
+    {
+        "AAS_AUTOLOOP_GOAL_PRIORITY",
+        "AAS_AUTOLOOP_NOTIFY",
+        "AAS_AUTOLOOP_FORMAL_POLICY",
+        "AAS_AUTOLOOP_FORMAL_TYPECHECK",
+        "AAS_FORCE_LOOP_COMPUTE_LANES",
+    }
+)
+_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_VALUE_RE = re.compile(r"^[A-Za-z0-9_.,:+/@-]*$")
 
 
 class EnvLoadError(ValueError):
-    """Raised when a line or file is not a safe KEY=VALUE assignment."""
+    """A force-loop policy file failed closed."""
 
 
-def _strip_optional_quotes(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        inner = value[1:-1]
-        if value[0] in inner:
-            raise EnvLoadError("nested quotes are not allowed")
-        return inner
-    return value
-
-
-def parse_env_text(text: str, *, source: str = "<memory>") -> dict[str, str]:
-    """Parse KEY=VALUE text into a dict. Raises EnvLoadError on bad lines."""
+def parse_env_text(
+    text: str,
+    *,
+    source: str = "<memory>",
+    allowed_keys: frozenset[str] = POLICY_KEYS,
+) -> dict[str, str]:
     out: dict[str, str] = {}
     for lineno, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
+        if not raw or raw.startswith("#"):
             continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        if "=" not in line:
-            raise EnvLoadError(f"{source}:{lineno}: missing '='")
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if not key or not _KEY_RE.match(key):
-            raise EnvLoadError(f"{source}:{lineno}: invalid key {key!r}")
-        if "\n" in value or "\r" in value:
-            raise EnvLoadError(f"{source}:{lineno}: multi-line values forbidden")
-        value = _strip_optional_quotes(value)
-        if _UNSAFE_VALUE.search(value):
-            raise EnvLoadError(
-                f"{source}:{lineno}: value for {key} contains unsafe characters"
-            )
+        if raw != raw.strip() or "=" not in raw:
+            raise EnvLoadError(f"{source}:{lineno}: malformed assignment")
+        key, value = raw.split("=", 1)
+        if not _KEY_RE.fullmatch(key) or key not in allowed_keys:
+            raise EnvLoadError(f"{source}:{lineno}: unsupported policy key")
+        if key in out:
+            raise EnvLoadError(f"{source}:{lineno}: duplicate policy key")
+        if not value or not _VALUE_RE.fullmatch(value):
+            raise EnvLoadError(f"{source}:{lineno}: invalid policy value")
         out[key] = value
     return out
 
 
-def load_env_file(path: Path | str) -> dict[str, str]:
-    """Load one KEY=VALUE file (UTF-8). Missing file → empty dict."""
-    p = Path(path)
-    if not p.is_file():
-        return {}
-    text = p.read_text(encoding="utf-8")
-    # Normalize Windows newlines without changing semantics.
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return parse_env_text(text, source=str(p))
+def _open_directory_nofollow(path: Path) -> int:
+    absolute = Path(os.path.abspath(path))
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    fd = os.open(absolute.anchor or os.sep, flags)
+    try:
+        for component in absolute.parts[1:]:
+            child = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
 
 
-def merge_env_files(paths: list[Path | str]) -> dict[str, str]:
-    """Load files in order; later files override earlier keys."""
+def _within(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def load_env_file(
+    path: Path | str,
+    *,
+    allowed_keys: frozenset[str] = POLICY_KEYS,
+    required: bool = True,
+    forbidden_root: Path | None = None,
+) -> dict[str, str]:
+    """Read one absolute owner-private single-link policy through one fd."""
+    supplied = Path(path)
+    if not supplied.is_absolute():
+        raise EnvLoadError("force-loop policy path must be absolute")
+    absolute = Path(os.path.abspath(supplied))
+    if forbidden_root is not None:
+        blocked = Path(os.path.abspath(forbidden_root))
+        if _within(absolute, blocked):
+            raise EnvLoadError("force-loop policy must be outside the loop tree")
+    if os.name != "posix":  # pragma: no cover - PowerShell owns native Windows policy loading
+        raise EnvLoadError("native Windows force-loop policy must be loaded by PowerShell")
+    parent_fd: int | None = None
+    file_fd: int | None = None
+    try:
+        parent_fd = _open_directory_nofollow(absolute.parent)
+        try:
+            path_info = os.stat(absolute.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            if not required:
+                return {}
+            raise EnvLoadError("force-loop policy file is missing")
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        file_fd = os.open(absolute.name, flags, dir_fd=parent_fd)
+        before = os.fstat(file_fd)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or int(before.st_nlink) != 1
+            or int(before.st_uid) != int(os.geteuid())
+            or stat.S_IMODE(before.st_mode) & 0o077
+            or int(before.st_size) > MAX_POLICY_BYTES
+            or (int(path_info.st_dev), int(path_info.st_ino))
+            != (int(before.st_dev), int(before.st_ino))
+        ):
+            raise EnvLoadError("force-loop policy must be an owner-private single-link file")
+        chunks: list[bytes] = []
+        remaining = MAX_POLICY_BYTES + 1
+        while remaining:
+            chunk = os.read(file_fd, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(file_fd)
+        stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink")
+        if len(payload) > MAX_POLICY_BYTES or any(
+            getattr(before, field) != getattr(after, field) for field in stable
+        ):
+            raise EnvLoadError("force-loop policy changed while reading")
+    except EnvLoadError:
+        raise
+    except OSError as exc:
+        raise EnvLoadError("could not securely read force-loop policy") from exc
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise EnvLoadError("force-loop policy must be UTF-8") from exc
+    return parse_env_text(text, source=str(absolute), allowed_keys=allowed_keys)
+
+
+def merge_env_files(
+    paths: list[Path | str],
+    *,
+    allowed_keys: frozenset[str] = POLICY_KEYS,
+) -> dict[str, str]:
     merged: dict[str, str] = {}
     for path in paths:
-        merged.update(load_env_file(path))
+        values = load_env_file(path, allowed_keys=allowed_keys)
+        overlap = set(merged) & set(values)
+        if overlap:
+            raise EnvLoadError("duplicate force-loop policy key across files")
+        merged.update(values)
     return merged
 
 
@@ -93,22 +171,17 @@ def apply_to_environ(
     *,
     override: bool = True,
 ) -> dict[str, str]:
-    """Copy mapping into environ (default: os.environ copy pattern).
-
-    Returns the environ dict for convenience. Does not print values.
-    """
-    import os
-
-    env = environ if environ is not None else os.environ  # type: ignore[assignment]
+    target = environ if environ is not None else os.environ  # type: ignore[assignment]
     for key, value in mapping.items():
-        if not override and key in env:
-            continue
-        env[key] = value
-    return env  # type: ignore[return-value]
+        if override or key not in target:
+            target[key] = value
+    return target  # type: ignore[return-value]
 
 
 __all__ = [
     "EnvLoadError",
+    "MAX_POLICY_BYTES",
+    "POLICY_KEYS",
     "apply_to_environ",
     "load_env_file",
     "merge_env_files",

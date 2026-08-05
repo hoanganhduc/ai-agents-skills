@@ -4892,6 +4892,78 @@ def iteration_prompt(
     return base
 
 
+def _minimal_child_environment(parent: dict[str, str] | None = None) -> dict[str, str]:
+    source = os.environ if parent is None else parent
+    home = source.get("HOME") or str(Path.home())
+    child = {
+        "HOME": home,
+        "PATH": "/usr/bin:/bin" if os.name == "posix" else os.defpath,
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONUTF8": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
+    for name in (
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
+        "TEMP",
+        "TMP",
+    ):
+        value = source.get(name)
+        if value:
+            child[name] = value
+    return child
+
+
+def _canonical_remote_bridge_authority(parent: dict[str, str] | None = None) -> Path | None:
+    source = os.environ if parent is None else parent
+    home_text = source.get("HOME") or str(Path.home())
+    home = Path(home_text)
+    if not home.is_absolute():
+        return None
+    if os.name == "nt":
+        candidates = [
+            home / "AppData" / "Roaming" / "remote-bridge" / "secrets.json",
+            home / "AppData" / "Local" / "remote-bridge" / "secrets.json",
+        ]
+    else:
+        candidates = [home / ".config" / "remote-bridge" / "secrets.json"]
+        if sys.platform == "darwin":
+            candidates.append(
+                home / "Library" / "Application Support" / "remote-bridge" / "secrets.json"
+            )
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def remote_notify_environment(parent: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for the exact Remote Bridge child, excluding provider/compute lanes."""
+
+    source = os.environ if parent is None else parent
+    child = _minimal_child_environment(source)
+    authority = _canonical_remote_bridge_authority(source)
+    if authority is not None:
+        child["REMOTE_BRIDGE_SECRETS_FILE"] = str(authority)
+    strict_channel = source.get("AAS_REMOTE_STRICT_NOTIFY_CHANNEL", "").strip().lower()
+    if strict_channel in {"zulip", "telegram"}:
+        child["AAS_REMOTE_STRICT_NOTIFY_CHANNEL"] = strict_channel
+    return child
+
+
+def raw_notify_environment(
+    payload: dict[str, str], parent: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Environment for an explicitly enabled raw hook: base OS fields + event only."""
+
+    child = _minimal_child_environment(parent)
+    child.update({str(key): str(value) for key, value in payload.items() if key.startswith("AUTOLOOP_")})
+    return child
+
+
 def resolve_remote_notify_argv(
     channel: str,
     text: str,
@@ -4904,14 +4976,13 @@ def resolve_remote_notify_argv(
     if os.environ.get("AAS_ALLOW_RAW_NOTIFY_CMD") == "1" and os.environ.get("AAS_AUTOLOOP_NOTIFY_CMD"):
         return None  # caller may use shell escape hatch
     skills_root = Path(__file__).resolve().parent.parent
-    rb = skills_root / "remote-bridge" / "remote_bridge.py"
+    rb = skills_root / "remote-bridge" / "run_remote_bridge.sh"
     if not rb.is_file():
         return None
-    py = os.environ.get("AAS_RUNTIME_PYTHON") or sys.executable
     if event_json_stdin:
-        argv = [py, str(rb), "send", "--event-json", "-"]
+        argv = [str(rb), "send", "--event-json", "-"]
     else:
-        argv = [py, str(rb), "send", "--text", text]
+        argv = [str(rb), "send", "--text", text]
         if html:
             argv.extend(["--html", html])
     if channel in {"zulip", "telegram", "both"}:
@@ -5172,6 +5243,7 @@ PRIMARY_PROVIDER_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
         {
             "ANTHROPIC_API_KEY",
             "ANTHROPIC_AUTH_TOKEN",
+            "CLAUDE_API_KEY",
             "CLAUDE_CODE_OAUTH_TOKEN",
             "CLAUDE_CONFIG_DIR",
         }
@@ -5184,7 +5256,13 @@ PRIMARY_PROVIDER_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
         {"GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_CONFIG_DIR"}
     ),
     "copilot": frozenset(
-        {"COPILOT_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}
+        {
+            "COPILOT_GITHUB_TOKEN",
+            "COPILOT_PROVIDER_API_KEY",
+            "COPILOT_PROVIDER_BEARER_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+        }
     ),
     "kimi": frozenset({"KIMI_API_KEY", "MOONSHOT_API_KEY", "KIMI_CONFIG_DIR"}),
     "opencode": frozenset({"OPENCODE_API_KEY", "OPENCODE_CONFIG_DIR"}),
@@ -7926,6 +8004,7 @@ def emit_loop_progress(
                             if isinstance(notify_event, dict)
                             else None
                         ),
+                        env=remote_notify_environment(),
                     )
                     bridge_result: dict[str, Any] = {}
                     try:
@@ -8019,8 +8098,7 @@ def watch_notify(cmd: str | None, payload: dict[str, str]) -> None:
     if not cmd:
         print(json.dumps(payload), flush=True)
         return
-    env = dict(os.environ)
-    env.update(payload)
+    env = raw_notify_environment(payload)
     try:
         subprocess.run(cmd, shell=True, env=env, timeout=60, check=False)
     except Exception:  # noqa: BLE001 - notification is best-effort.

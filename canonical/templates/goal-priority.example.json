@@ -13,7 +13,14 @@
       ]
     }
   },
-  "closed_campaigns": [],
+  "closed_campaigns": [
+    {
+      "id": "example-closed",
+      "kind": "certified_host_classification",
+      "forbid_as_sole_primary": true,
+      "note": "Replace or delete: a finished campaign hard mode must not re-target as sole primary."
+    }
+  ],
   "next_campaigns_ordered": [
     "main"
   ],

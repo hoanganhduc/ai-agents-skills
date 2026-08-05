@@ -12,8 +12,10 @@ without completing a token-aware lane recheck.
 
 ## Environment: token is process-local
 
-The Hetzner driver reads **`HCLOUD_TOKEN` from the environment only**. It does
-not load a secrets file by itself.
+The Hetzner driver reads **`HCLOUD_TOKEN` from the environment only**. The
+managed skill wrapper now resolves that environment from the protected
+`AAS_COMPUTE_SECRETS_FILE` launcher pointer when configured; the driver itself
+still never parses arbitrary secret files.
 
 - Lifecycle verbs (`up`, `push`, `run`, `wait`, `fetch`, `down`, `oneshot`) require
   the token and `--confirm`.
@@ -24,11 +26,14 @@ not load a secrets file by itself.
 - Never print the token, pass it on argv, log it, write an `hcloud` context file,
   or place it on a rented server.
 
-**How to load (portable rule):** ensure `HCLOUD_TOKEN` is present in the current
-process environment. Use an **installation- or loop-owned** secret loader. One
-host-local example used by a successful loop on this fleet is reading a JSON
-secrets map and exporting the key before drive spawn; that path is
-installation-specific and must not be the only documented mechanism.
+**How to load (portable rule):** set `AAS_COMPUTE_SECRETS_FILE` in the launcher
+environment to the restored, absolute private compute authority and invoke the
+managed runtime wrapper. Its strict loader accepts only `HCLOUD_TOKEN`,
+`HCLOUD_SSH_KEYS`, `KAGGLE_API_TOKEN`, and `KAGGLE_CONFIG_DIR`, rejects linked,
+public, malformed, or oversized files without printing values, and projects
+only `HCLOUD_TOKEN` and `HCLOUD_SSH_KEYS` into this lane. It removes Kaggle
+values and the pointer before launch. Direct ambient export remains supported,
+but never put the pointer or token assignment in an agent-writable loop env file.
 
 Drive/supervisor processes that spawn per-iteration agents should export the
 token **before** spawn so children inherit it.
@@ -38,8 +43,8 @@ token **before** spawn so children inherit it.
 | Step | Owner | Purpose |
 |------|--------|---------|
 | `run plan` / broker routing | research_compute broker | Choose among **permitted** lanes; adequacy + budget |
-| `preflight --job DIR` | **this skill** | Free plan: type, EUR estimate, `available` / `budget_verdict` |
-| `oneshot --job DIR --confirm` | **this skill** | `up → push → run → wait → fetch → down` with teardown on every exit |
+| `preflight --job DIR` | **this skill** | Free plan: type, EUR estimate, `available` / `budget_verdict`, and exact `required_bundle_sha256` |
+| `oneshot --job DIR --bundle-sha256 HEX --confirm` | **this skill** | Approved immutable bundle: `up → push → run → wait → fetch → down` with teardown on every exit |
 
 `run plan` does **not** provision a server. After a plan selects Hetzner (or the
 loop allowlists Hetzner and the job is adequate), agents must call the lane skill.
@@ -50,10 +55,11 @@ Prefer:
 runtime="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"
 het() { bash "$runtime/run_skill.sh" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
 
-# free
+# free: inspect the JSON and approve its exact required_bundle_sha256
 het preflight --job /path/to/bundle --json
-# paid lifecycle with guaranteed teardown
-het oneshot   --job /path/to/bundle --confirm
+bundle_sha256='<approved required_bundle_sha256>'
+# paid lifecycle with guaranteed teardown for that exact immutable snapshot
+het oneshot --job /path/to/bundle --bundle-sha256 "$bundle_sha256" --confirm
 # if an iteration crashed mid-lifecycle
 het down --orphans --confirm
 ```
@@ -70,6 +76,7 @@ A single JSON preflight may report combinations that look contradictory if only
 | `available` | Lane can accept work **now** (credentials, API, stock, etc.) |
 | `within_auto_approve` | Worst-case EUR within auto-approve envelope |
 | `budget_verdict` | e.g. `auto_approve` / `blocked` |
+| `required_bundle_sha256` | Exact full SHA-256 that must be approved and supplied to lifecycle verbs |
 | `reason` | Machine-readable explanation when not available |
 | `provisioned` | Whether a server was created (false for preflight-only) |
 
@@ -86,10 +93,11 @@ When the user or loop sets `policy.backends` to a strict list (e.g.
    without a fresh same-bundle lane check.
 3. From a process with credentials loaded, re-run **lane** `preflight` on the
    **same** job bundle and record `adequate` / `available` / `budget_verdict` /
-   `reason`.
+   `reason` / `required_bundle_sha256`.
 4. If the lane is now available, re-enter normal routing/dispatch (plan if
-   required, then `oneshot` / Kaggle `run`). The recheck does not itself bypass
-   routing policy.
+   required, then `oneshot` with that exact approved digest / Kaggle `run`). The
+   recheck does not itself bypass routing policy, and a changed bundle requires a
+   new preflight and approval.
 5. Only after a token-aware recheck still fails should a multi-iteration
    infrastructure blocker be banked.
 

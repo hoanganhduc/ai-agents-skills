@@ -23,22 +23,16 @@ if (-not (Test-Path -LiteralPath $script)) {
     exit 127
 }
 
-if ($env:AAS_RUNTIME_PYTHON) {
-    & $env:AAS_RUNTIME_PYTHON $script @SkillArgs
-    exit $LASTEXITCODE
+$runtimeRoot = if ($env:AAS_RUNTIME_ROOT) {
+    $env:AAS_RUNTIME_ROOT
+} else {
+    (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..\..")).Path
 }
-
-$python = Get-Command python3 -ErrorAction SilentlyContinue
-if (-not $python) { $python = Get-Command python -ErrorAction SilentlyContinue }
-if (-not $python) { $python = Get-Command py -ErrorAction SilentlyContinue }
-if (-not $python) {
-    Write-Error "error: no usable Python runtime found. Set AAS_RUNTIME_PYTHON or install Python 3."
+$runner = Join-Path $runtimeRoot "run_python.ps1"
+if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
+    Write-Error "shared runtime runner not found: $runner"
     exit 127
 }
-
-if ($python.Name -eq "py.exe" -or $python.Name -eq "py") {
-    & $python.Source -3 $script @SkillArgs
-} else {
-    & $python.Source $script @SkillArgs
-}
+$env:AAS_RUNTIME_SCRIPT = $script
+& $runner @SkillArgs
 exit $LASTEXITCODE

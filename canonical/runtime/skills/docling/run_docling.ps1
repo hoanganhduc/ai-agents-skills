@@ -17,12 +17,6 @@ $workspace = if ($env:AAS_RUNTIME_WORKSPACE) {
     (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
 }
 $env:OPENCLAW_WORKSPACE = $workspace
-if (-not $env:OPENCLAW_SECRETS_FILE) {
-    $secrets = Join-Path $workspace ".secrets.json"
-    if (Test-Path -LiteralPath $secrets -PathType Leaf) {
-        $env:OPENCLAW_SECRETS_FILE = $secrets
-    }
-}
 
 if ($env:DOCLING_RUN_ARG_COUNT -match '^\d+$') {
     $envArgs = New-Object System.Collections.Generic.List[string]
@@ -52,23 +46,16 @@ $script = switch -Regex ($cmd) {
     }
 }
 
-$python = $env:DOCLING_PYTHON
-if (-not $python) { $python = $env:AAS_RUNTIME_PYTHON }
-if (-not $python -and $env:USERPROFILE) {
-    $venvPython = Join-Path $env:USERPROFILE ".venv-docling\Scripts\python.exe"
-    if (Test-Path -LiteralPath $venvPython -PathType Leaf) { $python = $venvPython }
-}
-
-if ($python) {
-    & $python $script @rest
-} elseif (Get-Command py -ErrorAction SilentlyContinue) {
-    & py -3 $script @rest
-} elseif (Get-Command python.exe -ErrorAction SilentlyContinue) {
-    & python.exe $script @rest
-} elseif (Get-Command python -ErrorAction SilentlyContinue) {
-    & python $script @rest
+$runtimeRoot = if ($env:AAS_RUNTIME_ROOT) {
+    $env:AAS_RUNTIME_ROOT
 } else {
-    Write-Error "no usable Python runtime found. Set DOCLING_PYTHON or install Python 3."
+    (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..\..")).Path
+}
+$runner = Join-Path $runtimeRoot "run_python.ps1"
+if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
+    Write-Error "shared runtime runner not found: $runner"
     exit 127
 }
+$env:AAS_RUNTIME_SCRIPT = $script
+& $runner @rest
 exit $LASTEXITCODE

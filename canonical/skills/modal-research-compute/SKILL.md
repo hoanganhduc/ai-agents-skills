@@ -14,7 +14,7 @@ On native Windows, use the managed Windows runner and the native runtime command
 
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-& "$runtime\run_skill.ps1" "skills/modal-research-compute/modal_research_compute.py" <args>
+& "$runtime\run_skill.ps1" "skills/modal-research-compute/run_modal_research_compute.ps1" <args>
 ```
 
 POSIX examples below use `run_skill.sh` and `.sh` command targets; use the Windows command target above on native Windows.
@@ -124,13 +124,21 @@ Windows:
 ```powershell
 $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
 & "$runtime\run_skill.ps1" `
-  "skills/modal-research-compute/modal_research_compute.py" `
+  "skills/modal-research-compute/run_modal_research_compute.ps1" `
   doctor
 ```
 
 ## Operational notes
 
 - The broker is the decision boundary. Do not call Modal directly from the normal Codex flow when the broker can handle the task.
+- The managed broker wrapper consumes `AAS_COMPUTE_SECRETS_FILE` from the
+  launcher environment. That protected file accepts exactly `HCLOUD_TOKEN`,
+  `HCLOUD_SSH_KEYS`, `KAGGLE_API_TOKEN`, and `KAGGLE_CONFIG_DIR`; the strict
+  managed loader validates the shared authority without printing values, then
+  removes all four cross-lane keys and the pointer from the Modal child. Modal
+  keeps only its native profile/config or `MODAL_TOKEN_ID` and
+  `MODAL_TOKEN_SECRET` authority. Do not put a pointer or credential assignment
+  in a job manifest or loop env.
 - CPU-heavy combinatorial workloads should default to remote CPU or high-memory CPU, not GPU.
 - GPU use should be explicit in the manifest or clearly justified by the workload.
 - `doctor` and `plan` work without a deployed Modal app. Modal-backed submission and `deploy` need a Modal-authenticated host; GitHub Actions wait/fetch use an attempt-unique dispatch id plus the recorded exact GHA run id and `gh`, not Modal credentials. Unverifiable GHA timing stays reserved, while verified billed-equivalent usage remains accrued through the UTC billing cycle. Kaggle and Hetzner plans hand off to their lane drivers.

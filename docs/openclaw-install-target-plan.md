@@ -33,8 +33,12 @@ Implemented fail-closed behavior:
 - `openclaw-target-apply-manifest` requires an approved immutable v2 manifest,
   immediate target pre-state recheck, an OpenClaw-specific confirmation phrase,
   and `--real-system` for real home roots
-- v2 uninstall deletes only unchanged files recorded by
-  `.ai-agents-skills/openclaw-target-state.json`
+- an already-present byte-identical managed skill is not rewritten: apply
+  adopts it only after the approved canonical-source digest, rendered-content
+  digest, owner, file identity, timestamps, link count, and mode all recheck;
+  the attestation is recorded in `.ai-agents-skills/openclaw-target-state.json`
+- v2 uninstall deletes only unchanged files created by target apply; it forgets
+  adopted pre-existing files without deleting them
 - OpenClaw instruction blocks and management notices are not generated
 - symlink and reference install modes are blocked for OpenClaw
 - manifest runtime-backed skills are blocked until neutral runtime evidence
@@ -602,8 +606,12 @@ Real-system gate:
 - real apply and uninstall must fail closed unless OpenClaw is stopped, locked,
   or otherwise quiescent; target pre-state and write policy must be rechecked
   immediately before writes
-- v2 uninstall deletes only unchanged files recorded by the OpenClaw target
-  state journal and cleans only recorded empty parent directories
+- an identical pre-existing skill becomes managed only through an approved
+  canonical-source/rendered-content digest and exact file-identity attestation;
+  it is never rewritten by the no-op adoption path
+- v2 uninstall deletes only unchanged files created by target apply, forgets
+  adopted pre-existing files without deleting them, and cleans only recorded
+  empty parent directories
 
 ## Acceptance Criteria
 

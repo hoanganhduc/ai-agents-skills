@@ -76,7 +76,13 @@ PROVIDER_CLI_SPECS: dict[str, dict[str, Any]] = {
 PROVIDER_AUTH_ENV_NAMES: dict[str, tuple[str, ...]] = {
     "claude": ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
     "deepseek": ("DEEPSEEK_API_KEY",),
-    "copilot": ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"),
+    "copilot": (
+        "COPILOT_GITHUB_TOKEN",
+        "COPILOT_PROVIDER_API_KEY",
+        "COPILOT_PROVIDER_BEARER_TOKEN",
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+    ),
 }
 
 # Non-secret endpoint env vars some providers need at dispatch time. The DeepSeek

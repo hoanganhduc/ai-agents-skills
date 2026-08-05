@@ -97,9 +97,12 @@ record the agent policy and fallback behavior used to choose symlink,
 reference, or copy mode. Copy mode remains available when an agent or
 filesystem must have regular files inside the settings directory.
 
-Platform support is Linux and Windows first, with core installer flows also
-covered on macOS in CI. macOS users should expect POSIX-style behavior but
-lighter platform-specific guidance than Linux and Windows.
+Planning, prechecks, and runtime wrappers support Linux and Windows, with core
+POSIX installer flows also covered on macOS in CI. Native Windows target
+mutation is currently dry-run-only: apply, uninstall, rollback, OpenClaw target
+writes, and Antigravity settings writes fail closed until the mutation remains
+bound to the validated Windows handle. macOS users should expect POSIX-style
+behavior but lighter platform-specific guidance.
 
 ## Documentation
 
@@ -420,11 +423,12 @@ unchanged.
 Skills are the installable agent capabilities. Installing a skill creates the
 per-agent `SKILL.md` target, support files when needed, and managed instruction
 blocks only for installed, adopted, or migrated skills. By default those skill
-targets follow auto mode: Claude links to `canonical/skills`, Codex and
-DeepSeek receive reference adapters, OpenCode, Grok, and Kimi Code receive
-copied native skill files plus support files (Grok installs under `~/.grok` and
+targets follow auto mode: Claude links to `canonical/skills`; Codex, OpenCode,
+Grok, and Kimi Code receive copied native skill files plus support files;
+Grok installs under `~/.grok` and
 disables its `[compat.claude]` ride-along for a self-contained view; Kimi
-installs under `~/.kimi-code` and does not auto-edit `config.toml`), and
+installs under `~/.kimi-code` and does not auto-edit `config.toml`. DeepSeek
+receives reference adapters, and
 Antigravity receives flat global Markdown adapters plus native plugin/config
 scaffolds unless native loader evidence
 justifies a different policy. Explicit `symlink`, `reference`, and `copy`
@@ -494,6 +498,6 @@ make install ARGS="--skills zotero,docling --dry-run"
 | `url-to-screenshot-runtime` | Runtime engine for url-to-screenshot: headless-browser CDP capture, SSRF-safe URL admission, consent dismissal, blank-output detection, and an offline self-test of the deterministic core. | `media`, `full-research` |
 | `venue-ranking-evidence` | Resolve partial journal and conference names and preserve source-specific rank/index observations. ICORE alone has built-in live edition discovery and verified browser-print proof; nine other built-ins accept authorized normalized imports without establishing latest status, and Conference Ranks remains legacy. | `serious-research`, `full-research` |
 | `vnthuquan` | Vietnam Thu Quan ebook discovery, validation, dry-run download, and Calibre dry-run handoff. | `ebook`, `full-research` |
-| `vnu-eoffice` | Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and send requested files through Telegram. |  |
+| `vnu-eoffice` | Route VNU eOffice requests to an existing vnu_eoffice package or CLI: monitor updates, list latest incoming/outgoing documents, search by keyword, download attachments, and hand explicit file delivery to the authenticated host queue. |  |
 | `workspace-rearranger` | Plan safe workspace organization with dry-run first, explicit apply, and no silent deletion. | `workflow-tools`, `serious-research`, `full-research` |
 | `zotero` | Zotero paper search, retrieval, ingest, and collection workflow. | `library`, `serious-research`, `full-research` |

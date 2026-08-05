@@ -161,6 +161,52 @@
       "type": "text",
       "newline": "crlf",
       "mode": "0644"
+    },
+    {
+      "source": "runners/load_secret_env.py",
+      "target": "load_secret_env.py",
+      "platforms": [
+        "linux",
+        "macos",
+        "wsl"
+      ],
+      "type": "text",
+      "newline": "lf",
+      "mode": "0644"
+    },
+    {
+      "source": "runners/credential_projection_probe.py",
+      "target": "runners/credential_projection_probe.py",
+      "platforms": [
+        "linux",
+        "macos",
+        "wsl"
+      ],
+      "type": "text",
+      "newline": "lf",
+      "mode": "0644"
+    },
+    {
+      "source": "runners/credential_projection_check.py",
+      "target": "runners/credential_projection_check.py",
+      "platforms": [
+        "linux",
+        "macos",
+        "wsl"
+      ],
+      "type": "text",
+      "newline": "lf",
+      "mode": "0644"
+    },
+    {
+      "source": "runners/load_secret_env.ps1",
+      "target": "load_secret_env.ps1",
+      "platforms": [
+        "windows"
+      ],
+      "type": "text",
+      "newline": "crlf",
+      "mode": "0644"
     }
   ],
   "skills": {
@@ -2993,6 +3039,16 @@
           "mode": "0755"
         },
         {
+          "source": "skills/modal-research-compute/run_modal_research_compute.ps1",
+          "target": "workspace/skills/modal-research-compute/run_modal_research_compute.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
           "source": "workspace/research_compute/__init__.py",
           "target": "workspace/research_compute/__init__.py",
           "platforms": [
@@ -3162,6 +3218,19 @@
           "mode": "0644"
         },
         {
+          "source": "workspace/research_compute/windows_acl.py",
+          "target": "workspace/research_compute/windows_acl.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "workspace/research_compute/template_runner.py",
           "target": "workspace/research_compute/template_runner.py",
           "platforms": [
@@ -3235,6 +3304,16 @@
           "mode": "0755"
         },
         {
+          "source": "skills/hetzner-research-compute/run_hetzner_research_compute.ps1",
+          "target": "workspace/skills/hetzner-research-compute/run_hetzner_research_compute.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/hetzner-research-compute/hetzner_audit.py",
           "target": "workspace/skills/hetzner-research-compute/hetzner_audit.py",
           "platforms": [
@@ -3258,6 +3337,28 @@
           ],
           "type": "text",
           "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/hetzner-research-compute/run_hetzner_reaper.sh",
+          "target": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.sh",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0755"
+        },
+        {
+          "source": "skills/hetzner-research-compute/run_hetzner_reaper.ps1",
+          "target": "workspace/skills/hetzner-research-compute/run_hetzner_reaper.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
           "mode": "0644"
         },
         {
@@ -3319,6 +3420,16 @@
           "type": "text",
           "newline": "lf",
           "mode": "0755"
+        },
+        {
+          "source": "skills/kaggle-research-compute/run_kaggle_research_compute.ps1",
+          "target": "workspace/skills/kaggle-research-compute/run_kaggle_research_compute.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
         }
       ]
     },
@@ -4250,6 +4361,18 @@
           "type": "text",
           "newline": "lf",
           "mode": "0755"
+        },
+        {
+          "source": "skills/zotero/send_queue.py",
+          "target": "workspace/skills/zotero/send_queue.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
         },
         {
           "source": "skills/zotero/send_telegram.sh",
