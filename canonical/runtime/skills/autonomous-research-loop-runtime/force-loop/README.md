@@ -52,10 +52,15 @@ bash "$RUNTIME/run_skill.sh" \
 ## Env safety
 
 - **Never** shell-`source` agent-writable loop env files.
-- Host pin file: `{loop}/driver/force_loop.env` (strict KEY=VALUE via `load_loop_env.py`).
-- Secrets may be exported directly in the launcher process, or loaded from the
-  absolute path in launcher variable `AAS_COMPUTE_SECRETS_FILE`. Do not put
-  that pointer in `force_loop.env`.
+- Host policy is an explicit owner-private file outside the loop tree, passed
+  with `--policy-file` and parsed by `load_loop_env.py`.
+- `{loop}/driver/force_loop.env` and backup copies are forbidden shadow
+  authorities. Defaults may migrate only the strict nonsecret policy allowlist
+  and never copy legacy bytes. Any credential-capable field requires redacted
+  manual promotion to the canonical provider, compute, or Remote Bridge
+  authority before retrying.
+- Provider and compute authorities are supplied only to the exact-generation
+  launcher; never put their values or pointers in project policy files.
 - The compute secrets file must be a bounded, single-link regular file with no
   symlink in its path. On POSIX it must be owned by the effective user and mode
   `0600` (or stricter). Only `HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS`,

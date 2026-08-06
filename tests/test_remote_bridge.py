@@ -111,8 +111,6 @@ class RemoteBridgeMailbox(unittest.TestCase):
             "handle-command",
             "--text",
             f"/aas approve {rid}",
-            "--principal",
-            "cli",
             "--allow-local-cli",
             env=self.env,
         )
@@ -123,8 +121,6 @@ class RemoteBridgeMailbox(unittest.TestCase):
             "handle-command",
             "--text",
             f"/aas deny {rid}",
-            "--principal",
-            "cli",
             "--allow-local-cli",
             env=self.env,
         )
@@ -149,8 +145,7 @@ class RemoteBridgeMailbox(unittest.TestCase):
             "handle-command",
             "--text",
             "/aasfoo approve x",
-            "--principal",
-            "cli",
+            "--allow-local-cli",
             env=self.env,
         )
         self.assertNotEqual(res.returncode, 0)
@@ -177,7 +172,7 @@ class RemoteBridgeMailbox(unittest.TestCase):
             env=self.env,
         )
         self.assertNotEqual(res.returncode, 0)
-        self.assertEqual(json.loads(res.stdout).get("error_code"), "forbidden")
+        self.assertEqual(json.loads(res.stdout).get("error_code"), "untrusted_principal")
 
     def test_truncated_request_approval(self) -> None:
         _run(
@@ -274,8 +269,6 @@ class RemoteBridgeMailbox(unittest.TestCase):
                 str(RB),
                 "handle-command",
                 "--text-stdin",
-                "--principal",
-                "cli",
                 "--allow-local-cli",
             ],
             input="/aas status j5",

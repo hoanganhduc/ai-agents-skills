@@ -65,11 +65,14 @@ def _emit(obj: dict[str, Any]) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True))
 
 
-def _fail(command: str, error_code: str, message: str, **extra: Any) -> int:
+def _fail(
+    command: str, error_code: str, message: str, *, exit_code: int = 1, **extra: Any
+) -> int:
+    """Report a failure; trust-boundary refusals pass exit_code=2 like dispatch_aas."""
     payload = {"ok": False, "command": command, "error_code": error_code, "message": message}
     payload.update(extra)
     _emit(payload)
-    return 1
+    return exit_code
 
 
 def _ok(command: str, **extra: Any) -> int:
@@ -2625,21 +2628,42 @@ def cmd_instruct(args: argparse.Namespace) -> int:
 
 
 def cmd_handle_command(args: argparse.Namespace) -> int:
-    """Process a single inbound control text (for tests / soft ingress / OpenClaw /aas route)."""
-    mb = Mailbox()
-    cfg = build_config(args.secrets_file)
+    """Process a local operator command; remote identities are transport-owned."""
+    supplied_principal = str(getattr(args, "principal", "") or "").strip()
+    if supplied_principal:
+        return _fail(
+            "handle-command",
+            "untrusted_principal",
+            "a user-supplied principal can never authorize control",
+            exit_code=2,
+            human_reply="Forbidden: authenticated sender identity must come from host transport.",
+        )
+    allow_local_cli = bool(getattr(args, "allow_local_cli", False)) or os.environ.get(
+        "AAS_REMOTE_ALLOW_LOCAL_CLI"
+    ) == "1"
+    if not allow_local_cli:
+        return _fail(
+            "handle-command",
+            "forbidden",
+            "local command requires explicit operator opt-in",
+            exit_code=2,
+            human_reply="Forbidden: local CLI control is not enabled.",
+        )
     text = (
         _read_control_text_stdin()
         if bool(getattr(args, "text_stdin", False))
         else str(getattr(args, "text", "") or "")
     )
+    mb = Mailbox()
+    cfg = build_config(args.secrets_file)
+    principal = "local-operator"
     parsed = parse_aas_command(text, bot_username=args.bot_username)
     if not parsed:
         return _fail(
             "handle-command",
             "not_aas",
             "not an /aas command",
-            human_reply="Not an `/aas` command. Normal chat is handled by OpenClaw.",
+            human_reply="Not an `/aas` command.",
         )
     if parsed.get("ignore"):
         return _ok(
@@ -2654,38 +2678,6 @@ def cmd_handle_command(args: argparse.Namespace) -> int:
             "usage",
             parsed.get("usage") or "bad usage",
             human_reply=f"Usage: {parsed.get('usage') or '/aas help'}",
-        )
-    principal = args.principal or ""
-    allowed = set(cfg.allowed_user_ids) | set(_as_str_list(cfg.zulip.get("allowed_user_ids"))) | set(
-        _as_str_list(cfg.telegram.get("allowed_user_ids"))
-    )
-    # Also accept Telegram chat ids listed for outbound notify
-    allowed |= set(_as_str_list(cfg.telegram.get("allowed_chat_ids")))
-    allow_local_cli = bool(getattr(args, "allow_local_cli", False)) or os.environ.get(
-        "AAS_REMOTE_ALLOW_LOCAL_CLI"
-    ) == "1"
-    if principal == "cli" or not principal:
-        if not allow_local_cli:
-            return _fail(
-                "handle-command",
-                "forbidden",
-                "local cli principal requires --allow-local-cli or AAS_REMOTE_ALLOW_LOCAL_CLI=1",
-                human_reply="Forbidden: local CLI principal not allowed.",
-            )
-        principal = "cli"
-    elif not allowed:
-        return _fail(
-            "handle-command",
-            "forbidden",
-            "allowlists empty: configure allowed_user_ids (fail-closed)",
-            human_reply="Forbidden: remote-bridge allowlists are empty.",
-        )
-    elif principal not in allowed:
-        return _fail(
-            "handle-command",
-            "forbidden",
-            "principal not allowlisted",
-            human_reply=f"Forbidden: principal `{principal}` is not allowlisted for `/aas`.",
         )
     cmd = parsed.get("cmd")
     default_job = _resolve_focus_job(mb)
@@ -2706,7 +2698,7 @@ def cmd_handle_command(args: argparse.Namespace) -> int:
                 "- `/aas focus <job>` — set default job for freeform instruct\n"
                 "- `/aas approve|deny <request_id>` — tool approvals\n"
                 "- `/aas doctor` — bridge health\n\n"
-                "Messages **without** `/aas` are handled by **OpenClaw** (general chat)."
+                "Messages **without** `/aas` are outside this control interface."
             )
             return _ok("handle-command", help=help_text, human_reply=help_text)
         if cmd == "status":
@@ -2964,12 +2956,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="read one bounded UTF-8 control message from stdin",
     )
-    hc.add_argument("--principal", default="")
+    hc.add_argument(
+        "--principal",
+        default="",
+        help="retired compatibility argument; every supplied value is rejected",
+    )
     hc.add_argument("--bot-username", default=None)
     hc.add_argument(
         "--allow-local-cli",
         action="store_true",
-        help="allow principal=cli for local operator (never used by serve)",
+        help="explicitly authorize this process as the local operator",
     )
     hc.set_defaults(func=cmd_handle_command)
 

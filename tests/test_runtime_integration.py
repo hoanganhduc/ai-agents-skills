@@ -2069,6 +2069,19 @@ class RuntimeIntegrationTests(unittest.TestCase):
             wrapper = skill_dir / "run_lean_explore_mcp.sh"
             helper = skill_dir / "lean_explore_mcp.py"
             shutil.copy2(source_dir / wrapper.name, wrapper)
+            # An ephemeral copy can never be root-owned, so patch the flag the
+            # wrapper documents for exactly this case.  The argv and environment
+            # claims under test do not depend on the generation gate.
+            wrapper_text = wrapper.read_text(encoding="utf-8")
+            self.assertIn("lean_explore_exact_generation_enforcement=1", wrapper_text)
+            wrapper.write_text(
+                wrapper_text.replace(
+                    "lean_explore_exact_generation_enforcement=1",
+                    "lean_explore_exact_generation_enforcement=0",
+                    1,
+                ),
+                encoding="utf-8",
+            )
             wrapper.chmod(0o755)
             marker = root / "child-ready"
             capture_marker = root / "key-captured"
@@ -2351,19 +2364,11 @@ class RuntimeIntegrationTests(unittest.TestCase):
         configured = os.environ.get("AAS_LEANEXPLORE_TEST_SITE_PACKAGES", "")
         if configured:
             candidates.append(Path(configured))
-        candidates.extend(
-            sorted(
-                (
-                    Path.home()
-                    / ".codex"
-                    / "runtime"
-                    / "workspace"
-                    / ".venvs"
-                    / "lean-explore"
-                    / "lib"
-                ).glob("python*/site-packages")
-            )
+        closure_root = (
+            Path.home()
+            / ".local/share/coding-system/python-closure/lean-explore"
         )
+        candidates.extend(sorted((closure_root / "lib").glob("python*/site-packages")))
         site_packages = next(
             (
                 candidate
@@ -2376,7 +2381,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         if site_packages is None:
             self.skipTest("an exact lean-explore 1.2.1 site-packages closure is unavailable")
 
-        site_fd = os.open(site_packages, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        closure_fd = os.open(closure_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         key_read, key_write = os.pipe()
         canary = b"LEANEXPLORE-OFFLINE-HANDSHAKE-CANARY"
         os.write(key_write, canary)
@@ -2388,7 +2393,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
-            "AAS_LEANEXPLORE_SITE_FD": str(site_fd),
+            "AAS_LEANEXPLORE_CLOSURE_FD": str(closure_fd),
+            "AAS_LEANEXPLORE_SITE_RELATIVE": str(site_packages.relative_to(closure_root)),
             "AAS_LEANEXPLORE_KEY_FD": str(key_read),
         }
         process = subprocess.Popen(
@@ -2398,10 +2404,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
             stderr=subprocess.PIPE,
             text=True,
             env=env,
-            pass_fds=(site_fd, key_read),
+            pass_fds=(closure_fd, key_read),
             bufsize=1,
         )
-        os.close(site_fd)
+        os.close(closure_fd)
         os.close(key_read)
         try:
             if Path(f"/proc/{process.pid}/cmdline").is_file():

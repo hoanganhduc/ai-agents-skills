@@ -50,6 +50,11 @@ AGENT_SKILL_LOADER_POLICY: dict[str, dict[str, Any]] = {
         "default_mode": "copy",
         "reason": "OpenClaw native target support is fake-root-only; auto mode uses regular files for layout tests.",
     },
+    "chatgpt-local-coder": {
+        "symlink_skill_file": False,
+        "default_mode": "copy",
+        "reason": "chatgpt-local-coder reads directory-layout ~/.chatgpt-local-coder/skills/<skill>/SKILL.md files; copy keeps the install self-contained and works on native Windows, where symlink creation is privilege-gated.",
+    },
 }
 
 

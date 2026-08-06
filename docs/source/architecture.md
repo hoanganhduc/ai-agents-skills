@@ -48,14 +48,14 @@ Artifact classes:
 
 | Artifact class | Current behavior |
 |---|---|
-| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, OpenCode, Antigravity, Grok, and Kimi copy the full canonical skill body and support files by default; Codex uses copied regular files because symlinked discovery is not assumed and its install must remain self-contained. DeepSeek and Copilot resolve to reference adapters. Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`, and Kimi writes directory-layout `SKILL.md` files under `~/.kimi-code/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
+| `skill-file` | Default `auto` mode links Claude skill files to canonical `SKILL.md`. Codex, OpenCode, Antigravity, Grok, Kimi, and chatgpt-local-coder copy the full canonical skill body and support files by default; Codex uses copied regular files because symlinked discovery is not assumed and its install must remain self-contained. DeepSeek and Copilot resolve to reference adapters. Antigravity writes flat global Markdown files under `~/.gemini/antigravity-cli/skills/<skill>.md`, Grok writes directory-layout `SKILL.md` files under `~/.grok/skills/<skill>/`, Kimi writes directory-layout `SKILL.md` files under `~/.kimi-code/skills/<skill>/`, and chatgpt-local-coder writes directory-layout `SKILL.md` files under `~/.chatgpt-local-coder/skills/<skill>/`. Explicit reference and copy modes are available for all agents; Copilot symlink mode is blocked until loader evidence exists. |
 | `skill-support-file` | Symlinks canonical references, scripts, assets, templates, and agent notes when the effective skill install remains symlinked; copied in copy mode; skipped in reference mode. |
 | `instruction-block` | Adds or updates a managed block in `AGENTS.md` or `CLAUDE.md` only when the matching skill artifact is installed, adopted, updated, or migrated. |
 | `management-notice` | Optional top-level managed block explaining that this repo is the source and local agent homes are runtime targets. |
-| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude, OpenCode, and Kimi receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Grok receives Claude-style Markdown subagents (name/description overlay; Claude tool-restriction frontmatter is not enforced on Grok), Copilot receives `.agent.md` custom-agent profiles, and DeepSeek receives reference prompts. |
+| `agent-persona` | Optional reviewer/persona files. Codex receives TOML custom agents, Claude, OpenCode, and Kimi receive Markdown subagents, Antigravity receives plugin-scoped Markdown agent definitions, Grok receives Claude-style Markdown subagents (name/description overlay; Claude tool-restriction frontmatter is not enforced on Grok), Copilot receives `.agent.md` custom-agent profiles, DeepSeek receives reference prompts, and chatgpt-local-coder receives Markdown files that are inert storage rather than registered subagents. |
 | `template` | Optional research, report, specification, and task templates. |
 | `instruction-doc` | Optional workflow reference documents installed outside skill folders. |
-| `entrypoint-alias` | Optional quick-action aliases. Claude, OpenCode, and Grok receive command files; Antigravity receives flat global Markdown skill aliases; Codex and DeepSeek receive reference documents; Kimi has no commands-dir loader (skills are invoked as `/skill:<name>`). |
+| `entrypoint-alias` | Optional quick-action aliases. Claude, OpenCode, and Grok receive command files; Antigravity receives flat global Markdown skill aliases; Codex, DeepSeek, and chatgpt-local-coder receive reference documents; Kimi has no commands-dir loader (skills are invoked as `/skill:<name>`). |
 | `plugin` | Antigravity receives a managed `ai-agents-skills` plugin marker and payload directory when Antigravity artifacts are installed. |
 | `mcp-config` | Antigravity receives a no-op plugin-scoped `mcp_config.json` scaffold with an empty `mcpServers` map. |
 | `hook-config` | Antigravity receives a no-op plugin-scoped `hooks.json` scaffold. |
@@ -74,9 +74,9 @@ Markdown agent definitions, Grok personas are Claude-style Markdown subagents
 (name/description overlay only), Copilot personas are `.agent.md` custom-agent
 profiles, and DeepSeek personas are reference prompts. Claude, OpenCode, and
 Grok entrypoint aliases are command files, Antigravity entrypoint aliases are
-flat global Markdown skill aliases, Codex and DeepSeek entrypoint aliases are
-reference documents under `instructions/entrypoints`, and Kimi does not install
-command-file entrypoint aliases.
+flat global Markdown skill aliases, Codex, DeepSeek, and chatgpt-local-coder
+entrypoint aliases are reference documents under `instructions/entrypoints`, and
+Kimi does not install command-file entrypoint aliases.
 
 Copilot is included in default target detection when `~/.copilot` exists.
 Existing repository-level `.github/*` files do not activate the personal

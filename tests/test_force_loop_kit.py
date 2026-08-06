@@ -163,6 +163,75 @@ class ApplyDefaultsTests(unittest.TestCase):
             env_text = policy.read_text(encoding="utf-8")
             self.assertIn("AAS_AUTOLOOP_FORMAL_POLICY=off", env_text)
 
+    def test_legacy_credential_shadow_fails_before_any_campaign_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            driver = loop / "driver"
+            driver.mkdir(parents=True)
+            shadow = driver / "force_loop.env"
+            secret = "shadow-secret-value-92731"
+            original = f"TELEGRAM_BOT_TOKEN={secret}\n"
+            shadow.write_text(original, encoding="utf-8")
+            policy = root / "host-policy.env"
+
+            with self.assertRaisesRegex(ValueError, "credential-capable") as raised:
+                self.apply.apply_defaults(loop, profile="general", policy_file=policy)
+
+            self.assertNotIn(secret, str(raised.exception))
+            self.assertEqual(shadow.read_text(encoding="utf-8"), original)
+            self.assertFalse(policy.exists())
+            self.assertFalse((loop / "goal_priority.json").exists())
+            self.assertFalse((driver / "force_loop_pin_backups").exists())
+
+    def test_safe_legacy_policy_is_migrated_without_byte_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            driver = loop / "driver"
+            driver.mkdir(parents=True)
+            shadow = driver / "force_loop.env"
+            shadow.write_text(
+                "AAS_FORCE_LOOP_COMPUTE_LANES=local\n"
+                "AAS_AUTOLOOP_FORMAL_POLICY=off\n",
+                encoding="utf-8",
+            )
+            policy = root / "host-policy.env"
+
+            result = self.apply.apply_defaults(
+                loop, profile="general", policy_file=policy
+            )
+
+            self.assertTrue(result["ok"], result)
+            self.assertFalse(shadow.exists())
+            self.assertFalse(
+                (driver / "force_loop_pin_backups" / "force_loop.env").exists()
+            )
+            migrated = policy.read_text(encoding="utf-8")
+            self.assertIn("AAS_FORCE_LOOP_COMPUTE_LANES=local", migrated)
+
+    def test_any_legacy_backup_shadow_requires_manual_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            backup_shadow = (
+                loop
+                / "driver"
+                / "force_loop_pin_backups"
+                / "force_loop.env"
+            )
+            backup_shadow.parent.mkdir(parents=True)
+            original = "AAS_AUTOLOOP_NOTIFY=auto\n"
+            backup_shadow.write_text(original, encoding="utf-8")
+            policy = root / "host-policy.env"
+
+            with self.assertRaisesRegex(ValueError, "backup shadow"):
+                self.apply.apply_defaults(loop, profile="general", policy_file=policy)
+
+            self.assertEqual(backup_shadow.read_text(encoding="utf-8"), original)
+            self.assertFalse(policy.exists())
+            self.assertFalse((loop / "goal_priority.json").exists())
+
     def test_verify_fails_when_defaults_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             loop = Path(tmp) / "empty"

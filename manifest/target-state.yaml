@@ -291,6 +291,22 @@
       },
       "readiness": ["cli-version", "managed-skill-visibility", "runtime-smoke", "mcp-handshake", "scheduler-canary", "auth-structural", "agent-auth-closure"]
     },
+    "chatgpt-local-coder": {
+      "aliases": [],
+      "home": ".chatgpt-local-coder",
+      "cli_candidates": ["chatgpt-local-coder", "clc"],
+      "version_argv": ["--version"],
+      "runtime_requirements": ["node-runtime", "git-cli"],
+      "credential_authorities": [
+        {
+          "kind": "file",
+          "path": ".config/chatgpt-local-coder/secrets.json",
+          "restore_policy": "authority",
+          "platform_resolution": "XDG default; the host resolves this directory per OS and honours CLC_CONFIG_DIR"
+        }
+      ],
+      "readiness": ["cli-version", "managed-skill-visibility", "auth-structural"]
+    },
     "aider": {
       "aliases": ["aider-chat"],
       "home": ".aider",

@@ -9,10 +9,29 @@ from .capabilities import looks_like_real_system_root, resolved_path_within
 from .openclaw_target_gate import openclaw_target_capabilities, openclaw_target_decision
 
 
-DEFAULT_AGENT_NAMES = ["codex", "claude", "deepseek", "copilot", "opencode", "antigravity", "grok", "kimi", "openclaw"]
+DEFAULT_AGENT_NAMES = [
+    "codex",
+    "claude",
+    "deepseek",
+    "copilot",
+    "opencode",
+    "antigravity",
+    "grok",
+    "kimi",
+    "openclaw",
+    "chatgpt-local-coder",
+]
 KNOWN_AGENT_NAMES = list(DEFAULT_AGENT_NAMES)
 PORTABLE_MANIFEST_AGENT_NAMES = {"codex", "claude", "deepseek"}
-ADAPTER_AGENT_NAMES = {"copilot", "opencode", "antigravity", "grok", "kimi", "openclaw"}
+ADAPTER_AGENT_NAMES = {
+    "copilot",
+    "opencode",
+    "antigravity",
+    "grok",
+    "kimi",
+    "openclaw",
+    "chatgpt-local-coder",
+}
 
 
 @dataclass(frozen=True)
@@ -179,6 +198,26 @@ def target_for(root: Path, agent: str) -> AgentTarget:
             },
             skill_file_layout="directory",
             instruction_blocks_enabled=True,
+        )
+    if agent == "chatgpt-local-coder":
+        home = root / ".chatgpt-local-coder"
+        return AgentTarget(
+            name="chatgpt-local-coder",
+            home=home,
+            skills_dir=home / "skills",
+            instructions_file=home / "AGENTS.md",
+            optional_skills_dirs=(root / ".agents" / "skills",),
+            artifact_dirs={
+                "agent-persona": home / "agents",
+                "template": home / "templates",
+                # The host reads skills, personas and instruction docs; it has no
+                # slash-command loader, so aliases install as reference docs the
+                # way they do for Codex and DeepSeek rather than as commands.
+                "instruction-doc": home / "instructions",
+                "entrypoint-alias": home / "instructions" / "entrypoints",
+                "command": home / "commands",
+                "tool-shim": home / "tools",
+            },
         )
     if agent == "openclaw":
         return AgentTarget(

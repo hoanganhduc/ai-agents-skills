@@ -22,12 +22,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, NamedTuple
 
+try:
+    from arl_credential_client import (  # type: ignore
+        BrokerError as CredentialBrokerError,
+        broker_active as credential_broker_active,
+        request as credential_broker_request,
+    )
+except ImportError:  # pragma: no cover - package-style import during tests
+    from .arl_credential_client import (  # type: ignore
+        BrokerError as CredentialBrokerError,
+        broker_active as credential_broker_active,
+        request as credential_broker_request,
+    )
+
 # Sibling modules: hybrid panel + optional goal_priority.v1.
 try:
     from panel_parent import (  # type: ignore  # noqa: I001 — same-dir runtime import
         PanelIsolationError,
         ProviderResourceError,
         ProviderResourceCleanupError,
+        brokered_provider_containment_command,
         STRICT_ISOLATED_TRANSPORT,
         TRUSTED_LOCAL_TRANSPORT,
         assert_panel_prompt_safe,
@@ -86,6 +100,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
         PanelIsolationError,
         ProviderResourceError,
         ProviderResourceCleanupError,
+        brokered_provider_containment_command,
         STRICT_ISOLATED_TRANSPORT,
         TRUSTED_LOCAL_TRANSPORT,
         assert_panel_prompt_safe,
@@ -2556,10 +2571,45 @@ def run_primary_subprocess(
         elif trusted_local:
             try:
                 inner_args = interpreter_bound_provider_command(inner_args)
-                run_args = trusted_local_containment_command(
-                    inner_args,
-                    cwd=cwd,
-                )
+                strict_brokered = execution_env.pop(
+                    "AAS_ARL_BROKER_STRICT_FS", ""
+                ) == "1"
+                if strict_brokered:
+                    dependency_root = Path(
+                        execution_env.pop(
+                            "AAS_ARL_BROKER_DEPENDENCY_ROOT", ""
+                        )
+                    )
+                    home = Path(str(execution_env.get("HOME") or ""))
+                    raw_mounts = execution_env.pop(
+                        "AAS_ARL_BROKER_CONFIG_MOUNTS", "{}"
+                    )
+                    parsed_mounts = json.loads(raw_mounts)
+                    if not isinstance(parsed_mounts, dict) or not all(
+                        isinstance(key, str) and isinstance(value, str)
+                        for key, value in parsed_mounts.items()
+                    ):
+                        raise ProviderResourceError(
+                            "brokered provider config mounts are invalid"
+                        )
+                    broker_socket_text = str(
+                        execution_env.get("AAS_ARL_BROKER_SOCKET") or ""
+                    )
+                    run_args = brokered_provider_containment_command(
+                        inner_args,
+                        cwd=cwd,
+                        dependency_root=dependency_root,
+                        synthetic_home=home,
+                        config_mounts=parsed_mounts,
+                        broker_socket=Path(broker_socket_text)
+                        if broker_socket_text
+                        else None,
+                    )
+                else:
+                    run_args = trusted_local_containment_command(
+                        inner_args,
+                        cwd=cwd,
+                    )
             except ProviderResourceError as exc:
                 raise OSError(str(exc)) from exc
         else:
@@ -10099,25 +10149,65 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         rc = 126
                     else:
                         try:
-                            rc, timed_out, cleanup_error = run_primary_subprocess(
-                                run_args,
-                                use_shell=use_shell,
-                                child_env=child_env,
-                                cwd=root,
-                                timeout_s=iter_timeout,
-                                output=log_fh,
-                                provider=provider,
-                                enforce_mode=goal_focus_mode == "enforce",
-                                trusted_local=(
-                                    provider_transport == TRUSTED_LOCAL_TRANSPORT
-                                ),
-                                run_dir=run_dir,
-                                evidence_dir=evidence_dir,
-                                executable_attestation=driver_execution_attestation,
-                                stdin_text=primary_stdin_text,
-                                resource_metadata=primary_resource_metadata,
-                            )
-                        except OSError as exc:
+                            if credential_broker_active():
+                                broker_response = credential_broker_request(
+                                    {
+                                        "operation": "primary",
+                                        "run_args": run_args,
+                                        "use_shell": use_shell,
+                                        "child_env": child_env,
+                                        "cwd": str(root),
+                                        "timeout_s": iter_timeout,
+                                        "provider": provider,
+                                        "enforce_mode": goal_focus_mode == "enforce",
+                                        "trusted_local": provider_transport
+                                        == TRUSTED_LOCAL_TRANSPORT,
+                                        "run_dir": str(run_dir),
+                                        "evidence_dir": str(evidence_dir)
+                                        if evidence_dir is not None
+                                        else None,
+                                        "executable_attestation": driver_execution_attestation,
+                                        "stdin_text": primary_stdin_text,
+                                        "compute_lanes": sorted(
+                                            _host_pinned_primary_compute_lanes(run_dir)
+                                        ),
+                                    },
+                                    timeout_s=iter_timeout,
+                                )
+                                rc = int(broker_response.get("returncode", 126))
+                                timed_out = bool(broker_response.get("timed_out"))
+                                cleanup_error = (
+                                    str(broker_response["cleanup_error"])
+                                    if broker_response.get("cleanup_error")
+                                    else None
+                                )
+                                broker_metadata = broker_response.get(
+                                    "resource_metadata"
+                                )
+                                if isinstance(broker_metadata, dict):
+                                    primary_resource_metadata.update(broker_metadata)
+                                log_fh.write(str(broker_response.get("stdout") or ""))
+                                log_fh.write(str(broker_response.get("stderr") or ""))
+                            else:
+                                rc, timed_out, cleanup_error = run_primary_subprocess(
+                                    run_args,
+                                    use_shell=use_shell,
+                                    child_env=child_env,
+                                    cwd=root,
+                                    timeout_s=iter_timeout,
+                                    output=log_fh,
+                                    provider=provider,
+                                    enforce_mode=goal_focus_mode == "enforce",
+                                    trusted_local=(
+                                        provider_transport == TRUSTED_LOCAL_TRANSPORT
+                                    ),
+                                    run_dir=run_dir,
+                                    evidence_dir=evidence_dir,
+                                    executable_attestation=driver_execution_attestation,
+                                    stdin_text=primary_stdin_text,
+                                    resource_metadata=primary_resource_metadata,
+                                )
+                        except (OSError, CredentialBrokerError) as exc:
                             log_fh.write(f"autoloop-driver: spawn failed: {exc}\n")
                             log_fh.flush()
                             if (

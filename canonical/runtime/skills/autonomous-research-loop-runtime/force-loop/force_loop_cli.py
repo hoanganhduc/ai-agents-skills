@@ -102,6 +102,7 @@ COMPUTE_LANE_KEYS: dict[str, frozenset[str]] = {
 BASE_ENV_KEYS = frozenset(
     {
         "AAS_RUNTIME_PYTHON", "AAS_RUNTIME_ROOT", "AAS_RUNTIME_WORKSPACE",
+        "AAS_ARL_BROKER_SOCKET", "AAS_ARL_BROKER_TOKEN", "AAS_ARL_COMPUTE_PROXY",
         "AAS_REMOTE_STRICT_NOTIFY_CHANNEL", "REMOTE_BRIDGE_SECRETS_FILE",
         "AUTOLOOP_DISABLE", "CLAUDE_CONFIG_DIR", "CODEWHALE_HOME", "CODEX_HOME",
         "GEMINI_CONFIG_DIR", "GROK_CONFIG_DIR", "HOME", "KIMI_CONFIG_DIR",
@@ -115,6 +116,9 @@ SYSTEMD_ENV_MAX_BYTES = 262_144
 SYSTEMD_ENV_DIR_NAME = "aas-force-loop"
 SYSTEMD_ENV_FIXED_KEYS = frozenset(
     {
+        "AAS_ARL_BROKER_SOCKET",
+        "AAS_ARL_BROKER_TOKEN",
+        "AAS_ARL_COMPUTE_PROXY",
         "AAS_REMOTE_STRICT_NOTIFY_CHANNEL",
         "AAS_RUNTIME_PYTHON",
         "AAS_RUNTIME_ROOT",
@@ -666,6 +670,11 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     try:
         backend = select_backend(args.backend, detach=bool(args.detach))
+        if os.environ.get("AAS_ARL_BROKER_SOCKET") and backend != "foreground":
+            raise SystemExit(
+                "credential-brokered force-loop start requires --backend foreground; "
+                "detached backends cannot outlive the exact-generation broker"
+            )
     except ValueError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 2

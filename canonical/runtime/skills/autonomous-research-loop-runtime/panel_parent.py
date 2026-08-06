@@ -29,6 +29,19 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+try:
+    from arl_credential_client import (  # type: ignore
+        BrokerError as CredentialBrokerError,
+        broker_active as credential_broker_active,
+        request as credential_broker_request,
+    )
+except ImportError:  # pragma: no cover - package-style import during tests
+    from .arl_credential_client import (  # type: ignore
+        BrokerError as CredentialBrokerError,
+        broker_active as credential_broker_active,
+        request as credential_broker_request,
+    )
+
 # Panel briefs are the only channel a panel agent has: it does not read the
 # skill body, the loop's own context file, or AAS_AUTOLOOP_CMD_<PROVIDER>.
 # Degrade to a no-op block rather than failing if the sibling module is absent
@@ -50,6 +63,7 @@ try:
     from provider_resources import (  # type: ignore  # noqa: I001 — same-dir runtime import
         ProviderResourceError,
         ProviderResourceCleanupError,
+        brokered_provider_containment_command,
         cleanup_resource_scope,
         interpreter_bound_provider_command,
         preflight_resource_backend,
@@ -64,6 +78,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
     from .provider_resources import (  # type: ignore
         ProviderResourceError,
         ProviderResourceCleanupError,
+        brokered_provider_containment_command,
         cleanup_resource_scope,
         interpreter_bound_provider_command,
         preflight_resource_backend,
@@ -2882,15 +2897,40 @@ def run_one(
         if isolation_error is not None:
             rc, stdout, stderr = 126, "", isolation_error
         elif runner is None:
-            rc, stdout, stderr = _default_runner(
-                execution_cmd,
-                env,
-                str(work),
-                timeout_s,
-                stdin_text=stdin_prompt,
-                output_limit_bytes=resource_limits["output_max_bytes"],
-                scope_unit=resource_scope,
-            )
+            if credential_broker_active():
+                try:
+                    broker_response = credential_broker_request(
+                        {
+                            "operation": "panel",
+                            "provider": provider,
+                            "command": cmd,
+                            "environment": env,
+                            "cwd": str(work),
+                            "timeout_s": timeout_s,
+                            "stdin_text": stdin_prompt,
+                            "output_limit_bytes": resource_limits[
+                                "output_max_bytes"
+                            ],
+                            "scope_unit": resource_scope,
+                            "executable_attestation": executable_attestation,
+                        },
+                        timeout_s=timeout_s,
+                    )
+                    rc = int(broker_response.get("returncode", 126))
+                    stdout = str(broker_response.get("stdout") or "")
+                    stderr = str(broker_response.get("stderr") or "")
+                except (CredentialBrokerError, OSError, ValueError) as exc:
+                    rc, stdout, stderr = 126, "", f"credential broker failed: {exc}"
+            else:
+                rc, stdout, stderr = _default_runner(
+                    execution_cmd,
+                    env,
+                    str(work),
+                    timeout_s,
+                    stdin_text=stdin_prompt,
+                    output_limit_bytes=resource_limits["output_max_bytes"],
+                    scope_unit=resource_scope,
+                )
         else:
             rc, stdout, stderr = run(execution_cmd, env, str(work), timeout_s)
         resource_cleanup_failed = stderr.startswith("[resource-cleanup-failed]")
