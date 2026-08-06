@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -39,6 +40,25 @@ from installer.ai_agents_skills.state import sha256_file
 CAPTURED_AT = "2026-06-12T00:00:00Z"
 
 
+def _attested_node_available() -> bool:
+    """Mirror the production /usr/bin/node attestation (root-owned, nlink 1)."""
+    try:
+        info = os.lstat("/usr/bin/node")
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(info.st_mode)
+        and int(info.st_nlink) == 1
+        and int(info.st_uid) == 0
+        and not stat.S_IMODE(info.st_mode) & 0o022
+        and bool(stat.S_IMODE(info.st_mode) & 0o111)
+    )
+
+
+@unittest.skipUnless(
+    os.name == "posix",
+    "the strict Windows private-path DACL guard rejects runner %TEMP% by design",
+)
 class OpenClawTargetV2Tests(unittest.TestCase):
     def test_canary_manifest_approves_applies_and_uninstalls_skill_file(self) -> None:
         with openclaw_root() as root:
@@ -425,6 +445,10 @@ class OpenClawTargetV2Tests(unittest.TestCase):
             self.assertFalse(apply_payload["dry_run"])
             self.assertTrue((root / ".openclaw" / "skills" / "model-router" / "SKILL.md").exists())
 
+    @unittest.skipUnless(
+        _attested_node_available(),
+        "the attested root-owned /usr/bin/node interpreter is unavailable",
+    )
     def test_quiescence_ignores_empty_persistent_locks_directory(self) -> None:
         with openclaw_root() as root:
             (root / ".openclaw" / "locks").mkdir()
@@ -439,6 +463,10 @@ class OpenClawTargetV2Tests(unittest.TestCase):
             self.assertEqual(result["existing_lock_paths"], [])
             self.assertEqual(result["process_enumeration"], "ok")
 
+    @unittest.skipUnless(
+        _attested_node_available(),
+        "the attested root-owned /usr/bin/node interpreter is unavailable",
+    )
     def test_quiescence_detects_openclaw_gateway_process(self) -> None:
         with openclaw_root() as root:
             executable = fake_openclaw(root)
@@ -458,6 +486,10 @@ class OpenClawTargetV2Tests(unittest.TestCase):
                 {"pid": "1172", "comm": "node", "reason": "openclaw-node-entrypoint"},
             )
 
+    @unittest.skipUnless(
+        _attested_node_available(),
+        "the attested root-owned /usr/bin/node interpreter is unavailable",
+    )
     def test_openclaw_probe_uses_attested_absolute_binary_and_scrubbed_environment(self) -> None:
         with openclaw_root() as root:
             observed = root / "observed-env"

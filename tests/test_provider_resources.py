@@ -14,6 +14,7 @@ import os
 import signal
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import time
 import unittest
@@ -37,6 +38,11 @@ import provider_resources as pr  # noqa: E402
 
 
 _PYTHON = str(Path(sys.executable).resolve())
+# CI-provisioned interpreters (e.g. /opt/hostedtoolcache) are built
+# --enable-shared with libpython outside the default loader paths, so a
+# contained child running _PYTHON needs the interpreter's LIBDIR on
+# LD_LIBRARY_PATH and the full installation prefix mounted, not just bin/.
+_PYTHON_LIBDIR = sysconfig.get_config_var("LIBDIR") or ""
 _MIB = 1024 * 1024
 _RESOURCE_ENV = {
     "AAS_AUTOLOOP_RESOURCE_MEMORY_MIB": "1024",
@@ -94,16 +100,19 @@ class BrokeredProviderContainmentTests(unittest.TestCase):
             command = pr.brokered_provider_containment_command(
                 [_PYTHON, "-I", "-S", "-c", probe, str(project), str(selected_target), str(hidden)],
                 cwd=project,
-                dependency_root=Path(_PYTHON).parent,
+                dependency_root=Path(_PYTHON).parents[1],
                 synthetic_home=synthetic_home,
                 config_mounts={str(selected_target): str(selected)},
             )
             self.assertEqual(command[0], "/usr/bin/bwrap")
             self.assertNotIn(["--bind", "/", "/"], [command[i : i + 3] for i in range(len(command) - 2)])
+            child_env = {"PATH": "/usr/bin:/bin", "HOME": str(synthetic_home)}
+            if _PYTHON_LIBDIR and not _PYTHON_LIBDIR.startswith(("/usr/", "/lib")):
+                child_env["LD_LIBRARY_PATH"] = _PYTHON_LIBDIR
             completed = subprocess.run(
                 command,
                 cwd=str(project),
-                env={"PATH": "/usr/bin:/bin", "HOME": str(synthetic_home)},
+                env=child_env,
                 text=True,
                 capture_output=True,
                 timeout=10,

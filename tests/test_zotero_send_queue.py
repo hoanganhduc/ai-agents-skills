@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -26,6 +27,21 @@ def _load_module():
 
 
 @unittest.skipIf(os.name == "nt", "POSIX descriptor queue")
+def _attested_node_available() -> bool:
+    """Mirror the fixed root-controlled Node runtime attestation (uid 0, nlink 1)."""
+    try:
+        info = os.lstat("/usr/bin/node")
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(info.st_mode)
+        and int(info.st_nlink) == 1
+        and int(info.st_uid) == 0
+        and not stat.S_IMODE(info.st_mode) & 0o022
+        and bool(stat.S_IMODE(info.st_mode) & 0o111)
+    )
+
+
 class ZoteroSendQueueTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -542,6 +558,10 @@ class ZoteroSendQueueTests(unittest.TestCase):
                 )
             self.assertEqual(list(outside.iterdir()), [])
 
+    @unittest.skipUnless(
+        _attested_node_available(),
+        "the fixed root-controlled /usr/bin/node delivery runtime is unavailable",
+    )
     def test_host_sender_ignores_path_and_executes_a_bound_launcher_descriptor(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -614,6 +634,10 @@ class ZoteroSendQueueTests(unittest.TestCase):
             self.assertNotIn("XDG_CONFIG_HOME", captured["env"])
             self.assertNotIn("AAS_FILE_DELIVERY_SECRETS_FILE", captured["env"])
 
+    @unittest.skipUnless(
+        _attested_node_available(),
+        "the fixed root-controlled /usr/bin/node delivery runtime is unavailable",
+    )
     def test_host_sender_keeps_delivery_metadata_out_of_live_child_cmdline(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

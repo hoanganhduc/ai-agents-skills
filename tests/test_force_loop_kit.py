@@ -66,6 +66,7 @@ class LoadLoopEnvTests(unittest.TestCase):
             with self.subTest(body=body), self.assertRaises(self.env.EnvLoadError):
                 self.env.parse_env_text(body)
 
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_crlf(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp) / "e.env"
@@ -126,6 +127,7 @@ class ApplyDefaultsTests(unittest.TestCase):
             "force_loop_apply", FORCE_LOOP / "apply_force_loop_defaults.py"
         )
 
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_formal_apply_has_enforce_hard_notify(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             loop = Path(tmp) / "loop"
@@ -153,6 +155,7 @@ class ApplyDefaultsTests(unittest.TestCase):
             errors = self.apply.verify_effective(loop, "formal", policy)
             self.assertEqual(errors, [])
 
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_general_skips_formal_on(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             loop = Path(tmp) / "loop"
@@ -163,6 +166,7 @@ class ApplyDefaultsTests(unittest.TestCase):
             env_text = policy.read_text(encoding="utf-8")
             self.assertIn("AAS_AUTOLOOP_FORMAL_POLICY=off", env_text)
 
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_legacy_credential_shadow_fails_before_any_campaign_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -184,6 +188,7 @@ class ApplyDefaultsTests(unittest.TestCase):
             self.assertFalse((loop / "goal_priority.json").exists())
             self.assertFalse((driver / "force_loop_pin_backups").exists())
 
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_safe_legacy_policy_is_migrated_without_byte_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -210,6 +215,7 @@ class ApplyDefaultsTests(unittest.TestCase):
             migrated = policy.read_text(encoding="utf-8")
             self.assertIn("AAS_FORCE_LOOP_COMPUTE_LANES=local", migrated)
 
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_any_legacy_backup_shadow_requires_manual_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -272,8 +278,14 @@ class ProcessBackendTests(unittest.TestCase):
             script = root / "child.py"
             script.write_text("ORIGINAL = True\n", encoding="utf-8")
             script.chmod(0o700)
+            # The ancestor gate requires an owner-controlled interpreter chain;
+            # sys.executable is a group-writable hostedtoolcache build on CI
+            # runners, so prefer the OS interpreter (the test never executes it).
+            executable = Path("/usr/bin/python3")
+            if not executable.is_file():
+                executable = Path(sys.executable)
             bound = self.proc.bind_child_command(
-                [str(Path(sys.executable).resolve()), str(script), "argument"]
+                [str(executable.resolve()), str(script), "argument"]
             )
             try:
                 replacement = root / "replacement.py"
@@ -289,6 +301,7 @@ class ProcessBackendTests(unittest.TestCase):
             finally:
                 bound.close()
 
+    @unittest.skipUnless(os.name == "posix", "the ARL drive supervisor is pinned to /bin/bash")
     def test_supervisor_is_pinned_to_bin_bash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp)
@@ -361,6 +374,7 @@ class RuntimeYamlInstallTests(unittest.TestCase):
 
 
 class CliSmokeTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "the force-loop start path uses the POSIX policy loader and /bin/bash supervisor")
     def test_cli_apply_and_smoke(self) -> None:
         cli = _load("force_loop_cli", FORCE_LOOP / "force_loop_cli.py")
         with tempfile.TemporaryDirectory() as tmp:
@@ -385,6 +399,7 @@ class CliSmokeTests(unittest.TestCase):
             ])
             self.assertEqual(rc, 0)
 
+    @unittest.skipUnless(os.name == "posix", "the force-loop start path uses the POSIX policy loader and /bin/bash supervisor")
     def test_start_environment_scrubs_hostile_startup_hooks_and_credentials(self) -> None:
         cli = _load("force_loop_cli_scrub", FORCE_LOOP / "force_loop_cli.py")
         with tempfile.TemporaryDirectory() as tmp:
@@ -414,6 +429,7 @@ class CliSmokeTests(unittest.TestCase):
             self.assertEqual(child["PATH"], "/usr/bin:/bin")
             self.assertEqual(child["SHELL"], "/bin/bash")
 
+    @unittest.skipUnless(os.name == "posix", "the force-loop start path uses the POSIX policy loader and /bin/bash supervisor")
     def test_start_binds_before_credentials_for_foreground_and_detach(self) -> None:
         cli = _load("force_loop_cli_ordering", FORCE_LOOP / "force_loop_cli.py")
         with tempfile.TemporaryDirectory() as tmp:
@@ -1079,6 +1095,7 @@ class OperatorPinPlumbingTests(unittest.TestCase):
             FORCE_LOOP / "apply_force_loop_defaults.py",
         )
 
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_start_env_retains_autoloop_operator_pins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1124,6 +1141,7 @@ class OperatorPinPlumbingTests(unittest.TestCase):
             ),
         )
 
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_apply_defaults_rerun_preserves_compute_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
