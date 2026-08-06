@@ -58,7 +58,8 @@ trusted_regular_file() {
   case "$owner" in 0|"$current_uid") ;; *) return 1 ;; esac
   [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
   (( (8#$mode & 8#022) == 0 )) || return 1
-  [ "$links" -eq 1 ] && [ "$kind" = "regular file" ]
+  [ "$kind" = "regular file" ] || return 1
+  [ "$owner" = 0 ] || [ "$links" -eq 1 ]
 }
 
 PYTHON="$(/usr/bin/readlink -f -- /usr/bin/python3 2>/dev/null || true)"
