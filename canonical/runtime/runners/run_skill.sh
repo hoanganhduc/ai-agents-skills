@@ -426,6 +426,29 @@ system_python_path() {
 # exec either way, so bound descriptors survive into the launched child.
 bind_regular_file_next_fd=200
 
+# ``test -ef`` resolves Linux's /proc/self/fd symlinks to the underlying
+# file, so equality there compares device and inode exactly.  BSD fdesc
+# nodes (macOS /dev/fd) report the fdesc device with the underlying inode,
+# so ``-ef`` can never match through them; for those paths identity is the
+# strongest tuple fdesc proxies faithfully -- inode, owner, link count, and
+# file type.  Mode is excluded because fdesc synthesizes it from the
+# descriptor's open flags.
+bound_descriptor_matches_selected() {
+  local descriptor_path="$1" selected_path="$2" descriptor_id selected_id
+  if [ "$descriptor_path" -ef "$selected_path" ]; then
+    return 0
+  fi
+  case "$descriptor_path" in
+    /dev/fd/*) ;;
+    *) return 1 ;;
+  esac
+  descriptor_id="$(/usr/bin/stat -Lc '%i:%u:%h:%F' -- "$descriptor_path" 2>/dev/null || \
+    /usr/bin/stat -Lf '%i:%u:%l:%HT' "$descriptor_path" 2>/dev/null || true)"
+  selected_id="$(/usr/bin/stat -Lc '%i:%u:%h:%F' -- "$selected_path" 2>/dev/null || \
+    /usr/bin/stat -Lf '%i:%u:%l:%HT' "$selected_path" 2>/dev/null || true)"
+  [ -n "$descriptor_id" ] && [ "$descriptor_id" = "$selected_id" ]
+}
+
 bind_regular_file() {
   local selected="$1" variable="$2" fd_variable="${3:-}" bound value
   if [ "${BASH_VERSINFO[0]}" -gt 4 ] || \
@@ -445,7 +468,8 @@ bind_regular_file() {
     return 1
   fi
   value="${!variable}"
-  if ! [ "$value" -ef "$selected" ] || ! trusted_metadata "$value" file; then
+  if ! bound_descriptor_matches_selected "$value" "$selected" || \
+     ! trusted_metadata "$value" file; then
     eval "exec ${bound}<&-"
     return 1
   fi
