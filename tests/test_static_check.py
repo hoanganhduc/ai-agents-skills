@@ -100,11 +100,13 @@ class StaticCheckTests(unittest.TestCase):
         )
         self.assertEqual(projected, expected)
         self.assertIn(
-            'for key in "${projection_allow_keys[@]}"; do loader_args+=(--allow-key "$key"); done',
+            'for key in ${projection_allow_keys[@]+"${projection_allow_keys[@]}"}; '
+            'do loader_args+=(--allow-key "$key"); done',
             posix,
         )
         self.assertIn(
-            'for key in "${projection_export_keys[@]}"; do loader_args+=(--export-key "$key"); done',
+            'for key in ${projection_export_keys[@]+"${projection_export_keys[@]}"}; '
+            'do loader_args+=(--export-key "$key"); done',
             posix,
         )
 
