@@ -5321,6 +5321,7 @@ PRIMARY_RUNTIME_ENV_ALLOWLIST = frozenset({"AAS_RUNTIME_ROOT", "AAS_RUNTIME_PYTH
 PRIMARY_COMPUTE_LANE_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
     "hetzner": frozenset({"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS"}),
     "kaggle": frozenset({"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}),
+    "modal": frozenset({"MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"}),
 }
 
 

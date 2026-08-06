@@ -373,7 +373,18 @@ def write_host_env_defaults(
 ) -> Path:
     """Write the host policy outside the agent-writable loop tree."""
     dest = _validated_policy_path(run_dir, policy_file)
-    values = dict(migrated_policy or {})
+    # Idempotence: preserve operator-set keys already in the destination
+    # (e.g. AAS_FORCE_LOOP_COMPUTE_LANES) instead of silently deleting them
+    # on re-runs; migrated and fixed defaults still override below.
+    values: dict[str, str] = {}
+    if dest.is_file():
+        from load_loop_env import EnvLoadError, load_env_file
+
+        try:
+            values.update(load_env_file(dest, forbidden_root=run_dir))
+        except EnvLoadError:
+            pass
+    values.update(migrated_policy or {})
     values.update(
         {
             "AAS_AUTOLOOP_GOAL_PRIORITY": "on",

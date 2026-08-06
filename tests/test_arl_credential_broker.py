@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import os
 import stat
 import sys
@@ -81,6 +83,50 @@ class PrepareConfigProjectionTests(unittest.TestCase):
             self.assertEqual(projected, {"CODEWHALE_HOME": str(target)})
             self.assertEqual(mounts, {str(target): str(source)})
             self.assertFalse(target.exists())
+
+
+def _real_secret_loader():
+    """Load load_secret_env.py directly; the broker's ownership gate requires a
+    root-owned file (the published generation), which the mutable repo cannot
+    satisfy, and that gate is orthogonal to the schema behavior under test."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "aas_exact_secret_loader_test", RUNNERS_DIR / "load_secret_env.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class StartupSecretSchemaTests(unittest.TestCase):
+    def test_nonconforming_compute_file_fails_closed_without_traceback(self) -> None:
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as temporary:
+            secret_file = Path(temporary) / "compute.env"
+            secret_file.write_text("TOTALLY_BOGUS_KEY=x\n", encoding="utf-8")
+            secret_file.chmod(0o600)
+            captured = io.StringIO()
+            with (
+                mock.patch.object(
+                    broker, "_load_module_file", return_value=_real_secret_loader()
+                ),
+                mock.patch.dict(
+                    os.environ,
+                    {broker.COMPUTE_POINTER: str(secret_file)},
+                    clear=False,
+                ),
+                contextlib.redirect_stderr(captured),
+            ):
+                rc = broker.main(["--entry", "/bin/true"])
+            self.assertEqual(rc, 2)
+            self.assertIn("secret env rejected", captured.getvalue())
+            self.assertIn("TOTALLY_BOGUS_KEY", captured.getvalue())
+            self.assertNotIn("Traceback", captured.getvalue())
+
+    def test_compute_schema_covers_every_advertised_lane(self) -> None:
+        self.assertTrue(broker.COMPUTE_PROJECTION_KEYS <= broker.COMPUTE_KEYS)
 
 
 if __name__ == "__main__":

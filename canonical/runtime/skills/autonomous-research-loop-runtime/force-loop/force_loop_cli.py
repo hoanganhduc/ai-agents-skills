@@ -98,6 +98,7 @@ PROVIDER_KEY_MAP: dict[str, frozenset[str]] = {
 COMPUTE_LANE_KEYS: dict[str, frozenset[str]] = {
     "hetzner": frozenset({"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS"}),
     "kaggle": frozenset({"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}),
+    "modal": frozenset({"MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"}),
 }
 BASE_ENV_KEYS = frozenset(
     {
@@ -369,10 +370,15 @@ def _load_managed_secrets(
 
 def _load_start_env(loop: Path, policy_file: Path) -> dict[str, str]:
     """Build a scrubbed non-secret environment from one protected host policy."""
+    # Foreground/systemd parity: admit the same non-secret operator prefixes
+    # the systemd backend passes through (transport, attestation pins, egress
+    # consents, compute-workspace pin); policy-file keys still override below.
     env = {
         key: str(value)
         for key, value in os.environ.items()
-        if key in BASE_ENV_KEYS or key.startswith("LC_")
+        if key in BASE_ENV_KEYS
+        or key.startswith("LC_")
+        or any(key.startswith(prefix) for prefix in SYSTEMD_ENV_PREFIXES)
     }
     if os.name == "nt" and (
         os.environ.get(COMPUTE_SECRETS_ENV) or os.environ.get(PROVIDER_SECRETS_ENV)

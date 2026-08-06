@@ -182,19 +182,29 @@ def _default_modal_liveness_probe(config: Any) -> tuple[bool, str]:  # pragma: n
     without spawning paid work. Provider-side spend refusal can still occur later, so the
     planner also enforces its local per-job USD estimate cap.
     """
+    import importlib.util
+    import sys
+
     from .modal_backend import modal_cli_status
 
     cli_ok, cli_path = modal_cli_status()
-    if not cli_ok:
+    environment = str(getattr(config, "modal_environment", "main") or "main")
+    if cli_ok:
+        argv = [cli_path, "app", "list", "--json", "-e", environment]
+    elif importlib.util.find_spec("modal") is not None:
+        # SDK-first fallback: submission needs only the importable SDK, and the
+        # package ships the same CLI as a module, so a PATH-invisible binary
+        # must not mark an authenticated lane unavailable.
+        argv = [sys.executable, "-m", "modal", "app", "list", "--json", "-e", environment]
+    else:
         return False, "modal_cli_unavailable"
     env = os.environ.copy()
     profile = getattr(config, "modal_profile", None)
     if profile:
         env["MODAL_PROFILE"] = str(profile)
-    environment = str(getattr(config, "modal_environment", "main") or "main")
     try:
         result = subprocess.run(
-            [cli_path, "app", "list", "--json", "-e", environment],
+            argv,
             env=env,
             capture_output=True,
             text=True,
