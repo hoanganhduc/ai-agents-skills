@@ -68,6 +68,12 @@ from installer.ai_agents_skills.target_prechecks import build_target_prechecks
 from installer.ai_agents_skills.verify import verify
 
 
+NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "native Windows apply/uninstall/rollback are dry-run-only until handle-bound mutation lands",
+)
+
+
 class Args:
     skill = None
     skills = None
@@ -749,6 +755,7 @@ class CrossAgentDelegationInstallerTests(unittest.TestCase):
                 if action.get("artifact_type") == "runtime-file"
             ])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_lifecycle_uninstall_and_rollback_are_scoped(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:

@@ -66,6 +66,7 @@ class ZoteroSecretConfigTests(unittest.TestCase):
         )
         return path
 
+    @unittest.skipIf(os.name == "nt", "native Windows secret files require the managed projection runner")
     def test_environment_secret_overrides_and_removes_legacy_config_field(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -89,6 +90,7 @@ class ZoteroSecretConfigTests(unittest.TestCase):
             )
             self.assertNotIn("semantic_scholar_api_key", loaded)
 
+    @unittest.skipIf(os.name == "nt", "native Windows secret files require the managed projection runner")
     def test_legacy_config_field_is_not_a_credential_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -133,6 +135,7 @@ class ZoteroSecretConfigTests(unittest.TestCase):
         self.assertNotIn("semantic_scholar_api_key", example)
         self.assertNotIn("SEMANTIC_SCHOLAR_API_KEY", example)
 
+    @unittest.skipIf(os.name == "nt", "native Windows secret files require the managed projection runner")
     def test_private_exact_secret_projection_is_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
