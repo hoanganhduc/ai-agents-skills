@@ -111,8 +111,11 @@ PROVIDER_DEFAULT_CONFIG: dict[str, tuple[str, str]] = {
 # writable directory in the synthetic home, seeded with only the listed
 # regular files from the real config.  The grok CLI additionally ignores
 # GROK_CONFIG_DIR and always resolves $HOME/<relative>, which the seeded
-# target satisfies because the synthetic home is the child HOME.
+# target satisfies because the synthetic home is the child HOME.  Claude
+# writes shell snapshots, session transcripts, and credential refreshes into
+# CLAUDE_CONFIG_DIR during tool-using primary runs.
 PROVIDER_SEED_STATE: dict[str, tuple[str, ...]] = {
+    "claude": (".credentials.json", "settings.json", ".claude.json"),
     "grok": ("auth.json", "config.toml", "settings.json"),
     "xai": ("auth.json", "config.toml", "settings.json"),
 }
