@@ -252,6 +252,12 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             )
             self.assertEqual(env["AXLE_API_KEY"], "stale-inherited-value")
 
+    @unittest.skipIf(
+        sys.platform == "darwin",
+        "BSD fdesc synthesizes /dev/fd modes from open flags and denies execve, "
+        "so a Darwin credential launch execs the attested real path instead of "
+        "the bound inode and cannot honor this guarantee",
+    )
     def test_credential_command_replacement_after_binding_executes_original_inode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

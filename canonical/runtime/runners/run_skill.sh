@@ -449,6 +449,20 @@ bound_descriptor_matches_selected() {
   [ -n "$descriptor_id" ] && [ "$descriptor_id" = "$selected_id" ]
 }
 
+# BSD fdesc nodes also synthesize their permission bits from the
+# descriptor's open flags, so execve on a read-only /dev/fd path is denied
+# no matter what mode the underlying file carries.  Where /proc is
+# unavailable a launch therefore execs the attested real path -- the
+# descriptor stays bound for identity and child reads -- while Linux
+# /proc paths continue to exec the bound inode exactly.
+exec_path_for_bound() {
+  local bound="$1" attested="$2"
+  case "$bound" in
+    /dev/fd/*) printf '%s\n' "$attested" ;;
+    *) printf '%s\n' "$bound" ;;
+  esac
+}
+
 bind_regular_file() {
   local selected="$1" variable="$2" fd_variable="${3:-}" bound value
   if [ "${BASH_VERSINFO[0]}" -gt 4 ] || \
@@ -500,6 +514,7 @@ if [ "$credential_contract" -eq 1 ]; then
     printf 'credential-bearing launch could not descriptor-bind the managed command\n' >&2
     exit 127
   fi
+  command_command="$(exec_path_for_bound "$command_command" "$command_path")"
   export AAS_RUNTIME_COMMAND_FD="$command_fd"
   export AAS_RUNTIME_COMMAND_PATH="$command_path"
   selected_python="$(system_python_path || true)"
@@ -507,6 +522,7 @@ if [ "$credential_contract" -eq 1 ]; then
     printf 'credential-bearing launch requires the attested system Python runtime\n' >&2
     exit 127
   fi
+  python_command="$(exec_path_for_bound "$python_command" "$selected_python")"
   export AAS_RUNTIME_PYTHON="$python_command"
   export PATH=/usr/bin:/bin
   unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS PYTHONBREAKPOINT
