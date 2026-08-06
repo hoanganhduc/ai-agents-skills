@@ -63,7 +63,10 @@ PROVIDER_KEY_MAP: dict[str, frozenset[str]] = {
     "opencode": frozenset({"OPENCODE_API_KEY"}),
 }
 COMPUTE_KEYS = frozenset(
-    {"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS", "KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}
+    {
+        "HCLOUD_TOKEN", "HCLOUD_SSH_KEYS", "KAGGLE_API_TOKEN",
+        "KAGGLE_CONFIG_DIR", "MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET",
+    }
 )
 COMPUTE_KEY_MAP: dict[str, frozenset[str]] = {
     "hetzner": frozenset({"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS"}),
@@ -629,8 +632,16 @@ def main(argv: list[str] | None = None) -> int:
     if not loader_path.is_file():
         loader_path = runtime_root / "load_secret_env.py"
     loader = _load_module_file(loader_path, "aas_exact_secret_loader")
-    providers = loader.load_pointer_secret_env(PROVIDER_POINTER, allowed_keys=PROVIDER_KEYS)
-    compute = loader.load_pointer_secret_env(COMPUTE_POINTER, allowed_keys=COMPUTE_KEYS)
+    secret_error = getattr(loader, "SecretEnvError", ValueError)
+    try:
+        providers = loader.load_pointer_secret_env(PROVIDER_POINTER, allowed_keys=PROVIDER_KEYS)
+        compute = loader.load_pointer_secret_env(COMPUTE_POINTER, allowed_keys=COMPUTE_KEYS)
+    except (secret_error, OSError) as exc:
+        # Fail closed with a diagnostic instead of an uncaught traceback when a
+        # pointed secret file does not satisfy the strict schema. Loader errors
+        # name keys and line numbers, never values.
+        print(f"arl-credential-broker: secret env rejected: {exc}", file=sys.stderr)
+        return 2
     provider_config = {
         key: str(os.environ.get(key) or "")
         for key in PROVIDER_CONFIG_ENV

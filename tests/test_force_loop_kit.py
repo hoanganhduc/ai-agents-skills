@@ -1067,5 +1067,80 @@ class SystemdEnvironmentHandoffTests(unittest.TestCase):
             self.assertEqual(leftovers, [])
 
 
+class OperatorPinPlumbingTests(unittest.TestCase):
+    """Operator-pin delivery fixes: start-env prefix parity, modal lane
+    vocabulary, and apply-defaults idempotence for the lanes key."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.cli = _load("force_loop_cli_operator_pins", FORCE_LOOP / "force_loop_cli.py")
+        cls.defaults = _load(
+            "apply_force_loop_defaults_operator_pins",
+            FORCE_LOOP / "apply_force_loop_defaults.py",
+        )
+
+    def test_start_env_retains_autoloop_operator_pins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            policy = root / "host-policy.env"
+            policy.write_text(
+                "AAS_AUTOLOOP_GOAL_PRIORITY=on\nAAS_AUTOLOOP_NOTIFY=auto\n",
+                encoding="utf-8",
+            )
+            policy.chmod(0o600)
+            ambient = {
+                "AAS_AUTOLOOP_PROVIDER_TRANSPORT": "trusted-local",
+                "AAS_AUTOLOOP_ATTESTED_SHA256_CLAUDE": "deadbeef",
+                "AAS_AUTOLOOP_COMPUTE_WORKSPACE": "/data/workspace",
+                "AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS": "allow",
+                "AAS_AUTOLOOP_NOTIFY": "off",
+                "OPENAI_API_KEY": "must-not-cross",
+                "LD_PRELOAD": "/tmp/hostile.so",
+            }
+            with mock.patch.dict(os.environ, ambient, clear=True):
+                child = self.cli._load_start_env(root / "loop", policy)
+            self.assertEqual(child["AAS_AUTOLOOP_PROVIDER_TRANSPORT"], "trusted-local")
+            self.assertEqual(child["AAS_AUTOLOOP_ATTESTED_SHA256_CLAUDE"], "deadbeef")
+            self.assertEqual(child["AAS_AUTOLOOP_COMPUTE_WORKSPACE"], "/data/workspace")
+            self.assertEqual(child["AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS"], "allow")
+            # The protected host policy still overrides ambient values.
+            self.assertEqual(child["AAS_AUTOLOOP_NOTIFY"], "auto")
+            self.assertNotIn("OPENAI_API_KEY", child)
+            self.assertNotIn("LD_PRELOAD", child)
+
+    def test_compute_lanes_accept_kaggle_and_modal(self) -> None:
+        keys = self.cli._compute_keys(
+            {"AAS_FORCE_LOOP_COMPUTE_LANES": "kaggle,modal"}
+        )
+        self.assertEqual(
+            keys,
+            frozenset(
+                {
+                    "KAGGLE_API_TOKEN",
+                    "KAGGLE_CONFIG_DIR",
+                    "MODAL_TOKEN_ID",
+                    "MODAL_TOKEN_SECRET",
+                }
+            ),
+        )
+
+    def test_apply_defaults_rerun_preserves_compute_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "loop"
+            run_dir.mkdir()
+            policy = root / "policy.env"
+            self.defaults.write_host_env_defaults(
+                run_dir,
+                "formal",
+                policy,
+                migrated_policy={"AAS_FORCE_LOOP_COMPUTE_LANES": "kaggle,modal"},
+            )
+            self.defaults.write_host_env_defaults(run_dir, "formal", policy)
+            body = policy.read_text(encoding="utf-8")
+            self.assertIn("AAS_FORCE_LOOP_COMPUTE_LANES=kaggle,modal", body)
+            self.assertIn("AAS_AUTOLOOP_GOAL_PRIORITY=on", body)
+
+
 if __name__ == "__main__":
     unittest.main()
