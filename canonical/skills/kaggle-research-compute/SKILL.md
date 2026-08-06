@@ -50,6 +50,11 @@ choose the backend; this skill pushes kernels only after that choice lands on Ka
 
 ## Core workflow
 
+Work through `compute-offload-sizing-gate` first. Size against the lane's
+**aggregate** capacity — `kernel_cores` x `concurrency`, not one kernel — and
+set `total_units` so the fan-out is actually used; sizing to a single kernel
+understates the free lane by the concurrency factor.
+
 1. If local resources matter, run `get-available-resources` and let the broker apply the self-preservation veto.
 2. Build a portable job bundle (`manifest.json` with `total_units`, `worker`, `run.sh`, `merge`, writable `out/`) — the same bundle runs unchanged on any lane; each completed work unit leaves a checkpoint in `out/` so a re-pushed kernel resumes.
 3. Run `preflight` (free, no kernel) to get the Kaggle plan: kind (CPU/GPU), estimated resume rounds and kernel count, concurrency, the 12h session cap, the GPU-hour estimate vs the weekly cap, adequacy, and availability.
@@ -119,5 +124,6 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 When this skill is involved, consider the same workflow templates as the other offload lanes
 (install via the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
 
+- `compute-offload-sizing-gate` -- Pre-dispatch worksheet: measure the workload, read the declared lane capacity, write the manifest in the correct dialect, assert the plan, and verify the realized allocation.
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `engineering-delivery-loop-runbook` -- Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and five-lane broker-routed heavy-compute offload with per-lane safety gates.

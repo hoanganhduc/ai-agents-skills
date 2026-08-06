@@ -52,6 +52,11 @@ provisions only after that choice lands on Hetzner.
 
 ## Core workflow
 
+Work through `compute-offload-sizing-gate` first. This lane bills per server
+hour, so an under-characterized job pays for boot and teardown before failing;
+measure the workload and match it to the server type's declared vCPU/RAM before
+`up`.
+
 1. If local resources matter, run `get-available-resources` and let the broker apply the self-preservation veto.
 2. Build a portable job bundle (`manifest.json`, `worker`, executable `run.sh`, `merge`, writable `out/`) as an immediate child of the absolute operator-approved `[hetzner].bundle_root`. The same bundle runs unchanged on any lane.
 3. Run `preflight` (free, no server) to get the plan and exact full `required_bundle_sha256`; review that digest with the cost and placement.
@@ -149,5 +154,6 @@ reference.
 When this skill is involved, consider the same workflow templates as the other offload lanes
 (install via the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
 
+- `compute-offload-sizing-gate` -- Pre-dispatch worksheet: measure the workload, read the declared lane capacity, write the manifest in the correct dialect, assert the plan, and verify the realized allocation.
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `engineering-delivery-loop-runbook` -- Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and five-lane broker-routed heavy-compute offload with per-lane safety gates.

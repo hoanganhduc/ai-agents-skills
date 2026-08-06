@@ -85,9 +85,17 @@ successful retry replaces an earlier failed/vacuous duplicate during merge.
 
 ## Core workflow
 
+Work through `compute-offload-sizing-gate` first: measure the workload, read the
+declared lane capacity, and only then size the manifest. Modal's adequacy check
+is an API liveness probe, so it admits requests that exceed the target
+function's declared `cpu=`/`memory=` — the caller must make that comparison.
+
 1. If local resources matter, run `get-available-resources`.
-2. Build a broker manifest JSON for the task.
-3. Run broker `plan` (or `fanout-plan` for a large divisible job).
+2. Build a broker manifest JSON for the task. The resource block must be the
+   top-level **`constraints`** key; any other key is dropped silently and the
+   job plans as though it requested nothing.
+3. Run broker `plan` (or `fanout-plan` for a large divisible job). Confirm the
+   plan echoes a non-empty `constraints` block equal to what was submitted.
 4. Use `run plan` as the decision boundary. Execute a selected Kaggle or Hetzner lane
    through its corresponding lane skill; `run submit` dispatches only Modal/GitHub Actions.
    Execute an accepted local plan under the broker's reported worker limits.
@@ -153,5 +161,6 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 When this skill is involved, consider these workflow templates (install via
 the `workflow-templates` artifact profile, or `--with-deps` to pull backing skills):
 
+- `compute-offload-sizing-gate` -- Pre-dispatch worksheet: measure the workload, read the declared lane capacity, write the manifest in the correct dialect, assert the plan, and verify the realized allocation.
 - `autonomous-research-loop-runbook` -- Bounded autonomous research-loop runbook with four stop conditions, single-path solving, mandatory cross-agent verification, fresh-agent backtracking, and five-lane broker-routed heavy-compute offload with per-lane safety gates.
 - `engineering-delivery-loop-runbook` -- Bounded build-and-deliver loop runbook: single-path implementation with seen-to-fail proof, cross-agent diff verification, behavior-preserving cleanup, and five-lane broker-routed heavy-compute offload with per-lane safety gates.

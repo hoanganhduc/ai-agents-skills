@@ -28,7 +28,8 @@
         "template:reversible-decision-memo",
         "template:informal-to-lean-formalization-runbook",
         "template:cross-agent-adversarial-review",
-        "template:tikz-figure-verification-runbook"
+        "template:tikz-figure-verification-runbook",
+        "template:compute-offload-sizing-gate"
       ]
     },
     "serious-research": {
@@ -170,6 +171,7 @@
         "template:informal-to-lean-formalization-runbook",
         "template:cross-agent-adversarial-review",
         "template:tikz-figure-verification-runbook",
+        "template:compute-offload-sizing-gate",
         "template:goal-focus",
         "template:goal-priority",
         "template:goal-priority-example",
@@ -230,6 +232,24 @@
           "deepseek",
           "opencode",
           "antigravity"
+        ]
+      },
+      "compute-offload-sizing-gate": {
+        "description": "Pre-dispatch worksheet for remote compute: measure the workload, read the declared lane capacity, write the manifest in the correct dialect, assert the plan, and verify the realized allocation.",
+        "source": "compute-offload-sizing-gate.md",
+        "supported_agents": [
+          "codex",
+          "claude",
+          "deepseek",
+          "opencode",
+          "antigravity",
+          "grok",
+          "kimi"
+        ],
+        "depends_on_skills": [
+          "kaggle-research-compute",
+          "hetzner-research-compute",
+          "modal-research-compute"
         ]
       },
       "tasks-plan": {
