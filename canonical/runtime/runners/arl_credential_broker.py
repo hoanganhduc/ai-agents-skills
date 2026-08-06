@@ -106,6 +106,16 @@ PROVIDER_DEFAULT_CONFIG: dict[str, tuple[str, str]] = {
     "moonshot": ("KIMI_CONFIG_DIR", ".kimi"),
     "opencode": ("OPENCODE_CONFIG_DIR", ".config/opencode"),
 }
+# Providers that create session/lock state inside their config directory and
+# therefore cannot run against a read-only bind of it.  These get a private
+# writable directory in the synthetic home, seeded with only the listed
+# regular files from the real config.  The grok CLI additionally ignores
+# GROK_CONFIG_DIR and always resolves $HOME/<relative>, which the seeded
+# target satisfies because the synthetic home is the child HOME.
+PROVIDER_SEED_STATE: dict[str, tuple[str, ...]] = {
+    "grok": ("auth.json", "config.toml", "settings.json"),
+    "xai": ("auth.json", "config.toml", "settings.json"),
+}
 SECRET_POINTERS = frozenset(
     {
         PROVIDER_POINTER, COMPUTE_POINTER, "AAS_SECRETS_FILE",
@@ -335,6 +345,20 @@ class CredentialState:
             raise ValueError("selected provider config path is unsafe")
         target = child_home / relative
         projected[env_name] = str(target)
+        seed_names = PROVIDER_SEED_STATE.get(provider)
+        if seed_names is not None:
+            target.mkdir(mode=0o700, parents=True)
+            for name in seed_names:
+                seed_source = source / name
+                try:
+                    info = os.lstat(seed_source)
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISREG(info.st_mode):
+                    raise ValueError("provider seed state file is unsafe")
+                shutil.copy2(seed_source, target / name)
+                os.chmod(target / name, 0o600)
+            return projected, mounts
         mounts[str(target)] = str(source)
         return projected, mounts
 
