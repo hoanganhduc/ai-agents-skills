@@ -200,6 +200,7 @@ if [ -n "$compute_pointer" ]; then
     --allow-key KAGGLE_CONFIG_DIR
     --export-subset
     --retain-env PYTHONPATH
+    --retain-env AAS_AUTOLOOP_COMPUTE_WORKSPACE
     -- "${command[@]}"
   )
 else

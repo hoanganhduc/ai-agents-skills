@@ -195,6 +195,7 @@ if [ -n "${AAS_COMPUTE_SECRETS_FILE:-}" ]; then
     --export-key KAGGLE_API_TOKEN
     --export-key KAGGLE_CONFIG_DIR
     --retain-env PYTHONPATH
+    --retain-env AAS_AUTOLOOP_COMPUTE_WORKSPACE
     -- "${command[@]}"
   )
 else

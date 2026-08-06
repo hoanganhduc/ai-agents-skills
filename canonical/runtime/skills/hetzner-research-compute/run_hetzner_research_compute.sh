@@ -237,6 +237,7 @@ if [ -n "$compute_pointer" ]; then
     --export-key HCLOUD_TOKEN
     --export-key HCLOUD_SSH_KEYS
     --retain-env PYTHONPATH
+    --retain-env AAS_AUTOLOOP_COMPUTE_WORKSPACE
     --retain-env AAS_HETZNER_HCLOUD_BIN
     --retain-env AAS_HETZNER_SSH_BIN
     --retain-env AAS_HETZNER_SCP_BIN
