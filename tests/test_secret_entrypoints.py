@@ -64,6 +64,7 @@ OBSERVED_ENV_KEYS = sorted(COMPUTE_KEYS | MODAL_KEYS | PROVIDER_KEYS | SKILL_KEY
     "AAS_HETZNER_SCP_BIN",
     "AAS_HETZNER_SSH_BIN",
     "AAS_HETZNER_RSYNC_BIN",
+    "AAS_AUTOLOOP_COMPUTE_WORKSPACE",
     "PYTHONHOME",
     "PYTHONPATH",
 ]
@@ -1365,6 +1366,58 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             status_child = json.loads(status.stdout)
             for key in COMPUTE_KEYS | PROVIDER_KEYS:
                 self.assertIsNone(status_child[key], key)
+
+    def test_outer_runner_retains_compute_workspace_pin_for_lane_launch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = self._stage_entrypoint(
+                root,
+                skill="kaggle-research-compute",
+                wrapper="run_kaggle_research_compute.sh",
+                python_entrypoint="kaggle_research_compute.py",
+            )
+            runtime = wrapper.parents[3]
+            runner = runtime / "run_skill.sh"
+            self._copy_test_runner(runner)
+            runner.chmod(0o755)
+            compute_secrets = self._private_file(
+                root,
+                "compute.env",
+                "KAGGLE_API_TOKEN=restored-kaggle\n",
+            )
+            data_workspace = root / "data-workspace"
+            (data_workspace / "config").mkdir(parents=True)
+            (data_workspace / "config" / "research-compute.toml").write_text(
+                "", encoding="utf-8"
+            )
+            env = self._env(root)
+            env.update(
+                {
+                    "AAS_COMPUTE_SECRETS_FILE": str(compute_secrets),
+                    "AAS_AUTOLOOP_COMPUTE_WORKSPACE": str(data_workspace),
+                }
+            )
+
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(runner),
+                    "skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+                    "doctor",
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            child = json.loads(completed.stdout)
+            self.assertEqual(child["KAGGLE_API_TOKEN"], "restored-kaggle")
+            self.assertEqual(
+                child["AAS_AUTOLOOP_COMPUTE_WORKSPACE"], str(data_workspace)
+            )
 
     def test_kaggle_doctor_resolves_canonical_access_token_without_cross_lane_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
