@@ -164,7 +164,7 @@ export AAS_RUNTIME_PYTHON="$PYTHON"
 workspace_root="$(cd -- "$SCRIPT_DIR/../.." && pwd -P)"
 trusted_pythonpath="$workspace_root"
 IFS=: read -r -a python_entries <<< "${PYTHONPATH:-}"
-for python_entry in "${python_entries[@]}"; do
+for python_entry in ${python_entries[@]+"${python_entries[@]}"}; do
   if [ -d "$python_entry" ]; then
     python_entry_real="$(cd -- "$python_entry" && pwd -P)"
     case "$python_entry_real/" in

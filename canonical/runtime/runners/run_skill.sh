@@ -291,8 +291,13 @@ credential_runtime_enforcement=1
 
 root_owned_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links actual_type
-  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || true)"
+  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
+    /usr/bin/stat -Lf '%u:%Lp:%l:%HT' "$candidate" 2>/dev/null || true)"
   IFS=: read -r owner mode links actual_type <<< "$metadata"
+  case "$actual_type" in
+    "Regular File") actual_type="regular file" ;;
+    Directory) actual_type=directory ;;
+  esac
   [ "$owner" = 0 ] || return 1
   [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
   (( (8#$mode & 8#022) == 0 )) || return 1
@@ -333,8 +338,13 @@ trusted_credential_runtime_generation() {
 
 trusted_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links current_uid
-  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || true)"
+  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
+    /usr/bin/stat -Lf '%u:%Lp:%l:%HT' "$candidate" 2>/dev/null || true)"
   IFS=: read -r owner mode links actual_type <<< "$metadata"
+  case "$actual_type" in
+    "Regular File") actual_type="regular file" ;;
+    Directory) actual_type=directory ;;
+  esac
   current_uid="$(/usr/bin/id -u)"
   case "$owner" in 0|"$current_uid") ;; *) return 1 ;; esac
   [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1

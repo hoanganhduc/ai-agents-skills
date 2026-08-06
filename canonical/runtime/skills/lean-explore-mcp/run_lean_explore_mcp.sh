@@ -62,8 +62,13 @@ lean_explore_exact_generation_enforcement=1
 
 trusted_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links actual_type current_uid
-  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || true)"
+  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
+    /usr/bin/stat -Lf '%u:%Lp:%l:%HT' "$candidate" 2>/dev/null || true)"
   IFS=: read -r owner mode links actual_type <<< "$metadata"
+  case "$actual_type" in
+    "Regular File") actual_type="regular file" ;;
+    Directory) actual_type=directory ;;
+  esac
   current_uid="$(/usr/bin/id -u 2>/dev/null || true)"
   case "$owner" in 0|"$current_uid") ;; *) return 1 ;; esac
   [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
@@ -79,8 +84,13 @@ trusted_metadata() {
 
 root_owned_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links actual_type
-  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || true)"
+  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
+    /usr/bin/stat -Lf '%u:%Lp:%l:%HT' "$candidate" 2>/dev/null || true)"
   IFS=: read -r owner mode links actual_type <<< "$metadata"
+  case "$actual_type" in
+    "Regular File") actual_type="regular file" ;;
+    Directory) actual_type=directory ;;
+  esac
   [ "$owner" = 0 ] || return 1
   [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
   (( (8#$mode & 8#022) == 0 )) || return 1
@@ -96,8 +106,12 @@ trusted_directory_chain() {
   current_uid="$(/usr/bin/id -u 2>/dev/null || true)"
   while :; do
     [ ! -L "$current" ] || return 1
-    metadata="$(/usr/bin/stat -Lc '%u:%a:%F' -- "$current" 2>/dev/null || true)"
+    metadata="$(/usr/bin/stat -Lc '%u:%a:%F' -- "$current" 2>/dev/null || \
+      /usr/bin/stat -Lf '%u:%Lp:%HT' "$current" 2>/dev/null || true)"
     IFS=: read -r owner mode actual_type <<< "$metadata"
+    case "$actual_type" in
+      Directory) actual_type=directory ;;
+    esac
     case "$owner" in 0|"$current_uid") ;; *) return 1 ;; esac
     [ "$actual_type" = directory ] || return 1
     [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
