@@ -550,7 +550,11 @@ namespace AasSecretFile {
     )) {
         [void]$trustedOwnerSids.Add($sid)
     }
-    [uint32]$mutationMask = 0x500D0156
+    # Generic-rights ACEs (GENERIC_READ is bit 31) surface as negative Int32
+    # access masks; a range-checked [uint32] conversion would throw and skip
+    # that ACE's mutation check entirely.  Widening to Int64 keeps every ACE
+    # checked; sign extension cannot reach the mask, whose high bits are zero.
+    [int64]$mutationMask = 0x500D0156
     foreach ($descriptorCheck in $descriptorChecks) {
         $descriptorText = [string]$descriptorCheck.Descriptor
         try {
@@ -593,7 +597,7 @@ namespace AasSecretFile {
             if (-not $allowedSids.Contains($ace.SecurityIdentifier.Value)) {
                 if (
                     $descriptorCheck.Strict -or
-                    (([uint32]$ace.AccessMask -band $mutationMask) -ne 0)
+                    (([int64]$ace.AccessMask -band $mutationMask) -ne 0)
                 ) {
                     throw "Secret env path grants unsafe access outside the trusted ancestor boundary"
                 }
