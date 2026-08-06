@@ -53,6 +53,96 @@ _RESOURCE_ENV = {
 
 @unittest.skipUnless(
     sys.platform.startswith("linux"),
+    "brokered provider containment requires Linux",
+)
+class BrokeredProviderContainmentTests(unittest.TestCase):
+    """Exercise the allowlist filesystem boundary without network access."""
+
+    def test_real_bwrap_exposes_only_project_selected_config_and_runtime(self) -> None:
+        if not Path("/usr/bin/bwrap").is_file():
+            with mock.patch.object(
+                pr, "_trusted_host_binary", side_effect=pr.ProviderResourceError("missing")
+            ), self.assertRaises(pr.ProviderResourceError):
+                pr.brokered_provider_containment_command(
+                    ["/usr/bin/true"],
+                    cwd=REPO_ROOT,
+                    dependency_root=Path("/usr/bin"),
+                    synthetic_home=REPO_ROOT,
+                )
+            return
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            project = root / "project"
+            synthetic_home = root / "provider-home"
+            selected = root / "selected-config.json"
+            hidden = root / "other-host-config.json"
+            project.mkdir()
+            synthetic_home.mkdir()
+            (project / "input.txt").write_text("project-ok", encoding="utf-8")
+            selected.write_text("selected-ok", encoding="utf-8")
+            hidden.write_text("must-stay-hidden", encoding="utf-8")
+            selected.chmod(0o600)
+            hidden.chmod(0o600)
+            selected_target = synthetic_home / ".provider" / "config.json"
+            probe = (
+                "import json,sys; from pathlib import Path; "
+                "project,selected,hidden=map(Path,sys.argv[1:]); "
+                "(project/'written.txt').write_text('written',encoding='utf-8'); "
+                "print(json.dumps({'project':(project/'input.txt').read_text(),"
+                "'selected':selected.read_text(), 'hidden_exists':hidden.exists()}))"
+            )
+            command = pr.brokered_provider_containment_command(
+                [_PYTHON, "-I", "-S", "-c", probe, str(project), str(selected_target), str(hidden)],
+                cwd=project,
+                dependency_root=Path(_PYTHON).parent,
+                synthetic_home=synthetic_home,
+                config_mounts={str(selected_target): str(selected)},
+            )
+            self.assertEqual(command[0], "/usr/bin/bwrap")
+            self.assertNotIn(["--bind", "/", "/"], [command[i : i + 3] for i in range(len(command) - 2)])
+            completed = subprocess.run(
+                command,
+                cwd=str(project),
+                env={"PATH": "/usr/bin:/bin", "HOME": str(synthetic_home)},
+                text=True,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            payload = json.loads(completed.stdout)
+            self.assertEqual(payload["project"], "project-ok")
+            self.assertEqual(payload["selected"], "selected-ok")
+            self.assertFalse(payload["hidden_exists"])
+            self.assertEqual(
+                (project / "written.txt").read_text(encoding="utf-8"), "written"
+            )
+
+    def test_project_credential_shadows_are_rejected_before_command_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            dependency = root / "dependency"
+            synthetic_home = root / "home"
+            project.mkdir()
+            dependency.mkdir()
+            synthetic_home.mkdir()
+            (project / ".env.production").write_text(
+                "OPENAI_API_KEY=never-project-authority\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                pr.ProviderResourceError, "credential-capable"
+            ):
+                pr.brokered_provider_containment_command(
+                    ["/usr/bin/true"],
+                    cwd=project,
+                    dependency_root=dependency,
+                    synthetic_home=synthetic_home,
+                )
+
+
+@unittest.skipUnless(
+    sys.platform.startswith("linux"),
     "trusted-local resource enforcement requires Linux",
 )
 class ProviderResourceLinuxBehaviorTests(unittest.TestCase):

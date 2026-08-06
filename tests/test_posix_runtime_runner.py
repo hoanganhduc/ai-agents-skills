@@ -27,6 +27,14 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
         runner = runtime / "run_skill.sh"
         source = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_skill.sh"
         shutil.copy2(source, runner)
+        runner.write_text(
+            runner.read_text(encoding="utf-8").replace(
+                "credential_runtime_enforcement=1",
+                "credential_runtime_enforcement=0",
+                1,
+            ),
+            encoding="utf-8",
+        )
         runner.chmod(0o755)
         loader_source = (
             Path(__file__).resolve().parents[1]

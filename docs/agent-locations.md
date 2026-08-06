@@ -18,6 +18,7 @@ source content stays in this repository under `canonical/` and `manifest/`.
 | Grok | `~/.grok` | `~/.grok/skills/<skill>/` | `~/.grok/AGENTS.md` |
 | Kimi | `~/.kimi-code` | `~/.kimi-code/skills/<skill>/` | `~/.kimi-code/AGENTS.md` |
 | OpenClaw | `~/.openclaw` | `~/.openclaw/skills/<skill>/` | not modified |
+| chatgpt-local-coder | `~/.chatgpt-local-coder` | `~/.chatgpt-local-coder/skills/<skill>/` | `~/.chatgpt-local-coder/AGENTS.md` |
 
 **Source of truth vs install products.** Reusable skill and runtime logic is
 edited under `canonical/` (and installed into
@@ -50,6 +51,7 @@ Optional or compatibility skill locations:
 | Antigravity | `.agents/skills`, `~/.gemini/skills` | Workspace and Gemini compatibility locations reported but not used as the global write target. |
 | Grok | `~/.claude/skills`, `~/.agents/skills` | Compatibility locations reported but not used as the primary write target. |
 | Kimi | none additional | Primary write target is only `~/.kimi-code`. |
+| chatgpt-local-coder | `~/.agents/skills` | Compatibility location reported but not used as the primary write target. The host also discovers `~/.claude/skills` and `~/.codex/skills` at runtime; only `~/.chatgpt-local-coder/skills` is written here. |
 
 Optional artifact-class target directories:
 
@@ -64,15 +66,16 @@ Optional artifact-class target directories:
 | Grok | `~/.grok/agents` | `~/.grok/templates` | `~/.grok/commands` | `~/.grok/tools` |
 | Kimi | `~/.kimi-code/agents` | `~/.kimi-code/templates` | not supported | `~/.kimi-code/tools` |
 | OpenClaw | not supported | not supported | not supported | not supported |
+| chatgpt-local-coder | `~/.chatgpt-local-coder/agents` | `~/.chatgpt-local-coder/templates` | `~/.chatgpt-local-coder/commands` | `~/.chatgpt-local-coder/tools` |
 
 Rendered artifact behavior differs by agent:
 
-| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | Grok | Kimi | OpenClaw |
-|---|---|---|---|---|---|---|---|---|---|
-| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copied flat Markdown skill file in `~/.gemini/antigravity-cli/skills`. | Copied directory-layout `SKILL.md` plus support files in `~/.grok/skills`. | Copied directory-layout `SKILL.md` plus support files in `~/.kimi-code/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. |
-| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Markdown subagent file (name/description overlay). | Markdown subagent file (`name`/`description` frontmatter). | Not supported. |
-| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Command file in `~/.grok/commands`. | Not supported; skills use `/skill:<name>`. | Not supported. |
-| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Managed block in `~/.grok/AGENTS.md`. | Managed block in `~/.kimi-code/AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. |
+| Artifact | Codex | Claude | DeepSeek | Copilot | OpenCode | Antigravity | Grok | Kimi | OpenClaw | chatgpt-local-coder |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Skill file in auto mode | Reference adapter by default. | Symlink to canonical skill when supported. | Reference adapter by default. | Reference adapter in `~/.copilot/skills`. | Copied native `SKILL.md` plus support files. | Copied flat Markdown skill file in `~/.gemini/antigravity-cli/skills`. | Copied directory-layout `SKILL.md` plus support files in `~/.grok/skills`. | Copied directory-layout `SKILL.md` plus support files in `~/.kimi-code/skills`. | Copy-only in fake roots for eligible `SKILL.md` files. | Copied directory-layout `SKILL.md` plus support files in `~/.chatgpt-local-coder/skills`. |
+| Persona | TOML custom-agent file. | Markdown subagent file. | Reference prompt. | `.agent.md` custom-agent profile. | Markdown subagent file. | Plugin-scoped Markdown agent definition. | Markdown subagent file (name/description overlay). | Markdown subagent file (`name`/`description` frontmatter). | Not supported. | Markdown file in `~/.chatgpt-local-coder/agents`; inert storage, not a registered subagent. |
+| Entrypoint alias | Reference doc under `instructions/entrypoints`. | Command file. | Reference doc under `instructions/entrypoints`. | Not supported by this installer target. | Command file. | Flat Markdown global skill alias. | Command file in `~/.grok/commands`. | Not supported; skills use `/skill:<name>`. | Not supported. | Reference doc under `instructions/entrypoints`. |
+| Management notice | Managed block in `AGENTS.md`. | Managed block in `CLAUDE.md`. | Managed block in `AGENTS.md`. | Not supported; Copilot instruction files are not modified. | Managed block in `AGENTS.md`. | Managed block in `~/.gemini/GEMINI.md`. | Managed block in `~/.grok/AGENTS.md`. | Managed block in `~/.kimi-code/AGENTS.md`. | Not supported; OpenClaw instruction files are not modified. | Managed block in `~/.chatgpt-local-coder/AGENTS.md`. |
 
 Instruction docs target each agent's `instructions` or rules directory.
 Entrypoint aliases target Claude and OpenCode commands and Antigravity global
@@ -128,6 +131,21 @@ the drive primary does not nest those panel calls). See
 `docs/multi-agent-examples.md`. `KIMI_CODE_HOME`-relocated installs are
 unsupported; unset that variable before real-system install. See
 `targets/kimi/README.md`.
+
+chatgpt-local-coder is included in default target detection when
+`~/.chatgpt-local-coder` exists. It is the local MCP coding host published as
+the `chatgpt-local-coder` npm package (`clc` for short), and it runs natively on
+Windows, Linux, and macOS. The installer copies directory-layout skills under
+`~/.chatgpt-local-coder/skills/`, writes managed instruction blocks into
+`~/.chatgpt-local-coder/AGENTS.md`, and copies personas, templates, instruction
+docs, entrypoint reference docs, and tool shims into the matching subdirectories.
+Copy mode is the default because native Windows symlink creation is
+privilege-gated. The host adds `~/.chatgpt-local-coder/skills` to its own skill
+discovery roots, ranked below `~/.claude/skills` and above `~/.codex/skills`, and
+loads `~/.chatgpt-local-coder/AGENTS.md` as its user-level memory file. Its
+credentials live in the host config directory (`~/.config/chatgpt-local-coder`
+by XDG default; `%APPDATA%` on Windows and `Library/Application Support` on
+macOS), not in the agent home, so the installer never touches them.
 
 OpenClaw is included in default target detection when an eligible `.openclaw`
 fake-root home exists, and remains fake-root-only before native target

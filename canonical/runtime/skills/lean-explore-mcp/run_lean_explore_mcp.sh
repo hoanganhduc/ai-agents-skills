@@ -8,6 +8,7 @@ lean_explore_api_key="${LEANEXPLORE_API_KEY:-}"
 lean_explore_site_packages="${AAS_LEANEXPLORE_SITE_PACKAGES:-}"
 unset LEANEXPLORE_API_KEY AAS_SECRETS_FILE OPENCLAW_SECRETS_FILE
 unset AAS_LEANEXPLORE_SITE_PACKAGES AAS_LEANEXPLORE_KEY_FD AAS_LEANEXPLORE_SITE_FD
+unset AAS_LEANEXPLORE_CLOSURE_FD AAS_LEANEXPLORE_SITE_RELATIVE
 unset AAS_LEANEXPLORE_WRAPPER_PATH
 unset AAS_SKILL_SECRETS_FILE AAS_COMPUTE_SECRETS_FILE AAS_PROVIDER_SECRETS_FILE
 unset AAS_CALIBRE_SECRETS_FILE AAS_ZOTERO_SECRETS_FILE
@@ -55,6 +56,9 @@ case "$script_path" in */*) script_parent="${script_path%/*}" ;; *) script_paren
 SCRIPT_DIR="$(cd -- "$script_parent" && builtin pwd -P)"
 SCRIPT="$SCRIPT_DIR/lean_explore_mcp.py"
 WRAPPER="$SCRIPT_DIR/run_lean_explore_mcp.sh"
+# Patchable only in ephemeral test copies; production credential launches use
+# the root-owned exact CSR generation.
+lean_explore_exact_generation_enforcement=1
 
 trusted_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links actual_type current_uid
@@ -70,6 +74,20 @@ trusted_metadata() {
     [ "$owner" = 0 ] || [ "$links" -eq 1 ] || return 1
   else
     [ "$actual_type" = directory ] || return 1
+  fi
+}
+
+root_owned_metadata() {
+  local candidate="$1" expected_type="$2" metadata owner mode links actual_type
+  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || true)"
+  IFS=: read -r owner mode links actual_type <<< "$metadata"
+  [ "$owner" = 0 ] || return 1
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+  (( (8#$mode & 8#022) == 0 )) || return 1
+  if [ "$expected_type" = file ]; then
+    [ "$actual_type" = "regular file" ] && [ "$links" = 1 ]
+  else
+    [ "$actual_type" = directory ]
   fi
 }
 
@@ -96,6 +114,11 @@ trusted_directory_chain() {
 
 if [ ! -f "$SCRIPT" ] || [ -L "$SCRIPT" ] || ! trusted_metadata "$SCRIPT" file; then
   printf 'runtime helper is unavailable or untrusted.\n' >&2
+  exit 127
+fi
+if [ "$lean_explore_exact_generation_enforcement" -eq 1 ] && \
+   [ -n "$lean_explore_api_key" ] && ! root_owned_metadata "$SCRIPT" file; then
+  printf 'credential-bearing LeanExplore launch requires an immutable exact-generation helper.\n' >&2
   exit 127
 fi
 
@@ -163,22 +186,37 @@ if [ "${1:-}" = serve ]; then
     /*/site-packages) ;;
     *) printf 'LeanExplore site-packages must be an absolute site-packages directory.\n' >&2; exit 78 ;;
   esac
-  if [ ! -d "$lean_explore_site_packages" ] || [ -L "$lean_explore_site_packages" ] || \
-     ! trusted_directory_chain "$lean_explore_site_packages"; then
-    printf 'LeanExplore site-packages failed ownership or mode checks.\n' >&2
+  current_uid="$(/usr/bin/id -u)"
+  passwd_record="$(/usr/bin/getent passwd "$current_uid" 2>/dev/null || true)"
+  IFS=: read -r _ _ _ _ _ account_home _ <<< "$passwd_record"
+  if [ -z "$account_home" ] || [ "${account_home#/}" = "$account_home" ]; then
+    printf 'LeanExplore could not resolve the account home.\n' >&2
     exit 78
   fi
-  exec {AAS_LEANEXPLORE_SITE_FD}<"$lean_explore_site_packages"
-  if [ -e "/proc/self/fd/$AAS_LEANEXPLORE_SITE_FD" ]; then
-    lean_explore_bound_site="/proc/self/fd/$AAS_LEANEXPLORE_SITE_FD"
-  elif [ -e "/dev/fd/$AAS_LEANEXPLORE_SITE_FD" ]; then
-    lean_explore_bound_site="/dev/fd/$AAS_LEANEXPLORE_SITE_FD"
+  closure_root="$account_home/.local/share/coding-system/python-closure/lean-explore"
+  case "$lean_explore_site_packages" in
+    "$closure_root"/lib/python3.[0-9]/site-packages|"$closure_root"/lib/python3.[0-9][0-9]/site-packages|"$closure_root"/lib/python3.[0-9][0-9][0-9]/site-packages) ;;
+    *) printf 'LeanExplore requires the exact CSR lean-explore closure path.\n' >&2; exit 78 ;;
+  esac
+  if [ ! -d "$closure_root" ] || [ -L "$closure_root" ] || \
+     ! root_owned_metadata "$closure_root" directory || \
+     [ ! -f "$closure_root/.coding-system-python-closure.json" ] || \
+     ! root_owned_metadata "$closure_root/.coding-system-python-closure.json" file; then
+    printf 'LeanExplore CSR closure root or marker is unavailable or untrusted.\n' >&2
+    exit 78
+  fi
+  exec {AAS_LEANEXPLORE_CLOSURE_FD}<"$closure_root"
+  if [ -e "/proc/self/fd/$AAS_LEANEXPLORE_CLOSURE_FD" ]; then
+    lean_explore_bound_root="/proc/self/fd/$AAS_LEANEXPLORE_CLOSURE_FD"
+  elif [ -e "/dev/fd/$AAS_LEANEXPLORE_CLOSURE_FD" ]; then
+    lean_explore_bound_root="/dev/fd/$AAS_LEANEXPLORE_CLOSURE_FD"
   else
-    printf 'LeanExplore site-packages cannot be descriptor-bound on this host.\n' >&2
+    printf 'LeanExplore closure cannot be descriptor-bound on this host.\n' >&2
     exit 78
   fi
-  [ "$lean_explore_bound_site" -ef "$lean_explore_site_packages" ] || exit 78
-  export AAS_LEANEXPLORE_SITE_FD
+  [ "$lean_explore_bound_root" -ef "$closure_root" ] || exit 78
+  AAS_LEANEXPLORE_SITE_RELATIVE="${lean_explore_site_packages#"$closure_root"/}"
+  export AAS_LEANEXPLORE_CLOSURE_FD AAS_LEANEXPLORE_SITE_RELATIVE
 fi
 
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8

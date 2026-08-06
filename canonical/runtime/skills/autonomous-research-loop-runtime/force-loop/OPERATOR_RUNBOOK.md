@@ -44,7 +44,9 @@
 
 ## Secrets
 
-- Never put API tokens in `force_loop.env`, loop JSON, or unit `Environment=`.
+- Never create project `force_loop.env` files or backups. They are rejected as
+  shadow authority paths even when credential-shaped fields are empty.
+- Never put API tokens in project policy, loop JSON, or unit `Environment=`.
 - Export tokens in the launching shell, or set `AAS_COMPUTE_SECRETS_FILE` in
   that shell to an absolute path outside the loop. The file uses strict
   `KEY=VALUE` lines and may contain only `HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS`,

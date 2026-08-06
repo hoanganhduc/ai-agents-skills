@@ -9,36 +9,19 @@ import os
 # clients, but is consumed before discovery or any LeanExplore import.
 _LEANEXPLORE_API_KEY = os.environ.pop("LEANEXPLORE_API_KEY", None)
 _LEANEXPLORE_KEY_FD = os.environ.pop("AAS_LEANEXPLORE_KEY_FD", "")
-_LEANEXPLORE_SITE_FD = os.environ.pop("AAS_LEANEXPLORE_SITE_FD", "")
+_LEANEXPLORE_CLOSURE_FD = os.environ.pop("AAS_LEANEXPLORE_CLOSURE_FD", "")
+_LEANEXPLORE_SITE_RELATIVE = os.environ.pop(
+    "AAS_LEANEXPLORE_SITE_RELATIVE", ""
+)
+os.environ.pop("AAS_LEANEXPLORE_SITE_FD", None)
 _LEANEXPLORE_WRAPPER_PATH = os.environ.pop("AAS_LEANEXPLORE_WRAPPER_PATH", "")
 _LEANEXPLORE_CAPTURE_ERROR = ""
-if _LEANEXPLORE_API_KEY is None and _LEANEXPLORE_KEY_FD:
-    try:
-        _key_fd = int(_LEANEXPLORE_KEY_FD, 10)
-        if _key_fd < 3:
-            raise ValueError("credential descriptor must not be a standard stream")
-        _key_bytes = bytearray()
-        while len(_key_bytes) <= 4097:
-            _chunk = os.read(_key_fd, 4098 - len(_key_bytes))
-            if not _chunk:
-                break
-            _key_bytes.extend(_chunk)
-        os.close(_key_fd)
-        if len(_key_bytes) > 4097:
-            raise ValueError("credential exceeds the supported length")
-        if _key_bytes.endswith(b"\n"):
-            del _key_bytes[-1:]
-        if b"\n" in _key_bytes or b"\r" in _key_bytes:
-            raise ValueError("credential contains an unsupported line break")
-        _LEANEXPLORE_API_KEY = bytes(_key_bytes).decode("utf-8")
-        for _index in range(len(_key_bytes)):
-            _key_bytes[_index] = 0
-    except (OSError, UnicodeError, ValueError) as exc:
-        _LEANEXPLORE_CAPTURE_ERROR = str(exc)
 
 import argparse
+import hashlib
 import importlib.util
 import json
+import re
 import shutil
 import stat
 import sys
@@ -54,6 +37,10 @@ LEAN_EXPLORE_API_KEYS_URL = "https://www.leanexplore.com/api-keys"
 LEAN_EXPLORE_CACHE = Path.home() / ".lean_explore" / "cache"
 SUPPORTED_LEAN_EXPLORE_VERSION = "1.2.1"
 BACKENDS = {"api", "local"}
+CLOSURE_MARKER = ".coding-system-python-closure.json"
+CLOSURE_MARKER_SCHEMA = "coding-system.python-closure-install/v3"
+CLOSURE_CONTENT_SCHEMA = "coding-system.python-closure-content/v2"
+_SITE_RELATIVE_RE = re.compile(r"^lib/python3\.[0-9]{1,3}/site-packages$")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -234,21 +221,244 @@ def managed_wrapper_path() -> str:
     return str(candidate)
 
 
-def _activate_attested_site_packages() -> None:
-    if not _LEANEXPLORE_SITE_FD:
-        return
+def _stable_file_digest(path: Path, expected_owner: int) -> tuple[str, int]:
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
-        descriptor = int(_LEANEXPLORE_SITE_FD, 10)
-    except ValueError as exc:
-        raise RuntimeError("invalid LeanExplore site-packages descriptor") from exc
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != expected_owner
+            or before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or before.st_nlink != 1
+        ):
+            raise RuntimeError("LeanExplore closure file has unsafe ownership or type")
+        digest = hashlib.sha256()
+        while True:
+            block = os.read(descriptor, 1024 * 1024)
+            if not block:
+                break
+            digest.update(block)
+        after = os.fstat(descriptor)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise RuntimeError("LeanExplore closure file changed during attestation")
+        return digest.hexdigest(), int(before.st_size)
+    finally:
+        os.close(descriptor)
+
+
+def _installed_content_manifest(
+    root: Path, *, expected_owner: int
+) -> dict[str, object]:
+    """Reproduce CSR's complete v2 installed-content manifest."""
+
+    root_info = root.stat()
+    canonical_root = root.resolve(strict=True)
+    if (
+        not stat.S_ISDIR(root_info.st_mode)
+        or root_info.st_uid != expected_owner
+        or root_info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise RuntimeError("LeanExplore closure root is not immutable authority")
+    digest = hashlib.sha256()
+    digest.update((CLOSURE_CONTENT_SCHEMA + "\n").encode("utf-8"))
+    entry_count = 0
+
+    def add(record: dict[str, object]) -> None:
+        nonlocal entry_count
+        payload = json.dumps(
+            record, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+        entry_count += 1
+
+    def walk(directory: Path, relative: Path) -> None:
+        try:
+            entries = sorted(os.scandir(directory), key=lambda item: item.name)
+        except OSError as exc:
+            raise RuntimeError("LeanExplore closure cannot be enumerated") from exc
+        for entry in entries:
+            item_relative = relative / entry.name
+            relative_text = item_relative.as_posix()
+            if relative_text == CLOSURE_MARKER:
+                continue
+            info = entry.stat(follow_symlinks=False)
+            if info.st_uid != expected_owner or info.st_mode & (
+                stat.S_IWGRP | stat.S_IWOTH
+            ):
+                raise RuntimeError(
+                    "LeanExplore closure content has unsafe ownership or mode"
+                )
+            mode = stat.S_IMODE(info.st_mode)
+            path = Path(entry.path)
+            if stat.S_ISDIR(info.st_mode):
+                add({"mode": mode, "path": relative_text, "type": "directory"})
+                walk(path, item_relative)
+            elif stat.S_ISREG(info.st_mode):
+                file_digest, size = _stable_file_digest(path, expected_owner)
+                add(
+                    {
+                        "mode": mode,
+                        "path": relative_text,
+                        "sha256": file_digest,
+                        "size": size,
+                        "type": "file",
+                    }
+                )
+            elif stat.S_ISLNK(info.st_mode):
+                target = os.readlink(path)
+                resolved = path.resolve(strict=True)
+                try:
+                    resolved.relative_to(canonical_root)
+                except ValueError as exc:
+                    raise RuntimeError(
+                        "LeanExplore closure symlink escapes the held generation"
+                    ) from exc
+                add(
+                    {
+                        "mode": mode,
+                        "path": relative_text,
+                        "target": target,
+                        "type": "symlink",
+                    }
+                )
+            else:
+                raise RuntimeError("LeanExplore closure has an unsupported entry type")
+
+    add(
+        {
+            "mode": stat.S_IMODE(root_info.st_mode),
+            "path": ".",
+            "type": "directory",
+        }
+    )
+    walk(root, Path())
+    return {
+        "schema": CLOSURE_CONTENT_SCHEMA,
+        "entryCount": entry_count,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def verify_lean_explore_closure(
+    descriptor: int,
+    site_relative: str,
+    *,
+    expected_owner: int = 0,
+    between_passes: Any | None = None,
+) -> str:
+    """Validate the complete held CSR closure twice before credential read."""
+
     if descriptor < 3 or not stat.S_ISDIR(os.fstat(descriptor).st_mode):
-        raise RuntimeError("invalid LeanExplore site-packages descriptor")
-    for prefix in ("/proc/self/fd", "/dev/fd"):
-        candidate = f"{prefix}/{descriptor}"
-        if os.path.isdir(candidate):
-            sys.path.insert(0, candidate)
-            return
-    raise RuntimeError("this POSIX host cannot bind LeanExplore site-packages")
+        raise RuntimeError("invalid LeanExplore closure descriptor")
+    if _SITE_RELATIVE_RE.fullmatch(site_relative) is None:
+        raise RuntimeError("invalid LeanExplore site-packages relative path")
+    root_text = next(
+        (
+            f"{prefix}/{descriptor}"
+            for prefix in ("/proc/self/fd", "/dev/fd")
+            if os.path.isdir(f"{prefix}/{descriptor}")
+        ),
+        "",
+    )
+    if not root_text:
+        raise RuntimeError("this POSIX host cannot hold the LeanExplore closure")
+    root = Path(root_text)
+    marker_path = root / CLOSURE_MARKER
+    marker_fd = os.open(
+        marker_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        marker_info = os.fstat(marker_fd)
+        if (
+            not stat.S_ISREG(marker_info.st_mode)
+            or marker_info.st_uid != expected_owner
+            or marker_info.st_mode & 0o222
+            or marker_info.st_nlink != 1
+            or marker_info.st_size > 1024 * 1024
+        ):
+            raise RuntimeError("LeanExplore closure marker is unsafe")
+        marker_payload = os.read(marker_fd, 1024 * 1024 + 1)
+        marker_after = os.fstat(marker_fd)
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns")
+        if len(marker_payload) > 1024 * 1024 or any(
+            getattr(marker_info, field) != getattr(marker_after, field)
+            for field in fields
+        ):
+            raise RuntimeError("LeanExplore closure marker changed during read")
+    finally:
+        os.close(marker_fd)
+    try:
+        marker = json.loads(marker_payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("LeanExplore closure marker is invalid") from exc
+    if not isinstance(marker, dict) or marker.get("schema") != CLOSURE_MARKER_SCHEMA:
+        raise RuntimeError("LeanExplore closure marker schema is invalid")
+    if marker.get("environment") != "lean-explore":
+        raise RuntimeError("LeanExplore closure marker names the wrong environment")
+    distributions = marker.get("distributions")
+    if not isinstance(distributions, list) or sum(
+        1
+        for item in distributions
+        if isinstance(item, dict)
+        and item.get("name") == LEAN_EXPLORE_PACKAGE
+        and item.get("version") == SUPPORTED_LEAN_EXPLORE_VERSION
+    ) != 1:
+        raise RuntimeError("LeanExplore closure lacks the exact supported distribution")
+    expected_content = marker.get("installedContent")
+    if (
+        not isinstance(expected_content, dict)
+        or set(expected_content) != {"schema", "entryCount", "sha256"}
+        or expected_content.get("schema") != CLOSURE_CONTENT_SCHEMA
+        or not isinstance(expected_content.get("entryCount"), int)
+        or isinstance(expected_content.get("entryCount"), bool)
+        or int(expected_content.get("entryCount") or 0) < 1
+        or re.fullmatch(r"[0-9a-f]{64}", str(expected_content.get("sha256") or ""))
+        is None
+    ):
+        raise RuntimeError("LeanExplore closure content claim is invalid")
+    first = _installed_content_manifest(root, expected_owner=expected_owner)
+    if first != expected_content:
+        raise RuntimeError("LeanExplore closure content differs from its CSR marker")
+    if between_passes is not None:
+        between_passes()
+    second = _installed_content_manifest(root, expected_owner=expected_owner)
+    if second != first:
+        raise RuntimeError("LeanExplore closure changed after validation")
+    site = root / site_relative
+    if not site.is_dir() or site.is_symlink():
+        raise RuntimeError("LeanExplore site-packages is unavailable in held closure")
+    return str(site)
+
+
+def _consume_private_key_descriptor() -> None:
+    global _LEANEXPLORE_API_KEY, _LEANEXPLORE_CAPTURE_ERROR
+    if _LEANEXPLORE_API_KEY is not None or not _LEANEXPLORE_KEY_FD:
+        return
+    key_bytes = bytearray()
+    try:
+        key_fd = int(_LEANEXPLORE_KEY_FD, 10)
+        if key_fd < 3:
+            raise ValueError("credential descriptor must not be a standard stream")
+        while len(key_bytes) <= 4097:
+            chunk = os.read(key_fd, 4098 - len(key_bytes))
+            if not chunk:
+                break
+            key_bytes.extend(chunk)
+        os.close(key_fd)
+        if len(key_bytes) > 4097:
+            raise ValueError("credential exceeds the supported length")
+        if key_bytes.endswith(b"\n"):
+            del key_bytes[-1:]
+        if b"\n" in key_bytes or b"\r" in key_bytes:
+            raise ValueError("credential contains an unsupported line break")
+        _LEANEXPLORE_API_KEY = bytes(key_bytes).decode("utf-8")
+    except (OSError, UnicodeError, ValueError) as exc:
+        _LEANEXPLORE_CAPTURE_ERROR = str(exc)
+    finally:
+        for index in range(len(key_bytes)):
+            key_bytes[index] = 0
 
 
 def _require_supported_distribution() -> None:
@@ -278,8 +488,21 @@ def serve_adapter(backend: str) -> int:
         print("LeanExplore credential capture failed.", file=sys.stderr)
         return 78
     try:
-        _activate_attested_site_packages()
+        if not _LEANEXPLORE_CLOSURE_FD:
+            raise RuntimeError("held CSR LeanExplore closure is required")
+        try:
+            closure_descriptor = int(_LEANEXPLORE_CLOSURE_FD, 10)
+        except ValueError as exc:
+            raise RuntimeError("invalid LeanExplore closure descriptor") from exc
+        site_packages = verify_lean_explore_closure(
+            closure_descriptor,
+            _LEANEXPLORE_SITE_RELATIVE,
+        )
+        sys.path.insert(0, site_packages)
         _require_supported_distribution()
+        _consume_private_key_descriptor()
+        if _LEANEXPLORE_CAPTURE_ERROR:
+            raise RuntimeError("LeanExplore credential capture failed")
 
         # Importing tools registers the exact 1.2.1 tool surface on mcp_app.
         from lean_explore.mcp import tools as _registered_tools  # noqa: F401

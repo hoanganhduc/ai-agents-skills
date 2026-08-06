@@ -73,7 +73,7 @@ Env overrides: `REMOTE_BRIDGE_SECRETS_FILE`, `ZULIP_*`, `TELEGRAM_BOT_TOKEN`,
 **Do not** auto-read `~/.openclaw`. Prefer a **dedicated** Zulip bot user and a
 **dedicated** Telegram bot (not OpenClaw’s).
 
-### OpenClaw compatibility boundary
+### OpenClaw boundary
 
 The host CLI does **not** import from, export to, or synchronize with
 `~/.openclaw` before or after commands. Host secrets and mailbox state remain
@@ -82,23 +82,20 @@ inert revocation stub. Replacing a previously managed copy requires an
 explicitly reviewed backup-and-replace upgrade that preserves recovery data;
 the default installer does not overwrite divergent copies. The stub never
 inspects paths and is not part of normal `remote_bridge.py` execution.
-Any future compatibility transfer requires an
+`dispatch_aas.py` is also an inert revocation stub: OpenClaw may not dispatch
+control commands or supply an authorization principal. Remove any previously
+published `aas-remote-bridge` workspace adapter from service. Any future
+compatibility transfer requires an
 explicit, separately reviewed one-way export that excludes secrets and treats
 workspace content as untrusted.
 
-## Source of truth and OpenClaw dual-route
+## Source of truth
 
 Reusable logic lives in **`~/ai-agents-skills`** (this skill +
-`canonical/runtime/skills/remote-bridge/`). Agent homes and
-`~/.openclaw/workspace/skills/aas-remote-bridge/` are **install products**.
-
-OpenClaw workspace publishing is currently fail-closed: the installed
-revocation stub performs no destination reads or writes. Do not refresh or
-create a workspace adapter until a descriptor-pinned, no-follow, recoverable
-publisher has passed security review. The blocked publisher cannot replace or
-clean up an already-published OpenClaw workspace copy.
-
-See `canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
+`canonical/runtime/skills/remote-bridge/`). Agent homes are install products.
+OpenClaw control adapters are retired and are not install products. The
+publisher and dispatcher retained in the runtime are fail-closed revocation
+stubs only; neither reads or writes an OpenClaw workspace.
 
 ## Commands
 
@@ -112,11 +109,14 @@ See `canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
 | `send --text "…" [--channel zulip\|telegram\|both\|auto] [--dry-run]` | Notify (Zulip-primary; Telegram fallback) |
 | `request-approval --job ID --tool T [--wait --timeout N]` | Create approval + optional wait |
 | `instruct --job ID --text "…"` | Push inbox item |
-| `handle-command --text "/aas …" --principal USER` or `--text-stdin` | Process one control command |
+| `handle-command --text "/aas …" --allow-local-cli` or `--text-stdin --allow-local-cli` | Process one explicitly authorized local-operator command |
 | `format-inbox --job ID [--consume]` | Claim/format inbox for prompts |
 | `check-approval --job ID --digest HEX` | Consume matching allow reply |
 
-Chat control commands (Zulip/Telegram body): `/aas help|status|approve|deny|say|instruct|stop|pause|resume|focus|doctor`.
+Authenticated host transports may translate sender identity to a trusted local
+control event. The public CLI deliberately rejects `--principal`; command-line
+text cannot assert a remote identity. Chat control commands are
+`/aas help|status|approve|deny|say|instruct|stop|pause|resume|focus|doctor`.
 
 ## ARL / drive integration
 

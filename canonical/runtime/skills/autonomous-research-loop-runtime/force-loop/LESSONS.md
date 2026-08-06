@@ -8,7 +8,7 @@ Short map from operational footguns to pins this kit applies.
 | Sticky plan compute forbidding `local` | `compute_policy.json` + `standing_orders.compute` file-authoritative pins |
 | `job_ref` with spaces fails submit | runtime slugifies command-like refs (require current runtime on `main`) |
 | Orphan dispatch after kill | `force-loop drain` wraps `goal-focus recover-dispatch --cancel` |
-| Shell-sourced loop `drive.env` injection | `load_loop_env.py` strict KEY=VALUE; host `driver/force_loop.env` only |
+| Shell-sourced loop `drive.env` injection | `load_loop_env.py` strict KEY=VALUE; explicit host policy outside the loop only |
 | Linux-only launch assumed | Python CLI; foreground default on all OS |
 | Notify silently off | defaults write notify auto/on; document fail-closed preflight when channels missing |
 | Reconcile used as replan | runbook: reconcile ≠ replan; use `goal-focus replan` under clean authority |

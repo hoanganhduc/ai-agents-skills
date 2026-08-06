@@ -424,6 +424,172 @@ def trusted_local_containment_command(
     ]
 
 
+def brokered_provider_containment_command(
+    command: Sequence[str],
+    *,
+    cwd: Path,
+    dependency_root: Path,
+    synthetic_home: Path,
+    config_mounts: Mapping[str, str] | None = None,
+    broker_socket: Path | None = None,
+) -> list[str]:
+    """Build an allowlist-only provider filesystem view.
+
+    Unlike the compatibility trusted-local boundary, this shape never binds
+    the host root or user home.  It exposes the selected dependency closure,
+    project, system runtime, optional selected config sources, and broker
+    socket only.
+    """
+
+    if not command or not all(isinstance(item, str) and item for item in command):
+        raise ProviderResourceError("brokered provider command must be non-empty")
+    try:
+        canonical_cwd = cwd.resolve(strict=True)
+        canonical_dependency = dependency_root.resolve(strict=True)
+        canonical_home = synthetic_home.resolve(strict=True)
+    except OSError as exc:
+        raise ProviderResourceError("brokered provider mount is unavailable") from exc
+    if not all(path.is_dir() and not path.is_symlink() for path in (canonical_cwd, canonical_dependency, canonical_home)):
+        raise ProviderResourceError("brokered provider mounts must be real directories")
+    def within(candidate: Path, root: Path) -> bool:
+        try:
+            candidate.relative_to(root)
+            return True
+        except ValueError:
+            return False
+
+    real_home = Path.home().resolve()
+    if canonical_cwd == real_home or within(real_home, canonical_cwd):
+        raise ProviderResourceError("brokered project root must not expose the user home")
+    if canonical_dependency == Path("/") or canonical_dependency == real_home or within(
+        real_home, canonical_dependency
+    ):
+        raise ProviderResourceError(
+            "brokered dependency root must not expose the host root or user home"
+        )
+
+    sensitive_names = {".git-credentials", ".pypirc", ".npmrc", ".netrc"}
+    inspected = 0
+    for directory, directories, files in os.walk(canonical_cwd, followlinks=False):
+        inspected += len(directories) + len(files)
+        if inspected > 250_000:
+            raise ProviderResourceError(
+                "project credential-shadow scan exceeds the safety bound"
+            )
+        relative_dir = Path(directory).relative_to(canonical_cwd)
+        if "force_loop_pin_backups" in relative_dir.parts:
+            raise ProviderResourceError(
+                "project contains a forbidden force-loop backup shadow"
+            )
+        for name in [*directories, *files]:
+            if (
+                name in sensitive_names
+                or name == "force_loop.env"
+                or name.startswith(".env")
+                or name.startswith(".dev.vars")
+            ):
+                raise ProviderResourceError(
+                    "project contains a credential-capable file excluded from provider mounts"
+                )
+    git_config = canonical_cwd / ".git" / "config"
+    if git_config.is_symlink():
+        raise ProviderResourceError("project git config must not be a symlink")
+    if git_config.is_file():
+        try:
+            if git_config.stat().st_size > 1_000_000:
+                raise ProviderResourceError("project git config exceeds safety bound")
+            config_text = git_config.read_text(encoding="utf-8", errors="strict")
+        except (OSError, UnicodeError) as exc:
+            raise ProviderResourceError("project git config could not be inspected") from exc
+        lowered = config_text.lower()
+        if (
+            "[credential" in lowered
+            or "helper =" in lowered
+            or re.search(r"https?://[^/\s:@]+:[^@\s]+@", config_text)
+        ):
+            raise ProviderResourceError(
+                "project git config contains credential-capable authority"
+            )
+    bwrap = _trusted_host_binary((Path("/usr/bin/bwrap"),), "bubblewrap")
+    args = [
+        bwrap,
+        "--die-with-parent",
+        "--new-session",
+        "--unshare-ipc",
+        "--unshare-pid",
+        "--unshare-cgroup",
+    ]
+    created: set[Path] = {Path("/")}
+
+    def ensure_parents(destination: Path) -> None:
+        parents = list(destination.parents)
+        for parent in reversed(parents[:-1]):
+            if parent != Path("/") and parent not in created:
+                args.extend(["--dir", str(parent)])
+                created.add(parent)
+
+    def bind(source: Path, destination: Path, *, read_only: bool) -> None:
+        ensure_parents(destination)
+        args.extend(["--ro-bind" if read_only else "--bind", str(source), str(destination)])
+        created.add(destination)
+
+    args.extend(["--tmpfs", "/tmp", "--dir", "/var", "--tmpfs", "/var/tmp"])
+    created.update({Path("/tmp"), Path("/var"), Path("/var/tmp")})
+
+    for system_path in (Path("/usr"), Path("/bin"), Path("/sbin"), Path("/lib"), Path("/lib64")):
+        if system_path.exists():
+            bind(system_path.resolve(strict=True), system_path, read_only=True)
+    # Do not expose all of /etc.  Bind only the non-secret runtime material
+    # needed for dynamic linking, DNS, TLS verification, and timezone data.
+    for system_path in (
+        Path("/etc/ld.so.cache"),
+        Path("/etc/resolv.conf"),
+        Path("/etc/hosts"),
+        Path("/etc/nsswitch.conf"),
+        Path("/etc/gai.conf"),
+        Path("/etc/services"),
+        Path("/etc/localtime"),
+        Path("/etc/ssl/certs"),
+        Path("/etc/ssl/openssl.cnf"),
+    ):
+        if system_path.exists():
+            bind(system_path.resolve(strict=True), system_path, read_only=True)
+    bind(canonical_dependency, canonical_dependency, read_only=True)
+    bind(canonical_cwd, canonical_cwd, read_only=False)
+    bind(canonical_home, canonical_home, read_only=False)
+    for target_text, source_text in sorted((config_mounts or {}).items()):
+        source = Path(source_text).resolve(strict=True)
+        target = Path(target_text)
+        if not target.is_absolute() or not within(target, canonical_home):
+            raise ProviderResourceError("provider config target escapes synthetic home")
+        info = os.lstat(source)
+        if stat.S_ISLNK(info.st_mode) or not (
+            stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)
+        ):
+            raise ProviderResourceError("selected provider config has unsafe type")
+        if info.st_uid not in {0, os.getuid()} or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise ProviderResourceError("selected provider config has unsafe ownership")
+        bind(source, target, read_only=True)
+    if broker_socket is not None:
+        socket_path = broker_socket.resolve(strict=True)
+        if not stat.S_ISSOCK(os.lstat(socket_path).st_mode):
+            raise ProviderResourceError("compute broker endpoint is not a socket")
+        bind(socket_path, socket_path, read_only=True)
+    ensure_parents(Path("/sys/fs/cgroup"))
+    args.extend(
+        [
+            "--tmpfs", "/sys/fs/cgroup",
+            "--proc", "/proc",
+            "--dev", "/dev",
+            "--setenv", "HOME", str(canonical_home),
+            "--chdir", str(canonical_cwd),
+            "--",
+            *command,
+        ]
+    )
+    return args
+
+
 def interpreter_bound_provider_command(command: Sequence[str]) -> list[str]:
     """Pin Node entry scripts to a trusted system interpreter.
 

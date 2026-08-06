@@ -73,6 +73,18 @@ KAGGLE_KEYS = {"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}
 
 @unittest.skipIf(os.name == "nt", "POSIX wrappers are not native Windows targets")
 class PosixSecretEntrypointTests(unittest.TestCase):
+    @staticmethod
+    def _copy_test_runner(destination: Path) -> None:
+        shutil.copy2(RUNTIME_SOURCE / "runners" / "run_skill.sh", destination)
+        destination.write_text(
+            destination.read_text(encoding="utf-8").replace(
+                "credential_runtime_enforcement=1",
+                "credential_runtime_enforcement=0",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
     def _stage_entrypoint(
         self,
         root: Path,
@@ -91,6 +103,15 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         (runtime / "load_secret_env.py").chmod(0o644)
         wrapper_path = skill_dir / wrapper
         shutil.copy2(RUNTIME_SOURCE / "skills" / skill / wrapper, wrapper_path)
+        if skill == "lean-explore-mcp":
+            wrapper_path.write_text(
+                wrapper_path.read_text(encoding="utf-8").replace(
+                    "lean_explore_exact_generation_enforcement=1",
+                    "lean_explore_exact_generation_enforcement=0",
+                    1,
+                ),
+                encoding="utf-8",
+            )
         wrapper_path.chmod(0o755)
         (skill_dir / python_entrypoint).write_text(
             "from __future__ import annotations\n"
@@ -653,7 +674,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             )
             runtime = wrapper.parents[3]
             runner = runtime / "run_skill.sh"
-            shutil.copy2(RUNTIME_SOURCE / "runners" / "run_skill.sh", runner)
+            self._copy_test_runner(runner)
             runner.chmod(0o755)
             authority = self._private_file(
                 root,
@@ -696,7 +717,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             )
             runtime = wrapper.parents[3]
             runner = runtime / "run_skill.sh"
-            shutil.copy2(RUNTIME_SOURCE / "runners" / "run_skill.sh", runner)
+            self._copy_test_runner(runner)
             runner.chmod(0o755)
             authority = self._private_file(
                 root,
@@ -929,7 +950,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 program.chmod(0o644)
                 runtime = wrapper.parents[3]
                 runner = runtime / "run_skill.sh"
-                shutil.copy2(RUNTIME_SOURCE / "runners" / "run_skill.sh", runner)
+                self._copy_test_runner(runner)
                 runner.chmod(0o755)
                 authority = self._private_file(root, "authority.json", authority_body)
                 selected = (
@@ -1183,7 +1204,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             )
             runtime = wrapper.parents[3]
             runner = runtime / "run_skill.sh"
-            shutil.copy2(RUNTIME_SOURCE / "runners" / "run_skill.sh", runner)
+            self._copy_test_runner(runner)
             runner.chmod(0o755)
             skill_secrets = self._private_file(
                 root,

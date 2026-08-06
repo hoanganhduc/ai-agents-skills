@@ -49,13 +49,19 @@ esac
 # lives in ``runners/`` beside ``workspace/``.  Credential launches use only
 # the latter; mutable installed copies remain available for noncredential work.
 runtime_parent_real="$(cd -- "$runtime_parent" && builtin pwd -P)"
+source_layout=0
 if [ "${runtime_parent_real##*/}" = runners ] && \
-   [ -d "$runtime_parent_real/../workspace" ]; then
+   [ -d "$runtime_parent_real/../skills" ]; then
   runtime_root="$(cd -- "$runtime_parent_real/.." && builtin pwd -P)"
+  source_layout=1
 else
   runtime_root="$runtime_parent_real"
 fi
-default_workspace="$runtime_root/workspace"
+if [ "$source_layout" -eq 1 ]; then
+  default_workspace="$runtime_root"
+else
+  default_workspace="$runtime_root/workspace"
+fi
 workspace="$default_workspace"
 if [ "${AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE:-}" = "1" ] && [ -n "${AAS_RUNTIME_WORKSPACE:-}" ]; then
   workspace="$AAS_RUNTIME_WORKSPACE"
@@ -128,6 +134,7 @@ projection_retain_pointer=0
 projection_allow_keys=()
 projection_export_keys=()
 projection_retain_env=()
+arl_credential_broker=0
 
 select_flat_projection() {
   projection_pointer_env="$1"
@@ -238,6 +245,9 @@ case "$command_rel" in
     [ -n "$provider_pointer" ] && export AAS_PROVIDER_SECRETS_FILE="$provider_pointer"
     projection_pointer_env=AAS_PROVIDER_SECRETS_FILE
     projection_retain_pointer=1
+    if [ -n "$compute_pointer" ] || [ -n "$provider_pointer" ]; then
+      arl_credential_broker=1
+    fi
     projection_retain_env+=(
       AAS_COMPUTE_SECRETS_FILE AAS_REMOTE_STRICT_NOTIFY_CHANNEL
       AAS_FORCE_LOOP_POLICY_FILE AAS_FORCE_LOOP_COMPUTE_LANES
@@ -427,6 +437,11 @@ if [ "$credential_contract" -eq 1 ]; then
     printf 'credential-bearing launch refuses an external runtime workspace\n' >&2
     exit 127
   fi
+  if [ "$credential_runtime_enforcement" -eq 1 ] && \
+     ! trusted_credential_runtime_generation; then
+    printf 'credential-bearing launch requires a root-owned exact AAS component generation\n' >&2
+    exit 127
+  fi
   if ! trusted_command_chain; then
     printf 'credential-bearing launch requires an owner-controlled managed command chain\n' >&2
     exit 127
@@ -486,7 +501,26 @@ else
 fi
 
 if [ "$credential_contract" -eq 1 ]; then
+  if [ "$arl_credential_broker" -eq 1 ]; then
+    broker_path="$runtime_real/runners/arl_credential_broker.py"
+    if [ ! -f "$broker_path" ]; then
+      broker_path="$runtime_real/arl_credential_broker.py"
+    fi
+    if [ ! -f "$broker_path" ] || ! trusted_runtime_file_chain "$broker_path"; then
+      printf 'managed ARL credential broker is unavailable or untrusted\n' >&2
+      exit 127
+    fi
+    broker_command=""
+    if ! bind_regular_file "$broker_path" broker_command; then
+      printf 'managed ARL credential broker could not be descriptor-bound\n' >&2
+      exit 127
+    fi
+    exec "$python_command" -I "$broker_command" --entry "$command_command" -- "$@"
+  fi
   secret_loader="$runtime_real/load_secret_env.py"
+  if [ ! -f "$secret_loader" ]; then
+    secret_loader="$runtime_real/runners/load_secret_env.py"
+  fi
   if [ ! -f "$secret_loader" ] || ! trusted_runtime_file_chain "$secret_loader"; then
     printf 'managed credential projection loader is unavailable or untrusted\n' >&2
     exit 127
