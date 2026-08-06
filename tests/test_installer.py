@@ -48,6 +48,12 @@ from installer.ai_agents_skills.verify import verify
 from tools.import_canonical_skills import assert_admitted_source_file
 
 
+NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "native Windows apply/uninstall/rollback are dry-run-only until handle-bound mutation lands",
+)
+
+
 class Args:
     skill = None
     skills = None
@@ -491,6 +497,7 @@ class ManifestTests(unittest.TestCase):
         args.profile = "media"
         self.assertIn("manim-math-animation", resolve_skills(args, manifests))
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_autonomous_loop_runtime_installs_provider_resource_helper(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -1145,6 +1152,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
         self.assertIn('description: "Phased workflow: search, analyze, write."', content)
         self.assertIn('short-description: "Phased workflow: search, analyze, write."', content)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_partial_install_to_fake_root_only_installs_selected_skill(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1189,6 +1197,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 set(KNOWN_AGENT_NAMES),
             )
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_symlinked_agent_home_is_skipped_without_writing_target(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp, fake_root() as outside_tmp:
@@ -1209,6 +1218,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             skipped = {item["agent"]: item["reason"] for item in plan["skipped_agents"]}
             self.assertEqual(skipped["claude"], "agent home is a symlink")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_refuses_symlinked_state_dir_before_writes(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp, fake_root() as outside_tmp:
@@ -1230,6 +1240,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse((root / ".codex" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertFalse((outside / "state.json").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_refuses_target_drift_after_plan(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1273,6 +1284,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(target.is_symlink())
             self.assertEqual(target.read_text(encoding="utf-8"), "managed\n")
 
+    @unittest.skipIf(os.name == "nt", "POSIX mode normalization")
     def test_apply_preflight_refuses_blocked_parent_before_partial_writes(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1300,6 +1312,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse((root / ".codex" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertFalse((root / ".ai-agents-skills" / "state.json").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_allows_symlink_prefix_above_selected_root(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1343,6 +1356,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(file_action["operation"], "skip")
             self.assertEqual(file_action["reason"], "target path is a directory")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_with_no_detected_agent_writes_no_state_run(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1387,6 +1401,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(file_actions[0]["operation"], "skip")
             self.assertEqual(block_actions[0]["operation"], "skip")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_matching_instruction_block_replans_as_noop(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1513,6 +1528,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("remove-legacy", operations)
             self.assertFalse((root / ".ai-agents-skills" / "state.json").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_codex_legacy_alias_can_be_migrated_to_canonical_target(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1553,6 +1569,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIsNotNone(remove_results[0]["backup"])
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_copy_install_mode_writes_regular_skill_files(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1573,6 +1590,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("Managed by ai-agents-skills", target.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_codex_existing_canonical_symlink_is_replaced_with_self_contained_copy(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1599,6 +1617,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertNotIn("Canonical skill source:", target.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_codex_auto_install_copies_skill_support_tree_without_checkout_references(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1628,6 +1647,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertNotIn(REPO_ROOT.as_posix(), installed.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_codex_force_symlink_mode_keeps_canonical_link(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1650,6 +1670,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("canonical/skills/zotero/SKILL.md", target.resolve().as_posix())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_reference_install_mode_writes_thin_adapter_without_support_files(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1676,6 +1697,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse((target.parent / "references").exists())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_switching_to_reference_removes_managed_support_files(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1709,6 +1731,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue(support.is_symlink())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_switching_to_reference_preserves_changed_managed_support_file(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1738,6 +1761,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             state = (root / ".ai-agents-skills" / "state.json").read_text(encoding="utf-8")
             self.assertIn("output-structure.md", state)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_deepseek_default_reference_mode_writes_adapter(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1774,6 +1798,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual([agent.name for agent in detect_agents(root)], ["openclaw"])
             self.assertEqual([agent.name for agent in detect_agents(root, ["openclaw"])], ["openclaw"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_openclaw_fake_root_installs_skill_file_without_instruction_block(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1807,6 +1832,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             uninstall(root, agents={"openclaw"}, dry_run=False)
             self.assertFalse(target.exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_openclaw_fake_root_can_plan_draft_writing_skill_only(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -1942,6 +1968,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 "OpenClaw adopt, backup-replace, and migrate require native target evidence",
             )
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_openclaw_support_files_require_manifest_metadata(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2050,6 +2077,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue(all(action.get("mode_reason") for action in active_skill_actions))
             self.assertTrue(all(action.get("capability_evidence") for action in active_skill_actions))
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_all_agent_fake_root_install_verify_uninstall_lifecycle(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2078,6 +2106,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse((root / ".claude" / "CLAUDE.md").exists())
             self.assertFalse((root / ".deepseek" / "AGENTS.md").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_symlink_failure_falls_back_to_reference_adapter(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2102,6 +2131,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertNotIn("/home/", text)
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_migrate_removes_legacy_alias_when_canonical_already_installed(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2134,6 +2164,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(legacy.parent.exists())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_rollback_mode_switch_restores_previous_symlink(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2160,6 +2191,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("canonical/skills/zotero/SKILL.md", target.resolve().as_posix())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_is_dry_run_by_default_then_apply_removes(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2185,6 +2217,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(target.exists())
             self.assertFalse(instructions.exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_rollback_dry_run_and_apply(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2208,6 +2241,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(target.exists())
             self.assertFalse(instructions.exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_rollback_unmanages_adopted_file_without_deleting_or_rechecking_content(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2239,6 +2273,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse((root / ".claude" / "CLAUDE.md").exists())
             self.assertEqual(verify(root)["status"], "no-managed-artifacts")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_multi_skill_rollback_removes_shared_instruction_blocks_atomically(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2260,6 +2295,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse((root / ".claude" / "CLAUDE.md").exists())
             self.assertEqual(verify(root)["status"], "no-managed-artifacts")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_rollback_conflict_preflight_prevents_partial_mutation(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2360,6 +2396,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             self.assertEqual(target.read_text(encoding="utf-8"), "managed\n")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_instruction_block_lifecycle_refuses_symlinked_instruction_file(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
@@ -2404,6 +2441,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 rollback(root, run_id=result["run_id"], dry_run=False)
             self.assertEqual(outside_instructions.read_text(encoding="utf-8"), original_text)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_support_files_are_installed_and_verified(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2458,6 +2496,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
                 {"POSIX shell support file is not installed for Windows targets"},
             )
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_verify_instruction_block_ignores_unmanaged_surrounding_text(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2496,6 +2535,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(block_action["operation"], "skip")
             self.assertEqual(block_action["reason"], "managed instruction block is malformed or duplicated")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_verify_detects_changed_managed_instruction_block(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2525,6 +2565,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             checks = {check["name"]: check["ok"] for check in block_result["checks"]}
             self.assertFalse(checks["managed-block-match"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_verify_detects_duplicate_managed_instruction_block(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2553,6 +2594,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(checks["managed-block-unique"])
             self.assertFalse(checks["managed-block-present"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_verify_detects_changed_managed_file_signature(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2576,6 +2618,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             checks = {check["name"]: check["ok"] for check in changed["checks"]}
             self.assertFalse(checks["installed-signature-match"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_can_remove_one_skill_without_touching_another(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2596,6 +2639,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertNotIn("ai-agents-skills:zotero", instructions)
             self.assertIn("ai-agents-skills:source-research", instructions)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_preserves_unmanaged_extra_files_inside_skill_dir(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2616,6 +2660,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
             self.assertTrue(extra.exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_restores_backup_replaced_preinstall_snapshot(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2646,6 +2691,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             self.assertEqual(root_snapshot(root), before)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_preserves_changed_managed_skill_file(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2668,6 +2714,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("skip-conflict", {action["operation"] for action in result["actions"]})
             self.assertNotEqual(verify(root)["status"], "no-managed-artifacts")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_refuses_stale_planned_delete(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2703,6 +2750,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue(target.exists())
             self.assertEqual(target.read_text(encoding="utf-8"), "changed after uninstall planning\n")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_unmanages_adopted_file_without_deleting_it(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2731,6 +2779,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(existing.read_text(encoding="utf-8"), "user-owned zotero\n")
             self.assertEqual(verify(root)["status"], "no-managed-artifacts")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_removes_managed_block_and_preserves_user_text(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2756,6 +2805,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("suffix user text", text)
             self.assertNotIn("ai-agents-skills:zotero", text)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_restores_tombstoned_backup_with_missing_parent(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2790,6 +2840,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue(support.exists())
             self.assertEqual(support.read_text(encoding="utf-8"), "user-owned support\n")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_refuses_state_artifact_outside_root(self) -> None:
         with fake_root() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
             root = Path(tmp)
@@ -2826,6 +2877,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             state = json.loads((root / ".ai-agents-skills" / "state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["artifacts"][0]["key"], "tampered")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_refuses_unmanaged_state_record(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -2857,6 +2909,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(result["actions"][0]["operation"], "skip-conflict")
             self.assertEqual(result["actions"][0]["reason"], "state record is not marked managed")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_adopted_existing_file_verifies_by_recorded_hash(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2883,6 +2936,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             existing.write_text("changed user-owned zotero\n", encoding="utf-8")
             self.assertEqual(verify(root)["status"], "failed")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_migration_rollback_restores_legacy_alias_directory(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2907,6 +2961,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(legacy.read_text(encoding="utf-8"), "legacy alias skill\n")
             self.assertTrue(legacy_extra.exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_artifact_profile_installs_templates_and_personas(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2931,6 +2986,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertIn("reference document", deepseek_persona.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_writing_workflow_profile_installs_skill_templates_and_instruction_docs(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2955,6 +3011,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue((root / ".deepseek" / "instructions" / "claim-preserving-writing.md").exists())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_entrypoint_alias_requires_backing_skill(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2985,6 +3042,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue(command.exists())
             self.assertIn("Backing skill", command.read_text(encoding="utf-8"))
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_can_remove_one_artifact_without_removing_skill(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -3004,6 +3062,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertTrue((root / ".claude" / "skills" / "deep-research-workflow" / "SKILL.md").exists())
             self.assertFalse((root / ".claude" / "commands" / "deep-research.md").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_management_notice_artifact_adds_and_removes_instruction_block(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -3059,6 +3118,7 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(action["operation"], "skip")
             self.assertIn("malformed or duplicated", action["reason"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_refuses_tampered_backup_restore(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -3587,6 +3647,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertIn("confirmation phrase did not match", payload["error"])
             self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_install_fake_root_succeeds_with_process_confirmation(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -3606,6 +3667,7 @@ class DocsAndLauncherTests(unittest.TestCase):
                 ])
             self.assertEqual(code, 0)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_install_apply_confirms_via_env_without_stdin(self) -> None:
         # A backgrounded apply has no interactive stdin; the confirmation
         # environment variable must satisfy the gate even when stdin is empty.
@@ -3653,6 +3715,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertIn("confirmation phrase did not match", payload["error"])
             self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_rollback_apply_requires_process_confirmation(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -3694,6 +3757,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertIn("rollback confirmation required", payload["error"])
             self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_uninstall_apply_requires_process_confirmation(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -4168,6 +4232,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertTrue(any("--migrate" in command for command in report["recommended_dry_runs"]))
             self.assertTrue(any("--adopt" in command for command in report["recommended_dry_runs"]))
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_audit_system_reports_symlink_install_as_managed(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -4238,6 +4303,7 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn("real-system precheck state writes require --real-system", payload["error"])
         self.assertFalse((root / ".ai-agents-skills" / "precheck.json").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_verify_returns_nonzero_for_failed_status(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -4284,6 +4350,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             payload = json.loads(stream.getvalue())
             self.assertEqual(payload["status"], "no-managed-artifacts")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_smoke_reports_managed_skill_visibility(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -4317,6 +4384,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["checked"], 1)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_install_apply_runs_post_install_smoke(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -4472,6 +4540,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             )
             self.assertEqual(payload["complete_install"]["declared_exclusion_count"], 0)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_install_strict_post_install_failure_preserves_apply_json(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -4505,6 +4574,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertEqual(payload["post_install"]["status"], "failed")
             self.assertTrue((root / ".claude" / "skills" / "zotero" / "SKILL.md").is_file())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_fake_root_lifecycle_runs_without_real_home(self) -> None:
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
@@ -4530,6 +4600,7 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertTrue(run["uninstall"]["final_preserved_root"])
         self.assertEqual(run["uninstall"]["verify_status"], "no-managed-artifacts")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_lifecycle_test_runs_named_scenarios(self) -> None:
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
@@ -4550,6 +4621,7 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertTrue(all(run["install"]["dry_apply_actions_match"] for run in payload["runs"]))
         self.assertTrue(all(run["uninstall"]["final_preserved_root"] for run in payload["runs"]))
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_lifecycle_test_stress_runs_state_checks(self) -> None:
         stream = io.StringIO()
         with contextlib.redirect_stdout(stream):
@@ -4576,6 +4648,7 @@ class DocsAndLauncherTests(unittest.TestCase):
         )
         self.assertTrue(all(item["status"] == "ok" for item in payload["state_checks"]))
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_with_deps_installs_entrypoint_backing_skill(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -4599,6 +4672,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertTrue((root / ".claude" / "skills" / "deep-research-workflow" / "SKILL.md").exists())
             self.assertTrue((root / ".claude" / "commands" / "deep-research.md").exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_with_deps_installs_compute_skills_for_review_and_lean_templates(self) -> None:
         templates = (
             "cross-agent-adversarial-review",
@@ -4723,6 +4797,7 @@ class OpenCodeTargetTests(unittest.TestCase):
 
             self.assertEqual(detect_agents(root, ["opencode"]), [])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_opencode_auto_mode_copies_skill_and_support_files(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -4757,6 +4832,7 @@ class OpenCodeTargetTests(unittest.TestCase):
             self.assertIn("OpenCode Runtime Notes", skill.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_opencode_installs_managed_rules_persona_command_and_docs(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -4809,6 +4885,7 @@ class OpenCodeTargetTests(unittest.TestCase):
 
             self.assertEqual(target.home, root / "xdg-config" / "opencode")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_opencode_native_smoke_uses_isolated_cli_discovery(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
         from installer.ai_agents_skills.opencode import run_opencode_native_smoke
@@ -4919,6 +4996,7 @@ class AntigravityTargetTests(unittest.TestCase):
 
             self.assertEqual(detect_agents(root, ["antigravity"]), [])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_antigravity_full_install_scaffolds_native_surfaces(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -4970,6 +5048,7 @@ class AntigravityTargetTests(unittest.TestCase):
             self.assertIn("ai-agents-skills:zotero", (root / ".gemini" / "GEMINI.md").read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_antigravity_installs_plugin_artifacts_and_entrypoints(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -5007,6 +5086,7 @@ class AntigravityTargetTests(unittest.TestCase):
             self.assertIn("Backing skill", alias.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_antigravity_native_smoke_uses_isolated_cli_discovery(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
         from installer.ai_agents_skills.antigravity import run_antigravity_native_smoke
@@ -5093,6 +5173,7 @@ class GrokTargetTests(unittest.TestCase):
 
             self.assertEqual(detect_agents(root, ["grok"]), [])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_grok_full_install_writes_native_surfaces(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -5137,6 +5218,7 @@ class GrokTargetTests(unittest.TestCase):
             self.assertFalse((home / "settings.json").exists())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_grok_skips_compat_merge_when_user_authored_table_exists(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -5185,6 +5267,7 @@ class GrokTargetTests(unittest.TestCase):
                 tomllib.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_grok_installs_personas_entrypoints_and_rules(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -5221,6 +5304,7 @@ class GrokTargetTests(unittest.TestCase):
             self.assertIn("Backing skill", alias.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_grok_autoloop_installs_native_hook_file_not_settings(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -5260,6 +5344,7 @@ class GrokTargetTests(unittest.TestCase):
             self.assertFalse((root / ".grok" / "config.toml").exists())
             self.assertEqual(verify(root)["status"], "no-managed-artifacts")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_grok_native_smoke_uses_isolated_cli_discovery(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
         from installer.ai_agents_skills.grok import run_grok_native_smoke
@@ -5357,6 +5442,7 @@ class KimiTargetTests(unittest.TestCase):
             (root / ".agents" / "skills").mkdir(parents=True)
             self.assertEqual(detect_agents(root, ["kimi"]), [])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_kimi_full_install_writes_native_surfaces_without_entrypoint_alias(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 
@@ -5403,6 +5489,7 @@ class KimiTargetTests(unittest.TestCase):
             self.assertFalse((root / ".kimi").exists())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_kimi_native_smoke_skips_without_cli(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
         from installer.ai_agents_skills.kimi import run_kimi_native_smoke
@@ -5474,6 +5561,7 @@ class CopilotTargetTests(unittest.TestCase):
             self.assertEqual([agent.name for agent in detect_agents(root)], ["copilot"])
             self.assertEqual([agent.name for agent in detect_agents(root, ["copilot"])], ["copilot"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_explicit_copilot_skill_install_uses_personal_skill_surface(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
 

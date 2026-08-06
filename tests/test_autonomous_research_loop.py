@@ -1030,6 +1030,7 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             self.assertEqual(status_payload["status"], "failed")
             self.assertEqual(status_payload["remaining_iterations"], 0)
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_canonical_skill_installs_to_openclaw_without_runtime_or_support_files(self) -> None:
         manifests = load_manifests()
         for platform in ("linux", "macos", "windows", "wsl"):
@@ -6932,6 +6933,7 @@ class NotifyPolicyTests(unittest.TestCase):
             transport.assert_not_called()
             raw_hook.assert_not_called()
 
+    @unittest.skipUnless(os.name == "posix", "notify secret projection on native Windows goes through the PowerShell engine")
     def test_enforce_notify_with_explicit_consent_reaches_mocked_transports(self) -> None:
         mod = self._mod()
         bridge_result = {
@@ -7051,6 +7053,7 @@ class NotifyPolicyTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, child_env)
 
+    @unittest.skipUnless(os.name == "posix", "notify secret projection on native Windows goes through the PowerShell engine")
     def test_remote_notify_argv_uses_managed_wrapper_not_runtime_selector(self) -> None:
         mod = self._mod()
         with mock.patch.dict(

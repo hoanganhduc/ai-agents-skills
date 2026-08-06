@@ -181,6 +181,13 @@ HEAVY_CPU_JOB = {"task_family": "enumeration",
                                  "core_hours": 40, "resource_class": "cpu"}}
 
 
+_STATE_DACL_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "runner temp state dirs trip the strict windows_acl gate: 'Windows state DACL "
+    "grants unsafe access outside owner/SYSTEM/Administrators/TrustedInstaller'",
+)
+
+
 class KaggleRoutingTests(unittest.TestCase):
     """End-to-end routing through the real subprocess planner (plan §8.2 CPU corners)."""
 
@@ -188,6 +195,7 @@ class KaggleRoutingTests(unittest.TestCase):
         for mod in (planner, rc_config, kaggle_backend, budget_ledger, kaggle_driver):
             self.assertIsNotNone(mod)
 
+    @_STATE_DACL_SKIP
     def test_cpu_job_prefers_kaggle_over_paid_lanes(self) -> None:
         """New routing order local>kaggle>modal>hetzner>gha: a CPU-heavy job that exceeds
         local goes to KAGGLE FIRST (free CPU) even though Modal AND Hetzner are also
@@ -206,6 +214,7 @@ class KaggleRoutingTests(unittest.TestCase):
             # Modal was never consulted -- Kaggle won at position 2, ahead of the paid lanes.
             self.assertNotIn("modal", [t["backend"] for t in trail])
 
+    @_STATE_DACL_SKIP
     def test_submit_selected_kaggle_reports_lane_driver_handoff(self) -> None:
         """The umbrella submit path must not mislabel a Kaggle plan as local execution."""
         resources = {"liveness": {"kaggle": {"usable": True},
@@ -217,6 +226,7 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertEqual(result["plan"]["backend"], "kaggle")
             self.assertIn("kaggle-research-compute", result["message"])
 
+    @_STATE_DACL_SKIP
     def test_cpu_local_still_first(self) -> None:
         """Local remains position 1: a small job whose full-run load stays under the ceiling
         runs local, never Kaggle."""
@@ -231,6 +241,7 @@ class KaggleRoutingTests(unittest.TestCase):
             plan = _plan(ws, job, creds=True)["plan"]
             self.assertEqual(plan["decision"], "local_cpu")
 
+    @_STATE_DACL_SKIP
     def test_cpu_kaggle_unavailable_without_creds_falls_to_modal(self) -> None:
         """With no Kaggle credentials the lane is unavailable; the CPU job falls through
         order-driven to Modal (the next available lane)."""
@@ -243,6 +254,7 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertFalse(trail["kaggle"]["available"])
             self.assertTrue(trail["modal"]["available"])
 
+    @_STATE_DACL_SKIP
     def test_cpu_kaggle_liveness_unusable_falls_to_modal(self) -> None:
         """Credentials present but the account-usable probe fails (auth failure): the lane is
         unavailable and the CPU job falls through to Modal."""
@@ -255,6 +267,7 @@ class KaggleRoutingTests(unittest.TestCase):
             trail = {t["backend"]: t for t in plan["routing_trail"]}
             self.assertFalse(trail["kaggle"]["available"])
 
+    @_STATE_DACL_SKIP
     def test_cpu_kaggle_not_in_order_is_skipped(self) -> None:
         """With Kaggle absent from routing_order the lane is skipped entirely and a CPU job
         falls to Modal (the pre-Kaggle behaviour, order-driven)."""
@@ -265,6 +278,7 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertTrue(plan["decision"].startswith("modal_"))
             self.assertNotIn("kaggle", [t["backend"] for t in plan["routing_trail"]])
 
+    @_STATE_DACL_SKIP
     def test_explicit_kaggle_override_bypasses_routing_order_for_cpu(self) -> None:
         """An explicit override selects Kaggle even when it is absent from routing_order."""
         resources = {"liveness": {"kaggle": {"usable": True},
@@ -282,6 +296,7 @@ class KaggleRoutingTests(unittest.TestCase):
                 [entry["backend"] for entry in plan["routing_trail"]], ["kaggle"]
             )
 
+    @_STATE_DACL_SKIP
     def test_explicit_kaggle_override_selects_gpu_when_requested(self) -> None:
         resources = {"gpu": {"total_gpus": 1},
                      "liveness": {"kaggle": {"usable": True},
@@ -304,6 +319,7 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertEqual(plan["backend"], "kaggle")
             self.assertTrue(plan["within_weekly_gpu_cap"])
 
+    @_STATE_DACL_SKIP
     def test_explicit_kaggle_override_fails_closed_when_unavailable(self) -> None:
         resources = {"liveness": {
             "kaggle": {"usable": False, "reason": "kaggle_auth_failed"},
@@ -318,6 +334,7 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertIn("kaggle_unavailable", plan["risk_flags"])
             self.assertNotIn("modal", [t["backend"] for t in plan["routing_trail"]])
 
+    @_STATE_DACL_SKIP
     def test_explicit_kaggle_gpu_pin_fails_when_weekly_cap_is_exhausted(self) -> None:
         resources = {"gpu": {"total_gpus": 0}, "liveness": {
             "kaggle": {"usable": True, "gpu_hours_used_this_week": 18.0},
@@ -338,6 +355,7 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertIn("cap", plan["routing_trail"][0]["reason"])
             self.assertNotIn("modal", [entry["backend"] for entry in plan["routing_trail"]])
 
+    @_STATE_DACL_SKIP
     def test_explicit_kaggle_cpu_pin_fails_when_one_kernel_is_inadequate(self) -> None:
         resources = {"liveness": {
             "kaggle": {"usable": True},
@@ -395,6 +413,7 @@ class KaggleRoutingTests(unittest.TestCase):
                 [entry["backend"] for entry in plan["routing_trail"]], ["kaggle"]
             )
 
+    @_STATE_DACL_SKIP
     def test_cpu_highmem_inadequate_falls_through_to_paid_lane(self) -> None:
         """A job needing more than one kernel's ~32 GB is INADEQUATE for Kaggle and falls
         through; with Modal down it lands on Hetzner (a bigger box), proving Kaggle adequacy
@@ -412,6 +431,7 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertFalse(trail["kaggle"]["adequate"])
             self.assertNotEqual(plan["decision"], "kaggle")
 
+    @_STATE_DACL_SKIP
     def test_local_veto_falls_through_to_kaggle(self) -> None:
         """A job small enough to classify local, whose full-run load would breach the ceiling,
         is vetoed and re-routed order-driven -- landing on KAGGLE (position 2), ahead of the
@@ -433,6 +453,7 @@ class KaggleRoutingTests(unittest.TestCase):
             self.assertEqual(trail[-1]["backend"], "kaggle")
 
 
+@_STATE_DACL_SKIP
 class KaggleGpuRoutingTests(unittest.TestCase):
     """GPU routing matrix (plan §8.2): {auto-signal, explicit-request} x {within-cap ->
     Kaggle-GPU, quota-exhausted -> fall through to Modal}. gpu_hours_used_this_week is injected

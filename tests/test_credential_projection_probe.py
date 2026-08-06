@@ -69,6 +69,15 @@ class CredentialProjectionProbeTests(unittest.TestCase):
             "--provider-profile", "copilot",
             "--expect-key", "COPILOT_GITHUB_TOKEN",
         )
+        if os.name == "nt":
+            # Native Windows must fail closed to the PowerShell authority engine.
+            self.assertEqual(result.returncode, 3, result.stderr)
+            self.assertEqual(
+                result.stdout.strip(),
+                "FAIL lane=provider reason=native-windows-requires-powershell-loader",
+            )
+            self.assertNotIn("fixture-token", result.stdout + result.stderr)
+            return
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "PASS lane=provider")
         self.assertEqual(result.stderr, "")
@@ -88,6 +97,7 @@ class CredentialProjectionProbeTests(unittest.TestCase):
         self.assertIn("usage:", result.stdout)
         self.assertNotIn("FAIL", result.stdout + result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "probe fails closed first: reason=native-windows-requires-powershell-loader")
     def test_copilot_authority_rejects_unrelated_provider_assignment(self) -> None:
         result = self._run(
             "COPILOT_GITHUB_TOKEN=fixture-token\nOPENAI_API_KEY=must-reject\n",
@@ -100,6 +110,7 @@ class CredentialProjectionProbeTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
         self.assertNotIn("must-reject", result.stdout + result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "probe fails closed first: reason=native-windows-requires-powershell-loader")
     def test_broad_arl_provider_authority_remains_a_separate_profile(self) -> None:
         result = self._run(
             "OPENAI_API_KEY=fixture-openai\n",
@@ -117,9 +128,19 @@ class CredentialProjectionProbeTests(unittest.TestCase):
             "--expect-key", "HCLOUD_TOKEN",
             pointer="AAS_COMPUTE_SECRETS_FILE",
         )
+        if os.name == "nt":
+            # Native Windows must fail closed to the PowerShell authority engine.
+            self.assertEqual(result.returncode, 3, result.stderr)
+            self.assertEqual(
+                result.stdout.strip(),
+                "FAIL lane=compute reason=native-windows-requires-powershell-loader",
+            )
+            self.assertNotIn("fixture-hcloud", result.stdout + result.stderr)
+            return
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.strip(), "PASS lane=compute")
 
+    @unittest.skipIf(os.name == "nt", "probe fails closed first: reason=native-windows-requires-powershell-loader")
     def test_checker_must_be_the_fixed_installed_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

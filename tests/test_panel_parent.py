@@ -54,6 +54,10 @@ class PanelProviderCredentialScopeTests(unittest.TestCase):
         )
         all_keys = set().union(*expected.values())
         source = {key: f"restored-{key.lower()}" for key in all_keys}
+        # _panel_child_environment resolves Path.home(); keep the platform home
+        # variables in the scrubbed environment so home resolution works on nt.
+        home_keys = ("USERPROFILE", "HOMEDRIVE", "HOMEPATH") if os.name == "nt" else ("HOME",)
+        source.update({key: os.environ[key] for key in home_keys if key in os.environ})
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             for provider, allowed in expected.items():

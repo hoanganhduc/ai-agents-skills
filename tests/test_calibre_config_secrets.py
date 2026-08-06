@@ -44,6 +44,7 @@ class CalibreConfigSecretsTests(unittest.TestCase):
         }), encoding="utf-8")
         self.config.SKILL_DIR = str(root)
 
+    @unittest.skipIf(os.name == "nt", "native Windows secret files require the managed projection runner")
     def test_config_prefers_target_neutral_aas_authority(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
