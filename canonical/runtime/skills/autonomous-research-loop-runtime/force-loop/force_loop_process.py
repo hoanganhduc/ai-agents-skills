@@ -481,7 +481,11 @@ def bind_child_command(argv: list[str]) -> BoundChildCommand:
             raise
         descriptors.append(script_fd)
         bound_argv[1] = _fd_path(script_fd)
-    return BoundChildCommand(bound_argv, tuple(descriptors))
+    # argv references descriptors by embedded /proc/self/fd or /dev/fd paths,
+    # so tuple order is free; sort for a deterministic record on every
+    # platform (macOS dup ordering differs) — Popen's pass_fds is a set-like
+    # allowlist, not positional.
+    return BoundChildCommand(bound_argv, tuple(sorted(descriptors)))
 
 
 def run_foreground(

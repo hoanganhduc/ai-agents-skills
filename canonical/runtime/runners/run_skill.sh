@@ -419,9 +419,23 @@ system_python_path() {
   printf '%s\n' "$canonical"
 }
 
+# bash 4.1+ allocates the descriptor number itself via ``exec {var}<``.
+# Older substrates (macOS /bin/bash 3.2) parse ``{var}`` as a literal command
+# word, so a deterministic script-global counter supplies high descriptor
+# numbers there.  Descriptors opened with ``exec`` stay open across the final
+# exec either way, so bound descriptors survive into the launched child.
+bind_regular_file_next_fd=200
+
 bind_regular_file() {
   local selected="$1" variable="$2" fd_variable="${3:-}" bound value
-  exec {bound}<"$selected" || return 1
+  if [ "${BASH_VERSINFO[0]}" -gt 4 ] || \
+     { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+    exec {bound}<"$selected" || return 1
+  else
+    bound="$bind_regular_file_next_fd"
+    bind_regular_file_next_fd=$((bind_regular_file_next_fd + 1))
+    eval "exec ${bound}<\"\$selected\"" || return 1
+  fi
   if [ -e "/proc/self/fd/$bound" ]; then
     printf -v "$variable" '%s' "/proc/self/fd/$bound"
   elif [ -e "/dev/fd/$bound" ]; then
@@ -545,9 +559,9 @@ if [ "$credential_contract" -eq 1 ]; then
   loader_args=(--pointer-env "$projection_pointer_env" --format "$projection_format" --export-subset)
   [ "$projection_no_load" -eq 1 ] && loader_args+=(--no-load)
   [ "$projection_retain_pointer" -eq 1 ] && loader_args+=(--retain-pointer)
-  for key in "${projection_allow_keys[@]}"; do loader_args+=(--allow-key "$key"); done
-  for key in "${projection_export_keys[@]}"; do loader_args+=(--export-key "$key"); done
-  for key in "${projection_retain_env[@]}"; do loader_args+=(--retain-env "$key"); done
+  for key in ${projection_allow_keys[@]+"${projection_allow_keys[@]}"}; do loader_args+=(--allow-key "$key"); done
+  for key in ${projection_export_keys[@]+"${projection_export_keys[@]}"}; do loader_args+=(--export-key "$key"); done
+  for key in ${projection_retain_env[@]+"${projection_retain_env[@]}"}; do loader_args+=(--retain-env "$key"); done
   scrub_keys=(
     "${ambient_secret_keys[@]}"
     SHELLOPTS BASHOPTS BASH_ENV ENV PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT
