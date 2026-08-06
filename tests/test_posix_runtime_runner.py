@@ -378,7 +378,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             env = os.environ.copy()
             env.update(
                 {
-                    "AAS_RUNTIME_PYTHON": str(Path(sys.executable).resolve()),
+                    "AAS_RUNTIME_PYTHON": os.path.realpath("/usr/bin/python3"),
                     "AAS_SKILL_SECRETS_FILE": str(secrets),
                     "PATH": f"{hostile_bin}:/usr/bin:/bin",
                 }

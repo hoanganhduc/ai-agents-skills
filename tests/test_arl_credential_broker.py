@@ -17,6 +17,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNNERS_DIR = REPO_ROOT / "canonical" / "runtime" / "runners"
 sys.path.insert(0, str(RUNNERS_DIR))
 
+if os.name == "nt":
+    raise unittest.SkipTest("the ARL credential broker is POSIX-only (pwd, AF_UNIX)")
+
 import arl_credential_broker as broker  # noqa: E402
 
 

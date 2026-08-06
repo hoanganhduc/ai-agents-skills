@@ -71,8 +71,40 @@ OBSERVED_ENV_KEYS = sorted(COMPUTE_KEYS | MODAL_KEYS | PROVIDER_KEYS | SKILL_KEY
 HCLOUD_KEYS = {"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS"}
 KAGGLE_KEYS = {"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}
 
+# The credential gates only accept an AAS_RUNTIME_PYTHON that is the same inode
+# as the attested OS interpreter, so the live-wrapper tests must select the
+# interpreter the gate actually attests rather than sys.executable (which is a
+# hostedtoolcache build on CI runners).
+_SYSTEM_PYTHON = os.path.realpath("/usr/bin/python3")
+
+
+def _bash_supports_descriptor_binding() -> bool:
+    """The wrappers' {var}< descriptor binding requires bash >= 4.4."""
+    try:
+        probe = subprocess.run(
+            ["/bin/bash", "-c", 'printf %s "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+    except OSError:
+        return False
+    parts = probe.stdout.strip().split(".")
+    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return False
+    return (int(parts[0]), int(parts[1])) >= (4, 4)
+
 
 @unittest.skipIf(os.name == "nt", "POSIX wrappers are not native Windows targets")
+@unittest.skipUnless(
+    os.path.isfile("/usr/bin/python3"),
+    "live credential wrappers require the attested OS python3",
+)
+@unittest.skipUnless(
+    _bash_supports_descriptor_binding(),
+    "POSIX credential wrappers require bash >= 4.4; macOS /bin/bash is 3.2",
+)
 class PosixSecretEntrypointTests(unittest.TestCase):
     @staticmethod
     def _copy_test_runner(destination: Path) -> None:
@@ -148,7 +180,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         env = {
             "HOME": str(root),
             "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-            "AAS_RUNTIME_PYTHON": sys.executable,
+            "AAS_RUNTIME_PYTHON": _SYSTEM_PYTHON,
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         return env
@@ -415,7 +447,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 hostile_helper.chmod(0o644)
                 helper.unlink()
                 helper.symlink_to(hostile_helper)
-                env["AAS_RUNTIME_PYTHON"] = sys.executable
+                env["AAS_RUNTIME_PYTHON"] = _SYSTEM_PYTHON
                 linked = subprocess.run(
                     ["/bin/bash", str(wrapper), "doctor"], check=False, text=True,
                     capture_output=True, env=env, timeout=30,
@@ -1641,6 +1673,10 @@ class SecretEntrypointStaticTests(unittest.TestCase):
         self.assertLess(opened, invoked)
         self.assertLess(invoked, disposed)
 
+    @unittest.skipUnless(
+        os.name == "posix",
+        "native Windows secret loading requires the managed PowerShell authority engine",
+    )
     def test_loader_detects_in_place_mutation_even_when_mtime_is_restored(self) -> None:
         loader_path = RUNTIME_SOURCE / "runners" / "load_secret_env.py"
         spec = importlib.util.spec_from_file_location(
@@ -1683,6 +1719,10 @@ class SecretEntrypointStaticTests(unittest.TestCase):
                 ):
                     module.read_protected_secret_env(str(secret))
 
+    @unittest.skipUnless(
+        os.name == "posix",
+        "native Windows secret loading requires the managed PowerShell authority engine",
+    )
     def test_loader_can_validate_a_shared_authority_but_export_a_target_subset(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1748,6 +1788,10 @@ class SecretEntrypointStaticTests(unittest.TestCase):
                 },
             )
 
+    @unittest.skipUnless(
+        os.name == "posix",
+        "native Windows secret loading requires the managed PowerShell authority engine",
+    )
     def test_loader_explicit_empty_subset_scrubs_allowed_ambient_and_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1794,6 +1838,10 @@ class SecretEntrypointStaticTests(unittest.TestCase):
                 },
             )
 
+    @unittest.skipUnless(
+        os.name == "posix",
+        "native Windows secret loading requires the managed PowerShell authority engine",
+    )
     def test_loader_default_scrubs_ambient_siblings_and_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
