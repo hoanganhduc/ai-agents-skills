@@ -31,8 +31,12 @@ SCRIPT="$SCRIPT_DIR/send_email.py"
 
 trusted_regular_file() {
   local candidate="$1" metadata owner mode links kind current_uid
-  metadata="$(/usr/bin/stat -c '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || true)"
+  metadata="$(/usr/bin/stat -c '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
+    /usr/bin/stat -f '%u:%Lp:%l:%HT' "$candidate" 2>/dev/null || true)"
   IFS=: read -r owner mode links kind <<< "$metadata"
+  case "$kind" in
+    "Regular File") kind="regular file" ;;
+  esac
   current_uid="$(/usr/bin/id -u)"
   case "$owner" in 0|"$current_uid") ;; *) return 1 ;; esac
   [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1

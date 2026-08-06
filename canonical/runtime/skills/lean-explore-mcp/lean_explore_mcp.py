@@ -221,8 +221,12 @@ def managed_wrapper_path() -> str:
     return str(candidate)
 
 
-def _stable_file_digest(path: Path, expected_owner: int) -> tuple[str, int]:
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+def _stable_file_digest(
+    name: str, expected_owner: int, *, dir_fd: int | None = None
+) -> tuple[str, int]:
+    descriptor = os.open(
+        name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=dir_fd
+    )
     try:
         before = os.fstat(descriptor)
         if (
@@ -252,8 +256,24 @@ def _installed_content_manifest(
 ) -> dict[str, object]:
     """Reproduce CSR's complete v2 installed-content manifest."""
 
-    root_info = root.stat()
-    canonical_root = root.resolve(strict=True)
+    root_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        return _held_content_manifest(root_fd, expected_owner=expected_owner)
+    finally:
+        os.close(root_fd)
+
+
+def _held_content_manifest(
+    root_fd: int, *, expected_owner: int
+) -> dict[str, object]:
+    """Attest the held closure through descriptor-relative addressing only.
+
+    Every open, stat, and readlink below is dir_fd-relative (openat
+    semantics), so the walk never depends on /proc/self/fd or /dev/fd path
+    traversal and always attests the directory the held descriptor pins.
+    """
+
+    root_info = os.fstat(root_fd)
     if (
         not stat.S_ISDIR(root_info.st_mode)
         or root_info.st_uid != expected_owner
@@ -273,9 +293,9 @@ def _installed_content_manifest(
         digest.update(payload)
         entry_count += 1
 
-    def walk(directory: Path, relative: Path) -> None:
+    def walk(directory_fd: int, relative: Path) -> None:
         try:
-            entries = sorted(os.scandir(directory), key=lambda item: item.name)
+            entries = sorted(os.scandir(directory_fd), key=lambda item: item.name)
         except OSError as exc:
             raise RuntimeError("LeanExplore closure cannot be enumerated") from exc
         for entry in entries:
@@ -291,12 +311,23 @@ def _installed_content_manifest(
                     "LeanExplore closure content has unsafe ownership or mode"
                 )
             mode = stat.S_IMODE(info.st_mode)
-            path = Path(entry.path)
             if stat.S_ISDIR(info.st_mode):
                 add({"mode": mode, "path": relative_text, "type": "directory"})
-                walk(path, item_relative)
+                child_fd = os.open(
+                    entry.name,
+                    os.O_RDONLY
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=directory_fd,
+                )
+                try:
+                    walk(child_fd, item_relative)
+                finally:
+                    os.close(child_fd)
             elif stat.S_ISREG(info.st_mode):
-                file_digest, size = _stable_file_digest(path, expected_owner)
+                file_digest, size = _stable_file_digest(
+                    entry.name, expected_owner, dir_fd=directory_fd
+                )
                 add(
                     {
                         "mode": mode,
@@ -307,14 +338,18 @@ def _installed_content_manifest(
                     }
                 )
             elif stat.S_ISLNK(info.st_mode):
-                target = os.readlink(path)
-                resolved = path.resolve(strict=True)
-                try:
-                    resolved.relative_to(canonical_root)
-                except ValueError as exc:
+                target = os.readlink(entry.name, dir_fd=directory_fd)
+                escapes = os.path.isabs(target)
+                if not escapes:
+                    joined = os.path.normpath(
+                        (item_relative.parent / target).as_posix()
+                    )
+                    escapes = joined == ".." or joined.startswith("../")
+                if escapes:
                     raise RuntimeError(
                         "LeanExplore closure symlink escapes the held generation"
-                    ) from exc
+                    )
+                os.stat(entry.name, dir_fd=directory_fd)
                 add(
                     {
                         "mode": mode,
@@ -333,7 +368,16 @@ def _installed_content_manifest(
             "type": "directory",
         }
     )
-    walk(root, Path())
+    # A fresh "." open yields an independent directory-stream offset for the
+    # same pinned inode, so repeated attestation passes over one held
+    # descriptor never observe a shared readdir position.
+    walk_fd = os.open(
+        ".", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0), dir_fd=root_fd
+    )
+    try:
+        walk(walk_fd, Path())
+    finally:
+        os.close(walk_fd)
     return {
         "schema": CLOSURE_CONTENT_SCHEMA,
         "entryCount": entry_count,
@@ -364,10 +408,14 @@ def verify_lean_explore_closure(
     )
     if not root_text:
         raise RuntimeError("this POSIX host cannot hold the LeanExplore closure")
-    root = Path(root_text)
-    marker_path = root / CLOSURE_MARKER
+    # Validation below is descriptor-relative (openat semantics) throughout;
+    # root_text only names the returned interpreter-visible site path.  Path
+    # traversal beneath /dev/fd entries is unsupported on macOS, so the marker
+    # opens through dir_fd instead of a descriptor-rooted string path.
     marker_fd = os.open(
-        marker_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        CLOSURE_MARKER,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=descriptor,
     )
     try:
         marker_info = os.fstat(marker_fd)
@@ -418,18 +466,34 @@ def verify_lean_explore_closure(
         is None
     ):
         raise RuntimeError("LeanExplore closure content claim is invalid")
-    first = _installed_content_manifest(root, expected_owner=expected_owner)
+    first = _held_content_manifest(descriptor, expected_owner=expected_owner)
     if first != expected_content:
         raise RuntimeError("LeanExplore closure content differs from its CSR marker")
     if between_passes is not None:
         between_passes()
-    second = _installed_content_manifest(root, expected_owner=expected_owner)
+    second = _held_content_manifest(descriptor, expected_owner=expected_owner)
     if second != first:
         raise RuntimeError("LeanExplore closure changed after validation")
-    site = root / site_relative
-    if not site.is_dir() or site.is_symlink():
-        raise RuntimeError("LeanExplore site-packages is unavailable in held closure")
-    return str(site)
+    component_fds: list[int] = []
+    try:
+        current_fd = descriptor
+        for component in site_relative.split("/"):
+            current_fd = os.open(
+                component,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=current_fd,
+            )
+            component_fds.append(current_fd)
+    except OSError as exc:
+        raise RuntimeError(
+            "LeanExplore site-packages is unavailable in held closure"
+        ) from exc
+    finally:
+        for component_fd in component_fds:
+            os.close(component_fd)
+    return f"{root_text}/{site_relative}"
 
 
 def _consume_private_key_descriptor() -> None:

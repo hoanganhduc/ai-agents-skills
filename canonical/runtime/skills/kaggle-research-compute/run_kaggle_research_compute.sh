@@ -159,7 +159,7 @@ export AAS_RUNTIME_PYTHON="$PYTHON"
 [ -n "$compute_pointer" ] && export AAS_COMPUTE_SECRETS_FILE="$compute_pointer"
 trusted_pythonpath="$WORKSPACE_ROOT"
 IFS=: read -r -a python_entries <<< "${PYTHONPATH:-}"
-for python_entry in "${python_entries[@]}"; do
+for python_entry in ${python_entries[@]+"${python_entries[@]}"}; do
   if [ -d "$python_entry" ]; then
     python_entry_real="$(cd -- "$python_entry" && pwd -P)"
     case "$python_entry_real/" in
