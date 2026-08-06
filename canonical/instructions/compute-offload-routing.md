@@ -29,6 +29,64 @@ The Kaggle and Hetzner lanes' driver and guardrail contracts live with their ski
 `kaggle-research-compute/references/kaggle-offload.md` and
 `hetzner-research-compute/references/hetzner-offload.md`.
 
+## Mandatory pre-dispatch sizing gate
+
+Routing decides *which* lane. This gate decides whether the job has been
+**characterized** well enough to be routed at all. Work through
+`templates/compute-offload-sizing-gate.md` before any `submit`; it is five
+steps: characterize the workload by measurement, read the declared lane
+capacity, write the manifest in the correct dialect, assert the plan, then
+verify what was actually provisioned.
+
+Two rules carry most of the weight:
+
+- **`accepted: true` is not a fit check.** The lanes verify unequally. Kaggle
+  compares declared RAM against `kernel_ram_gb` and will reject
+  (`peak_ram 1024GB exceeds kernel RAM 32GB`). Modal's adequacy verdict,
+  `modal_authenticated_api_usable`, is an **API liveness probe only** — it never
+  compares the request against the target function's declared `cpu=`/`memory=`,
+  so an over-sized request is admitted and fails at runtime after boot. For
+  Modal, the caller must do the capacity comparison against `modal_app.py`.
+- **Size from the declared spec, never from inside the container.**
+  `os.cpu_count()` reports the worker host, not the allocation. The cgroup is
+  authoritative on Kaggle but **not on Modal**, where the limit is enforced by
+  the scheduler outside the gVisor guest and the guest's cgroup reports host
+  figures. The `@app.function(...)` decorator is the ground truth.
+
+## Manifest resource contract
+
+There are two manifest dialects and they are **not** interchangeable. An
+unrecognized top-level key is dropped **silently** — no warning, no error — so a
+resource block under the wrong key plans as though nothing was requested, and
+the job is confidently routed to the wrong hardware.
+
+| Manifest | Resource block key | Read by |
+|---|---|---|
+| Broker job (`plan`, `fanout-plan`, `submit`) | top-level **`constraints`** | `research_compute/planner.py` |
+| Kaggle bundle `manifest.json` | flat top level: `cores`, `memory_mb`, `total_units`, `checkpoint_glob` | `kaggle_driver.py` |
+
+After planning, assert the returned plan echoes a **non-empty** `constraints`
+block equal to what was submitted. That single assertion catches the silent
+drop, which is otherwise invisible until the job runs on the wrong lane.
+
+## Lane capacity reference
+
+Declared per-unit capacity, and the aggregate that matters for sizing. Read the
+live values from the sources named in the sizing-gate template; the figures
+below are the shape of the comparison, not a substitute for reading them.
+
+| Lane | Per unit | Parallel units | Aggregate | Cost |
+|---|---|---|---|---|
+| Kaggle CPU | `kernel_cores` (4) / `kernel_ram_gb` (32 GB), 12 h session | `concurrency` (5) | **20 vCPU / 160 GB** | free, quota-free |
+| Modal `run_cpu_job` | `cpu=4.0`, `memory=8192` | per-call | 4 vCPU / 8 GB | paid |
+| Modal `run_highmem_job` | `cpu=16.0`, `memory=65536` | per-call | 16 vCPU / 64 GB | paid |
+| Modal `run_gpu_job` | `gpu="L4"`, `cpu=8.0`, `memory=32768` | per-call | 8 vCPU / 32 GB + L4 | paid |
+
+Kaggle's aggregate free capacity exceeds Modal's paid high-memory tier in core
+count, which is why Kaggle sits ahead of Modal in the default order. Sizing a
+job to one kernel instead of the fan-out understates the free lane by 5x and
+misroutes work to a paid lane.
+
 ## Keep work local when
 
 - the data is small enough for the current machine and setup overhead would dominate;
