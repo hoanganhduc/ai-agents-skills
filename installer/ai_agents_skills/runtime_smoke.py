@@ -56,6 +56,30 @@ def installed_runtime_smoke_report(**fields: Any) -> dict[str, Any]:
     return report
 
 
+def relax_ephemeral_credential_enforcement(runtime_root: Path) -> None:
+    """Relax the credential-runtime generation gate in an ephemeral copy.
+
+    run_skill.sh documents that ``credential_runtime_enforcement=1`` is
+    intentionally patchable only in ephemeral copies.  The temporary smoke
+    install is exactly such a copy: it can never satisfy the root-owned
+    exact-generation check, and the smoke canaries would otherwise turn
+    every credential-bearing case into a gate refusal.  Installed-runtime
+    smoke does not call this.
+    """
+    runner = runtime_root / "run_skill.sh"
+    if not runner.is_file():
+        return
+    text = runner.read_text(encoding="utf-8")
+    patched = text.replace(
+        "credential_runtime_enforcement=1",
+        "credential_runtime_enforcement=0",
+        1,
+    )
+    if patched != text:
+        runner.write_text(patched, encoding="utf-8")
+        runner.chmod(0o755)
+
+
 def run_runtime_smoke(
     manifests: dict[str, Any],
     *,
@@ -82,6 +106,7 @@ def run_runtime_smoke(
         install_result = apply_plan(root, plan, dry_run=False)
         verify_result = verify(root)
         runtime_root = root / ".codex" / "runtime"
+        relax_ephemeral_credential_enforcement(runtime_root)
         workspace = runtime_root / "workspace"
         runners = runner_invocations(runtime_root, host_platform)
         if not runners:
