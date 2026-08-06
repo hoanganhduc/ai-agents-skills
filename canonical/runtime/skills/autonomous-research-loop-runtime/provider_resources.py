@@ -441,7 +441,12 @@ def brokered_provider_containment_command(
     socket only.
     """
 
-    if not command or not all(isinstance(item, str) and item for item in command):
+    if (
+        not command
+        or not isinstance(command[0], str)
+        or not command[0]
+        or not all(isinstance(item, str) for item in command)
+    ):
         raise ProviderResourceError("brokered provider command must be non-empty")
     try:
         canonical_cwd = cwd.resolve(strict=True)

@@ -118,6 +118,31 @@ class BrokeredProviderContainmentTests(unittest.TestCase):
                 (project / "written.txt").read_text(encoding="utf-8"), "written"
             )
 
+    def test_empty_non_first_argv_items_are_preserved(self) -> None:
+        """Provider CLIs legitimately pass empty argv values (e.g. --tools '')."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            project = root / "project"
+            dependency = root / "dependency"
+            synthetic_home = root / "home"
+            project.mkdir()
+            dependency.mkdir()
+            synthetic_home.mkdir()
+            command = pr.brokered_provider_containment_command(
+                ["/usr/bin/true", "--tools", ""],
+                cwd=project,
+                dependency_root=dependency,
+                synthetic_home=synthetic_home,
+            )
+            self.assertEqual(command[-3:], ["/usr/bin/true", "--tools", ""])
+        with self.assertRaisesRegex(pr.ProviderResourceError, "non-empty"):
+            pr.brokered_provider_containment_command(
+                ["", "--tools"],
+                cwd=REPO_ROOT,
+                dependency_root=Path("/usr/bin"),
+                synthetic_home=REPO_ROOT,
+            )
+
     def test_project_credential_shadows_are_rejected_before_command_build(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
