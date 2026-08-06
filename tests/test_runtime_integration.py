@@ -3416,8 +3416,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 (second_dir, second_log),
             ):
                 escaped_log = str(log_path).replace("'", "''")
+                # No param block: a [Parameter()] attribute would make the stub an
+                # advanced script whose common parameters make ``-I`` ambiguous
+                # (-InformationAction), so the automatic $Args receives everything.
                 (directory / "python.ps1").write_text(
-                    "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args = @())\n"
                     f"Add-Content -LiteralPath '{escaped_log}' -Value ($Args -join '|')\n"
                     "if ($Args.Count -ge 2 -and ($Args[0] -eq '-c' -or ($Args[0] -eq '-I' -and $Args[1] -eq '-c'))) { Write-Output '3.11'; exit 0 }\n"
                     "exit 0\n",
@@ -3568,8 +3570,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
             args_path = root / "py-args.txt"
             fake_py = root / "py.ps1"
             escaped_args_path = str(args_path).replace("'", "''")
+            # No param block: a [Parameter()] attribute would make the stub an
+            # advanced script whose common parameters make ``-I`` ambiguous
+            # (-InformationAction), so the automatic $Args receives everything.
             fake_py.write_text(
-                "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args = @())\n"
                 f"Add-Content -LiteralPath '{escaped_args_path}' -Value ($Args -join '|')\n"
                 "if ($Args.Count -ge 3 -and $Args[0] -eq '-3' -and ($Args[1] -eq '-c' -or ($Args[1] -eq '-I' -and $Args[2] -eq '-c'))) {\n"
                 "  Write-Output '3.11'\n"

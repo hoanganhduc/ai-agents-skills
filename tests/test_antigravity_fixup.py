@@ -11,6 +11,12 @@ from installer.ai_agents_skills.cli import main
 from installer.ai_agents_skills.render import render_management_notice
 
 
+NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "native Windows apply/uninstall/rollback are dry-run-only until handle-bound mutation lands",
+)
+
+
 class AntigravityFixupTests(unittest.TestCase):
     def test_merged_settings_adds_workspace_and_repairs_known_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -33,6 +39,7 @@ class AntigravityFixupTests(unittest.TestCase):
                 ["trim-whitespace", "add-workspaces", "disable-empty-status-line"],
             )
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_fixup_apply_preserves_existing_settings_and_writes_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -56,6 +63,7 @@ class AntigravityFixupTests(unittest.TestCase):
                 ["/tmp/existing", str(workspace.resolve())],
             )
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_fixup_defaults_to_current_working_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "home"

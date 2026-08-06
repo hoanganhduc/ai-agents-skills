@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,11 @@ from tests.test_openclaw_manifest import CREATED_AT
 
 
 REVIEWED_AT = "2026-05-01T00:01:00Z"
+
+NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "native Windows apply/uninstall/rollback are dry-run-only until handle-bound mutation lands",
+)
 
 
 def approved_manifest(source_root: Path, target_root: Path, agents: list[str] | None = None) -> dict[str, object]:
@@ -35,6 +41,7 @@ def write_json(path: Path, data: dict[str, object]) -> None:
 
 
 class OpenClawApplyTests(unittest.TestCase):
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_requires_approved_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
@@ -51,6 +58,7 @@ class OpenClawApplyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "approved"):
                 apply_manifest(manifest, target_root, dry_run=False)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_and_uninstall_roundtrip_restores_fake_target_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
@@ -81,6 +89,7 @@ class OpenClawApplyTests(unittest.TestCase):
             self.assertEqual(snapshot(target_root), before_target)
             self.assertEqual(snapshot(source_root), before_source)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_dry_run_and_apply_actions_match(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
@@ -103,6 +112,7 @@ class OpenClawApplyTests(unittest.TestCase):
             ]
             self.assertEqual(applied_actions, dry_actions)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_refuses_symlinked_state_dir_before_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
@@ -122,6 +132,7 @@ class OpenClawApplyTests(unittest.TestCase):
             self.assertEqual(snapshot(target_root), before_target)
             self.assertEqual(snapshot(outside), {})
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_refuses_symlinked_target_parent_before_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
@@ -174,6 +185,7 @@ class OpenClawApplyTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "real-system target roots"):
                     apply_manifest(manifest, target_root, dry_run=True)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_accepts_windows_shaped_fake_target_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
@@ -189,6 +201,7 @@ class OpenClawApplyTests(unittest.TestCase):
             self.assertTrue(any(action["applied"] for action in applied["actions"]))
             self.assertTrue(removed["removed"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_apply_fails_closed_on_target_drift_before_writes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
@@ -208,6 +221,7 @@ class OpenClawApplyTests(unittest.TestCase):
 
             self.assertEqual(snapshot(target_root), before_target)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_preserves_changed_generated_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")
@@ -227,6 +241,7 @@ class OpenClawApplyTests(unittest.TestCase):
             self.assertTrue(skipped)
             self.assertTrue(changed_path.exists())
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_cli_openclaw_approve_apply_uninstall_lifecycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_root = fake_root_path(tmp, "fake-openclaw")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +11,14 @@ from installer.ai_agents_skills.planner import classify_file_action
 from installer.ai_agents_skills.state import sha256_file
 
 
+NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "native Windows apply/uninstall/rollback are dry-run-only until handle-bound mutation lands",
+)
+
+
 class SkillSourceAttestationTests(unittest.TestCase):
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_skill_receipt_binds_canonical_source_digest(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
