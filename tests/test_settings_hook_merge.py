@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -28,6 +29,10 @@ def _action(settings_path: Path) -> dict:
     }
 
 
+@unittest.skipIf(
+    os.name == "nt",
+    "native Windows apply/uninstall/rollback are dry-run-only until handle-bound mutation lands",
+)
 class SettingsHookMergeLifecycleTests(unittest.TestCase):
     """Apply -> uninstall round trip through the real installer lifecycle."""
 

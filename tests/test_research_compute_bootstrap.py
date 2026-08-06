@@ -16,6 +16,13 @@ WORKSPACE = RUNTIME_SOURCE_ROOT / "workspace"
 EXAMPLE = WORKSPACE / "config" / "research-compute.example.toml"
 
 
+_STATE_DACL_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "runner temp state dirs trip the strict windows_acl gate: 'Windows state DACL "
+    "grants unsafe access outside owner/SYSTEM/Administrators/TrustedInstaller'",
+)
+
+
 class ResearchComputeBootstrapTests(unittest.TestCase):
     """The `bootstrap` subcommand must work on a bare machine: generate the
     per-install config from the example if absent, and never clobber one that
@@ -97,6 +104,7 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
             self.assertFalse(again["config"]["generated"])
             self.assertIn("left unchanged", again["config"].get("reason", ""))
 
+    @_STATE_DACL_SKIP
     def test_doctor_warns_when_routing_order_deviates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._make_workspace(Path(tmp))
@@ -123,6 +131,7 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
                 ],
             )
 
+    @_STATE_DACL_SKIP
     def test_doctor_has_no_warning_for_recommended_order(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._make_workspace(Path(tmp))
@@ -137,6 +146,7 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
             )
             self.assertEqual(result["warnings"], [])
 
+    @_STATE_DACL_SKIP
     def test_doctor_distinguishes_invalid_routing_order_from_valid_deviation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ws = self._make_workspace(Path(tmp))
@@ -153,6 +163,7 @@ class ResearchComputeBootstrapTests(unittest.TestCase):
             )
             self.assertIn("must start with local", result["warnings"][0]["error"])
 
+    @_STATE_DACL_SKIP
     def test_doctor_reports_non_array_routing_order_without_crashing(self) -> None:
         for configured in ("7", '"local"'):
             with self.subTest(configured=configured), tempfile.TemporaryDirectory() as tmp:

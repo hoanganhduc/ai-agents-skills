@@ -44,6 +44,7 @@ class SendEmailConfigTests(unittest.TestCase):
             rc = self.se.main(argv)
         return rc, json.loads(buf.getvalue())
 
+    @unittest.skipIf(os.name == "nt", "direct secret loads fail closed: native Windows authority is not bound")
     def test_cli_secrets_file_wins_over_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -55,6 +56,7 @@ class SendEmailConfigTests(unittest.TestCase):
         self.assertEqual(cfg.secrets_source, "cli")
         self.assertEqual(cfg.secrets_file, str(cli))
 
+    @unittest.skipIf(os.name == "nt", "direct secret loads fail closed: native Windows authority is not bound")
     def test_send_email_env_file_wins_over_platform_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -70,6 +72,7 @@ class SendEmailConfigTests(unittest.TestCase):
         self.assertEqual(cfg.host, "env.example")
         self.assertEqual(cfg.secrets_source, "SEND_EMAIL_SECRETS_FILE")
 
+    @unittest.skipIf(os.name == "nt", "direct secret loads fail closed: native Windows authority is not bound")
     def test_runtime_skill_local_file_is_used(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             skill_dir = Path(tmp) / "workspace" / "skills" / "send-email"
@@ -94,6 +97,7 @@ class SendEmailConfigTests(unittest.TestCase):
         self.assertEqual(cfg.host, "xdg.example")
         self.assertEqual(cfg.secrets_source, "platform_default")
 
+    @unittest.skipIf(os.name == "nt", "direct secret loads fail closed: native Windows authority is not bound")
     def test_broad_shared_secret_selectors_are_not_send_email_authorities(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -180,6 +184,7 @@ class SendEmailConfigTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertEqual(out["error_code"], "config_error")
 
+    @unittest.skipIf(os.name == "nt", "direct secret loads fail closed: native Windows authority is not bound")
     def test_show_config_and_accounts_do_not_print_password_or_passphrase(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             secrets = _write_json(Path(tmp) / "secrets.json", {
@@ -205,6 +210,7 @@ class SendEmailConfigTests(unittest.TestCase):
         self.assertNotIn("CANARY_PASSWORD", combined)
         self.assertNotIn("CANARY_PASSPHRASE", combined)
 
+    @unittest.skipIf(os.name == "nt", "direct secret loads fail closed: native Windows authority is not bound")
     def test_cli_env_and_secret_value_precedence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             secrets = _write_json(Path(tmp) / "secrets.json", {"smtp": {"host": "file.example"}})

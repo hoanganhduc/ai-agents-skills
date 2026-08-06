@@ -76,6 +76,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
         self.assertEqual(tuple(manifests["runtime"]["denied_patterns"]), runtime_denied_patterns())
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_runtime_files_are_root_scoped_and_installed_with_runtime_backed_skill(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -111,6 +112,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertTrue(any(item["artifact_type"] == "runtime-file" for item in uninstall_result["removed"]))
             self.assertFalse((root / ".codex" / "runtime" / "workspace" / "skills" / "graph-verifier" / "graph_verifier.py").exists())
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_rollback_preserves_runtime_runner_when_other_runtime_skill_remains(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,6 +173,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertNotIn("run_skill.sh", target_relpaths)
             self.assertNotIn("workspace/skills/graph-verifier/run_graph_verifier.sh", target_relpaths)
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_windows_upgrade_removes_obsolete_managed_runtime_file_and_rollback_restores_it(self) -> None:
         manifests = load_manifests()
         old_manifests = copy.deepcopy(manifests)
@@ -227,6 +230,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 any(item.get("artifact") == str(obsolete) for item in load_state(root)["artifacts"])
             )
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_windows_upgrade_preserves_modified_obsolete_runtime_file(self) -> None:
         manifests = load_manifests()
         old_manifests = copy.deepcopy(manifests)
@@ -278,6 +282,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 any(item.get("artifact") == str(obsolete) for item in load_state(root)["artifacts"])
             )
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_windows_upgrade_removes_obsolete_files_from_all_managed_runtime_roots(self) -> None:
         manifests = load_manifests()
         old_manifests = copy.deepcopy(manifests)
@@ -341,6 +346,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             rollback(root, run_id=result["run_id"], dry_run=False)
             self.assertTrue(all(path.is_file() for path in obsolete_files))
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_windows_upgrade_preserves_runtime_files_declared_for_other_platforms(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -386,6 +392,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertNotIn(str(posix_runner), removal_paths)
             self.assertNotIn(str(graph_runner), removal_paths)
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_opencode_only_runtime_uses_neutral_shared_root(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -414,6 +421,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertTrue((root / ".config" / "opencode" / "skills" / "graph-verifier" / "SKILL.md").is_file())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_antigravity_only_runtime_uses_neutral_shared_root(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -442,6 +450,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertTrue((root / ".gemini" / "antigravity-cli" / "skills" / "graph-verifier.md").is_file())
             self.assertEqual(verify(root)["status"], "ok")
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_grok_only_runtime_uses_neutral_shared_root(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -791,6 +800,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             "skills/lean-explore-mcp/run_lean_explore_mcp.ps1",
         )
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_uses_scratch_workspace(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -894,6 +904,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok", result)
         self.assertEqual([item["skill"] for item in result["results"]], ["graph-verifier"])
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_rejects_null_runtime_root_without_omitting_sibling(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -944,6 +955,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             managed_verify.assert_not_called()
             smoke_case.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_recomputes_complete_offline_and_exclusion_closures(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1004,6 +1016,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 managed_verify.assert_not_called()
                 smoke_case.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_rejects_forged_runner_hash_before_verify_or_execution(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1063,6 +1076,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             managed_verify.assert_not_called()
             smoke_case.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_rejects_extra_and_duplicate_records_before_verify(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1163,6 +1177,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 managed_verify.assert_not_called()
                 smoke_case.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_rejects_mixed_non_runtime_request(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1197,6 +1212,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             paper = next(item for item in result["results"] if item["skill"] == "paper-review")
             self.assertEqual(paper["failure_kind"], "not-runtime-backed")
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_rejects_malformed_skill_records_at_selected_root(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1248,6 +1264,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 )
                 managed_verify.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_preflight_faults_preserve_report_schema(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1287,6 +1304,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.assertEqual(result["runtime_state_coverage_status"], "failed")
                 managed_verify.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_timeout_bytes_preserve_report_schema(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1328,6 +1346,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertIsInstance(result["results"][0]["stderr_tail"], str)
             json.dumps(result)
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_deep_research_fallback_parse_error_preserves_schema(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1393,6 +1412,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         )
         json.dumps(result)
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_filter_excludes_unrelated_scratch_files(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1445,6 +1465,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual({item["skill"] for item in result["results"]}, {"graph-verifier"})
             self.assertEqual(smoke_case.call_count, 1)
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_refuses_tampered_code_before_execution(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1520,6 +1541,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertIn("integrity verification failed", result["reason"])
             smoke_case.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_descriptor_copy_rechecks_source_hash(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1626,6 +1648,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 )
             )
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_complete_coverage_rejects_omitted_runtime_skill(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1664,6 +1687,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             }
             self.assertIn("graph-verifier", missing)
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_rejects_state_paths_outside_selected_root(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1703,6 +1727,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertIn("escapes the selected root", result["reason"])
             smoke_case.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_launch_error_preserves_report_schema(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -1736,6 +1761,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(result["status"], "failed")
             self.assertEqual(result["results"][0]["failure_kind"], "launch-error")
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_installed_runtime_smoke_runs_all_offline_contracts_and_reports_declared_exclusions(self) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
@@ -2872,6 +2898,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(entries["workspace/linked"]["classification"], "blocked")
             self.assertEqual(entries["workspace/linked"]["reason"], "symlink")
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_agent_scoped_uninstall_preserves_shared_runtime_for_other_agents(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2914,6 +2941,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(verify(root, agent_filter={"codex"})["status"], "ok")
             self.assertEqual(verify(root, agent_filter={"claude"})["status"], "no-managed-artifacts")
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_agent_scoped_uninstall_removes_runtime_when_last_consumer_goes_away(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2950,6 +2978,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 / "graph_verifier.py"
             ).exists())
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
     def test_getscipapers_windows_runner_uses_installed_runtime_workspace(self) -> None:
         powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
@@ -3015,6 +3044,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             docling_dir.mkdir(parents=True)
             source_dir = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills" / "docling"
             shutil.copy2(source_dir / "run_docling.ps1", docling_dir / "run_docling.ps1")
+            runtime_source = Path(__file__).resolve().parents[1] / "canonical" / "runtime"
+            shutil.copy2(runtime_source / "runners" / "run_python.ps1", runtime_root / "run_python.ps1")
             (docling_dir / "docling_convert.py").write_text(
                 "import json, sys\nprint(json.dumps(sys.argv[1:]))\n",
                 encoding="utf-8",
@@ -3046,6 +3077,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             docling_dir.mkdir(parents=True)
             source_dir = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "skills" / "docling"
             shutil.copy2(source_dir / "run_docling.ps1", docling_dir / "run_docling.ps1")
+            runtime_source = Path(__file__).resolve().parents[1] / "canonical" / "runtime"
+            shutil.copy2(runtime_source / "runners" / "run_python.ps1", runtime_root / "run_python.ps1")
             (docling_dir / "doctor.py").write_text(
                 "import json, sys\nprint(json.dumps({'executable': sys.executable, 'args': sys.argv[1:]}))\n",
                 encoding="utf-8",
@@ -3088,6 +3121,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             payload = json.loads(stream.getvalue())
             self.assertTrue(any(item["artifact_type"] == "runtime-file" for item in payload["actions"]))
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_cli_install_runtime_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3385,7 +3419,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 (directory / "python.ps1").write_text(
                     "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args = @())\n"
                     f"Add-Content -LiteralPath '{escaped_log}' -Value ($Args -join '|')\n"
-                    "if ($Args.Count -ge 2 -and $Args[0] -eq '-c') { Write-Output '3.11'; exit 0 }\n"
+                    "if ($Args.Count -ge 2 -and ($Args[0] -eq '-c' -or ($Args[0] -eq '-I' -and $Args[1] -eq '-c'))) { Write-Output '3.11'; exit 0 }\n"
                     "exit 0\n",
                     encoding="utf-8",
                 )
@@ -3537,7 +3571,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             fake_py.write_text(
                 "param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args = @())\n"
                 f"Add-Content -LiteralPath '{escaped_args_path}' -Value ($Args -join '|')\n"
-                "if ($Args.Count -ge 3 -and $Args[0] -eq '-3' -and $Args[1] -eq '-c') {\n"
+                "if ($Args.Count -ge 3 -and $Args[0] -eq '-3' -and ($Args[1] -eq '-c' -or ($Args[1] -eq '-I' -and $Args[2] -eq '-c'))) {\n"
                 "  Write-Output '3.11'\n"
                 "  exit 0\n"
                 "}\n"
@@ -3889,6 +3923,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "zotero"):
             selected_runtime_skills(manifests, {"zotero"})
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_runtime_smoke_fails_closed_when_no_native_runner_is_available(self) -> None:
         manifests = load_manifests()
         with patch(

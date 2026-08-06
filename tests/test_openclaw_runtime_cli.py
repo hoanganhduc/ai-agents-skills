@@ -7,6 +7,7 @@ sys.dont_write_bytecode = True
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,6 +82,12 @@ def _approved_manifest_file(tmp: Path, root: Path, rroot: Path) -> Path:
     return apath
 
 
+@unittest.skipIf(
+    os.name == "nt",
+    "OpenClaw target path DACL validation fails closed on runner temp roots: Windows "
+    "private path DACL grants unsafe access outside the current account, SYSTEM, "
+    "Administrators, and TrustedInstaller",
+)
 class RuntimeCliTest(unittest.TestCase):
     def test_dry_run_then_approve(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

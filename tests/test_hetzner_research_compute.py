@@ -210,6 +210,24 @@ def _config_text(tmp: Path, text: str) -> rc_config.BrokerConfig:
     return rc_config.load_config(cfg)
 
 
+_STATE_DACL_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "runner temp state dirs trip the strict windows_acl gate: 'Windows state DACL "
+    "grants unsafe access outside owner/SYSTEM/Administrators/TrustedInstaller'",
+)
+
+_BUNDLE_POSIX_SKIP = unittest.skipUnless(
+    os.name == "posix",
+    "'Hetzner bundle upload is disabled on native Windows in this release; use "
+    "preflight for planning and WSL/Linux for up, push, or oneshot'",
+)
+
+_GETEUID_POSIX_SKIP = unittest.skipUnless(
+    os.name == "posix",
+    "models POSIX lease-ownership semantics; os.geteuid does not exist on Windows",
+)
+
+
 class HetznerRoutingTests(unittest.TestCase):
     def test_a_imports_clean(self) -> None:
         for mod in (planner, rc_config, hetzner_backend, budget_ledger):
@@ -219,6 +237,7 @@ class HetznerRoutingTests(unittest.TestCase):
                      "constraints": {"cpu": 12, "memory_mb": 8192, "parallelism": 12,
                                      "core_hours": 40, "resource_class": "cpu"}}
 
+    @_STATE_DACL_SKIP
     def test_b_cpu_job_prefers_modal_when_available(self) -> None:
         """New routing order local>modal>hetzner>gha: a CPU-heavy job that exceeds local
         goes to Modal FIRST when Modal is account-usable, even though Hetzner is also
@@ -230,6 +249,7 @@ class HetznerRoutingTests(unittest.TestCase):
             out = _plan(ws, self.HEAVY_CPU_JOB, token=True)
             self.assertTrue(out["plan"]["decision"].startswith("modal_"))
 
+    @_STATE_DACL_SKIP
     def test_b_cpu_job_routes_to_hetzner_when_modal_unavailable(self) -> None:
         """The Modal-out-of-credits fallthrough fix: with Modal unavailable, a CPU-heavy
         job falls through order-driven to HETZNER (not straight to GHA), with a EUR cost
@@ -254,6 +274,7 @@ class HetznerRoutingTests(unittest.TestCase):
             # No provisioning artifacts: only planning state exists.
             self.assertFalse((ws / "state" / "hetzner-reservations.jsonl").exists())
 
+    @_STATE_DACL_SKIP
     def test_submit_selected_hetzner_reports_lane_driver_handoff(self) -> None:
         resources = {"liveness": {"modal": {"ready": True, "usable": False},
                                   "hetzner": {"usable": True}}}
@@ -264,6 +285,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertEqual(result["plan"]["backend"], "hetzner")
             self.assertIn("hetzner-research-compute", result["message"])
 
+    @_STATE_DACL_SKIP
     def test_b_falls_to_modal_without_token(self) -> None:
         """With no HCLOUD_TOKEN Hetzner is unavailable; a Modal-usable host keeps the CPU
         job on Modal (the first offload tier)."""
@@ -273,6 +295,7 @@ class HetznerRoutingTests(unittest.TestCase):
             out = _plan(ws, self.HEAVY_CPU_JOB, token=False)
             self.assertTrue(out["plan"]["decision"].startswith("modal_"))
 
+    @_STATE_DACL_SKIP
     def test_b_custom_remote_order_is_honored_without_false_reasoning(self) -> None:
         custom = CONFIG_TOML.replace(
             '["local", "modal", "hetzner", "gha"]',
@@ -289,6 +312,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertIn("configured routing order selected Hetzner", plan["reasoning_summary"])
             self.assertNotIn("Modal unavailable", plan["reasoning_summary"])
 
+    @_STATE_DACL_SKIP
     def test_b_hetzner_liveness_unusable_falls_through_to_gha(self) -> None:
         """A per-vendor liveness probe reporting the lane unusable makes it unavailable:
         with Modal out of credits AND Hetzner's account-usable probe failing (http_401),
@@ -309,6 +333,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertFalse(trail["hetzner"]["available"])
             self.assertTrue(trail["gha"]["available"])
 
+    @_STATE_DACL_SKIP
     def test_b_gha_cap_under_60pct_allows_routing(self) -> None:
         """GHA lane available while cumulative usage + job worst-case <= 60% of included:
         total at 30% (600) + a 10% job (200) = 800 <= 1200 -> routes to GHA."""
@@ -322,6 +347,7 @@ class HetznerRoutingTests(unittest.TestCase):
             out = _plan(ws, job, token=False)
             self.assertEqual(out["plan"]["decision"], "gha")
 
+    @_STATE_DACL_SKIP
     def test_b_gha_cap_over_60pct_refuses_and_falls_through(self) -> None:
         """Cumulative TOTAL cap, NOT per-task: total already at 55% (1100) + a 10% job
         (200) = 1300 > 1200 makes GHA unavailable, so the lane falls through. With no other
@@ -342,6 +368,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertFalse(gha_entry["available"])
             self.assertIn("cap", gha_entry["reason"])
 
+    @_STATE_DACL_SKIP
     def test_c_self_preservation_veto_falls_through_to_hetzner(self) -> None:
         """A job small enough to classify local, whose full-run load would breach the
         ceiling (w_needed > w_safe), is vetoed and re-routed order-driven. With Modal
@@ -370,6 +397,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertEqual(trail[0]["w_needed"], 5)
             self.assertEqual(trail[-1]["backend"], "hetzner")
 
+    @_STATE_DACL_SKIP
     def test_c_unfallable_secret_never_offloads(self) -> None:
         """Secret-locality data that cannot run local safely (w_safe < 1) is surfaced
         (rejected), never gambled locally AND never offloaded -- even though a Hetzner
@@ -386,6 +414,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertFalse(plan["accepted"])
             self.assertIn("unfallable_secret_local_unsafe", plan["risk_flags"])
 
+    @_STATE_DACL_SKIP
     def test_c_secret_over_budget_runs_throttled_local(self) -> None:
         """Secret data that is load-safe but over the wall budget runs throttled-local
         (safe, not a gamble) rather than offloading."""
@@ -401,6 +430,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertIn("local_over_wall_budget", plan["risk_flags"])
             self.assertEqual(plan["local_workers"], 1)
 
+    @_STATE_DACL_SKIP
     def test_c_heavy_secret_job_is_forced_to_safe_local(self) -> None:
         """Remote classification never overrides the global secret-locality boundary."""
         resources = {"cpu": {"logical_cores": 16}, "load": {"load_1m": 0.2},
@@ -419,6 +449,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertNotIn("modal", [t["backend"] for t in plan["routing_trail"]])
             self.assertNotIn("hetzner", [t["backend"] for t in plan["routing_trail"]])
 
+    @_STATE_DACL_SKIP
     def test_c_secret_remote_override_is_rejected(self) -> None:
         resources = {"liveness": {"modal": {"ready": True, "usable": True}}}
         job = {"task_family": "enumeration",
@@ -432,6 +463,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertEqual(plan["decision"], "rejected")
             self.assertIn("secret_remote_override_forbidden", plan["risk_flags"])
 
+    @_STATE_DACL_SKIP
     def test_c_remote_disabled_rejects_explicit_gha_conflict(self) -> None:
         resources = {"liveness": {
             "gha": {"used_this_cycle": 100, "included_minutes": 2000}
@@ -446,6 +478,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertEqual(plan["decision"], "rejected")
             self.assertIn("remote_override_forbidden", plan["risk_flags"])
 
+    @_STATE_DACL_SKIP
     def test_c_remote_disabled_without_override_runs_watched_local(self) -> None:
         job = {"task_family": "enumeration", "policy": {"allow_remote": False},
                "constraints": {"cpu": 4, "parallelism": 4, "core_hours": 10}}
@@ -459,6 +492,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertTrue(plan["watchdog_armed"])
             self.assertFalse(plan["remote_fallback_allowed"])
 
+    @_STATE_DACL_SKIP
     def test_c_local_only_gpu_requests_never_downgrade_to_cpu(self) -> None:
         policies = (
             ("explicit-local", {"backend": "local", "gpu": True},
@@ -493,6 +527,7 @@ class HetznerRoutingTests(unittest.TestCase):
                         self.assertEqual(plan["decision"], "rejected")
                         self.assertIn(unavailable_flag, plan["risk_flags"])
 
+    @_STATE_DACL_SKIP
     def test_c_secret_gpu_requires_and_uses_only_a_local_gpu(self) -> None:
         job = {
             "task_family": "generic",
@@ -592,6 +627,7 @@ class HetznerRoutingTests(unittest.TestCase):
         self.assertFalse(gpu_rejected["remote_fallback_allowed"])
         self.assertEqual(gpu_rejected["routing_trail"][0]["w_safe"], 0)
 
+    @_STATE_DACL_SKIP
     def test_c_policy_boundary_values_fail_closed_or_choose_secret(self) -> None:
         cases = (
             (
@@ -664,6 +700,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertEqual(plan["decision"], "local_cpu")
             self.assertFalse(plan["remote_fallback_allowed"])
 
+    @_STATE_DACL_SKIP
     def test_c_explicit_gha_enforces_cap_and_gpu_capability(self) -> None:
         base = {
             "task_family": "enumeration",
@@ -699,6 +736,7 @@ class HetznerRoutingTests(unittest.TestCase):
                     self.assertEqual(plan["decision"], "rejected")
                     self.assertIn(risk_flag, plan["risk_flags"])
 
+    @_STATE_DACL_SKIP
     def test_c_explicit_gha_enforces_registered_runner_envelope(self) -> None:
         default_runner = GHA_CONFIG_TOML.replace("max_cpu = 16\n", "").replace(
             "max_memory_mb = 16384\n", ""
@@ -761,6 +799,7 @@ class HetznerRoutingTests(unittest.TestCase):
                 self.assertIn("gha_inadequate", plan["risk_flags"])
                 self.assertIn(reason_fragment, plan["routing_trail"][0]["reason"])
 
+    @_STATE_DACL_SKIP
     def test_c_explicit_gha_uses_payload_core_hours_for_adequacy(self) -> None:
         thirty_minute_target = GHA_CONFIG_TOML.replace(
             "timeout_minutes = 200", "timeout_minutes = 30"
@@ -788,6 +827,7 @@ class HetznerRoutingTests(unittest.TestCase):
         self.assertIn("gha_inadequate", plan["risk_flags"])
         self.assertIn("500 core-hours", plan["routing_trail"][0]["reason"])
 
+    @_STATE_DACL_SKIP
     def test_c_explicit_gha_rejects_public_repo_snapshot(self) -> None:
         job = {
             "task_family": "enumeration",
@@ -811,6 +851,7 @@ class HetznerRoutingTests(unittest.TestCase):
         self.assertIn("gha_unavailable", plan["risk_flags"])
         self.assertEqual(plan["routing_trail"][0]["reason"], "gha_repo_not_private")
 
+    @_STATE_DACL_SKIP
     def test_c_explicit_hetzner_gpu_pin_is_rejected(self) -> None:
         job = {
             "task_family": "generic",
@@ -881,6 +922,7 @@ class HetznerRoutingTests(unittest.TestCase):
                 )
             self.assertTrue(modal_plan["decision"].startswith("modal_"))
 
+    @_STATE_DACL_SKIP
     def test_c_invalid_backend_override_is_rejected(self) -> None:
         job = {"task_family": "enumeration", "policy": {"backend": "bogus"},
                "constraints": {"cpu": 12, "memory_mb": 8192,
@@ -892,6 +934,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertEqual(plan["decision"], "rejected")
             self.assertIn("invalid_backend_override", plan["risk_flags"])
 
+    @_STATE_DACL_SKIP
     def test_c_local_only_order_never_falls_open_to_modal(self) -> None:
         local_only = CONFIG_TOML.replace(
             'routing_order = ["local", "modal", "hetzner", "gha"]',
@@ -905,6 +948,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertEqual(plan["decision"], "rejected")
             self.assertIn("no_remote_lane_available", plan["risk_flags"])
 
+    @_STATE_DACL_SKIP
     def test_c_invalid_routing_order_is_rejected(self) -> None:
         cases = (
             '["local", "bogus"]',
@@ -924,6 +968,7 @@ class HetznerRoutingTests(unittest.TestCase):
                 self.assertEqual(plan["decision"], "rejected")
                 self.assertIn("invalid_routing_order", plan["risk_flags"])
 
+    @_STATE_DACL_SKIP
     def test_c_forced_local_keeps_watchdog_armed(self) -> None:
         """Phase A deviation 3 (plan section 6): an explicit backend=local override skips the
         PRE-LAUNCH veto but keeps the RUNTIME load-watchdog armed, so a forced-local run can
@@ -945,6 +990,7 @@ class HetznerRoutingTests(unittest.TestCase):
             self.assertEqual(plan["local_workers"], 1)
             self.assertLess(plan["local_workers"], 4)
 
+    @_STATE_DACL_SKIP
     def test_c_local_only_policies_reject_when_no_worker_is_safe(self) -> None:
         resources = {"cpu": {"logical_cores": 8}, "load": {"load_1m": 3.5}}
         cases = (
@@ -973,6 +1019,7 @@ class HetznerRoutingTests(unittest.TestCase):
             # Fail-closed: nothing was reserved.
             self.assertEqual(budget_ledger.outstanding(state, "hetzner"), 0.0)
 
+    @_STATE_DACL_SKIP
     def test_d_budget_gate_reserves_eur_within_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = _config(Path(tmp))
@@ -1406,6 +1453,7 @@ class LivenessAndCapTests(unittest.TestCase):
         ok_over, _ = gha.usage_cap_ok(repo_cfg=repo_cfg, config=cfg, cells=1)  # 1201 > 1200
         self.assertFalse(ok_over)
 
+    @_STATE_DACL_SKIP
     def test_gha_cap_and_atomic_gate_include_outstanding_reservations(self) -> None:
         cfg = _gha_config(Path(self._tmp.name) / "gha-ledger")
         repo_cfg = dict(cfg.gha_repos["sweep"])
@@ -1436,6 +1484,7 @@ class LivenessAndCapTests(unittest.TestCase):
                     cells=1,
                 )
 
+    @_STATE_DACL_SKIP
     def test_gha_fetch_download_uses_exact_positional_run_id(self) -> None:
         state = Path(self._tmp.name) / "gha-exact-run-state"
         budget_ledger.reserve(state, "gha", "dispatch-exact", 30.0, "minutes")
@@ -1458,6 +1507,7 @@ class LivenessAndCapTests(unittest.TestCase):
         )
         self.assertNotIn("--name", argv[:3])
 
+    @_STATE_DACL_SKIP
     def test_gha_fetch_timing_failure_keeps_full_reservation(self) -> None:
         state = Path(self._tmp.name) / "gha-timing-failure-state"
         budget_ledger.reserve(state, "gha", "dispatch-timing-failed", 200.0, "minutes")
@@ -1477,6 +1527,7 @@ class LivenessAndCapTests(unittest.TestCase):
         self.assertEqual(budget_ledger.outstanding(state, "gha"), 200.0)
         self.assertIn("dispatch-timing-failed", budget_ledger.reserved_job_ids(state, "gha"))
 
+    @_STATE_DACL_SKIP
     def test_gha_verified_completion_remains_accrued_against_stale_usage(self) -> None:
         cfg = _gha_config(Path(self._tmp.name) / "gha-accrued-config")
         repo_cfg = dict(cfg.gha_repos["sweep"])
@@ -1512,6 +1563,7 @@ class LivenessAndCapTests(unittest.TestCase):
         self.assertFalse(ok)  # stale 1000 + accrued 12 + next worst-case 200 > 1200
         self.assertEqual(detail["outstanding_minutes"], 12.0)
 
+    @_STATE_DACL_SKIP
     def test_gha_timing_preserves_linux_equivalent_os_and_matrix_minutes(self) -> None:
         cases = (
             (
@@ -1559,6 +1611,7 @@ class LivenessAndCapTests(unittest.TestCase):
                 self.assertEqual(fetched["actual_minutes"], expected)
                 self.assertEqual(budget_ledger.outstanding(state, "gha"), expected)
 
+    @_STATE_DACL_SKIP
     def test_budget_ledger_duplicate_ids_reconcile_only_one_reservation(self) -> None:
         state = Path(self._tmp.name) / "gha-duplicate-id-state"
         budget_ledger.reserve(state, "gha", "legacy-duplicate", 100.0, "minutes")
@@ -1573,6 +1626,7 @@ class LivenessAndCapTests(unittest.TestCase):
         self.assertEqual([row["state"] for row in rows].count("accrued"), 1)
         self.assertEqual([row["state"] for row in rows].count("reserved"), 1)
 
+    @_STATE_DACL_SKIP
     def test_gha_async_wait_fetch_uses_run_id_and_keeps_timeout_reservation(self) -> None:
         cfg = _gha_config(Path(self._tmp.name) / "gha-async")
         state = Path(self._tmp.name) / "gha-async-state"
@@ -1614,6 +1668,7 @@ class LivenessAndCapTests(unittest.TestCase):
         self.assertEqual(completed["gha_run_id"], 123)
         self.assertEqual(budget_ledger.outstanding(state, "gha"), 12.0)
 
+    @_STATE_DACL_SKIP
     def test_gha_submit_wait_timeout_does_not_fetch_or_release_budget(self) -> None:
         cfg = _gha_config(Path(self._tmp.name) / "gha-submit-timeout")
         state = Path(self._tmp.name) / "gha-submit-state"
@@ -1802,6 +1857,7 @@ class BrokerStateSecurityTests(unittest.TestCase):
         )
 
 
+@_STATE_DACL_SKIP
 class GpuRoutingTests(unittest.TestCase):
     """Offline, credential-free GPU-routing tests (plan §5.1) over the existing lanes. These
     exercise the router-wide GPU policy across the full matrix {CPU, GPU} x {auto-signal,
@@ -2291,6 +2347,7 @@ class HetznerDriverTests(unittest.TestCase):
         )
         return plan["required_confirmation"]
 
+    @_BUNDLE_POSIX_SKIP
     def test_preflight_plans_without_provisioning(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -2308,6 +2365,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertTrue(all("create" not in j and "delete" not in j for j in joined))
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # reserves nothing
 
+    @_BUNDLE_POSIX_SKIP
     def test_bundle_approval_uses_the_full_preflight_digest_and_fails_before_network(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -2345,6 +2403,7 @@ class HetznerDriverTests(unittest.TestCase):
             )
         self.assertEqual(runner.calls, [])
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_requires_bundle_approval_and_splits_all_64_hex_into_labels(self) -> None:
         bundle = self._bundle()
         with self.assertRaisesRegex(
@@ -2408,6 +2467,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertTrue(all("create" not in c["joined"] and "delete" not in c["joined"]
                             for c in runner.calls))
 
+    @_BUNDLE_POSIX_SKIP
     def test_preflight_falls_back_to_next_location_on_stockout(self) -> None:
         """A stock-out of the cheapest adequate type in the preferred region degrades gracefully:
         cpx62 is out in nbg1 but orderable in hel1, so preflight reports (cpx62, hel1)."""
@@ -2422,6 +2482,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(out["region"], "hel1")  # fell back from the stocked-out nbg1
         self.assertFalse(out["provisioned"])
 
+    @_BUNDLE_POSIX_SKIP
     def test_preflight_falls_back_to_next_type_when_cheapest_stocked_out(self) -> None:
         """When the cheapest adequate type is out across the whole allow-list, preflight falls
         back to the next (costlier) orderable type and flags it for human confirmation."""
@@ -2436,6 +2497,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(out["region"], "nbg1")
         self.assertEqual(out["budget_verdict"], "needs_human_confirmation")  # ccx63 worst-case > cap
 
+    @_BUNDLE_POSIX_SKIP
     def test_preflight_reports_no_orderable_server_on_full_stockout(self) -> None:
         """A full stock-out (only the too-small cpx22 orderable) makes the lane report no
         orderable server instead of planning an unprovisionable type."""
@@ -2449,6 +2511,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertFalse(out["available"])
         self.assertEqual(out["budget_verdict"], "no_orderable_server")
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_provisions_in_fallback_location_on_regional_stockout(self) -> None:
         """Regional stock-out degrades gracefully on the provisioning path: cpx62 is out in nbg1
         but orderable in hel1, so up provisions cpx62 in hel1 (the create carries --location hel1)."""
@@ -2465,6 +2528,7 @@ class HetznerDriverTests(unittest.TestCase):
         create = next(c for c in runner.calls if "create" in c["joined"])
         self.assertIn("--location hel1", create["joined"])
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_budget_gate_still_guards_costlier_fallback_type(self) -> None:
         """The type fallback stays under the fail-closed budget gate: with cpx62 stocked out and
         only ccx63 orderable, up resolves ccx63 but the gate refuses it (worst-case over the
@@ -2478,6 +2542,7 @@ class HetznerDriverTests(unittest.TestCase):
             self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=True)
         self.assertTrue(all("create" not in c["joined"] for c in runner.calls))  # gated before create
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_dry_run_no_reservation_no_call_no_token_on_argv(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -2513,6 +2578,7 @@ class HetznerDriverTests(unittest.TestCase):
             self._up(job_dir=self._bundle(), config=self.config, state_root=self.state, confirm=False)
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # fail-closed: no reservation
 
+    @_BUNDLE_POSIX_SKIP
     def test_native_windows_live_provisioning_fails_closed_without_durable_reaper(self) -> None:
         with mock.patch.object(hetzner_driver.os, "name", "nt"):
             with self.assertRaises(hetzner_driver.HetznerDriverError) as ctx:
@@ -2535,6 +2601,7 @@ class HetznerDriverTests(unittest.TestCase):
         gate.assert_called_once_with(self.config)
         self.assertTrue(all("create" not in call["joined"] for call in runner.calls))
 
+    @_BUNDLE_POSIX_SKIP
     def test_posix_live_provisioning_requires_operator_reaper_attestation(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -2557,6 +2624,7 @@ class HetznerDriverTests(unittest.TestCase):
 
         self.assertEqual(runner.calls, [])
 
+    @_GETEUID_POSIX_SKIP
     def test_reaper_lease_is_fresh_project_scope_and_scheduler_bound(self) -> None:
         from datetime import datetime, timezone
 
@@ -2623,6 +2691,7 @@ class HetznerDriverTests(unittest.TestCase):
         ):
             hetzner_driver._verify_durable_reaper_lease(self.config)
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_confirm_reserves_budget_and_keeps_token_off_argv(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -2812,6 +2881,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertTrue(out["destroyed"])
         self.assertTrue(any("delete" in c["joined"] for c in runner.calls))
 
+    @_STATE_DACL_SKIP
     def test_down_orphans_deletes_only_current_scope_jobs_absent_from_authoritative_ledger(self) -> None:
         other_scope = hetzner_driver.install_scope(mock.Mock(install_id="other-install"))
         servers = [
@@ -2913,6 +2983,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(runner.deleted, ["71"])
         self.assertEqual(out["destroyed"], ["71"])
 
+    @_STATE_DACL_SKIP
     def test_down_audit_failure_reconciles_and_continues(self) -> None:
         servers = [
             {"id": 11, "name": "first", "labels": {
@@ -2964,6 +3035,7 @@ class HetznerDriverTests(unittest.TestCase):
 
     # -- unnameable job ids + reservations that outlive a failed create -------
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_refuses_a_job_id_hetzner_cannot_use_as_a_server_name(self) -> None:
         """The observed leak. Two dispatches carried underscored job ids; the budget gate
         reserved EUR 0.94 each, then Hetzner refused the create with `invalid input in
@@ -2980,6 +3052,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # nothing committed
         self.assertTrue(all("create" not in c["joined"] for c in runner.calls))
 
+    @_BUNDLE_POSIX_SKIP
     def test_preflight_flags_an_unnameable_job_id(self) -> None:
         """preflight is free, so the cheapest place to catch this is before any lifecycle verb."""
         hetzner_driver.COMMAND_RUNNER = _FakeRunner()
@@ -3004,6 +3077,7 @@ class HetznerDriverTests(unittest.TestCase):
             with self.assertRaises(hetzner_driver.HetznerDriverError, msg=job_id):
                 hetzner_driver._check_server_name(job_id)
 
+    @_STATE_DACL_SKIP
     def test_a_failed_create_releases_the_reservation(self) -> None:
         """A reservation buys a server that now does not exist: hold it and the daily cap
         erodes with every failure."""
@@ -3017,6 +3091,7 @@ class HetznerDriverTests(unittest.TestCase):
                 (self.state / "hetzner-reservations.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
         self.assertEqual([r["state"] for r in rows], ["reconciled"])
 
+    @_STATE_DACL_SKIP
     def test_a_failed_create_keeps_the_reservation_when_a_server_may_exist(self) -> None:
         """`hcloud` can fail after the server was created (a timeout on the response, say).
         Releasing then would uncommit budget for a machine that is billing, so the release
@@ -3030,6 +3105,7 @@ class HetznerDriverTests(unittest.TestCase):
 
     # -- root SSH access + the cloud-init boot race ---------------------------
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_attaches_only_the_explicit_project_verified_ssh_key(self) -> None:
         """A create with no `--ssh-key` yields a server whose root login the stock Ubuntu
         image rejects (`Permission denied (publickey)`), so every later verb -- push, run,
@@ -3042,6 +3118,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertIn("--ssh-key research-key", create["joined"])
         self.assertNotIn("--ssh-key laptop", create["joined"])
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_refuses_when_the_project_has_no_ssh_key(self) -> None:
         """Provisioning an unreachable server is pure cost, so `up` aborts before spending."""
         runner = _FakeRunner(ssh_keys=[])
@@ -3054,6 +3131,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertTrue(all("create" not in c["joined"] for c in runner.calls))
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_reports_a_failed_key_lookup_as_a_lookup_failure(self) -> None:
         """"The project has no keys" and "the key query failed" need different fixes, so the
         refusal must not blame an empty project for an hcloud error."""
@@ -3094,6 +3172,7 @@ class HetznerDriverTests(unittest.TestCase):
                 hetzner_driver.list_ssh_key_names()
         self.assertEqual(runner.calls, [])
 
+    @_BUNDLE_POSIX_SKIP
     def test_push_waits_for_sshd_before_rsync(self) -> None:
         """hcloud reports `running` as soon as the VM boots, well before cloud-init starts
         sshd, so an immediate rsync loses the race and the bundle never lands."""
@@ -3106,6 +3185,7 @@ class HetznerDriverTests(unittest.TestCase):
                      if c["argv"][0] == "ssh" and c["argv"][-1] == "true")
         self.assertLess(probe, kinds.index("rsync"))  # probed first, then copied
 
+    @_BUNDLE_POSIX_SKIP
     def test_push_refetches_exact_server_and_rechecks_full_digest_before_rsync(self) -> None:
         class RelabelledBeforeUpload(_FakeRunner):
             def __call__(self, argv, *, env, timeout):
@@ -3133,6 +3213,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertTrue(any("server describe 4242" in c["joined"] for c in runner.calls))
         self.assertTrue(all(c["argv"][0] != "rsync" for c in runner.calls))
 
+    @_BUNDLE_POSIX_SKIP
     def test_push_rejects_bundle_outside_operator_approved_root(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -3153,6 +3234,7 @@ class HetznerDriverTests(unittest.TestCase):
                 )
         self.assertEqual(runner.calls, [])
 
+    @_BUNDLE_POSIX_SKIP
     def test_push_rejects_symlinked_bundle_content_before_network(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -3174,6 +3256,7 @@ class HetznerDriverTests(unittest.TestCase):
 
         self.assertEqual(runner.calls, [])
 
+    @_BUNDLE_POSIX_SKIP
     def test_push_rejects_protected_authority_inode_before_network(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -3203,6 +3286,7 @@ class HetznerDriverTests(unittest.TestCase):
 
         self.assertEqual(runner.calls, [])
 
+    @_BUNDLE_POSIX_SKIP
     def test_push_rejects_manifest_job_mismatch_before_network(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -3265,6 +3349,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertIn("BatchMode=yes", options)
         self.assertTrue(any(o.startswith("ConnectTimeout=") for o in options))
 
+    @_BUNDLE_POSIX_SKIP
     def test_oneshot_holds_one_immutable_bundle_snapshot_through_up_and_push(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -3278,6 +3363,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(snapshot_copy.call_count, 1)
         self.assertEqual(out["bundle_digest"], out["up"]["bundle_digest"])
 
+    @_BUNDLE_POSIX_SKIP
     def test_oneshot_teardown_uses_actual_created_server_identity(self) -> None:
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         seen: dict[str, object] = {}
@@ -3370,6 +3456,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertTrue(result["dry_run"])
         self.assertIn("required_confirmation", result)
 
+    @_BUNDLE_POSIX_SKIP
     def test_group_writable_bundle_authority_is_rejected_before_network(self) -> None:
         bundle = self._bundle()
         bundle.chmod(0o770)
@@ -3381,6 +3468,7 @@ class HetznerDriverTests(unittest.TestCase):
                 job_id="jobX", job_dir=bundle, config=self.config, dry_run=True
             )
 
+    @_BUNDLE_POSIX_SKIP
     def test_oneshot_dry_run_shows_full_sequence_without_calls(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -3390,6 +3478,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertIn("trap", out["teardown"])
         self.assertEqual(runner.calls, [])
 
+    @_BUNDLE_POSIX_SKIP
     def test_oneshot_tears_down_even_when_a_step_fails(self) -> None:
         # Fail the detached run step (ssh ... run.sh); teardown must still DELETE the server.
         runner = _FakeRunner(fail_on="run.sh")
@@ -3401,6 +3490,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertTrue(any("delete" in c["joined"] for c in runner.calls))  # guaranteed teardown ran
         self.assertTrue(all(DRIVER_TOKEN not in c["joined"] for c in runner.calls))  # token never on argv
 
+    @_BUNDLE_POSIX_SKIP
     def test_oneshot_finally_retries_a_teardown_that_threw_on_signal_path(self) -> None:
         os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
         captured: dict[str, object] = {}
@@ -3466,6 +3556,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertNotIn(DRIVER_TOKEN, ci)
         self.assertNotIn("HCLOUD_TOKEN", ci)       # no token variable planted on the server
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_dry_run_reports_dead_mans_switch(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -3515,6 +3606,7 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertFalse((self.state / "hetzner-reservations.jsonl").exists())  # no reservation
         self.assertTrue(all("create" not in c["joined"] for c in runner.calls))  # no create
 
+    @_BUNDLE_POSIX_SKIP
     def test_runaway_guard_counts_older_and_foreign_install_scopes(self) -> None:
         """A restore/path move must not hide already-billing AAS servers from the cap."""
         other_scope = hetzner_driver.install_scope(mock.Mock(install_id="other-install"))
@@ -3542,6 +3634,7 @@ class HetznerDriverTests(unittest.TestCase):
 
     # -- Phase C: audit log ---------------------------------------------------
 
+    @_BUNDLE_POSIX_SKIP
     def test_up_confirm_writes_provision_audit(self) -> None:
         runner = _FakeRunner()
         hetzner_driver.COMMAND_RUNNER = runner
@@ -3626,6 +3719,7 @@ class HetznerReaperTests(unittest.TestCase):
             dry_run=True,
         )["required_confirmation"]
 
+    @_GETEUID_POSIX_SKIP
     def test_root_attestation_publishes_agent_readable_root_only_writable_lease(self) -> None:
         lease_path = Path(self.config.hetzner_reaper_lease_file)
         with (
@@ -3649,6 +3743,7 @@ class HetznerReaperTests(unittest.TestCase):
             lease_path.parent, label="reaper lease"
         )
 
+    @_STATE_DACL_SKIP
     def test_reaper_deletes_expired_poweredoff_orphans_keeps_active(self) -> None:
         now = 2_000_000.0
         runner = _ReaperRunner(self._servers(now))
@@ -3744,6 +3839,7 @@ class HetznerReaperTests(unittest.TestCase):
                         now=2_000_000.0,
                     )
 
+    @_STATE_DACL_SKIP
     def test_reaper_stale_heartbeat(self) -> None:
         now = 2_000_000.0
         servers = [{"id": 9, "name": "hb", "status": "running", "created": _iso(now - 60),
@@ -3840,6 +3936,7 @@ class HetznerReaperTests(unittest.TestCase):
 
         self.assertEqual(runner.calls, [])
 
+    @_STATE_DACL_SKIP
     def test_kill_switch_deletes_all_tagged(self) -> None:
         now = 2_000_000.0
         runner = _ReaperRunner(self._servers(now))
@@ -3928,6 +4025,7 @@ class HetznerReaperTests(unittest.TestCase):
         self.assertNotIn("install-scope=", selector_call["joined"])
         self.assertNotIn("test-install", selector_call["joined"])
 
+    @_STATE_DACL_SKIP
     def test_foreign_scope_is_ttl_reaped_but_not_orphaned_or_locally_reconciled(self) -> None:
         now = 2_000_000.0
         other_scope = hetzner_driver.install_scope(mock.Mock(install_id="other-install"))
@@ -3954,6 +4052,7 @@ class HetznerReaperTests(unittest.TestCase):
         self.assertEqual(out["deleted"][0]["reasons"], ["past_ttl"])
         self.assertEqual(budget_ledger.outstanding(self.state, "hetzner"), 1.0)
 
+    @_STATE_DACL_SKIP
     def test_audit_failure_does_not_skip_reconcile_or_later_deletes(self) -> None:
         now = 2_000_000.0
         servers = [self._servers(now)[1], self._servers(now)[2]]
