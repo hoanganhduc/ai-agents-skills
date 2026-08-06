@@ -288,22 +288,11 @@ jobs:
         shell: pwsh
         run: ./make.ps1 test
 
-      - name: Run runtime smoke
-        shell: pwsh
-        run: ./make.ps1 runtime-smoke
-
+      # Runtime smoke and the lifecycle smokes perform real installs, and
+      # native Windows mutation is disabled until installer writes,
+      # replacements, and deletions remain bound to the validated Windows
+      # handle. The unit suite asserts that refusal; re-add the smoke steps
+      # when handle-bound mutation lands.
       - name: Verify generated docs are current
         shell: pwsh
         run: ./make.ps1 docs-check
-
-      - name: Run platform lifecycle smoke
-        shell: pwsh
-        run: ./make.ps1 lifecycle-test --matrix default --platform-shape windows
-
-      - name: Run Antigravity-only lifecycle smoke
-        shell: pwsh
-        run: ./make.ps1 lifecycle-test --scenario antigravity-only-auto --platform-shape windows
-
-      - name: Run Kimi-only lifecycle smoke
-        shell: pwsh
-        run: ./make.ps1 lifecycle-test --scenario kimi-only-auto --platform-shape windows
