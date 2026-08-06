@@ -51,6 +51,13 @@ def _legacy_policy_preflight(run_dir: Path) -> tuple[Path | None, dict[str, str]
             continue
         if not candidate.is_file():
             raise ValueError("legacy force-loop policy artifact has an unsafe type")
+        if os.name != "posix":
+            # POSIX descriptor ownership checks below (fstat uid) cannot bind
+            # trust on native Windows; fail closed like load_loop_env.
+            raise ValueError(
+                "native Windows legacy force-loop policy preflight requires "
+                "the PowerShell loader"
+            )
         descriptor = os.open(
             candidate,
             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
