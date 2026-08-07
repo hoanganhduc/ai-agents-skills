@@ -5,12 +5,11 @@ Hetzner, GitHub Actions). Its purpose is to make the dispatch decision on
 measured numbers rather than on guesses, so a job is not accepted, booted, and
 paid for before it fails.
 
-A plan that returns `accepted: true` is **not** evidence that the job fits. The
-lanes differ in how much they check: Kaggle compares your declared RAM against
-the kernel ceiling, while Modal's adequacy verdict
-(`modal_authenticated_api_usable`) is an API **liveness probe only** and never
-compares your request against the target function's declared `cpu=`/`memory=`.
-Steps 2 and 4 exist because the broker will not do that comparison for you.
+The broker checks that the job fits the lane's declared RAM and rejects it when
+it does not. It cannot check what you never measured: an unmeasured peak RSS or
+a guessed `total_units` produces a manifest that fits a lane the real job does
+not. Steps 1 and 2 supply the numbers the broker then enforces, and Step 4 is
+where you confirm it enforced them against yours.
 
 Do not skip a step because the job "looks small". Step 1 is what tells you
 whether it is small.
@@ -50,10 +49,13 @@ from the source of truth below, and treat container self-reports as unverified.
 
 | Lane | Ground truth for its size | Per-unit | Parallel units | Aggregate |
 |---|---|---|---|---|
-| Kaggle | `config/research-compute.toml` `[kaggle]` | `kernel_cores`, `kernel_ram_gb` | `concurrency` | cores × concurrency |
-| Modal | `@app.function(cpu=, memory=)` in `research_compute/modal_app.py` | declared `cpu`/`memory` | per-call | n/a |
+| Kaggle | `config/research-compute.toml` `[kaggle]`, echoed by `preflight` | `kernel_cores`, `kernel_ram_gb` | `concurrency` | `aggregate_cores` |
+| Modal | `modal_backend.FUNCTION_CAPACITY` | declared `cpu`/`memory` | per-call | n/a |
 | Hetzner | server type in `[hetzner]` | vCPU / RAM of the type | 1 server | n/a |
 | GitHub Actions | runner label | 2–4 vCPU | matrix cells | cells × vCPU |
+
+The Kaggle driver's `preflight` returns `kernel_cores`, `kernel_ram_gb` and
+`aggregate_cores`, so a bundled job can be sized without opening the config.
 
 Kaggle capacity is **per-kernel × concurrency**, not per-kernel. Quoting only
 the per-kernel figure understates the free lane badly and misroutes work to a
@@ -74,9 +76,10 @@ paid one.
 
 ## Step 3 — Write the manifest in the correct dialect
 
-The two manifest dialects are **not** interchangeable, and an unrecognized
-top-level key is dropped **silently** — no warning, no error. A manifest whose
-resource block lands under the wrong key plans as if it requested nothing.
+The two manifest dialects are **not** interchangeable. The broker rejects a job
+carrying any unrecognized top-level key (`unknown_manifest_key`), naming the
+offending key and the valid set, so a resource block under the wrong key fails
+loudly at plan time instead of planning as if it requested nothing.
 
 | Manifest | Resource block goes under | Read by |
 |---|---|---|
@@ -103,10 +106,11 @@ manifest and re-plan — not submit and see.
 
 | # | Assertion | Pass? |
 |---|---|---|
-| 1 | The plan echoes a **non-empty** `constraints` block equal to what you wrote (proves the key was read, not dropped) |  |
-| 2 | `routing_trail` gives a per-lane adequacy reason that **references your numbers** |  |
-| 3 | The chosen lane's declared capacity ≥ your Step 1 peak RSS and core need — **check this yourself for Modal**, whose adequacy is liveness-only |  |
-| 4 | Estimated cost and runtime are within the intended envelope |  |
+| 1 | The plan echoes a **non-empty** `constraints` block equal to what you wrote |  |
+| 2 | `routing_trail` gives a per-lane adequacy reason that **references your numbers** (`modal_capacity_ok:cores=4 ram_gb=8 …`, `peak_ram … kernel RAM …`) |  |
+| 3 | No lane in the trail reports `cores_oversubscribed=` — if one does, your worker count exceeds the reserved cores and the runtime estimate is wrong by that ratio |  |
+| 4 | `est_kernels` / `est_rounds` match the fan-out you expect from `total_units`, not just from `core_hours` |  |
+| 5 | Estimated cost and runtime are within the intended envelope |  |
 
 Record the decision: lane ______, declared size ______, est. cost ______.
 

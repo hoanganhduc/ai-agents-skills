@@ -6,7 +6,7 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
-from . import github_actions_backend, hetzner_backend, kaggle_backend
+from . import github_actions_backend, hetzner_backend, kaggle_backend, modal_backend
 from .config import DEFAULT_ROUTING_ORDER, SUPPORTED_BACKENDS, routing_order_error
 from .state import validate_job_id
 
@@ -243,10 +243,64 @@ def modal_lane_available(config: Any, resources: dict[str, Any] | None,
     return bool(usable), str(reason)
 
 
+# Every top-level key the broker job manifest reads. Anything else is a typo or a
+# manifest written in the wrong dialect -- the Kaggle *bundle* manifest.json puts its
+# resource block flat at the top level, so `cores`/`memory_mb`/`estimate` are the
+# natural wrong guesses here. Those keys used to be dropped in silence and the job
+# planned as though it had requested nothing, which is how an oversized job reaches a
+# lane that cannot hold it.
+KNOWN_JOB_KEYS = frozenset({
+    "constraints",
+    "gha_target",
+    "job_id",
+    "payload",
+    "policy",
+    "task_family",
+    "task_type",
+    "template",
+    "template_version",
+    # Stamped by `normalize_job`, carried on the job for submission and provenance
+    # rather than read by the routing logic.
+    "deployment_alias",
+    "environment_name",
+    "provenance",
+})
+
+
+def unknown_manifest_keys_error(job: dict[str, Any]) -> str | None:
+    """Reject a job manifest carrying keys the planner does not read. Returns an error
+    naming the offending keys and the valid set, or None when every key is recognized."""
+    unknown = sorted(str(key) for key in job if str(key) not in KNOWN_JOB_KEYS)
+    if not unknown:
+        return None
+    return (
+        f"Unrecognized top-level job manifest key(s): {', '.join(unknown)}. "
+        f"Valid keys are: {', '.join(sorted(KNOWN_JOB_KEYS))}. "
+        "Resource requests belong under 'constraints' (cores, memory_mb, core_hours, "
+        "gpu); the flat resource block is the Kaggle bundle manifest.json dialect, not "
+        "this one. Fix the manifest and re-plan."
+    )
+
+
+def modal_capacity_check(modal_fit: Any, decision: str) -> tuple[bool, str]:
+    """Resolve a Modal capacity guard into (adequate, reason).
+
+    `modal_fit` is a callable taking the routing decision and returning
+    (fits, reason); `None` means the caller supplied no estimate to size against,
+    which is reported as unchecked rather than silently asserted to fit. Modal's
+    availability probe is API liveness only and says nothing about whether the job
+    fits the target function's declared `cpu=`/`memory=`, so adequacy must come
+    from here."""
+    if modal_fit is None:
+        return True, "modal_capacity_unchecked:no_estimate_supplied"
+    fits, reason = modal_fit(decision)
+    return bool(fits), str(reason)
+
+
 def select_remote_lane(*, order: list[str], modal_decision: str, gpu_signal: bool,
                        hz: Any, hz_in_order: bool,
                        kg: Any = None, kg_in_order: bool = False,
-                       modal_ok: Any,
+                       modal_ok: Any, modal_fit: Any = None,
                        gha_ok: Any) -> tuple[str | None, str | None, list[dict[str, Any]]]:
     """Order-driven cascade over routing_order for the first AVAILABLE + ADEQUATE REMOTE
     lane (the caller owns the local lane). The walk is driven entirely by `order`, so it
@@ -271,8 +325,12 @@ def select_remote_lane(*, order: list[str], modal_decision: str, gpu_signal: boo
                 return "kaggle", "kaggle", trail
         elif backend == "modal":
             ok, reason = modal_ok() if callable(modal_ok) else modal_ok
-            trail.append({"backend": "modal", "available": bool(ok), "adequate": True, "reason": reason})
-            if ok:
+            adequate, fit_reason = modal_capacity_check(modal_fit, modal_decision)
+            if not adequate:
+                reason = fit_reason
+            trail.append({"backend": "modal", "available": bool(ok), "adequate": adequate,
+                          "reason": reason})
+            if ok and adequate:
                 return modal_decision, "modal", trail
         elif backend == "hetzner":
             if not hz_in_order:
@@ -296,7 +354,7 @@ def select_remote_lane(*, order: list[str], modal_decision: str, gpu_signal: boo
 
 def select_gpu_lane(*, order: list[str], local_gpu: bool, config: Any,
                     kg: Any = None, kg_in_order: bool = False,
-                    modal_ok: Any,
+                    modal_ok: Any, modal_fit: Any = None,
                     gha_ok: Any) -> tuple[str | None, str | None, list[dict[str, Any]]]:
     """Order-driven cascade over routing_order for the first GPU-CAPABLE + AVAILABLE lane
     (plan §5.1). A GPU-requested job (auto-signalled OR explicitly requested) must land on a
@@ -340,9 +398,12 @@ def select_gpu_lane(*, order: list[str], local_gpu: bool, config: Any,
                 return "kaggle_gpu", "kaggle", trail
         elif backend == "modal":
             ok, reason = modal_ok() if callable(modal_ok) else modal_ok
+            adequate, fit_reason = modal_capacity_check(modal_fit, "modal_gpu")
+            if not adequate:
+                reason = fit_reason
             trail.append({"backend": "modal", "gpu_capable": True, "available": bool(ok),
-                          "adequate": True, "reason": reason})
-            if ok:
+                          "adequate": adequate, "reason": reason})
+            if ok and adequate:
                 return "modal_gpu", "modal", trail
         elif backend == "hetzner":
             # No on-demand GPU on Hetzner Cloud -> GPU-inadequate; always skipped.
@@ -405,6 +466,19 @@ def plan_job(
         marker in task_family or marker in task_type for marker in GPU_TASK_MARKERS
     )
     gpu_requested = auto_gpu_signal or explicit_gpu
+
+    unknown_key_error = unknown_manifest_keys_error(job)
+    if unknown_key_error:
+        return finalize_plan(
+            decision="rejected",
+            execution_primitive=execution_primitive,
+            accepted=False,
+            estimated_cost_usd=0.0,
+            estimated_runtime_sec=runtime_sec,
+            risk_flags=["unknown_manifest_key"],
+            required_policy_exceptions=[],
+            reasoning_summary=unknown_key_error,
+        )
 
     if allow_remote_error:
         return finalize_plan(
@@ -1057,6 +1131,12 @@ def plan_job(
             modal_loaded = True
         return modal_ok
 
+    def modal_fit(decision: str) -> tuple[bool, str]:
+        """Size the job against the declared capacity of the Modal function the decision
+        maps to. `get_modal` only proves the API answers; it never compares the request
+        against `cpu=`/`memory=`, and Modal enforces those in its scheduler."""
+        return modal_backend.capacity_fit(estimate, decision, config)
+
     routing_extra: dict[str, Any] = {}
     routing_trail: list[dict[str, Any]] = []
 
@@ -1165,7 +1245,7 @@ def plan_job(
         chosen, backend_name, gpu_trail = select_gpu_lane(
             order=order, local_gpu=bool(local_gpu_count), config=config,
             kg=get_kaggle, kg_in_order=kaggle_in_order,
-            modal_ok=get_modal, gha_ok=gha_ok)
+            modal_ok=get_modal, modal_fit=modal_fit, gha_ok=gha_ok)
         routing_trail.extend(gpu_trail)
         if chosen is None:
             decision = "rejected"
@@ -1210,7 +1290,7 @@ def plan_job(
                 order=order, modal_decision=modal_decision, gpu_signal=gpu_requested,
                 hz=get_hetzner, hz_in_order=hetzner_in_order,
                 kg=get_kaggle, kg_in_order=kaggle_in_order,
-                modal_ok=get_modal, gha_ok=gha_ok)
+                modal_ok=get_modal, modal_fit=modal_fit, gha_ok=gha_ok)
             routing_trail.extend(cascade_trail)
             fell = _apply_lane(chosen, backend_name, context="User compute allowlist")
             if not fell:
@@ -1244,7 +1324,7 @@ def plan_job(
                     order=order, modal_decision=modal_decision, gpu_signal=gpu_requested,
                     hz=get_hetzner, hz_in_order=hetzner_in_order,
                     kg=get_kaggle, kg_in_order=kaggle_in_order,
-                    modal_ok=get_modal, gha_ok=gha_ok)
+                    modal_ok=get_modal, modal_fit=modal_fit, gha_ok=gha_ok)
                 routing_trail.extend(cascade_trail)
                 fell = _apply_lane(chosen, backend_name,
                                    context="Local vetoed for self-preservation")
@@ -1281,7 +1361,7 @@ def plan_job(
             order=order, modal_decision=decision, gpu_signal=gpu_requested,
             hz=get_hetzner, hz_in_order=hetzner_in_order,
             kg=get_kaggle, kg_in_order=kaggle_in_order,
-            modal_ok=get_modal, gha_ok=gha_ok)
+            modal_ok=get_modal, modal_fit=modal_fit, gha_ok=gha_ok)
         routing_trail.extend(cascade_trail)
         if backend_name == "kaggle":
             decision = "kaggle"
@@ -1431,6 +1511,9 @@ def build_estimate(
         "gpu": bool(gpu_signal),
         "data_locality": data_locality,
         "runtime_sec": int(runtime_sec),
+        # Unit-parallel jobs fan out one kernel per remaining unit, so a lane probe
+        # sizing only on core_hours under-reports a job that is short but widely split.
+        "total_units": max(1, int(constraints.get("total_units") or 1)),
     }
 
 

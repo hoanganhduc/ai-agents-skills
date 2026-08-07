@@ -162,3 +162,70 @@ def function_name_for_decision(decision: str, config: Any) -> str:
     if decision == "modal_sandbox_experimental":
         return config.functions.modal_sandbox_experimental
     raise RuntimeError(f"No Modal function is defined for decision '{decision}'.")
+
+
+# The capacity each Modal function is deployed with. `modal_app.py` builds its
+# `@app.function(...)` decorators from this table, so a planner check made here
+# cannot drift from what is actually running. This module imports only the
+# standard library, so the planner can read the table offline -- `modal_app.py`
+# imports the `modal` SDK and is not importable without it.
+FUNCTION_CAPACITY: dict[str, dict[str, Any]] = {
+    "run_cpu_job": {"cpu": 4.0, "memory_mb": 8192, "timeout": 3600, "startup_timeout": 600},
+    "run_highmem_job": {"cpu": 16.0, "memory_mb": 65536, "timeout": 21600, "startup_timeout": 1200},
+    "run_gpu_job": {
+        "cpu": 8.0, "memory_mb": 32768, "gpu": "L4", "timeout": 21600, "startup_timeout": 1200,
+    },
+    "run_sandbox_job": {"cpu": 2.0, "memory_mb": 4096, "timeout": 3600, "startup_timeout": 600},
+}
+
+
+def capacity_for_decision(decision: str, config: Any) -> dict[str, Any]:
+    """Declared capacity of the function a routing decision maps to."""
+    name = function_name_for_decision(decision, config)
+    capacity = FUNCTION_CAPACITY.get(name)
+    if capacity is None:
+        raise RuntimeError(
+            f"Modal function '{name}' (decision '{decision}') has no declared capacity. "
+            f"Add it to modal_backend.FUNCTION_CAPACITY."
+        )
+    return dict(capacity)
+
+
+def capacity_fit(estimate: dict[str, Any], decision: str, config: Any) -> tuple[bool, str]:
+    """Whether an estimate fits the declared capacity of the mapped Modal function.
+
+    Modal enforces `cpu=`/`memory=` in its scheduler, outside the gVisor guest, so the
+    guest's own `os.cpu_count()` and cgroup report the worker host and reveal nothing
+    about the allocation. The two limits fail differently, so only one of them vetoes:
+
+    - **memory** is a hard ceiling. A job whose peak RSS exceeds it is OOM-killed after
+      boot, having already been accepted and paid for. That is a routing veto.
+    - **cpu** is a reserved floor, not a cap. More workers than reserved cores
+      over-subscribe and run slower; the job still completes. That is sizing
+      information the caller needs in the trail, not grounds to refuse the lane.
+
+    The API liveness probe checks neither, so adequacy has to come from here.
+    """
+    try:
+        capacity = capacity_for_decision(decision, config)
+    except RuntimeError as exc:
+        return False, f"modal_capacity_unknown:{exc}"
+
+    function = function_name_for_decision(decision, config)
+    want_ram_gb = float(estimate.get("peak_ram_gb", 0.0) or 0.0)
+    have_ram_gb = float(capacity["memory_mb"]) / 1024.0
+    if want_ram_gb > have_ram_gb:
+        return False, (
+            f"modal_capacity_exceeded:ram_gb requested={want_ram_gb:g} "
+            f"declared={have_ram_gb:g} function={function}"
+        )
+
+    want_cores = float(estimate.get("parallelism", 1) or 1)
+    have_cores = float(capacity["cpu"])
+    note = ""
+    if want_cores > have_cores:
+        note = f" cores_oversubscribed={want_cores:g}>{have_cores:g}"
+    return True, (
+        f"modal_capacity_ok:cores={have_cores:g} ram_gb={have_ram_gb:g} "
+        f"function={function}{note}"
+    )

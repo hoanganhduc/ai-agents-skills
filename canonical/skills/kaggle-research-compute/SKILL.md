@@ -53,7 +53,10 @@ choose the backend; this skill pushes kernels only after that choice lands on Ka
 Work through `compute-offload-sizing-gate` first. Size against the lane's
 **aggregate** capacity — `kernel_cores` x `concurrency`, not one kernel — and
 set `total_units` so the fan-out is actually used; sizing to a single kernel
-understates the free lane by the concurrency factor.
+understates the free lane by the concurrency factor. `preflight` reports
+`kernel_cores`, `kernel_ram_gb` and `aggregate_cores` alongside `est_kernels`
+and `est_rounds`, which are derived from `total_units` as well as `core_hours`,
+so the estimate matches the kernels the run loop will actually launch.
 
 1. If local resources matter, run `get-available-resources` and let the broker apply the self-preservation veto.
 2. Build a portable job bundle (`manifest.json` with `total_units`, `worker`, `run.sh`, `merge`, writable `out/`) — the same bundle runs unchanged on any lane; each completed work unit leaves a checkpoint in `out/` so a re-pushed kernel resumes.

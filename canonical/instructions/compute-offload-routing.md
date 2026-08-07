@@ -40,34 +40,38 @@ verify what was actually provisioned.
 
 Two rules carry most of the weight:
 
-- **`accepted: true` is not a fit check.** The lanes verify unequally. Kaggle
-  compares declared RAM against `kernel_ram_gb` and will reject
-  (`peak_ram 1024GB exceeds kernel RAM 32GB`). Modal's adequacy verdict,
-  `modal_authenticated_api_usable`, is an **API liveness probe only** — it never
-  compares the request against the target function's declared `cpu=`/`memory=`,
-  so an over-sized request is admitted and fails at runtime after boot. For
-  Modal, the caller must do the capacity comparison against `modal_app.py`.
+- **`accepted: true` still reports how it decided.** Every lane now states its
+  adequacy against your numbers. Kaggle compares declared RAM against
+  `kernel_ram_gb` (`peak_ram 1024GB exceeds kernel RAM 32GB`); Modal compares
+  peak RSS against the declared `memory=` of the function the decision maps to
+  and rejects with `modal_capacity_exceeded:ram_gb requested=… declared=…`.
+  Read the reason: Modal's `cpu=` is a reserved floor rather than a cap, so
+  asking for more workers than cores is admitted and reported as
+  `cores_oversubscribed=12>4` — the job completes, but at a fraction of the
+  throughput the estimate assumed.
 - **Size from the declared spec, never from inside the container.**
   `os.cpu_count()` reports the worker host, not the allocation. The cgroup is
   authoritative on Kaggle but **not on Modal**, where the limit is enforced by
   the scheduler outside the gVisor guest and the guest's cgroup reports host
-  figures. The `@app.function(...)` decorator is the ground truth.
+  figures. `modal_backend.FUNCTION_CAPACITY` is the ground truth, and
+  `modal_app.py` builds its `@app.function(...)` decorators from it so the two
+  cannot drift.
 
 ## Manifest resource contract
 
-There are two manifest dialects and they are **not** interchangeable. An
-unrecognized top-level key is dropped **silently** — no warning, no error — so a
-resource block under the wrong key plans as though nothing was requested, and
-the job is confidently routed to the wrong hardware.
+There are two manifest dialects and they are **not** interchangeable. The broker
+**rejects** a job carrying any unrecognized top-level key, naming the offending
+key and listing the valid set, because a resource block under the wrong key
+would otherwise plan as though nothing was requested and route the job to the
+wrong hardware.
 
 | Manifest | Resource block key | Read by |
 |---|---|---|
 | Broker job (`plan`, `fanout-plan`, `submit`) | top-level **`constraints`** | `research_compute/planner.py` |
 | Kaggle bundle `manifest.json` | flat top level: `cores`, `memory_mb`, `total_units`, `checkpoint_glob` | `kaggle_driver.py` |
 
-After planning, assert the returned plan echoes a **non-empty** `constraints`
-block equal to what was submitted. That single assertion catches the silent
-drop, which is otherwise invisible until the job runs on the wrong lane.
+A rejection carries the `unknown_manifest_key` risk flag. Fix the manifest and
+re-plan; do not work around it by deleting the key, which loses the request.
 
 ## Lane capacity reference
 
