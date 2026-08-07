@@ -67,11 +67,23 @@ if [ -n "$configured_python" ] && [ ! "$configured_python" -ef "$PYTHON" ] 2>/de
   # path is never opened or executed.
 fi
 
-exec {AAS_REMOTE_BRIDGE_PYTHON_FD}<"$PYTHON"
+# bash 4.1+ allocates the descriptor number itself; macOS /bin/bash 3.2
+# parses ``{var}`` as a literal command word, so a fixed high descriptor is
+# bound there instead.  BSD fdesc also denies execve on read-only /dev/fd
+# nodes, so that branch execs the attested real path while the descriptor
+# stays bound for identity.
+python_real="$PYTHON"
+if [ "${BASH_VERSINFO[0]}" -gt 4 ] || \
+   { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+  exec {AAS_REMOTE_BRIDGE_PYTHON_FD}<"$PYTHON"
+else
+  AAS_REMOTE_BRIDGE_PYTHON_FD=210
+  eval "exec ${AAS_REMOTE_BRIDGE_PYTHON_FD}<\"\$PYTHON\""
+fi
 if [ -e "/proc/self/fd/$AAS_REMOTE_BRIDGE_PYTHON_FD" ]; then
   PYTHON="/proc/self/fd/$AAS_REMOTE_BRIDGE_PYTHON_FD"
 elif [ -e "/dev/fd/$AAS_REMOTE_BRIDGE_PYTHON_FD" ]; then
-  PYTHON="/dev/fd/$AAS_REMOTE_BRIDGE_PYTHON_FD"
+  PYTHON="$python_real"
 else
   printf 'attested system Python runtime could not be descriptor-bound\n' >&2
   exit 127
