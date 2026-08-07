@@ -12,7 +12,10 @@ lanes (Modal, Hetzner, GitHub Actions).
 The broker honors a valid configured `routing_order` or explicit `policy.backend` override;
 otherwise it walks the recommended default order and takes the **first backend that is AVAILABLE**
 (credentials or credits present, reachable, within budget) **AND ADEQUATE** (resources fit
-the job estimate). `run plan job.json` is the decision boundary; `doctor` warns if
+the job estimate). An explicit override chooses the lane but does not exempt the job from
+the adequacy check: forcing a lane the job does not fit is rejected, not dispatched, because
+a lane's hard memory ceiling would otherwise kill the job after it was accepted.
+`run plan job.json` is the decision boundary; `doctor` warns if
 `routing_order` deviates from the recommended order. Provider guards are lazy: a safe local
 decision does not contact remote providers, and the ordered walk stops probing after the
 first admitted lane. This doc links, and does not replace,

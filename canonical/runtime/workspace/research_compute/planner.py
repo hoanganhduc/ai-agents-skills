@@ -1217,22 +1217,32 @@ def plan_job(
             reasoning.append(f"Explicit hetzner requested but unavailable: {hz['reason']}.")
     elif backend_override == "modal":
         modal_available, modal_reason = get_modal()
+        # Forcing the lane does not make the job fit it: `memory=` is a hard ceiling, so an
+        # over-sized override is an OOM after the job is accepted. Size the request against
+        # the function this decision maps to, exactly as the cascade does.
+        modal_decision = "modal_cpu" if decision == "local_cpu" else decision
+        adequate, fit_reason = modal_capacity_check(modal_fit, modal_decision)
         routing_trail.append({
             "backend": "modal",
             "available": modal_available,
-            "adequate": True,
-            "reason": modal_reason,
+            "adequate": adequate,
+            "reason": modal_reason if adequate else fit_reason,
         })
-        if modal_available:
-            if decision == "local_cpu":
-                decision = "modal_cpu"
+        if modal_available and adequate:
+            decision = modal_decision
             routing_extra["backend"] = "modal"
             reasoning.append("Explicit override: Modal (forced remote).")
-        else:
+        elif not modal_available:
             decision = "rejected"
             risk_flags.append("modal_unavailable")
             reasoning.append(
                 f"Explicit modal requested but unavailable: {modal_reason}."
+            )
+        else:
+            decision = "rejected"
+            risk_flags.append("modal_capacity_exceeded")
+            reasoning.append(
+                f"Explicit modal requested but the job does not fit it: {fit_reason}."
             )
     elif not backend_override and gpu_requested:
         # GPU cascade (plan §5.1): a GPU-requested job walks routing_order for the first
