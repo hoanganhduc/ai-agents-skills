@@ -3037,7 +3037,9 @@ def selftest_drive_loop_checks(base: Path) -> list[str]:
     loop_a = base / "loop-a"
     init_loop(selftest_init_args(loop_a, max_iterations=2))
     stub = base / "stub_iteration.py"
-    stub.write_text(STUB_ITERATION_SNIPPET, encoding="utf-8", newline="\n")
+    # Path.write_text lacks the newline argument before Python 3.10.
+    with stub.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(STUB_ITERATION_SNIPPET)
     stub_cmd = f'"{sys.executable}" "{stub}"'
     result = drive_command(selftest_drive_args(loop_a, base / "reg", stub_cmd))
     budget_a = read_json(loop_a / "budget.json")
@@ -3131,7 +3133,8 @@ def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
         init_loop(init_args)
         proof_path = run_dir / "proofs" / "offline_smoke.proof"
         proof_path.parent.mkdir(parents=True, exist_ok=True)
-        proof_path.write_text("offline smoke proof artifact\n", encoding="utf-8", newline="\n")
+        with proof_path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write("offline smoke proof artifact\n")
         write_json(
             proof_artifact_path(run_dir, "offline-smoke-evidence"),
             {
