@@ -46,9 +46,16 @@ def _bootstrap_path() -> None:
     """Put the broker workspace and this skill dir on sys.path so a detached invocation
     (`python3 hetzner_reaper.py`, `-m hetzner_reaper`, or a systemd ExecStart) can import
     research_compute and hetzner_driver without the shell wrapper. A no-op when the test
-    harness or wrapper has already set the path."""
+    harness or wrapper has already set the path. Installed runtimes keep the package at
+    the runtime root beside ``skills/``; CSR's immutable exact-pin generation retains the
+    canonical source layout, where the package lives one level deeper under
+    ``workspace/``."""
     skill_dir = Path(__file__).resolve().parent
     workspace_root = skill_dir.parent.parent
+    if not (workspace_root / "research_compute").is_dir():
+        source_layout = workspace_root / "workspace"
+        if (source_layout / "research_compute").is_dir():
+            workspace_root = source_layout
     for entry in (str(workspace_root), str(skill_dir)):
         if entry not in sys.path:
             sys.path.insert(0, entry)
@@ -57,6 +64,7 @@ def _bootstrap_path() -> None:
 _bootstrap_path()
 
 import hetzner_driver  # noqa: E402
+import hetzner_research_compute  # noqa: E402
 from research_compute import budget_ledger  # noqa: E402
 from research_compute.config import default_config_path, load_config  # noqa: E402
 
@@ -494,6 +502,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     command = args.command or "reap"
     try:
+        # A launcher running from an immutable generation exports its read-only
+        # runtime root as the workspace override, which carries no broker
+        # configuration; drop unusable overrides exactly like the lane entrypoint
+        # so config and state resolve to the real broker data workspace.
+        hetzner_research_compute._normalize_data_workspace_env()
         config, state_root = _load_config(args.config)
         if command == "attest":
             result = {
