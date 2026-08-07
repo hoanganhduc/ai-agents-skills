@@ -19,19 +19,20 @@
 #            cancelled. The disposable box is single-boot, so the unit is started directly
 #            (async, no reboot-persistence needed).
 # ---------------------------------------------------------------------------
+# Per-job host identity generated locally before create. The controller pins the matching
+# public key before its first SSH connection; no trust-on-first-use path exists. The key
+# MUST go through cc_ssh's own `ssh_keys` directive: in the init stage `write_files` runs
+# BEFORE the ssh module, whose default `ssh_deletekeys: true` wipes every
+# /etc/ssh/ssh_host_* file it did not write itself -- a write_files-planted key is deleted
+# and replaced with a server-generated one, so the controller's pin never matches.
+ssh_deletekeys: true
+ssh_genkeytypes: [ed25519]
+ssh_keys:
+  ed25519_private: |
+{{SSH_HOST_PRIVATE_KEY_INDENTED}}
+  ed25519_public: {{SSH_HOST_PUBLIC_KEY}}
+
 write_files:
-  # Per-job host identity generated locally before create. The controller pins the matching
-  # public key before its first SSH connection; no trust-on-first-use path exists.
-  - path: /etc/ssh/ssh_host_ed25519_key
-    permissions: '0600'
-    owner: root:root
-    encoding: b64
-    content: {{SSH_HOST_PRIVATE_KEY_B64}}
-  - path: /etc/ssh/ssh_host_ed25519_key.pub
-    permissions: '0644'
-    owner: root:root
-    encoding: b64
-    content: {{SSH_HOST_PUBLIC_KEY_B64}}
   - path: /etc/systemd/system/aas-deadman.service
     permissions: '0644'
     content: |

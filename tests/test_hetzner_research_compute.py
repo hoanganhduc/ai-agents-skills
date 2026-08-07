@@ -3613,6 +3613,29 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertNotIn(DRIVER_TOKEN, ci)
         self.assertNotIn("HCLOUD_TOKEN", ci)       # no token variable planted on the server
 
+    def test_render_cloud_init_delivers_host_key_through_cc_ssh(self) -> None:
+        """cloud-init's ssh module runs AFTER write_files with ssh_deletekeys defaulting to
+        true, wiping any write_files-planted host key and regenerating a server key that can
+        never match the controller's pin; the identity must travel via cc_ssh's own
+        `ssh_keys` directive, which survives that deletion, with generation limited to
+        ed25519 so the pinned key is the only one sshd can offer."""
+        os.environ["HCLOUD_TOKEN"] = DRIVER_TOKEN
+        ci = hetzner_driver.render_cloud_init(
+            self.config,
+            6.0,
+            host_identity=hetzner_driver.HostIdentity(
+                private_key=TEST_HOST_PRIVATE_KEY,
+                public_key=TEST_HOST_PUBLIC_KEY,
+            ),
+        )
+        self.assertIn("ssh_deletekeys: true", ci)
+        self.assertIn("ssh_genkeytypes: [ed25519]", ci)
+        self.assertIn("ed25519_private: |", ci)
+        for line in TEST_HOST_PRIVATE_KEY.splitlines():
+            self.assertIn(f"    {line}\n", ci)     # block scalar keeps every key line
+        self.assertIn(f"ed25519_public: {TEST_HOST_PUBLIC_KEY}\n", ci)
+        self.assertNotIn("path: /etc/ssh/ssh_host_ed25519_key", ci)  # no write_files delivery
+
     @_BUNDLE_POSIX_SKIP
     def test_up_dry_run_reports_dead_mans_switch(self) -> None:
         runner = _FakeRunner()
