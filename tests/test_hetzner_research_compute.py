@@ -10,6 +10,8 @@ import sys
 
 sys.dont_write_bytecode = True  # never write __pycache__ into the canonical runtime tree
 
+import contextlib
+import io
 import json
 import os
 import stat
@@ -2580,6 +2582,38 @@ class HetznerDriverTests(unittest.TestCase):
             resolved = hetzner_driver.runtime_workspace()
         self.assertNotEqual(resolved, pinned.resolve())
         self.assertEqual(resolved, hetzner_driver.workspace_root())
+
+    def test_reaper_main_drops_a_configless_workspace_override(self) -> None:
+        """A detached reaper launched by the immutable-generation runner inherits workspace
+        overrides that name the read-only runtime root; main must drop them exactly like the
+        lane entrypoint so config and state resolve to the real broker data workspace (cwd)."""
+        ws = _make_workspace(self.tmp / "reaper-ws")
+        pinned = self.tmp / "immutable-generation-runtime"
+        pinned.mkdir()
+        captured = {}
+
+        def _fake_reap(*, config, state_root, dry_run, heartbeat_max_seconds):
+            captured["config"] = config
+            captured["state_root"] = state_root
+            return {"action": "reap", "errors": []}
+
+        overrides = {
+            "AAS_RUNTIME_WORKSPACE": str(pinned),
+            "OPENCLAW_WORKSPACE": str(pinned),
+            "CODEX_RUNTIME_WORKSPACE": str(pinned),
+        }
+        previous_cwd = os.getcwd()
+        os.chdir(ws)
+        try:
+            with mock.patch.dict(os.environ, overrides), \
+                    mock.patch.object(hetzner_reaper, "reap", _fake_reap), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                exit_code = hetzner_reaper.main(["reap", "--dry-run"])
+        finally:
+            os.chdir(previous_cwd)
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["config"].install_id, "test-install")
+        self.assertEqual(Path(captured["state_root"]).is_relative_to(ws.resolve()), True)
 
     def test_up_refuses_without_token_and_without_confirm(self) -> None:
         hetzner_driver.COMMAND_RUNNER = _FakeRunner()
