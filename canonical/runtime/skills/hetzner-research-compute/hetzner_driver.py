@@ -32,7 +32,6 @@ or later deletions.
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import hmac
 import ipaddress
@@ -1178,18 +1177,17 @@ def render_cloud_init(config: Any, ttl_hours: float, *, host_identity: HostIdent
     minutes = cloud_init_shutdown_minutes(ttl_hours)
     seconds = minutes * 60
     template = (ASSETS_DIR / "cloud-init.yaml").read_text(encoding="utf-8")
+    # cc_ssh's `ssh_keys` directive takes plain YAML text, not base64; the private key is
+    # indented to sit inside the template's block scalar under the two-space mapping key.
+    indented_private = "\n".join(
+        f"    {line}" for line in host_identity.private_key.splitlines()
+    )
     return (template
             .replace("{{MAX_SECONDS_PLUS}}", str(seconds + 120))
             .replace("{{MAX_SECONDS}}", str(seconds))
             .replace("{{MAX_MINUTES}}", str(minutes))
-            .replace(
-                "{{SSH_HOST_PRIVATE_KEY_B64}}",
-                base64.b64encode(host_identity.private_key.encode("ascii")).decode("ascii"),
-            )
-            .replace(
-                "{{SSH_HOST_PUBLIC_KEY_B64}}",
-                base64.b64encode((host_identity.public_key + "\n").encode("ascii")).decode("ascii"),
-            ))
+            .replace("{{SSH_HOST_PRIVATE_KEY_INDENTED}}", indented_private)
+            .replace("{{SSH_HOST_PUBLIC_KEY}}", host_identity.public_key))
 
 
 def _write_temp_cloud_init(rendered: str) -> str:
