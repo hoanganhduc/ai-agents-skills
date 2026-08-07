@@ -251,19 +251,29 @@ def estimate_gpu_hours(estimate: dict[str, Any], config: Any) -> float:
     return float(gpu_hours or 0.0)
 
 
-def estimate_runs(core_hours: float, config: Any) -> dict[str, Any]:
+def estimate_runs(core_hours: float, config: Any, total_units: int = 1) -> dict[str, Any]:
     """Estimate how the job fans out over Kaggle's 12h/~4-core kernels. per_kernel core-hours
     per run = cores x session_hours; a round fans out up to `concurrency` kernels, so the
     round throughput is per_kernel x concurrency. `est_rounds` is the multi-run resume-loop
-    depth; `est_kernels` is the total kernel runs across all rounds."""
+    depth; `est_kernels` is the total kernel runs across all rounds.
+
+    Two things bound the fan-out and the larger wins. Duration bounds it from core-hours:
+    a long job needs more kernels than one session holds. Partitioning bounds it from
+    `total_units`: the run loop dispatches one kernel per remaining unit, up to
+    `concurrency` per round, so a short job split into many units still costs that many
+    kernel runs. Sizing on core-hours alone under-reports a unit-parallel job -- a
+    five-unit job that finishes in minutes estimates as one kernel and launches five."""
     cores = kernel_cores(config)
     hours = session_hours(config)
     fanout = concurrency(config)
     per_kernel_core_h = max(1.0, float(cores) * float(hours))
     per_round_core_h = per_kernel_core_h * float(fanout)
     core_hours = max(0.0, float(core_hours))
-    est_kernels = max(1, math.ceil(core_hours / per_kernel_core_h)) if core_hours else 1
-    est_rounds = max(1, math.ceil(core_hours / per_round_core_h)) if core_hours else 1
+    units = max(1, int(total_units or 1))
+    duration_kernels = math.ceil(core_hours / per_kernel_core_h) if core_hours else 1
+    duration_rounds = math.ceil(core_hours / per_round_core_h) if core_hours else 1
+    est_kernels = max(1, duration_kernels, units)
+    est_rounds = max(1, duration_rounds, math.ceil(units / float(fanout)))
     return {"est_kernels": est_kernels, "est_rounds": est_rounds,
             "per_kernel_core_hours": per_kernel_core_h, "per_round_core_hours": per_round_core_h,
             "concurrency": fanout, "session_hours": hours, "kernel_cores": cores}
@@ -316,7 +326,8 @@ def probe(
     gpu = bool(estimate.get("gpu"))
     kind = "gpu" if gpu else "cpu"
 
-    runs = estimate_runs(float(estimate.get("core_hours") or 0.0), config)
+    runs = estimate_runs(float(estimate.get("core_hours") or 0.0), config,
+                         total_units=int(estimate.get("total_units") or 1))
 
     # GPU-only weekly cap (a local self-cap; CPU is free and ungated).
     cap = float(getattr(config, "kaggle_weekly_gpu_hours_cap", 0.0) or 0.0)

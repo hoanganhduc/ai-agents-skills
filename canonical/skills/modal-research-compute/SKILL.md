@@ -86,16 +86,20 @@ successful retry replaces an earlier failed/vacuous duplicate during merge.
 ## Core workflow
 
 Work through `compute-offload-sizing-gate` first: measure the workload, read the
-declared lane capacity, and only then size the manifest. Modal's adequacy check
-is an API liveness probe, so it admits requests that exceed the target
-function's declared `cpu=`/`memory=` — the caller must make that comparison.
+declared lane capacity, and only then size the manifest. The planner sizes the
+job against `modal_backend.FUNCTION_CAPACITY` — the same table `modal_app.py`
+builds its `@app.function(...)` decorators from — but it can only enforce the
+numbers you supply, so an unmeasured peak RSS defeats the check.
 
 1. If local resources matter, run `get-available-resources`.
 2. Build a broker manifest JSON for the task. The resource block must be the
-   top-level **`constraints`** key; any other key is dropped silently and the
-   job plans as though it requested nothing.
+   top-level **`constraints`** key; any other top-level key is rejected
+   (`unknown_manifest_key`).
 3. Run broker `plan` (or `fanout-plan` for a large divisible job). Confirm the
-   plan echoes a non-empty `constraints` block equal to what was submitted.
+   plan echoes a non-empty `constraints` block equal to what was submitted, and
+   read Modal's trail reason: `modal_capacity_exceeded:ram_gb …` means the job
+   does not fit, and `cores_oversubscribed=…` means it fits but will run at a
+   fraction of the estimated throughput.
 4. Use `run plan` as the decision boundary. Execute a selected Kaggle or Hetzner lane
    through its corresponding lane skill; `run submit` dispatches only Modal/GitHub Actions.
    Execute an accepted local plan under the broker's reported worker limits.

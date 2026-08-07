@@ -200,6 +200,9 @@ def estimate_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "peak_ram_gb": float(peak_ram_gb or 0.0),
         "gpu": bool(manifest.get("gpu")),
         "gpu_hours": float(manifest.get("gpu_hours", 0.0) or 0.0),
+        # The run loop dispatches one kernel per remaining unit, so the fan-out the probe
+        # estimates has to see the partitioning and not only the duration.
+        "total_units": _total_units(manifest),
     }
 
 
@@ -215,11 +218,19 @@ def _checkpoint_glob(manifest: dict[str, Any]) -> str:
 
 def units_done(out_dir: Path, glob: str = DEFAULT_CHECKPOINT_GLOB) -> int:
     """Count distinct completed-unit checkpoints in the cumulative out/ tree (a set by file
-    name, so a re-downloaded checkpoint is never double-counted)."""
+    name, so a re-downloaded checkpoint is never double-counted).
+
+    The kernel runner writes checkpoints to $OUT = /kaggle/working/out and
+    `kaggle kernels output -p DEST` preserves that layout, so a fetched checkpoint
+    arrives at <out_dir>/out/. Both that nested path and the flat one are counted: a
+    glob of out_dir alone finds nothing after a real run, which reports every unit as
+    missing and stops resume from ever engaging."""
     out_dir = Path(out_dir)
-    if not out_dir.is_dir():
-        return 0
-    return len({p.name for p in out_dir.glob(glob)})
+    names: set[str] = set()
+    for root in (out_dir, out_dir / "out"):
+        if root.is_dir():
+            names.update(p.name for p in root.glob(glob))
+    return len(names)
 
 
 # --- kernel packaging ---------------------------------------------------------
@@ -412,6 +423,7 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
     else:
         verdict = "free_cpu"
 
+    kernel_cores = kaggle_backend.kernel_cores(config)
     return {
         "backend": "kaggle",
         "job_id": manifest.get("job_id"),
@@ -419,6 +431,13 @@ def preflight(*, job_dir: str | Path, config: Any, state_root: Path | None = Non
         "total_units": _total_units(manifest),
         "est_rounds": probe["est_runs"],
         "est_kernels": probe["est_kernels"],
+        # The hardware a kernel actually provides, so a caller can size the job against
+        # the lane without reading research-compute.toml. Kaggle's usable capacity is
+        # per-kernel x concurrency, not per-kernel: quoting only the per-kernel figure
+        # understates the free lane and misroutes work to a paid one.
+        "kernel_cores": kernel_cores,
+        "kernel_ram_gb": kaggle_backend.kernel_ram_gb(config),
+        "aggregate_cores": kernel_cores * probe["concurrency"],
         "concurrency": probe["concurrency"],
         "session_hours": probe["session_hours"],
         "max_runs": kaggle_backend.max_runs(config),
