@@ -93,12 +93,13 @@ def _offline_creds(empty_kaggle_dir: Path):
     )
 
 
-def _plan(job):
+def _plan(job, *, modal_ready: bool = False):
     with tempfile.TemporaryDirectory() as tmp:
         legacy = {k: os.environ.pop(k) for k in ("KAGGLE_USERNAME", "KAGGLE_KEY") if k in os.environ}
         try:
             with _offline_creds(Path(tmp)):
-                return plan_job(job, config=_Cfg(), resources=_resources())
+                return plan_job(job, config=_Cfg(), resources=_resources(),
+                                modal_ready=modal_ready)
         finally:
             os.environ.update(legacy)
 
@@ -198,6 +199,40 @@ class ModalCapacityFitTests(unittest.TestCase):
         self.assertTrue(modal_hops, plan)
         self.assertFalse(modal_hops[0]["adequate"], modal_hops)
         self.assertFalse(plan["accepted"], plan)
+
+    def test_explicit_backend_override_still_checks_capacity(self) -> None:
+        """`policy.backend` forces the lane but must not forge adequacy: an override that
+        does not fit is an OOM after the job is accepted, which is the failure the
+        capacity check exists to prevent."""
+        job = {
+            "job_id": "override-too-big",
+            "task_family": "enumeration",
+            "policy": {"backend": "modal"},
+            "constraints": {"cores": 4, "memory_mb": 204800, "core_hours": 0.5},
+            "payload": {"python_source": "def main():\n    return {}\n", "entrypoint": "main"},
+        }
+        plan = _plan(job, modal_ready=True)
+        modal_hops = [t for t in plan.get("routing_trail", []) if t.get("backend") == "modal"]
+        self.assertTrue(modal_hops, plan)
+        self.assertFalse(modal_hops[0]["adequate"], modal_hops)
+        self.assertIn("modal_capacity_exceeded", modal_hops[0]["reason"])
+        self.assertFalse(plan["accepted"], plan)
+        self.assertIn("modal_capacity_exceeded", plan["risk_flags"])
+
+    def test_explicit_backend_override_that_fits_is_accepted(self) -> None:
+        """The override arm must keep working for a job the function can actually hold."""
+        job = {
+            "job_id": "override-fits",
+            "task_family": "enumeration",
+            "policy": {"backend": "modal"},
+            "constraints": {"cores": 4, "memory_mb": 4096, "core_hours": 0.5},
+            "payload": {"python_source": "def main():\n    return {}\n", "entrypoint": "main"},
+        }
+        plan = _plan(job, modal_ready=True)
+        modal_hops = [t for t in plan.get("routing_trail", []) if t.get("backend") == "modal"]
+        self.assertTrue(modal_hops, plan)
+        self.assertTrue(modal_hops[0]["adequate"], modal_hops)
+        self.assertTrue(plan["accepted"], plan)
 
 
 class KaggleUnitAccountingTests(unittest.TestCase):
