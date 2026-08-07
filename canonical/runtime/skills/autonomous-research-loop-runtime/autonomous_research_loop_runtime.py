@@ -1898,24 +1898,24 @@ def append_iteration(
     write_json(paths["budget"], budget)
 
     remaining_iterations = max(0, int(budget["max_iterations"]) - int(budget["spent_iterations"]))
-    paths["recovery"].write_text(
-        "\n".join(
-            [
-                "# Autonomous Research Loop Recovery",
-                "",
-                f"- Goal: {state.get('goal', '')}",
-                f"- Status: {state.get('status', '')}",
-                f"- Last completed iteration: {number}",
-                f"- Next safe action: {'report stop status' if args.decision in {'stop', 'blocked'} else 'continue from the last recorded decision'}",
-                f"- Remaining evidence gaps: {', '.join(record['remaining_gaps']) if record['remaining_gaps'] else 'none recorded'}",
-                f"- Active blockers: {args.stop_reason if args.decision == 'blocked' and args.stop_reason else 'none recorded'}",
-                f"- Budget remaining: {remaining_iterations} iterations",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-        newline="\n",
-    )
+    # Path.write_text lacks the newline argument before Python 3.10.
+    with paths["recovery"].open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(
+            "\n".join(
+                [
+                    "# Autonomous Research Loop Recovery",
+                    "",
+                    f"- Goal: {state.get('goal', '')}",
+                    f"- Status: {state.get('status', '')}",
+                    f"- Last completed iteration: {number}",
+                    f"- Next safe action: {'report stop status' if args.decision in {'stop', 'blocked'} else 'continue from the last recorded decision'}",
+                    f"- Remaining evidence gaps: {', '.join(record['remaining_gaps']) if record['remaining_gaps'] else 'none recorded'}",
+                    f"- Active blockers: {args.stop_reason if args.decision == 'blocked' and args.stop_reason else 'none recorded'}",
+                    f"- Budget remaining: {remaining_iterations} iterations",
+                    "",
+                ]
+            )
+        )
     gp_warnings = collect_goal_priority_warnings(run_dir, latest_record=record)
     return {
         "status": "ok",
@@ -2238,11 +2238,8 @@ def _apply_formal_drive_start(
                 formal_dir.mkdir(parents=True, exist_ok=True)
                 mirror_path = formal_dir / "formal_policy.json"
                 if not mirror_path.is_file() or formal_cli or env_set:
-                    mirror_path.write_text(
-                        json.dumps(pol.as_dict(), indent=2) + "\n",
-                        encoding="utf-8",
-                        newline="\n",
-                    )
+                    with mirror_path.open("w", encoding="utf-8", newline="\n") as handle:
+                        handle.write(json.dumps(pol.as_dict(), indent=2) + "\n")
             except OSError:
                 pass
         for key, value in export_formal_env(pol).items():
