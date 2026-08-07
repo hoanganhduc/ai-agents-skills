@@ -97,6 +97,11 @@ case "$command_dir_real/" in
     exit 2
     ;;
 esac
+# The trust-chain walks compare textual ancestry against the resolved
+# workspace, so rebase the command path onto its resolved directory; a
+# workspace addressed through a symlinked prefix (macOS /var -> private/var)
+# would otherwise never match even though the command is inside it.
+command_path="$command_dir_real/${command_path##*/}"
 if [ ! -f "$command_path" ] || [ -L "$command_path" ]; then
   printf 'runtime command must be a regular non-link file: %s\n' "$command_path" >&2
   exit 127
