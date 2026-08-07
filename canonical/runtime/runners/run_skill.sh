@@ -451,10 +451,13 @@ bound_descriptor_matches_selected() {
 
 # BSD fdesc nodes also synthesize their permission bits from the
 # descriptor's open flags, so execve on a read-only /dev/fd path is denied
-# no matter what mode the underlying file carries.  Where /proc is
-# unavailable a launch therefore execs the attested real path -- the
-# descriptor stays bound for identity and child reads -- while Linux
-# /proc paths continue to exec the bound inode exactly.
+# no matter what mode the underlying file carries, and opening a /dev/fd
+# path duplicates the descriptor with a shared file offset, so an
+# interpreter that reads its script argument twice sees end-of-file on
+# the second pass.  Where /proc is unavailable a launch therefore execs
+# and reads the attested real paths -- each descriptor stays bound for
+# identity attestation -- while Linux /proc paths continue to use the
+# bound inode exactly.
 exec_path_for_bound() {
   local bound="$1" attested="$2"
   case "$bound" in
@@ -581,6 +584,7 @@ if [ "$credential_contract" -eq 1 ]; then
       printf 'managed ARL credential broker could not be descriptor-bound\n' >&2
       exit 127
     fi
+    broker_command="$(exec_path_for_bound "$broker_command" "$broker_path")"
     exec "$python_command" -I "$broker_command" --entry "$command_command" -- "$@"
   fi
   secret_loader="$runtime_real/load_secret_env.py"
@@ -596,6 +600,7 @@ if [ "$credential_contract" -eq 1 ]; then
     printf 'managed credential projection loader could not be descriptor-bound\n' >&2
     exit 127
   fi
+  loader_command="$(exec_path_for_bound "$loader_command" "$secret_loader")"
   loader_args=(--pointer-env "$projection_pointer_env" --format "$projection_format" --export-subset)
   [ "$projection_no_load" -eq 1 ] && loader_args+=(--no-load)
   [ "$projection_retain_pointer" -eq 1 ] && loader_args+=(--retain-pointer)
