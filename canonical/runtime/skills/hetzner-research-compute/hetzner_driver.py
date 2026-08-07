@@ -338,13 +338,23 @@ def _require_durable_reaper_for_live_provisioning(config: Any) -> dict[str, Any]
 
 
 def runtime_workspace() -> Path:
-    """Resolve the workspace selected by the managed runner before agent-specific fallbacks."""
+    """Resolve the broker data workspace (config, state, and scope identity).
+
+    The managed runner exports ``AAS_RUNTIME_WORKSPACE``, but an immutable
+    exact-pin generation exports its own read-only tree there, which carries no
+    broker configuration, cannot hold broker state, and moves on every
+    republish (which would rotate the derived install scope).  Trust the
+    runner's selection only when it names a real broker data workspace;
+    otherwise fall back to ``workspace_root()``, whose environment the
+    entrypoint has already normalized the same way for every lane.
+    """
     selected = os.environ.get("AAS_RUNTIME_WORKSPACE")
     if selected:
         path = Path(selected).expanduser()
         if not path.is_absolute():
             raise HetznerDriverError("AAS_RUNTIME_WORKSPACE must name an absolute path")
-        return path.resolve()
+        if default_config_path(path).is_file():
+            return path.resolve()
     return workspace_root()
 
 

@@ -2561,6 +2561,10 @@ class HetznerDriverTests(unittest.TestCase):
 
     def test_install_scope_separates_two_runtime_roots_with_the_same_install_id(self) -> None:
         config = mock.Mock(install_id="same-hostname")
+        for name in ("runtime-a", "runtime-b"):
+            config_dir = self.tmp / name / "config"
+            config_dir.mkdir(parents=True)
+            (config_dir / "research-compute.toml").write_text("", encoding="utf-8")
         with mock.patch.dict(os.environ, {"AAS_RUNTIME_WORKSPACE": str(self.tmp / "runtime-a")}):
             first = hetzner_driver.install_scope(config)
         with mock.patch.dict(os.environ, {"AAS_RUNTIME_WORKSPACE": str(self.tmp / "runtime-b")}):
@@ -2568,6 +2572,14 @@ class HetznerDriverTests(unittest.TestCase):
 
         self.assertNotEqual(first, second)
         self.assertNotIn("same-hostname", first + second)
+
+    def test_runtime_workspace_ignores_a_runner_pin_without_broker_config(self) -> None:
+        pinned = self.tmp / "immutable-generation"
+        pinned.mkdir()
+        with mock.patch.dict(os.environ, {"AAS_RUNTIME_WORKSPACE": str(pinned)}):
+            resolved = hetzner_driver.runtime_workspace()
+        self.assertNotEqual(resolved, pinned.resolve())
+        self.assertEqual(resolved, hetzner_driver.workspace_root())
 
     def test_up_refuses_without_token_and_without_confirm(self) -> None:
         hetzner_driver.COMMAND_RUNNER = _FakeRunner()
