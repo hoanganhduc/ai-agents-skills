@@ -2615,6 +2615,17 @@ class HetznerDriverTests(unittest.TestCase):
         self.assertEqual(captured["config"].install_id, "test-install")
         self.assertEqual(Path(captured["state_root"]).is_relative_to(ws.resolve()), True)
 
+    def test_host_pin_uses_the_plain_default_port_known_hosts_form(self) -> None:
+        """OpenSSH looks up the plain host form for default-port connections; the bracketed
+        [ip]:22 form matches only non-standard ports, so a bracketed pin would fail strict
+        host-key checking on every port-22 connection."""
+        path = hetzner_driver._known_hosts_path(self.config, "jobX", self.state)
+        line = path.read_text(encoding="ascii")
+        self.assertTrue(line.startswith("203.0.113.9 ssh-ed25519 "))
+        options = hetzner_driver._ssh_options(
+            config=self.config, state_root=self.state, job_id="jobX", ip="203.0.113.9")
+        self.assertIn(f"UserKnownHostsFile={path}", options)
+
     def test_up_refuses_without_token_and_without_confirm(self) -> None:
         hetzner_driver.COMMAND_RUNNER = _FakeRunner()
         with self.assertRaises(hetzner_driver.HetznerDriverError):  # no token

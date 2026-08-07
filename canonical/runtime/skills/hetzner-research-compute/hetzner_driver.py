@@ -1676,7 +1676,10 @@ def _write_known_hosts(*, config: Any, state_root: Path, job_id: str,
         _require_posix_owned_unwritable(directory, label="Hetzner SSH pin directory")
     target = directory / f"{job_id}.known_hosts"
     temp = directory / f".{job_id}.{os.getpid()}.{time.monotonic_ns()}.tmp"
-    payload = f"[{address}]:22 {fields[0]} {fields[1]}\n".encode("ascii")
+    # OpenSSH looks up the plain host form for default-port connections; the
+    # bracketed ``[host]:port`` form matches only non-standard ports, so pinning
+    # it would fail strict checking on every port-22 connection.
+    payload = f"{address} {fields[0]} {fields[1]}\n".encode("ascii")
     fd = os.open(
         temp,
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
@@ -1713,7 +1716,7 @@ def _ssh_options(*, config: Any, state_root: Path | None, job_id: str, ip: str) 
     if os.name == "posix":
         _require_posix_owned_unwritable(path.parent, label="Hetzner SSH pin directory")
         _require_posix_owned_unwritable(path, label="Hetzner SSH host pin")
-    expected_prefix = f"[{str(ipaddress.IPv4Address(ip))}]:22 ssh-ed25519 "
+    expected_prefix = f"{str(ipaddress.IPv4Address(ip))} ssh-ed25519 "
     try:
         line = path.read_text(encoding="ascii")
     except (OSError, UnicodeError) as exc:
