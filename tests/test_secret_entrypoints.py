@@ -65,6 +65,7 @@ OBSERVED_ENV_KEYS = sorted(COMPUTE_KEYS | MODAL_KEYS | PROVIDER_KEYS | SKILL_KEY
     "AAS_HETZNER_SSH_BIN",
     "AAS_HETZNER_RSYNC_BIN",
     "AAS_AUTOLOOP_COMPUTE_WORKSPACE",
+    "AAS_RUNTIME_PYTHON",
     "PYTHONHOME",
     "PYTHONPATH",
 ]
@@ -1225,6 +1226,96 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                     "must-not-reach-hostile-python",
                     completed.stdout + completed.stderr,
                 )
+
+    def test_force_loop_replace_carries_credentials_and_other_subcommands_do_not(self) -> None:
+        """`replace` restarts the loop it stopped, so it needs `start` authority.
+
+        Every other subcommand must reach the CLI with the pointers scrubbed, so
+        a diagnostic call can never hand the credential set to a child.
+        """
+
+        expectations = (
+            ("start", True),
+            ("replace", True),
+            ("stop", False),
+            ("status", False),
+        )
+        for subcommand, credential_bearing in expectations:
+            with self.subTest(subcommand=subcommand), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                wrapper = self._stage_entrypoint(
+                    root,
+                    skill="autonomous-research-loop-runtime/force-loop",
+                    wrapper="run_force_loop.sh",
+                    python_entrypoint="force_loop_cli.py",
+                )
+                compute = self._private_file(root, "compute.env", "HCLOUD_TOKEN=compute\n")
+                provider = self._private_file(root, "provider.env", "OPENAI_API_KEY=provider\n")
+                env = self._env(root)
+                env.update(
+                    {
+                        "AAS_COMPUTE_SECRETS_FILE": str(compute),
+                        "AAS_PROVIDER_SECRETS_FILE": str(provider),
+                    }
+                )
+
+                completed = subprocess.run(
+                    ["bash", str(wrapper), subcommand],
+                    check=False,
+                    text=True,
+                    capture_output=True,
+                    env=env,
+                    timeout=30,
+                )
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                observed = json.loads(completed.stdout)
+                if credential_bearing:
+                    self.assertEqual(observed["AAS_COMPUTE_SECRETS_FILE"], str(compute))
+                    self.assertEqual(observed["AAS_PROVIDER_SECRETS_FILE"], str(provider))
+                else:
+                    self.assertIsNone(observed["AAS_COMPUTE_SECRETS_FILE"])
+                    self.assertIsNone(observed["AAS_PROVIDER_SECRETS_FILE"])
+
+    def test_force_loop_exports_a_child_resolvable_interpreter_path(self) -> None:
+        """Children re-exec `AAS_RUNTIME_PYTHON` by name from their own process.
+
+        A `/proc/self/fd/N` or `/dev/fd/N` alias names a descriptor of the
+        wrapper, not of the drive or supervisor it launches, so exporting the
+        bound alias makes every re-exec fail with "no such file". The launch
+        itself still runs through the bound inode.
+        """
+
+        for subcommand in ("drain", "start"):
+            with self.subTest(subcommand=subcommand), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                wrapper = self._stage_entrypoint(
+                    root,
+                    skill="autonomous-research-loop-runtime/force-loop",
+                    wrapper="run_force_loop.sh",
+                    python_entrypoint="force_loop_cli.py",
+                )
+                compute = self._private_file(root, "compute.env", "HCLOUD_TOKEN=compute\n")
+                env = self._env(root)
+                env["AAS_COMPUTE_SECRETS_FILE"] = str(compute)
+
+                completed = subprocess.run(
+                    ["bash", str(wrapper), subcommand],
+                    check=False,
+                    text=True,
+                    capture_output=True,
+                    env=env,
+                    timeout=30,
+                )
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                exported = json.loads(completed.stdout)["AAS_RUNTIME_PYTHON"]
+                self.assertIsNotNone(exported)
+                self.assertFalse(
+                    exported.startswith(("/proc/self/fd/", "/dev/fd/")),
+                    exported,
+                )
+                self.assertTrue(os.path.isfile(exported), exported)
 
     def test_outer_runner_and_hetzner_wrapper_drop_broad_skill_authority_and_hostile_startup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

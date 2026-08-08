@@ -52,22 +52,82 @@ trusted_python_metadata_ok() {
   return 0
 }
 
+# bash 4.1+ allocates the descriptor number itself via ``exec {var}<``.
+# Older substrates (macOS /bin/bash 3.2) parse ``{var}`` as a literal command
+# word, so a deterministic script-global counter supplies high descriptor
+# numbers there.  Descriptors opened with ``exec`` stay open across the final
+# exec either way, so bound descriptors survive into the launched child.
+bind_selected_python_next_fd=200
+
+# ``test -ef`` resolves Linux's /proc/self/fd symlinks to the underlying
+# file, so equality there compares device and inode exactly.  BSD fdesc
+# nodes (macOS /dev/fd) report the fdesc device with the underlying inode,
+# so ``-ef`` can never match through them; for those paths identity is the
+# strongest tuple fdesc proxies faithfully -- inode, owner, link count, and
+# file type.  Mode is excluded because fdesc synthesizes it from the
+# descriptor's open flags.
+bound_descriptor_matches_selected() {
+  local descriptor_path="$1" selected_path="$2" descriptor_id selected_id
+  if [ "$descriptor_path" -ef "$selected_path" ]; then
+    return 0
+  fi
+  case "$descriptor_path" in
+    /dev/fd/*) ;;
+    *) return 1 ;;
+  esac
+  descriptor_id="$(/usr/bin/stat -Lc '%i:%u:%h:%F' -- "$descriptor_path" 2>/dev/null || \
+    /usr/bin/stat -Lf '%i:%u:%l:%HT' "$descriptor_path" 2>/dev/null || true)"
+  selected_id="$(/usr/bin/stat -Lc '%i:%u:%h:%F' -- "$selected_path" 2>/dev/null || \
+    /usr/bin/stat -Lf '%i:%u:%l:%HT' "$selected_path" 2>/dev/null || true)"
+  [ -n "$descriptor_id" ] && [ "$descriptor_id" = "$selected_id" ]
+}
+
+# BSD fdesc nodes also synthesize their permission bits from the descriptor's
+# open flags, so execve on a read-only /dev/fd path is denied no matter what
+# mode the underlying file carries.  Where /proc is unavailable a launch
+# therefore execs the attested real path -- the descriptor stays bound for
+# identity attestation -- while Linux /proc paths continue to use the bound
+# inode exactly.
+exec_path_for_bound() {
+  local bound="$1" attested="$2"
+  case "$bound" in
+    /dev/fd/*) printf '%s\n' "$attested" ;;
+    *) printf '%s\n' "$bound" ;;
+  esac
+}
+
 bind_selected_python_inode() {
   local selected="$PYTHON"
-  exec {AAS_PYTHON_EXEC_FD}<"$selected" || return 1
+  if [ "${BASH_VERSINFO[0]}" -gt 4 ] || \
+     { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+    exec {AAS_PYTHON_EXEC_FD}<"$selected" || return 1
+  else
+    AAS_PYTHON_EXEC_FD="$bind_selected_python_next_fd"
+    bind_selected_python_next_fd=$((bind_selected_python_next_fd + 1))
+    eval "exec ${AAS_PYTHON_EXEC_FD}<\"\$selected\"" || return 1
+  fi
   if [ -e "/proc/self/fd/$AAS_PYTHON_EXEC_FD" ]; then
     PYTHON="/proc/self/fd/$AAS_PYTHON_EXEC_FD"
   elif [ -e "/dev/fd/$AAS_PYTHON_EXEC_FD" ]; then
     PYTHON="/dev/fd/$AAS_PYTHON_EXEC_FD"
   else
-    exec {AAS_PYTHON_EXEC_FD}<&-
+    eval "exec ${AAS_PYTHON_EXEC_FD}<&-"
     return 1
   fi
-  [ "$PYTHON" -ef "$selected" ]
+  bound_descriptor_matches_selected "$PYTHON" "$selected"
 }
 
 has_runtime_credentials() {
   [ -n "$compute_pointer" ] || [ -n "$provider_pointer" ]
+}
+
+# start and replace both hand credentials to a launched loop; every other
+# subcommand runs with the pointers and provider tokens scrubbed.
+credential_subcommand() {
+  case "${1:-}" in
+    start|replace) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 resolve_python() {
@@ -134,11 +194,16 @@ resolve_python() {
 if ! PYTHON="$(resolve_python)"; then
   exit 127
 fi
-if has_runtime_credentials && ! bind_selected_python_inode; then
+resolved_python="$PYTHON"
+if credential_subcommand "${1:-}" && has_runtime_credentials && ! bind_selected_python_inode; then
   printf 'Credential-bearing force-loop launch could not bind the trusted Python inode.\n' >&2
   exit 127
 fi
-export AAS_RUNTIME_PYTHON="$PYTHON"
+PYTHON_EXEC="$(exec_path_for_bound "$PYTHON" "$resolved_python")"
+# Children re-exec this interpreter by name, and a descriptor alias is not
+# resolvable from a subprocess, so hand them the real path; this launch still
+# runs through the bound inode via PYTHON_EXEC.
+export AAS_RUNTIME_PYTHON="$resolved_python"
 [ -n "$compute_pointer" ] && export AAS_COMPUTE_SECRETS_FILE="$compute_pointer"
 [ -n "$provider_pointer" ] && export AAS_PROVIDER_SECRETS_FILE="$provider_pointer"
 unset AAS_SKILL_SECRETS_FILE
@@ -152,7 +217,7 @@ if has_runtime_credentials; then
   python_args=(-I)
 fi
 
-if [ "${1:-}" != "start" ]; then
+if ! credential_subcommand "${1:-}"; then
   unset AAS_COMPUTE_SECRETS_FILE AAS_PROVIDER_SECRETS_FILE REMOTE_BRIDGE_SECRETS_FILE
   unset HCLOUD_TOKEN HCLOUD_SSH_KEYS KAGGLE_API_TOKEN KAGGLE_CONFIG_DIR
   unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_API_KEY
@@ -161,4 +226,4 @@ if [ "${1:-}" != "start" ]; then
   unset GEMINI_API_KEY GH_TOKEN GITHUB_TOKEN GOOGLE_API_KEY GROK_API_KEY
   unset KIMI_API_KEY MOONSHOT_API_KEY OPENAI_API_KEY OPENCODE_API_KEY XAI_API_KEY
 fi
-exec "$PYTHON" "${python_args[@]}" "$SCRIPT_DIR/force_loop_cli.py" "$@"
+exec "$PYTHON_EXEC" ${python_args[@]+"${python_args[@]}"} "$SCRIPT_DIR/force_loop_cli.py" "$@"

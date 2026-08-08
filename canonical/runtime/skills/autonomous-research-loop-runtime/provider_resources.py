@@ -372,6 +372,61 @@ def provider_control_plane_mask_args() -> list[str]:
     return args
 
 
+# Every shape ends with these three, after any control-plane masks, so they
+# hide a working directory no matter which builder assembled the argv.
+CONTAINMENT_TAIL_MOUNT_MASKS = (Path("/sys/fs/cgroup"), Path("/proc"), Path("/dev"))
+
+
+def containment_mask_roots(mask_args: Sequence[str]) -> list[Path]:
+    """Collect the destinations a built mask argument list covers with a tmpfs.
+
+    The masks are computed from what exists on the host, so deriving the roots
+    from the argv that will actually be passed to bubblewrap keeps this in
+    sync; a second hard-coded list would drift.
+    """
+
+    roots: list[Path] = []
+    index = 0
+    while index < len(mask_args) - 1:
+        if mask_args[index] == "--tmpfs":
+            roots.append(Path(mask_args[index + 1]))
+            index += 2
+            continue
+        index += 1
+    return roots
+
+
+def containment_hidden_root(path: Path, roots: Sequence[Path]) -> Path | None:
+    """Return the mask root that hides ``path``, or ``None`` when it is visible.
+
+    A directory under a masked mount still exists on the host, so bubblewrap
+    accepts the argv and then fails its own ``--chdir`` with an opaque errno.
+    Callers use this to refuse the launch with a message that names the mount.
+    """
+
+    for masked in roots:
+        if path == masked or masked in path.parents:
+            return masked
+    return None
+
+
+def containment_mask_roots_for_host() -> list[Path]:
+    """Best-effort mask roots for a preflight that must not itself fail.
+
+    A preflight runs long before any provider spawn, on hosts where the
+    control-plane masks may not be buildable at all.  Where they are, they are
+    included so the preflight matches what the builder will emit; where they
+    are not, the tail masks alone still catch the common ``/dev/shm`` case.
+    """
+
+    roots = list(CONTAINMENT_TAIL_MOUNT_MASKS)
+    try:
+        roots.extend(containment_mask_roots(provider_control_plane_mask_args()))
+    except ProviderResourceError:
+        pass
+    return roots
+
+
 def trusted_local_containment_command(
     command: Sequence[str],
     *,
@@ -400,6 +455,15 @@ def trusted_local_containment_command(
     bwrap = _trusted_host_binary(
         (Path("/usr/bin/bwrap"), Path("/bin/bwrap")), "bubblewrap"
     )
+    mask_args = provider_control_plane_mask_args()
+    masked = containment_hidden_root(
+        canonical_cwd, (*containment_mask_roots(mask_args), *CONTAINMENT_TAIL_MOUNT_MASKS)
+    )
+    if masked is not None:
+        raise ProviderResourceError(
+            "trusted-local working directory is hidden by the containment mount "
+            f"mask {masked}"
+        )
     return [
         bwrap,
         "--die-with-parent",
@@ -410,7 +474,7 @@ def trusted_local_containment_command(
         "--bind",
         "/",
         "/",
-        *provider_control_plane_mask_args(),
+        *mask_args,
         "--tmpfs",
         "/sys/fs/cgroup",
         "--proc",
@@ -580,6 +644,14 @@ def brokered_provider_containment_command(
         if not stat.S_ISSOCK(os.lstat(socket_path).st_mode):
             raise ProviderResourceError("compute broker endpoint is not a socket")
         bind(socket_path, socket_path, read_only=True)
+    # The tail masks land after every bind above, so a project root under one
+    # of them is bound and then hidden again before bubblewrap chdirs into it.
+    masked = containment_hidden_root(canonical_cwd, CONTAINMENT_TAIL_MOUNT_MASKS)
+    if masked is not None:
+        raise ProviderResourceError(
+            "brokered project root is hidden by the containment mount "
+            f"mask {masked}"
+        )
     ensure_parents(Path("/sys/fs/cgroup"))
     args.extend(
         [

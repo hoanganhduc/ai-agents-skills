@@ -90,11 +90,10 @@ Default utility weights are:
 - A campaign/path/recovery/ledger mismatch is an enforce-mode dispatch error.
 - Invalid, omitted, or unavailable trusted-local resource controls deny before
   provider spawn; strict-isolated never falls back to trusted-local.
-- A blocked route needs a recorded new mechanism and fresh review to reopen.
 - Open `negative_space.v1` rows make the approach ineligible even if registry
-  status is manually flipped to `eligible`. Reopen requires a **new**
-  `mechanism_fingerprint` plus different-family review binding; wording-only
-  reopen is rejected (`wording_only_reopen`).
+  status is manually flipped to `eligible`. Such rows are **permanent for the
+  life of the loop**: no automated reopen exists, so continue under a new
+  `approach_id`.
 - Multi-LLM LGTM alone never banks; enforce-mode acceptance still requires
   different-family `result_review` (and optional machine checks). Wording-only
   review-round progress without an evidence delta must not be treated as

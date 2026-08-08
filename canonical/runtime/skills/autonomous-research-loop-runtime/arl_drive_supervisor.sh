@@ -132,6 +132,7 @@ lines = [
     f"ROTATE_COOLDOWN_S={int(data.get('rotate_cooldown_s', 30))}",
     f"PRIMARY_PATH={shlex.quote(primary_path)}",
     f"EXCLUDED_PATH={shlex.quote(excluded_path)}",
+    f"EXCLUDE_TTL_S={int(data.get('session_exclude_ttl_s', 21600))}",
     f"SYNC_PANEL={'1' if data.get('sync_panel_exclude_until_credit', True) else '0'}",
     f"PANEL={shlex.quote(str(dd.get('panel', 'on')))}",
     f"NOTIFY={shlex.quote(str(dd.get('notify', 'auto')))}",
@@ -314,9 +315,13 @@ write_primary() {
   }
 }
 
+# Each line is `name` or `name<TAB>epoch`. EXCLUDED holds bare names, so every
+# other helper is unchanged; EXCLUDED_AT holds the stamp at the same index.
 load_excluded() {
   EXCLUDED=()
-  local content line
+  EXCLUDED_AT=()
+  local content line name stamp now
+  now="$(date -u +%s)"
   content="$(safe_state_file read "$EXCLUDED_PATH")" || {
     echo "supervisor: could not safely read session-exclude state" >&2
     exit 2
@@ -324,12 +329,28 @@ load_excluded() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line//$'\r'/}"
     [[ -z "$line" ]] && continue
-    EXCLUDED+=("$line")
+    name="${line%%$'\t'*}"
+    [[ -z "$name" ]] && continue
+    stamp="${line#*$'\t'}"
+    # A legacy bare-name file has no stamp: treat it as excluded from now, so
+    # an existing file degrades to one more TTL window rather than to forever.
+    if [[ "$stamp" == "$line" || ! "$stamp" =~ ^[0-9]+$ ]]; then
+      stamp="$now"
+    fi
+    if (( EXCLUDE_TTL_S > 0 && now - stamp > EXCLUDE_TTL_S )); then
+      continue
+    fi
+    EXCLUDED+=("$name")
+    EXCLUDED_AT+=("$stamp")
   done <<<"$content"
 }
 
 save_excluded() {
-  safe_state_file write-lines "$EXCLUDED_PATH" "${EXCLUDED[@]}" || {
+  local i lines=()
+  for i in "${!EXCLUDED[@]}"; do
+    lines+=("${EXCLUDED[$i]}"$'\t'"${EXCLUDED_AT[$i]}")
+  done
+  safe_state_file write-lines "$EXCLUDED_PATH" "${lines[@]}" || {
     echo "supervisor: could not safely write session-exclude state" >&2
     exit 2
   }
@@ -349,9 +370,14 @@ session_exclude() {
     return 0
   fi
   EXCLUDED+=("$p")
+  EXCLUDED_AT+=("$(date -u +%s)")
   save_excluded
   if [[ "$SYNC_PANEL" == "1" && -f "$SYNC_PANEL_PY" ]]; then
-    python3 "$SYNC_PANEL_PY" --dir "$LOOP_DIR" --provider "$p" >/dev/null 2>&1 || true
+    # Keep helper output suppressed — notify() is the pack's redaction-aware
+    # channel — but do not let the one silent rotation-path failure stay silent.
+    if ! python3 "$SYNC_PANEL_PY" --dir "$LOOP_DIR" --provider "$p" >/dev/null 2>&1; then
+      notify "panel exclude sync failed for $p; panel dispatch may still invite this provider."
+    fi
   fi
 }
 

@@ -14,6 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from state_transaction import iteration_ledger_paths  # type: ignore
+except ImportError:  # pragma: no cover - package-relative install layouts
+    from .state_transaction import iteration_ledger_paths  # type: ignore
+
 SCHEMA_VERSION = "goal_priority.v1"
 
 GENERIC_LOCAL_TAGS = [
@@ -317,20 +322,26 @@ def contribution_is_generic_advance(value: Any) -> bool:
 
 
 def read_iterations_jsonl(run_dir: Path) -> list[dict[str, Any]]:
-    path = Path(run_dir) / "iterations.jsonl"
-    if not path.is_file():
-        return []
+    """Read the whole iteration ledger, spanning every rotated shard.
+
+    Reading only ``iterations.jsonl`` would make every ledger scan here restart
+    at the first rotation, so the shard order comes from one shared helper.
+    """
+
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
+    for path in iteration_ledger_paths(run_dir):
+        if not path.is_file():
             continue
-        try:
-            obj = json.loads(line)
-            if isinstance(obj, dict):
-                rows.append(obj)
-        except json.JSONDecodeError:
-            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    rows.append(obj)
+            except json.JSONDecodeError:
+                continue
     return rows
 
 
@@ -837,27 +848,6 @@ def goal_priority_prompt_addon(run_dir: Path, cfg: dict[str, Any] | None = None)
     )
     lines.append("")
     return "\n".join(lines)
-
-
-def goal_priority_brief_block(run_dir: Path, cfg: dict[str, Any] | None = None) -> str:
-    """Block for panel target brief — placed before long recovery excerpts."""
-    cfg = cfg or load_goal_priority(run_dir)
-    if not cfg.get("_active"):
-        return ""
-    rank = bool(cfg.get("panel_rank_by_goal_ev", True))
-    header = (
-        "# Goal-EV ranking (host parent — goal_priority active)\n\n"
-        "Rank candidate next paths by contribution to the loop **goal**, not by "
-        "local residual size alone. Do not recommend a closed campaign with "
-        "`forbid_as_sole_primary` as the sole primary.\n"
-        if rank
-        else (
-            "# Goal priority (host parent — active; ranking language off)\n\n"
-            "Honor goal / closed-campaign / replan guidance below. "
-            "`panel_rank_by_goal_ev` is false (no EV ranking language).\n"
-        )
-    )
-    return header + goal_priority_prompt_addon(run_dir, cfg)
 
 
 def campaign_match_line(run_dir: Path, cfg: dict[str, Any] | None = None) -> str:

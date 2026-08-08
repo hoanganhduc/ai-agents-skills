@@ -870,7 +870,9 @@ class StateTransactionSecurityTests(unittest.TestCase):
             self.assertEqual(victim.read_bytes(), before)
             self.assertTrue(tx_dir.exists())
 
-    def test_committed_journal_is_retained_when_live_poststate_is_missing_or_tampered(self) -> None:
+    def test_committed_journal_is_quarantined_when_live_poststate_is_missing_or_tampered(
+        self,
+    ) -> None:
         for attack in ("missing", "tampered"):
             with self.subTest(attack=attack), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -886,10 +888,16 @@ class StateTransactionSecurityTests(unittest.TestCase):
                 else:
                     target.write_bytes(b"tampered committed post-state\n")
 
-                with self.assertRaises(st.TransactionError):
+                with self.assertRaises(st.TransactionQuarantined):
                     st.recover_transactions(root)
 
-                self.assertTrue(tx_dir.exists())
+                # The evidence is preserved, but out of the journal so the
+                # same failure cannot re-arm on every later command.
+                self.assertFalse(tx_dir.exists())
+                quarantined = (
+                    root / st.TRANSACTION_QUARANTINE_DIRNAME / tx_dir.name
+                )
+                self.assertTrue((quarantined / "manifest.json").is_file())
                 if attack == "missing":
                     self.assertFalse(target.exists())
                 else:
@@ -1315,6 +1323,108 @@ class GoalFocusContractsTests(_AttestedGoalFocusTestCase):
                 committed["plan"]["next_action"], "Run the fresh bounded discriminator."
             )
             self.assertEqual(committed["plan"]["falsifier"], "The discriminator returns zero.")
+
+
+class GoalFocusEnforcementModeTests(_AttestedGoalFocusTestCase):
+    def test_set_mode_rebinds_plan_and_decision_row_together(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root, mode="monitor")
+            self.assertEqual(gf.goal_focus_mode(root), "monitor")
+
+            result = gf.set_enforcement_mode(root, mode="enforce")
+
+            self.assertEqual(result["status"], "committed")
+            self.assertEqual(result["previous_mode"], "monitor")
+            self.assertEqual(gf.goal_focus_mode(root), "enforce")
+            plan = gf.load_current_plan(root)
+            self.assertEqual(plan["plan_revision"], 2)
+            row = gf.load_direction_decisions(root)[-1]
+            self.assertEqual(row["decision_type"], "set_mode")
+            self.assertEqual(row["enforcement_mode"], "enforce")
+            self.assertEqual(row["previous_enforcement_mode"], "monitor")
+            self.assertEqual(row["plan_revision"], plan["plan_revision"])
+            self.assertEqual(row["mode_plan_fingerprint"], gf._object_fingerprint(plan))
+            self.assertEqual(row["event_id"], row["decision_id"])
+            validation = gf.validate_goal_focus(root, require_enabled=True)
+            self.assertEqual(validation["status"], "ok", validation)
+
+    def test_set_mode_is_a_no_op_when_the_mode_is_already_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root, mode="enforce")
+            before = (root / gf.DIRECTION_DECISIONS_FILE).read_bytes()
+            plan_before = (root / gf.CURRENT_PLAN_FILE).read_bytes()
+
+            result = gf.set_enforcement_mode(root, mode="enforce")
+
+            self.assertEqual(result["status"], "unchanged")
+            self.assertEqual((root / gf.DIRECTION_DECISIONS_FILE).read_bytes(), before)
+            self.assertEqual((root / gf.CURRENT_PLAN_FILE).read_bytes(), plan_before)
+
+    def test_set_mode_repairs_a_plan_whose_mode_was_written_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root, mode="monitor")
+            plan = gf.load_current_plan(root)
+            plan["enforcement_mode"] = "enforce"
+            _write_json(root / gf.CURRENT_PLAN_FILE, plan)
+            with self.assertRaisesRegex(ValueError, "lacks a complete decision row"):
+                gf.goal_focus_mode(root)
+
+            result = gf.set_enforcement_mode(root, mode="enforce")
+
+            self.assertEqual(result["status"], "repaired")
+            self.assertEqual(gf.goal_focus_mode(root), "enforce")
+            # A repair rebinds the plan exactly as it stands: a revision bump
+            # would void an active direction decision.
+            self.assertEqual(gf.load_current_plan(root)["plan_revision"], 1)
+            validation = gf.validate_goal_focus(root, require_enabled=True)
+            self.assertEqual(validation["status"], "ok", validation)
+
+    def test_set_mode_refuses_a_mode_change_on_an_active_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root, mode="enforce")
+            _activate(root)
+            before = (root / gf.CURRENT_PLAN_FILE).read_bytes()
+
+            with self.assertRaisesRegex(ValueError, "current_plan is active"):
+                gf.set_enforcement_mode(root, mode="monitor")
+
+            self.assertEqual((root / gf.CURRENT_PLAN_FILE).read_bytes(), before)
+            self.assertEqual(gf.goal_focus_mode(root), "enforce")
+            self.assertEqual(gf.validate_goal_focus(root)["status"], "ok")
+
+    def test_set_mode_refuses_an_unknown_mode_and_a_stale_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root, mode="monitor")
+            with self.assertRaisesRegex(ValueError, "mode must be one of"):
+                gf.set_enforcement_mode(root, mode="strict")
+            with self.assertRaises(st.RevisionConflict):
+                gf.set_enforcement_mode(root, mode="enforce", expected_plan_revision=7)
+            self.assertEqual(gf.goal_focus_mode(root), "monitor")
+
+    def test_set_mode_refuses_while_an_iteration_candidate_is_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root, mode="monitor")
+            plan = gf.load_current_plan(root)
+            _write_json(
+                root / gf.PENDING_CANDIDATE_FILE,
+                {
+                    "schema_version": gf.ITERATION_CANDIDATE_SCHEMA,
+                    "candidate_id": "cand-1",
+                    "status": "staged",
+                    "plan_revision": plan["plan_revision"],
+                },
+            )
+
+            with self.assertRaisesRegex(ValueError, "iteration candidate is"):
+                gf.set_enforcement_mode(root, mode="enforce")
+
+            self.assertEqual(gf.goal_focus_mode(root), "monitor")
 
 
 class GoalFocusSelectionTests(_AttestedGoalFocusTestCase):
@@ -3283,6 +3393,52 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                 "terminal_claim_not_supported_by_goal_obligations",
             )
             self.assertEqual(json.loads((root / "loop_state.json").read_text(encoding="utf-8"))["status"], "running")
+
+    def test_ledger_rotates_into_shards_without_restarting_iteration_numbers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            plan = _activate(root)
+
+            def _bank(index):
+                staged = _stage_enforced_candidate(
+                    root,
+                    plan,
+                    {
+                        "output": f"banked result {index}",
+                        "evidence_ids": [f"evidence-{index}.json"],
+                    },
+                )
+                return gf.finalize_candidate(
+                    root, accepted=True, review=_bound_review(staged)
+                )
+
+            first = _bank(1)
+            self.assertEqual(first["record"]["iteration"], 1)
+            self.assertFalse((root / "iterations.1.jsonl").exists())
+
+            # Rotate on the next append: the threshold is the only trigger.
+            with mock.patch.object(gf, "ITERATION_LEDGER_ROTATE_BYTES", 1):
+                second = _bank(2)
+                third = _bank(3)
+
+            self.assertEqual(second["record"]["iteration"], 2)
+            self.assertEqual(third["record"]["iteration"], 3)
+            self.assertTrue((root / "iterations.1.jsonl").exists())
+            self.assertTrue((root / "iterations.2.jsonl").exists())
+
+            rows = gf._read_iteration_rows(root)
+            self.assertEqual([row["iteration"] for row in rows], [1, 2, 3])
+            live = [
+                json.loads(line)
+                for line in (root / "iterations.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            self.assertEqual([row["iteration"] for row in live], [3])
 
     def test_host_dispatch_is_pinned_and_consumed_atomically_by_stage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

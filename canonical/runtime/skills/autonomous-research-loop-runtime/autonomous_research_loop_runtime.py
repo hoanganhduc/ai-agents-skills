@@ -42,11 +42,14 @@ try:
         ProviderResourceError,
         ProviderResourceCleanupError,
         brokered_provider_containment_command,
+        CONTAINMENT_TAIL_MOUNT_MASKS,
         STRICT_ISOLATED_TRANSPORT,
         TRUSTED_LOCAL_TRANSPORT,
         assert_panel_prompt_safe,
         attest_provider_executable,
         cleanup_resource_scope,
+        containment_hidden_root,
+        containment_mask_roots_for_host,
         interpreter_bound_provider_command,
         ensure_iter_dir,
         load_panel_config,
@@ -84,7 +87,11 @@ try:
     )
     import goal_focus as goal_focus_v2  # type: ignore
     import notify_v2  # type: ignore
-    from state_transaction import LoopLock  # type: ignore
+    from state_transaction import (  # type: ignore
+        LoopLock,
+        TransactionQuarantined,
+        iteration_ledger_paths,
+    )
     from formal_policy import (  # type: ignore
         export_formal_env,
         formal_force_tick,
@@ -101,11 +108,14 @@ except ImportError:  # pragma: no cover - package-style import during tests
         ProviderResourceError,
         ProviderResourceCleanupError,
         brokered_provider_containment_command,
+        CONTAINMENT_TAIL_MOUNT_MASKS,
         STRICT_ISOLATED_TRANSPORT,
         TRUSTED_LOCAL_TRANSPORT,
         assert_panel_prompt_safe,
         attest_provider_executable,
         cleanup_resource_scope,
+        containment_hidden_root,
+        containment_mask_roots_for_host,
         interpreter_bound_provider_command,
         ensure_iter_dir,
         load_panel_config,
@@ -143,7 +153,11 @@ except ImportError:  # pragma: no cover - package-style import during tests
     )
     from . import goal_focus as goal_focus_v2  # type: ignore
     from . import notify_v2  # type: ignore
-    from .state_transaction import LoopLock  # type: ignore
+    from .state_transaction import (  # type: ignore
+        LoopLock,
+        TransactionQuarantined,
+        iteration_ledger_paths,
+    )
     from .formal_policy import (  # type: ignore
         export_formal_env,
         formal_force_tick,
@@ -757,20 +771,27 @@ def _open_exclusive_driver_log(path: Path):  # noqa: ANN202 - TextIO inferred
 
 
 def read_iterations(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
+    """Read the whole iteration ledger the given live file belongs to.
+
+    Callers pass ``paths["iterations"]``; the rotated shards beside it are part
+    of the same ledger, so validation and iteration numbering span them all.
+    """
+
     records: list[dict[str, Any]] = []
-    for index, raw_line in enumerate(_read_regular_text(path).splitlines(), start=1):
-        line = raw_line.strip()
-        if not line:
+    for shard in iteration_ledger_paths(path.parent):
+        if not shard.exists():
             continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"iterations.jsonl line {index} is invalid JSON: {exc}") from exc
-        if not isinstance(record, dict):
-            raise ValueError(f"iterations.jsonl line {index} must contain a JSON object")
-        records.append(record)
+        for index, raw_line in enumerate(_read_regular_text(shard).splitlines(), start=1):
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{shard.name} line {index} is invalid JSON: {exc}") from exc
+            if not isinstance(record, dict):
+                raise ValueError(f"{shard.name} line {index} must contain a JSON object")
+            records.append(record)
     return records
 
 
@@ -1130,6 +1151,17 @@ def init_loop(args: argparse.Namespace) -> dict[str, Any]:
             or run_info.st_uid != os.geteuid()
         ):
             raise OSError("loop directory must be a real current-user-owned directory")
+    # Every containment shape masks these mounts, so a loop that lives under
+    # one of them cannot be chdir'd into and dies once per iteration with a
+    # raw bwrap errno. Refuse it here, where the operator can still move it.
+    masked = containment_hidden_root(
+        run_dir.resolve(), containment_mask_roots_for_host()
+    )
+    if masked is not None:
+        raise OSError(
+            f"loop directory is hidden by the primary containment mount mask "
+            f"{masked}; choose a path outside it"
+        )
     # Check every output owned directly by init before changing any of them.
     # Atomic replacement below prevents a later leaf-link race from reaching
     # the link target; these checks additionally fail visibly on planted state.
@@ -2613,6 +2645,14 @@ def run_primary_subprocess(
             # Monitor/legacy runs preserve their historical writable view while
             # trusted-local enforce runs explicitly accept the same host view.
             # Both retain the PID-namespace descendant-lifetime boundary.
+            masked = containment_hidden_root(
+                Path(cwd).resolve(), CONTAINMENT_TAIL_MOUNT_MASKS
+            )
+            if masked is not None:
+                raise OSError(
+                    "primary working directory is hidden by the containment mount "
+                    f"mask {masked}"
+                )
             sandbox_args.extend(
                 [
                     "--bind",
@@ -2829,6 +2869,32 @@ def run_primary_subprocess(
     return return_code, timed_out, None
 
 
+def _containment_scratch_base() -> str | None:
+    """Keep selftest scratch off mounts the containment boundary masks.
+
+    ``TMPDIR`` is inherited, so an operator whose temp directory sits on a
+    masked mount would otherwise see the probe fail and the gate blame the
+    host.  ``None`` means the platform default is already usable.
+    """
+
+    if os.name != "posix":
+        return None
+    # Same precedence tempfile itself uses, read live rather than through the
+    # cached ``gettempdir`` so a caller that sets TMPDIR is still honoured.
+    override = next(
+        (os.environ[name] for name in ("TMPDIR", "TEMP", "TMP") if os.environ.get(name)),
+        None,
+    )
+    try:
+        default = Path(override or tempfile.gettempdir()).resolve()
+    except OSError:
+        return "/tmp"
+    roots = containment_mask_roots_for_host()
+    if containment_hidden_root(default, roots) is None:
+        return None
+    return "/tmp"
+
+
 def host_primary_containment_status() -> tuple[bool, str]:
     """Report whether this host can launch a contained primary, and why not.
 
@@ -2839,7 +2905,22 @@ def host_primary_containment_status() -> tuple[bool, str]:
     rather than a driver defect, so the offline selftest separates the two.
     """
 
-    with tempfile.TemporaryDirectory(prefix="autoloop-contain-probe-") as tmp:
+    scratch_base = _containment_scratch_base()
+    if scratch_base is not None:
+        masked = containment_hidden_root(
+            Path(scratch_base).resolve(), containment_mask_roots_for_host()
+        )
+        if masked is not None:
+            # Not a host verdict: the scratch base is, so say so rather than
+            # declaring the host unable to contain anything.
+            return (
+                False,
+                "selftest scratch base is hidden by the containment mount "
+                f"masks: {scratch_base}",
+            )
+    with tempfile.TemporaryDirectory(
+        prefix="autoloop-contain-probe-", dir=scratch_base
+    ) as tmp:
         probe_dir = Path(tmp).resolve()
         log_path = probe_dir / "probe.log"
         try:
@@ -2872,7 +2953,9 @@ def selftest_driver_checks() -> dict[str, Any]:
     providers_checked = 0
     drive_checks = "ran"
     drive_skip_reason = ""
-    with tempfile.TemporaryDirectory(prefix="autoloop-driver-smoke-") as tmp:
+    with tempfile.TemporaryDirectory(
+        prefix="autoloop-driver-smoke-", dir=_containment_scratch_base()
+    ) as tmp:
         # Every loop built below goes through ``init_loop``, which refuses a
         # path that crosses a symlink.  The default temp directory is one on
         # macOS, where ``/var`` links to ``/private/var``, so resolve the
@@ -3008,8 +3091,8 @@ def selftest_driver_checks() -> dict[str, Any]:
             drive_checks = "skipped"
             drive_skip_reason = containment_reason
             print(
-                "autoloop-selftest: driver drive checks skipped because this "
-                f"host cannot contain a primary: {containment_reason}",
+                "autoloop-selftest: driver drive checks skipped, no contained "
+                f"primary available: {containment_reason}",
                 file=sys.stderr,
             )
     return {
@@ -3099,7 +3182,9 @@ def selftest_drive_loop_checks(base: Path) -> list[str]:
 
 
 def selftest_command(_: argparse.Namespace) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="autonomous-loop-smoke-") as tmp:
+    with tempfile.TemporaryDirectory(
+        prefix="autonomous-loop-smoke-", dir=_containment_scratch_base()
+    ) as tmp:
         # Resolve the scratch root before ``init_loop`` sees it: the guard
         # there rejects a loop path that crosses a symlink, which the default
         # macOS temp directory always does.
@@ -4125,10 +4210,12 @@ def arm_loop(args: argparse.Namespace) -> dict[str, Any]:
             default_auto=True,
         )
         persist_token = normalize_notify_token(explicit_notify)
-        if persist_token is None:
-            persist_token = notify_channel or "off"
-        elif persist_token == "auto":
-            persist_token = notify_channel or "off"
+        if persist_token in (None, "auto"):
+            # An unresolved 'auto' is 'no opinion', not a silence order.  Both
+            # loop_state and the registry entry are decisive sources, so
+            # latching 'off' here mutes a loop armed before its notify secrets
+            # exist and no later source can revive it.
+            persist_token = notify_channel or "auto"
         write_loop_notify_policy(
             run_dir, None if persist_token == "off" else persist_token
         )
@@ -7446,25 +7533,34 @@ def build_progress_event(
     # Notify v2 owns all externally visible renderings. Keep the original flat
     # fields for progress readers while exposing the validated envelope for the
     # remote bridge and future consumers.
-    envelope = _build_notify_v2_envelope(
-        run_dir,
-        event,
-        record=record,
-        state=state,
-        budget=budget,
-        extra=extra_data,
-        iteration=iteration,
-        spent=spent,
-        max_iter=max_iter,
-        objective=objective,
-        output=output,
-        progress_note=progress_note,
-        why=why,
-        where=where,
-        timestamp=ts,
-        attempt_event=attempt_event,
-    )
-    rendered = notify_v2.render_all(envelope)
+    # A poisoned ledger row must cost the rich rendering, not the drive: the
+    # flat payload assembled above is already a complete progress event.
+    try:
+        envelope = _build_notify_v2_envelope(
+            run_dir,
+            event,
+            record=record,
+            state=state,
+            budget=budget,
+            extra=extra_data,
+            iteration=iteration,
+            spent=spent,
+            max_iter=max_iter,
+            objective=objective,
+            output=output,
+            progress_note=progress_note,
+            why=why,
+            where=where,
+            timestamp=ts,
+            attempt_event=attempt_event,
+        )
+        rendered = notify_v2.render_all(envelope)
+    except notify_v2.NotifyValidationError as exc:
+        sys.stderr.write(
+            f"autoloop: notify envelope unavailable ({exc}); plain-text progress only\n"
+        )
+        payload["notification_error"] = str(exc)[:200]
+        return _scrub_progress_payload(payload)
     payload.update(notify_v2.legacy_flat_fields(envelope))
     payload.update(
         {
@@ -8981,6 +9077,21 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     try:
         if (run_dir / ".goal_focus_transactions").exists():
             goal_focus_v2.recover_transactions(run_dir)
+    except TransactionQuarantined as exc:
+        # The entry has been moved aside, so this failure is loud once rather
+        # than permanent: the operator inspects the manifest, then re-runs.
+        return {
+            "status": "failed",
+            "action": "drive",
+            "dir": str(run_dir),
+            "reason": "runtime_error",
+            "error": (
+                f"Goal-Focus transaction journal quarantined: {exc}; inspect the "
+                "quarantined manifest.json against the live targets, then re-run "
+                "start"
+            ),
+            "exit_code": DRIVE_EXIT_CODES["runtime_error"],
+        }
     except Exception as exc:  # noqa: BLE001 - never mutate around a torn authority
         return {
             "status": "failed",
@@ -9118,16 +9229,19 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     def _progress(event: str, **extra: Any) -> None:
         if not progress_enabled:
             return
-        emit_loop_progress(
-            run_dir,
-            event,
-            log_dir=log_dir,
-            notify_cmd=notify_cmd,
-            notify_channel=notify_channel,
-            to_stderr=True,
-            to_stdout_json=False,
-            extra=extra or None,
-        )
+        try:
+            emit_loop_progress(
+                run_dir,
+                event,
+                log_dir=log_dir,
+                notify_cmd=notify_cmd,
+                notify_channel=notify_channel,
+                to_stderr=True,
+                to_stdout_json=False,
+                extra=extra or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - progress must not kill drive
+            sys.stderr.write(f"autoloop-driver: progress emit failed: {exc}\n")
 
     def _cancel_prepared_dispatch(intent: dict[str, Any], why: str) -> bool:
         dispatch_id = str(intent.get("dispatch_id") or "")
@@ -10895,6 +11009,51 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     success=iter_ok,
                 )
                 os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                # A zero exit that appends no iteration and leaves the loop
+                # neither terminal nor paused cannot move compute_done, so
+                # clearing the counter here would respawn the same command
+                # forever. Count that like a failed iteration, mirroring the
+                # enforce staging contract above. Stop/pause requests raised by
+                # the iteration itself are legitimate control actions and are
+                # settled by the next top-of-loop verdict instead.
+                stalled = not ledger_advanced
+                if stalled:
+                    try:
+                        stall_verdict = compute_done(run_dir)
+                    except Exception:  # noqa: BLE001 - unreadable state -> count it.
+                        stall_verdict = {}
+                    stalled = not (
+                        stall_verdict.get("done") or stall_verdict.get("paused")
+                    )
+                if stalled:
+                    failures += 1
+                    _progress(
+                        "iteration_failed",
+                        source="drive",
+                        drive_cycle=iterations_run,
+                        rc=rc,
+                        log_path=str(log_path),
+                        failures=failures,
+                        max_failures=max_failures,
+                        provider=provider or "custom",
+                        started_at=iteration_started_at,
+                        finished_at=iteration_finished_at,
+                        duration_seconds=iteration_duration,
+                        failure_class="no_ledger_progress",
+                        error=(
+                            "the iteration command exited 0 without appending an "
+                            "iteration record, so the loop did not advance"
+                        ),
+                    )
+                    sys.stderr.write(
+                        "autoloop-driver: iteration command exited 0 without "
+                        "advancing the iteration ledger "
+                        f"({failures}/{max_failures}, log: {log_path})\n"
+                    )
+                    if failures >= max_failures:
+                        reason = "max_failures"
+                        break
+                    continue
                 failures = 0
                 quota_waits = 0
                 _progress(
@@ -11198,6 +11357,88 @@ def goal_focus_validate_command(args: argparse.Namespace) -> dict[str, Any]:
         "status": "ok" if not result.get("errors") else "failed",
         "action": "goal-focus-validate",
         "dir": str(run_dir),
+    }
+
+
+def goal_focus_set_mode_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    mode = str(args.mode)
+    result: dict[str, Any] = {
+        "action": "goal-focus-set-mode",
+        "dir": str(run_dir),
+        "mode": mode,
+        "dry_run": not bool(args.apply),
+        "applied": False,
+    }
+    try:
+        goal_focus_v2.recover_transactions(run_dir)
+        validation = goal_focus_v2.validate_goal_focus(run_dir, require_enabled=True)
+        plan = goal_focus_v2.load_current_plan(run_dir)
+    except (OSError, ValueError) as exc:
+        return {**result, "status": "failed", "error": str(exc)}
+    # An unbound enforcement_mode is precisely what this command repairs, so it
+    # is the one validation error that must not block it.
+    blocking = [
+        error
+        for error in (validation.get("errors") or [])
+        if error != goal_focus_v2.MODE_AUTHORITY_ERROR
+    ]
+    previous_mode = str(plan.get("enforcement_mode") or "").lower()
+    result.update(
+        {
+            "previous_mode": previous_mode,
+            "plan_state": plan.get("state"),
+            "validation": validation,
+        }
+    )
+    if blocking:
+        return {
+            **result,
+            "status": "failed",
+            "errors": blocking,
+            "error": "repair the Goal-Focus authority before changing the mode",
+        }
+    if not bool(args.apply):
+        return {
+            **result,
+            "status": "ok",
+            "would_change": previous_mode != mode or bool(validation.get("errors")),
+        }
+    try:
+        # The plan revision moves under the driver's feet otherwise; a live
+        # driver must be stopped before the mode is re-bound.
+        with LoopLock(run_dir):
+            live_drivers = live_driver_entries_for_loop(registry_dir(args), run_dir)
+    except RegistrySafetyError as exc:
+        return {**result, "status": "failed", "error": str(exc)}
+    if live_drivers:
+        return {
+            **result,
+            "status": "failed",
+            "driver_pids": sorted(
+                {
+                    int(entry.get("pid"))
+                    for _, entry in live_drivers
+                    if isinstance(entry.get("pid"), int)
+                }
+            ),
+            "error": "refusing to change enforcement_mode while a live driver owns this loop",
+        }
+    try:
+        committed = goal_focus_v2.set_enforcement_mode(
+            run_dir, mode=mode, trigger=str(args.trigger or "operator")
+        )
+    except (OSError, ValueError, goal_focus_v2.RevisionConflict) as exc:
+        return {**result, "status": "failed", "error": str(exc)}
+    validation = goal_focus_v2.validate_goal_focus(run_dir, require_enabled=True)
+    return {
+        **result,
+        "status": "ok" if not validation.get("errors") else "failed",
+        "set_mode_status": committed.get("status"),
+        "applied": committed.get("status") != "unchanged",
+        "plan_revision": committed.get("plan", {}).get("plan_revision"),
+        "decision_id": (committed.get("decision") or {}).get("decision_id"),
+        "validation": validation,
     }
 
 
@@ -11715,6 +11956,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     goal_focus_validate.add_argument("--dir", required=True)
     goal_focus_validate.set_defaults(func=goal_focus_validate_command)
+
+    goal_focus_set_mode = goal_focus_sub.add_parser(
+        "set-mode",
+        help="escalate or relax enforcement_mode through one bound decision row",
+    )
+    goal_focus_set_mode.add_argument("--dir", required=True)
+    goal_focus_set_mode.add_argument(
+        "--mode", choices=sorted(GOAL_FOCUS_MODES), required=True
+    )
+    goal_focus_set_mode.add_argument(
+        "--registry-dir",
+        default=None,
+        help="autoloop registry root used to refuse apply while a driver is live",
+    )
+    goal_focus_set_mode.add_argument("--trigger", default="operator")
+    set_mode_mode = goal_focus_set_mode.add_mutually_exclusive_group()
+    set_mode_mode.add_argument("--dry-run", action="store_true")
+    set_mode_mode.add_argument("--apply", action="store_true")
+    goal_focus_set_mode.set_defaults(func=goal_focus_set_mode_command)
 
     goal_focus_migrate = goal_focus_sub.add_parser(
         "migrate", help="plan or apply a provenance-preserving v1 migration"

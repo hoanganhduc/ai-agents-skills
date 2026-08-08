@@ -7,9 +7,10 @@
 | Pin | Value |
 |-----|--------|
 | Goal Focus | `enforce` |
-| goal_priority | `enabled=true`, `discipline_mode=hard` |
+| goal_priority | `enabled=true`, `discipline_mode=hard` (warnings + panel goal-EV block; the host path rewrite is inactive under the Goal Focus `enforce` pin above) |
 | Notify | `AAS_AUTOLOOP_NOTIFY=auto` (+ standing_orders) |
 | Compute (default profiles) | allow `local,kaggle,modal`; forbid `hetzner,github-actions` |
+| Compute secret lanes | `AAS_FORCE_LOOP_COMPUTE_LANES` (host policy; selects accepted secret names) |
 | Formal profile | `formal_policy=on`, typecheck on |
 
 ## Platform matrix
@@ -19,34 +20,46 @@
 | Linux | Python CLI + `.sh` | **foreground** | `--backend systemd` if user bus works; `--detach` |
 | WSL | same as Linux | **foreground** | avoid assuming full systemd |
 | macOS | Python CLI + `.sh` | **foreground** | `--detach` |
-| Windows | Python CLI + `.ps1` | **foreground** | no Windows Service in v1 |
+| Windows | Python CLI + `.ps1` | **foreground** | host policy read by `Load-LoopEnv.ps1`; no Windows Service in v1 |
 
 ## Commands
 
+Set `AAS_FORCE_LOOP_POLICY_FILE` to the absolute host policy path, or pass
+`--policy-file` on every command that writes or reads pins: `bootstrap`,
+`apply-defaults`, `start`, `replace`, `status`, and `smoke` all exit before
+doing any work without it. Only `stop` and `drain` run without a policy path.
+`--profile` defaults to `formal` wherever it is accepted.
+
 ```text
-force-loop bootstrap --loop DIR --root ROOT --profile formal|general [--goal …]
-force-loop apply-defaults --loop DIR --profile formal|general
-force-loop start --loop DIR --root ROOT          # foreground
-force-loop stop|replace|status --loop DIR
+force-loop bootstrap --loop DIR --root ROOT --profile formal|general [--goal …] --policy-file ABS_PATH
+force-loop apply-defaults --loop DIR --profile formal|general --policy-file ABS_PATH
+force-loop start --loop DIR --root ROOT --policy-file ABS_PATH     # foreground
+force-loop replace --loop DIR --root ROOT --policy-file ABS_PATH   # stop, then start
+force-loop status --loop DIR --policy-file ABS_PATH
+force-loop stop --loop DIR
 force-loop drain --loop DIR [--cancel-dispatch-id ID] [--recover-quarantine]
-force-loop smoke --loop DIR [--live]
+force-loop smoke --loop DIR [--live] --policy-file ABS_PATH
 ```
 
 ### POSIX
 
 ```bash
 RUNTIME="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"
+POLICY=/abs/path/host-policy.env
 bash "$RUNTIME/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
-  bootstrap --loop "$LOOP" --root "$ROOT" --profile formal --goal "…"
+  bootstrap --loop "$LOOP" --root "$ROOT" --profile formal --goal "…" \
+  --policy-file "$POLICY"
 ```
 
 ### Windows
 
 ```powershell
+$Policy = "C:\abs\path\host-policy.env"
 & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
   skills\autonomous-research-loop-runtime\force-loop\run_force_loop.ps1 `
-  bootstrap --loop $Loop --root $Root --profile formal --goal "…"
+  bootstrap --loop $Loop --root $Root --profile formal --goal "…" `
+  --policy-file $Policy
 ```
 
 ## Env safety
@@ -63,10 +76,23 @@ bash "$RUNTIME/run_skill.sh" \
   launcher; never put their values or pointers in project policy files.
 - The compute secrets file must be a bounded, single-link regular file with no
   symlink in its path. On POSIX it must be owned by the effective user and mode
-  `0600` (or stricter). Only `HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS`,
-  `KAGGLE_API_TOKEN`, and `KAGGLE_CONFIG_DIR` are accepted. The restored class
-  replaces stale ambient values and the pointer is removed before child launch;
-  values are never included in CLI output.
+  `0600` (or stricter). The accepted key set is **derived from the lanes**
+  selected by `AAS_FORCE_LOOP_COMPUTE_LANES` in the host policy file — a
+  comma-separated list:
+
+  | Lane | Keys projected |
+  |------|----------------|
+  | `hetzner` | `HCLOUD_TOKEN`, `HCLOUD_SSH_KEYS` |
+  | `kaggle` | `KAGGLE_API_TOKEN`, `KAGGLE_CONFIG_DIR` |
+  | `modal` | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` |
+
+  A pointer with no selected lanes fails `start`. The lane pin is read only
+  from the `--policy-file`; an exported shell variable of the same name is
+  dropped. `apply-defaults` preserves it across re-runs. It selects accepted
+  secret **names** only and is independent of `compute_policy.json` backends.
+  The same lane-derived contract applies on Windows via `run_force_loop.ps1`.
+  The restored class replaces stale ambient values and the pointer is removed
+  before child launch; values are never included in CLI output.
 - Provider fallback credentials use a separate absolute launcher pointer,
   `AAS_PROVIDER_SECRETS_FILE`. Its file has the same strict path, ownership,
   size, syntax, duplicate, and empty-value checks. It accepts only

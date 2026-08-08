@@ -15,12 +15,14 @@ Never prints secrets.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
 import stat
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +30,55 @@ PACK_DIR = Path(__file__).resolve().parent
 DEFAULTS_DIR = PACK_DIR / "defaults"
 if str(PACK_DIR) not in sys.path:
     sys.path.insert(0, str(PACK_DIR))
+# The runtime package directory carries state_transaction (loop lock + journal
+# recovery); pinning must take the same lock the drive takes.
+if str(PACK_DIR.parent) not in sys.path:
+    sys.path.insert(0, str(PACK_DIR.parent))
 
 PROFILES = frozenset({"formal", "general"})
 MAX_LEGACY_POLICY_BYTES = 16_384
+# Compute lanes are not pure pins: the value selects which credential lane the
+# start path is allowed to project, so it can never be inherited from an
+# agent-writable legacy shadow.
+NON_MIGRATABLE_POLICY_KEYS = frozenset({"AAS_FORCE_LOOP_COMPUTE_LANES"})
+PENDING_JOURNAL_ERROR = (
+    "a Goal-Focus transaction journal is pending; run drive or "
+    "goal-focus recovery before re-applying pins"
+)
+
+
+@contextlib.contextmanager
+def _pin_guard(run_dir: Path):
+    """Finish any pending Goal-Focus journal, then hold the loop lock.
+
+    ``loop_state.json`` and ``current_plan.json`` are transaction-managed:
+    pinning them beside a live drive loses one side of the update, and pinning
+    over a pending journal is reverted by the next replay.  The runtime import
+    stays lazy because this module is documented as runnable standalone.
+    """
+
+    try:
+        from state_transaction import (
+            TRANSACTION_DIRNAME,
+            LoopLock,
+            TransactionError,
+            recover_transactions,
+        )
+    except ImportError:
+        if (run_dir / ".goal_focus_transactions").is_dir():
+            raise ValueError(PENDING_JOURNAL_ERROR) from None
+        yield
+        return
+    try:
+        # recover_transactions takes the loop lock itself and LoopLock is a
+        # non-reentrant flock, so replay has to finish before we acquire it.
+        recover_transactions(run_dir)
+        if (run_dir / TRANSACTION_DIRNAME).is_dir():
+            raise ValueError(PENDING_JOURNAL_ERROR)
+        with LoopLock(run_dir):
+            yield
+    except TransactionError as exc:
+        raise ValueError(f"loop state is not safe to pin: {exc}") from exc
 
 
 def _legacy_policy_preflight(run_dir: Path) -> tuple[Path | None, dict[str, str]]:
@@ -95,6 +143,12 @@ def _legacy_policy_preflight(run_dir: Path) -> tuple[Path | None, dict[str, str]
                 "fields; promote configured credentials to canonical authorities and "
                 "remove every shadow copy before retrying"
             )
+        if observed_names & NON_MIGRATABLE_POLICY_KEYS:
+            raise ValueError(
+                "legacy force-loop policy selects compute lanes; set "
+                f"{sorted(NON_MIGRATABLE_POLICY_KEYS)[0]} in the host policy file "
+                "yourself and remove the loop-local shadow before retrying"
+            )
         try:
             parsed = parse_env_text(text, source="<legacy-force-loop-policy>")
         except EnvLoadError as exc:
@@ -152,11 +206,34 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _read_json_strict(path: Path) -> dict[str, Any]:
+    """Read a file this module is about to rewrite, refusing damaged content.
+
+    ``_read_json`` degrades to ``{}``, which is safe for inspection but would
+    let a pin pass silently overwrite a corrupt or hand-edited campaign file
+    with profile defaults.
+    """
+
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"{path.name} is unreadable: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path.name} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{path.name} must contain a JSON object")
+    return data
+
+
 def _backup(path: Path, backup_dir: Path) -> None:
     if not path.is_file():
         return
     backup_dir.mkdir(parents=True, exist_ok=True)
-    dest = backup_dir / path.name
+    # One backup per run; a fixed name would let a second apply-defaults
+    # overwrite the only copy of the pre-pin state.
+    dest = backup_dir / f"{path.name}.{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
     shutil.copy2(path, dest)
 
 
@@ -183,7 +260,7 @@ def _load_goal_priority_base() -> dict[str, Any]:
 
 def apply_goal_priority(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "goal_priority.json"
-    existing = _read_json(path)
+    existing = _read_json_strict(path)
     base = _load_goal_priority_base()
     if existing:
         # Preserve campaign structure; force discipline pins.
@@ -216,7 +293,7 @@ def apply_compute_policy(run_dir: Path, profile: str) -> dict[str, Any]:
 
 def apply_notify_identity(run_dir: Path, *, research_title: str | None) -> dict[str, Any]:
     path = run_dir / "notify.json"
-    existing = _read_json(path)
+    existing = _read_json_strict(path)
     data = dict(existing) if existing else {}
     title = research_title or data.get("research_title") or data.get("notify_title")
     if title:
@@ -262,17 +339,20 @@ def apply_formal_policy(run_dir: Path, profile: str) -> dict[str, Any] | None:
 
 
 def apply_current_plan_enforce(run_dir: Path) -> bool:
+    """Report whether the plan already carries Goal Focus enforce.
+
+    ``current_plan.enforcement_mode`` is authority-bound: it is only valid
+    while a ``direction_decisions.jsonl`` row fingerprints the whole plan.
+    Writing the field here breaks that binding permanently, so escalation
+    belongs to ``goal-focus set-mode``, which rewrites plan and decision row
+    inside one transaction.
+    """
+
     path = run_dir / "current_plan.json"
     if not path.is_file():
         return False
-    plan = _read_json(path)
-    if not plan:
-        return False
-    if plan.get("enforcement_mode") == "enforce":
-        return True
-    plan["enforcement_mode"] = "enforce"
-    _atomic_write_json(path, plan)
-    return True
+    plan = _read_json_strict(path)
+    return str(plan.get("enforcement_mode") or "").lower() == "enforce"
 
 
 def apply_standing_orders(
@@ -284,7 +364,7 @@ def apply_standing_orders(
     research_title: str | None,
 ) -> dict[str, Any]:
     path = run_dir / "loop_state.json"
-    state = _read_json(path)
+    state = _read_json_strict(path)
     if not state:
         # Minimal standing shell so pins exist even before full init.
         state = {
@@ -389,8 +469,10 @@ def write_host_env_defaults(
 
         try:
             values.update(load_env_file(dest, forbidden_root=run_dir))
-        except EnvLoadError:
-            pass
+        except EnvLoadError as exc:
+            raise ValueError(
+                f"existing host force-loop policy is unreadable; fix or move it first: {exc}"
+            ) from exc
     values.update(migrated_policy or {})
     values.update(
         {
@@ -423,12 +505,6 @@ def verify_effective(run_dir: Path, profile: str, policy_file: Path | None = Non
     if str(gp.get("discipline_mode") or "").lower() != "hard":
         errors.append("goal_priority.discipline_mode is not hard")
 
-    cp = _read_json(run_dir / "compute_policy.json")
-    policy = cp.get("policy") if isinstance(cp.get("policy"), dict) else cp
-    backends = policy.get("backends") if isinstance(policy, dict) else None
-    if not backends:
-        errors.append("compute_policy backends missing")
-
     state = _read_json(run_dir / "loop_state.json")
     so = state.get("standing_orders") if isinstance(state.get("standing_orders"), dict) else {}
     gf = so.get("goal_focus") if isinstance(so.get("goal_focus"), dict) else {}
@@ -441,6 +517,25 @@ def verify_effective(run_dir: Path, profile: str, policy_file: Path | None = Non
     mode = str(notify.get("mode") or "").lower()
     if mode not in {"auto", "on"}:
         errors.append("standing_orders.notify.mode is not auto/on")
+    channel = str(state.get("notify_channel") or "").lower()
+    if mode in {"auto", "on"} and channel in {"off", "none", "disabled"}:
+        errors.append("loop_state.notify_channel is off while the notify pin is auto/on")
+
+    cp = _read_json(run_dir / "compute_policy.json")
+    compute = cp.get("policy") if isinstance(cp.get("policy"), dict) else cp
+    backends = set(compute.get("backends") or ()) if isinstance(compute, dict) else set()
+    forbidden = set(compute.get("forbidden_services") or ()) if isinstance(compute, dict) else set()
+    standing = so.get("compute") if isinstance(so.get("compute"), dict) else {}
+    if not backends:
+        errors.append("compute_policy backends missing")
+    # A backend that is also forbidden is refused at dispatch, so an allowlist
+    # that intersects the denylist is a silently unusable lane, not a pin.
+    if backends & forbidden:
+        errors.append("compute_policy backends intersect forbidden_services")
+    if backends != set(standing.get("backends") or ()) or forbidden != set(
+        standing.get("forbidden_services") or ()
+    ):
+        errors.append("standing_orders.compute does not mirror compute_policy.json")
 
     if policy_file is None:
         errors.append("host force-loop policy path missing")
@@ -449,18 +544,27 @@ def verify_effective(run_dir: Path, profile: str, policy_file: Path | None = Non
             from load_loop_env import load_env_file
 
             policy = load_env_file(policy_file, forbidden_root=run_dir)
-        except Exception:
-            errors.append("host force-loop policy is missing or unsafe")
+        except Exception as exc:
+            errors.append(f"host force-loop policy is missing or unsafe: {exc}")
         else:
             if policy.get("AAS_AUTOLOOP_GOAL_PRIORITY") != "on":
                 errors.append("host policy missing AAS_AUTOLOOP_GOAL_PRIORITY=on")
             if policy.get("AAS_AUTOLOOP_NOTIFY") not in {"auto", "on"}:
                 errors.append("host policy missing notify ON")
 
+    # current_plan.json is the only enforcement_mode any runtime reads; the
+    # standing-orders mirror above is advisory.
     plan = _read_json(run_dir / "current_plan.json")
-    if plan and str(plan.get("enforcement_mode") or "").lower() not in {"", "enforce"}:
-        if str(plan.get("enforcement_mode") or "").lower() != "enforce":
-            errors.append("current_plan.enforcement_mode is not enforce")
+    if not plan:
+        errors.append(
+            "current_plan.json is missing; Goal Focus enforce is not established "
+            "(re-init with --goal-focus-mode enforce or run goal-focus migrate)"
+        )
+    elif str(plan.get("enforcement_mode") or "").lower() != "enforce":
+        errors.append(
+            "current_plan.enforcement_mode is not enforce; escalate the mode with "
+            "goal-focus set-mode --mode enforce --apply"
+        )
 
     if profile == "formal":
         formal = _read_json(run_dir / "formal" / "formal_policy.json")
@@ -490,38 +594,39 @@ def apply_defaults(
     policy_file = _validated_policy_path(run_dir, policy_file.expanduser())
     legacy_policy, migrated_policy = _legacy_policy_preflight(run_dir)
 
-    if backup:
-        backup_dir = run_dir / "driver" / "force_loop_pin_backups"
-        for name in (
-            "goal_priority.json",
-            "compute_policy.json",
-            "loop_state.json",
-            "current_plan.json",
-            "notify.json",
-        ):
-            _backup(run_dir / name, backup_dir)
-        _backup(run_dir / "formal" / "formal_policy.json", backup_dir)
-    gp = apply_goal_priority(run_dir)
-    compute = apply_compute_policy(run_dir, profile)
-    formal = apply_formal_policy(run_dir, profile)
-    notify = apply_notify_identity(run_dir, research_title=research_title)
-    plan_updated = apply_current_plan_enforce(run_dir)
-    standing = apply_standing_orders(
-        run_dir,
-        profile=profile,
-        compute=compute,
-        formal=formal,
-        research_title=research_title,
-    )
-    env_path = write_host_env_defaults(
-        run_dir,
-        profile,
-        policy_file,
-        migrated_policy=migrated_policy,
-    )
-    if legacy_policy is not None:
-        legacy_policy.unlink()
-    errors = verify_effective(run_dir, profile, policy_file)
+    with _pin_guard(run_dir):
+        if backup:
+            backup_dir = run_dir / "driver" / "force_loop_pin_backups"
+            for name in (
+                "goal_priority.json",
+                "compute_policy.json",
+                "loop_state.json",
+                "current_plan.json",
+                "notify.json",
+            ):
+                _backup(run_dir / name, backup_dir)
+            _backup(run_dir / "formal" / "formal_policy.json", backup_dir)
+        gp = apply_goal_priority(run_dir)
+        compute = apply_compute_policy(run_dir, profile)
+        formal = apply_formal_policy(run_dir, profile)
+        notify = apply_notify_identity(run_dir, research_title=research_title)
+        plan_enforced = apply_current_plan_enforce(run_dir)
+        standing = apply_standing_orders(
+            run_dir,
+            profile=profile,
+            compute=compute,
+            formal=formal,
+            research_title=research_title,
+        )
+        env_path = write_host_env_defaults(
+            run_dir,
+            profile,
+            policy_file,
+            migrated_policy=migrated_policy,
+        )
+        if legacy_policy is not None:
+            legacy_policy.unlink()
+        errors = verify_effective(run_dir, profile, policy_file)
     return {
         "ok": not errors,
         "profile": profile,
@@ -533,7 +638,8 @@ def apply_defaults(
         "notify_mode": (standing.get("notify") or {}).get("mode"),
         "goal_focus_mode": (standing.get("goal_focus") or {}).get("mode"),
         "policy_path": str(env_path),
-        "current_plan_enforced": plan_updated,
+        "migrated_policy_keys": sorted(migrated_policy),
+        "current_plan_enforced": plan_enforced,
         "notify_identity": {
             "research_title": notify.get("research_title"),
         },

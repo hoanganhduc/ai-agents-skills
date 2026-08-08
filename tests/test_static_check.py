@@ -232,8 +232,12 @@ class StaticCheckTests(unittest.TestCase):
         text = Path(
             "canonical/runtime/skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1"
         ).read_text(encoding="utf-8")
-        block = text.split('Import-AasSecretEnvFile -PointerEnv "AAS_PROVIDER_SECRETS_FILE"', 1)[1]
-        block = block.split(")", 1)[0]
+        # The call is wrapped over several lines with backtick continuations and
+        # takes the allowlist by variable, so read the assignment it names.
+        call = text.split('-PointerEnv "AAS_PROVIDER_SECRETS_FILE"', 1)[1]
+        call = call.split("\n\n", 1)[0]
+        self.assertIn("-AllowedKeys $ProviderAllowed", call)
+        block = text.split("$ProviderAllowed = @(", 1)[1].split(")", 1)[0]
         self.assertEqual(set(re.findall(r'"([A-Z][A-Z0-9_]*)"', block)), expected)
         self.assertIn("Remove-Item Env:AAS_PROVIDER_SECRETS_FILE", text)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -9,6 +10,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -1419,6 +1421,74 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             self.assertEqual(ok["iteration"], 1)
             self.assertIn("PROVED something banked", ok.get("output_preview") or "")
 
+    def test_progress_degrades_to_plain_text_on_an_unrenderable_ledger_tip(self) -> None:
+        """A poisoned ledger row must cost the rich rendering, not the drive."""
+        import sys
+        runtime = (
+            Path(__file__).resolve().parents[1]
+            / "canonical"
+            / "runtime"
+            / "skills"
+            / "autonomous-research-loop-runtime"
+        )
+        sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+        import goal_focus as gf  # noqa: WPS
+
+        poisoned = ("yesterday", "2026-08-07 09:10:00+00:00")
+        for stamp in poisoned:
+            with self.subTest(started_at=stamp), tempfile.TemporaryDirectory() as tmp:
+                loop = Path(tmp)
+                (loop / "loop_state.json").write_text(
+                    json.dumps({"goal": "g", "success_criteria": ["s"]}), encoding="utf-8"
+                )
+                (loop / "budget.json").write_text(
+                    json.dumps({"max_iterations": 5, "spent_iterations": 1}),
+                    encoding="utf-8",
+                )
+                (loop / "iterations.jsonl").write_text(
+                    json.dumps(
+                        {
+                            "iteration": 1,
+                            "mode": "bounded-research",
+                            "objective": "o",
+                            "decision": "continue",
+                            "timestamp": "2026-08-07T09:00:00+00:00",
+                            "execution": {"started_at": stamp},
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                payload = arl.build_progress_event(loop, "drive_start")
+
+                self.assertTrue(payload.get("text_compact"))
+                self.assertIn("iteration.started_at", payload.get("notification_error", ""))
+                self.assertNotIn("notification", payload)
+                arl.emit_loop_progress(
+                    loop, "drive_start", notify_channel="off", to_stderr=False
+                )
+
+        # The same string must never be bankable in the first place.
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "timezone-aware ISO-8601"):
+                gf.validate_compute_execution(
+                    Path(tmp),
+                    {
+                        "recording_status": "explicit",
+                        "usage": "local",
+                        "services": [
+                            {
+                                "service": "local",
+                                "status": "succeeded",
+                                "started_at": "2026-08-07 09:10:00+00:00",
+                            }
+                        ],
+                    },
+                    _plan={"compute_policy": {"allowed_services": [], "forbidden_services": []}},
+                )
+
     def test_progress_result_prefers_contribution_over_certificate_path(self) -> None:
         """Bare certificate paths must not become the notify Result body."""
         import sys
@@ -1790,6 +1860,33 @@ class RuntimeDriveTests(unittest.TestCase):
             res = self._drive(loop, reg, cmd, "--max-failures", "3")
             self.assertEqual(res.returncode, 3)
             self.assertEqual((loop / "c").read_text(encoding="utf-8"), "3")
+
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving real iterations requires a working bubblewrap",
+    )
+    def test_stops_when_zero_exit_never_advances_the_ledger(self) -> None:
+        """A silent agent must not hot-spin the driver.
+
+        An iteration command that exits 0 without appending an iteration leaves
+        compute_done exactly where it was, so counting it as success would
+        respawn it forever. It is counted against max_failures instead.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp); reg, loop = base / "reg", base / "loop"
+            _init_loop(loop, reg, max_iterations=5)
+            cmd = _py_iteration(
+                "import os,pathlib; d=pathlib.Path(os.environ['AUTOLOOP_DIR']); p=d/'c'; "
+                "c=(int(p.read_text()) if p.exists() else 0)+1; p.write_text(str(c))"
+            )
+            res = self._drive(loop, reg, cmd, "--max-failures", "3")
+            self.assertEqual(res.returncode, 3, res.stderr)
+            self.assertEqual((loop / "c").read_text(encoding="utf-8"), "3")
+            self.assertIn("without advancing the iteration ledger", res.stderr)
+            self.assertEqual(
+                json.loads(res.stdout).get("reason"), "max_failures", res.stdout
+            )
 
     @unittest.skipUnless(
         _primary_containment_available(),
@@ -2757,6 +2854,79 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
 
             self.assertEqual(result["status"], "ok")
             self.assertFalse((loop / arl.MIGRATION_CLAIM_FILE).exists())
+
+    def test_arm_keeps_an_unresolved_auto_notify_request_non_decisive(self) -> None:
+        """A loop armed before its notify secrets exist must not latch 'off'."""
+        arl, _ = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            loop = base / "loop"
+            registry_root = self._trusted_registry_root(base.name)
+            active = registry_root / "active.d"
+            arl.init_loop(arl.selftest_init_args(loop, max_iterations=2))
+            args = argparse.Namespace(
+                dir=str(loop),
+                root=str(loop),
+                force=False,
+                pid=os.getpid(),
+                driver=True,
+                notify="auto",
+                registry_dir=str(registry_root),
+            )
+
+            with mock.patch.object(
+                arl, "auto_notify_channel_from_secrets", return_value=None
+            ):
+                arl.arm_loop(args)
+
+            self.assertNotEqual(arl.read_loop_notify_policy(loop), "off")
+            entries = [
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in active.glob("*.json")
+            ]
+            self.assertTrue(entries)
+            for entry in entries:
+                self.assertNotEqual(entry.get("notify_channel"), "off")
+
+            # Once the secrets land, the same loop resolves to a real channel.
+            with mock.patch.object(
+                arl, "auto_notify_channel_from_secrets", return_value="zulip"
+            ):
+                self.assertEqual(
+                    arl.resolve_notify_channel(
+                        explicit="auto", run_dir=loop, registry=active
+                    ),
+                    "zulip",
+                )
+
+    def test_arm_still_honours_an_explicit_notify_off(self) -> None:
+        arl, _ = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            loop = base / "loop"
+            registry_root = self._trusted_registry_root(base.name)
+            arl.init_loop(arl.selftest_init_args(loop, max_iterations=2))
+            args = argparse.Namespace(
+                dir=str(loop),
+                root=str(loop),
+                force=False,
+                pid=os.getpid(),
+                driver=True,
+                notify="off",
+                registry_dir=str(registry_root),
+            )
+
+            with mock.patch.object(
+                arl, "auto_notify_channel_from_secrets", return_value="zulip"
+            ):
+                arl.arm_loop(args)
+
+            self.assertEqual(arl.read_loop_notify_policy(loop), "off")
+            self.assertIsNone(
+                arl.resolve_notify_channel(
+                    explicit=None, run_dir=loop, registry=registry_root / "active.d"
+                )
+            )
 
     def test_driver_registration_race_removes_own_entry_and_fails(self) -> None:
         arl, _ = self._runtime_modules()
@@ -6624,6 +6794,7 @@ raise SystemExit(2)
         root: Path,
         loop: Path,
         config: dict[str, object],
+        sync_panel_py: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         project = root / "project"
         project.mkdir(exist_ok=True)
@@ -6636,7 +6807,9 @@ raise SystemExit(2)
                 "PROJECT_ROOT": str(project),
                 "FAILOVER_JSON": str(config_path),
                 "RUNTIME_PY": str(stub),
-                "SYNC_PANEL_PY": str(root / "missing-sync-panel.py"),
+                "SYNC_PANEL_PY": str(
+                    sync_panel_py or (root / "missing-sync-panel.py")
+                ),
             }
         )
         return subprocess.run(
@@ -6659,7 +6832,11 @@ raise SystemExit(2)
 
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual((loop / "driver" / "PRIMARY").read_text(encoding="utf-8"), "codex")
-            self.assertEqual((loop / "driver" / "EXCLUDED").read_text(encoding="utf-8"), "claude\n")
+            # `name<TAB>epoch`: the stamp is what lets the entry expire.
+            excluded = (loop / "driver" / "EXCLUDED").read_text(encoding="utf-8")
+            name, _, stamp = excluded.rstrip("\n").partition("\t")
+            self.assertEqual(name, "claude")
+            self.assertTrue(stamp.isdigit(), excluded)
             self.assertEqual(
                 stat.S_IMODE((loop / "driver" / "PRIMARY").stat().st_mode), 0o600
             )
@@ -6782,6 +6959,104 @@ raise SystemExit(2)
             excluded = loop / "driver" / "EXCLUDED"
             self.assertTrue(not excluded.exists() or not excluded.read_text(encoding="utf-8").strip())
 
+    @staticmethod
+    def _seed_excluded(loop: Path, content: str) -> None:
+        driver = loop / "driver"
+        driver.mkdir(mode=0o700, exist_ok=True)
+        excluded = driver / "EXCLUDED"
+        excluded.write_text(content, encoding="utf-8")
+        excluded.chmod(0o600)
+
+    def test_supervisor_expires_stale_session_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            loop.mkdir(mode=0o700)
+            self._seed_excluded(loop, "claude\t1\n")
+
+            result = self._run(root, loop, self._config(session_exclude_ttl_s=3600))
+
+            self.assertNotEqual(result.returncode, 11, result.stdout + result.stderr)
+            drive_rows = [
+                json.loads(line)
+                for line in (loop / "stub-drive.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertIn("claude", [row["provider"] for row in drive_rows])
+
+    def test_supervisor_keeps_fresh_session_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            loop.mkdir(mode=0o700)
+            self._seed_excluded(loop, f"claude\t{int(time.time())}\n")
+
+            result = self._run(
+                root,
+                loop,
+                self._config(primary_order=["claude"], session_exclude_ttl_s=3600),
+            )
+
+            self.assertEqual(result.returncode, 11, result.stdout + result.stderr)
+            self.assertFalse((loop / "stub-drive.jsonl").exists())
+
+    def test_supervisor_notifies_when_panel_exclude_sync_fails(self) -> None:
+        for rc, expect_notify in ((1, True), (0, False)):
+            with self.subTest(sync_rc=rc), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                loop = root / "loop"
+                loop.mkdir(mode=0o700)
+                sync = root / "sync_stub.py"
+                sync.write_text(f"raise SystemExit({rc})\n", encoding="utf-8")
+
+                result = self._run(
+                    root,
+                    loop,
+                    self._config(sync_panel_exclude_until_credit=True),
+                    sync_panel_py=sync,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                notify_rows = [
+                    json.loads(line)
+                    for line in (loop / "stub-notify.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                ]
+                completed = [
+                    row[row.index("--completed") + 1]
+                    for row in notify_rows
+                    if "--completed" in row
+                ]
+                failed = [text for text in completed if "panel exclude sync failed" in text]
+                if expect_notify:
+                    self.assertEqual(len(failed), 1, completed)
+                    self.assertIn("claude", failed[0])
+                else:
+                    self.assertEqual(failed, [], completed)
+
+    def test_supervisor_readme_panel_default_matches_code(self) -> None:
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import panel_parent  # noqa: WPS
+
+        text = (runtime / "supervisor_README.md").read_text(encoding="utf-8")
+        lines = text.splitlines()
+        anchor = next(
+            index
+            for index, line in enumerate(lines)
+            if "Default **panel** invite order" in line
+        )
+        documented = next(
+            line.strip().strip("`")
+            for line in lines[anchor + 1 :]
+            if line.strip().startswith("`")
+        )
+        self.assertEqual(
+            [name.strip() for name in documented.split("→")],
+            list(panel_parent.DEFAULT_PROVIDERS),
+        )
+
     def test_supervisor_never_retries_unpersisted_quarantine(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -6800,6 +7075,151 @@ raise SystemExit(2)
                 for line in (loop / "stub-drive.jsonl").read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual([row["provider"] for row in drive_rows], ["claude"])
+
+
+@unittest.skipUnless(os.name == "posix", "the launcher is a POSIX shell script")
+class LaunchSupervisorPortabilityTests(unittest.TestCase):
+    """flock(1) and procfs are Linux-only; the launcher must not require either."""
+
+    LAUNCHER = HELPER.with_name("LAUNCH_supervisor.sh")
+
+    def _path_without(self, root: Path, *excluded: str) -> str:
+        """A PATH carrying the launcher's real dependencies minus `excluded`."""
+        shim = root / "shim"
+        shim.mkdir()
+        needed = (
+            "bash",
+            "python3",
+            "mkdir",
+            "dirname",
+            "cat",
+            "rm",
+            "sleep",
+            "nohup",
+            "ps",
+            "flock",
+            "fuser",
+        )
+        for name in needed:
+            if name in excluded:
+                continue
+            resolved = shutil.which(name)
+            if resolved:
+                (shim / name).symlink_to(resolved)
+        return str(shim)
+
+    def test_start_locks_and_refuses_a_second_launch_without_flock(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            loop.mkdir(mode=0o700)
+            supervisor = root / "stub_supervisor.sh"
+            supervisor.write_text("#!/usr/bin/env bash\nsleep 30\n", encoding="utf-8")
+            supervisor.chmod(0o700)
+            env = _subprocess_env(
+                {
+                    "LOOP_DIR": str(loop),
+                    "PROJECT_ROOT": str(root),
+                    "SUPERVISOR": str(supervisor),
+                    "PATH": self._path_without(root, "flock", "fuser"),
+                }
+            )
+
+            first = subprocess.Popen(
+                ["bash", str(self.LAUNCHER), "start"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                env=env,
+            )
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    if (loop / "driver" / "supervisor.pid").is_file():
+                        break
+                    self.assertIsNone(
+                        first.poll(), "launcher exited instead of holding the lock"
+                    )
+                    time.sleep(0.1)
+                else:  # pragma: no cover - only on a wedged host
+                    self.fail("launcher never wrote its pidfile")
+
+                second = subprocess.run(
+                    ["bash", str(self.LAUNCHER), "start"],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=20,
+                    check=False,
+                    env=env,
+                )
+            finally:
+                # The launcher nohups the supervisor, so it outlives the
+                # launcher: signal the recorded pid rather than leaking a sleep.
+                pidfile = loop / "driver" / "supervisor.pid"
+                spawned = pidfile.read_text(encoding="utf-8").strip() if pidfile.is_file() else ""
+                first.terminate()
+                first.wait(timeout=20)
+                if first.stdout is not None:
+                    first.stdout.close()
+                if spawned.isdigit():
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.kill(int(spawned), signal.SIGKILL)
+
+            self.assertEqual(second.returncode, 10, second.stdout + second.stderr)
+            self.assertIn("lock held", second.stderr)
+
+    def test_stop_prior_scan_falls_back_to_ps_without_procfs(self) -> None:
+        source = self.LAUNCHER.read_text(encoding="utf-8")
+        body = source.split("python3 - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        self.assertIn('proc_root = Path("/proc")', body)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            loop.mkdir()
+            script = root / "stop_prior_scan.py"
+            script.write_text(
+                body.replace(
+                    'proc_root = Path("/proc")',
+                    'proc_root = Path(os.environ["TEST_PROC_ROOT"])',
+                ),
+                encoding="utf-8",
+            )
+            shim = root / "shim"
+            shim.mkdir()
+            # A pid this scan can never signal: reporting it proves the ps
+            # branch parsed, and ProcessLookupError proves it stays clean.
+            (shim / "ps").write_text(
+                "#!/usr/bin/env bash\n"
+                f"echo '  2147483647 python3 autonomous_research_loop_runtime.py "
+                f"drive --dir {loop} --provider claude'\n"
+                "echo '  not-a-pid garbage line'\n",
+                encoding="utf-8",
+            )
+            (shim / "ps").chmod(0o700)
+            env = _subprocess_env(
+                {
+                    "LOOP_DIR": str(loop),
+                    "TEST_PROC_ROOT": str(root / "no-such-proc"),
+                    "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}",
+                }
+            )
+
+            result = subprocess.run(
+                [sys.executable, str(script)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=30,
+                check=False,
+                env=env,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertIn("stopping pid 2147483647", result.stdout)
 
 
 class NotifyPolicyTests(unittest.TestCase):
@@ -7581,6 +8001,123 @@ class SelftestContainmentGateTests(unittest.TestCase):
         self.assertIn("drive contract broke", result["errors"])
         self.assertEqual(result["drive_checks"], "ran")
         self.assertEqual(result["drive_skip_reason"], "")
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux")
+        and os.path.isdir("/dev/shm")
+        and os.access("/dev/shm", os.W_OK),
+        "requires a writable /dev/shm on Linux",
+    )
+    def test_masked_tmpdir_does_not_make_the_gate_blame_the_host(self) -> None:
+        arl = self._runtime()
+        if not arl.host_primary_containment_status()[0]:
+            self.skipTest("host cannot contain a primary at all")
+        with mock.patch.dict(os.environ, {"TMPDIR": "/dev/shm"}):
+            available, reason = arl.host_primary_containment_status()
+        self.assertTrue(available, reason)
+
+    def test_probe_scratch_moves_off_a_masked_tmpdir(self) -> None:
+        arl = self._runtime()
+        with mock.patch.dict(os.environ, {"TMPDIR": "/dev/shm"}), mock.patch.object(
+            arl,
+            "containment_mask_roots_for_host",
+            return_value=[Path("/dev")],
+        ):
+            self.assertEqual(arl._containment_scratch_base(), "/tmp")
+        with mock.patch.object(
+            arl, "containment_mask_roots_for_host", return_value=[]
+        ):
+            self.assertIsNone(arl._containment_scratch_base())
+
+    def test_a_fully_masked_scratch_base_is_not_reported_as_a_host_verdict(
+        self,
+    ) -> None:
+        arl = self._runtime()
+        with mock.patch.object(
+            arl, "_containment_scratch_base", return_value="/tmp"
+        ), mock.patch.object(
+            arl,
+            "containment_mask_roots_for_host",
+            return_value=[Path("/tmp")],
+        ), mock.patch.object(
+            arl, "run_primary_subprocess"
+        ) as probe:
+            available, reason = arl.host_primary_containment_status()
+        probe.assert_not_called()
+        self.assertFalse(available)
+        self.assertIn("scratch base", reason)
+        self.assertNotIn("host", reason)
+
+
+class ContainmentMaskedWorkingDirectoryTests(unittest.TestCase):
+    """A directory the containment shape hides must be refused before spawn.
+
+    bubblewrap accepts the argv and then fails its own ``--chdir`` with an
+    opaque errno, once per iteration, so the refusal has to name the mount.
+    """
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    def setUp(self) -> None:
+        if not sys.platform.startswith("linux"):
+            self.skipTest("containment masks are Linux-only")
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import provider_resources  # noqa: WPS
+
+        self.provider_resources = provider_resources
+
+    def _shm_dir(self) -> Path:
+        if not (os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK)):
+            self.skipTest("requires a writable /dev/shm")
+        base = Path(tempfile.mkdtemp(dir="/dev/shm"))
+        self.addCleanup(shutil.rmtree, base, True)
+        return base
+
+    def test_mask_roots_are_derived_from_the_built_argument_list(self) -> None:
+        roots = self.provider_resources.containment_mask_roots(
+            ["--tmpfs", "/run/user/9", "--ro-bind", "/dev/null", "/run/docker.sock"]
+        )
+        self.assertEqual(roots, [Path("/run/user/9")])
+
+    def test_trusted_local_refuses_a_working_directory_under_a_mask(self) -> None:
+        with self.assertRaises(self.provider_resources.ProviderResourceError) as ctx:
+            self.provider_resources.trusted_local_containment_command(
+                ["/bin/true"], cwd=self._shm_dir()
+            )
+        self.assertIn("/dev", str(ctx.exception))
+        self.assertIn("containment mount mask", str(ctx.exception))
+
+    def test_trusted_local_still_builds_for_an_unmasked_working_directory(
+        self,
+    ) -> None:
+        base = Path(tempfile.mkdtemp(dir="/tmp")).resolve()
+        self.addCleanup(shutil.rmtree, base, True)
+        try:
+            argv = self.provider_resources.trusted_local_containment_command(
+                ["/bin/true"], cwd=base
+            )
+        except self.provider_resources.ProviderResourceError as exc:
+            self.skipTest(f"host cannot build the trusted-local shape: {exc}")
+        self.assertEqual(argv[-4:], ["--chdir", str(base), "--", "/bin/true"])
+        # The masks themselves must not be weakened to let the cwd through.
+        self.assertIn("--dev", argv)
+        self.assertEqual(argv[argv.index("--dev") + 1], "/dev")
+        self.assertLess(argv.index("--dev"), argv.index("--chdir"))
+
+    def test_init_refuses_a_loop_directory_under_a_mask(self) -> None:
+        arl = self._runtime()
+        with self.assertRaises(OSError) as ctx:
+            arl.init_loop(arl.selftest_init_args(self._shm_dir() / "loop", 1))
+        self.assertIn("containment mount mask", str(ctx.exception))
 
 
 class SelftestScratchPathTests(unittest.TestCase):

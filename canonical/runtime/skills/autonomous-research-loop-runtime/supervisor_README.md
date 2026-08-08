@@ -15,7 +15,7 @@ is the POSIX failover detail that kit uses when present; direct
 | File | Role |
 |------|------|
 | `arl_drive_supervisor.sh` | Rotate primaries on drive exit 5/6/7; session-exclude |
-| `LAUNCH_supervisor.sh` | `start` (flock) or `replace` (stop prior then start) |
+| `LAUNCH_supervisor.sh` | `start` (exclusive lock) or `replace` (stop prior then start) |
 | `failover.example.json` | Schema example → copy to `{loop}/failover.json` |
 | `sync_panel_exclude.py` | Atomic panel exclude_until_credit merge |
 | `apply_failover_settings.py` | Write/merge failover.json |
@@ -83,6 +83,15 @@ Default example **drive** order (`failover.example.json`):
 
 When none remain → exit 11.
 
+Session exclusions are **not** permanent. Each entry in `{loop}/driver/EXCLUDED`
+is stored as `name<TAB>epoch` and expires after `session_exclude_ttl_s` seconds
+(`failover.json`, default `21600` = 6 h), so a provider that regains credit
+re-enters rotation on the next supervisor pass without operator action. Set it
+to `0` to disable expiry. A legacy bare-name file is read as excluded from
+**now**, so an upgrade costs one more TTL window rather than a permanent
+exclusion. To clear immediately, remove the file and empty
+`standing_orders.panel.exclude_until_credit` in `loop_state.json`.
+
 The shipped supervisor and `failover.example.json` pass
 `drive_defaults.max_failures=3`. Host panel dispatch separately persists a
 three-attempt cap per phase and pending iteration, so restarting or rotating a
@@ -90,7 +99,10 @@ primary does not restart panel calls indefinitely.
 
 Default **panel** invite order (when loop config omits `providers`):
 
-`codex → claude → grok → opencode → antigravity → copilot → kimi → deepseek`
+`codex → claude → codewhale`
+
+The panel id for CodeWhale is `codewhale`; the drive `--provider` id for the
+same provider is `deepseek` (both are accepted by panel dispatch).
 
 ## Drive exit codes consumed
 
@@ -112,6 +124,20 @@ Default **panel** invite order (when loop config omits `providers`):
 | 11 | all primaries session-excluded |
 | 12 | restart cap |
 
+## POSIX portability
+
+Both scripts are POSIX-targeted, not Linux-only, and degrade rather than fail on
+hosts missing Linux-specific tooling:
+
+- **`flock(1)`** — absent on macOS/BSD. `LAUNCH_supervisor.sh` falls back to
+  `flock(2)` on the inherited lock descriptor, so the lock still belongs to the
+  launching shell. A locking failure that is not contention exits **3**, never
+  the "lock held" **10**.
+- **procfs** — absent on macOS and some containers. `stop`/`replace` scan
+  `/proc` when it exists and `ps -ax -o pid=,command=` otherwise.
+- **`fuser(1)`** — util-linux/psmisc only. `replace` skips the lock-release wait
+  when it is missing instead of reading "not installed" as "lock already free".
+
 ## Notify titles
 
 Set `research_title` in `failover.json` so Zulip/Telegram show the research topic,
@@ -120,8 +146,12 @@ when unset.
 
 ## Secrets
 
-Never load API tokens from files inside these scripts. Export tokens in the
-environment (or via a loop-owned `with_compute_env.sh`) before launch.
+Never load API tokens from files inside these scripts. For a direct
+`LAUNCH_supervisor.sh` launch, export tokens in the environment (or via a
+loop-owned `with_compute_env.sh`) before launch. Under the force-loop kit (see
+above) that advice does **not** apply: the kit scrubs every ambient provider and
+compute token before the CLI sees them and takes credentials only through
+`AAS_COMPUTE_SECRETS_FILE` / `AAS_PROVIDER_SECRETS_FILE`.
 
 ## Compose with formal / compute
 

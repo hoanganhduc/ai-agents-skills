@@ -50,7 +50,11 @@ For a research workspace, keep these files in the active research directory:
 
 - `loop_state.json`: goal, success criteria, mode, stop flags, current status.
 - `budget.json`: iteration, wall-clock, token, cost, depth, and child-agent limits.
-- `iterations.jsonl`: append-only record of each loop iteration.
+- `iterations.jsonl`: append-only record of each loop iteration. The runtime
+  shards it at 8 MB into `iterations.1.jsonl`, `iterations.2.jsonl`, … so a
+  long campaign never reaches the 16 MB cap every reader enforces. The shards
+  plus the live file are **one** ledger: read them in numeric order, then the
+  live file, or iteration numbering restarts at the first rotation.
 - `recovery.md`: latest resume point, blockers, next safe action, and evidence gaps.
 
 These remain the base ARL ledger and compatibility surface. Goal Focus v2 adds
@@ -289,7 +293,7 @@ negative-space ledger:
 | `approach_registry.json` | Campaigns, approaches, estimates, dependencies, blockers, and reopen conditions. |
 | `current_plan.json` | The one active campaign/approach, bounded next action, target obligations, scope lock, falsifier, compute policy, and revision pins. |
 | `direction_decisions.jsonl` | Append-only initialization, migration, selection, revision, and outcome provenance. |
-| `.goal_focus/negative_space.jsonl` | Append-only `negative_space.v1` failed explorations / blocked routes; never banks claims. Open rows make an approach ineligible; reopen requires a new `mechanism_fingerprint` plus different-family review (wording-only reopen is rejected). |
+| `.goal_focus/negative_space.jsonl` | Append-only `negative_space.v1` failed explorations / blocked routes; never banks claims. Open rows make an approach ineligible and are permanent for the life of the loop — no automated reopen exists, so continue under a new `approach_id`. |
 
 `loop_state.goal`, `loop_state.success_criteria`,
 `loop_state.next_preferred_path`, `loop_state.goal_focus_projection`, and the
@@ -545,8 +549,9 @@ boundaries end it. For unattended multi-day runs, prefer the **force-loop kit** 
 Goal Focus enforce, goal_priority hard, notify auto/on; Linux/macOS/Windows/WSL):
 
 ```bash
-... force-loop/run_force_loop.sh bootstrap --loop <loop_dir> --root <project> --profile formal --goal "…"
-... force-loop/run_force_loop.sh start --loop <loop_dir> --root <project> --provider <claude|codex|…>
+# --policy-file (or AAS_FORCE_LOOP_POLICY_FILE) names the owner-private host policy
+... force-loop/run_force_loop.sh bootstrap --loop <loop_dir> --root <project> --profile formal --goal "…" --policy-file <abs_path>
+... force-loop/run_force_loop.sh start --loop <loop_dir> --root <project> --provider <claude|codex|…> --policy-file <abs_path>
 ```
 
 Raw headless `drive` remains available; it respawns a fresh agent session per
@@ -569,8 +574,9 @@ failures to send never stop the loop. Interactive sessions on Claude are
 additionally governed by the installed `hooks.Stop` entry while a loop is
 armed (`arm --dir <loop_dir> --root <project_root>`): the hook blocks turn-end
 until a real stop condition fires. Kill switches in both modes:
-`touch <loop_dir>/STOP_REQUESTED`, `touch <loop_dir>/PAUSE`,
-`AUTOLOOP_DISABLE=1`, or `disarm`.
+`touch <loop_dir>/STOP_REQUESTED` and `touch <loop_dir>/PAUSE`.
+`AUTOLOOP_DISABLE=1` and `disarm` govern the interactive Stop hook only; neither
+stops a running headless `drive` or supervisor.
 
 For an enforce-mode loop, finding configured credentials does not itself grant
 network egress. `AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS=allow` is required before

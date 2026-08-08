@@ -19,6 +19,7 @@
   "rotate_cooldown_s": 30,
   "write_active_primary_path": "driver/PRIMARY",
   "session_exclude_path": "driver/EXCLUDED",
+  "session_exclude_ttl_s": 21600,
   "sync_panel_exclude_until_credit": true,
   "drive_defaults": {
     "panel": "on",
