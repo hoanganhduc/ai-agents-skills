@@ -1,7 +1,9 @@
 """Permanent negative-space ledger for Goal Focus / ARL.
 
 Failed explorations are append-only, queryable, and never bank positive claims.
-Reopen requires a new mechanism fingerprint plus independent review binding.
+Open rows are permanent for the life of the loop: `can_reopen_with_mechanism`
+and `supersession_rows` below define the reopen predicate but have no operator
+entry point, so callers must continue under a new approach id instead.
 """
 
 from __future__ import annotations

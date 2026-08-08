@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -24,7 +25,9 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping, Sequence
 
 TRANSACTION_DIRNAME = ".goal_focus_transactions"
+TRANSACTION_QUARANTINE_DIRNAME = ".goal_focus_transactions_quarantine"
 LOCK_FILENAME = ".goal_focus.lock"
+MAX_TRANSACTION_BYTES = 64_000_000
 
 
 class TransactionError(RuntimeError):
@@ -41,6 +44,62 @@ class LockTimeout(TransactionError):
 
 class InjectedCrash(TransactionError):
     """Test-only interruption raised at a named transaction checkpoint."""
+
+
+class TransactionQuarantined(TransactionError):
+    """Raised when a journal entry could not be finished and was moved aside."""
+
+
+ITERATION_LEDGER_FILE = "iterations.jsonl"
+# Rotate well below the 16 MB cap every ledger reader enforces, so a campaign
+# reaches a shard boundary long before it reaches a wall it cannot cross.
+ITERATION_LEDGER_ROTATE_BYTES = 8_000_000
+_ITERATION_SHARD = re.compile(r"^iterations\.([0-9]+)\.jsonl$")
+
+
+def iteration_shard_name(index: int) -> str:
+    """Name the rotated ledger shard holding the ``index``-th rotation."""
+
+    return f"iterations.{int(index)}.jsonl"
+
+
+def iteration_ledger_paths(run_dir: str | Path) -> list[Path]:
+    """List the ledger files in record order: rotated shards, then the live file.
+
+    Every reader must span the shard set.  A reader that sees only the live
+    file silently restarts iteration numbering at the first rotation, so this
+    is the one place the ordering is defined.
+    """
+
+    root = Path(run_dir)
+    shards: list[tuple[int, Path]] = []
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        entries = []
+    for entry in entries:
+        match = _ITERATION_SHARD.match(entry.name)
+        if match is not None and entry.is_file():
+            shards.append((int(match.group(1)), entry))
+    ordered = [path for _index, path in sorted(shards, key=lambda item: item[0])]
+    ordered.append(root / ITERATION_LEDGER_FILE)
+    return ordered
+
+
+def next_iteration_shard_index(run_dir: str | Path) -> int:
+    """Return the next unused shard number for ``run_dir``."""
+
+    root = Path(run_dir)
+    highest = 0
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        entries = []
+    for entry in entries:
+        match = _ITERATION_SHARD.match(entry.name)
+        if match is not None:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
 
 
 def _utc_now() -> str:
@@ -161,7 +220,7 @@ def _lstat_nofollow(path: Path) -> os.stat_result | None:
 def _read_bytes_nofollow(
     path: Path,
     *,
-    max_bytes: int = 64_000_000,
+    max_bytes: int = MAX_TRANSACTION_BYTES,
     require_single_link: bool = False,
     require_current_owner: bool = False,
     require_private: bool = False,
@@ -517,6 +576,17 @@ def _event_key(record: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
+def jsonl_text(records: Sequence[Mapping[str, Any]]) -> str:
+    """Serialize rows exactly as an appended post-image would serialize them.
+
+    Kept byte-identical to :func:`_jsonl_postimage` so a caller that rewrites a
+    ledger wholesale (rotation) produces the same file an append would.
+    """
+
+    lines = [json.dumps(dict(record), sort_keys=True) for record in records]
+    return ("\n".join(lines) + "\n") if lines else ""
+
+
 def _jsonl_postimage(path: Path, records: Sequence[Mapping[str, Any]]) -> bytes:
     existing_lines: list[str] = []
     existing_keys: set[str] = set()
@@ -742,17 +812,35 @@ def _recover_locked(run_dir: Path) -> list[dict[str, Any]]:
                 f"transaction manifest id disagrees with journal directory: {manifest_path}"
             )
         phase = str(manifest.get("phase") or "")
-        if phase != "committed":
-            _apply_manifest(run_dir, tx_dir, manifest)
-            recovered.append(
-                {
-                    "transaction_id": manifest.get("transaction_id"),
-                    "previous_phase": phase,
-                    "status": "recovered",
-                }
-            )
-        else:
-            _validate_committed_poststate(run_dir, manifest)
+        try:
+            if phase != "committed":
+                _apply_manifest(run_dir, tx_dir, manifest)
+                recovered.append(
+                    {
+                        "transaction_id": manifest.get("transaction_id"),
+                        "previous_phase": phase,
+                        "status": "recovered",
+                    }
+                )
+            else:
+                _validate_committed_poststate(run_dir, manifest)
+        except TransactionError as exc:
+            # Leaving the entry in place re-arms the same failure on every
+            # later command, and no command in the kit can clear it.  Move it
+            # aside so the failure is loud once: the manifest carries the
+            # expected-versus-observed digests and must never be auto-deleted.
+            quarantine = run_dir / TRANSACTION_QUARANTINE_DIRNAME / tx_dir.name
+            _ensure_directory_chain(quarantine.parent, create=True)
+            shutil.move(str(tx_dir), str(quarantine))
+            try:
+                # Only succeeds when this was the last entry, which is the
+                # case that would otherwise leave an empty journal behind.
+                root.rmdir()
+            except OSError:
+                pass
+            raise TransactionQuarantined(
+                f"transaction journal quarantined at {quarantine}: {exc}"
+            ) from exc
         shutil.rmtree(tx_dir)
     try:
         root.rmdir()
@@ -862,6 +950,20 @@ def commit_transaction(
                 "recovered": recovered,
                 "targets": [],
             }
+
+        # A post-image the reader cannot read back would prepare cleanly and
+        # then fail every recovery pass, so refuse it before the journal
+        # directory exists rather than after it is armed.
+        oversized = [
+            rel
+            for rel, payload in payloads.items()
+            if len(payload) > MAX_TRANSACTION_BYTES
+        ]
+        if oversized:
+            raise TransactionError(
+                f"transaction post-image exceeds {MAX_TRANSACTION_BYTES} bytes: "
+                f"{sorted(item.as_posix() for item in oversized)[0]}"
+            )
 
         tx_root = root / TRANSACTION_DIRNAME
         tx_dir = tx_root / transaction_id

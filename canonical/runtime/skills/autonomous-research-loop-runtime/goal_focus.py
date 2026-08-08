@@ -21,9 +21,16 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, Iterable, Mapping, Sequence
 
 from state_transaction import (
+    ITERATION_LEDGER_FILE,
+    ITERATION_LEDGER_ROTATE_BYTES,
     RevisionConflict,
     TransactionError,
+    TransactionQuarantined,
     commit_transaction,
+    iteration_ledger_paths,
+    jsonl_text,
+    iteration_shard_name,
+    next_iteration_shard_index,
     recover_transactions,
 )
 
@@ -84,6 +91,12 @@ _SENSITIVE_EVIDENCE_SUFFIXES = {
 
 ENFORCEMENT_MODES = frozenset({"off", "monitor", "enforce"})
 PLAN_STATES = frozenset({"provisional", "active", "needs_replan", "terminal"})
+# The one validation error `set_enforcement_mode` is allowed to repair, so
+# callers can tell an unbound mode apart from a genuinely broken authority.
+MODE_AUTHORITY_ERROR = (
+    "current_plan enforcement_mode lacks a complete decision row bound to "
+    "the exact plan postimage"
+)
 APPROACH_STATUSES = frozenset({"eligible", "parked", "blocked", "closed", "succeeded"})
 CAMPAIGN_STATUSES = frozenset(
     {"eligible", "active", "open", "parked", "blocked", "closed", "succeeded"}
@@ -99,6 +112,12 @@ KNOWN_COMPUTE_SERVICES = frozenset(
     {"local", "hetzner", "kaggle", "modal", "github-actions"}
 )
 _SAFE_CUSTOM_COMPUTE_SERVICE = re.compile(r"^other:[a-z0-9][a-z0-9-]{0,47}$")
+# Kept identical to notify_v2._ISO_TIMESTAMP: a row this validator banks must
+# still be renderable by the notifier that reads the ledger tip.
+_ISO_TIMESTAMP_STRICT = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+)
 _COMPUTE_RUN_FIELDS = frozenset(
     {
         "service",
@@ -610,6 +629,19 @@ def _read_jsonl_snapshot(path: Path) -> tuple[list[dict[str, Any]], str | None]:
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return _read_jsonl_snapshot(path)[0]
+
+
+def _read_iteration_rows(run_dir: Path) -> list[dict[str, Any]]:
+    """Read the whole iteration ledger, spanning every rotated shard.
+
+    Reading only ``iterations.jsonl`` restarts iteration numbering at the
+    first rotation, so no caller reads that file directly.
+    """
+
+    rows: list[dict[str, Any]] = []
+    for path in iteration_ledger_paths(run_dir):
+        rows.extend(_read_jsonl(path))
+    return rows
 
 
 def _positive_int(value: Any, default: int = 0) -> int:
@@ -1335,7 +1367,7 @@ def _validate_plan(
 
 def _latest_finalized_row(run_dir: Path) -> dict[str, Any] | None:
     try:
-        rows = _read_jsonl(run_dir / "iterations.jsonl")
+        rows = _read_iteration_rows(run_dir)
     except ValueError:
         return None
     for row in reversed(rows):
@@ -1393,7 +1425,13 @@ def _mode_authority_error(
 
     expected_mode = _clean_text(plan.get("enforcement_mode")).lower()
     expected_fingerprint = _object_fingerprint(plan)
-    allowed_types = {"initialize", "migration", "select_direction", "result_finalize"}
+    allowed_types = {
+        "initialize",
+        "migration",
+        "select_direction",
+        "result_finalize",
+        "set_mode",
+    }
     for row in reversed(list(decisions)):
         if not isinstance(row, Mapping):
             continue
@@ -1413,10 +1451,7 @@ def _mode_authority_error(
         ):
             continue
         return ""
-    return (
-        "current_plan enforcement_mode lacks a complete decision row bound to "
-        "the exact plan postimage"
-    )
+    return MODE_AUTHORITY_ERROR
 
 
 def validate_goal_focus(
@@ -1528,7 +1563,7 @@ def validate_goal_focus(
         if latest.get("approach_id") and latest.get("approach_id") != plan.get("approach_id"):
             errors.append("latest finalized iteration approach disagrees with current_plan")
     try:
-        ledger_rows = _read_jsonl(root / "iterations.jsonl")
+        ledger_rows = _read_iteration_rows(root)
     except (OSError, ValueError) as exc:
         errors.append(f"cannot validate Goal-Focus terminal ledger: {exc}")
     else:
@@ -1752,7 +1787,7 @@ def _finalized_rows(run_dir: Path) -> list[dict[str, Any]]:
     try:
         return [
             row
-            for row in _read_jsonl(run_dir / "iterations.jsonl")
+            for row in _read_iteration_rows(run_dir)
             if row.get("bank_status", "accepted") in {"accepted", "rejected"}
         ]
     except ValueError:
@@ -2359,6 +2394,155 @@ def initialize_goal_focus(
             "direction_decisions": str(root / DIRECTION_DECISIONS_FILE),
         },
         "bundle": load_goal_focus(root),
+        "transaction": tx,
+    }
+
+
+def set_enforcement_mode(
+    run_dir: str | Path,
+    *,
+    mode: str,
+    trigger: str = "operator",
+    expected_plan_revision: int | None = None,
+) -> dict[str, Any]:
+    """Move enforcement_mode through the one transaction that keeps it readable.
+
+    ``enforcement_mode`` is authority-bound: ``_mode_authority_error`` only
+    accepts it while a decision row fingerprints the exact plan postimage, so
+    editing ``current_plan.json`` in place permanently bricks the loop.  This
+    writer rewrites plan and decision row together, and is also the repair path
+    for a plan whose mode row was lost or never written.
+
+    An active plan is refused: its direction review is bound to the mode it was
+    reviewed under, so escalation there belongs to a new direction decision.
+    """
+
+    if mode not in ENFORCEMENT_MODES:
+        raise ValueError(f"mode must be one of {sorted(ENFORCEMENT_MODES)}")
+    root = Path(run_dir)
+    contract = load_goal_contract(root)
+    registry = load_approach_registry(root)
+    old_plan = load_current_plan(root)
+    decisions = load_direction_decisions(root)
+    live_plan_revision = _require_nonnegative_int(
+        old_plan.get("plan_revision"), "current_plan.plan_revision"
+    )
+    expected = (
+        live_plan_revision
+        if expected_plan_revision is None
+        else _require_nonnegative_int(expected_plan_revision, "expected_plan_revision")
+    )
+    if live_plan_revision != expected:
+        raise RevisionConflict("current_plan changed before enforcement mode commit")
+    previous_mode = _clean_text(old_plan.get("enforcement_mode")).lower()
+    repair_only = previous_mode == mode
+    if repair_only and not _mode_authority_error(old_plan, decisions):
+        return {
+            "status": "unchanged",
+            "mode": mode,
+            "previous_mode": previous_mode,
+            "plan": old_plan,
+        }
+    now = utc_now()
+    decision_id = _stable_id(
+        "decision", "set_mode", previous_mode, mode, str(expected), now
+    )
+    json_files: dict[str, Any] = {}
+    text_files: dict[str, str] = {}
+    expected_hashes: dict[str, str] = {}
+    expected_absent: list[str] = []
+    if repair_only:
+        # The plan is already the mode the operator asked for; only its
+        # authority row is missing.  Rebinding the plan as it stands keeps an
+        # active direction decision valid, which a revision bump would void.
+        plan = old_plan
+    else:
+        if _clean_text(old_plan.get("state")) == "active":
+            raise ValueError(
+                "cannot change enforcement_mode while current_plan is active: the "
+                "active direction review is bound to its mode; commit a new "
+                "direction decision instead"
+            )
+        if load_pending_candidate(root):
+            raise ValueError(
+                "cannot change enforcement_mode while an iteration candidate is "
+                "pending; resolve or quarantine the candidate first"
+            )
+        next_revision = expected + 1
+        plan = copy.deepcopy(old_plan)
+        plan.update(
+            {
+                "enforcement_mode": mode,
+                "plan_revision": next_revision,
+                "goal_revision": contract["goal_revision"],
+                "registry_revision": registry["registry_revision"],
+                "updated_at": now,
+            }
+        )
+        if _clean_text(old_plan.get("plan_id")):
+            plan["plan_id"] = f"plan-r{next_revision}-{decision_id[-8:]}"
+        previous_state, state_hash, previous_recovery, recovery_hash = (
+            _managed_view_snapshot(root)
+        )
+        state, recovery = _managed_postimages(
+            contract,
+            registry,
+            plan,
+            state_preimage=previous_state,
+            recovery_preimage=previous_recovery,
+        )
+        json_files[CURRENT_PLAN_FILE] = plan
+        if state:
+            json_files["loop_state.json"] = state
+        text_files["recovery.md"] = recovery
+        for filename, digest in (
+            ("loop_state.json", state_hash),
+            ("recovery.md", recovery_hash),
+        ):
+            if digest is None:
+                expected_absent.append(filename)
+            else:
+                expected_hashes[filename] = digest
+    decision = {
+        "schema_version": DIRECTION_DECISION_SCHEMA,
+        "event_id": decision_id,
+        "decision_id": decision_id,
+        "decision_type": "set_mode",
+        "enforcement_mode": plan["enforcement_mode"],
+        "mode_plan_fingerprint": _object_fingerprint(plan),
+        "trigger": _clean_text(trigger) or "operator",
+        "previous_enforcement_mode": previous_mode,
+        "previous_plan_revision": expected,
+        "plan_revision": plan["plan_revision"],
+        "goal_revision": plan["goal_revision"],
+        "registry_revision": plan["registry_revision"],
+        "campaign_id": _clean_text(plan.get("campaign_id")),
+        "approach_id": _clean_text(plan.get("approach_id")),
+        "timestamp": now,
+    }
+    tx = commit_transaction(
+        root,
+        json_files=json_files,
+        text_files=text_files,
+        jsonl_appends={DIRECTION_DECISIONS_FILE: [decision]},
+        expected_revisions={
+            CURRENT_PLAN_FILE: ("plan_revision", expected),
+            GOAL_CONTRACT_FILE: ("goal_revision", contract.get("goal_revision")),
+            APPROACH_REGISTRY_FILE: (
+                "registry_revision",
+                registry.get("registry_revision"),
+            ),
+        },
+        expected_hashes=expected_hashes,
+        expected_absent=expected_absent,
+        transaction_id=decision_id,
+    )
+    return {
+        "status": "repaired" if repair_only else "committed",
+        "mode": plan["enforcement_mode"],
+        "previous_mode": previous_mode,
+        "plan": plan,
+        "decision": decision,
         "transaction": tx,
     }
 
@@ -4354,6 +4538,12 @@ def validate_compute_execution(
             if not isinstance(raw_time, str) or len(raw_time) > 40:
                 raise ValueError(f"{label} {field} must be a bounded ISO-8601 timestamp")
             normalized_time = raw_time.strip()
+            # notify_v2 renders every banked row and rejects anything looser
+            # than this, so accepting it here poisons the ledger tip instead.
+            if _ISO_TIMESTAMP_STRICT.fullmatch(normalized_time) is None:
+                raise ValueError(
+                    f"{label} {field} must be a timezone-aware ISO-8601 timestamp"
+                )
             try:
                 parsed = datetime.fromisoformat(
                     normalized_time[:-1] + "+00:00"
@@ -5361,7 +5551,7 @@ def validate_host_finalized_goal_success(
         plan = load_current_plan(root)
         state = _read_object(root / "loop_state.json", required=True)
         decisions = load_direction_decisions(root)
-        rows = _read_jsonl(root / "iterations.jsonl")
+        rows = _read_iteration_rows(root)
     except (OSError, ValueError) as exc:
         reject(f"terminal authority bundle is unavailable: {exc}")
         return errors
@@ -5657,12 +5847,18 @@ def finalize_candidate(
     )
     if accepted:
         _validate_accepted_review_coverage(record, review)
-    rows, iterations_hash = _read_jsonl_snapshot(root / "iterations.jsonl")
+    ledger_path = root / ITERATION_LEDGER_FILE
+    live_rows, iterations_hash = _read_jsonl_snapshot(ledger_path)
     if iterations_hash is None:
-        expected_absent.append("iterations.jsonl")
+        expected_absent.append(ITERATION_LEDGER_FILE)
     else:
-        expected_hashes["iterations.jsonl"] = iterations_hash
-    record["iteration"] = len(rows) + 1
+        expected_hashes[ITERATION_LEDGER_FILE] = iterations_hash
+    archived_rows = sum(
+        len(_read_jsonl(path))
+        for path in iteration_ledger_paths(root)
+        if path != ledger_path
+    )
+    record["iteration"] = archived_rows + len(live_rows) + 1
     record.update(
         {
             "event_id": _stable_id("iteration", candidate["candidate_id"]),
@@ -5872,10 +6068,19 @@ def finalize_candidate(
     if budget:
         json_files["budget.json"] = budget
 
-    jsonl_appends: dict[str, list[Any]] = {
-        "iterations.jsonl": [record],
-        DIRECTION_DECISIONS_FILE: [mode_event],
-    }
+    jsonl_appends: dict[str, list[Any]] = {DIRECTION_DECISIONS_FILE: [mode_event]}
+    text_files: dict[str, str] = {}
+    # Rotate before the ledger reaches the size every reader refuses, in the
+    # same transaction that banks the record: the shard and the fresh live file
+    # either both land or neither does, so no record can fall between them.
+    live_text = jsonl_text(live_rows)
+    if len(live_text.encode("utf-8")) >= ITERATION_LEDGER_ROTATE_BYTES:
+        shard_rel = iteration_shard_name(next_iteration_shard_index(root))
+        expected_absent.append(shard_rel)
+        text_files[shard_rel] = live_text
+        text_files[ITERATION_LEDGER_FILE] = jsonl_text([record])
+    else:
+        jsonl_appends[ITERATION_LEDGER_FILE] = [record]
     ns_entry = _negative_space_entry_for_finalize(
         root,
         candidate=candidate,
@@ -5903,6 +6108,7 @@ def finalize_candidate(
     tx = commit_transaction(
         root,
         json_files=json_files,
+        text_files=text_files,
         jsonl_appends=jsonl_appends,
         deletes=[PENDING_CANDIDATE_FILE],
         expected_revisions={

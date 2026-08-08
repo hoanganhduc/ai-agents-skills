@@ -53,18 +53,69 @@ trusted_python_metadata_ok() {
   return 0
 }
 
+# bash 4.1+ allocates the descriptor number itself via ``exec {var}<``.
+# Older substrates (macOS /bin/bash 3.2) parse ``{var}`` as a literal command
+# word, so a deterministic script-global counter supplies high descriptor
+# numbers there.  Descriptors opened with ``exec`` stay open across the final
+# exec either way, so bound descriptors survive into the launched child.
+bind_selected_python_next_fd=200
+
+# ``test -ef`` resolves Linux's /proc/self/fd symlinks to the underlying
+# file, so equality there compares device and inode exactly.  BSD fdesc
+# nodes (macOS /dev/fd) report the fdesc device with the underlying inode,
+# so ``-ef`` can never match through them; for those paths identity is the
+# strongest tuple fdesc proxies faithfully -- inode, owner, link count, and
+# file type.  Mode is excluded because fdesc synthesizes it from the
+# descriptor's open flags.
+bound_descriptor_matches_selected() {
+  local descriptor_path="$1" selected_path="$2" descriptor_id selected_id
+  if [ "$descriptor_path" -ef "$selected_path" ]; then
+    return 0
+  fi
+  case "$descriptor_path" in
+    /dev/fd/*) ;;
+    *) return 1 ;;
+  esac
+  descriptor_id="$(/usr/bin/stat -Lc '%i:%u:%h:%F' -- "$descriptor_path" 2>/dev/null || \
+    /usr/bin/stat -Lf '%i:%u:%l:%HT' "$descriptor_path" 2>/dev/null || true)"
+  selected_id="$(/usr/bin/stat -Lc '%i:%u:%h:%F' -- "$selected_path" 2>/dev/null || \
+    /usr/bin/stat -Lf '%i:%u:%l:%HT' "$selected_path" 2>/dev/null || true)"
+  [ -n "$descriptor_id" ] && [ "$descriptor_id" = "$selected_id" ]
+}
+
+# BSD fdesc nodes also synthesize their permission bits from the descriptor's
+# open flags, so execve on a read-only /dev/fd path is denied no matter what
+# mode the underlying file carries.  Where /proc is unavailable a launch
+# therefore execs the attested real path -- the descriptor stays bound for
+# identity attestation -- while Linux /proc paths continue to use the bound
+# inode exactly.
+exec_path_for_bound() {
+  local bound="$1" attested="$2"
+  case "$bound" in
+    /dev/fd/*) printf '%s\n' "$attested" ;;
+    *) printf '%s\n' "$bound" ;;
+  esac
+}
+
 bind_selected_python_inode() {
   local selected="$PYTHON"
-  exec {AAS_PYTHON_EXEC_FD}<"$selected" || return 1
+  if [ "${BASH_VERSINFO[0]}" -gt 4 ] || \
+     { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -ge 1 ]; }; then
+    exec {AAS_PYTHON_EXEC_FD}<"$selected" || return 1
+  else
+    AAS_PYTHON_EXEC_FD="$bind_selected_python_next_fd"
+    bind_selected_python_next_fd=$((bind_selected_python_next_fd + 1))
+    eval "exec ${AAS_PYTHON_EXEC_FD}<\"\$selected\"" || return 1
+  fi
   if [ -e "/proc/self/fd/$AAS_PYTHON_EXEC_FD" ]; then
     PYTHON="/proc/self/fd/$AAS_PYTHON_EXEC_FD"
   elif [ -e "/dev/fd/$AAS_PYTHON_EXEC_FD" ]; then
     PYTHON="/dev/fd/$AAS_PYTHON_EXEC_FD"
   else
-    exec {AAS_PYTHON_EXEC_FD}<&-
+    eval "exec ${AAS_PYTHON_EXEC_FD}<&-"
     return 1
   fi
-  [ "$PYTHON" -ef "$selected" ]
+  bound_descriptor_matches_selected "$PYTHON" "$selected"
 }
 
 has_runtime_credentials() {
@@ -153,10 +204,12 @@ resolve_secret_loader() {
 if ! PYTHON="$(resolve_python)"; then
   exit 127
 fi
+resolved_python="$PYTHON"
 if has_runtime_credentials && ! bind_selected_python_inode; then
   printf 'Credential-bearing loop launch could not bind the trusted Python inode.\n' >&2
   exit 127
 fi
+PYTHON_EXEC="$(exec_path_for_bound "$PYTHON" "$resolved_python")"
 export AAS_RUNTIME_PYTHON="$PYTHON"
 [ -n "$compute_pointer" ] && export AAS_COMPUTE_SECRETS_FILE="$compute_pointer"
 [ -n "$provider_pointer" ] && export AAS_PROVIDER_SECRETS_FILE="$provider_pointer"
@@ -179,7 +232,7 @@ unset AXLE_API_KEY LEANEXPLORE_API_KEY OCR_SPACE_API_KEY OCR_SPACE_KEY
 unset OCRSPACE_API_KEY OCRSPACE_KEY OPENCLAW_S2_API_KEY PATENTSVIEW_API_KEY
 unset SEMANTIC_SCHOLAR_API_KEY UNPAYWALL_EMAIL ZENODO_TOKEN
 
-command=("$PYTHON" "$SCRIPT_DIR/autonomous_research_loop_runtime.py" "$@")
+command=("$PYTHON_EXEC" "$SCRIPT_DIR/autonomous_research_loop_runtime.py" "$@")
 if [ "${1:-}" = "drive" ] && {
   [ -n "${AAS_COMPUTE_SECRETS_FILE:-}" ] ||
     [ -n "${AAS_PROVIDER_SECRETS_FILE:-}" ];
@@ -191,7 +244,7 @@ if [ "${1:-}" = "drive" ] && {
   fi
   if [ -n "${AAS_COMPUTE_SECRETS_FILE:-}" ]; then
     command=(
-      "$PYTHON" -I "$secret_loader"
+      "$PYTHON_EXEC" -I "$secret_loader"
       --pointer-env AAS_COMPUTE_SECRETS_FILE
       --allow-key HCLOUD_TOKEN
       --allow-key HCLOUD_SSH_KEYS
@@ -225,7 +278,7 @@ if [ "${1:-}" = "drive" ] && {
   fi
   if [ -n "${AAS_PROVIDER_SECRETS_FILE:-}" ]; then
     command=(
-      "$PYTHON" -I "$secret_loader"
+      "$PYTHON_EXEC" -I "$secret_loader"
       --pointer-env AAS_PROVIDER_SECRETS_FILE
       --allow-key ANTHROPIC_API_KEY
       --allow-key ANTHROPIC_AUTH_TOKEN

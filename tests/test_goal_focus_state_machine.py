@@ -259,6 +259,77 @@ class TransactionStateMachineTests(unittest.TestCase):
                 self.assertEqual(json.loads((root / "goal_contract.json").read_text(encoding="utf-8"))["value"], "new")
                 self.assertFalse((root / st.TRANSACTION_DIRNAME).exists())
 
+    def test_unrecoverable_journal_is_quarantined_not_wedged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_json(root / "current_plan.json", {"plan_revision": 1, "value": "old"})
+            with self.assertRaises(st.InjectedCrash):
+                st.commit_transaction(
+                    root,
+                    json_files={"current_plan.json": {"plan_revision": 2, "value": "new"}},
+                    expected_revisions={"current_plan.json": ("plan_revision", 1)},
+                    crash_after="committed",
+                )
+            # An out-of-band write after the commit point breaks the digest
+            # proof the recovery pass validates, which is exactly the signal
+            # that must be preserved rather than retried forever.
+            _write_json(root / "current_plan.json", {"plan_revision": 2, "value": "tampered"})
+
+            with self.assertRaises(st.TransactionQuarantined) as ctx:
+                st.recover_transactions(root)
+            self.assertIn(st.TRANSACTION_QUARANTINE_DIRNAME, str(ctx.exception))
+            self.assertFalse((root / st.TRANSACTION_DIRNAME).exists())
+
+            quarantine = root / st.TRANSACTION_QUARANTINE_DIRNAME
+            manifests = sorted(quarantine.glob("*/manifest.json"))
+            self.assertEqual(len(manifests), 1, manifests)
+            self.assertIn("targets", json.loads(manifests[0].read_text(encoding="utf-8")))
+
+            # The loop is not wedged: recovery is clean and commits resume.
+            self.assertEqual(st.recover_transactions(root), [])
+            st.commit_transaction(
+                root,
+                json_files={"current_plan.json": {"plan_revision": 3, "value": "next"}},
+                expected_revisions={"current_plan.json": ("plan_revision", 2)},
+            )
+            plan = json.loads((root / "current_plan.json").read_text(encoding="utf-8"))
+            self.assertEqual(plan["value"], "next")
+
+    def test_oversized_postimage_fails_without_wedging_the_journal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # The cap is patched rather than met with a real 64 MB payload: the
+            # check reads the module constant, so the boundary is the same one.
+            with mock.patch.object(st, "MAX_TRANSACTION_BYTES", 1024):
+                with self.assertRaises(st.TransactionError) as ctx:
+                    st.commit_transaction(
+                        root, text_files={"iterations.jsonl": "x" * 2048}
+                    )
+            self.assertIn("exceeds", str(ctx.exception))
+            self.assertNotIsInstance(ctx.exception, st.TransactionQuarantined)
+            self.assertFalse((root / st.TRANSACTION_DIRNAME).exists())
+            self.assertFalse((root / "iterations.jsonl").exists())
+
+            st.commit_transaction(root, json_files={"small.json": {"ok": True}})
+            self.assertTrue(
+                json.loads((root / "small.json").read_text(encoding="utf-8"))["ok"]
+            )
+
+    def test_a_ledger_past_the_read_cap_fails_before_the_journal_is_armed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            row = json.dumps({"event_id": "seed", "pad": "x" * 4096}, sort_keys=True)
+            count = (st.MAX_TRANSACTION_BYTES // (len(row) + 1)) + 2
+            (root / "events.jsonl").write_text(
+                "".join(f"{row}\n" for _ in range(count)), encoding="utf-8"
+            )
+
+            with self.assertRaises(st.TransactionError):
+                st.commit_transaction(
+                    root, jsonl_appends={"events.jsonl": [{"event_id": "evt-1"}]}
+                )
+            self.assertFalse((root / st.TRANSACTION_DIRNAME).exists())
+
     def test_binary_postimage_recovers_without_text_normalization(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

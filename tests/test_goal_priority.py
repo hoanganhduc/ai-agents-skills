@@ -269,7 +269,7 @@ class GoalPriorityTests(unittest.TestCase):
                     ],
                 },
             )
-            block = gp.goal_priority_brief_block(run_dir)
+            block = gp.goal_priority_prompt_addon(run_dir)
             self.assertIn("forbid", block.lower())
             self.assertIn("A1", block)
 
@@ -280,7 +280,7 @@ class GoalPriorityTests(unittest.TestCase):
                 run_dir,
                 {"enabled": True, "panel_rank_by_goal_ev": False, "primary_campaign": "main"},
             )
-            block = gp.goal_priority_brief_block(run_dir)
+            block = gp.goal_priority_prompt_addon(run_dir)
             self.assertIn("goal_priority", block)
             self.assertNotIn("Rank candidate", block)
 
@@ -604,3 +604,58 @@ class GoalPriorityHardSteerTests(unittest.TestCase):
             out = gp.apply_hard_path_discipline(run_dir)
             self.assertTrue(out.get("applied"), out)
             self.assertIn("k3", out.get("path", ""))
+
+
+class IterationLedgerRotationTests(unittest.TestCase):
+    """Every ledger reader spans rotated shards, in record order."""
+
+    def test_readers_span_rotated_shards_in_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            rows = [
+                {"iteration": index, "decision": "continue", "mode": "bounded-research"}
+                for index in range(1, 8)
+            ]
+            for name, chunk in (
+                ("iterations.1.jsonl", rows[:3]),
+                ("iterations.2.jsonl", rows[3:5]),
+                ("iterations.jsonl", rows[5:]),
+            ):
+                (run_dir / name).write_text(
+                    "".join(json.dumps(row, sort_keys=True) + "\n" for row in chunk),
+                    encoding="utf-8",
+                )
+            # A double-digit shard must not sort before a single-digit one.
+            (run_dir / "iterations.10.jsonl").write_text("", encoding="utf-8")
+
+            ordered = [path.name for path in gp.iteration_ledger_paths(run_dir)]
+            self.assertEqual(
+                ordered,
+                [
+                    "iterations.1.jsonl",
+                    "iterations.2.jsonl",
+                    "iterations.10.jsonl",
+                    "iterations.jsonl",
+                ],
+            )
+            self.assertEqual(
+                [row["iteration"] for row in gp.read_iterations_jsonl(run_dir)],
+                [1, 2, 3, 4, 5, 6, 7],
+            )
+            self.assertEqual(
+                [row["iteration"] for row in rt.read_iterations(run_dir / "iterations.jsonl")],
+                [1, 2, 3, 4, 5, 6, 7],
+            )
+
+    def test_an_unrotated_ledger_reads_exactly_as_before(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            self.assertEqual(gp.read_iterations_jsonl(run_dir), [])
+            self.assertEqual(rt.read_iterations(run_dir / "iterations.jsonl"), [])
+            (run_dir / "iterations.jsonl").write_text(
+                json.dumps({"iteration": 1}, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            self.assertEqual(gp.read_iterations_jsonl(run_dir), [{"iteration": 1}])
+            self.assertEqual(
+                rt.read_iterations(run_dir / "iterations.jsonl"), [{"iteration": 1}]
+            )

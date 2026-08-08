@@ -27,6 +27,7 @@ if str(PACK_DIR) not in sys.path:
 
 # Local imports (same directory)
 from apply_force_loop_defaults import (  # noqa: E402
+    apply_compute_policy,
     apply_defaults,
     verify_effective,
 )
@@ -42,6 +43,7 @@ from force_loop_process import (  # noqa: E402
     systemd_user_available,
 )
 from load_loop_env import (  # noqa: E402
+    COMPUTE_LANE_KEYS,
     EnvLoadError,
     apply_to_environ,
     load_env_file,
@@ -50,12 +52,15 @@ from load_loop_env import (  # noqa: E402
 
 COMPUTE_SECRETS_ENV = "AAS_COMPUTE_SECRETS_FILE"
 POLICY_FILE_ENV = "AAS_FORCE_LOOP_POLICY_FILE"
+SECRETS_PROJECTION_ENV = "AAS_FORCE_LOOP_SECRETS_PROJECTED"
 COMPUTE_SECRET_KEYS = frozenset(
     {
         "HCLOUD_TOKEN",
         "HCLOUD_SSH_KEYS",
         "KAGGLE_API_TOKEN",
         "KAGGLE_CONFIG_DIR",
+        "MODAL_TOKEN_ID",
+        "MODAL_TOKEN_SECRET",
     }
 )
 PROVIDER_SECRETS_ENV = "AAS_PROVIDER_SECRETS_FILE"
@@ -83,7 +88,9 @@ PROVIDER_SECRET_KEYS = frozenset(
 )
 PROVIDER_KEY_MAP: dict[str, frozenset[str]] = {
     "anthropic": frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}),
+    "antigravity": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
     "claude": frozenset({"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}),
+    "codex": frozenset({"OPENAI_API_KEY"}),
     "copilot": frozenset({"COPILOT_GITHUB_TOKEN", "COPILOT_PROVIDER_API_KEY", "COPILOT_PROVIDER_BEARER_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}),
     "deepseek": frozenset({"DEEPSEEK_API_KEY"}),
     "gemini": frozenset({"GEMINI_API_KEY", "GOOGLE_API_KEY"}),
@@ -95,16 +102,11 @@ PROVIDER_KEY_MAP: dict[str, frozenset[str]] = {
     "openai": frozenset({"OPENAI_API_KEY"}),
     "opencode": frozenset({"OPENCODE_API_KEY"}),
 }
-COMPUTE_LANE_KEYS: dict[str, frozenset[str]] = {
-    "hetzner": frozenset({"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS"}),
-    "kaggle": frozenset({"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}),
-    "modal": frozenset({"MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"}),
-}
 BASE_ENV_KEYS = frozenset(
     {
         "AAS_RUNTIME_PYTHON", "AAS_RUNTIME_ROOT", "AAS_RUNTIME_WORKSPACE",
         "AAS_ARL_BROKER_SOCKET", "AAS_ARL_BROKER_TOKEN", "AAS_ARL_COMPUTE_PROXY",
-        "AAS_REMOTE_STRICT_NOTIFY_CHANNEL", "REMOTE_BRIDGE_SECRETS_FILE",
+        "AAS_REMOTE_STRICT_NOTIFY_CHANNEL",
         "AUTOLOOP_DISABLE", "CLAUDE_CONFIG_DIR", "CODEWHALE_HOME", "CODEX_HOME",
         "GEMINI_CONFIG_DIR", "GROK_CONFIG_DIR", "HOME", "KIMI_CONFIG_DIR",
         "LANG", "LC_ALL", "LOGNAME", "OPENCODE_CONFIG_DIR", "TZ", "USER",
@@ -146,6 +148,7 @@ SYSTEMD_ENV_FIXED_KEYS = frozenset(
         "RUNTIME_PY",
         "SHELL",
         "SUPERVISOR",
+        "SYNC_PANEL_PY",
         "TZ",
         "USER",
         "VIRTUAL_ENV",
@@ -171,6 +174,9 @@ SYSTEMD_CLIENT_ENV_KEYS = frozenset(
 )
 SYSTEMD_CLIENT_ENV_PREFIXES = ("LC_", "SYSTEMD_")
 SYSTEMD_SAFE_PATH = re.compile(r"/[A-Za-z0-9_./-]+\Z")
+# DRIVE_EXTRA_ARGS crosses into the supervisor as one space-joined string that
+# bash re-splits and expands, so only word-splitting-stable characters pass.
+UNSAFE_DRIVE_EXTRA = re.compile(r"[^A-Za-z0-9_@%+=:,./-]")
 
 
 def _python() -> str:
@@ -187,6 +193,37 @@ def _run_runtime(args: list[str], *, env: dict[str, str] | None = None) -> int:
     return int(proc.returncode)
 
 
+def _run_runtime_json(
+    args: list[str], *, env: dict[str, str] | None = None
+) -> tuple[int, dict[str, Any]]:
+    """Run a runtime command and return its exit status with its JSON report.
+
+    The report is advisory: an unparsable payload still yields the exit status,
+    so a caller never fails only because the runtime changed its output shape.
+    """
+
+    cmd = [_python(), str(_runtime_py()), *args]
+    try:
+        proc = subprocess.run(
+            cmd,
+            env=env or os.environ.copy(),
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return 1, {}
+    if proc.stdout:
+        sys.stdout.write(proc.stdout)
+    if proc.stderr:
+        sys.stderr.write(proc.stderr)
+    try:
+        report = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        report = {}
+    return int(proc.returncode), report if isinstance(report, dict) else {}
+
+
 def _policy_file_from_args(args: argparse.Namespace) -> Path:
     value = str(getattr(args, "policy_file", None) or os.environ.get(POLICY_FILE_ENV) or "")
     if not value:
@@ -201,13 +238,17 @@ def _policy_file_from_args(args: argparse.Namespace) -> Path:
 
 def cmd_apply_defaults(args: argparse.Namespace) -> int:
     policy_file = _policy_file_from_args(args)
-    result = apply_defaults(
-        Path(args.loop),
-        profile=args.profile,
-        research_title=args.research_title,
-        backup=not args.no_backup,
-        policy_file=policy_file,
-    )
+    try:
+        result = apply_defaults(
+            Path(args.loop),
+            profile=args.profile,
+            research_title=args.research_title,
+            backup=not args.no_backup,
+            policy_file=policy_file,
+        )
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 2
     print(json.dumps(result, indent=2))
     return 0 if result.get("ok") else 1
 
@@ -215,16 +256,17 @@ def cmd_apply_defaults(args: argparse.Namespace) -> int:
 def cmd_bootstrap(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else loop.parent
+    policy_file = _policy_file_from_args(args)
     loop.mkdir(parents=True, exist_ok=True)
 
     need_init = not (loop / "loop_state.json").is_file()
     if need_init:
-        if not args.goal:
+        if not (args.goal and args.success_criteria):
             print(
                 json.dumps(
                     {
                         "ok": False,
-                        "error": "loop missing; pass --goal (and optional --success-criteria) for init",
+                        "error": "loop missing; pass both --goal and --success-criteria for init",
                     },
                     indent=2,
                 )
@@ -236,35 +278,47 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             str(loop),
             "--goal",
             args.goal,
+            "--success-criteria",
+            args.success_criteria,
             "--goal-focus-mode",
             "enforce",
         ]
-        if args.success_criteria:
-            init_args.extend(["--success-criteria", args.success_criteria])
         if args.profile == "formal":
             init_args.extend(["--formal-policy", "on"])
             if args.formal_project:
                 init_args.extend(["--formal-project", args.formal_project])
+        if not (loop / "compute_policy.json").is_file():
+            # Goal Focus resolves current_plan.compute_policy during init; a pin
+            # written afterwards leaves the plan allowlist empty and permanently
+            # fails the plan compute-policy check.
+            try:
+                apply_compute_policy(loop, args.profile)
+            except ValueError as exc:
+                print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+                return 2
         rc = _run_runtime(init_args)
         if rc != 0:
             print(json.dumps({"ok": False, "error": "init failed", "rc": rc}, indent=2))
             return rc
 
-    policy_file = _policy_file_from_args(args)
-    result = apply_defaults(
-        loop,
-        profile=args.profile,
-        research_title=args.research_title,
-        backup=not args.no_backup,
-        policy_file=policy_file,
-    )
+    try:
+        result = apply_defaults(
+            loop,
+            profile=args.profile,
+            research_title=args.research_title,
+            backup=not args.no_backup,
+            policy_file=policy_file,
+        )
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 2
     smoke = _smoke_checks(loop, args.profile, root=root, live=False, policy_file=policy_file)
     out = {
         "ok": bool(result.get("ok") and smoke.get("ok")),
         "bootstrap": result,
         "smoke": smoke,
         "next": [
-            f"force-loop start --loop {loop} --root {root}",
+            f"force-loop start --loop {loop} --root {root} --policy-file {policy_file}",
         ],
     }
     print(json.dumps(out, indent=2))
@@ -411,11 +465,18 @@ def _load_start_env(loop: Path, policy_file: Path) -> dict[str, str]:
     return env
 
 
-def _provider_keys(provider: str | None) -> frozenset[str]:
+def _provider_name(provider: str | None) -> str:
+    """Return the bare provider name, dropping any ``name:model`` suffix."""
     value = str(provider or "").strip().lower()
     if not value:
+        return ""
+    return re.split(r"[:/]", value, maxsplit=1)[0]
+
+
+def _provider_keys(provider: str | None) -> frozenset[str]:
+    name = _provider_name(provider)
+    if not name:
         return frozenset()
-    name = re.split(r"[:/]", value, maxsplit=1)[0]
     return PROVIDER_KEY_MAP.get(name, frozenset())
 
 
@@ -432,6 +493,39 @@ def _compute_keys(policy: dict[str, str]) -> frozenset[str]:
     return frozenset(selected)
 
 
+def _projected_credentials(selected: frozenset[str]) -> dict[str, str]:
+    """Return the selected subset of what run_force_loop.ps1 already loaded.
+
+    The native Windows launcher owns credential reading, so it publishes the
+    key names it exported and Python admits nothing else: an ambient token that
+    the launcher's scrub missed cannot pose as a projected credential.
+    """
+    if SECRETS_PROJECTION_ENV not in os.environ:
+        raise EnvLoadError(
+            "Windows credentials must be projected by run_force_loop.ps1"
+        )
+    # An empty manifest means the launcher ran and the pointer file carried
+    # nothing for the selected lanes/provider, which is what POSIX does too;
+    # an absent manifest means the launcher never ran.
+    names = [
+        name
+        for name in str(os.environ[SECRETS_PROJECTION_ENV]).strip().split(",")
+        if name
+    ]
+    if names != sorted(set(names)):
+        raise EnvLoadError("projected credential manifest must be sorted and unique")
+    known = COMPUTE_SECRET_KEYS | PROVIDER_SECRET_KEYS
+    values: dict[str, str] = {}
+    for name in names:
+        if name not in known:
+            raise EnvLoadError("projected credential manifest names an unsupported key")
+        if name not in os.environ:
+            raise EnvLoadError("projected credential manifest is missing a declared key")
+        if name in selected:
+            values[name] = str(os.environ[name])
+    return values
+
+
 def _load_selected_credentials(
     env: dict[str, str],
     *,
@@ -440,22 +534,35 @@ def _load_selected_credentials(
     """Load only policy/provider-selected credentials after argv binding."""
     for key in COMPUTE_SECRET_KEYS | PROVIDER_SECRET_KEYS:
         env.pop(key, None)
+    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+        try:
+            selected = _compute_keys(env) | _provider_keys(provider)
+            if provider and _provider_name(provider) not in PROVIDER_KEY_MAP:
+                raise EnvLoadError("selected provider has no credential projection contract")
+            if selected:
+                apply_to_environ(_projected_credentials(selected), env)
+        except EnvLoadError as exc:
+            raise SystemExit(f"env load failed: {exc}") from exc
+        return env
     compute_pointer = str(os.environ.get(COMPUTE_SECRETS_ENV) or "")
     provider_pointer = str(os.environ.get(PROVIDER_SECRETS_ENV) or "")
     try:
         compute_keys = _compute_keys(env)
         provider_keys = _provider_keys(provider)
-        if provider and not provider_keys:
+        if provider and _provider_name(provider) not in PROVIDER_KEY_MAP:
             raise EnvLoadError("selected provider has no credential projection contract")
         if compute_pointer and not compute_keys:
             raise EnvLoadError("compute secret pointer requires policy-selected compute lanes")
         if provider_pointer and not provider_keys:
             raise EnvLoadError("provider secret pointer requires an explicit supported provider")
+        # The managed loader rejects a whole file that carries any key outside
+        # ``allowed_keys``; admit the full lane/provider vocabulary there and
+        # narrow the projection to the selected subset below.
         if compute_keys:
             pointer_env = {COMPUTE_SECRETS_ENV: compute_pointer}
             loaded = _load_managed_secrets(
                 COMPUTE_SECRETS_ENV,
-                allowed_keys=compute_keys,
+                allowed_keys=COMPUTE_SECRET_KEYS,
                 environ=pointer_env,
             )
             apply_to_environ({key: value for key, value in loaded.items() if key in compute_keys}, env)
@@ -463,7 +570,7 @@ def _load_selected_credentials(
             pointer_env = {PROVIDER_SECRETS_ENV: provider_pointer}
             loaded = _load_managed_secrets(
                 PROVIDER_SECRETS_ENV,
-                allowed_keys=provider_keys,
+                allowed_keys=PROVIDER_SECRET_KEYS,
                 environ=pointer_env,
             )
             apply_to_environ({key: value for key, value in loaded.items() if key in provider_keys}, env)
@@ -651,6 +758,28 @@ def _systemd_client_environment(env: dict[str, str]) -> dict[str, str]:
     }
 
 
+def _write_pinned_failover(loop: Path, provider: str) -> Path:
+    """Persist a single-primary failover config so rotation cannot override --provider."""
+    source = loop / "failover.json"
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"failover config is unreadable: {exc}") from exc
+    if not isinstance(data, dict):
+        raise SystemExit("failover config must be a JSON object")
+    data = dict(data)
+    data["primary_order"] = [provider]
+    data.pop("primary_fallback", None)
+    data["max_quota_waits_per_primary"] = int(data.get("max_quota_waits_per_primary", 3) or 3)
+    destination = loop / "driver" / "failover.pinned.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, destination)
+    return destination
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else loop.parent
@@ -658,6 +787,23 @@ def cmd_start(args: argparse.Namespace) -> int:
     if not loop.is_dir():
         print(json.dumps({"ok": False, "error": f"loop not found: {loop}"}, indent=2))
         return 2
+
+    # A second driver on one loop tree races every state transaction; refuse
+    # unless the operator has confirmed the survivors are stale.
+    running = status_snapshot(loop)
+    if (running.get("pidfile_alive") or running.get("matched_pids")) and not args.force:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "loop already has live driver processes; run stop/replace or pass --force",
+                    "process": running,
+                },
+                indent=2,
+                default=str,
+            )
+        )
+        return 10
 
     # Ensure pins present before start.
     errors = verify_effective(loop, args.profile, policy_file)
@@ -695,8 +841,6 @@ def cmd_start(args: argparse.Namespace) -> int:
             env["AAS_RUNTIME_ROOT"] = str(candidate)
 
     extra: list[str] = []
-    if args.provider:
-        extra.extend(["--provider", args.provider])
     if args.panel:
         extra.extend(["--panel", args.panel])
     if args.profile == "formal":
@@ -711,15 +855,41 @@ def cmd_start(args: argparse.Namespace) -> int:
         loop_dir=loop,
         project_root=root,
     )
-    if supervisor and not args.drive_only:
+    # The supervisor is only a supervisor when it has a failover config; without
+    # one it exits 2 before any drive iteration, so fall back to direct drive.
+    use_supervisor = bool(
+        supervisor and not args.drive_only and (loop / "failover.json").is_file()
+    )
+    if use_supervisor:
         argv = supervisor
         env["LOOP_DIR"] = str(loop)
         env["PROJECT_ROOT"] = str(root)
+        env["RUNTIME_PY"] = str(_runtime_py())
+        env["SYNC_PANEL_PY"] = str(RUNTIME_PARENT / "sync_panel_exclude.py")
+        if args.provider:
+            # The supervisor owns provider selection; a --provider on the drive
+            # argv would silently outrank every rotation it performs.
+            env["FAILOVER_JSON"] = str(_write_pinned_failover(loop, args.provider))
         if extra:
             # Supervisor reads DRIVE_EXTRA_ARGS as shell-ish; pass via env space-joined
             # only safe flags we control (no secrets).
+            rejected = [item for item in extra if UNSAFE_DRIVE_EXTRA.search(item)]
+            if rejected:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "drive extras must survive supervisor word splitting",
+                            "rejected": rejected,
+                        },
+                        indent=2,
+                    )
+                )
+                return 2
             env["DRIVE_EXTRA_ARGS"] = " ".join(extra)
     else:
+        if args.provider:
+            extra[:0] = ["--provider", args.provider]
         argv = build_drive_command(
             runtime_py=_runtime_py(),
             loop_dir=loop,
@@ -732,6 +902,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             {
                 "ok": True,
                 "backend": backend,
+                "failover_supervisor": use_supervisor,
                 "argv_preview": argv[:6] + (["…"] if len(argv) > 6 else []),
                 "loop": str(loop),
             },
@@ -749,19 +920,34 @@ def cmd_start(args: argparse.Namespace) -> int:
         return 2
     try:
         binding = bind_child_command(argv)
-    except ValueError as exc:
+    except (ValueError, OSError) as exc:
         print(json.dumps({"ok": False, "error": f"child binding failed: {exc}"}, indent=2))
         return 2
     try:
         _load_selected_credentials(env, provider=args.provider)
         if backend == "foreground":
-            return run_foreground(
+            rc = run_foreground(
                 binding.argv, loop_dir=loop, env=env, pass_fds=binding.pass_fds
             )
-        if backend == "posix_detach":
-            return run_posix_detach(
+        elif backend == "posix_detach":
+            rc = run_posix_detach(
                 binding.argv, loop_dir=loop, env=env, pass_fds=binding.pass_fds
             )
+        else:
+            rc = None
+        if rc is not None:
+            if rc == 10:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "supervisor lock is held by another driver on this loop",
+                            "lock": str(loop / "driver" / "supervisor.lock"),
+                        },
+                        indent=2,
+                    )
+                )
+            return rc
     finally:
         binding.close()
     if backend == "systemd_user":
@@ -880,8 +1066,21 @@ def _start_systemd_user(
 def cmd_stop(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
     stopped = stop_loop_processes(loop)
-    print(json.dumps({"ok": True, "stopped": stopped, "loop": str(loop)}, indent=2))
-    return 0
+    snap = status_snapshot(loop)
+    survivors = bool(snap.get("pidfile_alive") or snap.get("matched_pids"))
+    print(
+        json.dumps(
+            {
+                "ok": not survivors,
+                "stopped": stopped,
+                "loop": str(loop),
+                "process": snap,
+            },
+            indent=2,
+            default=str,
+        )
+    )
+    return 1 if survivors else 0
 
 
 def cmd_replace(args: argparse.Namespace) -> int:
@@ -931,13 +1130,16 @@ def cmd_drain(args: argparse.Namespace) -> int:
     actions: list[dict[str, Any]] = []
 
     def _gf(extra: list[str]) -> dict[str, Any]:
-        proc = subprocess.run(
-            [_python(), str(_runtime_py()), "goal-focus", *extra, "--dir", str(loop)],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                [_python(), str(_runtime_py()), "goal-focus", *extra, "--dir", str(loop)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return {"argv": extra, "rc": 1, "result": {"status": "failed", "error": str(exc)}}
         body: Any
         try:
             body = json.loads(proc.stdout) if proc.stdout.strip() else {"stdout": proc.stdout}
@@ -978,8 +1180,50 @@ def cmd_drain(args: argparse.Namespace) -> int:
             }
         )
 
-    print(json.dumps({"ok": True, "actions": actions, "process": snap}, indent=2, default=str))
-    return 0
+    # `drain` is a recovery command: a failed recover-* leaves the loop stuck,
+    # so its exit status must follow the recovery calls, not the wrapper.
+    recovery_ok = all(
+        int(action.get("rc", 0)) == 0
+        for action in actions
+        if str((action.get("argv") or [""])[0]).startswith("recover-")
+    )
+    print(
+        json.dumps(
+            {"ok": recovery_ok, "actions": actions, "process": snap},
+            indent=2,
+            default=str,
+        )
+    )
+    return 0 if recovery_ok else 1
+
+
+def _goal_focus_validate_errors(loop: Path) -> list[str]:
+    """Run `goal-focus validate` and return its errors, prefixed for the caller."""
+    try:
+        proc = subprocess.run(
+            [_python(), str(_runtime_py()), "goal-focus", "validate", "--dir", str(loop)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return [f"goal-focus: validate could not run: {exc}"]
+    if proc.returncode == 0:
+        return []
+    body: Any = {}
+    try:
+        body = json.loads(proc.stdout) if proc.stdout.strip() else {}
+    except json.JSONDecodeError:
+        body = {}
+    detail: list[str] = []
+    if isinstance(body, dict):
+        detail = [str(item) for item in (body.get("errors") or [])]
+        if not detail and body.get("error"):
+            detail = [str(body["error"])]
+    if not detail:
+        detail = [f"validate exited {proc.returncode}"]
+    return [f"goal-focus: {item}" for item in detail]
 
 
 def _smoke_checks(
@@ -991,12 +1235,25 @@ def _smoke_checks(
     policy_file: Path | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
+    warnings: list[str] = []
     if not _runtime_py().is_file():
         errors.append(f"runtime missing: {_runtime_py()}")
     defaults_errors = (
         verify_effective(loop, profile, policy_file) if loop.is_dir() else ["loop missing"]
     )
     errors.extend(defaults_errors)
+
+    # Pins can all be present while Goal Focus still refuses the plan (mode
+    # authority, compute allowlist); a smoke that skips this reports ok on a
+    # loop whose first gate call fails.
+    if loop.is_dir() and (loop / "loop_state.json").is_file() and _runtime_py().is_file():
+        errors.extend(_goal_focus_validate_errors(loop))
+
+    if str(os.environ.get("AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS") or "").strip().lower() != "allow":
+        warnings.append(
+            "AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS is not 'allow'; "
+            "external notify delivery stays blocked for this loop"
+        )
 
     # Env loader self-check
     try:
@@ -1015,6 +1272,7 @@ def _smoke_checks(
     out: dict[str, Any] = {
         "ok": not errors,
         "errors": errors,
+        "warnings": warnings,
         "default_backend": backend,
         "systemd_user_available": systemd_user_available(),
         "platform": sys.platform,
@@ -1022,9 +1280,18 @@ def _smoke_checks(
         "loop": str(loop),
     }
     if live and root is not None and not errors:
-        # Optional: runtime selftest
-        rc = _run_runtime(["selftest"])
+        # Optional: runtime selftest.  A green rc can still hide skipped drive
+        # checks, so surface that verdict instead of only the exit status.
+        rc, report = _run_runtime_json(["selftest"])
         out["runtime_selftest_rc"] = rc
+        drive_checks = str(report.get("drive_checks") or "")
+        if drive_checks:
+            out["runtime_selftest_drive_checks"] = drive_checks
+        if drive_checks == "skipped":
+            out["warnings"] = list(out["warnings"]) + [
+                "runtime selftest skipped its driver drive checks: "
+                + (str(report.get("drive_skip_reason") or "no reason reported"))
+            ]
         if rc != 0:
             out["ok"] = False
             out["errors"] = list(out["errors"]) + ["runtime selftest failed"]
@@ -1068,8 +1335,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     b = sub.add_parser("bootstrap", help="init if needed + apply defaults + smoke")
     add_loop(b)
-    b.add_argument("--goal", default=None)
-    b.add_argument("--success-criteria", default=None)
+    b.add_argument("--goal", default=None, help="required when the loop is not initialised yet")
+    b.add_argument(
+        "--success-criteria",
+        default=None,
+        help="required when the loop is not initialised yet",
+    )
     b.add_argument("--research-title", default=None)
     b.add_argument("--formal-project", default=None)
     b.add_argument("--no-backup", action="store_true")
@@ -1095,6 +1366,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="pass --formal-typecheck when profile=formal (default: on)",
     )
     s.add_argument("--skip-defaults-check", action="store_true")
+    s.add_argument(
+        "--force",
+        action="store_true",
+        help="start even when live driver processes already match this loop",
+    )
     s.add_argument("drive_extra", nargs="*", help="extra args after -- passed to drive")
     s.set_defaults(func=cmd_start)
 
@@ -1115,6 +1391,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
     )
     r.add_argument("--skip-defaults-check", action="store_true")
+    r.add_argument("--force", action="store_true")
     r.add_argument("drive_extra", nargs="*")
     r.set_defaults(func=cmd_replace)
 

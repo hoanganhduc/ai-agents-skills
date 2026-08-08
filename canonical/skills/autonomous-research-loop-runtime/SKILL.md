@@ -116,19 +116,24 @@ prefer the installed **force-loop kit** first. It applies notify ON, Goal Focus
 **enforce**, and goal_priority **hard**, and works on Linux, macOS, Windows, and
 WSL without requiring systemd:
 
+Every command that writes or reads pins needs the host policy file, either as
+`--policy-file ABS_PATH` or via `AAS_FORCE_LOOP_POLICY_FILE`:
+
 ```bash
 bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
-  bootstrap --loop research/run --root "$PWD" --profile formal --goal "..."
+  bootstrap --loop research/run --root "$PWD" --profile formal --goal "..." \
+  --policy-file /abs/path/host-policy.env
 bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
-  start --loop research/run --root "$PWD" --provider claude
+  start --loop research/run --root "$PWD" --provider claude \
+  --policy-file /abs/path/host-policy.env
 ```
 
-Windows (PowerShell only):
+Windows (PowerShell only; the same policy file is read by `Load-LoopEnv.ps1`):
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1 bootstrap --loop research\run --root $PWD --profile formal --goal "..."
+& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1 bootstrap --loop research\run --root $PWD --profile formal --goal "..." --policy-file C:\abs\path\host-policy.env
 ```
 
 Pack docs: `force-loop/README.md`, `OPERATOR_RUNBOOK.md`. Discovery template:
@@ -631,8 +636,9 @@ apply, reconcile, validate, and only then restart.
 
 File `{loop}/goal_priority.json` or `loop_state.standing_orders.goal_priority`.
 Executable v1 defaults are `"enabled": false` and
-`"discipline_mode": "soft"`. Explicit advise/hard mode adds goal text and
-bare-`advance` warnings. Opt out with `"enabled": false` or
+`"discipline_mode": "soft"`. Explicit advise/hard mode adds bare-`advance`
+warnings, plus v1 goal text on loops that are not Goal Focus `enforce`. Opt out
+with `"enabled": false` or
 `AAS_AUTOLOOP_GOAL_PRIORITY=off`; env `on` forces enable only when a config
 object exists.
 

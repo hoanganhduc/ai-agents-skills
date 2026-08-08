@@ -1343,6 +1343,16 @@
           "mode": "0644"
         },
         {
+          "source": "skills/autonomous-research-loop-runtime/force-loop/Load-LoopEnv.ps1",
+          "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/Load-LoopEnv.ps1",
+          "platforms": [
+            "windows"
+          ],
+          "type": "text",
+          "newline": "crlf",
+          "mode": "0644"
+        },
+        {
           "source": "skills/autonomous-research-loop-runtime/force-loop/README.md",
           "target": "workspace/skills/autonomous-research-loop-runtime/force-loop/README.md",
           "platforms": [

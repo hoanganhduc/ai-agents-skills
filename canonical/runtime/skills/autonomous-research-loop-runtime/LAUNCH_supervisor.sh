@@ -44,22 +44,52 @@ stop_prior() {
   fi
   # Kill drive processes for this loop only.
   LOOP_DIR="$LOOP_DIR" python3 - <<'PY'
-import os, signal, time
+import os, signal, subprocess, time
 from pathlib import Path
 loop = os.environ["LOOP_DIR"]
 needle = f"drive --dir {loop}"
-pids = []
-for proc in Path("/proc").iterdir():
-    if not proc.name.isdigit():
-        continue
+
+
+def cmdlines():
+    """Return (pid, cmdline) pairs from /proc, or from ps where /proc is absent."""
+    proc_root = Path("/proc")
+    if proc_root.is_dir():
+        pairs = []
+        for proc in proc_root.iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                raw = (proc / "cmdline").read_bytes()
+            except Exception:
+                continue
+            pairs.append((int(proc.name), raw.replace(b"\0", b" ").decode(errors="ignore")))
+        return pairs
+    # macOS/BSD and some containers carry no procfs.
     try:
-        cmd = (proc / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="ignore")
+        out = subprocess.run(
+            ["ps", "-ax", "-o", "pid=,command="],
+            capture_output=True, text=True, timeout=15, check=False,
+        )
     except Exception:
-        continue
+        return []
+    pairs = []
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        head, _, rest = line.partition(" ")
+        if not head.isdigit():
+            continue
+        pairs.append((int(head), rest.strip()))
+    return pairs
+
+
+pids = []
+for pid, cmd in cmdlines():
     if "autonomous_research_loop_runtime.py" in cmd and needle in cmd:
-        pids.append(int(proc.name))
+        pids.append(pid)
     if "arl_drive_supervisor.sh" in cmd and loop in cmd:
-        pids.append(int(proc.name))
+        pids.append(pid)
 for pid in sorted(set(pids)):
     print(f"LAUNCH_supervisor: stopping pid {pid}")
     try:
@@ -80,13 +110,18 @@ case "$MODE" in
   start) ;;
   replace)
     stop_prior
-    # Wait briefly for lock release
-    for _ in 1 2 3 4 5; do
-      if ! fuser "$LOCK" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 1
-    done
+    # Wait briefly for lock release. fuser(1) is util-linux/psmisc, so skip the
+    # wait rather than treat "not installed" as "lock already free".
+    if command -v fuser >/dev/null 2>&1; then
+      for _ in 1 2 3 4 5; do
+        if ! fuser "$LOCK" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+      done
+    else
+      sleep 2
+    fi
     ;;
   *)
     echo "LAUNCH_supervisor: unknown mode $MODE (use start|replace)" >&2
@@ -96,7 +131,29 @@ esac
 
 # Exclusive lock held by a long-lived wrapper so start refuses concurrent launch.
 exec 9>"$LOCK"
-if ! flock -n 9; then
+# No flock(1) on macOS/BSD: flock(2) on the inherited fd 9 locks the shared open
+# file description, so the lock still belongs to this shell after python3 exits.
+# A locking error that is not contention must not be reported as contention.
+if command -v flock >/dev/null 2>&1; then
+  flock -n 9
+  lock_rc=$?
+else
+  python3 -c '
+import errno, fcntl, sys
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError as exc:
+    if exc.errno in (errno.EACCES, errno.EAGAIN):
+        sys.exit(1)
+    sys.stderr.write(f"LAUNCH_supervisor: cannot lock: {exc}\n")
+    sys.exit(3)
+'
+  lock_rc=$?
+fi
+if [[ "$lock_rc" -eq 3 ]]; then
+  exit 3
+fi
+if [[ "$lock_rc" -ne 0 ]]; then
   echo "LAUNCH_supervisor: lock held at $LOCK (another supervisor running). Use replace." >&2
   exit 10
 fi

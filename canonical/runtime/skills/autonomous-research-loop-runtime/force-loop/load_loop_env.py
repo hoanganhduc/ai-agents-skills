@@ -21,6 +21,19 @@ POLICY_KEYS = frozenset(
 )
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _VALUE_RE = re.compile(r"^[A-Za-z0-9_.,:+/@-]*$")
+COMPUTE_LANE_KEYS: dict[str, frozenset[str]] = {
+    "hetzner": frozenset({"HCLOUD_TOKEN", "HCLOUD_SSH_KEYS"}),
+    "kaggle": frozenset({"KAGGLE_API_TOKEN", "KAGGLE_CONFIG_DIR"}),
+    "modal": frozenset({"MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"}),
+}
+# Comma-separated policy values whose members come from a closed vocabulary.
+# Validating here keeps an unknown lane a parse failure instead of a silent
+# empty credential projection at start time.
+_VALUE_CHOICES: dict[str, frozenset[str]] = {
+    "AAS_FORCE_LOOP_COMPUTE_LANES": frozenset(COMPUTE_LANE_KEYS),
+}
+WINDOWS_PROJECTION_ENV = "AAS_FORCE_LOOP_POLICY_PROJECTED"
+WINDOWS_PROJECTION_SOURCE_ENV = "AAS_FORCE_LOOP_POLICY_SOURCE"
 
 
 class EnvLoadError(ValueError):
@@ -46,8 +59,55 @@ def parse_env_text(
             raise EnvLoadError(f"{source}:{lineno}: duplicate policy key")
         if not value or not _VALUE_RE.fullmatch(value):
             raise EnvLoadError(f"{source}:{lineno}: invalid policy value")
+        choices = _VALUE_CHOICES.get(key)
+        if choices is not None:
+            members = [member.strip().lower() for member in value.split(",")]
+            if not all(members) or any(member not in choices for member in members):
+                raise EnvLoadError(f"{source}:{lineno}: unsupported compute lane")
         out[key] = value
     return out
+
+
+def load_projected_env(
+    *,
+    source_path: Path | None = None,
+    allowed_keys: frozenset[str] = POLICY_KEYS,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Read the policy Load-LoopEnv.ps1 validated and projected into this process.
+
+    Native Windows has no ``O_NOFOLLOW``/``fstat`` equivalent reachable from
+    this module, so the PowerShell loader owns the file checks and hands the
+    result over through a declared, sorted key manifest.  Values are re-parsed
+    here so the strict grammar stays single-sourced.
+    """
+    values = os.environ if environ is None else environ
+    manifest = str(values.get(WINDOWS_PROJECTION_ENV) or "").strip()
+    if not manifest:
+        raise EnvLoadError(
+            "native Windows force-loop policy must be projected by Load-LoopEnv.ps1"
+        )
+    if source_path is not None:
+        declared = str(values.get(WINDOWS_PROJECTION_SOURCE_ENV) or "").strip()
+        if not declared or os.path.normcase(declared) != os.path.normcase(
+            str(Path(os.path.abspath(source_path)))
+        ):
+            raise EnvLoadError("projected force-loop policy came from a different file")
+    names = [name for name in manifest.split(",") if name]
+    if not names or names != sorted(set(names)):
+        raise EnvLoadError("projected force-loop policy manifest must be sorted and unique")
+    lines: list[str] = []
+    for name in names:
+        if name not in allowed_keys:
+            raise EnvLoadError("projected force-loop policy names an unsupported key")
+        if name not in values:
+            raise EnvLoadError("projected force-loop policy is missing a declared key")
+        lines.append(f"{name}={values[name]}")
+    return parse_env_text(
+        "\n".join(lines),
+        source=WINDOWS_PROJECTION_ENV,
+        allowed_keys=allowed_keys,
+    )
 
 
 def _open_directory_nofollow(path: Path) -> int:
@@ -95,7 +155,7 @@ def load_env_file(
         if _within(absolute, blocked):
             raise EnvLoadError("force-loop policy must be outside the loop tree")
     if os.name != "posix":  # pragma: no cover - PowerShell owns native Windows policy loading
-        raise EnvLoadError("native Windows force-loop policy must be loaded by PowerShell")
+        return load_projected_env(source_path=absolute, allowed_keys=allowed_keys)
     parent_fd: int | None = None
     file_fd: int | None = None
     try:
@@ -179,11 +239,15 @@ def apply_to_environ(
 
 
 __all__ = [
+    "COMPUTE_LANE_KEYS",
     "EnvLoadError",
     "MAX_POLICY_BYTES",
     "POLICY_KEYS",
+    "WINDOWS_PROJECTION_ENV",
+    "WINDOWS_PROJECTION_SOURCE_ENV",
     "apply_to_environ",
     "load_env_file",
+    "load_projected_env",
     "merge_env_files",
     "parse_env_text",
 ]

@@ -43,7 +43,7 @@ Merge order: defaults → file → standing_orders (standing wins) → env (enab
 |------|----------|
 | `soft` (default) | v1 soft text + optional fields; no advance-deprecation warn |
 | `advise` | + host warnings for bare `advance`; host local streak; REPLAN text |
-| `hard` | advise + **rewrites** `next_preferred_path` and recovery **Next safe action** when REPLAN_REQUIRED (closed residual targeted, or local streak at cap). **Must not** refuse append or write `loop_state.status` |
+| `hard` | advise + **rewrites** `next_preferred_path` and recovery **Next safe action** when REPLAN_REQUIRED (closed residual targeted, or local streak at cap). **Must not** refuse append or write `loop_state.status`. Under Goal Focus `enforce` the rewrite is not applied and the v1 prompt addon is not injected; only the advise+ warnings and the closed-residual `REPLAN_REQUIRED` warning remain |
 
 Set `"discipline_mode": "soft"|"advise"|"hard"` in `goal_priority.json`.
 Defaults are opt-in: `"enabled": false`, `"discipline_mode": "soft"`.

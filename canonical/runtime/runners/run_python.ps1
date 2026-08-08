@@ -489,7 +489,10 @@ if (
 $env:AAS_RUNTIME_PYTHON = $python
 if ($ResolveOnly) {
     Assert-AasPythonGuard
-    [Console]::Out.WriteLine($python)
+    # The success stream, not the raw console handle: every caller captures
+    # this with `@(& $Runner -ResolveOnly)`, which sees nothing written
+    # straight to the console.
+    Write-Output $python
     exit 0
 }
 
