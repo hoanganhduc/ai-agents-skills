@@ -8016,6 +8016,9 @@ class SelftestContainmentGateTests(unittest.TestCase):
             available, reason = arl.host_primary_containment_status()
         self.assertTrue(available, reason)
 
+    @unittest.skipUnless(
+        os.name == "posix", "the scratch fallback is a POSIX temp-directory rule"
+    )
     def test_probe_scratch_moves_off_a_masked_tmpdir(self) -> None:
         arl = self._runtime()
         with mock.patch.dict(os.environ, {"TMPDIR": "/dev/shm"}), mock.patch.object(
@@ -8029,6 +8032,9 @@ class SelftestContainmentGateTests(unittest.TestCase):
         ):
             self.assertIsNone(arl._containment_scratch_base())
 
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"), "containment masks are Linux-only"
+    )
     def test_a_fully_masked_scratch_base_is_not_reported_as_a_host_verdict(
         self,
     ) -> None:

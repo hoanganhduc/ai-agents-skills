@@ -410,7 +410,11 @@ class ProcessBackendTests(unittest.TestCase):
             root.chmod(0o700)
 
             loose = root / "loose"
-            loose.mkdir(mode=0o775)
+            # ``mkdir(mode=...)`` is masked by the process umask, so a runner
+            # at the usual 022 would create 0755 and never trip the gate the
+            # rest of this test asserts on. ``chmod`` sets the mode outright.
+            loose.mkdir()
+            loose.chmod(0o775)
             script = loose / "child.py"
             script.write_text("x = 1\n", encoding="utf-8")
             script.chmod(0o700)
@@ -1372,6 +1376,19 @@ class PowerShellLaunchTests(unittest.TestCase):
                 "HOME": tmp,
                 "AAS_RUNTIME_PYTHON": sys.executable,
             }
+            # The runner probes the interpreter's version before it resolves,
+            # and a Windows python.exe cannot start without this OS metadata,
+            # so without it the probe fails and the resolver exits 127 with
+            # nothing on the success stream. Same set the credential path in
+            # run_skill.ps1 preserves.
+            for name in (
+                "SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP",
+                "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "LOCALAPPDATA",
+                "APPDATA", "PROGRAMDATA", "SystemDrive", "NUMBER_OF_PROCESSORS",
+            ):
+                value = os.environ.get(name)
+                if value:
+                    env[name] = value
             completed = subprocess.run(
                 [
                     "pwsh",
@@ -1389,8 +1406,11 @@ class PowerShellLaunchTests(unittest.TestCase):
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             captured = observed.read_text(encoding="utf-8").splitlines()
+            # The resolver reports every refusal on the error stream, so carry
+            # it into the failure message: a bare `['0', '']` names no cause.
+            resolver_stderr = completed.stderr
 
-        self.assertEqual(captured, ["1", sys.executable])
+        self.assertEqual(captured, ["1", sys.executable], resolver_stderr)
 
         # A console-handle write would satisfy an interactive eyeball and fail
         # every capture, so keep the emitter itself pinned.
