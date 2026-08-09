@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 import tempfile
+import unittest
+from pathlib import Path
+from typing import Any, Callable
 
 # The autonomous-research-loop runtime rejects any loop or artifact path that
 # crosses a symlink, so tests must hand it a fully resolved directory. On macOS
@@ -76,3 +80,44 @@ def runner_child_env() -> dict[str, str]:
     for key in _SECRET_TRIGGER_KEYS:
         env.pop(key, None)
     return env
+
+
+@functools.lru_cache(maxsize=1)
+def _state_dacl_guard_refusal() -> str:
+    """Return why ``private_path_guard`` refuses a temp state directory, or ``""``.
+
+    The broker guards every state directory with ``private_path_guard``, which
+    denies any ACE outside owner/SYSTEM/Administrators/TrustedInstaller. Whether
+    a ``tempfile`` directory satisfies that is a property of the host, not of
+    the platform: a profile carrying an orphaned ACE from a former domain fails,
+    a clean one passes. Ask the guard itself rather than assuming, so these
+    tests run wherever they can and report the real reason where they cannot.
+    """
+    if os.name != "nt":
+        return ""
+
+    from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
+
+    workspace = str(RUNTIME_SOURCE_ROOT / "workspace")
+    if workspace not in sys.path:
+        sys.path.insert(0, workspace)
+    from research_compute.windows_acl import private_path_guard
+
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "state"
+        probe.mkdir(mode=0o700)
+        try:
+            with private_path_guard(probe, directory=True):
+                pass
+        except OSError as exc:
+            return str(exc) or exc.__class__.__name__
+    return ""
+
+
+def state_dacl_skip() -> Callable[[Any], Any]:
+    """Return a decorator that skips only where the host's ACLs force it."""
+    refusal = _state_dacl_guard_refusal()
+    return unittest.skipIf(
+        bool(refusal),
+        f"runner temp state dirs trip the strict windows_acl gate: {refusal!r}",
+    )

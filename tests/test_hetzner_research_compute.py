@@ -24,6 +24,7 @@ from pathlib import Path
 from unittest import mock
 
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
+from tests import state_dacl_skip
 
 WORKSPACE = RUNTIME_SOURCE_ROOT / "workspace"
 if str(WORKSPACE) not in sys.path:
@@ -212,11 +213,7 @@ def _config_text(tmp: Path, text: str) -> rc_config.BrokerConfig:
     return rc_config.load_config(cfg)
 
 
-_STATE_DACL_SKIP = unittest.skipIf(
-    os.name == "nt",
-    "runner temp state dirs trip the strict windows_acl gate: 'Windows state DACL "
-    "grants unsafe access outside owner/SYSTEM/Administrators/TrustedInstaller'",
-)
+_STATE_DACL_SKIP = state_dacl_skip()
 
 _BUNDLE_POSIX_SKIP = unittest.skipUnless(
     os.name == "posix",
@@ -3134,7 +3131,7 @@ class HetznerDriverTests(unittest.TestCase):
             with self.assertRaises(hetzner_driver.HetznerDriverError, msg=job_id):
                 hetzner_driver._check_server_name(job_id)
 
-    @_STATE_DACL_SKIP
+    @_BUNDLE_POSIX_SKIP
     def test_a_failed_create_releases_the_reservation(self) -> None:
         """A reservation buys a server that now does not exist: hold it and the daily cap
         erodes with every failure."""
@@ -3148,7 +3145,7 @@ class HetznerDriverTests(unittest.TestCase):
                 (self.state / "hetzner-reservations.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
         self.assertEqual([r["state"] for r in rows], ["reconciled"])
 
-    @_STATE_DACL_SKIP
+    @_BUNDLE_POSIX_SKIP
     def test_a_failed_create_keeps_the_reservation_when_a_server_may_exist(self) -> None:
         """`hcloud` can fail after the server was created (a timeout on the response, say).
         Releasing then would uncommit budget for a machine that is billing, so the release
