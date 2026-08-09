@@ -6,6 +6,7 @@ import io
 import importlib.util
 import json
 import os
+import re
 import select
 import shutil
 import subprocess
@@ -3394,6 +3395,229 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
         candidates = text.index('@("python.exe", "python", "py")')
         self.assertGreaterEqual(candidates, 0)
+
+    def test_windows_python_runner_admits_versioned_system_drive_root(self) -> None:
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        text = runner.read_text(encoding="utf-8")
+
+        program_files_branch = text.index("$trustedRoots = @(Get-AasOsTrustedRoots)")
+        drive_branch = text.index("if (Get-AasSystemDrivePythonRoot $absolute) {")
+        self.assertLess(program_files_branch, drive_branch)
+
+        # The drive root grants `Authenticated Users` add-subdirectory, so a
+        # system-drive interpreter is admitted only under the admin-owned
+        # predicate. Program Files keeps the original predicate, which also
+        # trusts the caller's own SID.
+        self.assertIn(
+            "Test-AasProtectedAclChain $absolute -RequireAdminOwned",
+            text[drive_branch:drive_branch + 200],
+        )
+        self.assertIn("if (-not $RequireAdminOwned) {", text)
+        self.assertIn(r"$segments[0] -notmatch '^Python\d+(\.\d+)?$'", text)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_system_drive_root_shape_is_versioned_only(self) -> None:
+        powershell = shutil.which("pwsh") or shutil.which("powershell.exe") or shutil.which("powershell")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        drive = Path(os.environ.get("SystemRoot", "C:\\Windows")).anchor.rstrip("\\")
+        accepted = (
+            f"{drive}\\Python310\\python.exe",
+            f"{drive}\\Python3.13\\python.exe",
+            f"{drive}\\Python313\\Scripts\\python.exe",
+        )
+        rejected = (
+            f"{drive}\\PythonEvil\\python.exe",
+            f"{drive}\\Python\\python.exe",
+            f"{drive}\\Users\\someone\\Python310\\python.exe",
+            f"{drive}\\Python310",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = Path(tmp) / "shape.ps1"
+            escaped_runner = str(runner).replace("'", "''")
+            probes = ";".join(f"'{path}'" for path in accepted + rejected)
+            harness.write_text(
+                "$ErrorActionPreference = 'Stop'\n"
+                f"$text = Get-Content -LiteralPath '{escaped_runner}' -Raw\n"
+                "foreach ($fn in @('Get-AasSystemDriveRoot','Get-AasSystemDrivePythonRoot')) {\n"
+                "    $pattern = '(?ms)^function\\s+' + [regex]::Escape($fn) + '\\s*\\(.*?^\\}'\n"
+                "    $match = [regex]::Match($text, $pattern)\n"
+                "    if (-not $match.Success) { throw \"missing $fn\" }\n"
+                "    $body = $match.Value -replace ('^function\\s+' + [regex]::Escape($fn)), \"function global:$fn\"\n"
+                "    Invoke-Expression $body\n"
+                "}\n"
+                f"foreach ($probe in @({probes})) {{\n"
+                "    $resolved = Get-AasSystemDrivePythonRoot $probe\n"
+                "    Write-Output ($probe + '=' + $(if ($resolved) { 'accepted' } else { 'rejected' }))\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        verdicts = dict(
+            line.rsplit("=", 1)
+            for line in completed.stdout.splitlines()
+            if "=" in line
+        )
+        for path in accepted:
+            self.assertEqual(verdicts.get(path), "accepted", path)
+        for path in rejected:
+            self.assertEqual(verdicts.get(path), "rejected", path)
+
+    def test_credential_allowlist_retains_every_pin_the_python_runner_requires(self) -> None:
+        """A scrubbed pin makes every credential-bearing launch unstartable.
+
+        `run_skill.ps1` sets `AAS_RUNTIME_REQUIRE_TRUSTED` for credential-bearing
+        commands, and `run_python.ps1` then exits 127 unless the interpreter pins
+        are present. Those pins arrive through the same process environment the
+        allowlist has already emptied, so any name the runner requires must be
+        on the list.
+        """
+
+        runners = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners"
+        skill = (runners / "run_skill.ps1").read_text(encoding="utf-8")
+        python = (runners / "run_python.ps1").read_text(encoding="utf-8")
+
+        self.assertIn('$env:AAS_RUNTIME_REQUIRE_TRUSTED = "1"', skill)
+        required = set(re.findall(r"\$env:(AAS_WINDOWS_PYTHON_[A-Z0-9_]+)", python))
+        self.assertEqual(
+            required,
+            {"AAS_WINDOWS_PYTHON_SHA256", "AAS_WINDOWS_PYTHON_SIGNER_THUMBPRINT"},
+        )
+
+        base_list = skill.split("$credentialMetadataNames = ", 1)[1]
+        base_list = base_list.split("foreach ($name in @(", 1)[1].split(")) {", 1)[0]
+        allowlisted = set(re.findall(r'"([A-Za-z_][A-Za-z0-9_()]*)"', base_list))
+        self.assertLessEqual(required, allowlisted, sorted(required - allowlisted))
+
+    def test_windows_python_runner_hex_helper_replaces_dotnet5_only_api(self) -> None:
+        """`[System.Convert]::ToHexString` is .NET 5+, so 5.1 never attests.
+
+        Windows PowerShell 5.1 is the default `powershell.exe`, and every digest
+        comparison in the runner runs through this conversion, so calling the
+        .NET 5 API turned each attestation into a generic bind-and-attest error.
+        """
+
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        text = runner.read_text(encoding="utf-8")
+
+        # The open paren keeps this off the helper's own explanatory comment.
+        self.assertEqual(text.count("[System.Convert]::ToHexString("), 0)
+        self.assertIn("function ConvertTo-AasHexString([byte[]]$Bytes) {", text)
+        self.assertEqual(text.count("ConvertTo-AasHexString ("), 4)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_hex_helper_runs_under_windows_powershell(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell") or shutil.which("pwsh")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        probe = bytes((0x00, 0x0F, 0x10, 0xA5, 0xFF))
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = Path(tmp) / "hex.ps1"
+            escaped_runner = str(runner).replace("'", "''")
+            harness.write_text(
+                "$ErrorActionPreference = 'Stop'\n"
+                f"$text = Get-Content -LiteralPath '{escaped_runner}' -Raw\n"
+                "$pattern = '(?ms)^function\\s+ConvertTo-AasHexString\\s*\\(.*?^\\}'\n"
+                "$match = [regex]::Match($text, $pattern)\n"
+                "if (-not $match.Success) { throw 'missing ConvertTo-AasHexString' }\n"
+                "$body = $match.Value -replace '^function\\s+ConvertTo-AasHexString',"
+                " 'function global:ConvertTo-AasHexString'\n"
+                "Invoke-Expression $body\n"
+                "Write-Output ('major=' + $PSVersionTable.PSVersion.Major)\n"
+                "Write-Output ('hex=' + (ConvertTo-AasHexString"
+                f" ([byte[]]@({','.join(str(byte) for byte in probe)}))))\n"
+                "Write-Output ('dotnet5=' + [bool]([System.Convert].GetMethod("
+                "'ToHexString', [type[]]@([byte[]]))))\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        observed = dict(
+            line.split("=", 1)
+            for line in completed.stdout.splitlines()
+            if "=" in line
+        )
+        self.assertEqual(observed.get("hex"), probe.hex().upper(), completed.stdout)
+        if observed.get("major") == "5":
+            # The helper is load-bearing only because the .NET 5 API is absent
+            # here; if that ever stops being true the test still passes above.
+            self.assertEqual(observed.get("dotnet5"), "False", completed.stdout)
+
+    def test_windows_python_runner_version_probe_carries_no_quote_character(self) -> None:
+        """Windows PowerShell 5.1 drops embedded quotes from native arguments.
+
+        The f-string probe reached Python as `print(f{...}.{...})` under 5.1, so
+        the version gate rejected every interpreter and no credential-bearing
+        command could start on the default shell.
+        """
+
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        text = runner.read_text(encoding="utf-8")
+
+        declaration = re.search(r"^\$versionCode\s*=\s*'(.*)'\s*$", text, re.MULTILINE)
+        self.assertIsNotNone(declaration)
+        probe = declaration.group(1)
+        self.assertNotIn('"', probe)
+        self.assertIn("sys.version_info", probe)
+
+    @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
+    def test_windows_python_runner_version_probe_answers_under_windows_powershell(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell") or shutil.which("pwsh")
+        if not powershell:
+            self.skipTest("PowerShell executable not found")
+        runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
+        with tempfile.TemporaryDirectory() as tmp:
+            harness = Path(tmp) / "version.ps1"
+            escaped_runner = str(runner).replace("'", "''")
+            escaped_python = sys.executable.replace("'", "''")
+            harness.write_text(
+                "$ErrorActionPreference = 'Continue'\n"
+                f"$text = Get-Content -LiteralPath '{escaped_runner}' -Raw\n"
+                "$match = [regex]::Match($text, '(?m)^\\$versionCode\\s*=\\s*''(.*)''\\s*$')\n"
+                "if (-not $match.Success) { throw 'missing $versionCode' }\n"
+                "$versionCode = $match.Groups[1].Value -replace \"''\", \"'\"\n"
+                f"$out = @(& '{escaped_python}' -I -c $versionCode 2>$null)\n"
+                "Write-Output ('major=' + $PSVersionTable.PSVersion.Major)\n"
+                "Write-Output ('exit=' + $LASTEXITCODE)\n"
+                "Write-Output ('reported=' + (($out -join [char]10).Trim()))\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        observed = dict(
+            line.split("=", 1)
+            for line in completed.stdout.splitlines()
+            if "=" in line
+        )
+        self.assertEqual(observed.get("exit"), "0", completed.stdout)
+        expected = f"{sys.version_info[0]}.{sys.version_info[1]}"
+        self.assertEqual(observed.get("reported"), expected, completed.stdout)
+        # The runner accepts the probe only through this exact anchored shape.
+        self.assertRegex(observed.get("reported", ""), r"^[0-9]{1,3}\.[0-9]{1,3}$")
 
     @unittest.skipUnless(os.name == "nt", "Windows PowerShell runner test")
     def test_windows_python_runner_uses_only_first_duplicate_path_command(self) -> None:

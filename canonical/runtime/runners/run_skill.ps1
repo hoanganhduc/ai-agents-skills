@@ -252,6 +252,12 @@ if ($credentialContract) {
         "LOCALAPPDATA", "APPDATA", "PROGRAMDATA", "PROGRAMFILES",
         "PROGRAMFILES(X86)", "COMMONPROGRAMFILES", "COMMONPROGRAMFILES(X86)",
         "LANG", "LC_ALL", "TZ", "AAS_RUNTIME_PYTHON", "AAS_RUNTIME_ROOT",
+        # A credential-bearing launch sets AAS_RUNTIME_REQUIRE_TRUSTED below, and
+        # run_python.ps1 then refuses to start without these pins. Scrubbing them
+        # here made the requirement unsatisfiable. Neither is a secret: one is a
+        # public file digest, the other a signer thumbprint, and run_python.ps1
+        # checks both against the interpreter on disk and drops them before exec.
+        "AAS_WINDOWS_PYTHON_SHA256", "AAS_WINDOWS_PYTHON_SIGNER_THUMBPRINT",
         "AAS_RUNTIME_WORKSPACE", "OPENCLAW_WORKSPACE",
         "PYTHONDONTWRITEBYTECODE", "PYTHONUTF8", "PYTHONIOENCODING"
     )) {
@@ -358,6 +364,7 @@ function Test-AasProtectedAclChain([string]$Value) {
     }
     [uint32]$mutationMask = 0x500D0156
     $cursor = Get-Item -LiteralPath $Value -Force
+    $depth = 0
     while ($null -ne $cursor) {
         if (($cursor.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             return $false
@@ -370,18 +377,36 @@ function Test-AasProtectedAclChain([string]$Value) {
             if (-not $trusted.Contains($owner)) {
                 return $false
             }
-            foreach ($rule in $acl.GetAccessRules(
-                $true,
-                $true,
-                [System.Security.Principal.SecurityIdentifier]
-            )) {
-                if (
-                    $rule.AccessControlType -eq
-                        [System.Security.AccessControl.AccessControlType]::Allow -and
-                    -not $trusted.Contains($rule.IdentityReference.Value) -and
-                    (([int64]$rule.FileSystemRights -band [int64]$mutationMask) -ne 0)
-                ) {
-                    return $false
+            # Predicate-check the DACL on the file and its immediate parent only.
+            # Higher ancestors are still walked for reparse points and ownership.
+            # Stock Windows grants `Authenticated Users` add-subdirectory on the
+            # drive root, so demanding a mutation-free chain up to `C:\` can never
+            # be satisfied. Nothing is given up: a right on an ancestor confers no
+            # access to an existing descendant, and any grant that does reach this
+            # file by inheritance is materialised into its own DACL, checked here.
+            if ($depth -le 1) {
+                foreach ($rule in $acl.GetAccessRules(
+                    $true,
+                    $true,
+                    [System.Security.Principal.SecurityIdentifier]
+                )) {
+                    # An INHERIT_ONLY ace confers nothing on the object carrying it;
+                    # it only seeds children, whose own DACLs are checked when they
+                    # are guarded in turn.
+                    if (
+                        ($rule.PropagationFlags -band
+                            [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0
+                    ) {
+                        continue
+                    }
+                    if (
+                        $rule.AccessControlType -eq
+                            [System.Security.AccessControl.AccessControlType]::Allow -and
+                        -not $trusted.Contains($rule.IdentityReference.Value) -and
+                        (([int64]$rule.FileSystemRights -band [int64]$mutationMask) -ne 0)
+                    ) {
+                        return $false
+                    }
                 }
             }
         } catch {
@@ -392,6 +417,7 @@ function Test-AasProtectedAclChain([string]$Value) {
         } else {
             $cursor.Directory
         }
+        $depth++
     }
     return $true
 }
