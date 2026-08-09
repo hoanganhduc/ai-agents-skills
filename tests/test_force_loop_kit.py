@@ -26,6 +26,15 @@ FORCE_LOOP = (
 )
 RUNTIME_PY = FORCE_LOOP.parent / "autonomous_research_loop_runtime.py"
 
+# Patching os.name to "nt" must not change which concrete Path flavor
+# production code instantiates: Python 3.12 bakes the flavor guard into
+# WindowsPath.__new__ at import time, so a simulated-Windows Path() on
+# POSIX yields a WindowsPath whose re-instantiation (relative_to,
+# with_segments) raises NotImplementedError; 3.13 dropped that guard and
+# hides the mismatch. Pinning the host's real flavor keeps the simulation
+# to branch decisions only — on native Windows the pin is an identity.
+_NATIVE_PATH = type(Path())
+
 
 def _load(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -225,6 +234,8 @@ class ApplyDefaultsTests(unittest.TestCase):
             policy = Path(tmp) / "secure" / "host-policy.env"
             with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(
                 self.apply.os, "name", "nt"
+            ), mock.patch.object(self.apply, "Path", _NATIVE_PATH), mock.patch.object(
+                load_loop_env, "Path", _NATIVE_PATH
             ):
                 dest = self.apply.write_host_env_defaults(loop, "formal", policy)
                 got = load_loop_env.load_env_file(dest, forbidden_root=loop)
@@ -240,7 +251,9 @@ class ApplyDefaultsTests(unittest.TestCase):
             policy = Path(tmp) / "secure" / "host-policy.env"
             with mock.patch.dict(
                 os.environ, {"AAS_AUTOLOOP_FORMAL_TYPECHECK": "1"}, clear=False
-            ), mock.patch.object(self.apply.os, "name", "nt"):
+            ), mock.patch.object(self.apply.os, "name", "nt"), mock.patch.object(
+                self.apply, "Path", _NATIVE_PATH
+            ):
                 self.apply.write_host_env_defaults(loop, "general", policy)
                 manifest = os.environ["AAS_FORCE_LOOP_POLICY_PROJECTED"]
                 self.assertNotIn("AAS_AUTOLOOP_FORMAL_TYPECHECK", os.environ)
