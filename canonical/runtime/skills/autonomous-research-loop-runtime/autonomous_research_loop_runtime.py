@@ -9857,6 +9857,19 @@ def _ledger_consistency_errors(run_dir: Path) -> list[str]:
     return errors
 
 
+def _non_linux_enforce_note() -> str:
+    """Name the platform gap behind a Goal-Focus enforce refusal, if that is it."""
+
+    if sys.platform.startswith("linux"):
+        return ""
+    return (
+        ". This host is not Linux, and Goal-Focus enforce requires the "
+        "trusted-local transport whose resource preflight is Linux-only, so "
+        "enforce cannot drive here at all: use --goal-focus-mode monitor, or "
+        "drive from WSL or Linux"
+    )
+
+
 def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     """Cross-platform headless driver: run one iteration command per loop until the
     runtime reports the loop is done (loops reached, credit/budget exhausted, goal
@@ -9947,6 +9960,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     "panel review, dispatch, or worker spawn because no credential-blind, "
                     "prompt-private, allowlist-filesystem, resource-bounded model "
                     "transport with constrained egress is available"
+                    + _non_linux_enforce_note()
                 ),
                 "exit_code": DRIVE_EXIT_CODES["runtime_error"],
             }
@@ -10006,7 +10020,12 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 "action": "drive",
                 "dir": str(run_dir),
                 "reason": "resource_limits_unavailable",
-                "error": str(exc),
+                "error": str(exc)
+                + (
+                    _non_linux_enforce_note()
+                    if initial_goal_focus_mode == "enforce"
+                    else ""
+                ),
                 "exit_code": DRIVE_EXIT_CODES["runtime_error"],
             }
     quota_backoff = max(0, int(getattr(args, "quota_backoff", 900)))

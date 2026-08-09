@@ -3955,7 +3955,7 @@ run one at a time.
 
 ## Runtime paths that differ on native Windows
 
-Four runtime paths diverge from POSIX. Each is the supported native behaviour,
+Five runtime paths diverge from POSIX. Each is the supported native behaviour,
 not a degradation to work around.
 
 - **Secret-bearing launches require a trusted interpreter.** When a
@@ -3988,15 +3988,26 @@ not a degradation to work around.
   no effect: with the default `--backend auto`, Windows selects `foreground`.
   Requesting `--backend posix_detach` explicitly fails with `posix_detach is not
   available on Windows; use foreground`. There is no Windows Service backend.
-- **Host-mediated iteration submissions are not consumable.** The host claims a
-  worker submission through directory descriptors: it walks the evidence root
-  with `O_NOFOLLOW` and then opens, renames, and unlinks relative to that
-  descriptor. Windows has neither `O_NOFOLLOW` nor `dir_fd` support in `os.open`,
-  and `os.open` cannot open a directory at all, so the walk fails at the path
-  anchor. A drive under `--goal-focus-mode enforce` therefore fails every
-  iteration with exit code 126 no matter what the worker produced. Run enforce
-  drives from WSL or Linux. `--goal-focus-mode monitor` is unaffected, because
-  it does not consume submissions through that path.
+- **Goal-Focus enforce mode refuses to drive.** Enforce requires the
+  trusted-local provider transport, whose resource preflight is Linux-only, so
+  a drive stops before registration, dispatch, or any worker spawn. The refusal
+  is `exit_code` 4 with reason `secure_primary_transport_unavailable`, or
+  `resource_limits_unavailable` if the transport is set to `trusted-local`
+  explicitly. No iteration runs and the failure budget is never touched. This
+  is a platform gap, not a misconfiguration: the same preflight refuses macOS.
+  Run enforce drives from WSL or Linux. `--goal-focus-mode monitor` is
+  unaffected and banks iterations normally.
+
+  Behind that refusal sits a second limitation, reachable in-process but not
+  through a drive. The host claims a worker submission through directory
+  descriptors: it walks the evidence root with `O_NOFOLLOW` and then opens,
+  renames, and unlinks relative to that descriptor. Windows has neither
+  `O_NOFOLLOW` nor `dir_fd` support in `os.open`, and `os.open` cannot open a
+  directory at all, so the walk fails at the path anchor with
+  `FileNotFoundError`. Calling `append-iteration` with
+  `AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION=1` therefore fails and writes no
+  submission. Porting this needs handle-bound directory mutation, the same
+  work the installer's Windows apply path is waiting on.
 
 For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`
