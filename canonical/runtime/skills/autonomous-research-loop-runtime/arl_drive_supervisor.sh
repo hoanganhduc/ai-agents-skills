@@ -138,6 +138,7 @@ lines = [
     f"NOTIFY={shlex.quote(str(dd.get('notify', 'auto')))}",
     f"ITERATION_TIMEOUT={int(dd.get('iteration_timeout', 7200))}",
     f"MAX_FAILURES={int(dd.get('max_failures', 3))}",
+    f"MAX_REVIEW_WAITS={int(dd.get('max_review_waits', 0))}",
     f"RESEARCH_TITLE={shlex.quote(title)}",
 ]
 out.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -447,6 +448,7 @@ while :; do
     --iteration-timeout "$ITERATION_TIMEOUT" \
     --max-failures "$MAX_FAILURES" \
     --max-quota-waits "$MAX_QUOTA_WAITS" \
+    --max-review-waits "$MAX_REVIEW_WAITS" \
     $DRIVE_EXTRA_ARGS &
   child_pid=$!
   wait "$child_pid"

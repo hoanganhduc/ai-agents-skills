@@ -2348,6 +2348,72 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             )
             self.assertFalse((loop / "iteration_candidate.json").exists())
 
+    def test_enforce_dry_run_previews_staging_without_any_write(self) -> None:
+        arl, gf = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            init_args = arl.selftest_init_args(loop, max_iterations=2)
+            init_args.goal_focus_mode = "enforce"
+            arl.init_loop(init_args)
+            self._activate_single_direction(arl, gf, loop)
+            dispatch = gf.prepare_iteration_dispatch(
+                loop,
+                executor_provider="claude",
+                executor_family="anthropic",
+                executor_attestation=_provider_attestation("claude", loop),
+                started_at="2026-07-29T12:00:00Z",
+            )["dispatch"]
+            write_text_evidence(loop, dispatch, "dispatch-bound-evidence")
+
+            def everything() -> dict[str, bytes]:
+                return {
+                    str(path.relative_to(loop)): path.read_bytes()
+                    for path in sorted(loop.rglob("*"))
+                    if path.is_file()
+                }
+
+            before = everything()
+            res = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(HELPER),
+                    "append-iteration",
+                    "--dir",
+                    str(loop),
+                    "--mode",
+                    "bounded-research",
+                    "--objective",
+                    "preview the staging record",
+                    "--decision",
+                    "revise",
+                    "--claim-id",
+                    "dispatch-bound-claim",
+                    "--evidence-id",
+                    "dispatch-bound-evidence",
+                    "--compute-none",
+                    "--dry-run",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+                env=_subprocess_env(
+                    {
+                        "AAS_AUTOLOOP_PRIMARY_PROVIDER": "claude",
+                        "AAS_AUTOLOOP_DISPATCH_ID": dispatch["dispatch_id"],
+                        "AAS_AUTOLOOP_CANDIDATE_ID": dispatch["candidate_id"],
+                    }
+                ),
+            )
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            body = json.loads(res.stdout)
+            self.assertIs(body["dry_run"], True)
+            self.assertIs(body["would_stage"], True)
+            self.assertEqual(body["would_append"]["decision"], "revise")
+            self.assertEqual(everything(), before)
+            self.assertFalse((loop / "iteration_candidate.json").exists())
+
     def test_panel_goal_resolution_factor_reaches_core_scorer(self) -> None:
         arl, gf = self._runtime_modules()
         registry = gf.default_approach_registry()
@@ -3622,6 +3688,266 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
         primary.assert_not_called()
         self.assertEqual(result["reason"], "resource_cleanup_unverified", result)
         self.assertEqual(result["exit_code"], 8)
+
+    def test_strategy_review_wait_exhaustion_stops_resumably(self) -> None:
+        arl, _gf = self._runtime_modules()
+        base = self.provider_fixture.root / "review-wait-exhausted"
+        project = base / "project"
+        loop = project / ".autoloop" / "loop"
+        project.mkdir(parents=True, mode=0o700)
+        registry_dir = self._trusted_registry_root("review-wait-exhausted")
+        init_args = arl.selftest_init_args(loop, max_iterations=2)
+        init_args.goal_focus_mode = "enforce"
+        arl.init_loop(init_args)
+        args = arl.selftest_drive_args(loop, registry_dir, "unused")
+        args.root = str(project)
+        args.cmd = None
+        args.provider = "claude"
+        args.max_review_waits = 1
+        profile = arl.provider_resource_limits(60, role="primary")
+        with mock.patch.dict(
+            os.environ,
+            {"AAS_AUTOLOOP_PROVIDER_TRANSPORT": "trusted-local"},
+            clear=False,
+        ), mock.patch.object(
+            arl, "preflight_resource_backend", return_value=profile
+        ), mock.patch.object(
+            arl,
+            "run_panel_phase_for_drive",
+            side_effect=RuntimeError("panel transport is down"),
+        ) as panel, mock.patch.object(
+            arl,
+            "interruptible_sleep",
+            side_effect=AssertionError("exhaustion must break before sleeping"),
+        ), mock.patch.object(
+            arl, "run_primary_subprocess"
+        ) as primary:
+            result = arl.drive_command(args)
+        panel.assert_called_once()
+        primary.assert_not_called()
+        self.assertEqual(result["reason"], "review_wait_exhausted", result)
+        self.assertEqual(
+            result["exit_code"], arl.DRIVE_EXIT_CODES["review_wait_exhausted"]
+        )
+
+    def test_ledger_tampering_counts_toward_max_failures_even_when_banked(self) -> None:
+        arl, gf = self._runtime_modules()
+        base = self.provider_fixture.root / "integrity-accounting"
+        project = base / "project"
+        loop = project / ".autoloop" / "loop"
+        project.mkdir(parents=True, mode=0o700)
+        registry_dir = self._trusted_registry_root("integrity-accounting")
+        init_args = arl.selftest_init_args(loop, max_iterations=4)
+        init_args.goal_focus_mode = "enforce"
+        arl.init_loop(init_args)
+        self._activate_single_direction(arl, gf, loop)
+
+        args = arl.selftest_drive_args(loop, registry_dir, "unused")
+        args.root = str(project)
+        args.cmd = None
+        args.provider = "claude"
+        args.max_failures = 1
+        args.max_review_waits = 3
+        profile = arl.provider_resource_limits(60, role="primary")
+        cycle = {"n": 0}
+
+        def stage_and_later_tamper(*_args, **kwargs):  # noqa: ANN002, ANN003
+            cycle["n"] += 1
+            n = cycle["n"]
+            self.assertLessEqual(n, 3, "the drive must stop after the tampered cycle")
+            if n == 3:
+                # Rewrite history the host watch has already baselined: flip a
+                # byte inside iteration 1's banked record without changing its
+                # length. The watch only advances at the post-worker check, so
+                # record 1 first enters the baseline during cycle 2's check.
+                ledger = loop / "iterations.jsonl"
+                tampered = ledger.read_bytes().replace(
+                    b"integrity-claim-1", b"integrity-claim-X", 1
+                )
+                ledger.write_bytes(tampered)
+            evidence_dir = Path(kwargs["evidence_dir"])
+            child_env = kwargs["child_env"]
+            evidence_id = f"integrity-evidence-{n}.txt"
+            evidence = evidence_dir / evidence_id
+            evidence.write_text(
+                f"bounded integrity check {n} completed\n", encoding="utf-8"
+            )
+            if os.name == "posix":
+                evidence.chmod(0o600)
+            request: dict[str, object] = {}
+            for field in arl.ITERATION_SUBMISSION_ARG_FIELDS:
+                if field in arl.ITERATION_SUBMISSION_LIST_FIELDS:
+                    request[field] = []
+                elif field in arl.ITERATION_SUBMISSION_BOOL_FIELDS:
+                    request[field] = False
+                elif field in arl.ITERATION_SUBMISSION_INT_FIELDS:
+                    request[field] = 0
+                elif field == "usd":
+                    request[field] = 0.0
+                else:
+                    request[field] = ""
+            request.update(
+                {
+                    "mode": "bounded-research",
+                    "objective": f"bounded integrity check {n}",
+                    "decision": "continue",
+                    "claim_id": [f"integrity-claim-{n}"],
+                    "evidence_id": [evidence_id],
+                    "output": f"bounded integrity check {n} completed",
+                    "compute_none": True,
+                    "executor_provider": "claude",
+                }
+            )
+            submission = {
+                "schema_version": arl.ITERATION_SUBMISSION_SCHEMA,
+                "run_id": child_env["AAS_AUTOLOOP_RUN_ID"],
+                "dispatch_id": child_env["AAS_AUTOLOOP_DISPATCH_ID"],
+                "candidate_id": child_env["AAS_AUTOLOOP_CANDIDATE_ID"],
+                "executor_provider": "claude",
+                "request": request,
+            }
+            submission_path = evidence_dir / arl.ITERATION_SUBMISSION_FILENAME
+            submission_path.write_text(
+                json.dumps(submission, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            if os.name == "posix":
+                submission_path.chmod(0o600)
+            clean_attestation = _primary_resource_attestation()
+            clean_attestation["limits"] = arl.public_resource_limits(profile)
+            kwargs["resource_metadata"].update(clean_attestation)
+            return 0, False, None
+
+        def accept_exact_candidate(_run_dir, _root, phase, **_kwargs):  # noqa: ANN001, ANN003
+            if phase == "strategy_review":
+                # The drive replans between banked iterations; keep selecting
+                # the single eligible approach so the loop stays live.
+                import panel_parent  # noqa: WPS
+
+                provider_advice = {
+                    "schema_version": "strategy_advice.v1",
+                    "decision": "select",
+                    "recommended_approach_id": "approach-a",
+                    "candidates": [
+                        {
+                            "approach_id": "approach-a",
+                            "campaign_id": "campaign-a",
+                            "rank": 1,
+                            "estimates": {
+                                factor: {"lower": 2, "upper": 3}
+                                for factor in panel_parent.ESTIMATE_FACTORS
+                            },
+                            "evidence_refs": [],
+                            "missing_evidence": [],
+                            "falsifier": "The bounded check fails.",
+                            "strongest_objection": "The ledger could drift.",
+                            "next_action": "Execute the single test command.",
+                        }
+                    ],
+                    "inspected_evidence": [],
+                    "uninspected_evidence": [],
+                    "reasoning_summary": "The only eligible approach is selected.",
+                }
+                return {
+                    "authority_snapshot": gf.strategy_authority_snapshot(loop),
+                    "primary_execution_attestation": _provider_attestation(
+                        "claude", loop
+                    ),
+                    "provider_execution_attestations": {
+                        "codex": _provider_attestation("codex", loop)
+                    },
+                    "structured_synthesis": {
+                        "required_schema": "strategy_advice.v1",
+                        "primary_provider": "claude",
+                        "primary_family": _provider_attestation("claude", loop)[
+                            "family"
+                        ],
+                        "valid_providers": ["codex"],
+                        "different_family_valid_providers": ["codex"],
+                        "recommendation_counts": {"approach-a": 1},
+                        "decision_counts": {"select": 1},
+                        "dissent": False,
+                    },
+                    "results": {
+                        "codex": {
+                            "structured_valid": True,
+                            "structured_payload": provider_advice,
+                        }
+                    },
+                }
+            self.assertEqual(phase, "result_review")
+            pending = gf.load_pending_candidate(loop)
+            self.assertIsNotNone(pending)
+            fingerprint = gf.candidate_fingerprint(pending)
+            record = pending.get("record") or pending
+            claim_ids = list(record.get("claim_ids") or [])
+            evidence_ids = list(
+                (record.get("evidence_checked") or {}).get("evidence_ids") or []
+            )
+            provider_review = {
+                "schema_version": "result_review.v1",
+                "candidate_id": pending["candidate_id"],
+                "candidate_fingerprint": fingerprint,
+                "verdict": "pass",
+                "safe_to_bank": True,
+                "inspected_paths": evidence_ids,
+                "uninspected_paths": [],
+                "invalidation_conditions": [],
+                "summary": "The exact staged candidate is supported.",
+                "claim_reviews": [
+                    {
+                        "claim_id": claim_id,
+                        "status": "supported",
+                        "evidence_refs": evidence_ids,
+                        "reason": "The staged evidence supports the claim.",
+                    }
+                    for claim_id in claim_ids
+                ],
+                "obligation_reviews": [],
+                "machine_checks": [],
+            }
+            return {
+                "structured_synthesis": {
+                    "candidate_ids": [pending["candidate_id"]],
+                    "candidate_fingerprints": [fingerprint],
+                    "conservative_verdict": "pass",
+                },
+                "provider_execution_attestations": {
+                    "codex": _provider_attestation("codex", loop)
+                },
+                "results": {
+                    "codex": {
+                        "structured_valid": True,
+                        "structured_payload": provider_review,
+                    }
+                },
+            }
+
+        with mock.patch.dict(
+            os.environ,
+            {"AAS_AUTOLOOP_PROVIDER_TRANSPORT": "trusted-local"},
+            clear=False,
+        ), mock.patch.object(
+            arl, "preflight_resource_backend", return_value=profile
+        ), mock.patch.object(
+            arl, "run_primary_subprocess", side_effect=stage_and_later_tamper
+        ), mock.patch.object(
+            arl, "run_panel_phase_for_drive", side_effect=accept_exact_candidate
+        ), mock.patch.object(
+            arl, "interruptible_sleep", return_value=None
+        ):
+            result = arl.drive_command(args)
+
+        # Cycle 3's candidate still banks — the reviewed result is genuine —
+        # but the tampering must stop the drive instead of resetting failures.
+        self.assertEqual(result["reason"], "max_failures", result)
+        self.assertEqual(result["exit_code"], arl.DRIVE_EXIT_CODES["max_failures"])
+        self.assertEqual(cycle["n"], 3)
+        records = arl.read_iterations(loop / "iterations.jsonl")
+        self.assertEqual(len(records), 3, records)
+        integrity = result.get("integrity") or {}
+        violations = list(integrity.get("ledger_violations") or [])
+        self.assertTrue(violations, result)
+        self.assertEqual(violations[0]["kind"], "rewritten")
 
     def test_cleanup_error_prevents_submission_stage_and_result_review(self) -> None:
         arl, gf = self._runtime_modules()

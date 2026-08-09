@@ -241,9 +241,11 @@ Env: `AAS_AUTOLOOP_FORMAL_POLICY`, `AAS_AUTOLOOP_FORMAL_PROJECT`,
 `AAS_AUTOLOOP_FORMAL_FORCE`, `AAS_AUTOLOOP_FORMAL_TYPECHECK`. File:
 `<loop>/formal/formal_policy.json` or `loop_state.standing_orders.formal`.
 
-When the committed path is **formal-track**, use positions F1–F7 from
-`informal-to-lean-formalization-runbook` (intake → Explore → skeleton → fill →
-optional interactive OpenGauss only → strict gate → fresh review → acceptance).
+When the committed path is **formal-track**, use positions F1–F7' from
+`informal-to-lean-formalization-runbook` (intake → Explore → F2' library reuse
+gate via `lean-research-library search` → skeleton → fill → optional
+interactive OpenGauss only → strict gate → fresh review → acceptance → F7'
+proposal-only library intake; staging/pushes stay user-gated).
 Evidence labels (`lean_declaration_search`, `opengauss_run`, `formal_scan`,
 `formal_typecheck`) never alone set claim-support. Host force tick reports are
 hygiene only (`claim_support_status=not_evaluated`).
