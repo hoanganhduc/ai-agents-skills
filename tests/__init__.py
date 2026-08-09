@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 
 # The autonomous-research-loop runtime rejects any loop or artifact path that
@@ -24,6 +25,14 @@ os.environ["TMPDIR"] = tempfile.tempdir
 # holds its own bytecode from before this module was imported.
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
+# The parent needs the same treatment for a different reason: several modules
+# load canonical sources directly through ``spec_from_file_location``, which
+# happens after this package is imported and writes ``__pycache__`` beside the
+# source. A full run hides it, because whichever module sets this first covers
+# every module collected after it. Running one file on its own does not, so the
+# next inventory check fails on bytecode the previous command left behind.
+sys.dont_write_bytecode = True
+
 # Windows CPython cannot seed its hash randomization without ``SYSTEMROOT`` and
 # aborts with ``_Py_HashRandomization_Init: failed to get random numbers`` before
 # reaching ``main``. Tests that hand a child an explicit ``env=`` therefore have
@@ -37,3 +46,4 @@ _OS_CHILD_ENV_KEYS = ("SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "TEMP", "TMP")
 def os_child_env() -> dict[str, str]:
     """Return the minimum OS identity a fresh interpreter needs in order to start."""
     return {key: os.environ[key] for key in _OS_CHILD_ENV_KEYS if key in os.environ}
+
