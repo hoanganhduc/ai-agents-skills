@@ -440,6 +440,7 @@ def run_installed_runtime_smoke(
     comparison = compare_runtime_state_records(
         scoped_runtime_artifacts,
         expected_runtime_artifacts,
+        host_platform=target_platform,
     )
     invalid_requested_skills = sorted(explicit_skills - declared_runtime_skills)
     unknown_installed_skills = sorted(
@@ -497,6 +498,8 @@ def run_installed_runtime_smoke(
             runtime_state_missing_records=comparison["missing"],
             runtime_state_extra_count=len(comparison["extra"]),
             runtime_state_extra_records=comparison["extra"],
+            runtime_state_foreign_platform_count=len(comparison["foreign_platform"]),
+            runtime_state_foreign_platform_records=comparison["foreign_platform"],
             runtime_state_duplicate_count=len(comparison["duplicates"]),
             runtime_state_duplicate_records=comparison["duplicates"],
             runtime_state_mismatched_count=(
@@ -568,6 +571,8 @@ def run_installed_runtime_smoke(
             runtime_state_missing_records=[],
             runtime_state_extra_count=0,
             runtime_state_extra_records=[],
+            runtime_state_foreign_platform_count=len(comparison["foreign_platform"]),
+            runtime_state_foreign_platform_records=comparison["foreign_platform"],
             runtime_state_duplicate_count=0,
             runtime_state_duplicate_records=[],
             runtime_state_mismatched_count=0,
@@ -699,6 +704,8 @@ def run_installed_runtime_smoke(
         runtime_state_missing_records=[],
         runtime_state_extra_count=0,
         runtime_state_extra_records=[],
+        runtime_state_foreign_platform_count=len(comparison["foreign_platform"]),
+        runtime_state_foreign_platform_records=comparison["foreign_platform"],
         runtime_state_duplicate_count=0,
         runtime_state_duplicate_records=[],
         runtime_state_mismatched_count=0,
@@ -946,6 +953,8 @@ def runtime_state_record_summary(artifact: dict[str, Any]) -> dict[str, Any]:
 def compare_runtime_state_records(
     actual: list[dict[str, Any]],
     expected: list[dict[str, Any]],
+    *,
+    host_platform: str | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     actual_by_key: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     expected_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -968,10 +977,25 @@ def compare_runtime_state_records(
         runtime_state_record_summary(expected_by_key[key])
         for key in sorted(set(expected_by_key) - set(actual_by_key))
     ]
-    extra = [
-        runtime_state_record_summary(actual_by_key[key][0])
-        for key in sorted(set(actual_by_key) - set(expected_by_key))
-    ]
+    extra: list[dict[str, Any]] = []
+    foreign_platform: list[dict[str, Any]] = []
+    for key in sorted(set(actual_by_key) - set(expected_by_key)):
+        artifact = actual_by_key[key][0]
+        declared = artifact.get("platforms")
+        # A record whose entry does not declare this platform is outside the
+        # current closure by construction, not an unmanaged extra. Native
+        # Windows and WSL share a runtime root, so POSIX-only entries installed
+        # by a WSL run legitimately persist in a root a Windows run also owns.
+        # They are reported separately rather than failing state coverage.
+        if (
+            host_platform
+            and isinstance(declared, list)
+            and declared
+            and host_platform not in declared
+        ):
+            foreign_platform.append(runtime_state_record_summary(artifact))
+            continue
+        extra.append(runtime_state_record_summary(artifact))
     duplicates = [
         {
             **runtime_state_record_summary(actual_by_key[key][0]),
@@ -1005,6 +1029,7 @@ def compare_runtime_state_records(
     return {
         "missing": missing,
         "extra": extra,
+        "foreign_platform": foreign_platform,
         "duplicates": duplicates,
         "mismatched": mismatched,
     }
