@@ -68,6 +68,25 @@ def parse_env_text(
     return out
 
 
+def _same_projected_path(declared: str, source_path: Path | str) -> bool:
+    """Say whether two paths that reached this process by different routes agree.
+
+    ``[System.IO.Path]::GetFullPath`` expands an 8.3 short component to its long
+    form, while ``os.path.abspath`` leaves it alone.  The loader's declared
+    source and this module's own absolute path therefore disagreed on any host
+    whose policy path carries a short component -- routine, since ``%TEMP%``
+    sits under the user name -- and a correct ``--policy-file`` was refused as
+    coming from a different file.  ``os.path.realpath`` gives both routes the
+    same canonical answer, and it answers for a path that does not exist yet.
+
+    This is a provenance comparison only.  The loader already opened the file
+    under its own no-follow guards, so resolving links here gives up nothing.
+    """
+    return os.path.normcase(os.path.realpath(declared)) == os.path.normcase(
+        os.path.realpath(os.path.abspath(source_path))
+    )
+
+
 def load_projected_env(
     *,
     source_path: Path | None = None,
@@ -89,9 +108,7 @@ def load_projected_env(
         )
     if source_path is not None:
         declared = str(values.get(WINDOWS_PROJECTION_SOURCE_ENV) or "").strip()
-        if not declared or os.path.normcase(declared) != os.path.normcase(
-            str(Path(os.path.abspath(source_path)))
-        ):
+        if not declared or not _same_projected_path(declared, source_path):
             raise EnvLoadError("projected force-loop policy came from a different file")
     names = [name for name in manifest.split(",") if name]
     if not names or names != sorted(set(names)):
