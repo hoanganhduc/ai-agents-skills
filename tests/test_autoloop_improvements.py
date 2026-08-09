@@ -337,6 +337,33 @@ class DryRunTests(unittest.TestCase):
             )
 
 
+class HostMediatedSubmissionTests(unittest.TestCase):
+    def test_unwritable_evidence_dir_names_the_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            _init(loop)
+            evidence = Path(tmp) / "no-such-evidence-dir"
+            res = _append(
+                loop,
+                "continue",
+                env_extra={
+                    "AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION": "1",
+                    "AAS_AUTOLOOP_EVIDENCE_DIR": str(evidence),
+                    "AAS_AUTOLOOP_EVIDENCE_ROOT": str(evidence),
+                    "AAS_AUTOLOOP_RUN_ID": "run",
+                    "AAS_AUTOLOOP_DISPATCH_ID": "dispatch",
+                    "AAS_AUTOLOOP_CANDIDATE_ID": "candidate",
+                    "AAS_AUTOLOOP_PRIMARY_PROVIDER": "claude",
+                },
+            )
+            self.assertEqual(res.returncode, 1, res.stdout)
+            error = _out(res)["error"]
+            # A bare descriptor-walk failure reads as a missing submission file,
+            # which is the one thing this failure is not.
+            self.assertIn("cannot be opened for submission", error)
+            self.assertIn(str(evidence), error)
+
+
 class StageProofTests(unittest.TestCase):
     def _stage(
         self,

@@ -1535,7 +1535,16 @@ def _write_worker_iteration_submission(args: argparse.Namespace) -> dict[str, An
     if len(payload) > ITERATION_SUBMISSION_MAX_BYTES:
         raise ValueError("iteration submission is oversized")
 
-    directory_fd = _open_directory_nofollow(evidence_dir)
+    # The walk raises whatever the platform reports for the path anchor, which
+    # on a host without directory descriptors is a bare FileNotFoundError for a
+    # drive root. Name the directory the worker was told to write into so the
+    # failure does not read as a missing submission file.
+    try:
+        directory_fd = _open_directory_nofollow(evidence_dir)
+    except OSError as exc:
+        raise OSError(
+            f"evidence directory {evidence_dir} cannot be opened for submission: {exc}"
+        ) from exc
     try:
         directory_info = os.fstat(directory_fd)
         if not stat.S_ISDIR(directory_info.st_mode):
