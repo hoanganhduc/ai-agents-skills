@@ -21,6 +21,7 @@ def private_path_guard(
     directory: bool,
     _include_ancestors: bool = True,
     _strict: bool = True,
+    _check_dacl: bool = True,
 ) -> Iterator[dict[str, int]]:
     if os.name != "nt":
         yield {}
@@ -29,9 +30,14 @@ def private_path_guard(
     absolute = Path(os.path.abspath(path))
     if _include_ancestors:
         # Hold every ancestor no-follow handle for the full protected operation.
-        # The immediate private parent is strict; higher system ancestors may be
-        # SYSTEM/Administrators/TrustedInstaller owned but must not grant an
-        # untrusted principal mutation rights.
+        # The immediate private parent is strict; higher system ancestors are
+        # pinned by handle and must still be SYSTEM/Administrators/TrustedInstaller
+        # owned, but their DACLs are not predicate-checked. Stock Windows grants
+        # ``AU:(LC)`` (add-subdirectory) on the drive root, so demanding a
+        # mutation-free chain up to ``C:\`` can never be satisfied. Nothing is
+        # given up: a right on an ancestor confers no access to an existing
+        # descendant, and any grant that does reach the target by inheritance is
+        # materialised into the target's own DACL, which is checked below.
         ancestors: list[Path] = []
         cursor = absolute.parent
         while cursor != cursor.parent:
@@ -47,6 +53,7 @@ def private_path_guard(
                         directory=True,
                         _include_ancestors=False,
                         _strict=ancestor == absolute.parent,
+                        _check_dacl=ancestor == absolute.parent,
                     )
                 )
             snapshot = stack.enter_context(
@@ -276,9 +283,18 @@ def private_path_guard(
                 }
             )
 
-        for ace in re.findall(r"\(([^()]*)\)", sddl[dacl_marker + 2 :]):
+        for ace in re.findall(r"\(([^()]*)\)", sddl[dacl_marker + 2 :]) if _check_dacl else ():
             fields = ace.split(";")
             if len(fields) < 6 or fields[0] not in {"A", "OA", "XA", "XU", "ZA"}:
+                continue
+            # An INHERIT_ONLY ace confers nothing on this object; it only seeds
+            # children, whose own DACLs are checked when they are guarded in turn.
+            # Split into two-character tokens rather than substring-matching, so a
+            # ``CIOI`` flag pair cannot be misread as ``IO``.
+            flag_tokens = {
+                fields[1][index : index + 2] for index in range(0, len(fields[1]), 2)
+            }
+            if "IO" in flag_tokens:
                 continue
             if fields[5] not in trusted_sids and (_strict or mutates(fields[2])):
                 raise OSError(
