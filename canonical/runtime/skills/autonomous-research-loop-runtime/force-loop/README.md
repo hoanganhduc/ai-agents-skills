@@ -20,7 +20,7 @@
 | Linux | Python CLI + `.sh` | **foreground** | `--backend systemd` if user bus works; `--detach` |
 | WSL | same as Linux | **foreground** | avoid assuming full systemd |
 | macOS | Python CLI + `.sh` | **foreground** | `--detach` |
-| Windows | Python CLI + `.ps1` | **foreground** | host policy read by `Load-LoopEnv.ps1`; no Windows Service in v1 |
+| Windows | Python CLI + `.ps1` | **foreground** | host policy read by `Load-LoopEnv.ps1`; no Windows Service in v1; `--detach` has no effect and `--backend posix_detach` is refused |
 
 ## Commands
 

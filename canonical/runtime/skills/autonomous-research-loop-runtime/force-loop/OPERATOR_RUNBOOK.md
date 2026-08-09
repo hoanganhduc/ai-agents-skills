@@ -62,8 +62,14 @@
   Subcommands that carry no credential (`status`, `doctor`, `drain`, `stop`)
   never demand the pins, so an ambient `GITHUB_TOKEN` in the shell cannot make
   them unstartable.
-- Foreground only in v1: no Windows Service backend. Supervisor shell scripts
-  are POSIX-only, so Windows runs `drive` via Python.
+- Foreground only in v1: no Windows Service backend. `--detach` is accepted but
+  has no effect, and an explicit `--backend posix_detach` is refused with
+  "posix_detach is not available on Windows; use foreground". Supervisor shell
+  scripts are POSIX-only, so Windows runs `drive` via Python.
+- The exact-generation credential broker is POSIX-only: it speaks over
+  `socket.AF_UNIX`, which CPython does not expose on Windows. `broker_active()`
+  stays false, so panel and compute launches take the direct execution path and
+  read credentials through `load_secret_env.ps1`.
 - Failover rotation that depends on `arl_drive_supervisor.sh` is a POSIX
   convenience; Windows operators set `--provider` or failover offline.
 
