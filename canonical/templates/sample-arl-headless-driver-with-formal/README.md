@@ -24,7 +24,15 @@ fragments only.
 | `formal_policy.example.json` | Schema example for `<loop>/formal/formal_policy.json`. |
 | `apply_formal_settings.py` | Schema-validated JSON writer (not sed). |
 | `LAUNCH_with_formal_env.sh` | Optional: source env, then exec **existing** supervisor. |
+| `hermetic_benchmark_env.inc.sh` | Preset A: closed-book benchmark recipe (claude, non-attested drive lane only). |
+| `production_formalization_env.inc.sh` | Preset B: production lane with curated MCP config (claude, non-attested drive lane only). |
+| `curated_mcp.claude.example.json` | Preset B curated MCP config example (copy operator-owned, 0600, outside loop trees). |
 | `README.md` | This file. |
+
+Preset lane rules and the enforce/force-loop compatibility matrix live in
+`autonomous-research-loop-runtime/force-loop/OPERATOR_RUNBOOK.md` ("Banked
+launch presets (claude)"). Benchmark-set selection for closed-book runs:
+`docs/lean-formalization-benchmarks.md` (repo root).
 
 ## Default sample policy
 
@@ -98,8 +106,9 @@ Each ARL iteration:
   P1 path-select (recovery / hard replan)
   P2 resources / compute policy
   P3 solve THAT path
-     if formal-track: F1 intake → F2 Explore → F3 skeleton → F4a fill
-        → F4b OpenGauss interactive only → F5 gate → F6 review → F7 accept
+     if formal-track: F1 intake → F2 Explore → F2' library reuse gate
+        → F3 skeleton → F4a fill → F4b OpenGauss interactive only
+        → F5 gate → F6 review → F7 accept → F7' intake proposal (user-gated)
   P4 panel / independent verify
   P6 ledger + recovery
 

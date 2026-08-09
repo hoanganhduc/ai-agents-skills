@@ -31,7 +31,7 @@ doing any work without it. Only `stop` and `drain` run without a policy path.
 `--profile` defaults to `formal` wherever it is accepted.
 
 ```text
-force-loop bootstrap --loop DIR --root ROOT --profile formal|general [--goal …] --policy-file ABS_PATH
+force-loop bootstrap --loop DIR --root ROOT --profile formal|general --goal … --success-criteria … --policy-file ABS_PATH   # goal/criteria required on first init
 force-loop apply-defaults --loop DIR --profile formal|general --policy-file ABS_PATH
 force-loop start --loop DIR --root ROOT --policy-file ABS_PATH     # foreground
 force-loop replace --loop DIR --root ROOT --policy-file ABS_PATH   # stop, then start
@@ -46,9 +46,12 @@ force-loop smoke --loop DIR [--live] --policy-file ABS_PATH
 ```bash
 RUNTIME="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"
 POLICY=/abs/path/host-policy.env
+ROOT=/abs/path/project
+LOOP="$ROOT/loop"
 bash "$RUNTIME/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
-  bootstrap --loop "$LOOP" --root "$ROOT" --profile formal --goal "…" \
+  bootstrap --loop "$LOOP" --root "$ROOT" --profile formal \
+  --goal "…" --success-criteria "…" \
   --policy-file "$POLICY"
 ```
 
@@ -56,9 +59,12 @@ bash "$RUNTIME/run_skill.sh" \
 
 ```powershell
 $Policy = "C:\abs\path\host-policy.env"
+$Root = "C:\abs\path\project"
+$Loop = "$Root\loop"
 & "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
   skills\autonomous-research-loop-runtime\force-loop\run_force_loop.ps1 `
-  bootstrap --loop $Loop --root $Root --profile formal --goal "…" `
+  bootstrap --loop $Loop --root $Root --profile formal `
+  --goal "…" --success-criteria "…" `
   --policy-file $Policy
 ```
 

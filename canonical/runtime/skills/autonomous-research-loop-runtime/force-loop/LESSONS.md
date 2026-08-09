@@ -12,5 +12,7 @@ Short map from operational footguns to pins this kit applies.
 | Linux-only launch assumed | Python CLI; foreground default on all OS |
 | Notify silently off | defaults write notify auto/on; document fail-closed preflight when channels missing |
 | Reconcile used as replan | runbook: reconcile ≠ replan; use `goal-focus replan` under clean authority |
+| Banked preset sourced into an enforce/attested campaign | fail-closed refusal ("a host-attested provider cannot use custom argument overrides"); lane matrix in runbook "Banked launch presets (claude)" |
+| Closed-book F2' suspension mistaken for a runtime switch | prompt-level convention only: goal/success-criteria wording plus no reachable library skill; recorded in `hermetic_benchmark_env.inc.sh` |
 
 Keep this file short. Put procedure in `OPERATOR_RUNBOOK.md`.

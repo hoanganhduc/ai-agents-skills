@@ -3,7 +3,7 @@
 ## Bootstrap a new loop
 
 1. Choose project root and loop directory.
-2. Run `force-loop bootstrap` with `--goal` (and criteria) if the loop does not exist yet.
+2. Run `force-loop bootstrap`; when the loop does not exist yet, both `--goal` and `--success-criteria` are required (init exits 2 without them).
 3. Confirm smoke reports `ok: true` (enforce / hard / notify present).
 4. Ensure notify secrets and `AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS=allow` are configured if notify must fire (preflight fails closed when required and no channel resolves — configure remote-bridge / notify secrets per ARL docs).
 5. `force-loop start` in an interactive session or long-lived terminal (foreground default).
@@ -196,6 +196,44 @@ walk also inspects; `namei -m` prints that full chain so a remaining `775`
 parent is visible. The loop directory is not bound this way, so relocating the
 loop never clears this error — a loop under an owner-private directory in
 `/tmp` starts normally once the command chain is owner-controlled.
+
+## Banked launch presets (claude)
+
+Two tested `AAS_AUTOLOOP_ARGS_CLAUDE` presets are banked as env fragments in
+`canonical/templates/sample-arl-headless-driver-with-formal/`:
+
+| | Preset A `hermetic_benchmark_env.inc.sh` | Preset B `production_formalization_env.inc.sh` |
+|---|---|---|
+| Purpose | Closed-book benchmark (the 2026-08 T0–T4 recipe) | Production formalization |
+| Claude args | `--strict-mcp-config --setting-sources project --disallowedTools WebSearch WebFetch Task Agent Skill` | Same, plus `--mcp-config $AAS_ARL_MCP_CONFIG` (curated file) |
+| Formal policy | `on`, project `.` | `on`, typecheck `1` |
+| F2' library-first | Suspended by goal wording only (no runtime flag; see fragment note) | Active (intended) |
+| MCP posture | None beyond project config | Curated operator-owned 0600 config outside the loop tree; server keys only via its per-server `env` block |
+| Panel | `--panel off` | `--panel auto` (host-owned panel replaces the disallowed Task/Agent/Skill) |
+
+Launch template (both presets):
+
+```bash
+env -i HOME="$HOME" PATH="$PATH" LANG="$LANG" TERM="$TERM" \
+    TMPDIR="$TMPDIR" USER="$USER" PYTHONDONTWRITEBYTECODE=1 \
+    bash -c 'source <preset>.inc.sh && python3 .../autonomous_research_loop_runtime.py drive --provider claude ...'
+```
+
+**Lane matrix — read before sourcing.** `AAS_AUTOLOOP_ARGS_CLAUDE` presets run
+ONLY in the strict-isolated, non-attested drive lane:
+
+| Lane | Preset A/B |
+|------|-----------|
+| Plain `drive`, provider not attested | ✅ works |
+| Provider attested (`AAS_AUTOLOOP_ATTESTED_BIN_CLAUDE` pinned) | ❌ refused fail-closed: "a host-attested provider cannot use custom argument overrides" |
+| Goal-Focus enforce campaign | ❌ enforce requires trusted-local attestation → same refusal |
+| This force-loop kit | ❌ defaults pin Goal-Focus enforce (`apply_force_loop_defaults.py` `verify_effective`), and the policy-file grammar cannot carry an args template; the kit also has no MCP key channel (`run_force_loop.sh` unsets `LEANEXPLORE_API_KEY`) |
+
+A first-class MCP-config knob for the attested/enforce lane (R1) is
+**deliberately deferred**: an MCP config grants live tool-server authority to
+an unattended agent, so it needs its own adversarial security review —
+including server-credential delivery through `build_primary_child_env`'s
+allowlists — before it can be added.
 
 ## Recovery matrix
 

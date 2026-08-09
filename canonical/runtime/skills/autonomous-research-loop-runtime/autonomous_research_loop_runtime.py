@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import copy
+import difflib
+import hashlib
 import json
 import math
 import os
@@ -93,13 +95,17 @@ try:
         iteration_ledger_paths,
     )
     from formal_policy import (  # type: ignore
+        evaluate_formal_terminal_state,
         export_formal_env,
         formal_force_tick,
         formal_policy_prompt_addon,
         is_force_tick_enabled,
+        is_formal_track,
         load_formal_policy,
+        load_formal_terminal_state,
         merge_standing_orders_formal,
         pin_privileged_policy,
+        resolve_formal_project,
         write_host_pin,
     )
 except ImportError:  # pragma: no cover - package-style import during tests
@@ -159,13 +165,17 @@ except ImportError:  # pragma: no cover - package-style import during tests
         iteration_ledger_paths,
     )
     from .formal_policy import (  # type: ignore
+        evaluate_formal_terminal_state,
         export_formal_env,
         formal_force_tick,
         formal_policy_prompt_addon,
         is_force_tick_enabled,
+        is_formal_track,
         load_formal_policy,
+        load_formal_terminal_state,
         merge_standing_orders_formal,
         pin_privileged_policy,
+        resolve_formal_project,
         write_host_pin,
     )
 
@@ -198,6 +208,18 @@ COMPUTE_SERVICE_ALIASES = {
     "modal": "modal",
 }
 COMPUTE_RUN_STATUSES = {"succeeded", "failed", "cancelled", "unknown"}
+# Provenance-metadata synonyms accepted on --compute-run records. Aliasing is
+# allowed here (unlike stop_reason, which gates the early-stop policy).
+COMPUTE_RUN_STATUS_ALIASES = {"completed": "succeeded"}
+COMPUTE_RUN_KNOWN_KEYS = (
+    "service",
+    "status",
+    "job_ref",
+    "detail",
+    "started_at",
+    "finished_at",
+    "duration_seconds",
+)
 ITERATION_SUBMISSION_SCHEMA = "iteration_submission.v1"
 ITERATION_SUBMISSION_FILENAME = ".iteration_submission.json"
 ITERATION_SUBMISSION_MAX_BYTES = 1_000_000
@@ -889,7 +911,11 @@ def parse_compute_runs(values: list[str] | None, *, explicit_none: bool = False)
         item = parse_json_or_file(raw)
         if not isinstance(item, dict):
             raise ValueError("each --compute-run value must be a JSON object")
-        token = str(item.get("service") or "").strip().lower()
+        raw_service = item.get("service")
+        if raw_service in (None, "") and item.get("backend") not in (None, ""):
+            # Provenance metadata: accept the common 'backend' synonym.
+            raw_service = item.get("backend")
+        token = str(raw_service or "").strip().lower()
         service = COMPUTE_SERVICE_ALIASES.get(token, token)
         if service.startswith("other:"):
             slug = service.split(":", 1)[1]
@@ -897,12 +923,17 @@ def parse_compute_runs(values: list[str] | None, *, explicit_none: bool = False)
                 raise ValueError(f"invalid custom compute service {service!r}")
         elif service not in set(COMPUTE_SERVICE_ALIASES.values()):
             raise ValueError(
-                "compute service must be local, hetzner, kaggle, modal, "
-                "github-actions, or other:<safe-slug>"
+                "compute run 'service' must be local, hetzner, kaggle, modal, "
+                f"github-actions, or other:<safe-slug> (got {token!r}); "
+                f"recognized --compute-run keys: {', '.join(COMPUTE_RUN_KNOWN_KEYS)}"
             )
         status = str(item.get("status") or "unknown").strip().lower()
+        status = COMPUTE_RUN_STATUS_ALIASES.get(status, status)
         if status not in COMPUTE_RUN_STATUSES:
-            raise ValueError(f"compute run status must be one of {sorted(COMPUTE_RUN_STATUSES)}")
+            raise ValueError(
+                f"compute run status must be one of {sorted(COMPUTE_RUN_STATUSES)} "
+                f"(got {status!r})"
+            )
         normalized: dict[str, Any] = {"service": service, "status": status}
         residual_job_detail: str | None = None
         for key in ("job_ref", "detail", "started_at", "finished_at", "duration_seconds"):
@@ -940,6 +971,80 @@ def is_success_stop_reason(reason: object) -> bool:
     return normalized_stop_reason(reason) in SUCCESS_STOP_REASONS
 
 
+class GuardError(ValueError):
+    """Guard failure carrying structured hints for the CLI failure payload.
+
+    ``str(exc)`` stays the stable ``error`` string; ``payload`` keys are merged
+    into the JSON failure result under their own names so scripted callers that
+    parse ``error`` are unaffected.
+    """
+
+    def __init__(self, message: str, **payload: Any) -> None:
+        super().__init__(message)
+        self.payload: dict[str, Any] = payload
+
+
+def proof_artifact_example() -> dict[str, Any]:
+    """The exact record shape validate_proof_artifact accepts (see selftest)."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "id": "<evidence-id>",
+        "artifact_type": "lean",
+        "machine_checkable": True,
+        "target": "<theorem or claim this artifact proves>",
+        "proof_path": "<path relative to the loop dir, e.g. proof_artifacts/final.lean>",
+        "checker": {"name": "lake", "status": "passed"},
+    }
+
+
+def early_stop_contract() -> dict[str, Any]:
+    """Structured hints attached to early-stop guard failures (one round-trip)."""
+    return {
+        "accepted_stop_reasons": sorted(SUCCESS_STOP_REASONS),
+        "honest_negative_stop_reason": (
+            "formal_open_ledger (requires a host-authored formal/terminal_state.json "
+            "with terminal_state=open_ledger; run the formal-terminal-state command first)"
+        ),
+        "accepted_artifact_types": sorted(PROOF_ARTIFACT_TYPES),
+        "evidence_requirement": (
+            "each --evidence-id must be a safe id (letters/digits/_/.-) resolving to "
+            f"{PROOF_ARTIFACT_DIRNAME}/<id>.json inside --dir, with a relative proof_path "
+            "inside the loop directory; use the stage-proof command to scaffold one, "
+            "validate-proof-artifact to check it, and append-iteration --dry-run to "
+            "run every guard without writing"
+        ),
+        "expected_proof_artifact": proof_artifact_example(),
+    }
+
+
+def suggest_stop_reason(raw: object) -> str | None:
+    """Suggestion-only stop_reason hint; never aliased (the append gate and the
+    validate re-check both compare the stored literal, so silent normalization
+    on one side would desync them and refuse all later appends)."""
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    head = normalized_stop_reason(text.split(":", 1)[0])
+    accepted = SUCCESS_STOP_REASONS | {"formal_open_ledger"}
+    if head in accepted and normalized_stop_reason(text) not in accepted:
+        return head
+    matches = difflib.get_close_matches(
+        normalized_stop_reason(text), sorted(accepted), n=1, cutoff=0.75
+    )
+    return matches[0] if matches else None
+
+
+def suggest_artifact_type(raw: object) -> str | None:
+    token = str(raw or "").strip().lower()
+    if not token:
+        return None
+    for known in sorted(PROOF_ARTIFACT_TYPES):
+        if token.startswith(known) or known.startswith(token):
+            return known
+    matches = difflib.get_close_matches(token, sorted(PROOF_ARTIFACT_TYPES), n=1, cutoff=0.6)
+    return matches[0] if matches else None
+
+
 def proof_artifacts_dir(run_dir: Path) -> Path:
     return run_dir / PROOF_ARTIFACT_DIRNAME
 
@@ -958,15 +1063,25 @@ def validate_relative_proof_path(run_dir: Path, raw_path: object, evidence_id: s
         return [f"proof artifact {evidence_id!r} proof_path must be a non-empty relative path"]
     candidate = Path(raw_path)
     if candidate.is_absolute() or ".." in candidate.parts:
-        return [f"proof artifact {evidence_id!r} proof_path must stay inside the loop directory"]
+        return [
+            f"proof artifact {evidence_id!r} proof_path must stay inside the loop directory "
+            f"(use a relative path such as {PROOF_ARTIFACT_DIRNAME}/<file>; the stage-proof "
+            "command copies an outside file in and records its provenance)"
+        ]
     resolved_run_dir = run_dir.resolve()
     resolved_proof = (resolved_run_dir / candidate).resolve()
     try:
         resolved_proof.relative_to(resolved_run_dir)
     except ValueError:
-        errors.append(f"proof artifact {evidence_id!r} proof_path must stay inside the loop directory")
+        errors.append(
+            f"proof artifact {evidence_id!r} proof_path must stay inside the loop directory "
+            "(symlinks escaping --dir are rejected; use the stage-proof command to copy the file in)"
+        )
     if not resolved_proof.is_file():
-        errors.append(f"proof artifact {evidence_id!r} proof_path does not exist: {raw_path}")
+        errors.append(
+            f"proof artifact {evidence_id!r} proof_path does not exist: {raw_path} "
+            "(the stage-proof command copies a checked file into the loop directory)"
+        )
     return errors
 
 
@@ -993,7 +1108,13 @@ def validate_proof_artifact(run_dir: Path, evidence_id: object) -> list[str]:
     if artifact.get("machine_checkable") is not True:
         errors.append(f"proof artifact {evidence_id!r} machine_checkable must be true")
     if artifact.get("artifact_type") not in PROOF_ARTIFACT_TYPES:
-        errors.append(f"proof artifact {evidence_id!r} artifact_type is invalid")
+        hint = suggest_artifact_type(artifact.get("artifact_type"))
+        suffix = f"; did you mean {hint!r}?" if hint else ""
+        errors.append(
+            f"proof artifact {evidence_id!r} artifact_type is invalid "
+            f"(got {artifact.get('artifact_type')!r}; accepted: "
+            f"{', '.join(sorted(PROOF_ARTIFACT_TYPES))}){suffix}"
+        )
 
     checker = artifact.get("checker")
     if not isinstance(checker, dict):
@@ -1663,6 +1784,12 @@ def append_iteration(
         _host_control is None
         and os.environ.get("AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION") == "1"
     ):
+        if getattr(args, "dry_run", False):
+            raise ValueError(
+                "append-iteration --dry-run is unavailable under host-mediated "
+                "submission (AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION=1): guards run "
+                "host-side on the real submission; submit without --dry-run"
+            )
         return _write_worker_iteration_submission(args)
     control = os.environ if _host_control is None else _host_control
     run_dir = Path(args.dir).expanduser().resolve()
@@ -1745,18 +1872,57 @@ def append_iteration(
             "for material claim review"
         )
     if args.decision == "stop" and remaining_after_append > 0:
-        if not is_success_stop_reason(args.stop_reason):
-            raise ValueError("early stop before max_iterations requires a success/proof stop_reason")
-        if not evidence_ids:
-            raise ValueError("early stop before max_iterations requires at least one proof artifact evidence_id")
-        proof_errors: list[str] = []
-        for evidence_id in evidence_ids:
-            proof_errors.extend(validate_proof_artifact(run_dir, evidence_id))
-        if len(proof_errors) == len(evidence_ids) or not valid_proof_artifact_evidence_ids(run_dir, evidence_ids):
-            raise ValueError(
-                "early stop before max_iterations requires at least one evidence_id with a valid proof artifact: "
-                + "; ".join(proof_errors)
-            )
+        if str(args.stop_reason or "").strip() == "formal_open_ledger":
+            # Honest negative for formal-track runs: allowed early only when the
+            # host-authored terminal state records an open obligation ledger.
+            terminal = load_formal_terminal_state(run_dir)
+            if not terminal or terminal.get("terminal_state") != "open_ledger":
+                raise GuardError(
+                    "stop_reason formal_open_ledger requires a host-authored "
+                    "formal/terminal_state.json with terminal_state=open_ledger "
+                    "(run the formal-terminal-state command first)",
+                    **early_stop_contract(),
+                )
+        else:
+            if not is_success_stop_reason(args.stop_reason):
+                hint = suggest_stop_reason(args.stop_reason)
+                suffix = (
+                    f" (got {str(args.stop_reason or '')!r}; did you mean {hint!r}? "
+                    "the stop_reason must be exactly one accepted token — put detail in --output)"
+                    if hint
+                    else f" (got {str(args.stop_reason or '')!r})"
+                )
+                raise GuardError(
+                    "early stop before max_iterations requires a success/proof stop_reason"
+                    + suffix,
+                    **early_stop_contract(),
+                )
+            if not evidence_ids:
+                raise GuardError(
+                    "early stop before max_iterations requires at least one proof artifact evidence_id "
+                    f"(--evidence-id <id> resolving to {PROOF_ARTIFACT_DIRNAME}/<id>.json)",
+                    **early_stop_contract(),
+                )
+            proof_errors: list[str] = []
+            for evidence_id in evidence_ids:
+                proof_errors.extend(validate_proof_artifact(run_dir, evidence_id))
+            if len(proof_errors) == len(evidence_ids) or not valid_proof_artifact_evidence_ids(run_dir, evidence_ids):
+                raise GuardError(
+                    "early stop before max_iterations requires at least one evidence_id with a valid proof artifact: "
+                    + "; ".join(proof_errors),
+                    **early_stop_contract(),
+                )
+            formal_pol_local = load_formal_policy(run_dir)
+            if formal_pol_local.policy in {"on", "force"} and is_formal_track(run_dir):
+                terminal = load_formal_terminal_state(run_dir)
+                if not terminal or terminal.get("terminal_state") != "sorry_free_artifact":
+                    raise GuardError(
+                        "formal policy is active on a formal-track path: an early "
+                        "success stop requires a host-authored formal/terminal_state.json "
+                        "with terminal_state=sorry_free_artifact "
+                        "(run the formal-terminal-state command first)",
+                        **early_stop_contract(),
+                    )
     now = utc_now()
     record = {
         "schema_version": SCHEMA_VERSION,
@@ -1892,6 +2058,19 @@ def append_iteration(
         if not next_action:
             record["proposed_next_action"] = str(plan.get("next_action") or "")
         if enforced_goal_focus:
+            if getattr(args, "dry_run", False):
+                # Every guard above has passed; stop before the first write.
+                return {
+                    "status": "ok",
+                    "action": "append-iteration",
+                    "dry_run": True,
+                    "would_stage": True,
+                    "dir": str(run_dir),
+                    "iteration": number,
+                    "decision": args.decision,
+                    "would_append": record,
+                    "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
+                }
             staged = goal_focus_v2.stage_iteration_candidate(
                 run_dir,
                 record,
@@ -1917,6 +2096,19 @@ def append_iteration(
                 "candidate": staged,
                 "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
             }
+    if getattr(args, "dry_run", False):
+        # Every guard above has passed; stop before the first write.
+        return {
+            "status": "ok",
+            "action": "append-iteration",
+            "dry_run": True,
+            "would_stage": False,
+            "dir": str(run_dir),
+            "iteration": number,
+            "decision": args.decision,
+            "would_append": record,
+            "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
+        }
     append_jsonl(paths["iterations"], record)
 
     state["last_iteration"] = number
@@ -2075,9 +2267,26 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
                 ):
                     if host_reviewed_goal_success:
                         continue
+                    if str(record.get("stop_reason") or "").strip() == "formal_open_ledger":
+                        # Mirror the append-gate exemption: an honest-negative early
+                        # stop is valid when the host-authored terminal state records
+                        # an open obligation ledger.
+                        terminal = load_formal_terminal_state(run_dir)
+                        if not terminal or terminal.get("terminal_state") != "open_ledger":
+                            errors.append(
+                                f"iteration {iteration_number} early stop with stop_reason "
+                                "formal_open_ledger requires a host-authored "
+                                "formal/terminal_state.json with terminal_state=open_ledger"
+                            )
+                        continue
                     if not is_success_stop_reason(record.get("stop_reason")):
                         errors.append(
                             f"iteration {iteration_number} early stop before max_iterations must use a success/proof stop_reason"
+                        )
+                        errors.append(
+                            f"iteration {iteration_number}: accepted stop_reason values: "
+                            f"{', '.join(sorted(SUCCESS_STOP_REASONS))} "
+                            "(or formal_open_ledger with a host-authored open_ledger terminal state)"
                         )
                     evidence_ids = record_evidence_ids(record)
                     if not evidence_ids:
@@ -2092,6 +2301,18 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
                             errors.extend(
                                 f"iteration {iteration_number}: {error}"
                                 for error in validate_proof_artifact(run_dir, evidence_id)
+                            )
+                    # Mirror the append-gate formal-track success rule: an agent
+                    # deleting (or never obtaining) the host verdict must not
+                    # leave validate green.
+                    formal_pol_local = load_formal_policy(run_dir)
+                    if formal_pol_local.policy in {"on", "force"} and is_formal_track(run_dir):
+                        terminal = load_formal_terminal_state(run_dir)
+                        if not terminal or terminal.get("terminal_state") != "sorry_free_artifact":
+                            errors.append(
+                                f"iteration {iteration_number} early success stop on a "
+                                "formal-track run requires a host-authored "
+                                "formal/terminal_state.json with terminal_state=sorry_free_artifact"
                             )
 
     latest = iterations[-1] if iterations else None
@@ -2128,6 +2349,344 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
 
 def validate_command(args: argparse.Namespace) -> dict[str, Any]:
     return validate_loop_dir(Path(args.dir).expanduser().resolve())
+
+
+def validate_proof_artifact_command(args: argparse.Namespace) -> dict[str, Any]:
+    run_dir = Path(args.dir).expanduser().resolve()
+    evidence_id = str(args.evidence_id or "").strip()
+    errors = validate_proof_artifact(run_dir, evidence_id)
+    result: dict[str, Any] = {
+        "status": "ok" if not errors else "failed",
+        "action": "validate-proof-artifact",
+        "dir": str(run_dir),
+        "evidence_id": evidence_id,
+        "errors": errors,
+    }
+    if errors:
+        result["expected_proof_artifact"] = proof_artifact_example()
+    return result
+
+
+def stage_proof_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Copy a checked proof file into the loop dir and scaffold its artifact.
+
+    The copy records provenance (source path + sha256) so the staged file can
+    be traced; the scaffold is exactly the shape validate_proof_artifact
+    accepts, with checker fields taken from the caller's flags.
+    """
+    run_dir = Path(args.dir).expanduser().resolve()
+    if not run_dir.is_dir():
+        raise ValueError(f"--dir does not exist or is not a directory: {run_dir}")
+    evidence_id = str(args.id or "").strip()
+    if not is_safe_evidence_id(evidence_id):
+        raise ValueError(
+            "stage-proof --id must be 1-128 characters of letters, digits, "
+            "underscore, hyphen, or dot, and must start with a letter or digit"
+        )
+    source = Path(args.file).expanduser().resolve()
+    if not source.is_file():
+        raise ValueError(f"stage-proof --file does not exist: {args.file}")
+    artifact_type = str(args.artifact_type or "").strip().lower()
+    if artifact_type not in PROOF_ARTIFACT_TYPES:
+        hint = suggest_artifact_type(artifact_type)
+        suffix = f"; did you mean {hint!r}?" if hint else ""
+        raise ValueError(
+            f"stage-proof --artifact-type must be one of "
+            f"{', '.join(sorted(PROOF_ARTIFACT_TYPES))} (got {artifact_type!r}){suffix}"
+        )
+    target = str(args.target or "").strip()
+    if not target:
+        raise ValueError("stage-proof --target must describe the proved statement")
+    checker_name = str(args.checker_name or "").strip()
+    if not checker_name:
+        raise ValueError("stage-proof --checker-name must name the checker (e.g. lake)")
+
+    artifacts_dir = proof_artifacts_dir(run_dir)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    # Prefix with the evidence id: Lean sources routinely share a basename
+    # (Proof.lean, Main.lean), so a bare source.name would collide across
+    # different artifacts, and the id prefix also keeps the staged copy from
+    # ever colliding with the <id>.json artifact record itself.
+    staged_name = f"{evidence_id}__{source.name}"
+    staged_path = artifacts_dir / staged_name
+    artifact_path = proof_artifact_path(run_dir, evidence_id)
+    if artifact_path.exists():
+        raise ValueError(
+            f"proof artifact {evidence_id!r} already exists: "
+            f"{PROOF_ARTIFACT_DIRNAME}/{evidence_id}.json (pick a new --id)"
+        )
+    if staged_path.exists():
+        raise ValueError(
+            f"staged file already exists: {PROOF_ARTIFACT_DIRNAME}/{staged_name} "
+            "(pick a new --id or remove the stale copy first)"
+        )
+    payload = source.read_bytes()
+    digest = hashlib.sha256(payload).hexdigest()
+    staged_path.write_bytes(payload)
+    artifact = {
+        "schema_version": SCHEMA_VERSION,
+        "id": evidence_id,
+        "artifact_type": artifact_type,
+        "machine_checkable": True,
+        "target": target,
+        "proof_path": f"{PROOF_ARTIFACT_DIRNAME}/{staged_name}",
+        "checker": {"name": checker_name, "status": str(args.checker_status or "passed")},
+        "staged_from": str(source),
+        "sha256": digest,
+    }
+    write_json(artifact_path, artifact)
+    errors = validate_proof_artifact(run_dir, evidence_id)
+    return {
+        "status": "ok" if not errors else "failed",
+        "action": "stage-proof",
+        "dir": str(run_dir),
+        "evidence_id": evidence_id,
+        "artifact_path": f"{PROOF_ARTIFACT_DIRNAME}/{evidence_id}.json",
+        "proof_path": f"{PROOF_ARTIFACT_DIRNAME}/{staged_name}",
+        "sha256": digest,
+        "errors": errors,
+        "artifact": artifact,
+    }
+
+
+RETRACTIONS_FILENAME = "retractions.jsonl"
+RETRACTIONS_PER_ITERATION_CAP = 3
+
+
+def retract_iteration_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Remove the newest non-terminal ledger record and restore coherence.
+
+    Legacy-mode recovery only: an agent that botched an append can undo it
+    instead of rewriting the ledger by hand (the T1 failure mode). Refused
+    under Goal-Focus enforce, under host-mediated submission, and while any
+    armed registry entry claims the loop — in those modes the host owns the
+    ledger. Every retraction (and any rollback) lands in an append-only
+    retractions.jsonl audit file, and the loop must validate cleanly after
+    the mutation or the change is rolled back byte-for-byte.
+    """
+    if os.environ.get("AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION") == "1":
+        raise ValueError(
+            "retract-iteration is unavailable under host-mediated submission "
+            "(AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION=1): the host owns the ledger"
+        )
+    run_dir = Path(args.dir).expanduser().resolve()
+    if not run_dir.is_dir():
+        raise ValueError(f"--dir does not exist or is not a directory: {run_dir}")
+    reason = str(args.reason or "").strip()
+    if not reason:
+        raise ValueError(
+            "retract-iteration requires a non-empty --reason describing why the "
+            "record is being withdrawn"
+        )
+    if goal_focus_is_enforced(run_dir):
+        raise ValueError(
+            "retract-iteration is refused while Goal-Focus enforce mode is active: "
+            "host banking owns the ledger (use the host review flow instead)"
+        )
+    if goal_focus_v2.load_iteration_dispatch(run_dir):
+        raise ValueError(
+            "retract-iteration is refused while a host dispatch intent is in flight"
+        )
+    try:
+        reg = registry_dir(args)
+        if reg.is_dir():
+            # pathlib.glob swallows PermissionError, which would read an
+            # unreadable registry as "disarmed"; probe it so we fail closed.
+            os.listdir(reg)
+        target = str(run_dir)
+        for entry_path, entry in list_registry_entries(reg):
+            if str(entry.get("loop_dir") or "") == target:
+                raise ValueError(
+                    "retract-iteration is refused while the loop is armed "
+                    f"(registry entry {entry_path.name}): stop or disarm the "
+                    "driver first"
+                )
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - unreadable registry fails closed.
+        raise ValueError(
+            f"retract-iteration could not prove the loop is disarmed: {exc}"
+        ) from exc
+
+    paths = loop_paths(run_dir)
+    for name in ("state", "budget", "iterations"):
+        if not paths[name].exists():
+            raise ValueError(f"loop file missing: {paths[name].name}")
+    state = read_json(paths["state"])
+    budget = read_json(paths["budget"])
+    iterations = read_iterations(paths["iterations"])
+    if not iterations:
+        raise ValueError("nothing to retract: iterations.jsonl has no records")
+    if state.get("status") in TERMINAL_STATUSES:
+        raise ValueError(
+            f"cannot retract after loop status is {state.get('status')}: "
+            "terminal records are permanent"
+        )
+    record = iterations[-1]
+    if record.get("decision") in TERMINAL_DECISIONS:
+        raise ValueError(
+            f"cannot retract a terminal record (decision {record.get('decision')})"
+        )
+    number = record.get("iteration")
+
+    # Rotation safety: only a record still in the live file can be removed.
+    raw = _read_regular_text(paths["iterations"])
+    lines = raw.splitlines(keepends=True)
+    last_index = max(
+        (i for i, line in enumerate(lines) if line.strip()), default=None
+    )
+    if last_index is None:
+        raise ValueError(
+            "the newest ledger record lives in a rotated shard: retraction only "
+            "operates on the live iterations.jsonl"
+        )
+    try:
+        live_last = json.loads(lines[last_index].strip())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"live ledger tail is invalid JSON: {exc}") from exc
+    if live_last != record:
+        raise ValueError(
+            "the live iterations.jsonl tail does not match the newest ledger "
+            "record (rotated or concurrently modified ledger): refusing to retract"
+        )
+
+    retractions_path = run_dir / RETRACTIONS_FILENAME
+    prior_attempts = 0
+    if retractions_path.exists():
+        for line in _read_regular_text(retractions_path).splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(entry, dict)
+                and entry.get("action") == "retract"
+                and entry.get("iteration") == number
+            ):
+                prior_attempts += 1
+    if prior_attempts >= RETRACTIONS_PER_ITERATION_CAP:
+        raise ValueError(
+            f"iteration {number} has already been retracted "
+            f"{RETRACTIONS_PER_ITERATION_CAP} times: the cap protects the audit "
+            "trail from append/retract churn (fix the record content instead)"
+        )
+
+    now = utc_now()
+    snapshots = {
+        name: (paths[name].read_bytes() if paths[name].exists() else None)
+        for name in ("state", "budget", "iterations", "recovery")
+    }
+    # The full removed record is audited BEFORE the mutation so a crash midway
+    # can never lose it; a failed retraction appends a rollback entry after it.
+    append_jsonl(
+        retractions_path,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "action": "retract",
+            "retracted_at": now,
+            "iteration": number,
+            "reason": reason,
+            "record": record,
+        },
+    )
+
+    prev_record = iterations[-2] if len(iterations) > 1 else None
+    new_count = len(iterations) - 1
+    delta = record.get("budget_delta") or {}
+    try:
+        paths["iterations"].parent.mkdir(parents=True, exist_ok=True)
+        with paths["iterations"].open("w", encoding="utf-8", newline="") as handle:
+            handle.write("".join(lines[:last_index]))
+        state["last_iteration"] = (
+            int(prev_record.get("iteration") or new_count) if prev_record else 0
+        )
+        state["status"] = "running" if prev_record else "initialized"
+        state["updated_at"] = now
+        budget["spent_iterations"] = new_count
+        budget["spent_tokens"] = max(
+            0, int(budget.get("spent_tokens", 0)) - int(delta.get("tokens") or 0)
+        )
+        budget["spent_usd"] = max(
+            0.0, float(budget.get("spent_usd", 0.0)) - float(delta.get("usd") or 0.0)
+        )
+        budget["updated_at"] = now
+        write_json(paths["state"], state)
+        write_json(paths["budget"], budget)
+        prev_gaps = list((prev_record or {}).get("remaining_gaps") or [])
+        remaining_iterations = max(
+            0, int(budget.get("max_iterations", 0)) - new_count
+        )
+        with paths["recovery"].open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(
+                "\n".join(
+                    [
+                        "# Autonomous Research Loop Recovery",
+                        "",
+                        f"- Goal: {state.get('goal', '')}",
+                        f"- Status: {state.get('status', '')}",
+                        f"- Last completed iteration: {new_count}",
+                        "- Next safe action: "
+                        + (
+                            "continue from the last recorded decision"
+                            if prev_record
+                            else "start the first bounded iteration"
+                        ),
+                        "- Remaining evidence gaps: "
+                        + (
+                            ", ".join(prev_gaps)
+                            if prev_gaps
+                            else ("none recorded" if prev_record else "not yet assessed")
+                        ),
+                        "- Active blockers: none recorded",
+                        f"- Budget remaining: {remaining_iterations} iterations",
+                        "",
+                    ]
+                )
+            )
+        validation_errors = validate_loop_dir(run_dir)["errors"]
+        if validation_errors:
+            raise ValueError(
+                "loop did not validate after retraction: "
+                + "; ".join(validation_errors)
+            )
+    except Exception as exc:
+        for name, payload in snapshots.items():
+            try:
+                if payload is None:
+                    paths[name].unlink(missing_ok=True)
+                else:
+                    paths[name].write_bytes(payload)
+            except OSError:
+                pass
+        append_jsonl(
+            retractions_path,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "action": "rollback",
+                "rolled_back_at": utc_now(),
+                "iteration": number,
+                "error": str(exc),
+            },
+        )
+        raise
+    return {
+        "status": "ok",
+        "action": "retract-iteration",
+        "dir": str(run_dir),
+        "iteration": number,
+        "reason": reason,
+        "retracted_record": record,
+        "restored": {
+            "last_iteration": state["last_iteration"],
+            "loop_status": state["status"],
+            "spent_iterations": new_count,
+        },
+        "audit": str(retractions_path),
+        "validation_errors": [],
+    }
 
 
 def status_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -2301,8 +2860,17 @@ STUB_ITERATION_SNIPPET = (
     "    sys.exit(1)\n"
     "budget_path = os.path.join(run_dir, 'budget.json')\n"
     "budget = json.load(open(budget_path))\n"
-    "budget['spent_iterations'] = int(budget.get('spent_iterations', 0)) + 1\n"
+    "number = int(budget.get('spent_iterations', 0)) + 1\n"
+    "budget['spent_iterations'] = number\n"
     "json.dump(budget, open(budget_path, 'w'))\n"
+    "record = {'iteration': number, 'decision': 'continue',\n"
+    "          'summary': 'stub iteration', 'evidence_ids': []}\n"
+    "with open(os.path.join(run_dir, 'iterations.jsonl'), 'a') as handle:\n"
+    "    handle.write(json.dumps(record) + '\\n')\n"
+    "state_path = os.path.join(run_dir, 'loop_state.json')\n"
+    "state = json.load(open(state_path))\n"
+    "state['last_iteration'] = number\n"
+    "json.dump(state, open(state_path, 'w'))\n"
     "print('stub iteration complete')\n"
 )
 GROK_PROFILE_STATUS_SCHEMA = "grok-remote.profile-status.v1"
@@ -4368,6 +4936,32 @@ def done_command(args: argparse.Namespace) -> dict[str, Any]:
     return {"status": "ok", "action": "done", "dir": str(run_dir), **compute_done(run_dir)}
 
 
+def formal_terminal_state_command(args: argparse.Namespace) -> dict[str, Any]:
+    """Host-run gate verdict on the formal artifact; writes formal/terminal_state.json."""
+    run_dir = Path(args.dir).expanduser().resolve()
+    root = Path(args.root).expanduser().resolve() if getattr(args, "root", None) else None
+    pol = load_formal_policy(run_dir)
+    verdict = evaluate_formal_terminal_state(
+        run_dir,
+        root=root,
+        policy=pol,
+        reason=str(getattr(args, "reason", "") or "cli"),
+        require_typecheck=not bool(getattr(args, "no_typecheck", False)),
+    )
+    decided = verdict.get("terminal_state") in {"sorry_free_artifact", "open_ledger"}
+    return {
+        "status": "ok" if decided else "failed",
+        "action": "formal-terminal-state",
+        "dir": str(run_dir),
+        "terminal_state": verdict.get("terminal_state"),
+        "detail": verdict.get("detail"),
+        "gate": verdict.get("gate"),
+        "obligations": verdict.get("obligations"),
+        "decided_at": verdict.get("decided_at"),
+        "state_file": str(run_dir / "formal" / "terminal_state.json"),
+    }
+
+
 def read_hook_payload() -> str:
     """Best-effort read of the Stop-hook JSON on stdin that never blocks the
     fail-open hook. On POSIX a zero-timeout select guards against an inherited idle
@@ -4988,6 +5582,10 @@ def iteration_prompt(
             "header if absent): what this iteration did, what it concluded, whether "
             "it was independently verified, and what comes next — written for the "
             "project owner, not for the next agent; (6) exit. Do not run more than one iteration. "
+            "iterations.jsonl is append-only history: never truncate, rewrite, or "
+            "reset it or the loop's earlier records, even to recover from your own "
+            "failed append attempts — fix the new record instead (append-iteration "
+            "--dry-run shows every guard without writing). "
             "Do not stop the loop yourself: the headless driver owns the stop "
             "conditions. If you hit a credit or quota error, exit nonzero with the "
             "provider's error text visible in your output."
@@ -9050,8 +9648,203 @@ DRIVE_EXIT_CODES = {
     "resource_cleanup_unverified": 8,
     "candidate_quarantined": 9,
     "quarantine_persistence_unverified": 10,
+    "review_wait_exhausted": 16,
     "bad_arguments": 2,
 }
+
+BUILD_CONFIG_FILENAMES = (
+    "lakefile.lean",
+    "lakefile.toml",
+    "lake-manifest.json",
+    "lean-toolchain",
+)
+
+
+class LedgerIntegrityWatch:
+    """Host-memory watch over the append-only iteration-ledger prefix.
+
+    The observed prefix hash lives only in driver memory: the loop tree
+    (including driver_logs) is agent-writable, so nothing an iteration agent
+    writes can alter what this watch has already seen. The watch hashes the
+    logical ledger stream — rotated shards in record order plus the live file
+    (``iteration_ledger_paths``) — so the host's own shard rotation, which
+    moves live bytes across a shard boundary without changing the stream, is
+    not a violation. A violation means bytes the host previously observed
+    changed or disappeared — a truncate, rewrite, or reset — never merely
+    that new records were appended or rotated.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.seen_bytes = 0
+        self.prefix_sha256 = hashlib.sha256(b"").hexdigest()
+        self.violations: list[dict[str, Any]] = []
+        self._advance(self._read())
+
+    def _read(self) -> bytes:
+        chunks: list[bytes] = []
+        for shard in iteration_ledger_paths(self.path.parent):
+            try:
+                if shard.exists():
+                    chunks.append(shard.read_bytes())
+            except OSError:
+                continue
+        return b"".join(chunks)
+
+    def _advance(self, data: bytes) -> None:
+        self.seen_bytes = len(data)
+        self.prefix_sha256 = hashlib.sha256(data).hexdigest()
+
+    def check(self) -> dict[str, Any] | None:
+        """Record and return a violation if the seen prefix changed, else None."""
+        data = self._read()
+        if len(data) < self.seen_bytes:
+            kind = "truncated"
+        elif hashlib.sha256(data[: self.seen_bytes]).hexdigest() != self.prefix_sha256:
+            kind = "rewritten"
+        else:
+            self._advance(data)
+            return None
+        violation = {
+            "kind": kind,
+            "observed_at": utc_now(),
+            "expected_prefix_bytes": self.seen_bytes,
+            "expected_prefix_sha256": self.prefix_sha256,
+            "found_bytes": len(data),
+            "found_prefix_sha256": hashlib.sha256(
+                data[: min(len(data), self.seen_bytes)]
+            ).hexdigest(),
+        }
+        self.violations.append(violation)
+        # Re-baseline so one rewrite is one violation, not one per later cycle.
+        self._advance(data)
+        return violation
+
+
+class BuildConfigWatch:
+    """Hash-snapshot watch over host-owned Lean build configuration files."""
+
+    def __init__(self, dirs: list[Path]) -> None:
+        seen: set[str] = set()
+        self.dirs: list[Path] = []
+        for candidate in dirs:
+            try:
+                key = str(Path(candidate).resolve())
+            except OSError:
+                continue
+            if key not in seen:
+                seen.add(key)
+                self.dirs.append(Path(key))
+        self.baseline = self._snapshot()
+        self.changes: list[dict[str, Any]] = []
+
+    def _snapshot(self) -> dict[str, str | None]:
+        out: dict[str, str | None] = {}
+        for directory in self.dirs:
+            for name in BUILD_CONFIG_FILENAMES:
+                path = directory / name
+                try:
+                    out[str(path)] = (
+                        hashlib.sha256(path.read_bytes()).hexdigest()
+                        if path.is_file()
+                        else None
+                    )
+                except OSError:
+                    out[str(path)] = None
+        return out
+
+    def check(self) -> list[dict[str, Any]]:
+        """Record and return the files whose content changed since last check."""
+        current = self._snapshot()
+        fresh: list[dict[str, Any]] = []
+        for key, prior in self.baseline.items():
+            now = current.get(key)
+            if now == prior:
+                continue
+            fresh.append(
+                {
+                    "path": key,
+                    "change": (
+                        "added" if prior is None else "removed" if now is None else "modified"
+                    ),
+                    "prior_sha256": prior,
+                    "current_sha256": now,
+                    "observed_at": utc_now(),
+                }
+            )
+        if fresh:
+            self.changes.extend(fresh)
+            # Re-baseline so one edit is one report, not one per later cycle.
+            self.baseline = current
+        return fresh
+
+
+def _write_integrity_snapshot(
+    log_dir: Path, tag: str, payload: dict[str, Any], ledger_bytes: bytes
+) -> str:
+    """Exclusive-create snapshot of a violation plus the ledger bytes seen.
+
+    Uses the same O_EXCL|O_NOFOLLOW discipline as the per-iteration driver logs
+    so an agent-planted file or symlink at the target name fails the write
+    instead of redirecting it.
+    """
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    nonce = uuid.uuid4().hex[:12]
+    path = log_dir / f"integrity_{tag}_{stamp}_{nonce}.json"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(str(path), flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                **payload,
+                "ledger_snapshot_utf8": ledger_bytes.decode("utf-8", errors="replace"),
+            },
+            handle,
+            indent=2,
+            sort_keys=True,
+        )
+    return str(path)
+
+
+def _ledger_consistency_errors(run_dir: Path) -> list[str]:
+    """Cheap post-iteration cross-file coherence check (IG-3).
+
+    Reuses the validate invariants that tie budget.json and loop_state.json to
+    the iterations.jsonl record count. This is a complement to
+    LedgerIntegrityWatch, not a substitute: an agent that rewrites all three
+    files consistently passes here but still trips the in-memory prefix watch.
+    """
+    try:
+        paths = loop_paths(run_dir)
+        iterations = (
+            read_iterations(paths["iterations"]) if paths["iterations"].exists() else []
+        )
+        budget = read_json(paths["budget"]) if paths["budget"].exists() else {}
+        state = read_json(paths["state"]) if paths["state"].exists() else {}
+    except Exception as exc:  # noqa: BLE001 - unreadable ledger is itself a finding.
+        return [f"ledger unreadable during consistency check: {exc}"]
+    errors: list[str] = []
+    spent = budget.get("spent_iterations")
+    if isinstance(spent, int) and spent != len(iterations):
+        errors.append(
+            f"budget.json spent_iterations ({spent}) does not equal the "
+            f"iterations.jsonl record count ({len(iterations)})"
+        )
+    if iterations:
+        last_number = iterations[-1].get("iteration")
+        recorded_last = state.get("last_iteration")
+        if (
+            isinstance(last_number, int)
+            and isinstance(recorded_last, int)
+            and recorded_last != last_number
+        ):
+            errors.append(
+                f"loop_state.json last_iteration ({recorded_last}) does not match "
+                f"the newest ledger record ({last_number})"
+            )
+    return errors
 
 
 def drive_command(args: argparse.Namespace) -> dict[str, Any]:
@@ -9208,6 +10001,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             }
     quota_backoff = max(0, int(getattr(args, "quota_backoff", 900)))
     max_quota_waits = max(0, int(getattr(args, "max_quota_waits", 0)))
+    max_review_waits = max(0, int(getattr(args, "max_review_waits", 0)))
     log_dir = (
         Path(args.log_dir).expanduser()
         if getattr(args, "log_dir", None)
@@ -9298,6 +10092,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         }
     failures = 0
     quota_waits = 0
+    review_waits = 0
     quota_waits_total = 0
     iterations_run = 0
     reason = "unknown"
@@ -9305,6 +10100,28 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
     panel_mode = getattr(args, "panel", None) or "auto"
     panel_enabled = resolve_panel_mode(panel_mode, run_dir)
     formal_pol, formal_pin = _apply_formal_drive_start(run_dir, args)
+    # Host-memory integrity watches (IG-1/IG-2): baselines are taken before the
+    # first iteration agent runs and never live in agent-writable files.
+    ledger_watch = LedgerIntegrityWatch(loop_paths(run_dir)["iterations"])
+    ledger_desync_events: list[dict[str, Any]] = []
+    integrity_snapshots: list[str] = []
+    build_config_lock = bool(getattr(args, "build_config_lock", False))
+    build_config_watch: BuildConfigWatch | None = None
+    if formal_pol is not None and formal_pol.policy in {"on", "force"}:
+        watch_dirs: list[Path] = []
+        try:
+            project_dir = resolve_formal_project(
+                run_dir, formal_pol.project, root=root
+            )
+            if project_dir is not None:
+                watch_dirs.append(project_dir)
+        except Exception:  # noqa: BLE001 - watch setup must never block the drive.
+            pass
+        watch_dirs.append(root)
+        try:
+            build_config_watch = BuildConfigWatch(watch_dirs)
+        except Exception:  # noqa: BLE001
+            build_config_watch = None
     prior_primary_provider = os.environ.get("AAS_AUTOLOOP_PRIMARY_PROVIDER")
     os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = str(provider or "custom")
     _progress(
@@ -9586,6 +10403,27 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             current_summary=str(exc)[:400],
                             next_action="Repair or explicitly reject the exact candidate before review.",
                         )
+                        review_waits += 1
+                        if max_review_waits and review_waits >= max_review_waits:
+                            reason = "review_wait_exhausted"
+                            _progress(
+                                "result_review_error",
+                                source="drive",
+                                iteration_status="error",
+                                review_status="error",
+                                completed_summary=(
+                                    "Review wait budget exhausted; the staged candidate is "
+                                    "preserved and the drive exits resumably."
+                                ),
+                                current_summary=(
+                                    f"{review_waits} consecutive review waits without a "
+                                    "bank-or-reject verdict."
+                                ),
+                                next_action=(
+                                    "Repair the candidate or reviewer, then restart the drive."
+                                ),
+                            )
+                            break
                         interruptible_sleep(max(poll, 30.0), run_dir)
                         continue
                     pending_iteration = int(
@@ -9654,6 +10492,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             )
                             interruptible_sleep(max(poll, 30.0), run_dir)
                             continue
+                        review_waits = 0
                         final_record = finalized.get("record") or {}
                         final_plan = finalized.get("plan") or {}
                         review_families = review.get("reviewer_families") or []
@@ -9731,6 +10570,27 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                         next_action="Obtain a valid different-family review of the exact pending candidate.",
                     )
+                    review_waits += 1
+                    if max_review_waits and review_waits >= max_review_waits:
+                        reason = "review_wait_exhausted"
+                        _progress(
+                            "result_review_error",
+                            source="drive",
+                            iteration_status="error",
+                            review_status="error",
+                            completed_summary=(
+                                "Review wait budget exhausted; the staged candidate is "
+                                "preserved and the drive exits resumably."
+                            ),
+                            current_summary=(
+                                f"{review_waits} consecutive review waits without a "
+                                "bank-or-reject verdict."
+                            ),
+                            next_action=(
+                                "Repair the result-review panel, then restart the drive."
+                            ),
+                        )
+                        break
                     interruptible_sleep(max(poll, 30.0), run_dir)
                     continue
 
@@ -9803,6 +10663,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                 next_action=str(committed_plan.get("next_action") or ""),
                                 plan_revision=committed_plan.get("plan_revision"),
                             )
+                            review_waits = 0
                             continue
                     _progress(
                         "strategy_review_wait",
@@ -9817,6 +10678,28 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                         next_action="Obtain valid different-family strategy advice or repair the approach registry.",
                     )
+                    review_waits += 1
+                    if max_review_waits and review_waits >= max_review_waits:
+                        reason = "review_wait_exhausted"
+                        _progress(
+                            "strategy_review_error",
+                            source="drive",
+                            iteration_status="error",
+                            review_status="error",
+                            completed_summary=(
+                                "Strategy review wait budget exhausted; the drive exits "
+                                "resumably without committing a direction."
+                            ),
+                            current_summary=(
+                                f"{review_waits} consecutive review waits without a "
+                                "committed direction."
+                            ),
+                            next_action=(
+                                "Repair the strategy panel or approach registry, then "
+                                "restart the drive."
+                            ),
+                        )
+                        break
                     interruptible_sleep(max(poll, 30.0), run_dir)
                     continue
 
@@ -10430,6 +11313,87 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             except Exception:  # noqa: BLE001
                 post_spent = pre_spent
             ledger_advanced = post_spent > pre_spent
+            # IG-2: previously observed ledger bytes must never change.
+            integrity_failure_class = ""
+            ledger_violation = ledger_watch.check()
+            if ledger_violation is not None:
+                integrity_failure_class = "ledger_integrity_violation"
+                snapshot_error = ""
+                try:
+                    snapshot_path = _write_integrity_snapshot(
+                        log_dir,
+                        "ledger",
+                        {**ledger_violation, "drive_cycle": iterations_run},
+                        ledger_watch._read(),
+                    )
+                    integrity_snapshots.append(snapshot_path)
+                except Exception as exc:  # noqa: BLE001 - snapshot is evidence, not a gate.
+                    snapshot_path = ""
+                    snapshot_error = str(exc)
+                _progress(
+                    "ledger_integrity_violation",
+                    source="drive",
+                    drive_cycle=iterations_run,
+                    violation=ledger_violation,
+                    snapshot_path=snapshot_path,
+                    snapshot_error=snapshot_error,
+                )
+                sys.stderr.write(
+                    "autoloop-driver: iterations.jsonl history changed under the "
+                    f"host watch ({ledger_violation['kind']}); treating this cycle "
+                    "as failed\n"
+                )
+            # IG-3: cross-file coherence (complement to the prefix watch above —
+            # a consistent rewrite of all ledger files passes here by design).
+            desync_errors = _ledger_consistency_errors(run_dir)
+            if desync_errors:
+                if not integrity_failure_class:
+                    integrity_failure_class = "ledger_desync"
+                event = {
+                    "drive_cycle": iterations_run,
+                    "observed_at": utc_now(),
+                    "errors": desync_errors,
+                }
+                ledger_desync_events.append(event)
+                _progress(
+                    "ledger_desync",
+                    source="drive",
+                    drive_cycle=iterations_run,
+                    errors=desync_errors,
+                )
+                sys.stderr.write(
+                    "autoloop-driver: ledger files disagree after this iteration: "
+                    + "; ".join(desync_errors)
+                    + "\n"
+                )
+            # IG-1: host-owned build configuration must not drift mid-run.
+            if build_config_watch is not None:
+                config_changes = build_config_watch.check()
+                if config_changes:
+                    _progress(
+                        "build_config_change",
+                        source="drive",
+                        drive_cycle=iterations_run,
+                        changes=config_changes,
+                        locked=build_config_lock,
+                    )
+                    sys.stderr.write(
+                        "autoloop-driver: build configuration changed during the "
+                        "loop: "
+                        + ", ".join(
+                            f"{item['path']} ({item['change']})" for item in config_changes
+                        )
+                        + ("\n" if not build_config_lock else " [--build-config-lock]\n")
+                    )
+                    if build_config_lock and not integrity_failure_class:
+                        integrity_failure_class = "build_config_change"
+            if integrity_failure_class:
+                # An integrity finding invalidates this cycle's apparent
+                # progress. Legacy mode counts it as a failure through the
+                # shared stall handling below; the enforce-mode paths never
+                # reach that handling, so they consult integrity_failure_class
+                # directly before resetting or bypassing the failure counter.
+                ledger_advanced = False
             quarantined_after_failure = False
             if rc != 0 and goal_focus_mode == "enforce":
                 try:
@@ -10862,8 +11826,17 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                 reason = "max_failures"
                                 break
                             continue
-                        failures = 0
+                        if integrity_failure_class:
+                            # The reviewed candidate stays banked, but the
+                            # integrity finding still counts toward
+                            # max_failures: enforce mode never reaches the
+                            # shared stall handling below, so resetting the
+                            # counter here would make tampering uncountable.
+                            failures += 1
+                        else:
+                            failures = 0
                         quota_waits = 0
+                        review_waits = 0
                         final_record = finalized.get("record") or {}
                         final_plan = finalized.get("plan") or {}
                         reviewer_families = review.get("reviewer_families") or []
@@ -10970,6 +11943,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                     drive_cycle=iterations_run,
                                     error=str(exc)[:200],
                                 )
+                        if integrity_failure_class and failures >= max_failures:
+                            reason = "max_failures"
+                            break
                         continue
 
                     _progress(
@@ -10996,6 +11972,36 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                         next_action="Obtain a valid different-family review of the exact pending candidate.",
                     )
+                    if integrity_failure_class:
+                        # A wait cycle banks nothing, but the integrity finding
+                        # must still be counted: enforce mode never reaches the
+                        # shared stall handling below.
+                        failures += 1
+                        if failures >= max_failures:
+                            reason = "max_failures"
+                            break
+                    review_waits += 1
+                    if max_review_waits and review_waits >= max_review_waits:
+                        reason = "review_wait_exhausted"
+                        _progress(
+                            "result_review_error",
+                            source="drive",
+                            drive_cycle=iterations_run,
+                            iteration_status="error",
+                            review_status="error",
+                            completed_summary=(
+                                "Review wait budget exhausted; the staged candidate is "
+                                "preserved and the drive exits resumably."
+                            ),
+                            current_summary=(
+                                f"{review_waits} consecutive review waits without a "
+                                "bank-or-reject verdict."
+                            ),
+                            next_action=(
+                                "Repair the result-review panel, then restart the drive."
+                            ),
+                        )
+                        break
                     interruptible_sleep(max(poll, 30.0), run_dir)
                     continue
 
@@ -11017,7 +12023,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 # the iteration itself are legitimate control actions and are
                 # settled by the next top-of-loop verdict instead.
                 stalled = not ledger_advanced
-                if stalled:
+                if stalled and not integrity_failure_class:
+                    # A done/paused verdict excuses a quiet cycle, but never an
+                    # integrity finding: a rewritten ledger could fake "done".
                     try:
                         stall_verdict = compute_done(run_dir)
                     except Exception:  # noqa: BLE001 - unreadable state -> count it.
@@ -11039,10 +12047,14 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         started_at=iteration_started_at,
                         finished_at=iteration_finished_at,
                         duration_seconds=iteration_duration,
-                        failure_class="no_ledger_progress",
+                        failure_class=integrity_failure_class or "no_ledger_progress",
                         error=(
-                            "the iteration command exited 0 without appending an "
-                            "iteration record, so the loop did not advance"
+                            "the loop's ledger integrity checks failed this cycle"
+                            if integrity_failure_class
+                            else (
+                                "the iteration command exited 0 without appending an "
+                                "iteration record, so the loop did not advance"
+                            )
                         ),
                     )
                     sys.stderr.write(
@@ -11056,6 +12068,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     continue
                 failures = 0
                 quota_waits = 0
+                review_waits = 0
                 _progress(
                     "iteration_ok",
                     source="drive",
@@ -11185,12 +12198,48 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             disarm_loop(disarm_ns)
         except Exception:  # noqa: BLE001 - disarm is best-effort cleanup.
             pass
+        integrity_summary = {
+            "ledger_violations": list(ledger_watch.violations),
+            "ledger_desync_events": list(ledger_desync_events),
+            "build_config_changes": (
+                list(build_config_watch.changes) if build_config_watch is not None else []
+            ),
+            "build_config_lock": build_config_lock,
+            "snapshots": list(integrity_snapshots),
+        }
+        integrity_clean = not (
+            integrity_summary["ledger_violations"]
+            or integrity_summary["ledger_desync_events"]
+            or integrity_summary["build_config_changes"]
+        )
+        formal_terminal = ""
+        if formal_pol is not None and formal_pol.policy in {"on", "force"}:
+            # Host-authored verdict on the formal artifact. A "done" exit pays
+            # for the full lake build; failure exits record a scan-only ledger
+            # so shutdown stays fast and never certifies sorry-free.
+            try:
+                formal_verdict = evaluate_formal_terminal_state(
+                    run_dir,
+                    root=root,
+                    policy=formal_pol,
+                    pin=formal_pin,
+                    reason=f"drive_stop:{reason}",
+                    require_typecheck=(reason == "done"),
+                    integrity=integrity_summary,
+                )
+                formal_terminal = str(formal_verdict.get("terminal_state") or "")
+            except Exception:  # noqa: BLE001 - verdict is best-effort at shutdown.
+                formal_terminal = ""
         _progress(
             "drive_stop",
             source="drive",
             drive_cycle=iterations_run,
             terminal_reason=reason,
+            formal_terminal_state=formal_terminal,
             provider=provider or "",
+            ledger_violations=len(integrity_summary["ledger_violations"]),
+            ledger_desync_events=len(integrity_summary["ledger_desync_events"]),
+            build_config_changes=len(integrity_summary["build_config_changes"]),
         )
         if prior_primary_provider is None:
             os.environ.pop("AAS_AUTOLOOP_PRIMARY_PROVIDER", None)
@@ -11210,6 +12259,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
         "exit_code": exit_code,
         "live_status": str(run_dir / "LIVE_STATUS.md"),
         "progress_jsonl": str(log_dir / "progress.jsonl"),
+        "integrity": {**integrity_summary, "clean": integrity_clean},
     }
 
 
@@ -12058,23 +13108,91 @@ def build_parser() -> argparse.ArgumentParser:
     replan_mode.add_argument("--apply", action="store_true")
     goal_focus_replan.set_defaults(func=goal_focus_replan_command)
 
-    append = subparsers.add_parser("append-iteration", help="append one iteration record")
-    append.add_argument("--dir", required=True)
-    append.add_argument("--mode", choices=sorted(VALID_MODES), required=True)
-    append.add_argument("--objective", required=True)
-    append.add_argument("--decision", choices=sorted(VALID_DECISIONS), required=True)
-    append.add_argument("--input-ref", action="append")
-    append.add_argument("--source-id", action="append")
-    append.add_argument("--claim-id", action="append")
-    append.add_argument("--evidence-id", action="append")
-    append.add_argument("--guard-ref", action="append")
-    append.add_argument("--action-taken", action="append")
-    append.add_argument("--output", default="")
-    append.add_argument("--remaining-gap", action="append")
-    append.add_argument("--tokens", type=positive_int, default=0)
-    append.add_argument("--usd", type=nonnegative_float, default=0.0)
-    append.add_argument("--wall-time-seconds", type=positive_int, default=0)
-    append.add_argument("--stop-reason", default="")
+    append_epilog = (
+        "early-stop evidence contract (decision=stop before max_iterations):\n"
+        f"  accepted stop_reason values: {', '.join(sorted(SUCCESS_STOP_REASONS))}\n"
+        "  honest negative: --stop-reason formal_open_ledger (requires a host-authored\n"
+        "    formal/terminal_state.json with terminal_state=open_ledger)\n"
+        "  each --evidence-id <id> must resolve to a valid "
+        f"{PROOF_ARTIFACT_DIRNAME}/<id>.json:\n"
+        + json.dumps(proof_artifact_example(), indent=4)
+        + "\n"
+        f"  accepted artifact_type values: {', '.join(sorted(PROOF_ARTIFACT_TYPES))}\n"
+        "\n"
+        "workflow: stage-proof scaffolds an artifact, validate-proof-artifact checks one,\n"
+        "append-iteration --dry-run runs every guard without writing anything.\n"
+    )
+    append = subparsers.add_parser(
+        "append-iteration",
+        help="append one iteration record",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=append_epilog,
+    )
+    append.add_argument("--dir", required=True, help="loop directory created by init")
+    append.add_argument(
+        "--mode",
+        choices=sorted(VALID_MODES),
+        required=True,
+        help="iteration mode recorded in the ledger",
+    )
+    append.add_argument(
+        "--objective", required=True, help="what this iteration set out to do"
+    )
+    append.add_argument(
+        "--decision",
+        choices=sorted(VALID_DECISIONS),
+        required=True,
+        help="continue, or a terminal decision that ends the loop",
+    )
+    append.add_argument(
+        "--input-ref", action="append", help="input consulted this iteration (repeatable)"
+    )
+    append.add_argument(
+        "--source-id", action="append", help="evidence source id checked (repeatable)"
+    )
+    append.add_argument(
+        "--claim-id", action="append", help="material claim id staged (repeatable)"
+    )
+    append.add_argument(
+        "--evidence-id",
+        action="append",
+        help=(
+            "proof-artifact id; must resolve to "
+            f"{PROOF_ARTIFACT_DIRNAME}/<id>.json (repeatable; see epilog)"
+        ),
+    )
+    append.add_argument(
+        "--guard-ref", action="append", help="guard or gate reference consulted (repeatable)"
+    )
+    append.add_argument(
+        "--action-taken", action="append", help="action performed this iteration (repeatable)"
+    )
+    append.add_argument(
+        "--output", default="", help="free-text result summary (put stop detail here)"
+    )
+    append.add_argument(
+        "--remaining-gap", action="append", help="known open gap after this iteration (repeatable)"
+    )
+    append.add_argument(
+        "--tokens", type=positive_int, default=0, help="tokens spent this iteration"
+    )
+    append.add_argument(
+        "--usd", type=nonnegative_float, default=0.0, help="USD spent this iteration"
+    )
+    append.add_argument(
+        "--wall-time-seconds",
+        type=positive_int,
+        default=0,
+        help="wall time spent this iteration",
+    )
+    append.add_argument(
+        "--stop-reason",
+        default="",
+        help=(
+            "required for early stops; exactly one accepted token (see epilog) — "
+            "free-text detail belongs in --output"
+        ),
+    )
     append.add_argument(
         "--goal-contribution",
         default="",
@@ -12143,7 +13261,13 @@ def build_parser() -> argparse.ArgumentParser:
     append.add_argument(
         "--compute-run",
         action="append",
-        help="actual compute record as a JSON object or @JSON-file (repeatable)",
+        help=(
+            "actual compute record as a JSON object or @JSON-file (repeatable); "
+            f"keys: {', '.join(COMPUTE_RUN_KNOWN_KEYS)}; 'service' accepts "
+            "local|hetzner|kaggle|modal|github-actions|other:<slug> ('backend' is "
+            "accepted as a synonym), 'status' one of "
+            f"{'|'.join(sorted(COMPUTE_RUN_STATUSES))} ('completed' maps to 'succeeded')"
+        ),
     )
     append.add_argument(
         "--compute-none",
@@ -12155,11 +13279,72 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="executor provider; drive normally supplies this automatically",
     )
+    append.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="run every append guard and report the record that would be written, without writing",
+    )
     append.set_defaults(func=append_iteration)
 
     validate = subparsers.add_parser("validate", help="validate loop ledger files")
     validate.add_argument("--dir", required=True)
     validate.set_defaults(func=validate_command)
+
+    validate_artifact = subparsers.add_parser(
+        "validate-proof-artifact",
+        help="check one proof artifact against the early-stop evidence contract",
+    )
+    validate_artifact.add_argument("--dir", required=True, help="loop directory")
+    validate_artifact.add_argument(
+        "--evidence-id", required=True, help=f"artifact id under {PROOF_ARTIFACT_DIRNAME}/"
+    )
+    validate_artifact.set_defaults(func=validate_proof_artifact_command)
+
+    stage_proof = subparsers.add_parser(
+        "stage-proof",
+        help="copy a checked proof file into the loop dir and scaffold its artifact record",
+    )
+    stage_proof.add_argument("--dir", required=True, help="loop directory")
+    stage_proof.add_argument("--id", required=True, help="new proof-artifact evidence id")
+    stage_proof.add_argument("--file", required=True, help="proof file to copy in (source recorded)")
+    stage_proof.add_argument(
+        "--artifact-type",
+        required=True,
+        help=f"one of {', '.join(sorted(PROOF_ARTIFACT_TYPES))}",
+    )
+    stage_proof.add_argument(
+        "--target", required=True, help="the theorem or claim this artifact proves"
+    )
+    stage_proof.add_argument(
+        "--checker-name", required=True, help="checker that verified the file (e.g. lake)"
+    )
+    stage_proof.add_argument(
+        "--checker-status",
+        default="passed",
+        help="checker outcome; only 'passed' artifacts satisfy the early-stop gate",
+    )
+    stage_proof.set_defaults(func=stage_proof_command)
+
+    retract = subparsers.add_parser(
+        "retract-iteration",
+        help=(
+            "remove the newest non-terminal ledger record (legacy mode only) and "
+            "restore loop_state/budget/recovery coherently; audited in "
+            f"{RETRACTIONS_FILENAME}"
+        ),
+    )
+    retract.add_argument("--dir", required=True, help="loop directory")
+    retract.add_argument(
+        "--reason",
+        required=True,
+        help="why the record is being withdrawn (recorded verbatim in the audit)",
+    )
+    retract.add_argument(
+        "--registry-dir",
+        default=None,
+        help="armed-loop registry override (default: AAS_AUTOLOOP_REGISTRY or the shared registry)",
+    )
+    retract.set_defaults(func=retract_iteration_command)
 
     status = subparsers.add_parser("status", help="summarize loop status")
     status.add_argument("--dir", required=True)
@@ -12288,6 +13473,24 @@ def build_parser() -> argparse.ArgumentParser:
     done.add_argument("--dir", required=True)
     done.set_defaults(func=done_command)
 
+    formal_ts = subparsers.add_parser(
+        "formal-terminal-state",
+        help=(
+            "host-run strict-gate verdict on the formal artifact "
+            "(sorry_free_artifact | open_ledger | indeterminate); "
+            "writes formal/terminal_state.json"
+        ),
+    )
+    formal_ts.add_argument("--dir", required=True)
+    formal_ts.add_argument("--root", default=None, help="project root (default: loop parent)")
+    formal_ts.add_argument("--reason", default="", help="free-text reason recorded with the verdict")
+    formal_ts.add_argument(
+        "--no-typecheck",
+        action="store_true",
+        help="scan only; without a host build the verdict can never be sorry_free_artifact",
+    )
+    formal_ts.set_defaults(func=formal_terminal_state_command)
+
     hook = subparsers.add_parser(
         "hook-check",
         help="fail-open Stop-hook check; exit 2 only when an active loop for --root is not done",
@@ -12354,6 +13557,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="max consecutive quota waits before giving up (0 = wait indefinitely, honoring pause-and-resume on credit exhaustion)",
     )
     drive.add_argument(
+        "--max-review-waits",
+        type=positive_int,
+        default=0,
+        help=(
+            "max consecutive review/strategy wait laps (>=30s each) before the drive "
+            "exits resumably with reason review_wait_exhausted (0 = wait indefinitely)"
+        ),
+    )
+    drive.add_argument(
         "--log-dir",
         default=None,
         help="directory for per-iteration output logs (default: <dir>/driver_logs)",
@@ -12374,6 +13586,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-progress",
         action="store_true",
         help="disable LIVE_STATUS.md / progress.jsonl / stderr progress lines",
+    )
+    drive.add_argument(
+        "--build-config-lock",
+        action="store_true",
+        help=(
+            "treat any mid-run change to host-owned Lean build configuration "
+            "(lakefile.lean, lakefile.toml, lake-manifest.json, lean-toolchain) "
+            "as a failed cycle instead of record-only"
+        ),
     )
     drive.add_argument(
         "--panel",
@@ -12494,6 +13715,10 @@ def main(argv: list[str] | None = None) -> int:
         result = args.func(args)
     except Exception as exc:  # noqa: BLE001 - CLI should return structured failure.
         result = {"status": "failed", "error": str(exc)}
+        if isinstance(exc, GuardError):
+            # Merge structured hints without ever touching the stable keys above.
+            for key, value in exc.payload.items():
+                result.setdefault(key, value)
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stdout)
         # The Stop hook must fail open: never block turn-end on an internal error.
         return 0 if command == "hook-check" else 1

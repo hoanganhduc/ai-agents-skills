@@ -1,0 +1,32 @@
+{
+  "_readme": [
+    "curated_mcp.claude.example.json — Preset B curated MCP config (EXAMPLE).",
+    "Copy to an absolute operator-owned path OUTSIDE every loop tree, fill in",
+    "the placeholders, chmod 0600, and point AAS_ARL_MCP_CONFIG at the copy",
+    "(see production_formalization_env.inc.sh). Never place a filled copy",
+    "inside a loop directory: the loop tree is agent-writable and this file",
+    "decides which live tool servers the unattended agent may reach.",
+    "Server API keys (e.g. LEANEXPLORE_API_KEY) are delivered ONLY through the",
+    "per-server env block below — the spawned primary's environment is strictly",
+    "allowlist-built (build_primary_child_env) and an env -i keep-list can",
+    "never carry such a key to the agent or its MCP servers.",
+    "Do NOT replace the placeholders in the repo copy of this example.",
+    "Delete this _readme key if your MCP client rejects unknown top-level keys."
+  ],
+  "mcpServers": {
+    "lean-lsp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["lean-lsp-mcp"]
+    },
+    "lean-explore": {
+      "type": "stdio",
+      "command": "<ABSOLUTE_PATH_TO>/run_lean_explore_mcp.sh",
+      "args": ["serve", "--backend", "api"],
+      "env": {
+        "AAS_LEANEXPLORE_SITE_PACKAGES": "<ABSOLUTE_LEANEXPLORE_1_2_1_SITE_PACKAGES>",
+        "LEANEXPLORE_API_KEY": "<LEANEXPLORE_API_KEY>"
+      }
+    }
+  }
+}

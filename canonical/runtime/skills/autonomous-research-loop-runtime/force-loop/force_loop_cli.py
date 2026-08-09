@@ -287,6 +287,20 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             init_args.extend(["--formal-policy", "on"])
             if args.formal_project:
                 init_args.extend(["--formal-project", args.formal_project])
+        max_iterations = args.max_iterations
+        max_wall_time = args.max_wall_time_seconds
+        if args.profile == "formal":
+            # Formal campaigns outlive the runtime's smoke-scale init defaults
+            # (5 iterations / 1 h); a paper-formalization run needs room to
+            # reach a terminal state without tripping the budget stop.
+            if max_iterations is None:
+                max_iterations = 40
+            if max_wall_time is None:
+                max_wall_time = 259200
+        if max_iterations is not None:
+            init_args.extend(["--max-iterations", str(max_iterations)])
+        if max_wall_time is not None:
+            init_args.extend(["--max-wall-time-seconds", str(max_wall_time)])
         if not (loop / "compute_policy.json").is_file():
             # Goal Focus resolves current_plan.compute_policy during init; a pin
             # written afterwards leaves the plan allowlist empty and permanently
@@ -1226,6 +1240,38 @@ def _goal_focus_validate_errors(loop: Path) -> list[str]:
     return [f"goal-focus: {item}" for item in detail]
 
 
+def _detect_notify_channels() -> list[str] | None:
+    """Notify channels with usable remote-bridge credentials; None when detection fails.
+
+    Runs in a subprocess so a broken runtime import cannot take down the CLI.
+    """
+    snippet = (
+        "import json, sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "import autonomous_research_loop_runtime as rt\n"
+        "print(json.dumps(rt.detect_configured_notify_channels()))\n"
+    )
+    try:
+        proc = subprocess.run(
+            [_python(), "-c", snippet, str(RUNTIME_PARENT)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    try:
+        channels = json.loads(proc.stdout.strip().splitlines()[-1])
+    except ValueError:
+        return None
+    if not isinstance(channels, list):
+        return None
+    return [str(channel) for channel in channels]
+
+
 def _smoke_checks(
     loop: Path,
     profile: str,
@@ -1249,11 +1295,34 @@ def _smoke_checks(
     if loop.is_dir() and (loop / "loop_state.json").is_file() and _runtime_py().is_file():
         errors.extend(_goal_focus_validate_errors(loop))
 
-    if str(os.environ.get("AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS") or "").strip().lower() != "allow":
+    # Notify preflight: a campaign whose terminal notice cannot be delivered
+    # runs to completion with nobody watching, so consented egress without a
+    # usable channel is an error, not a warning.
+    egress_allowed = (
+        str(os.environ.get("AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS") or "").strip().lower()
+        == "allow"
+    )
+    channels = _detect_notify_channels() if egress_allowed else None
+    if not egress_allowed:
+        notify_status = "blocked_no_consent"
         warnings.append(
             "AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS is not 'allow'; "
             "external notify delivery stays blocked for this loop"
         )
+    elif channels is None:
+        notify_status = "unknown"
+        warnings.append(
+            "notify channel detection failed; external notify delivery is unverified"
+        )
+    elif not channels:
+        notify_status = "no_channel"
+        errors.append(
+            "external notify egress is allowed but no notify channel has usable "
+            "credentials (zulip/telegram); configure remote-bridge secrets or "
+            "unset AAS_AUTOLOOP_EXTERNAL_NOTIFY_EGRESS"
+        )
+    else:
+        notify_status = "ready:" + ",".join(channels)
 
     # Env loader self-check
     try:
@@ -1273,6 +1342,7 @@ def _smoke_checks(
         "ok": not errors,
         "errors": errors,
         "warnings": warnings,
+        "notify_status": notify_status,
         "default_backend": backend,
         "systemd_user_available": systemd_user_available(),
         "platform": sys.platform,
@@ -1340,6 +1410,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--success-criteria",
         default=None,
         help="required when the loop is not initialised yet",
+    )
+    b.add_argument(
+        "--max-iterations",
+        type=int,
+        default=None,
+        help="init iteration budget; formal profile defaults to 40 (runtime default 5)",
+    )
+    b.add_argument(
+        "--max-wall-time-seconds",
+        type=int,
+        default=None,
+        help="init wall-time budget; formal profile defaults to 259200 (runtime default 3600)",
     )
     b.add_argument("--research-title", default=None)
     b.add_argument("--formal-project", default=None)
