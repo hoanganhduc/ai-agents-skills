@@ -8,6 +8,8 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +47,24 @@ PROJECT_MAX_FILES = 2000
 TOOL_ENV = {
     "lean": "AAS_LEAN",
     "lake": "AAS_LAKE",
+    "lean4checker": "AAS_LEAN4CHECKER",
 }
+# The three axioms an ordinary mathlib proof reports. Anything else is a
+# trust-base expansion the audit has to surface by name.
+SANCTIONED_AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
+# sorryAx is what `sorry` elaborates to: an --allow-axiom flag must never be
+# able to sanction it, so it is refused ahead of the operator allowlist.
+NEVER_SANCTIONED_AXIOMS = {"sorryAx"}
+# What `native_decide` reports. Unlike sorryAx these mark a complete proof, so a
+# project may knowingly accept them, but the proof then rests on the compiler
+# and the native runtime rather than on the kernel alone. Allowlisting them is
+# therefore permitted and always reported, never silent.
+COMPILER_TRUST_AXIOMS = {"Lean.ofReduceBool", "Lean.trustCompiler"}
+AXIOM_AUDIT_MAX_DECLARATIONS = 500
+KERNEL_CHECK_MAX_MODULES = 50
+# A lakefile is a build script, not a library module: importing it into the
+# audit harness would be a build-time error, never a proof dependency.
+NON_MODULE_STEMS = {"lakefile"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -73,6 +92,61 @@ def main(argv: list[str] | None = None) -> int:
         "--strict",
         action="store_true",
         help="require a passing typecheck for exit 0: 'typecheck never ran' is a failure (implies --typecheck)",
+    )
+
+    audit = sub.add_parser(
+        "axiom-audit",
+        help="report the axioms each theorem actually depends on (#print axioms)",
+    )
+    audit.add_argument("--input", required=True, help="project directory to audit")
+    audit.add_argument("--project-root", help="lake workspace root (defaults to --input)")
+    audit.add_argument(
+        "--declaration",
+        action="append",
+        default=[],
+        help="fully qualified declaration to audit; repeatable (default: discovered by scan)",
+    )
+    audit.add_argument(
+        "--import",
+        dest="import_module",
+        action="append",
+        default=[],
+        help="module the harness imports; repeatable (default: derived from the project)",
+    )
+    audit.add_argument(
+        "--allow-axiom",
+        action="append",
+        default=[],
+        help=(
+            f"extra sanctioned axiom; repeatable. {sorted(NEVER_SANCTIONED_AXIOMS)} can never be "
+            f"allowed, and {sorted(COMPILER_TRUST_AXIOMS)} stay reported in compiler_trust_axioms "
+            "even once allowed"
+        ),
+    )
+    audit.add_argument("--timeout", type=int, default=600)
+    audit.add_argument(
+        "--strict",
+        action="store_true",
+        help="require a completed audit for exit 0: 'audit never ran' is a failure",
+    )
+
+    kernel = sub.add_parser(
+        "kernel-check",
+        help="replay compiled modules through the kernel with lean4checker",
+    )
+    kernel.add_argument("--input", required=True, help="project directory to re-check")
+    kernel.add_argument("--project-root", help="lake workspace root (defaults to --input)")
+    kernel.add_argument(
+        "--module",
+        action="append",
+        default=[],
+        help="module to replay; repeatable (default: derived from the project)",
+    )
+    kernel.add_argument("--timeout", type=int, default=600)
+    kernel.add_argument(
+        "--strict",
+        action="store_true",
+        help="require a completed kernel replay for exit 0: a missing lean4checker is a failure",
     )
 
     args = parser.parse_args(argv)
@@ -107,6 +181,34 @@ def main(argv: list[str] | None = None) -> int:
         if strict:
             return 0 if payload["ok"] and payload.get("lean_check_status") == "typechecked" else 1
         return 0 if payload["ok"] and payload.get("lean_check_status") not in {"typecheck_failed", "command_failed"} else 1
+    if args.command == "axiom-audit":
+        input_path = Path(args.input)
+        payload = axiom_audit_payload(
+            input_path,
+            project_root=Path(args.project_root) if args.project_root else input_path,
+            timeout=args.timeout,
+            declarations=list(args.declaration),
+            imports=list(args.import_module),
+            allowed_axioms=set(args.allow_axiom),
+            strict=bool(args.strict),
+        )
+        emit(payload)
+        if args.strict:
+            return 0 if payload["ok"] and payload["axiom_audit_status"] == "audited" else 1
+        return 0 if payload["ok"] and payload["axiom_audit_status"] != "command_failed" else 1
+    if args.command == "kernel-check":
+        input_path = Path(args.input)
+        payload = kernel_check_payload(
+            input_path,
+            project_root=Path(args.project_root) if args.project_root else input_path,
+            timeout=args.timeout,
+            modules=list(args.module),
+            strict=bool(args.strict),
+        )
+        emit(payload)
+        if args.strict:
+            return 0 if payload["ok"] and payload["kernel_check_status"] == "kernel_checked" else 1
+        return 0 if payload["ok"] and payload["kernel_check_status"] != "command_failed" else 1
     raise AssertionError(args.command)
 
 
@@ -123,6 +225,9 @@ def doctor_payload(*, project_root: Path, probe: bool) -> dict[str, Any]:
             "lean": tool_status("lean"),
             "lake": tool_status("lake"),
             "elan": tool_status("elan"),
+            # Reported so an operator can see that kernel-check has no checker
+            # to run, rather than discovering it as a tool_unavailable verdict.
+            "lean4checker": lean4checker_status(project_root),
             "npm": tool_status("npm"),
             "npx": tool_status("npx"),
             "pip": tool_status("pip"),
@@ -555,6 +660,496 @@ def run_typecheck(
     }
     if project_status_payload:
         payload["project_status"] = project_status_payload
+    return payload
+
+
+_AXIOM_DEPENDS_RE = re.compile(r"'(?P<decl>[^']+)' depends on axioms: \[(?P<axioms>[^\]]*)\]", re.S)
+_AXIOM_NONE_RE = re.compile(r"'(?P<decl>[^']+)' does not depend on any axioms")
+_MODIFIERS = r"(?:(?:protected|noncomputable|partial|nonrec|unsafe|scoped)\s+)*"
+_DECLARATION_RE = re.compile(
+    # `open X in` may sit on the declaration's own line, ahead of the attributes.
+    r"^\s*(?:open\s+[^\n]*?\sin\s+)?(?:@\[[^\]]*\]\s*)*"
+    # `private` may sit anywhere in the modifier run, so both sides allow one.
+    + _MODIFIERS
+    + r"(?P<private>private\s+)?"
+    + _MODIFIERS
+    + r"(?:theorem|lemma)\s+(?P<name>[^\s:({\[]+)"
+)
+_NAMESPACE_RE = re.compile(r"^\s*namespace\s+(?P<name>[A-Za-z_][A-Za-z0-9_.'!?]*)")
+# Every block `end` closes must push a scope, or the walk pops a namespace it
+# never entered and every later name loses its prefix.
+_ANONYMOUS_SCOPE_RE = re.compile(r"^\s*(?:section|mutual)\b")
+
+
+def scan_declarations(text: str) -> tuple[list[str], list[str]]:
+    """Qualified theorem/lemma names, split into auditable and private ones.
+
+    This is a line walk over comment-stripped source, not a Lean parser: a
+    declaration it misses is simply never audited, and a name it invents is
+    reported back as ``declaration_unresolved`` rather than silently passing.
+    Definitions (``def``, ``abbrev``, ``instance``) are deliberately out of
+    scope — a theorem that uses one inherits its axioms, so an unsound
+    definition still surfaces through the theorem that depends on it — and
+    ``example`` has no name to ask ``#print axioms`` about.
+
+    Lean mangles a ``private`` name, so an importing harness cannot ask about
+    it and every one of them would come back unresolved. They are returned
+    separately, to be reported as skipped rather than audited or hidden: the
+    same transitivity argument covers them, since nothing outside their module
+    can cite one and any public theorem using one inherits its axioms.
+    """
+    scopes: list[str] = []
+    names: list[str] = []
+    private: list[str] = []
+    for line in strip_comments_and_strings(text).splitlines():
+        namespace = _NAMESPACE_RE.match(line)
+        if namespace:
+            scopes.append(namespace.group("name"))
+            continue
+        if _ANONYMOUS_SCOPE_RE.match(line):
+            scopes.append("")
+            continue
+        if re.match(r"\s*end\b", line):
+            if scopes:
+                scopes.pop()
+            continue
+        declaration = _DECLARATION_RE.match(line)
+        if declaration:
+            prefix = ".".join(scope for scope in scopes if scope)
+            name = declaration.group("name")
+            qualified = f"{prefix}.{name}" if prefix else name
+            (private if declaration.group("private") else names).append(qualified)
+    return names, private
+
+
+def declaration_names(text: str) -> list[str]:
+    """The auditable half of :func:`scan_declarations`."""
+    return scan_declarations(text)[0]
+
+
+def project_module_sources(root: Path) -> list[tuple[str, Path]]:
+    """(module name, source file) for every .lean file the project owns."""
+    pairs = []
+    for lean_file in project_lean_files(root):
+        parts = lean_file.relative_to(root).with_suffix("").parts
+        if len(parts) == 1 and parts[0] in NON_MODULE_STEMS:
+            continue
+        pairs.append((".".join(parts), lean_file))
+    return pairs
+
+
+def project_modules(root: Path) -> list[str]:
+    """Module names derived from the project layout, built or not."""
+    return [module for module, _ in project_module_sources(root)]
+
+
+def built_module_names(root: Path) -> set[str]:
+    """Modules Lake has actually compiled, read off its olean output tree."""
+    lean_dir = root / ".lake" / "build" / "lib" / "lean"
+    lib_dir = lean_dir if lean_dir.is_dir() else root / ".lake" / "build" / "lib"
+    if not lib_dir.is_dir():
+        return set()
+    return {
+        ".".join(olean.relative_to(lib_dir).with_suffix("").parts)
+        for olean in lib_dir.rglob("*.olean")
+    }
+
+
+def built_project_modules(root: Path) -> tuple[list[str], list[str]]:
+    """Split the project's modules into the ones Lake built and the rest.
+
+    Both audits work on compiled modules, so a source Lake never built is not
+    importable wherever it sits under the root. Staged proof artifacts are the
+    common case — a loop directory inside the project holds copies of the very
+    file under audit — and naming one in the harness aborts it with ``unknown
+    module prefix`` before a single line of evidence is produced. Reading the
+    olean tree asks the build itself which modules exist rather than guessing
+    from the directory layout.
+    """
+    built = built_module_names(root)
+    present = [module for module, _ in project_module_sources(root) if module in built]
+    missing = [module for module, _ in project_module_sources(root) if module not in built]
+    return present, missing
+
+
+def project_declaration_scan(
+    root: Path, modules: list[str] | None = None
+) -> tuple[list[str], list[str]]:
+    """Auditable and private declaration names, optionally limited to modules.
+
+    Limiting matters for the audit: a declaration that lives only in a source
+    Lake never built cannot be resolved against the compiled environment, and
+    would be reported as an unresolved declaration — a refusal caused by a
+    stray copy rather than by anything wrong with the proof.
+    """
+    allowed = set(modules) if modules is not None else None
+    names: list[str] = []
+    private: list[str] = []
+    for module, lean_file in project_module_sources(root):
+        if allowed is not None and module not in allowed:
+            continue
+        try:
+            text = lean_file.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        found, found_private = scan_declarations(text)
+        names.extend(found)
+        private.extend(found_private)
+
+    def _unique(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        return [v for v in values if not (v in seen or seen.add(v))]
+
+    return _unique(names), _unique(private)
+
+
+def project_declarations(root: Path, modules: list[str] | None = None) -> list[str]:
+    """The auditable half of :func:`project_declaration_scan`."""
+    return project_declaration_scan(root, modules)[0]
+
+
+def parse_axiom_report(text: str) -> dict[str, list[str]]:
+    """Map declaration -> axiom list from ``#print axioms`` output.
+
+    Lean wraps long messages, so the bracket body is matched across newlines.
+    """
+    observed: dict[str, list[str]] = {}
+    for match in _AXIOM_NONE_RE.finditer(text):
+        observed[match.group("decl")] = []
+    for match in _AXIOM_DEPENDS_RE.finditer(text):
+        observed[match.group("decl")] = [
+            item.strip() for item in match.group("axioms").split(",") if item.strip()
+        ]
+    return observed
+
+
+def axiom_audit_payload(
+    input_path: Path,
+    *,
+    project_root: Path,
+    timeout: int,
+    declarations: list[str],
+    imports: list[str],
+    allowed_axioms: set[str],
+    strict: bool,
+) -> dict[str, Any]:
+    root = project_root.expanduser().resolve()
+    sanctioned = (SANCTIONED_AXIOMS | allowed_axioms) - NEVER_SANCTIONED_AXIOMS
+    payload: dict[str, Any] = {
+        "schema_version": "lean-strict-verification-gate.v1",
+        "ok": True,
+        "input": str(input_path),
+        "mode": "axiom-audit",
+        "strict": strict,
+        "axiom_audit_status": "not_run",
+        "sanctioned_axioms": sorted(sanctioned),
+        "declarations": [],
+        "unsanctioned_axioms": [],
+        "compiler_trust_axioms": [],
+        "findings": [],
+        "audit_command": "lake env lean <harness>",
+        "audit_cwd": str(root),
+        "audit_stdout": "",
+        "audit_stderr": "",
+        "limitations": [
+            "declaration discovery is a regex walk, not a Lean parser",
+            "the audit needs an already-built project: it imports compiled modules",
+            "sources Lake did not build are skipped, so their declarations go unaudited",
+            "#print axioms reports the trust base, not statement equivalence",
+        ],
+    }
+
+    def fail(kind: str, detail: str, status: str) -> dict[str, Any]:
+        payload["ok"] = False
+        payload["axiom_audit_status"] = status
+        payload["findings"].append({"kind": kind, "detail": detail})
+        return payload
+
+    if not root.is_dir():
+        return fail("missing_project", "project root does not exist", "command_failed")
+    status = project_status(root)
+    payload["project_status"] = status
+    if not status["lake_workspace_detected"]:
+        return fail(
+            "missing_lakefile",
+            "project root must contain lakefile.lean or lakefile.toml",
+            "command_failed",
+        )
+
+    # Modules come first: what the harness can import decides which
+    # declarations there is any point in asking about.
+    if imports:
+        modules, unbuilt = imports, []
+    else:
+        modules, unbuilt = built_project_modules(root)
+        payload["modules_skipped_unbuilt"] = unbuilt
+    if not modules:
+        return fail(
+            "project_not_built" if unbuilt else "no_modules",
+            (
+                f"no compiled module under {root / '.lake' / 'build' / 'lib'}: "
+                "build the project before auditing"
+                if unbuilt
+                else "no importable module found under the project root"
+            ),
+            "command_failed",
+        )
+
+    if declarations:
+        targets, private_targets = declarations, []
+    else:
+        targets, private_targets = project_declaration_scan(root, modules)
+    payload["declarations_requested"] = len(targets)
+    if private_targets:
+        # Named, not hidden: an operator reading the report can see exactly
+        # which proofs the harness was unable to ask about.
+        payload["declarations_skipped_private"] = private_targets
+        payload["limitations"].append(
+            "private theorems cannot be named by an importing harness, so they went "
+            "unaudited; a public theorem that uses one still inherits its axioms"
+        )
+    if not targets:
+        payload["axiom_audit_status"] = "no_declarations"
+        payload["findings"].append(
+            {"kind": "no_declarations", "detail": "no theorem or lemma found to audit"}
+        )
+        payload["ok"] = False
+        return payload
+    if len(targets) > AXIOM_AUDIT_MAX_DECLARATIONS:
+        return fail(
+            "too_many_declarations",
+            f"{len(targets)} declarations exceed the {AXIOM_AUDIT_MAX_DECLARATIONS} cap; pass --declaration",
+            "command_failed",
+        )
+
+    lake = tool_status("lake")
+    payload["tool_status"] = {"lake": lake}
+    if lake["status"] != "available":
+        payload["axiom_audit_status"] = "tool_unavailable"
+        payload["limitations"].append("lake was not found: no axiom evidence was produced")
+        return payload
+
+    with tempfile.TemporaryDirectory() as tmp:
+        harness = Path(tmp) / "AasAxiomAudit.lean"
+        harness.write_text(
+            "\n".join(
+                [*(f"import {module}" for module in modules), *(f"#print axioms {name}" for name in targets)]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        command = [lake["path"], "env", "lean", str(harness)]
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                cwd=str(root),
+            )
+        except subprocess.TimeoutExpired:
+            return fail("audit_timeout", f"timeout after {timeout} seconds", "command_failed")
+        except OSError as exc:
+            return fail("audit_failed", str(exc), "command_failed")
+
+    payload["audit_stdout"] = completed.stdout[-4000:]
+    payload["audit_stderr"] = completed.stderr[-4000:]
+    observed = parse_axiom_report(completed.stdout)
+    if not observed:
+        return fail(
+            "audit_produced_no_report",
+            f"lake env lean exited {completed.returncode} without any #print axioms output",
+            "command_failed",
+        )
+
+    unsanctioned: set[str] = set()
+    compiler_trust: set[str] = set()
+    for name in targets:
+        if name not in observed:
+            payload["declarations"].append(
+                {"declaration": name, "axioms": [], "status": "unresolved"}
+            )
+            payload["findings"].append({"kind": "declaration_unresolved", "detail": name})
+            payload["ok"] = False
+            continue
+        axioms = observed[name]
+        offending = [axiom for axiom in axioms if axiom not in sanctioned]
+        # A compiler-trust axiom the operator allowlisted passes, but it is
+        # never allowed to read as an ordinary kernel-checked proof.
+        allowed_compiler_trust = [
+            axiom for axiom in axioms if axiom in COMPILER_TRUST_AXIOMS and axiom in sanctioned
+        ]
+        if offending:
+            status = "unsanctioned_axiom"
+        elif allowed_compiler_trust:
+            status = "sanctioned_compiler_trust"
+        else:
+            status = "sanctioned"
+        payload["declarations"].append(
+            {"declaration": name, "axioms": axioms, "status": status}
+        )
+        for axiom in allowed_compiler_trust:
+            compiler_trust.add(axiom)
+            payload["findings"].append(
+                {"kind": "compiler_trust_axiom", "detail": axiom, "declaration": name}
+            )
+        for axiom in offending:
+            unsanctioned.add(axiom)
+            payload["findings"].append(
+                {"kind": "unsanctioned_axiom", "detail": axiom, "declaration": name}
+            )
+            payload["ok"] = False
+
+    payload["unsanctioned_axioms"] = sorted(unsanctioned)
+    payload["compiler_trust_axioms"] = sorted(compiler_trust)
+    if compiler_trust:
+        payload["limitations"].append(
+            "an allowlisted compiler-trust axiom means the proof rests on native "
+            "evaluation and the compiler, not on the kernel alone"
+        )
+    payload["axiom_audit_status"] = "audited"
+    return payload
+
+
+def lean4checker_status(project_root: Path) -> dict[str, Any]:
+    """lean4checker from the env/PATH, else the project's own build output."""
+    status = tool_status("lean4checker")
+    if status["status"] == "available":
+        return status
+    local = project_root / ".lake" / "build" / "bin" / executable_name("lean4checker")
+    if local.is_file():
+        return {"status": "available", "path": str(local), "source": "project-build"}
+    return status
+
+
+def kernel_check_payload(
+    input_path: Path,
+    *,
+    project_root: Path,
+    timeout: int,
+    modules: list[str],
+    strict: bool,
+) -> dict[str, Any]:
+    root = project_root.expanduser().resolve()
+    payload: dict[str, Any] = {
+        "schema_version": "lean-strict-verification-gate.v1",
+        "ok": True,
+        "input": str(input_path),
+        "mode": "kernel-check",
+        "strict": strict,
+        "kernel_check_status": "not_run",
+        "runner": "lake-env-lean4checker",
+        "modules": [],
+        "findings": [],
+        "kernel_check_cwd": str(root),
+        "kernel_check_stdout": "",
+        "kernel_check_stderr": "",
+        "limitations": [
+            "a passing lake build is not a kernel replay: only lean4checker re-checks proof terms",
+            "modules are replayed as compiled, so the audit inherits the build's own toolchain",
+            "sources Lake did not build are skipped, so they are never replayed",
+            "--timeout is the total budget for every module, not a per-module allowance",
+        ],
+    }
+
+    def fail(kind: str, detail: str, status: str) -> dict[str, Any]:
+        payload["ok"] = False
+        payload["kernel_check_status"] = status
+        payload["findings"].append({"kind": kind, "detail": detail})
+        return payload
+
+    if not root.is_dir():
+        return fail("missing_project", "project root does not exist", "command_failed")
+    status = project_status(root)
+    payload["project_status"] = status
+    if not status["lake_workspace_detected"]:
+        return fail(
+            "missing_lakefile",
+            "project root must contain lakefile.lean or lakefile.toml",
+            "command_failed",
+        )
+
+    if modules:
+        targets, unbuilt = modules, []
+    else:
+        targets, unbuilt = built_project_modules(root)
+        payload["modules_skipped_unbuilt"] = unbuilt
+    if not targets:
+        return fail(
+            "project_not_built" if unbuilt else "no_modules",
+            (
+                f"no compiled module under {root / '.lake' / 'build' / 'lib'}: "
+                "build the project before replaying it"
+                if unbuilt
+                else "no importable module found under the project root"
+            ),
+            "command_failed",
+        )
+    if len(targets) > KERNEL_CHECK_MAX_MODULES:
+        return fail(
+            "too_many_modules",
+            f"{len(targets)} modules exceed the {KERNEL_CHECK_MAX_MODULES} cap; pass --module",
+            "command_failed",
+        )
+
+    lake = tool_status("lake")
+    checker = lean4checker_status(root)
+    payload["tool_status"] = {"lake": lake, "lean4checker": checker}
+    if lake["status"] != "available" or checker["status"] != "available":
+        payload["kernel_check_status"] = "tool_unavailable"
+        payload["limitations"].append(
+            "lean4checker or lake was not found: no kernel replay evidence was produced"
+        )
+        return payload
+
+    stdout_chunks: list[str] = []
+    stderr_chunks: list[str] = []
+    # One budget for the whole verb: a per-module allowance would let 50
+    # modules run 50x past the timeout the caller bounded the process with,
+    # and the caller would see a killed gate instead of a replay verdict.
+    deadline = time.monotonic() + timeout
+    for module in targets:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
+            payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
+            return fail(
+                "kernel_check_timeout",
+                f"{timeout}s budget was exhausted before {module}",
+                "command_failed",
+            )
+        command = [lake["path"], "env", checker["path"], module]
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+                check=False,
+                cwd=str(root),
+            )
+        except subprocess.TimeoutExpired:
+            payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
+            payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
+            return fail("kernel_check_timeout", f"{module}: timeout after {timeout} seconds", "command_failed")
+        except OSError as exc:
+            payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
+            payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
+            return fail("kernel_check_failed", f"{module}: {exc}", "command_failed")
+        stdout_chunks.append(completed.stdout)
+        stderr_chunks.append(completed.stderr)
+        replayed = completed.returncode == 0
+        payload["modules"].append(
+            {"module": module, "status": "kernel_checked" if replayed else "kernel_check_failed"}
+        )
+        if not replayed:
+            payload["ok"] = False
+            payload["findings"].append({"kind": "kernel_check_failed", "detail": module})
+
+    payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
+    payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
+    payload["kernel_check_status"] = "kernel_checked" if payload["ok"] else "kernel_check_failed"
     return payload
 
 

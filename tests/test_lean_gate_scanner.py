@@ -340,5 +340,534 @@ class CliExitMappingTests(unittest.TestCase):
             )
 
 
+def _fake_tool(root: Path, name: str, body: str) -> Path:
+    """A stub executable named ``name`` whose behaviour is the given Python body."""
+    impl = root / f"fake_{name}_impl.py"
+    impl.write_text(body, encoding="utf-8")
+    if os.name == "nt":
+        wrapper = root / f"{name}.cmd"
+        wrapper.write_text(
+            "@echo off\r\nchcp 65001 >nul\r\n"
+            f'"{sys.executable}" "{impl}" %*\r\nexit /b %ERRORLEVEL%\r\n',
+            encoding="utf-8",
+        )
+        return wrapper
+    wrapper = root / name
+    wrapper.write_text(
+        f'#!/usr/bin/env sh\nexec "{sys.executable}" "{impl}" "$@"\n', encoding="utf-8"
+    )
+    wrapper.chmod(0o755)
+    return wrapper
+
+
+# `lake env lean <harness>` stand-in: echoes one #print axioms line per requested
+# declaration, reporting the axioms named in FAKE_AXIOMS and skipping any
+# declaration listed in FAKE_UNKNOWN (which also makes the process fail, as a
+# real unknown identifier would).
+_FAKE_LAKE_AXIOMS = """
+import os
+import sys
+
+harness = sys.argv[-1]
+requested = [
+    line.split(None, 2)[2].strip()
+    for line in open(harness, encoding="utf-8")
+    if line.startswith("#print axioms ")
+]
+unknown = set(filter(None, os.environ.get("FAKE_UNKNOWN", "").split(",")))
+axioms = os.environ.get("FAKE_AXIOMS", "propext, Classical.choice, Quot.sound")
+for declaration in requested:
+    if declaration in unknown:
+        continue
+    print(f"'{declaration}' depends on axioms: [{axioms}]")
+if unknown & set(requested):
+    print("error: unknown identifier", file=sys.stderr)
+    sys.exit(1)
+"""
+
+# `lake env <tool> <args...>` stand-in: runs the tool it was handed.
+_FAKE_LAKE_ENV = """
+import subprocess
+import sys
+
+args = sys.argv[1:]
+assert args and args[0] == "env", args
+sys.exit(subprocess.run(args[1:], check=False).returncode)
+"""
+
+
+class AxiomAuditTests(unittest.TestCase):
+    """The audit's parsing and verdicts, plus its CLI exit mapping."""
+
+    def test_declaration_names_qualify_by_namespace_not_section(self) -> None:
+        source = (
+            "namespace Foo.Bar\n"
+            "section Helpers\n"
+            "private theorem alpha : True := trivial\n"
+            "@[simp] lemma beta (n : Nat) : n = n := rfl\n"
+            "end Helpers\n"
+            "theorem gamma : True := trivial\n"
+            "end Foo.Bar\n"
+            "-- theorem commented_out : True := trivial\n"
+            "theorem top : True := trivial\n"
+        )
+        self.assertEqual(
+            gate.scan_declarations(source),
+            (["Foo.Bar.beta", "Foo.Bar.gamma", "top"], ["Foo.Bar.alpha"]),
+        )
+
+    def test_a_mutual_block_does_not_close_the_enclosing_namespace(self) -> None:
+        """`end` closing a `mutual` must not pop the namespace above it.
+
+        The walk pops a scope on every `end`, so a block opener it does not
+        push for silently unqualifies every later declaration in the file —
+        names the built environment then rejects as `unresolved`.
+        """
+        source = (
+            "namespace Foo\n"
+            "mutual\n"
+            "theorem alpha : True := trivial\n"
+            "theorem beta : True := trivial\n"
+            "end\n"
+            "theorem gamma : True := trivial\n"
+            "end Foo\n"
+        )
+        self.assertEqual(
+            gate.declaration_names(source),
+            ["Foo.alpha", "Foo.beta", "Foo.gamma"],
+        )
+
+    def test_modifiers_and_an_open_prefix_do_not_hide_a_declaration(self) -> None:
+        """A declaration the walk misses is never audited at all."""
+        source = (
+            "nonrec theorem alpha : True := trivial\n"
+            "private nonrec theorem beta : True := trivial\n"
+            "noncomputable private theorem beta2 : True := trivial\n"
+            "open Nat in theorem gamma : True := trivial\n"
+            "open Nat in\n"
+            "@[simp] theorem delta : True := trivial\n"
+        )
+        self.assertEqual(
+            gate.scan_declarations(source),
+            (["alpha", "gamma", "delta"], ["beta", "beta2"]),
+        )
+
+    def test_private_theorems_are_separated_rather_than_audited(self) -> None:
+        """Lean mangles a private name, so an importing harness cannot ask.
+
+        Auditing them anyway makes every project with a private lemma fail on
+        `unresolved`, which is a refusal caused by Lean's naming rather than by
+        anything wrong with the proof.
+        """
+        source = (
+            "namespace Foo\n"
+            "private theorem helper : True := trivial\n"
+            "theorem public_result : True := trivial\n"
+            "end Foo\n"
+        )
+        self.assertEqual(
+            gate.scan_declarations(source),
+            (["Foo.public_result"], ["Foo.helper"]),
+        )
+        self.assertEqual(gate.declaration_names(source), ["Foo.public_result"])
+
+    def test_definitions_stay_out_of_scope(self) -> None:
+        """Definitions surface through the theorems that use them."""
+        source = (
+            "def f : Nat := 0\n"
+            "abbrev g : Nat := 0\n"
+            "instance i : Inhabited Nat := ⟨0⟩\n"
+            "example : True := trivial\n"
+            "theorem alpha : True := trivial\n"
+        )
+        self.assertEqual(gate.declaration_names(source), ["alpha"])
+
+    def test_axiom_report_parses_wrapped_lines_and_empty_dependencies(self) -> None:
+        text = (
+            "'Foo.alpha' depends on axioms: [propext,\n"
+            " Classical.choice, Quot.sound]\n"
+            "'Foo.beta' does not depend on any axioms\n"
+            "'Foo.gamma' depends on axioms: [sorryAx]\n"
+        )
+        self.assertEqual(
+            gate.parse_axiom_report(text),
+            {
+                "Foo.alpha": ["propext", "Classical.choice", "Quot.sound"],
+                "Foo.beta": [],
+                "Foo.gamma": ["sorryAx"],
+            },
+        )
+
+    def test_project_modules_skip_the_lakefile_and_build_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "lakefile.lean").write_text("import Lake\n", encoding="utf-8")
+            (root / "Proj").mkdir()
+            (root / "Proj" / "Basic.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+            (root / ".lake" / "build").mkdir(parents=True)
+            (root / ".lake" / "build" / "Stale.lean").write_text("theorem s : True := trivial\n", encoding="utf-8")
+            self.assertEqual(gate.project_modules(root), ["Proj.Basic"])
+            self.assertEqual(gate.project_declarations(root), ["t"])
+
+    def test_only_modules_lake_built_are_importable(self) -> None:
+        """A staged copy under the root is a file, not a module.
+
+        The loop stages proof artifacts inside the project directory, so the
+        walk finds `loop/proof_artifacts/Copy.lean` next to the real source.
+        Naming it in the harness aborts the whole audit with `unknown module
+        prefix`, so the built set decides and the copy is reported as skipped.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "lakefile.toml").write_text('name = "proj"\n', encoding="utf-8")
+            (root / "Proj").mkdir()
+            (root / "Proj" / "Basic.lean").write_text(
+                "theorem real : True := trivial\n", encoding="utf-8"
+            )
+            staged = root / "loop" / "proof_artifacts"
+            staged.mkdir(parents=True)
+            (staged / "Copy.lean").write_text(
+                "theorem staged_only : True := trivial\n", encoding="utf-8"
+            )
+            built = root / ".lake" / "build" / "lib" / "lean" / "Proj"
+            built.mkdir(parents=True)
+            (built / "Basic.olean").write_bytes(b"")
+
+            present, missing = gate.built_project_modules(root)
+            self.assertEqual(present, ["Proj.Basic"])
+            self.assertEqual(missing, ["loop.proof_artifacts.Copy"])
+            # The staged declaration is not in the compiled environment, so
+            # asking about it would only produce a spurious `unresolved`.
+            self.assertEqual(gate.project_declarations(root, present), ["real"])
+            self.assertEqual(
+                gate.project_declarations(root), ["real", "staged_only"]
+            )
+
+    def test_an_unbuilt_project_reports_that_rather_than_no_modules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "lakefile.toml").write_text('name = "proj"\n', encoding="utf-8")
+            (root / "Proj.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+            self.assertEqual(gate.built_project_modules(root), ([], ["Proj"]))
+
+
+class AuditCliTests(unittest.TestCase):
+    """CLI exit mapping for axiom-audit and kernel-check, with stubbed tools."""
+
+    def _project(self, tmp: str) -> Path:
+        root = Path(tmp) / "proj"
+        (root / "Proj").mkdir(parents=True)
+        (root / "lakefile.lean").write_text("import Lake\n", encoding="utf-8")
+        (root / "Proj" / "Basic.lean").write_text(
+            "theorem good : True := trivial\ntheorem bad : True := trivial\n",
+            encoding="utf-8",
+        )
+        # Both verbs consume compiled modules, so the fixture has to look like a
+        # project Lake already built.
+        olean = root / ".lake" / "build" / "lib" / "lean" / "Proj"
+        olean.mkdir(parents=True)
+        (olean / "Basic.olean").write_bytes(b"")
+        return root
+
+    def _run_gate(
+        self, *args: str, env_extra: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        for key in ("AAS_LEAN", "AAS_LAKE", "AAS_LEAN4CHECKER"):
+            env.pop(key, None)
+        env.update(env_extra or {})
+        return subprocess.run(
+            [sys.executable, "-B", str(GATE_PY), *args],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=env,
+            check=False,
+        )
+
+    def test_a_missing_lake_is_unavailable_lax_but_fails_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            missing = {"AAS_LAKE": str(Path(tmp) / "missing-lake")}
+            lax = self._run_gate("axiom-audit", "--input", str(root), env_extra=missing)
+            self.assertEqual(lax.returncode, 0, lax.stdout + lax.stderr)
+            payload = json.loads(lax.stdout)
+            self.assertEqual(payload["axiom_audit_status"], "tool_unavailable")
+            self.assertTrue(payload["ok"])
+            self.assertEqual(payload["declarations_requested"], 2)
+            strict = self._run_gate(
+                "axiom-audit", "--input", str(root), "--strict", env_extra=missing
+            )
+            self.assertEqual(strict.returncode, 1, strict.stdout + strict.stderr)
+
+    def test_the_sanctioned_trio_audits_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            result = self._run_gate(
+                "axiom-audit", "--input", str(root), "--strict",
+                env_extra={"AAS_LAKE": str(lake)},
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["axiom_audit_status"], "audited")
+            self.assertEqual(payload["unsanctioned_axioms"], [])
+            self.assertEqual(
+                sorted(row["declaration"] for row in payload["declarations"]),
+                ["bad", "good"],
+            )
+
+    def test_sorry_ax_fails_and_cannot_be_allowlisted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            dirty = {"AAS_LAKE": str(lake), "FAKE_AXIOMS": "propext, sorryAx"}
+            result = self._run_gate("axiom-audit", "--input", str(root), env_extra=dirty)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["axiom_audit_status"], "audited")
+            self.assertEqual(payload["unsanctioned_axioms"], ["sorryAx"])
+            # An operator allowlist widens the sanctioned set but never to sorryAx.
+            allowed = self._run_gate(
+                "axiom-audit", "--input", str(root), "--allow-axiom", "sorryAx",
+                env_extra=dirty,
+            )
+            self.assertEqual(allowed.returncode, 1, allowed.stdout + allowed.stderr)
+            self.assertNotIn("sorryAx", json.loads(allowed.stdout)["sanctioned_axioms"])
+
+    def test_an_operator_allowlist_admits_a_named_axiom(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            env_extra = {"AAS_LAKE": str(lake), "FAKE_AXIOMS": "propext, Nat.Custom"}
+            blocked = self._run_gate("axiom-audit", "--input", str(root), env_extra=env_extra)
+            self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
+            allowed = self._run_gate(
+                "axiom-audit", "--input", str(root), "--allow-axiom", "Nat.Custom",
+                "--strict", env_extra=env_extra,
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+
+    def test_an_allowlisted_compiler_trust_axiom_still_reads_as_compiler_trust(self) -> None:
+        """`native_decide` may be accepted, but never as a kernel-checked proof.
+
+        Both axioms mark a complete proof, so unlike `sorryAx` they stay
+        allowlistable; what must not happen is a payload that a caller reads as
+        an ordinary clean trust base.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            env_extra = {
+                "AAS_LAKE": str(lake),
+                "FAKE_AXIOMS": "propext, Lean.ofReduceBool, Lean.trustCompiler",
+            }
+            blocked = self._run_gate("axiom-audit", "--input", str(root), env_extra=env_extra)
+            self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
+            self.assertEqual(
+                json.loads(blocked.stdout)["unsanctioned_axioms"],
+                ["Lean.ofReduceBool", "Lean.trustCompiler"],
+            )
+            allowed = self._run_gate(
+                "axiom-audit", "--input", str(root), "--strict",
+                "--allow-axiom", "Lean.ofReduceBool",
+                "--allow-axiom", "Lean.trustCompiler",
+                env_extra=env_extra,
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+            payload = json.loads(allowed.stdout)
+            self.assertEqual(payload["unsanctioned_axioms"], [])
+            self.assertEqual(
+                payload["compiler_trust_axioms"],
+                ["Lean.ofReduceBool", "Lean.trustCompiler"],
+            )
+            self.assertEqual(
+                sorted({row["status"] for row in payload["declarations"]}),
+                ["sanctioned_compiler_trust"],
+            )
+            self.assertTrue(
+                any("native evaluation" in line for line in payload["limitations"]),
+                payload["limitations"],
+            )
+
+    def test_a_private_theorem_is_reported_as_skipped_not_unresolved(self) -> None:
+        """Verified against Lean v4.24.0: `#print axioms` cannot name one.
+
+        Asking anyway fails the whole audit on `unresolved`, so the audit names
+        what it could not ask about and says why in its limitations.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            (root / "Proj" / "Basic.lean").write_text(
+                "theorem good : True := trivial\n"
+                "private theorem helper : True := trivial\n",
+                encoding="utf-8",
+            )
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            result = self._run_gate(
+                "axiom-audit", "--input", str(root), "--strict",
+                env_extra={"AAS_LAKE": str(lake)},
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(
+                [row["declaration"] for row in payload["declarations"]], ["good"]
+            )
+            self.assertEqual(payload["declarations_skipped_private"], ["helper"])
+            self.assertTrue(
+                any("private theorems" in line for line in payload["limitations"]),
+                payload["limitations"],
+            )
+
+    def test_a_clean_audit_reports_no_compiler_trust(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            result = self._run_gate(
+                "axiom-audit", "--input", str(root), "--strict",
+                env_extra={"AAS_LAKE": str(lake)},
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(result.stdout)["compiler_trust_axioms"], [])
+
+    def test_a_declaration_the_audit_cannot_resolve_is_never_silently_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            result = self._run_gate(
+                "axiom-audit", "--input", str(root), "--declaration", "good",
+                "--declaration", "Ghost.missing",
+                env_extra={"AAS_LAKE": str(lake), "FAKE_UNKNOWN": "Ghost.missing"},
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(
+                {row["declaration"]: row["status"] for row in payload["declarations"]},
+                {"good": "sanctioned", "Ghost.missing": "unresolved"},
+            )
+
+    def test_an_audit_that_printed_nothing_is_a_command_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            silent = _fake_tool(Path(tmp), "lake", "import sys\nsys.exit(1)\n")
+            result = self._run_gate(
+                "axiom-audit", "--input", str(root), env_extra={"AAS_LAKE": str(silent)}
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["axiom_audit_status"], "command_failed")
+            self.assertFalse(payload["ok"])
+
+    def test_a_staged_artifact_does_not_abort_the_audit(self) -> None:
+        """The ARL stages `.lean` copies inside the project it is auditing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            staged = root / "loop_t1" / "proof_artifacts"
+            staged.mkdir(parents=True)
+            (staged / "Basic_final.lean").write_text(
+                "theorem staged_only : True := trivial\n", encoding="utf-8"
+            )
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            result = self._run_gate(
+                "axiom-audit", "--input", str(root), "--strict",
+                env_extra={"AAS_LAKE": str(lake)},
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["axiom_audit_status"], "audited")
+            self.assertEqual(
+                payload["modules_skipped_unbuilt"],
+                ["loop_t1.proof_artifacts.Basic_final"],
+            )
+            self.assertEqual(
+                sorted(row["declaration"] for row in payload["declarations"]),
+                ["bad", "good"],
+            )
+
+    def test_an_unbuilt_project_is_refused_by_both_verbs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "unbuilt"
+            root.mkdir()
+            (root / "lakefile.toml").write_text('name = "proj"\n', encoding="utf-8")
+            (root / "Proj.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            for verb in ("axiom-audit", "kernel-check"):
+                result = self._run_gate(
+                    verb, "--input", str(root), env_extra={"AAS_LAKE": str(lake)}
+                )
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(
+                    [f["kind"] for f in payload["findings"]], ["project_not_built"]
+                )
+
+    def test_a_project_without_a_lakefile_is_refused_by_both_verbs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "bare"
+            root.mkdir()
+            (root / "Solo.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+            for verb in ("axiom-audit", "kernel-check"):
+                result = self._run_gate(verb, "--input", str(root))
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                payload = json.loads(result.stdout)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(
+                    [f["kind"] for f in payload["findings"]], ["missing_lakefile"]
+                )
+
+    def test_a_missing_lean4checker_is_unavailable_lax_but_fails_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_ENV)
+            missing = {
+                "AAS_LAKE": str(lake),
+                "AAS_LEAN4CHECKER": str(Path(tmp) / "missing-checker"),
+            }
+            lax = self._run_gate("kernel-check", "--input", str(root), env_extra=missing)
+            self.assertEqual(lax.returncode, 0, lax.stdout + lax.stderr)
+            payload = json.loads(lax.stdout)
+            self.assertEqual(payload["kernel_check_status"], "tool_unavailable")
+            self.assertTrue(payload["ok"])
+            self.assertTrue(
+                any("lean4checker" in note for note in payload["limitations"]),
+                payload["limitations"],
+            )
+            strict = self._run_gate(
+                "kernel-check", "--input", str(root), "--strict", env_extra=missing
+            )
+            self.assertEqual(strict.returncode, 1, strict.stdout + strict.stderr)
+
+    def test_kernel_check_reports_each_module_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_ENV)
+            passing = _fake_tool(Path(tmp), "lean4checker", "import sys\nsys.exit(0)\n")
+            ok = self._run_gate(
+                "kernel-check", "--input", str(root), "--strict",
+                env_extra={"AAS_LAKE": str(lake), "AAS_LEAN4CHECKER": str(passing)},
+            )
+            self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+            payload = json.loads(ok.stdout)
+            self.assertEqual(payload["kernel_check_status"], "kernel_checked")
+            self.assertEqual(
+                payload["modules"], [{"module": "Proj.Basic", "status": "kernel_checked"}]
+            )
+            failing_dir = Path(tmp) / "failing"
+            failing_dir.mkdir()
+            rejecting = _fake_tool(failing_dir, "lean4checker", "import sys\nsys.exit(1)\n")
+            bad = self._run_gate(
+                "kernel-check", "--input", str(root),
+                env_extra={"AAS_LAKE": str(lake), "AAS_LEAN4CHECKER": str(rejecting)},
+            )
+            self.assertEqual(bad.returncode, 1, bad.stdout + bad.stderr)
+            self.assertEqual(
+                json.loads(bad.stdout)["kernel_check_status"], "kernel_check_failed"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
