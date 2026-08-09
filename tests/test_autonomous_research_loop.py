@@ -3730,6 +3730,28 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             result["exit_code"], arl.DRIVE_EXIT_CODES["review_wait_exhausted"]
         )
 
+    def test_unopenable_evidence_root_is_not_reported_as_a_missing_submission(self) -> None:
+        arl, _ = self._runtime_modules()
+        missing = self.provider_fixture.root / "no-such-evidence-root"
+        with self.assertRaises(OSError) as caught:
+            arl.consume_iteration_submission(
+                missing.parent,
+                missing,
+                expected_run_id="run",
+                expected_dispatch_id="dispatch",
+                expected_candidate_id="candidate",
+                expected_provider="claude",
+                iteration_started_at="2026-01-01T00:00:00Z",
+            )
+        # The driver reads FileNotFoundError as "the worker never submitted", so
+        # a host-side failure to open the evidence root must not surface as one.
+        self.assertNotIsInstance(caught.exception, FileNotFoundError)
+        self.assertIn("cannot be opened for host review", str(caught.exception))
+
+    @unittest.skipUnless(
+        os.name == "posix",
+        "consuming a host-mediated submission needs POSIX directory descriptors",
+    )
     def test_ledger_tampering_counts_toward_max_failures_even_when_banked(self) -> None:
         arl, gf = self._runtime_modules()
         base = self.provider_fixture.root / "integrity-accounting"

@@ -3921,6 +3921,38 @@ place. The installer still detects only agent homes that already exist under
 `--root`, so fake-root dry-runs must create `.codex`, `.claude`, or `.deepseek`
 before planning. A fake root with no detected agent homes produces no actions.
 
+### Applying to a Windows profile from WSL
+
+WSL is the supported way to apply to a Windows profile while the gate stands.
+The gate reads the host interpreter, not `--platform`, so `os.name` is `posix`
+under WSL and the mutation proceeds, while `--platform windows` keeps the
+Windows artifact exclusions in force. This is not an evasion: under WSL the
+POSIX ownership and permission checks that the gate stands in for are the ones
+actually enforcing path safety.
+
+```sh
+cd /mnt/c/Users/<you>/ai-agents-skills
+cp /mnt/c/Users/<you>/.ai-agents-skills/state.json \\
+   /mnt/c/Users/<you>/.ai-agents-skills/state.json.bak
+python3 -m installer.ai_agents_skills --root /mnt/c/Users/<you> \\
+  --platform windows install --runtime-profile auto --dry-run --json
+AAS_INSTALL_CONFIRM="I understand the installation and uninstall process" \\
+python3 -m installer.ai_agents_skills --root /mnt/c/Users/<you> \\
+  --platform windows install --runtime-profile auto --apply --real-system
+```
+
+Read the dry-run before applying. Two results mean stop: `create` actions for
+`*.sh` support files mean `--platform windows` was not honoured, and any action
+under an OpenClaw workspace that is a sync replica must not be written.
+
+`/mnt/c` must be mounted with `metadata` for this to work. Without it every
+path reports mode `0777` and the POSIX check refuses each one as
+group/world-writable. Confirm with `mount | grep ' /mnt/c '` before applying.
+
+Back up `state.json` first. It is the one file that cannot be reconstructed
+from the repository, and it is rewritten after every action, so applies must
+run one at a time.
+
 ## Runtime paths that differ on native Windows
 
 Four runtime paths diverge from POSIX. Each is the supported native behaviour,
@@ -3956,6 +3988,15 @@ not a degradation to work around.
   no effect: with the default `--backend auto`, Windows selects `foreground`.
   Requesting `--backend posix_detach` explicitly fails with `posix_detach is not
   available on Windows; use foreground`. There is no Windows Service backend.
+- **Host-mediated iteration submissions are not consumable.** The host claims a
+  worker submission through directory descriptors: it walks the evidence root
+  with `O_NOFOLLOW` and then opens, renames, and unlinks relative to that
+  descriptor. Windows has neither `O_NOFOLLOW` nor `dir_fd` support in `os.open`,
+  and `os.open` cannot open a directory at all, so the walk fails at the path
+  anchor. A drive under `--goal-focus-mode enforce` therefore fails every
+  iteration with exit code 126 no matter what the worker produced. Run enforce
+  drives from WSL or Linux. `--goal-focus-mode monitor` is unaffected, because
+  it does not consume submissions through that path.
 
 For WSL-backed tools, the relevant check is whether `wsl.exe` exists and the
 command is available inside the default WSL distro. For example, `sage-runtime`

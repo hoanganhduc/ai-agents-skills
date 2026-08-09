@@ -1632,7 +1632,17 @@ def consume_iteration_submission(
 ) -> dict[str, Any]:
     """Claim one exact worker submission, validate it, then stage it as host."""
 
-    directory_fd = _open_directory_nofollow(evidence_dir)
+    # The caller treats FileNotFoundError as "the worker never submitted" and
+    # every other error as a host rejection. The host's own walk of the
+    # evidence root raises FileNotFoundError too, so passing it through
+    # unchanged makes the driver blame the worker for a host-side failure.
+    # Re-raise as a plain OSError to keep that boundary readable.
+    try:
+        directory_fd = _open_directory_nofollow(evidence_dir)
+    except OSError as exc:
+        raise OSError(
+            f"candidate evidence root cannot be opened for host review: {exc}"
+        ) from exc
     quarantine = f".host-submission-{uuid.uuid4().hex}"
     original_fd = -1
     moved_fd = -1
