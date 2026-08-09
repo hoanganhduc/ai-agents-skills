@@ -38,6 +38,7 @@ from installer.ai_agents_skills.runtime_smoke import (
 from installer.ai_agents_skills.sanitize import has_sensitive_material
 from installer.ai_agents_skills.state import artifact_signature, load_state, save_state, sha256_file
 from installer.ai_agents_skills.verify import verify
+from tests import runner_child_env
 
 
 def create_agent_home(root: Path, agent: str = "codex") -> None:
@@ -3052,7 +3053,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             args = [f"arg{i}" for i in range(12)]
-            env = os.environ.copy()
+            env = runner_child_env()
             env["AAS_RUNTIME_PYTHON"] = sys.executable
 
             completed = subprocess.run(
@@ -3084,7 +3085,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 "import json, sys\nprint(json.dumps({'executable': sys.executable, 'args': sys.argv[1:]}))\n",
                 encoding="utf-8",
             )
-            env = os.environ.copy()
+            env = runner_child_env()
             env["AAS_RUNTIME_PYTHON"] = sys.executable
             env.pop("DOCLING_PYTHON", None)
 
@@ -3649,7 +3650,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     "exit 0\n",
                     encoding="utf-8",
                 )
-            env = os.environ.copy()
+            env = runner_child_env()
             env["PATH"] = str(first_dir) + os.pathsep + str(second_dir)
             env["AAS_RUNTIME_SCRIPT"] = str(child)
             env.pop("AAS_RUNTIME_PYTHON", None)
@@ -3696,7 +3697,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 "raise SystemExit(7)\n",
                 encoding="utf-8",
             )
-            env = os.environ.copy()
+            env = runner_child_env()
             env["AAS_RUNTIME_SCRIPT"] = str(script)
             env["AAS_RUNTIME_PYTHON"] = sys.executable
             env["ERRORLEVEL"] = "0"
@@ -3720,7 +3721,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         if not powershell:
             self.skipTest("PowerShell executable not found")
         runner = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_python.ps1"
-        env = os.environ.copy()
+        env = runner_child_env()
         env.pop("AAS_RUNTIME_SCRIPT", None)
         missing_script = subprocess.run(
             [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
@@ -3765,7 +3766,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
             for candidate in (non_python, str(old_python)):
                 with self.subTest(candidate=candidate):
-                    env = os.environ.copy()
+                    env = runner_child_env()
                     env["AAS_RUNTIME_SCRIPT"] = str(script)
                     env["AAS_RUNTIME_PYTHON"] = candidate
                     completed = subprocess.run(
@@ -3807,7 +3808,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 "exit 91\n",
                 encoding="utf-8",
             )
-            env = os.environ.copy()
+            env = runner_child_env()
             env["PATH"] = str(root) + os.pathsep + env.get("PATH", "")
             env["AAS_RUNTIME_SCRIPT"] = str(script)
             env["AAS_RUNTIME_PYTHON"] = "py"
@@ -3836,7 +3837,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             script = Path(tmp) / "child.py"
             script.write_text("print('runtime-override-won')\n", encoding="utf-8")
-            env = os.environ.copy()
+            env = runner_child_env()
             env["AAS_RUNTIME_SCRIPT"] = str(script)
             env["AAS_RUNTIME_PYTHON"] = sys.executable
             env["AAS_PYTHON"] = "py"
@@ -3911,7 +3912,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             shutil.copy2(runtime_source / "runners" / "run_python.ps1", root / "run_python.ps1")
-            env = os.environ.copy()
+            env = runner_child_env()
             env.pop("AAS_RUNTIME_PYTHON", None)
             env["AAS_PYTHON"] = sys.executable
             env["AAS_RUNTIME_ROOT"] = str(root)

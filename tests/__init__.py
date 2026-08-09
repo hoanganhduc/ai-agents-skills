@@ -47,3 +47,32 @@ def os_child_env() -> dict[str, str]:
     """Return the minimum OS identity a fresh interpreter needs in order to start."""
     return {key: os.environ[key] for key in _OS_CHILD_ENV_KEYS if key in os.environ}
 
+
+# ``run_python.ps1`` demands a pinned, signature-verified interpreter the moment
+# it sees a secret pointer or ``LEANEXPLORE_API_KEY`` in its environment. Tests
+# that exercise interpreter discovery hand it a stub or a temp-tree interpreter,
+# so a developer shell exporting any of these turns that group red for a reason
+# unrelated to the behaviour under test. A full-suite run happened to hide it,
+# because an unrelated module pops the LeanExplore key at import time. Scrub the
+# triggers from the child environment instead; the credential gate keeps its own
+# coverage in the tests that set these deliberately.
+_SECRET_TRIGGER_KEYS = (
+    "AAS_CALIBRE_SECRETS_FILE",
+    "AAS_COMPUTE_SECRETS_FILE",
+    "AAS_FILE_DELIVERY_SECRETS_FILE",
+    "AAS_PROVIDER_SECRETS_FILE",
+    "AAS_RUNTIME_REQUIRE_TRUSTED",
+    "AAS_SKILL_SECRETS_FILE",
+    "AAS_ZOTERO_SECRETS_FILE",
+    "LEANEXPLORE_API_KEY",
+    "REMOTE_BRIDGE_SECRETS_FILE",
+    "SEND_EMAIL_SECRETS_FILE",
+)
+
+
+def runner_child_env() -> dict[str, str]:
+    """Return the process environment without the runner's secret-bearing triggers."""
+    env = os.environ.copy()
+    for key in _SECRET_TRIGGER_KEYS:
+        env.pop(key, None)
+    return env
