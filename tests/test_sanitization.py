@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 
 from installer.ai_agents_skills.sanitize import has_sensitive_material, sanitize_text
@@ -53,6 +55,30 @@ class SanitizationTests(unittest.TestCase):
             sanitization_check.should_skip_path(Path(".codex/runs/agent_group_discuss/repo_review/final.md"))
         )
         self.assertFalse(sanitization_check.should_skip_path(Path("docs/source/installation.md")))
+
+    def test_sanitization_check_skips_what_git_ignores(self) -> None:
+        ignored = frozenset({Path(".claude")})
+        self.assertTrue(sanitization_check.should_skip_path(Path(".claude/settings.local.json"), ignored))
+        # An untracked file that is not ignored is the next commit, so it stays
+        # in scope.
+        self.assertFalse(sanitization_check.should_skip_path(Path("docs/source/installation.md"), ignored))
+
+    def test_git_ignored_prefixes_are_empty_outside_a_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(sanitization_check.git_ignored_prefixes(Path(tmp)), frozenset())
+
+    def test_git_ignored_prefixes_reads_the_repository_rules(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            if subprocess.run(["git", "init", "-q", str(root)], check=False).returncode != 0:
+                self.skipTest("git unavailable")
+            (root / ".gitignore").write_text("secrets/\n", encoding="utf-8")
+            (root / "secrets").mkdir()
+            (root / "secrets" / "local.json").write_text("{}\n", encoding="utf-8")
+            (root / "kept.md").write_text("# kept\n", encoding="utf-8")
+            ignored = sanitization_check.git_ignored_prefixes(root)
+            self.assertTrue(sanitization_check.should_skip_path(Path("secrets/local.json"), ignored))
+            self.assertFalse(sanitization_check.should_skip_path(Path("kept.md"), ignored))
 
 
 if __name__ == "__main__":
