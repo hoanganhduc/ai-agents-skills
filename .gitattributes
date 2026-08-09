@@ -6,3 +6,11 @@
 *.yml text eol=lf
 *.json text eol=lf
 *.html text eol=lf
+canonical/runtime/**/*.md text eol=lf
+canonical/runtime/**/*.txt text eol=lf
+canonical/runtime/**/*.tex text eol=lf
+canonical/runtime/**/*.sage text eol=lf
+canonical/runtime/**/*.toml text eol=lf
+canonical/runtime/**/*.example text eol=lf
+canonical/runtime/**/*.defaults text eol=lf
+canonical/runtime/**/.gitignore text eol=lf
