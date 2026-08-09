@@ -22,6 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
+from tests import state_dacl_skip
 
 WORKSPACE = RUNTIME_SOURCE_ROOT / "workspace"
 if str(WORKSPACE) not in sys.path:
@@ -127,11 +128,7 @@ def _config(tmp: Path) -> rc_config.BrokerConfig:
     return rc_config.load_config(cfg)
 
 
-_STATE_DACL_SKIP = unittest.skipIf(
-    os.name == "nt",
-    "runner temp state dirs trip the strict windows_acl gate: 'Windows state DACL "
-    "grants unsafe access outside owner/SYSTEM/Administrators/TrustedInstaller'",
-)
+_STATE_DACL_SKIP = state_dacl_skip()
 
 
 class AllocatorKnobTests(unittest.TestCase):
