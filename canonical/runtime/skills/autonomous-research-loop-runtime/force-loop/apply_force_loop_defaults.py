@@ -451,6 +451,36 @@ def _validated_policy_path(run_dir: Path, policy_file: Path) -> Path:
     return dest
 
 
+def _reproject_windows_policy(dest: Path, values: dict[str, str]) -> None:
+    """Republish the host policy this process just wrote, for this process.
+
+    On native Windows ``load_env_file`` does not read the file: PowerShell owns
+    the file checks and hands the validated policy over through the projection
+    ``Load-LoopEnv.ps1`` took at process start.  Defaults written during a run
+    were therefore invisible to the ``verify_effective`` call that follows, so a
+    first bootstrap reported ``host policy missing AAS_AUTOLOOP_GOAL_PRIORITY=on``
+    while an otherwise identical second run passed.  Republishing here keeps the
+    projection and the file in step within the run that changed them.
+
+    This widens nothing.  The keys were validated on the way in, the manifest
+    names only what was written, and ``load_projected_env`` re-parses them under
+    the same strict grammar.  Policy keys the write dropped are removed so a
+    stale pin cannot outlive the file or reach a child process.
+    """
+    from load_loop_env import (
+        POLICY_KEYS,
+        WINDOWS_PROJECTION_ENV,
+        WINDOWS_PROJECTION_SOURCE_ENV,
+    )
+
+    for key in sorted(values):
+        os.environ[key] = values[key]
+    for key in POLICY_KEYS - set(values):
+        os.environ.pop(key, None)
+    os.environ[WINDOWS_PROJECTION_ENV] = ",".join(sorted(values))
+    os.environ[WINDOWS_PROJECTION_SOURCE_ENV] = str(dest)
+
+
 def write_host_env_defaults(
     run_dir: Path,
     profile: str,
@@ -493,6 +523,8 @@ def write_host_env_defaults(
     _atomic_write_text(dest, "\n".join(lines) + "\n")
     if os.name == "posix":
         dest.chmod(0o600)
+    else:
+        _reproject_windows_policy(dest, values)
     return dest
 
 

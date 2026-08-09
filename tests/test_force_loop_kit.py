@@ -208,6 +208,59 @@ class ApplyDefaultsTests(unittest.TestCase):
         )
         return plan
 
+    def test_windows_write_republishes_the_policy_projection(self) -> None:
+        """A first bootstrap must see the defaults it just wrote.
+
+        On native Windows `load_env_file` returns the projection
+        Load-LoopEnv.ps1 took at process start, not the file, so the
+        `verify_effective` call that follows the write read a pre-write view:
+        run 1 reported `host policy missing AAS_AUTOLOOP_GOAL_PRIORITY=on`
+        while an otherwise identical run 2 passed.
+        """
+        import load_loop_env
+
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            loop.mkdir()
+            policy = Path(tmp) / "secure" / "host-policy.env"
+            with mock.patch.dict(os.environ, {}, clear=False), mock.patch.object(
+                self.apply.os, "name", "nt"
+            ):
+                dest = self.apply.write_host_env_defaults(loop, "formal", policy)
+                got = load_loop_env.load_env_file(dest, forbidden_root=loop)
+            self.assertEqual(got["AAS_AUTOLOOP_GOAL_PRIORITY"], "on")
+            self.assertEqual(got["AAS_AUTOLOOP_NOTIFY"], "auto")
+            self.assertEqual(got["AAS_AUTOLOOP_FORMAL_POLICY"], "on")
+            self.assertEqual(got["AAS_AUTOLOOP_FORMAL_TYPECHECK"], "1")
+
+    def test_windows_reprojection_drops_a_key_the_write_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            loop.mkdir()
+            policy = Path(tmp) / "secure" / "host-policy.env"
+            with mock.patch.dict(
+                os.environ, {"AAS_AUTOLOOP_FORMAL_TYPECHECK": "1"}, clear=False
+            ), mock.patch.object(self.apply.os, "name", "nt"):
+                self.apply.write_host_env_defaults(loop, "general", policy)
+                manifest = os.environ["AAS_FORCE_LOOP_POLICY_PROJECTED"]
+                self.assertNotIn("AAS_AUTOLOOP_FORMAL_TYPECHECK", os.environ)
+            self.assertEqual(
+                manifest,
+                "AAS_AUTOLOOP_FORMAL_POLICY,AAS_AUTOLOOP_GOAL_PRIORITY,"
+                "AAS_AUTOLOOP_NOTIFY",
+            )
+
+    @unittest.skipUnless(os.name == "posix", "reprojection is the native Windows path")
+    def test_posix_write_leaves_the_process_environment_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            loop.mkdir()
+            policy = Path(tmp) / "secure" / "host-policy.env"
+            with mock.patch.dict(os.environ, {}, clear=False):
+                self.apply.write_host_env_defaults(loop, "formal", policy)
+                self.assertNotIn("AAS_FORCE_LOOP_POLICY_PROJECTED", os.environ)
+                self.assertNotIn("AAS_AUTOLOOP_GOAL_PRIORITY", os.environ)
+
     @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_formal_apply_has_enforce_hard_notify(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
