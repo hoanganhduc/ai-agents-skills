@@ -75,8 +75,14 @@ Enabled only when `policy==force` **and**
 
 - Non-terminal: never sets loop `blocked`/`stopped`.
 - Scan-first; typecheck opt-in; wall budget ~90s; no OpenGauss.
-- Report schema `formal_force_report.v1`: `claim_support_status` always
-  `not_evaluated`; `opengauss_launched` always false.
+- Report schema `formal_force_report.v1`: `opengauss_launched` always false.
+  `claim_support_status` is written at the host writer boundary from checks the
+  host itself ran on that tick, never from anything in the report dict. It
+  reads `supports_formal_statement_only` only when the gate scan was clean, the
+  host Lake build reported `typechecked`, and the axiom audit came back clean;
+  every other outcome, and anything an agent writes, reads `not_evaluated`.
+  `no_claim_support_promotion` stays true either way: a machine check shows the
+  Lean statement is proved, not that it says what the informal claim says.
 - Missing Lake/tools → `tool_unavailable`; drive continues.
 
 ## Prompt order

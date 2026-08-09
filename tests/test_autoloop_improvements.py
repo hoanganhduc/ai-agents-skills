@@ -572,11 +572,6 @@ class FormalOpenLedgerValidateTests(unittest.TestCase):
             base = Path(tmp)
             loop = base / "loop"
             _init(loop, extra=("--formal-policy", "on"))
-            state = _read_json(loop, "loop_state.json")
-            state["next_preferred_path"] = "formal-track: build the Lean artifact"
-            (loop / "loop_state.json").write_text(
-                json.dumps(state, indent=2) + "\n", encoding="utf-8"
-            )
             source = base / "final.lean"
             source.write_bytes(b"theorem improvement_batch_ok : True := trivial\n")
             staged = _run(
@@ -605,6 +600,15 @@ class FormalOpenLedgerValidateTests(unittest.TestCase):
             )
             res = _append(loop, "stop", stop_reason="proof", evidence_id="proof-1")
             self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            # The path turns formal-track only now: the append gate re-verifies
+            # the staged verdict against the project, which is a separate rule
+            # with its own tests. What is under test here is that validate holds
+            # a banked row to the formal-track verdict requirement.
+            state = _read_json(loop, "loop_state.json")
+            state["next_preferred_path"] = "formal-track: build the Lean artifact"
+            (loop / "loop_state.json").write_text(
+                json.dumps(state, indent=2) + "\n", encoding="utf-8"
+            )
             validated = _run("validate", "--dir", str(loop))
             self.assertEqual(validated.returncode, 0, validated.stdout)
             # An agent deleting the host verdict must not leave validate green.

@@ -4449,5 +4449,131 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
             self.assertEqual(validation["errors"], [], validation)
 
 
+class HostReverificationAtFinalizeTests(_AttestedGoalFocusTestCase):
+    """WS1: a certified formal claim is re-checked by the host before it banks."""
+
+    def _bank(self, root: Path, reverifier) -> dict:
+        plan = _activate(root)
+        staged = _stage_enforced_candidate(
+            root,
+            plan,
+            {"output": "a formal result", "evidence_ids": ["proof.json"]},
+        )
+        return gf.finalize_candidate(
+            root,
+            accepted=True,
+            review=_bound_review(staged),
+            formal_reverifier=reverifier,
+        )
+
+    def test_a_reverified_bank_records_the_recheck_on_the_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            result = self._bank(
+                root,
+                lambda _root: {
+                    "status": "reverified",
+                    "ok": True,
+                    "staged": {"coverage_digest": "abc"},
+                    "observed": {"coverage_digest": "abc"},
+                },
+            )
+            recheck = result["record"]["host_reverification"]
+            self.assertEqual(recheck["status"], "reverified")
+            rows = gf._read_iteration_rows(root)
+            self.assertEqual(rows[-1]["host_reverification"]["status"], "reverified")
+
+    def test_a_non_formal_bank_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            result = self._bank(
+                root, lambda _root: {"status": "not_applicable", "ok": True}
+            )
+            self.assertNotIn("host_reverification", result["record"])
+
+    def test_a_mismatched_recheck_refuses_to_bank(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            with self.assertRaises(ValueError) as caught:
+                self._bank(
+                    root,
+                    lambda _root: {
+                        "status": "mismatch",
+                        "ok": False,
+                        "detail": "coverage_digest_mismatch",
+                    },
+                )
+            self.assertIn("host re-verification gate", str(caught.exception))
+            self.assertIn("coverage_digest_mismatch", str(caught.exception))
+            # Nothing banked: the candidate is still pending for another round.
+            self.assertEqual(gf._read_iteration_rows(root), [])
+            self.assertTrue((root / gf.PENDING_CANDIDATE_FILE).exists())
+
+    def test_a_recheck_that_could_not_run_refuses_to_bank(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            with self.assertRaises(ValueError) as caught:
+                self._bank(
+                    root,
+                    lambda _root: {
+                        "status": "unavailable",
+                        "ok": False,
+                        "detail": "gate_scan_unavailable",
+                    },
+                )
+            self.assertIn("unavailable", str(caught.exception))
+
+    def test_a_broken_reverifier_refuses_rather_than_banks(self) -> None:
+        def _boom(_root):
+            raise RuntimeError("gate exploded")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            with self.assertRaises(ValueError) as caught:
+                self._bank(root, _boom)
+            self.assertIn("host re-verification gate", str(caught.exception))
+            self.assertEqual(gf._read_iteration_rows(root), [])
+
+    def test_a_reverifier_answering_with_junk_refuses_to_bank(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            with self.assertRaises(ValueError):
+                self._bank(root, lambda _root: "looks fine to me")
+
+    def test_a_rejected_candidate_needs_no_recheck(self) -> None:
+        def _never(_root):
+            raise AssertionError("rejection must not re-run the host gate")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            plan = _activate(root)
+            staged = _stage_enforced_candidate(
+                root, plan, {"output": "no good", "evidence_ids": ["proof.json"]}
+            )
+            result = gf.finalize_candidate(
+                root,
+                accepted=False,
+                review=_bound_review(staged, status="failed", reason="gap"),
+                formal_reverifier=_never,
+            )
+            self.assertEqual(result["record"]["bank_status"], "rejected")
+
+    def test_the_default_reverifier_is_the_formal_policy_one(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            # No formal/terminal_state.json in the run dir: nothing certified
+            # was staged, so the real re-verifier reports not_applicable.
+            result = self._bank(root, None)
+            self.assertNotIn("host_reverification", result["record"])
+
+
 if __name__ == "__main__":
     unittest.main()

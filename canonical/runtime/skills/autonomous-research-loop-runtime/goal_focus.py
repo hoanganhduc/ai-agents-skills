@@ -5706,6 +5706,59 @@ def _negative_space_entry_for_finalize(
         return None
 
 
+def _default_formal_reverifier(root: Path) -> dict[str, Any]:
+    try:
+        import formal_policy as fp  # type: ignore
+    except ImportError:  # pragma: no cover - package-relative import
+        try:
+            from . import formal_policy as fp  # type: ignore
+        except ImportError:
+            # No formal machinery in this install means no host verdict was ever
+            # written, so there is nothing to re-check — the honest answer, and
+            # not a reason to refuse every bank in a non-formal loop.
+            return {
+                "schema_version": "formal_reverification.v1",
+                "status": "not_applicable",
+                "ok": True,
+                "detail": "formal_policy_unavailable",
+            }
+    return fp.reverify_formal_evidence(root)
+
+
+def _require_host_reverification(
+    root: Path,
+    *,
+    reverifier: Any | None = None,
+) -> dict[str, Any]:
+    """Re-run the host formal checks before a certified proof claim banks.
+
+    A staged ``sorry_free_artifact`` says what the host saw earlier, which is
+    not the same as what holds now: the project stays agent-writable between
+    the verdict and the bank. Banking therefore re-executes the checks and
+    refuses whenever the re-run disagrees or cannot decide, so "the host could
+    not re-check" never reads as "the host confirmed".
+    """
+    call = reverifier if reverifier is not None else _default_formal_reverifier
+    try:
+        result = call(root)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(
+            f"host re-verification gate: re-verification failed: {exc}"
+        ) from exc
+    if not isinstance(result, Mapping):
+        raise ValueError("host re-verification gate: re-verifier returned no result")
+    status = _clean_text(result.get("status"))
+    if status == "not_applicable":
+        return dict(result)
+    if status != "reverified":
+        detail = _clean_text(result.get("detail"))
+        raise ValueError(
+            f"host re-verification gate: {status or 'no_status'}"
+            + (f": {detail}" if detail else "")
+        )
+    return dict(result)
+
+
 def finalize_candidate(
     run_dir: str | Path,
     *,
@@ -5718,6 +5771,7 @@ def finalize_candidate(
     contract_postimage: Mapping[str, Any] | None = None,
     registry_postimage: Mapping[str, Any] | None = None,
     expected_plan_revision: int | None = None,
+    formal_reverifier: Any | None = None,
 ) -> dict[str, Any]:
     root = Path(run_dir)
     recover_transactions(root)
@@ -5847,6 +5901,13 @@ def finalize_candidate(
     )
     if accepted:
         _validate_accepted_review_coverage(record, review)
+        reverification = _require_host_reverification(
+            root, reverifier=formal_reverifier
+        )
+        if reverification.get("status") != "not_applicable":
+            # The banked row carries the proof that the host re-checked, so a
+            # later audit can tell a re-verified bank from an unchecked one.
+            record["host_reverification"] = reverification
     ledger_path = root / ITERATION_LEDGER_FILE
     live_rows, iterations_hash = _read_jsonl_snapshot(ledger_path)
     if iterations_hash is None:

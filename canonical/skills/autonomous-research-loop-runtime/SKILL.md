@@ -444,8 +444,41 @@ legacy `goal_priority`) → `formal_policy` (empty when off).
 
 **`formal_force_tick`** (after `iteration_ok`, only `force` + flag): writes
 `formal/force_loop_reports/*`; never sets loop `blocked`/`stopped`; never
-launches OpenGauss; never sets `claim_support_status=supported`. Missing Lake
-→ `tool_unavailable`; drive continues.
+launches OpenGauss. Missing Lake → `tool_unavailable`; drive continues.
+`claim_support_status` is set at the writer boundary from the tick's own gate
+scan, host Lake build, and axiom audit; all three clean gives
+`supports_formal_statement_only`, anything else gives `not_evaluated`, and no
+agent-written value reaches the field. Claim-level support still needs a
+statement-equivalence review, so `no_claim_support_promotion` stays true.
+
+**Host verdict on the artifact.** At drive stop, `evaluate_formal_terminal_state`
+writes `formal/terminal_state.json`: `sorry_free_artifact`, `open_ledger`, or
+`indeterminate`. `sorry_free_artifact` needs a clean gate scan, a host-run Lake
+build reporting `typechecked`, and a clean `axiom-audit`; `indeterminate` means
+the host could not decide and is never a pass. Only a `done` exit pays for the
+full build, so a failure exit records a scan-only ledger and never certifies.
+
+**Host re-verification at bank.** That certified verdict
+records what the host saw when it was written, and the project stays
+agent-writable afterwards, so `goal_focus.finalize_candidate` re-runs the same
+decision procedure before an accepted candidate banks
+(`formal_policy.reverify_formal_evidence`). The fresh verdict is diffed against
+the staged one — terminal state plus the scan's `source_digest`, a sha256 over
+the gate's per-file manifest with the loop's own directory excluded so that
+staging one more proof artifact does not read as a changed project, while any
+edit to a real source still moves it. A stamp written before that field existed
+is compared on the whole-manifest `coverage_digest` instead, and
+`compared_digest` records which of the two was used. The bank is refused when
+the two disagree or when the re-check could not run, so "could not re-check"
+never reads as "confirmed". A re-check never overwrites the staged stamp. Runs
+with no certified verdict staged are reported `not_applicable` and bank
+unchanged. The banked row carries the re-check under `host_reverification`.
+
+A legacy (non-enforce) run never reaches that finalize step, so
+`append-iteration` runs the same re-check itself before appending a
+formal-track early success stop that rests on a staged `sorry_free_artifact`.
+It refuses on anything but agreement and records the result on the appended row
+under the same key.
 
 **Glossary:** headless force-driven ARL ≠ `formal_policy=force`. Default
 scripted force-loop pack: `force-loop/` (and discovery template

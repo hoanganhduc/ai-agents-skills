@@ -7,8 +7,10 @@ informal-to-lean-formalization-runbook for F1–F7 positions.
 Contract:
 * Never raise into drive/prompt construction.
 * Policy ``off`` → empty prompt addon (default-off regression).
-* Force tick never sets loop status blocked/stopped, never auto-spawns OpenGauss,
-  never sets claim_support=supported.
+* Force tick never sets loop status blocked/stopped and never auto-spawns
+  OpenGauss. It writes claim_support_status only from checks it ran itself, and
+  only as far as supports_formal_statement_only: claim-level support needs a
+  statement-equivalence review the host cannot perform.
 * Path steal refused in MVP (allow_path_steal field reserved, always false write).
 """
 
@@ -53,16 +55,35 @@ _FORMAL_PATH_SEG_RE = re.compile(r"(?i)(?:^|/)(?:research_loop/)?formal/")
 FORCE_REPORT_SCHEMA = "formal_force_report.v1"
 HOST_WRITER = "host_formal_force_tick"
 
+# Claim support the host itself can establish. A machine check shows that the
+# Lean statement is proved; whether that statement says what the informal claim
+# says is a review step, so supports_claim_after_equivalence_review stays out of
+# the host's reach no matter how clean the build is.
+CLAIM_SUPPORT_NOT_EVALUATED = "not_evaluated"
+HOST_MACHINE_CHECKED_CLAIM_SUPPORT = "supports_formal_statement_only"
+
 TERMINAL_STATE_SCHEMA = "formal_terminal_state.v1"
 TERMINAL_STATES = frozenset({"sorry_free_artifact", "open_ledger", "indeterminate"})
+REVERIFICATION_SCHEMA = "formal_reverification.v1"
 GATE_SCRIPT_ENV = "AAS_STRICT_GATE_SCRIPT"
 TYPECHECK_TIMEOUT_ENV = "AAS_AUTOLOOP_FORMAL_TYPECHECK_TIMEOUT"
+
+# Force-skill name -> strict-gate subcommand, for the read-only trust-base verbs.
+_AUDIT_GATE_VERBS = {
+    "lean_strict_verification_gate.axiom_audit": "axiom-audit",
+    "lean_strict_verification_gate.kernel_check": "kernel-check",
+}
 
 ALLOWED_FORCE_SKILLS = frozenset(
     {
         "lean_formalization_intake.assess",
         "lean_strict_verification_gate.scan",
         "lean_strict_verification_gate.verify_typecheck",
+        # Trust-base evidence: what the proofs actually depend on, and a kernel
+        # replay of the compiled environment. Both are read-only over an
+        # already-built project — neither can write into the loop tree.
+        "lean_strict_verification_gate.axiom_audit",
+        "lean_strict_verification_gate.kernel_check",
         "lean_explore.search",
         # Library-first reuse (F2') and user-gated intake proposals (F7').
         # search is read-only; intake only writes a proposal packet — the
@@ -530,7 +551,9 @@ def formal_policy_prompt_addon(
                     "\n### Force hygiene mode\n"
                     "Host may run a non-terminal formal_force_tick after iteration_ok "
                     "(scan-only by default). That report is hygiene, not theorem success. "
-                    "claim_support_status from host is always not_evaluated.\n"
+                    "claim_support_status is written by the host from checks the host "
+                    "itself ran, and reaches supports_formal_statement_only at best; "
+                    "nothing you write can raise it.\n"
                 )
             return "\n\n" + header + EARLY_STOP_CONTRACT_BLOCK
         return "\n\n" + PARKED_BLOCK + EARLY_STOP_CONTRACT_BLOCK
@@ -756,6 +779,21 @@ def default_gate_runner(name: str, payload: dict[str, Any]) -> dict[str, Any]:
             "--timeout",
             str(int(timeout)),
         ]
+    elif name in _AUDIT_GATE_VERBS:
+        timeout = float(payload.get("timeout") or typecheck_timeout_s())
+        cmd = [
+            sys.executable,
+            str(script),
+            _AUDIT_GATE_VERBS[name],
+            "--input",
+            project,
+            "--timeout",
+            str(int(timeout)),
+        ]
+        # An audit that never ran must not read as a clean audit, so the caller
+        # opts into strict per call rather than inheriting a default.
+        if payload.get("strict"):
+            cmd.append("--strict")
     else:
         return {"ok": False, "status": "forbidden_skill", "detail": name, "report": {}}
     try:
@@ -779,9 +817,12 @@ def default_gate_runner(name: str, payload: dict[str, Any]) -> dict[str, Any]:
         report = {}
     if not isinstance(report, dict):
         report = {}
-    status = str(report.get("lean_check_status") or "") or (
-        "ok" if completed.returncode == 0 else "failed"
-    )
+    status = str(
+        report.get("lean_check_status")
+        or report.get("axiom_audit_status")
+        or report.get("kernel_check_status")
+        or ""
+    ) or ("ok" if completed.returncode == 0 else "failed")
     return {
         "ok": completed.returncode == 0,
         "status": status,
@@ -814,7 +855,7 @@ def formal_force_tick(
         "credits_initial": 0,
         "credits_remaining": 0,
         "ledger": [],
-        "claim_support_status": "not_evaluated",
+        "claim_support_status": CLAIM_SUPPORT_NOT_EVALUATED,
         "opengauss_launched": False,
         "evidence_types_emitted": [],
         "no_claim_support_promotion": True,
@@ -866,6 +907,12 @@ def formal_force_tick(
         # and is recorded as "crude_fallback", never equated with a gate result.
         gaps = 0
         evidence: list[str] = []
+        # Promotion evidence, each raised only by a step the host itself ran.
+        # The crude fallback deliberately cannot raise gate_scan_clean: reading
+        # source text for the token "sorry" is not a gate result.
+        gate_scan_clean = False
+        typecheck_clean = False
+        audit_clean = False
         if proj and proj.is_dir():
             active_runner = runner if runner is not None else default_gate_runner
             scan_report: dict[str, Any] = {}
@@ -902,6 +949,7 @@ def formal_force_tick(
                     }
                 )
                 evidence.append("formal_scan")
+                gate_scan_clean = bool(scan_report.get("ok")) and not findings
             else:
                 lean_files = list(proj.rglob("*.lean"))
                 sorry_count = 0
@@ -954,6 +1002,18 @@ def formal_force_tick(
                                 }
                             )
                             evidence.append("formal_typecheck")
+                            # A build that reports anything other than
+                            # "typechecked" — tool_unavailable most of all —
+                            # is an absence of evidence, so it is read here as
+                            # exactly that and never as a passing build.
+                            ver_report = (
+                                result.get("report") if isinstance(result, dict) else None
+                            )
+                            typecheck_clean = bool(result.get("ok")) and (
+                                isinstance(ver_report, dict)
+                                and str(ver_report.get("lean_check_status") or "")
+                                == "typechecked"
+                            )
                             if not result.get("ok", True):
                                 gaps += 1
                                 # spend 1 on failed typecheck attempt
@@ -967,6 +1027,32 @@ def formal_force_tick(
                                 }
                             )
                             gaps += 1
+            # The trust base is checked last and only when everything cheaper
+            # already passed: an audit over a project with findings or a failed
+            # build costs a run without changing the outcome. It is what the
+            # textual scan cannot see — a sorryAx reached through a dependency.
+            if gate_scan_clean and typecheck_clean:
+                audit = _run_axiom_audit(active_runner, proj)
+                report["ledger"].append(
+                    {
+                        "step": "axiom_audit",
+                        "decision": audit["status"],
+                        "detail": _redact_secrets(
+                            ", ".join(
+                                audit["unsanctioned_axioms"]
+                                + audit["unresolved_declarations"]
+                            )[:200]
+                        ),
+                    }
+                )
+                evidence.append("formal_axiom_audit")
+                audit_clean = (
+                    audit["status"] == "audited"
+                    and not audit["unsanctioned_axioms"]
+                    and not audit["unresolved_declarations"]
+                )
+                if not audit_clean:
+                    gaps += 1
         else:
             report["ledger"].append(
                 {
@@ -984,7 +1070,9 @@ def formal_force_tick(
 
         report["evidence_types_emitted"] = evidence
         report["opengauss_launched"] = False
-        report["claim_support_status"] = "not_evaluated"
+        # Every one of these was raised by a step this host process ran on this
+        # tick; none of them can be reached by anything the agent wrote.
+        host_checked = gate_scan_clean and typecheck_clean and audit_clean
         if gaps == 0:
             report["terminal"] = "issue_free"
             report["hygiene_status"] = "clean"
@@ -996,7 +1084,7 @@ def formal_force_tick(
         # MVP scan-only: do not spend credits (vestigial until typecheck spend path used)
         if report["credits_remaining"] == credits_i and not pol.typecheck:
             pass
-        _write_force_report(run_path, report)
+        _write_force_report(run_path, report, host_checked=host_checked)
         return report
     except Exception as exc:  # noqa: BLE001
         report["terminal"] = "tool_unavailable"
@@ -1008,7 +1096,6 @@ def formal_force_tick(
                 "detail": _redact_secrets(str(exc)[:200]),
             }
         )
-        report["claim_support_status"] = "not_evaluated"
         report["opengauss_launched"] = False
         try:
             _write_force_report(Path(run_dir), report)
@@ -1017,14 +1104,23 @@ def formal_force_tick(
         return report
 
 
-def _write_force_report(run_dir: Path, report: dict[str, Any]) -> None:
-    # Enforce schema invariants at writer boundary
-    report["claim_support_status"] = "not_evaluated"
+def _write_force_report(
+    run_dir: Path, report: dict[str, Any], *, host_checked: bool = False
+) -> None:
+    # Enforce schema invariants at writer boundary. The claim-support level is
+    # computed here from what the host executed on this tick, never read out of
+    # the report dict: an upstream assignment — an agent's, or a stale one of
+    # our own — therefore cannot promote anything, because the only channel that
+    # reaches this field is a keyword the caller has to pass deliberately.
+    report["claim_support_status"] = (
+        HOST_MACHINE_CHECKED_CLAIM_SUPPORT if host_checked else CLAIM_SUPPORT_NOT_EVALUATED
+    )
     report["opengauss_launched"] = False
+    # Machine-checked statement support is not claim support: the Lean statement
+    # matching the informal claim stays unproven either way, so this stays true
+    # even on the promoted path.
     report["no_claim_support_promotion"] = True
     report["writer"] = HOST_WRITER
-    if report.get("claim_support_status") == "supported":
-        report["claim_support_status"] = "not_evaluated"
     try:
         d = Path(run_dir) / "formal" / "force_loop_reports"
         d.mkdir(parents=True, exist_ok=True)
@@ -1103,6 +1199,89 @@ def load_formal_terminal_state(run_dir: Path | str) -> dict[str, Any] | None:
         return None
 
 
+def _coverage_digest(
+    coverage: dict[str, Any], *, exclude_prefix: str | None = None
+) -> tuple[str, int]:
+    """Stable digest of the gate's per-file sha256 manifest.
+
+    The digest covers every scanned file, so a project that changed by one
+    line in one file after the verdict was written cannot match the stamp.
+    An empty manifest digests to the empty string rather than to the hash of
+    nothing, so "no manifest" can never compare equal to "manifest of zero
+    files that happened to hash the same way".
+
+    ``exclude_prefix`` drops a project-relative subtree, which is how the
+    loop's own directory is kept out of the digest a later re-run is compared
+    against. Excluding everything is refused by the caller rather than handled
+    here: a digest over nothing carries no information.
+    """
+    rows = [row for row in (coverage.get("files") or []) if isinstance(row, dict)]
+    if exclude_prefix:
+        prefix = exclude_prefix.rstrip("/") + "/"
+        rows = [row for row in rows if not str(row.get("file") or "").startswith(prefix)]
+    if not rows:
+        return "", 0
+    lines = sorted(f"{row.get('file')}\t{row.get('sha256')}" for row in rows)
+    digest = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+    return digest, len(rows)
+
+
+def _run_dir_prefix(run_dir: Path, project: Path) -> str:
+    """The loop directory as a project-relative prefix, empty when outside.
+
+    The loop stages proof artifacts under its own directory, and that
+    directory commonly sits inside the project it checks. Those copies are
+    bookkeeping, not sources: staging one more between the verdict and the
+    bank must not read as "the project changed".
+    """
+    try:
+        relative = run_dir.resolve().relative_to(project.resolve())
+    except (OSError, ValueError):
+        return ""
+    text = relative.as_posix()
+    return "" if text in {"", "."} else text
+
+
+def _run_axiom_audit(
+    runner: Callable[[str, dict[str, Any]], dict[str, Any]], project: Path
+) -> dict[str, Any]:
+    """Trust-base evidence for a would-be sorry-free artifact. Never raises.
+
+    An empty report means the audit never ran, which is reported as such and
+    never as a clean trust base.
+    """
+    summary: dict[str, Any] = {
+        "status": "not_run",
+        "declarations": 0,
+        "unsanctioned_axioms": [],
+        "unresolved_declarations": [],
+    }
+    try:
+        result = runner(
+            "lean_strict_verification_gate.axiom_audit",
+            {"project": str(project), "timeout": typecheck_timeout_s(), "strict": True},
+        )
+    except Exception as exc:  # noqa: BLE001
+        summary["status"] = "command_failed"
+        summary["detail"] = _redact_secrets(str(exc)[:200])
+        return summary
+    report = result.get("report") if isinstance(result, dict) else None
+    if not isinstance(report, dict) or not report:
+        if isinstance(result, dict) and result.get("status"):
+            summary["status"] = str(result["status"])
+        return summary
+    summary["status"] = str(report.get("axiom_audit_status") or "not_run")
+    rows = [row for row in (report.get("declarations") or []) if isinstance(row, dict)]
+    summary["declarations"] = len(rows)
+    summary["unsanctioned_axioms"] = sorted(
+        {str(axiom) for axiom in (report.get("unsanctioned_axioms") or [])}
+    )[:50]
+    summary["unresolved_declarations"] = [
+        str(row.get("declaration") or "") for row in rows if row.get("status") == "unresolved"
+    ][:50]
+    return summary
+
+
 def evaluate_formal_terminal_state(
     run_dir: Path | str,
     *,
@@ -1113,6 +1292,7 @@ def evaluate_formal_terminal_state(
     reason: str = "",
     require_typecheck: bool = True,
     integrity: dict[str, Any] | None = None,
+    write: bool = True,
 ) -> dict[str, Any]:
     """Host-authored terminal verdict for a formal-track run. Never raises.
 
@@ -1123,8 +1303,18 @@ def evaluate_formal_terminal_state(
     ``integrity`` is the drive's run-integrity summary (ledger watch, build
     config watch); it is recorded verbatim for the acceptance reviewer and
     never changes the verdict itself.
+
+    ``write=False`` evaluates without persisting, for callers that must diff a
+    fresh verdict against the staged one: overwriting the stamp mid-check
+    would let a refusal erase the very evidence the next attempt is judged
+    against, so a re-check leaves the staged file alone.
     """
     run_path = Path(run_dir)
+
+    def _persist(state: dict[str, Any]) -> None:
+        if write:
+            _write_terminal_state(run_path, state)
+
     verdict: dict[str, Any] = {
         "schema_version": TERMINAL_STATE_SCHEMA,
         "writer": HOST_WRITER,
@@ -1145,7 +1335,7 @@ def evaluate_formal_terminal_state(
         )
         if proj is None:
             verdict["detail"] = "no_lake_project"
-            _write_terminal_state(run_path, verdict)
+            _persist(verdict)
             return verdict
         active_runner = runner if runner is not None else default_gate_runner
         scan_result = active_runner(
@@ -1154,18 +1344,36 @@ def evaluate_formal_terminal_state(
         scan_report = scan_result.get("report") if isinstance(scan_result, dict) else None
         if not isinstance(scan_report, dict) or not scan_report:
             verdict["detail"] = "gate_scan_unavailable"
-            _write_terminal_state(run_path, verdict)
+            _persist(verdict)
             return verdict
         findings = [
             f for f in (scan_report.get("findings") or []) if isinstance(f, dict)
         ]
         coverage = scan_report.get("coverage")
         coverage = coverage if isinstance(coverage, dict) else {}
+        coverage_digest, manifest_files = _coverage_digest(coverage)
+        source_digest, source_files = _coverage_digest(
+            coverage, exclude_prefix=_run_dir_prefix(run_path, proj)
+        )
+        if not source_digest:
+            # Nothing outside the loop directory, so there is no narrower
+            # scope to compare: the whole manifest is the project.
+            source_digest, source_files = coverage_digest, manifest_files
         verdict["gate"]["scan"] = {
             "ok": bool(scan_report.get("ok")),
             "findings": len(findings),
             "files_scanned": coverage.get("files_scanned"),
             "files_total": coverage.get("files_total"),
+            # The manifest digest is what a later re-scan is diffed against:
+            # without it a verdict can only be re-derived, never compared.
+            "coverage_digest": coverage_digest,
+            "manifest_files": manifest_files,
+            # The same digest over the project sources alone. Comparing this
+            # one lets a bank stage its evidence without the re-run reading the
+            # new copy as a changed project, while any edit to a real source
+            # still moves it.
+            "source_digest": source_digest,
+            "source_files": source_files,
         }
         verdict["obligations"] = [
             {
@@ -1192,7 +1400,27 @@ def evaluate_formal_terminal_state(
                 and typecheck_status == "typechecked"
             )
             if typecheck_ok and not findings:
-                verdict["terminal_state"] = "sorry_free_artifact"
+                # The scanner reads source text; only the audit sees what the
+                # compiled proofs actually rest on, including a sorryAx that
+                # arrives through a dependency the scan never opened.
+                audit = _run_axiom_audit(active_runner, proj)
+                verdict["gate"]["axiom_audit"] = audit
+                if audit["status"] != "audited":
+                    verdict["terminal_state"] = "indeterminate"
+                    verdict["detail"] = f"axiom_audit_{audit['status']}"
+                elif audit["unresolved_declarations"]:
+                    # Source declares what the built environment does not have:
+                    # the artifact and the build disagree, so nothing is certified.
+                    verdict["terminal_state"] = "indeterminate"
+                    verdict["detail"] = "axiom_audit_unresolved_declaration"
+                elif audit["unsanctioned_axioms"]:
+                    verdict["terminal_state"] = "open_ledger"
+                    verdict["obligations"].extend(
+                        {"file": "", "kind": "unsanctioned_axiom", "detail": axiom}
+                        for axiom in audit["unsanctioned_axioms"]
+                    )
+                else:
+                    verdict["terminal_state"] = "sorry_free_artifact"
             elif typecheck_status == "typecheck_failed" or findings:
                 verdict["terminal_state"] = "open_ledger"
                 if typecheck_status != "typechecked":
@@ -1211,16 +1439,137 @@ def evaluate_formal_terminal_state(
                 # sorry-free is never granted without a host-run build
                 verdict["terminal_state"] = "indeterminate"
                 verdict["detail"] = "scan_clean_but_unbuilt"
-        _write_terminal_state(run_path, verdict)
+        _persist(verdict)
         return verdict
     except Exception as exc:  # noqa: BLE001
         verdict["terminal_state"] = "indeterminate"
         verdict["detail"] = _redact_secrets(str(exc)[:200])
         try:
-            _write_terminal_state(Path(run_dir), verdict)
+            _persist(verdict)
         except Exception:  # noqa: BLE001
             pass
         return verdict
+
+
+def reverify_formal_evidence(
+    run_dir: Path | str,
+    *,
+    root: Path | str | None = None,
+    policy: FormalPolicy | None = None,
+    pin: dict[str, Any] | None = None,
+    runner: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Re-run the host formal checks and diff them against the staged verdict.
+
+    A staged ``sorry_free_artifact`` records what the host saw when the
+    verdict was written; it is not evidence that the project still typechecks
+    now. This re-executes the same decision procedure — no cached verdict is
+    read as a result — and reports whether the two agree. The staged verdict
+    is only ever the thing to disagree with, never a shortcut past the checks.
+
+    Statuses: ``not_applicable`` (nothing certified was staged, so there is no
+    claim to re-check), ``reverified``, ``mismatch`` (the re-run contradicts
+    the stamp — the caller must refuse), ``unavailable`` (the host could not
+    re-check, which is never a pass). Never raises.
+
+    Scope: this compares the host's own earlier verdict against the host's
+    verdict now. An agent-authored proof artifact that was banked without any
+    host verdict has nothing to diff against and is reported as
+    ``not_applicable`` here; refusing those is a separate gate.
+
+    A re-run reuses whatever the operator's toolchain resolves to and whatever
+    the project's build cache holds; only ``lean_strict_verification_gate
+    kernel-check`` replays proof terms independently of that cache.
+    """
+    run_path = Path(run_dir)
+    result: dict[str, Any] = {
+        "schema_version": REVERIFICATION_SCHEMA,
+        "status": "not_applicable",
+        "ok": True,
+        "detail": "",
+        "staged": {},
+        "observed": {},
+        "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    try:
+        staged = load_formal_terminal_state(run_path)
+        if not staged or staged.get("terminal_state") != "sorry_free_artifact":
+            result["detail"] = "no_certified_verdict_staged"
+            return result
+        staged_scan = staged.get("gate") or {}
+        staged_scan = staged_scan.get("scan") if isinstance(staged_scan, dict) else {}
+        staged_scan = staged_scan if isinstance(staged_scan, dict) else {}
+        # A stamp written before source digests existed only carries the full
+        # manifest, so it is compared the strict old way rather than skipped.
+        digest_field = "source_digest" if staged_scan.get("source_digest") else "coverage_digest"
+        staged_digest = str(staged_scan.get(digest_field) or "")
+        result["staged"] = {
+            "terminal_state": staged.get("terminal_state"),
+            "coverage_digest": str(staged_scan.get("coverage_digest") or ""),
+            "source_digest": str(staged_scan.get("source_digest") or ""),
+            "compared_digest": digest_field,
+            "decided_at": staged.get("decided_at"),
+        }
+        if not staged_digest:
+            # A verdict written before manifests were stamped cannot be
+            # diffed. Re-deriving one now would compare the project against
+            # itself and always agree, so this reports the gap instead.
+            result["status"] = "unavailable"
+            result["ok"] = False
+            result["detail"] = "staged_verdict_has_no_manifest"
+            return result
+        observed = evaluate_formal_terminal_state(
+            run_path,
+            root=root,
+            policy=policy,
+            pin=pin,
+            runner=runner,
+            reason="host_reverification_at_finalize",
+            require_typecheck=True,
+            write=False,
+        )
+        observed_gate = observed.get("gate") if isinstance(observed, dict) else {}
+        observed_gate = observed_gate if isinstance(observed_gate, dict) else {}
+        observed_scan = observed_gate.get("scan")
+        observed_scan = observed_scan if isinstance(observed_scan, dict) else {}
+        observed_digest = str(observed_scan.get(digest_field) or "")
+        result["observed"] = {
+            "terminal_state": observed.get("terminal_state"),
+            "coverage_digest": str(observed_scan.get("coverage_digest") or ""),
+            "source_digest": str(observed_scan.get("source_digest") or ""),
+            "detail": observed.get("detail"),
+            "findings": observed_scan.get("findings"),
+            "typecheck_status": observed_gate.get("typecheck_status"),
+            "obligations": len(observed.get("obligations") or []),
+        }
+        if observed.get("terminal_state") == "indeterminate":
+            # The host could not decide a second time: tooling gone, build
+            # unavailable, audit never ran. Undecided is not agreement.
+            result["status"] = "unavailable"
+            result["ok"] = False
+            result["detail"] = str(observed.get("detail") or "indeterminate")[:200]
+            return result
+        if observed.get("terminal_state") != "sorry_free_artifact":
+            result["status"] = "mismatch"
+            result["ok"] = False
+            result["detail"] = "terminal_state_regressed"
+            return result
+        if observed_digest != staged_digest:
+            # Same verdict, different sources: the project moved after the
+            # verdict was written, so the stamp no longer describes what was
+            # checked.
+            result["status"] = "mismatch"
+            result["ok"] = False
+            result["detail"] = f"{digest_field}_mismatch"
+            return result
+        result["status"] = "reverified"
+        result["ok"] = True
+        return result
+    except Exception as exc:  # noqa: BLE001
+        result["status"] = "unavailable"
+        result["ok"] = False
+        result["detail"] = _redact_secrets(str(exc)[:200])
+        return result
 
 
 def is_force_tick_enabled(pol: FormalPolicy) -> bool:
