@@ -11296,6 +11296,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
                 reason = "runtime_error"
                 break
+            # The submission gate below rewrites rc to its own verdict, so keep
+            # the status the worker actually exited with for later diagnostics.
+            worker_rc = rc
             if goal_focus_mode == "enforce":
                 try:
                     if cleanup_error is not None:
@@ -11457,7 +11460,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     else:
                         quarantine_reason = (
                             "candidate existed after the host submission gate failed "
-                            f"with worker status {rc}"
+                            f"with worker status {worker_rc}"
                         )
                     try:
                         quarantine_result = goal_focus_v2.quarantine_failed_completion(
