@@ -46,13 +46,13 @@ POSIX ownership and permission checks that the gate stands in for are the ones
 actually enforcing path safety.
 
 ```sh
-cd /mnt/c/Users/<you>/ai-agents-skills
-cp /mnt/c/Users/<you>/.ai-agents-skills/state.json \
-   /mnt/c/Users/<you>/.ai-agents-skills/state.json.bak
-python3 -m installer.ai_agents_skills --root /mnt/c/Users/<you> \
+cd /mnt/c/Users/.../ai-agents-skills
+cp /mnt/c/Users/.../.ai-agents-skills/state.json \
+   /mnt/c/Users/.../.ai-agents-skills/state.json.bak
+python3 -m installer.ai_agents_skills --root /mnt/c/Users/... \
   --platform windows install --runtime-profile auto --dry-run --json
 AAS_INSTALL_CONFIRM="I understand the installation and uninstall process" \
-python3 -m installer.ai_agents_skills --root /mnt/c/Users/<you> \
+python3 -m installer.ai_agents_skills --root /mnt/c/Users/... \
   --platform windows install --runtime-profile auto --apply --real-system
 ```
 
