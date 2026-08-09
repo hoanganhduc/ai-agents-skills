@@ -222,6 +222,13 @@ PROVIDER_EXECUTABLE_BASENAMES: dict[str, frozenset[str]] = {
     "kimi": frozenset({"kimi", "kimi.exe"}),
     "opencode": frozenset({"opencode", "opencode.exe"}),
 }
+# Deliberately narrower than PROVIDER_EXECUTABLE_BASENAMES["codewhale"]: the
+# native TUI takes a different argv shape (see the dispatch gate below).  npm
+# installs a `.cmd` shim on Windows, and `which` returns it with PATHEXT casing,
+# so this set is compared against a lowercased basename.
+CODEWHALE_WRAPPER_BASENAMES = frozenset(
+    {"codewhale", "codewhale.exe", "codewhale.js", "codewhale.cmd"}
+)
 PROVIDER_EXECUTABLE_PACKAGE_MARKERS: dict[str, tuple[str, ...]] = {
     "claude": ("/@anthropic-ai/claude-code/",),
     "codex": ("/@openai/codex/",),
@@ -2185,7 +2192,7 @@ def build_cmd(
         # flag placement, so silently falling back to either would attest one
         # interface and execute another contract.
         bin_ = selected_binary("codewhale")
-        if Path(bin_).name not in {"codewhale", "codewhale.exe", "codewhale.js"}:
+        if Path(bin_).name.lower() not in CODEWHALE_WRAPPER_BASENAMES:
             raise PanelIsolationError(
                 "trusted CodeWhale panels require the verified codewhale wrapper"
             )
