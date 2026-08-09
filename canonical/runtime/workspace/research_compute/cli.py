@@ -92,8 +92,27 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"ok": True, **result}, indent=2))
         return 0
 
-    config = load_config(config_path)
-    state_root = ensure_root(config.state_root(root))
+    try:
+        config = load_config(config_path)
+        state_root = ensure_root(config.state_root(root))
+    except FileNotFoundError:
+        # An install that has never run `bootstrap` has no per-install config.
+        # That is an expected state, so report it as a diagnostic with the
+        # remedy rather than as an unhandled traceback.
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": f"no research-compute config at {config_path}",
+                    "hint": "run `research_compute bootstrap` to generate it from the example",
+                },
+                indent=2,
+            )
+        )
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 1
 
     try:
         if args.command == "doctor":
