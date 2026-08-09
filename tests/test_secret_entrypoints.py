@@ -11,6 +11,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests import os_child_env
+
 
 REPO = Path(__file__).resolve().parents[1]
 RUNTIME_SOURCE = REPO / "canonical" / "runtime"
@@ -2001,7 +2003,7 @@ class SecretEntrypointStaticTests(unittest.TestCase):
             check=False,
             text=True,
             capture_output=True,
-            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            env={**os_child_env(), "PATH": os.environ.get("PATH", "/usr/bin:/bin")},
         )
         self.assertEqual(completed.returncode, 2)
         self.assertIn("subset", completed.stderr)

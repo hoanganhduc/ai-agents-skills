@@ -21,6 +21,7 @@ from installer.ai_agents_skills.openclaw_runtime_broker import (
     handle_run_request,
     verify_before_exec,
 )
+from tests import os_child_env
 
 
 def _sha(data: bytes) -> str:
@@ -140,7 +141,8 @@ class BrokerExecTest(unittest.TestCase):
             )
             plan = handle_run_request(
                 {"token": "tok", "skill": "demo", "command": "run", "args": ["WORLD"]},
-                state=state, parent_env={"PATH": os.environ.get("PATH", "")})
+                state=state,
+                parent_env={**os_child_env(), "PATH": os.environ.get("PATH", "")})
             self.assertEqual(plan["status"], "ok")
             result = exec_plan(plan, timeout=30)
             self.assertEqual(result["status"], "completed")
