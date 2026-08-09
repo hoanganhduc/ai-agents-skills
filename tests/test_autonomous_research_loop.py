@@ -3750,6 +3750,28 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
 
     @unittest.skipUnless(
         os.name == "posix",
+        "claiming a host-mediated submission needs POSIX directory descriptors",
+    )
+    def test_missing_submission_file_is_reported_as_a_missing_submission(self) -> None:
+        arl, _ = self._runtime_modules()
+        evidence = self.provider_fixture.root / "empty-evidence-root"
+        evidence.mkdir(mode=0o700)
+        # The complement of the host-side re-raise above: an openable evidence
+        # root with no submission in it is exactly the worker fault the driver
+        # reads FileNotFoundError as, so that arm must keep the bare type.
+        with self.assertRaises(FileNotFoundError):
+            arl.consume_iteration_submission(
+                evidence.parent,
+                evidence,
+                expected_run_id="run",
+                expected_dispatch_id="dispatch",
+                expected_candidate_id="candidate",
+                expected_provider="claude",
+                iteration_started_at="2026-01-01T00:00:00Z",
+            )
+
+    @unittest.skipUnless(
+        os.name == "posix",
         "consuming a host-mediated submission needs POSIX directory descriptors",
     )
     def test_ledger_tampering_counts_toward_max_failures_even_when_banked(self) -> None:
