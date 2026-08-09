@@ -74,7 +74,7 @@
 
 ## Verification
 
-- Enforcement unit tests: `python3 -m pytest -q tests/test_autonomous_research_loop.py`
+- Enforcement unit tests: `python3 -m unittest tests.test_autonomous_research_loop`
 - Installer manifest/render tests: `python3 -m unittest tests.test_installer`
 - Round-trip: apply + uninstall the managed hook on a populated fake
   `settings.json`; `plan` and `audit-system` show the exact diff.
