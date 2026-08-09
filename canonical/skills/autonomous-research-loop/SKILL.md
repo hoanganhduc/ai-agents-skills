@@ -248,7 +248,8 @@ interactive OpenGauss only → strict gate → fresh review → acceptance → F
 proposal-only library intake; staging/pushes stay user-gated).
 Evidence labels (`lean_declaration_search`, `opengauss_run`, `formal_scan`,
 `formal_typecheck`) never alone set claim-support. Host force tick reports are
-hygiene only (`claim_support_status=not_evaluated`).
+hygiene: their `claim_support_status` comes from checks the host ran itself and
+reaches `supports_formal_statement_only` at best, never claim-level support.
 
 **Default scripted force-loop** (all OS; enforce + hard + notify ON): runtime
 pack `autonomous-research-loop-runtime/force-loop/` — discovery template

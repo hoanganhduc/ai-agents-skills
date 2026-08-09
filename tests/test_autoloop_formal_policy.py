@@ -78,6 +78,38 @@ def _set_state(run_dir: Path, **updates: Any) -> None:
     path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
 
 
+_CLEAN_SCAN: dict[str, Any] = {
+    "ok": True,
+    "status": "ok",
+    "report": {
+        "ok": True,
+        "findings": [],
+        "coverage": {"files_total": 1, "files_scanned": 1},
+    },
+}
+_TYPECHECK_OK: dict[str, Any] = {
+    "ok": True,
+    "status": "typechecked",
+    "report": {"lean_check_status": "typechecked"},
+}
+
+
+def _audit_result(status: str, **report_extra: Any) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "axiom_audit_status": status,
+        "declarations": [
+            {"declaration": "t", "axioms": ["propext"], "status": "sanctioned"}
+        ],
+        "unsanctioned_axioms": [],
+    }
+    report.update(report_extra)
+    clean = status == "audited" and not report["unsanctioned_axioms"]
+    return {"ok": clean, "status": status, "report": report}
+
+
+_AUDIT_CLEAN = _audit_result("audited")
+
+
 def _set_standing_formal(run_dir: Path, formal: dict[str, Any]) -> None:
     path = run_dir / "loop_state.json"
     state = json.loads(path.read_text(encoding="utf-8"))
@@ -292,6 +324,7 @@ class FormalForceTickTests(unittest.TestCase):
             self.assertNotIn(state_after.get("status"), {"blocked", "stopped"})
 
     def test_force_forbids_claim_supported(self) -> None:
+        """A runner that answers "supported" cannot put that in the report."""
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _init_loop(
                 Path(tmp),
@@ -301,10 +334,19 @@ class FormalForceTickTests(unittest.TestCase):
             pol = fp.load_formal_policy(
                 run_dir, cli={"policy": "force", "force_after_iteration": True}
             )
-            # Even if a runner tried to promote — writer boundary
-            report = fp.formal_force_tick(run_dir, policy=pol)
+
+            def promoting_runner(_name: str, _payload: dict[str, Any]) -> dict[str, Any]:
+                return {
+                    "ok": True,
+                    "status": "ok",
+                    "claim_support_status": "supported",
+                    "report": {"claim_support_status": "supported", "ok": True},
+                }
+
+            report = fp.formal_force_tick(run_dir, policy=pol, runner=promoting_runner)
             self.assertEqual(report["claim_support_status"], "not_evaluated")
             self.assertNotEqual(report.get("claim_support_status"), "supported")
+            self.assertTrue(report["no_claim_support_promotion"])
 
     def test_fp22_no_opengauss(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -349,7 +391,190 @@ class FormalForceTickTests(unittest.TestCase):
             self.assertNotIn(state.get("status"), {"blocked", "stopped"})
 
 
+class HostCheckedClaimSupportTests(unittest.TestCase):
+    """WS1: the host may record what its own checks established, and no more.
+
+    Every promotion here rests on three host-run steps agreeing — gate scan,
+    lake build, axiom audit. Each test below removes exactly one of them and
+    asserts the report falls back to ``not_evaluated``, because a missing check
+    is an absence of evidence rather than a weaker kind of pass.
+    """
+
+    def tearDown(self) -> None:
+        for key in list(os.environ):
+            if key.startswith("AAS_AUTOLOOP_FORMAL"):
+                os.environ.pop(key, None)
+
+    @staticmethod
+    def _runner(
+        *,
+        scan: dict[str, Any] | None = None,
+        verify: dict[str, Any] | None = None,
+        audit: dict[str, Any] | None = None,
+    ):
+        seen: list[str] = []
+
+        def runner(name: str, _payload: dict[str, Any]) -> dict[str, Any]:
+            seen.append(name)
+            if name == "lean_strict_verification_gate.scan":
+                return scan if scan is not None else _CLEAN_SCAN
+            if name == "lean_strict_verification_gate.verify_typecheck":
+                return verify if verify is not None else _TYPECHECK_OK
+            if name == "lean_strict_verification_gate.axiom_audit":
+                return audit if audit is not None else _AUDIT_CLEAN
+            return {"ok": False, "status": "forbidden_skill", "report": {}}
+
+        runner.seen = seen  # type: ignore[attr-defined]
+        return runner
+
+    def _tick(self, tmp: Path, runner: Any) -> dict[str, Any]:
+        run_dir = _init_loop(
+            tmp,
+            formal_policy="force",
+            formal_force_after_iteration=True,
+            formal_typecheck=True,
+        )
+        (run_dir / "formal").mkdir(parents=True, exist_ok=True)
+        (run_dir / "formal" / "lakefile.toml").write_text(
+            'name = "demo"\n', encoding="utf-8"
+        )
+        pol = fp.load_formal_policy(
+            run_dir,
+            cli={
+                "policy": "force",
+                "force_after_iteration": True,
+                "typecheck": True,
+            },
+        )
+        self.assertTrue(pol.typecheck)
+        report = fp.formal_force_tick(run_dir, policy=pol, runner=runner)
+        self.run_dir = run_dir
+        return report
+
+    def test_a_clean_host_check_records_statement_level_support(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self._runner()
+            report = self._tick(Path(tmp), runner)
+            self.assertEqual(
+                report["claim_support_status"], "supports_formal_statement_only"
+            )
+            # Statement support is not claim support: equivalence with the
+            # informal claim is still unreviewed, so the flag stays raised.
+            self.assertTrue(report["no_claim_support_promotion"])
+            self.assertNotEqual(
+                report["claim_support_status"], "supports_claim_after_equivalence_review"
+            )
+            self.assertIn("formal_axiom_audit", report["evidence_types_emitted"])
+            self.assertIn(
+                "lean_strict_verification_gate.axiom_audit", runner.seen
+            )
+
+    def test_the_persisted_report_carries_what_was_returned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._tick(Path(tmp), self._runner())
+            written = sorted(
+                (self.run_dir / "formal" / "force_loop_reports").glob("force_*.json")
+            )
+            self.assertTrue(written)
+            data = json.loads(written[-1].read_text(encoding="utf-8"))
+            self.assertEqual(
+                data["claim_support_status"], report["claim_support_status"]
+            )
+            self.assertEqual(data["writer"], fp.HOST_WRITER)
+
+    def test_a_build_that_never_ran_never_promotes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self._runner(
+                verify={"ok": True, "status": "tool_unavailable", "report": {}}
+            )
+            report = self._tick(Path(tmp), runner)
+            self.assertEqual(report["claim_support_status"], "not_evaluated")
+            # No build, no audit: the cheaper checks gate the expensive one.
+            self.assertNotIn("lean_strict_verification_gate.axiom_audit", runner.seen)
+
+    def test_a_failed_build_never_promotes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._tick(
+                Path(tmp),
+                self._runner(
+                    verify={
+                        "ok": False,
+                        "status": "typecheck_failed",
+                        "report": {"lean_check_status": "typecheck_failed"},
+                    }
+                ),
+            )
+            self.assertEqual(report["claim_support_status"], "not_evaluated")
+
+    def test_a_sorry_ax_in_the_trust_base_never_promotes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._tick(
+                Path(tmp),
+                self._runner(
+                    audit=_audit_result("audited", unsanctioned_axioms=["sorryAx"])
+                ),
+            )
+            self.assertEqual(report["claim_support_status"], "not_evaluated")
+            self.assertEqual(report["hygiene_status"], "gaps")
+
+    def test_an_unresolved_declaration_never_promotes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._tick(
+                Path(tmp),
+                self._runner(
+                    audit=_audit_result(
+                        "audited",
+                        declarations=[{"declaration": "Ghost.t", "status": "unresolved"}],
+                    )
+                ),
+            )
+            self.assertEqual(report["claim_support_status"], "not_evaluated")
+
+    def test_an_audit_that_could_not_run_never_promotes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._tick(
+                Path(tmp), self._runner(audit=_audit_result("tool_unavailable"))
+            )
+            self.assertEqual(report["claim_support_status"], "not_evaluated")
+
+    def test_a_scan_finding_never_promotes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self._runner(
+                scan={
+                    "ok": False,
+                    "status": "failed",
+                    "report": {
+                        "ok": False,
+                        "findings": [
+                            {"file": "Demo.lean", "kind": "active_placeholder"}
+                        ],
+                        "coverage": {"files_total": 1, "files_scanned": 1},
+                    },
+                }
+            )
+            report = self._tick(Path(tmp), runner)
+            self.assertEqual(report["claim_support_status"], "not_evaluated")
+            self.assertNotIn("lean_strict_verification_gate.axiom_audit", runner.seen)
+
+    def test_the_crude_fallback_never_promotes(self) -> None:
+        """Reading source text for the token "sorry" is not a gate result."""
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self._runner(scan={"ok": True, "status": "ok", "report": {}})
+            report = self._tick(Path(tmp), runner)
+            self.assertEqual(report["claim_support_status"], "not_evaluated")
+            self.assertNotIn("lean_strict_verification_gate.axiom_audit", runner.seen)
+            self.assertIn(
+                "crude_fallback",
+                [row.get("decision") for row in report["ledger"]],
+            )
+
+
 class FormalSafetyTests(unittest.TestCase):
+    def tearDown(self) -> None:
+        for key in list(os.environ):
+            if key.startswith("AAS_AUTOLOOP_FORMAL"):
+                os.environ.pop(key, None)
+
     def test_no_path_steal_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = _init_loop(Path(tmp), formal_policy="force")

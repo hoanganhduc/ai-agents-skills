@@ -106,6 +106,7 @@ try:
         merge_standing_orders_formal,
         pin_privileged_policy,
         resolve_formal_project,
+        reverify_formal_evidence,
         write_host_pin,
     )
 except ImportError:  # pragma: no cover - package-style import during tests
@@ -176,6 +177,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
         merge_standing_orders_formal,
         pin_privileged_policy,
         resolve_formal_project,
+        reverify_formal_evidence,
         write_host_pin,
     )
 
@@ -1794,6 +1796,40 @@ def consume_iteration_submission(
         os.close(directory_fd)
 
 
+def _require_legacy_host_reverification(run_dir: Path) -> dict[str, Any]:
+    """Re-run the host formal checks before a legacy run banks a proof claim.
+
+    Goal-Focus enforce mode stages the record and re-checks at finalize, so a
+    stale verdict is caught there. A legacy run has no finalize: the append is
+    the last moment left to ask whether the staged ``sorry_free_artifact``
+    still holds, and the project stays agent-writable up to it. Refuse on
+    anything other than agreement, so "the host could not re-check" never
+    banks as "the host confirmed".
+    """
+    try:
+        result = reverify_formal_evidence(run_dir)
+    except Exception as exc:  # noqa: BLE001 - any failure to re-check is a refusal.
+        raise GuardError(
+            f"host re-verification of the staged formal verdict failed: {exc}",
+            **early_stop_contract(),
+        ) from exc
+    if not isinstance(result, Mapping):
+        raise GuardError(
+            "host re-verification of the staged formal verdict returned no result",
+            **early_stop_contract(),
+        )
+    status = str(result.get("status") or "").strip()
+    if status in {"reverified", "not_applicable"}:
+        return dict(result)
+    detail = str(result.get("detail") or "").strip()
+    raise GuardError(
+        "host re-verification of the staged formal verdict did not confirm it: "
+        + (status or "no_status")
+        + (f": {detail}" if detail else ""),
+        **early_stop_contract(),
+    )
+
+
 def append_iteration(
     args: argparse.Namespace,
     *,
@@ -1890,6 +1926,7 @@ def append_iteration(
             "Goal-Focus enforce mode requires at least one staged --evidence-id "
             "for material claim review"
         )
+    host_reverification: dict[str, Any] | None = None
     if args.decision == "stop" and remaining_after_append > 0:
         if str(args.stop_reason or "").strip() == "formal_open_ledger":
             # Honest negative for formal-track runs: allowed early only when the
@@ -1942,6 +1979,12 @@ def append_iteration(
                         "(run the formal-terminal-state command first)",
                         **early_stop_contract(),
                     )
+                if not enforced_goal_focus:
+                    # Enforce mode re-checks the staged verdict when the host
+                    # finalizes the candidate. A legacy run never reaches that
+                    # step, so it re-checks here instead of banking a verdict
+                    # nothing has confirmed since it was written.
+                    host_reverification = _require_legacy_host_reverification(run_dir)
     now = utc_now()
     record = {
         "schema_version": SCHEMA_VERSION,
@@ -1972,6 +2015,10 @@ def append_iteration(
         "decision": args.decision,
         "stop_reason": args.stop_reason,
     }
+    if host_reverification is not None:
+        # The banked row carries the proof that the host re-checked, so a later
+        # audit can tell a re-verified bank from an unchecked one.
+        record["host_reverification"] = host_reverification
     # Optional goal_priority soft fields (open vocabulary; advise+ may warn).
     goal_contrib = getattr(args, "goal_contribution", None) or ""
     campaign_id = getattr(args, "campaign_id", None) or ""

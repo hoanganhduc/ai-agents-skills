@@ -46,6 +46,7 @@ LEAN_TOOLCHAIN = "leanprover/lean4:v4.32.2"
 
 # A deterministic fake gate: findings iff the project contains "sorry".
 STUB_GATE = """\
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -59,9 +60,35 @@ for lean_file in files:
         findings.append(
             {"file": lean_file.name, "kind": "active_placeholder", "detail": "sorry"}
         )
-coverage = {"files_total": len(files), "files_scanned": len(files)}
+coverage = {
+    "files_total": len(files),
+    "files_scanned": len(files),
+    "files": [
+        {
+            "file": lean_file.name,
+            "sha256": hashlib.sha256(lean_file.read_bytes()).hexdigest()[:16],
+            "ok": True,
+        }
+        for lean_file in files
+    ],
+}
 report = {"ok": not findings, "findings": findings, "coverage": coverage}
-if mode == "verify":
+if mode == "axiom-audit":
+    axioms = ["sorryAx"] if findings else ["propext", "Classical.choice", "Quot.sound"]
+    report = {
+        "ok": not findings,
+        "axiom_audit_status": "audited",
+        "declarations": [
+            {
+                "declaration": "t",
+                "axioms": axioms,
+                "status": "unsanctioned_axiom" if findings else "sanctioned",
+            }
+        ],
+        "unsanctioned_axioms": ["sorryAx"] if findings else [],
+        "findings": [],
+    }
+elif mode == "verify":
     report["lean_check_status"] = (
         "typechecked" if not findings else "refused_active_placeholders"
     )
@@ -184,6 +211,7 @@ def _append_stop(
     *,
     stop_reason: str,
     evidence_id: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     args = [
         "append-iteration",
@@ -206,7 +234,7 @@ def _append_stop(
     ]
     if evidence_id:
         args.extend(["--evidence-id", evidence_id])
-    return _run_runtime(*args)
+    return _run_runtime(*args, env=env)
 
 
 def _policy(**overrides: Any) -> fp.FormalPolicy:
@@ -234,37 +262,79 @@ def _make_project(tmp: Path, lean_body: str) -> Path:
     return proj
 
 
-def _runner_for(scan: dict[str, Any], verify: dict[str, Any] | None = None):
+def _runner_for(
+    scan: dict[str, Any],
+    verify: dict[str, Any] | None = None,
+    audit: dict[str, Any] | None = None,
+):
     def runner(name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if name == "lean_strict_verification_gate.scan":
             return scan
         if name == "lean_strict_verification_gate.verify_typecheck":
             return verify or {"ok": False, "status": "not_run", "report": {}}
+        if name == "lean_strict_verification_gate.axiom_audit":
+            return audit if audit is not None else AUDIT_CLEAN
         return {"ok": False, "status": "forbidden_skill", "report": {}}
 
     return runner
 
 
-CLEAN_SCAN = {
-    "ok": True,
-    "status": "ok",
-    "report": {
-        "ok": True,
-        "findings": [],
-        "coverage": {"files_total": 1, "files_scanned": 1},
-    },
-}
-SORRY_SCAN = {
-    "ok": False,
-    "status": "failed",
-    "report": {
-        "ok": False,
-        "findings": [
-            {"file": "Demo/Bad.lean", "kind": "active_placeholder", "detail": "sorry"}
-        ],
-        "coverage": {"files_total": 2, "files_scanned": 2},
-    },
-}
+def _audit(status: str, **report_extra: Any) -> dict[str, Any]:
+    report = {
+        "ok": status == "audited" and not report_extra.get("unsanctioned_axioms"),
+        "axiom_audit_status": status,
+        "declarations": [],
+        "unsanctioned_axioms": [],
+    }
+    report.update(report_extra)
+    return {"ok": report["ok"], "status": status, "report": report}
+
+
+AUDIT_CLEAN = _audit(
+    "audited",
+    declarations=[{"declaration": "t", "axioms": ["propext"], "status": "sanctioned"}],
+)
+AUDIT_SORRY_AX = _audit(
+    "audited",
+    declarations=[{"declaration": "t", "axioms": ["sorryAx"], "status": "unsanctioned_axiom"}],
+    unsanctioned_axioms=["sorryAx"],
+)
+AUDIT_UNRESOLVED = _audit(
+    "audited",
+    declarations=[{"declaration": "Ghost.t", "axioms": [], "status": "unresolved"}],
+)
+AUDIT_UNAVAILABLE = _audit("tool_unavailable")
+
+
+def _scan(*files: tuple[str, str], findings: list[dict[str, Any]] | None = None):
+    """A gate scan result carrying the per-file manifest a re-scan is diffed against."""
+    found = findings or []
+    return {
+        "ok": not found,
+        "status": "ok" if not found else "failed",
+        "report": {
+            "ok": not found,
+            "findings": found,
+            "coverage": {
+                "files_total": len(files),
+                "files_scanned": len(files),
+                "files": [
+                    {"file": name, "sha256": digest, "ok": True}
+                    for name, digest in files
+                ],
+            },
+        },
+    }
+
+
+CLEAN_SCAN = _scan(("Demo.lean", "aaaaaaaaaaaaaaaa"))
+SORRY_SCAN = _scan(
+    ("Demo.lean", "aaaaaaaaaaaaaaaa"),
+    ("Demo/Bad.lean", "bbbbbbbbbbbbbbbb"),
+    findings=[
+        {"file": "Demo/Bad.lean", "kind": "active_placeholder", "detail": "sorry"}
+    ],
+)
 TYPECHECK_OK = {
     "ok": True,
     "status": "typechecked",
@@ -322,6 +392,51 @@ class EvaluateTerminalStateTests(unittest.TestCase):
             loaded = fp.load_formal_terminal_state(run_dir)
             self.assertIsNotNone(loaded)
             self.assertEqual(loaded["terminal_state"], "sorry_free_artifact")
+
+    def _verdict_with_audit(self, tmp: str, audit: dict[str, Any]) -> dict[str, Any]:
+        run_dir = Path(tmp) / "loop"
+        run_dir.mkdir()
+        proj = self._project(Path(tmp))
+        return fp.evaluate_formal_terminal_state(
+            run_dir,
+            root=Path(tmp),
+            policy=_policy(project=str(proj)),
+            runner=_runner_for(CLEAN_SCAN, TYPECHECK_OK, audit),
+            reason="unit",
+        )
+
+    def test_an_unsanctioned_axiom_downgrades_a_clean_build_to_open_ledger(self) -> None:
+        """A scan and a build both pass; only the audit sees what the proof rests on."""
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = self._verdict_with_audit(tmp, AUDIT_SORRY_AX)
+            self.assertEqual(verdict["terminal_state"], "open_ledger")
+            self.assertIn(
+                {"file": "", "kind": "unsanctioned_axiom", "detail": "sorryAx"},
+                verdict["obligations"],
+            )
+            self.assertEqual(verdict["gate"]["axiom_audit"]["unsanctioned_axioms"], ["sorryAx"])
+
+    def test_an_audit_that_never_ran_is_never_a_sorry_free_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = self._verdict_with_audit(tmp, AUDIT_UNAVAILABLE)
+            self.assertEqual(verdict["terminal_state"], "indeterminate")
+            self.assertEqual(verdict["detail"], "axiom_audit_tool_unavailable")
+
+    def test_a_forbidden_audit_verb_cannot_pass_as_a_clean_trust_base(self) -> None:
+        """An empty report means the audit never ran, never that it found nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = self._verdict_with_audit(
+                tmp, {"ok": False, "status": "forbidden_skill", "report": {}}
+            )
+            self.assertEqual(verdict["terminal_state"], "indeterminate")
+            self.assertEqual(verdict["detail"], "axiom_audit_forbidden_skill")
+
+    def test_a_declaration_missing_from_the_build_blocks_certification(self) -> None:
+        """Source and built environment disagree, so the host certifies nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = self._verdict_with_audit(tmp, AUDIT_UNRESOLVED)
+            self.assertEqual(verdict["terminal_state"], "indeterminate")
+            self.assertEqual(verdict["detail"], "axiom_audit_unresolved_declaration")
 
     def test_findings_yield_open_ledger_with_obligations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -409,6 +524,267 @@ class EvaluateTerminalStateTests(unittest.TestCase):
             _write_terminal_file(run_dir, "definitely_sorry_free_trust_me")
             self.assertIsNone(fp.load_formal_terminal_state(run_dir))
 
+    def test_a_certified_verdict_stamps_the_coverage_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            run_dir.mkdir()
+            proj = self._project(Path(tmp))
+            verdict = fp.evaluate_formal_terminal_state(
+                run_dir,
+                root=Path(tmp),
+                policy=_policy(project=str(proj)),
+                runner=_runner_for(CLEAN_SCAN, TYPECHECK_OK),
+                reason="unit",
+            )
+            scan = verdict["gate"]["scan"]
+            self.assertEqual(scan["manifest_files"], 1)
+            self.assertTrue(scan["coverage_digest"])
+
+    def test_a_scan_without_a_manifest_digests_to_nothing(self) -> None:
+        # An empty manifest must not collide with a real one-file manifest.
+        self.assertEqual(fp._coverage_digest({}), ("", 0))
+        self.assertNotEqual(
+            fp._coverage_digest(CLEAN_SCAN["report"]["coverage"])[0], ""
+        )
+
+    def test_the_source_digest_ignores_the_loop_directory(self) -> None:
+        coverage = _scan(
+            ("Demo.lean", "aaaaaaaaaaaaaaaa"),
+            ("loop/proof_artifacts/Demo.lean", "bbbbbbbbbbbbbbbb"),
+        )["report"]["coverage"]
+        full, full_files = fp._coverage_digest(coverage)
+        source, source_files = fp._coverage_digest(coverage, exclude_prefix="loop")
+        self.assertEqual((full_files, source_files), (2, 1))
+        self.assertNotEqual(full, source)
+        self.assertEqual(
+            source, fp._coverage_digest(_scan(("Demo.lean", "aaaaaaaaaaaaaaaa"))["report"]["coverage"])[0]
+        )
+        # A prefix must not match a sibling that merely starts with the same
+        # characters.
+        self.assertEqual(fp._coverage_digest(coverage, exclude_prefix="loo")[1], 2)
+
+    def test_a_loop_directory_outside_the_project_has_no_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            proj = _make_project(tmp, "theorem t : True := trivial\n")
+            inside = proj / "loop"
+            inside.mkdir()
+            self.assertEqual(fp._run_dir_prefix(inside, proj), "loop")
+            self.assertEqual(fp._run_dir_prefix(tmp / "loop", proj), "")
+            # The project itself is never its own excluded subtree.
+            self.assertEqual(fp._run_dir_prefix(proj, proj), "")
+
+
+class ReverificationTests(unittest.TestCase):
+    """WS1: banking a certified proof re-runs the checks instead of trusting the stamp."""
+
+    def _staged(
+        self,
+        tmp: Path,
+        scan: dict[str, Any] = CLEAN_SCAN,
+    ) -> tuple[Path, Path]:
+        run_dir = tmp / "loop"
+        run_dir.mkdir()
+        proj = _make_project(tmp, "theorem t : True := trivial\n")
+        verdict = fp.evaluate_formal_terminal_state(
+            run_dir,
+            root=tmp,
+            policy=_policy(project=str(proj)),
+            runner=_runner_for(scan, TYPECHECK_OK),
+            reason="stage",
+        )
+        self.assertEqual(verdict["terminal_state"], "sorry_free_artifact")
+        return run_dir, proj
+
+    def _reverify(
+        self,
+        run_dir: Path,
+        tmp: Path,
+        proj: Path,
+        scan: dict[str, Any],
+        verify: dict[str, Any] | None = TYPECHECK_OK,
+        audit: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return fp.reverify_formal_evidence(
+            run_dir,
+            root=tmp,
+            policy=_policy(project=str(proj)),
+            runner=_runner_for(scan, verify, audit),
+        )
+
+    def test_a_run_with_no_certified_verdict_has_nothing_to_recheck(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir = tmp / "loop"
+            run_dir.mkdir()
+            result = fp.reverify_formal_evidence(run_dir)
+            self.assertEqual(result["status"], "not_applicable")
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["detail"], "no_certified_verdict_staged")
+
+    def test_an_unchanged_project_reverifies(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            result = self._reverify(run_dir, tmp, proj, CLEAN_SCAN)
+            self.assertEqual(result["status"], "reverified")
+            self.assertTrue(result["ok"])
+            self.assertEqual(
+                result["observed"]["coverage_digest"],
+                result["staged"]["coverage_digest"],
+            )
+
+    def test_a_project_edited_after_the_verdict_is_a_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            # Same clean verdict, different bytes: the stamp no longer
+            # describes the sources that were checked.
+            edited = _scan(("Demo.lean", "cccccccccccccccc"))
+            result = self._reverify(run_dir, tmp, proj, edited)
+            self.assertEqual(result["status"], "mismatch")
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["detail"], "source_digest_mismatch")
+
+    def _staged_inside(self, tmp: Path, scan: dict[str, Any]) -> tuple[Path, Path]:
+        """A loop directory that lives inside the project it checks."""
+        proj = _make_project(tmp, "theorem t : True := trivial\n")
+        run_dir = proj / "loop"
+        run_dir.mkdir()
+        verdict = fp.evaluate_formal_terminal_state(
+            run_dir,
+            root=tmp,
+            policy=_policy(project=str(proj)),
+            runner=_runner_for(scan, TYPECHECK_OK),
+            reason="stage",
+        )
+        self.assertEqual(verdict["terminal_state"], "sorry_free_artifact")
+        return run_dir, proj
+
+    def test_staging_evidence_after_the_verdict_is_not_a_changed_project(self) -> None:
+        """Banking stages a copy inside the project; that is not an edit.
+
+        The loop writes proof artifacts under its own directory, which usually
+        sits inside the project, so comparing the full manifest made every bank
+        that staged one more file refuse itself.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            before = _scan(("Demo.lean", "aaaaaaaaaaaaaaaa"))
+            run_dir, proj = self._staged_inside(tmp, before)
+            after = _scan(
+                ("Demo.lean", "aaaaaaaaaaaaaaaa"),
+                ("loop/proof_artifacts/Demo.lean", "bbbbbbbbbbbbbbbb"),
+            )
+            result = self._reverify(run_dir, tmp, proj, after)
+            self.assertEqual(result["status"], "reverified")
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["staged"]["compared_digest"], "source_digest")
+            self.assertNotEqual(
+                result["observed"]["coverage_digest"],
+                result["staged"]["coverage_digest"],
+            )
+
+    def test_a_source_edit_is_still_a_mismatch_with_a_loop_inside_the_project(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            before = _scan(("Demo.lean", "aaaaaaaaaaaaaaaa"))
+            run_dir, proj = self._staged_inside(tmp, before)
+            edited = _scan(
+                ("Demo.lean", "cccccccccccccccc"),
+                ("loop/proof_artifacts/Demo.lean", "bbbbbbbbbbbbbbbb"),
+            )
+            result = self._reverify(run_dir, tmp, proj, edited)
+            self.assertEqual(result["status"], "mismatch")
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["detail"], "source_digest_mismatch")
+
+    def test_a_stamp_predating_source_digests_is_compared_the_old_way(self) -> None:
+        """An older verdict still gets diffed, on the field it actually has."""
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            path = run_dir / "formal" / "terminal_state.json"
+            staged = json.loads(path.read_text(encoding="utf-8"))
+            staged["gate"]["scan"].pop("source_digest", None)
+            staged["gate"]["scan"].pop("source_files", None)
+            path.write_text(json.dumps(staged, indent=2) + "\n", encoding="utf-8")
+            same = self._reverify(run_dir, tmp, proj, CLEAN_SCAN)
+            self.assertEqual(same["status"], "reverified")
+            self.assertEqual(same["staged"]["compared_digest"], "coverage_digest")
+            path.write_text(json.dumps(staged, indent=2) + "\n", encoding="utf-8")
+            edited = self._reverify(
+                run_dir, tmp, proj, _scan(("Demo.lean", "cccccccccccccccc"))
+            )
+            self.assertEqual(edited["detail"], "coverage_digest_mismatch")
+
+    def test_a_sorry_that_appeared_after_the_verdict_is_a_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            result = self._reverify(run_dir, tmp, proj, SORRY_SCAN, verify=None)
+            self.assertEqual(result["status"], "mismatch")
+            self.assertEqual(result["detail"], "terminal_state_regressed")
+            self.assertEqual(result["observed"]["terminal_state"], "open_ledger")
+
+    def test_an_unsanctioned_axiom_found_on_recheck_is_a_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            result = self._reverify(
+                run_dir, tmp, proj, CLEAN_SCAN, audit=AUDIT_SORRY_AX
+            )
+            self.assertEqual(result["status"], "mismatch")
+            self.assertEqual(result["detail"], "terminal_state_regressed")
+
+    def test_a_recheck_that_cannot_run_is_never_a_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            unavailable = {"ok": False, "status": "tool_unavailable", "report": {}}
+            result = self._reverify(run_dir, tmp, proj, unavailable)
+            self.assertEqual(result["status"], "unavailable")
+            self.assertFalse(result["ok"])
+
+    def test_a_stamp_without_a_manifest_cannot_be_diffed(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir = tmp / "loop"
+            run_dir.mkdir()
+            proj = _make_project(tmp, "theorem t : True := trivial\n")
+            legacy = {
+                "ok": True,
+                "status": "ok",
+                "report": {
+                    "ok": True,
+                    "findings": [],
+                    "coverage": {"files_total": 1, "files_scanned": 1},
+                },
+            }
+            fp.evaluate_formal_terminal_state(
+                run_dir,
+                root=tmp,
+                policy=_policy(project=str(proj)),
+                runner=_runner_for(legacy, TYPECHECK_OK),
+                reason="stage",
+            )
+            result = self._reverify(run_dir, tmp, proj, legacy)
+            self.assertEqual(result["status"], "unavailable")
+            self.assertEqual(result["detail"], "staged_verdict_has_no_manifest")
+
+    def test_a_refused_recheck_leaves_the_staged_stamp_in_place(self) -> None:
+        # Otherwise a first refusal would erase the certified stamp and the
+        # retry would find nothing to check, banking unverified.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            first = self._reverify(run_dir, tmp, proj, SORRY_SCAN, verify=None)
+            self.assertEqual(first["status"], "mismatch")
+            staged = fp.load_formal_terminal_state(run_dir)
+            self.assertEqual(staged["terminal_state"], "sorry_free_artifact")
+            second = self._reverify(run_dir, tmp, proj, SORRY_SCAN, verify=None)
+            self.assertEqual(second["status"], "mismatch")
+
 
 class ForceTickLedgerTests(unittest.TestCase):
     def _force_policy(self, proj: Path) -> fp.FormalPolicy:
@@ -450,6 +826,17 @@ class ForceTickLedgerTests(unittest.TestCase):
 
 
 class EarlyStopGuardTests(unittest.TestCase):
+    def _legacy_formal_loop(self, tmp: Path, *, lean_body: str) -> tuple[Path, dict[str, str]]:
+        """A legacy (Goal-Focus off) formal-track loop over a stub-gated project."""
+        run_dir = tmp / "loop"
+        proj = _make_project(tmp, lean_body)
+        _init_loop(run_dir, formal=True, project=str(proj))
+        _set_formal_track(run_dir)
+        _write_proof_artifact(run_dir)
+        stub = tmp / "stub_gate.py"
+        stub.write_text(STUB_GATE, encoding="utf-8")
+        return run_dir, _clean_env(AAS_STRICT_GATE_SCRIPT=str(stub))
+
     def test_formal_track_success_stop_requires_host_terminal_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "loop"
@@ -466,13 +853,85 @@ class EarlyStopGuardTests(unittest.TestCase):
                 (run_dir / "iterations.jsonl").read_text(encoding="utf-8"), ""
             )
 
+    def test_a_staged_verdict_with_no_manifest_cannot_be_re_verified(self) -> None:
+        # A hand-written stamp carries no per-file manifest, so there is nothing
+        # a re-run could agree with. Undiffable is refused, not waved through.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            _set_formal_track(run_dir)
+            _write_proof_artifact(run_dir)
             _write_terminal_file(run_dir, "sorry_free_artifact")
-            accepted = _append_stop(
+
+            rejected = _append_stop(
                 run_dir, stop_reason="proof_found", evidence_id="proof-artifact-1"
             )
+            self.assertNotEqual(rejected.returncode, 0)
+            output = rejected.stdout + rejected.stderr
+            self.assertIn("re-verification", output)
+            self.assertIn("staged_verdict_has_no_manifest", output)
+            self.assertEqual(
+                (run_dir / "iterations.jsonl").read_text(encoding="utf-8"), ""
+            )
+
+    def test_a_legacy_success_stop_re_verifies_the_staged_verdict(self) -> None:
+        # Legacy mode has no finalize step, so the append is where the host
+        # re-runs its own checks before the proof claim banks.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, env = self._legacy_formal_loop(
+                Path(tmp), lean_body="theorem t : True := trivial\n"
+            )
+            stamped = _run_runtime(
+                "formal-terminal-state", "--dir", str(run_dir), "--reason", "test", env=env
+            )
+            self.assertEqual(stamped.returncode, 0, stamped.stdout + stamped.stderr)
+
+            accepted = _append_stop(
+                run_dir,
+                stop_reason="proof_found",
+                evidence_id="proof-artifact-1",
+                env=env,
+            )
             self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
-            status = json.loads(_run_runtime("status", "--dir", str(run_dir)).stdout)
-            self.assertEqual(status["state_status"], "stopped")
+            rows = [
+                json.loads(line)
+                for line in (run_dir / "iterations.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(rows[-1]["host_reverification"]["status"], "reverified")
+            validated = _run_runtime("validate", "--dir", str(run_dir), env=env)
+            self.assertEqual(validated.returncode, 0, validated.stdout + validated.stderr)
+
+    def test_a_source_edited_after_the_verdict_refuses_the_legacy_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir, env = self._legacy_formal_loop(
+                Path(tmp), lean_body="theorem t : True := trivial\n"
+            )
+            stamped = _run_runtime(
+                "formal-terminal-state", "--dir", str(run_dir), "--reason", "test", env=env
+            )
+            self.assertEqual(stamped.returncode, 0, stamped.stdout + stamped.stderr)
+            # Still clean, so the verdict itself does not regress: only the
+            # manifest moves, which is exactly what the digest is there to see.
+            (Path(tmp) / "proj" / "Demo.lean").write_text(
+                "theorem t : True := trivial\ntheorem u : True := trivial\n",
+                encoding="utf-8",
+            )
+
+            rejected = _append_stop(
+                run_dir,
+                stop_reason="proof_found",
+                evidence_id="proof-artifact-1",
+                env=env,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            output = rejected.stdout + rejected.stderr
+            self.assertIn("mismatch", output)
+            self.assertEqual(
+                (run_dir / "iterations.jsonl").read_text(encoding="utf-8"), ""
+            )
 
     def test_non_formal_loop_success_stop_is_unaffected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
