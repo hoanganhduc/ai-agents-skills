@@ -122,6 +122,68 @@ class LoadLoopEnvTests(unittest.TestCase):
                     self.env.load_env_file(policy)
             self.assertIn("changed while reading", str(raised.exception))
 
+    def test_projected_source_rejects_a_different_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            environ = {
+                self.env.WINDOWS_PROJECTION_ENV: "AAS_AUTOLOOP_NOTIFY",
+                self.env.WINDOWS_PROJECTION_SOURCE_ENV: str(root / "other.env"),
+                "AAS_AUTOLOOP_NOTIFY": "auto",
+            }
+            with self.assertRaises(self.env.EnvLoadError) as raised:
+                self.env.load_projected_env(
+                    source_path=root / "host-policy.env", environ=environ
+                )
+            self.assertIn("came from a different file", str(raised.exception))
+
+    @unittest.skipUnless(os.name == "posix", "needs unprivileged symlink creation")
+    def test_projected_source_accepts_another_route_to_the_same_file(self) -> None:
+        """The loader and this module reach one policy by two different routes.
+
+        Load-LoopEnv.ps1 declares the path `[System.IO.Path]::GetFullPath`
+        returns, which expands an 8.3 short component, while `os.path.abspath`
+        leaves it alone.  Comparing the two textually refused a correct
+        --policy-file.  A symlinked parent is the same class of mismatch in a
+        form POSIX can build without privilege.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secure = root / "secure"
+            secure.mkdir()
+            (root / "link").symlink_to(secure, target_is_directory=True)
+            policy = secure / "host-policy.env"
+            policy.write_text("AAS_AUTOLOOP_NOTIFY=auto\n", encoding="utf-8")
+            environ = {
+                self.env.WINDOWS_PROJECTION_ENV: "AAS_AUTOLOOP_NOTIFY",
+                self.env.WINDOWS_PROJECTION_SOURCE_ENV: str(
+                    root / "link" / "host-policy.env"
+                ),
+                "AAS_AUTOLOOP_NOTIFY": "auto",
+            }
+            got = self.env.load_projected_env(source_path=policy, environ=environ)
+            self.assertEqual(got, {"AAS_AUTOLOOP_NOTIFY": "auto"})
+
+    @unittest.skipIf(os.name == "posix", "8.3 short names are a Windows volume feature")
+    def test_projected_source_accepts_a_windows_short_path_route(self) -> None:
+        import ctypes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            policy = Path(tmp) / "host-policy.env"
+            policy.write_text("AAS_AUTOLOOP_NOTIFY=auto\n", encoding="utf-8")
+            buffer = ctypes.create_unicode_buffer(1024)
+            written = ctypes.windll.kernel32.GetShortPathNameW(str(policy), buffer, 1024)
+            short = buffer.value if written else ""
+            if not short or short == str(policy):
+                self.skipTest("8.3 short-name creation is disabled on this volume")
+            environ = {
+                self.env.WINDOWS_PROJECTION_ENV: "AAS_AUTOLOOP_NOTIFY",
+                # The loader declares the long form; Python keeps the short one.
+                self.env.WINDOWS_PROJECTION_SOURCE_ENV: str(policy),
+                "AAS_AUTOLOOP_NOTIFY": "auto",
+            }
+            got = self.env.load_projected_env(source_path=Path(short), environ=environ)
+            self.assertEqual(got, {"AAS_AUTOLOOP_NOTIFY": "auto"})
+
 
 class ApplyDefaultsTests(unittest.TestCase):
     @classmethod
