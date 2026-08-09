@@ -2924,6 +2924,13 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
     def test_arm_keeps_an_unresolved_auto_notify_request_non_decisive(self) -> None:
         """A loop armed before its notify secrets exist must not latch 'off'."""
         arl, _ = self._runtime_modules()
+        # The env outranks the secrets fallback, so an operator shell that
+        # exports AAS_AUTOLOOP_NOTIFY would decide this instead of arm_loop.
+        env_patcher = mock.patch.dict(os.environ, {}, clear=False)
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+        os.environ.pop("AAS_AUTOLOOP_NOTIFY", None)
+        os.environ.pop("AAS_REMOTE_NOTIFY", None)
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             loop = base / "loop"
@@ -4325,7 +4332,21 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                 {},
                 False,
                 None,
-                "candidate existed after the host submission gate failed",
+                "candidate existed after the host submission gate failed "
+                "with worker status 17",
+                "candidate_quarantined",
+                "",
+            ),
+            (
+                # The gate rewrites rc to its own 126 verdict here, so the
+                # quarantine reason must still report what the worker exited
+                # with rather than the gate's own status.
+                "attestation",
+                {"scope_unit": "not-a-host-issued-scope"},
+                False,
+                None,
+                "candidate existed after the host submission gate failed "
+                "with worker status 17",
                 "candidate_quarantined",
                 "",
             ),
@@ -8189,7 +8210,13 @@ class NotifyPolicyTests(unittest.TestCase):
     def test_auto_uses_secrets_when_configured(self) -> None:
         mod = self._mod()
         # Default secrets pick is Zulip-primary (not dual "both").
-        with mock.patch.object(mod, "auto_notify_channel_from_secrets", return_value="zulip"):
+        # An operator shell that exports AAS_AUTOLOOP_NOTIFY outranks the
+        # secrets fallback, so clear it rather than testing the caller's shell.
+        with mock.patch.object(
+            mod, "auto_notify_channel_from_secrets", return_value="zulip"
+        ), mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AAS_AUTOLOOP_NOTIFY", None)
+            os.environ.pop("AAS_REMOTE_NOTIFY", None)
             self.assertEqual(
                 mod.resolve_notify_channel(explicit="auto", run_dir=None, default_auto=True),
                 "zulip",
