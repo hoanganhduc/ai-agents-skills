@@ -23,3 +23,17 @@ os.environ["TMPDIR"] = tempfile.tempdir
 # bytecode. Disable it for every child the suite spawns; the parent already
 # holds its own bytecode from before this module was imported.
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+
+# Windows CPython cannot seed its hash randomization without ``SYSTEMROOT`` and
+# aborts with ``_Py_HashRandomization_Init: failed to get random numbers`` before
+# reaching ``main``. Tests that hand a child an explicit ``env=`` therefore have
+# to carry the OS identity forward, or the child exits 1 on Windows no matter
+# what the code under test would have decided. These are plain OS configuration
+# values, never secret material, so forwarding them does not weaken the
+# cross-lane isolation those tests assert.
+_OS_CHILD_ENV_KEYS = ("SYSTEMROOT", "WINDIR", "SYSTEMDRIVE", "TEMP", "TMP")
+
+
+def os_child_env() -> dict[str, str]:
+    """Return the minimum OS identity a fresh interpreter needs in order to start."""
+    return {key: os.environ[key] for key in _OS_CHILD_ENV_KEYS if key in os.environ}

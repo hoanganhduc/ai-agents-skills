@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT
+from tests import os_child_env
 
 
 RUNNERS = RUNTIME_SOURCE_ROOT / "runners"
@@ -40,6 +41,7 @@ class CredentialProjectionProbeTests(unittest.TestCase):
             secret.write_text(secret_text, encoding="utf-8")
             secret.chmod(0o600)
             env = {
+                **os_child_env(),
                 "PATH": os.environ.get("PATH", ""),
                 pointer: str(secret),
                 # Ambient cross-lane material must never reach the checker.
@@ -86,7 +88,7 @@ class CredentialProjectionProbeTests(unittest.TestCase):
     def test_help_exits_successfully_without_failure_record(self) -> None:
         result = subprocess.run(
             [sys.executable, "-I", str(PROBE), "--help"],
-            env={"PATH": os.environ.get("PATH", "")},
+            env={**os_child_env(), "PATH": os.environ.get("PATH", "")},
             capture_output=True,
             text=True,
             timeout=30,
