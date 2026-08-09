@@ -108,21 +108,83 @@ function Get-AasOsTrustedRoots() {
     return @($roots | Select-Object -Unique)
 }
 
-function Test-AasProtectedAclChain([string]$Value) {
-    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+function ConvertTo-AasHexString([byte[]]$Bytes) {
+    # [System.Convert]::ToHexString is .NET 5+, so it does not exist under
+    # Windows PowerShell 5.1 and every attestation below would fail into the
+    # generic bind-and-attest error. BitConverter is present on both runtimes,
+    # and each comparison against this value is case-insensitive.
+    return [System.BitConverter]::ToString($Bytes).Replace("-", "")
+}
+
+function Get-AasSystemDriveRoot() {
+    $systemDirectory = [System.Environment]::SystemDirectory
+    if (-not $systemDirectory -or -not [System.IO.Path]::IsPathRooted($systemDirectory)) {
+        return $null
+    }
+    $drive = [System.IO.Path]::GetPathRoot($systemDirectory)
+    if (-not $drive) {
+        return $null
+    }
+    return $drive
+}
+
+function Get-AasSystemDrivePythonRoot([string]$Absolute) {
+    # Windows all-users Python installers offer a versioned directory at the
+    # system drive root, such as `C:\Python313`, alongside the Program Files
+    # layout. Accept only that shape: `Python` plus a version, one level under
+    # the drive root, with something below it. The name alone confers nothing;
+    # the caller still has to clear the admin-owned ACL predicate, because the
+    # drive root lets any authenticated user create a sibling directory.
+    $drive = Get-AasSystemDriveRoot
+    if (-not $drive) {
+        return $null
+    }
+    if (-not $Absolute.StartsWith($drive, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+    # The [char[]] cast is load-bearing. Without it PowerShell 7 binds the
+    # String.Split(string, StringSplitOptions) overload instead of the char[]
+    # one and returns the tail unsplit, so every candidate would be rejected.
+    $segments = $Absolute.Substring($drive.Length).Split(
+        [char[]]@(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        ),
+        [System.StringSplitOptions]::RemoveEmptyEntries
+    )
+    if ($segments.Count -lt 2) {
+        return $null
+    }
+    if ($segments[0] -notmatch '^Python\d+(\.\d+)?$') {
+        return $null
+    }
+    return (Join-Path $drive $segments[0])
+}
+
+function Test-AasProtectedAclChain([string]$Value, [switch]$RequireAdminOwned) {
     $trusted = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase
     )
     foreach ($sid in @(
-        $identity.User.Value,
         "S-1-5-18",
         "S-1-5-32-544",
         "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
     )) {
         [void]$trusted.Add($sid)
     }
+    if (-not $RequireAdminOwned) {
+        # The caller's own SID counts as trusted only inside roots Windows
+        # already keeps non-user-writable. A root the caller could have created
+        # must not trust it: the drive root grants `Authenticated Users`
+        # add-subdirectory, so an unprivileged process can make its own
+        # versioned Python directory and would otherwise have it accepted as a
+        # secret-bearing interpreter.
+        $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        [void]$trusted.Add($identity.User.Value)
+    }
     [uint32]$mutationMask = 0x500D0156
     $cursor = Get-Item -LiteralPath $Value -Force
+    $depth = 0
     while ($null -ne $cursor) {
         if (($cursor.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             return $false
@@ -135,19 +197,37 @@ function Test-AasProtectedAclChain([string]$Value) {
             if (-not $trusted.Contains($owner)) {
                 return $false
             }
-            $rules = $acl.GetAccessRules(
-                $true,
-                $true,
-                [System.Security.Principal.SecurityIdentifier]
-            )
-            foreach ($rule in $rules) {
-                if (
-                    $rule.AccessControlType -eq
-                        [System.Security.AccessControl.AccessControlType]::Allow -and
-                    -not $trusted.Contains($rule.IdentityReference.Value) -and
-                    (([int64]$rule.FileSystemRights -band [int64]$mutationMask) -ne 0)
-                ) {
-                    return $false
+            # Predicate-check the DACL on the file and its immediate parent only.
+            # Higher ancestors are still walked for reparse points and ownership.
+            # Stock Windows grants `Authenticated Users` add-subdirectory on the
+            # drive root, so demanding a mutation-free chain up to `C:\` can never
+            # be satisfied. Nothing is given up: a right on an ancestor confers no
+            # access to an existing descendant, and any grant that does reach this
+            # file by inheritance is materialised into its own DACL, checked here.
+            if ($depth -le 1) {
+                $rules = $acl.GetAccessRules(
+                    $true,
+                    $true,
+                    [System.Security.Principal.SecurityIdentifier]
+                )
+                foreach ($rule in $rules) {
+                    # An INHERIT_ONLY ace confers nothing on the object carrying it;
+                    # it only seeds children, whose own DACLs are checked when they
+                    # are guarded in turn.
+                    if (
+                        ($rule.PropagationFlags -band
+                            [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0
+                    ) {
+                        continue
+                    }
+                    if (
+                        $rule.AccessControlType -eq
+                            [System.Security.AccessControl.AccessControlType]::Allow -and
+                        -not $trusted.Contains($rule.IdentityReference.Value) -and
+                        (([int64]$rule.FileSystemRights -band [int64]$mutationMask) -ne 0)
+                    ) {
+                        return $false
+                    }
                 }
             }
         } catch {
@@ -158,6 +238,7 @@ function Test-AasProtectedAclChain([string]$Value) {
         } else {
             $cursor.Directory
         }
+        $depth++
     }
     return $true
 }
@@ -181,6 +262,9 @@ function Test-AasTrustedPython([string]$Value) {
         }
         return (Test-AasProtectedAclChain $absolute)
     }
+    if (Get-AasSystemDrivePythonRoot $absolute) {
+        return (Test-AasProtectedAclChain $absolute -RequireAdminOwned)
+    }
     return $false
 }
 $python = Resolve-ExplicitPython $env:AAS_RUNTIME_PYTHON
@@ -203,7 +287,8 @@ if (-not $python -and $trustedRuntimeRequired) {
     $trustedCandidates = [System.Collections.Generic.List[string]]::new()
     foreach ($programRoot in @(
         (Get-AasKnownFolder ([System.Environment+SpecialFolder]::ProgramFiles)),
-        (Get-AasKnownFolder ([System.Environment+SpecialFolder]::ProgramFilesX86))
+        (Get-AasKnownFolder ([System.Environment+SpecialFolder]::ProgramFilesX86)),
+        (Get-AasSystemDriveRoot)
     )) {
         if (-not $programRoot) {
             continue
@@ -267,7 +352,11 @@ if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
 }
 if ($trustedRuntimeRequired -and -not (Test-AasTrustedPython $python)) {
     [Console]::Error.WriteLine(
-        "Secret-bearing launch requires a trusted managed or system Python runtime."
+        "Secret-bearing launch requires a trusted managed or system Python runtime: " +
+        "an install under Program Files, or an admin-owned versioned Python " +
+        "directory at the system drive root such as Python313. The interpreter " +
+        "and its directory must grant no write access outside SYSTEM, " +
+        "Administrators, and TrustedInstaller."
     )
     exit 127
 }
@@ -394,7 +483,7 @@ namespace AasPythonGuard {
         $hasher = [System.Security.Cryptography.SHA256]::Create()
         try {
             $pythonGuard.Position = 0
-            $pythonGuardHash = [System.Convert]::ToHexString(
+            $pythonGuardHash = ConvertTo-AasHexString (
                 $hasher.ComputeHash($pythonGuard)
             )
             $pythonGuard.Position = 0
@@ -427,7 +516,7 @@ function Assert-AasPythonGuard() {
     $hasher = [System.Security.Cryptography.SHA256]::Create()
     try {
         $pythonGuard.Position = 0
-        $currentHash = [System.Convert]::ToHexString(
+        $currentHash = ConvertTo-AasHexString (
             $hasher.ComputeHash($pythonGuard)
         )
         $pythonGuard.Position = 0
@@ -459,7 +548,11 @@ $launcher = $launcher -or (
     $pythonLeaf -ieq "py" -or
     $pythonLeaf -ieq "py.exe"
 )
-$versionCode = 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
+# This probe carries no quote character on purpose. Windows PowerShell 5.1
+# forwards an embedded double quote to a native command unescaped, so the
+# f-string form arrived at Python as `print(f{...}.{...})` and every 5.1 launch
+# died on the version gate. `chr(46)` is the separating dot.
+$versionCode = 'import sys; print(sys.version_info[0], sys.version_info[1], sep=chr(46))'
 try {
     if ($launcher) {
         $versionOutput = @(& $python -3 -I -c $versionCode 2>$null)
@@ -570,7 +663,7 @@ if ($trustedRuntimeRequired) {
         )
         $scriptHasher = [System.Security.Cryptography.SHA256]::Create()
         try {
-            $scriptGuardHash = [System.Convert]::ToHexString(
+            $scriptGuardHash = ConvertTo-AasHexString (
                 $scriptHasher.ComputeHash($scriptGuard)
             )
             $scriptGuard.Position = 0
@@ -601,7 +694,7 @@ try {
         $scriptHasher = [System.Security.Cryptography.SHA256]::Create()
         try {
             $scriptGuard.Position = 0
-            $currentScriptHash = [System.Convert]::ToHexString(
+            $currentScriptHash = ConvertTo-AasHexString (
                 $scriptHasher.ComputeHash($scriptGuard)
             )
             $scriptGuard.Position = 0
