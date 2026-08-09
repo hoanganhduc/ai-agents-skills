@@ -511,6 +511,7 @@ namespace AasSecretFile {
         [void]$descriptorChecks.Add([pscustomobject]@{
             Descriptor = $snapshot.SecurityDescriptor
             Strict = $true
+            Dacl = $true
         })
         $ancestor = [System.IO.Directory]::GetParent($absolute)
         $immediateParent = $true
@@ -520,6 +521,16 @@ namespace AasSecretFile {
                     $ancestor.FullName
                 )
                 Strict = $immediateParent
+                # Predicate-check the DACL on the file and its immediate parent
+                # only.  Every ancestor is still opened no-follow and still has
+                # its owner checked.  Stock Windows grants `Authenticated Users`
+                # add-subdirectory on the drive root, so demanding a
+                # mutation-free DACL all the way up to `C:\` can never be
+                # satisfied.  Nothing is given up: a right on an ancestor
+                # confers no access to an existing descendant, and any grant
+                # that does reach this file by inheritance is materialised into
+                # its own DACL, which is checked strictly above.
+                Dacl = $immediateParent
             })
             $immediateParent = $false
             $ancestor = $ancestor.Parent
@@ -581,6 +592,9 @@ namespace AasSecretFile {
         ) {
             throw "Secret env path has an untrusted owner in its ancestor chain"
         }
+        if (-not $descriptorCheck.Dacl) {
+            continue
+        }
         if ($null -eq $descriptor.DiscretionaryAcl) {
             throw "Secret env file and immediate parent must have a non-null DACL"
         }
@@ -593,6 +607,15 @@ namespace AasSecretFile {
             }
             if (-not $ace.SecurityIdentifier) {
                 throw "Secret env path contains an allow ACE without a principal"
+            }
+            # An INHERIT_ONLY ace confers nothing on the object carrying it; it
+            # only seeds children, whose own DACLs are checked when they are
+            # guarded in turn.
+            if (
+                ([int]$ace.AceFlags -band
+                    [int][System.Security.AccessControl.AceFlags]::InheritOnly) -ne 0
+            ) {
+                continue
             }
             if (-not $allowedSids.Contains($ace.SecurityIdentifier.Value)) {
                 if (
