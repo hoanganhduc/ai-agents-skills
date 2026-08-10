@@ -455,8 +455,11 @@ statement-equivalence review, so `no_claim_support_promotion` stays true.
 writes `formal/terminal_state.json`: `sorry_free_artifact`, `open_ledger`, or
 `indeterminate`. `sorry_free_artifact` needs a clean gate scan, a host-run Lake
 build reporting `typechecked`, and a clean `axiom-audit`; `indeterminate` means
-the host could not decide and is never a pass. Only a `done` exit pays for the
-full build, so a failure exit records a scan-only ledger and never certifies.
+the host could not decide and is never a pass. An audit that refuses — a
+declaration line the walk could not read a name off is one — is a coverage hole
+and reads as `indeterminate`, never as a clean trust base over the part it did
+scan. Only a `done` exit pays for the full build, so a failure exit records a
+scan-only ledger and never certifies.
 
 **Host re-verification at bank.** That certified verdict
 records what the host saw when it was written, and the project stays
@@ -476,9 +479,12 @@ unchanged. The banked row carries the re-check under `host_reverification`.
 
 A legacy (non-enforce) run never reaches that finalize step, so
 `append-iteration` runs the same re-check itself before appending a
-formal-track early success stop that rests on a staged `sorry_free_artifact`.
+formal-track success stop that rests on a staged `sorry_free_artifact`.
 It refuses on anything but agreement and records the result on the appended row
-under the same key.
+under the same key. The requirement follows the success claim rather than the
+iteration it lands on: the last allowed iteration, which stops without ever
+being an *early* stop, is checked like any other, and `validate` mirrors that
+so deleting the verdict afterwards cannot leave the run green.
 
 **Glossary:** headless force-driven ARL ≠ `formal_policy=force`. Default
 scripted force-loop pack: `force-loop/` (and discovery template

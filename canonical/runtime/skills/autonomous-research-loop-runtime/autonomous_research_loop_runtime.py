@@ -1803,6 +1803,10 @@ def _require_formal_terminal_state_for_success(run_dir: Path) -> dict[str, Any]:
     formal-track (nothing to require). Stamping matters as much as checking:
     the row records which verdict admitted it, so the re-check at finalize can
     tell a run that never staged one from a run whose stamp went missing.
+
+    Every route to a success claim goes through here, the last allowed
+    iteration included: the requirement follows the claim, not the iteration
+    it lands on.
     """
     formal_pol_local = load_formal_policy(run_dir)
     if formal_pol_local.policy not in {"on", "force"} or not is_formal_track(run_dir):
@@ -1810,8 +1814,8 @@ def _require_formal_terminal_state_for_success(run_dir: Path) -> dict[str, Any]:
     terminal = load_formal_terminal_state(run_dir)
     if not terminal or terminal.get("terminal_state") != "sorry_free_artifact":
         raise GuardError(
-            "formal policy is active on a formal-track path: an early "
-            "success stop requires a host-authored formal/terminal_state.json "
+            "formal policy is active on a formal-track path: a success claim "
+            "requires a host-authored formal/terminal_state.json "
             "with terminal_state=sorry_free_artifact "
             "(run the formal-terminal-state command first)",
             **early_stop_contract(),
@@ -2102,6 +2106,19 @@ def append_iteration(
         # the decision alone, or this route banks a goal success on a
         # formal-track run with no host verdict behind it.
         formal_terminal_claim = _require_formal_terminal_state_for_success(run_dir)
+    if not formal_terminal_claim and (
+        (enforced_goal_focus and global_delta == "satisfied")
+        or (args.decision == "stop" and is_success_stop_reason(args.stop_reason))
+    ):
+        # Both routes above are guarded by `remaining_after_append > 0`, because
+        # stopping early is what they police. The formal verdict is not about
+        # stopping early: it is what a success claim stands on. The last allowed
+        # iteration is the one route to a success stop that passes neither guard,
+        # so without this the run that exhausts its budget banks the strongest
+        # claim under the weakest check.
+        formal_terminal_claim = _require_formal_terminal_state_for_success(run_dir)
+        if formal_terminal_claim and not enforced_goal_focus and host_reverification is None:
+            host_reverification = _require_legacy_host_reverification(run_dir)
     record["progress_assessment"] = {
         "campaign_delta": campaign_delta,
         "global_delta": global_delta,
@@ -2414,6 +2431,26 @@ def validate_loop_dir(run_dir: Path) -> dict[str, Any]:
                         if not terminal or terminal.get("terminal_state") != "sorry_free_artifact":
                             errors.append(
                                 f"iteration {iteration_number} early success stop on a "
+                                "formal-track run requires a host-authored "
+                                "formal/terminal_state.json with terminal_state=sorry_free_artifact"
+                            )
+                if (
+                    record.get("decision") == "stop"
+                    and isinstance(iteration_number, int)
+                    and iteration_number >= max_iterations
+                    and not host_reviewed_goal_success
+                    and is_success_stop_reason(record.get("stop_reason"))
+                ):
+                    # The last allowed iteration never enters the early-stop
+                    # block above, so its success row would be the one place a
+                    # formal-track claim needs no host verdict. The rule follows
+                    # the claim, not the iteration it lands on.
+                    formal_pol_local = load_formal_policy(run_dir)
+                    if formal_pol_local.policy in {"on", "force"} and is_formal_track(run_dir):
+                        terminal = load_formal_terminal_state(run_dir)
+                        if not terminal or terminal.get("terminal_state") != "sorry_free_artifact":
+                            errors.append(
+                                f"iteration {iteration_number} success stop on a "
                                 "formal-track run requires a host-authored "
                                 "formal/terminal_state.json with terminal_state=sorry_free_artifact"
                             )

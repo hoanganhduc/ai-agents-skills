@@ -624,6 +624,70 @@ class FormalOpenLedgerValidateTests(unittest.TestCase):
             )
 
 
+class FormalTrackTerminalIterationTests(unittest.TestCase):
+    """The last allowed iteration reaches a success stop past every early guard.
+
+    Both early-stop routes only run while iterations remain, because stopping
+    early is what they police. A run that spends its whole budget and then
+    claims a proof passes neither, so without a check that follows the claim
+    it banks the strongest statement under the weakest scrutiny.
+    """
+
+    @staticmethod
+    def _turn_formal_track(loop: Path) -> None:
+        state = _read_json(loop, "loop_state.json")
+        state["next_preferred_path"] = "formal-track: build the Lean artifact"
+        (loop / "loop_state.json").write_text(
+            json.dumps(state, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def test_the_last_iteration_cannot_claim_success_without_a_host_verdict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            _init(loop, max_iterations=1, extra=("--formal-policy", "on"))
+            self._turn_formal_track(loop)
+            res = _append(loop, "stop", stop_reason="proof")
+            self.assertEqual(res.returncode, 1, res.stdout + res.stderr)
+            self.assertIn(
+                "a success claim requires a host-authored formal/terminal_state.json "
+                "with terminal_state=sorry_free_artifact",
+                _out(res)["error"],
+            )
+            # The refusal has to precede the write, or the row is banked anyway.
+            self.assertEqual((loop / "iterations.jsonl").read_bytes(), b"")
+
+    def test_the_last_iteration_may_still_report_an_honest_negative(self) -> None:
+        """Spending the budget without a proof is a real outcome, not a refusal."""
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            _init(loop, max_iterations=1, extra=("--formal-policy", "on"))
+            self._turn_formal_track(loop)
+            res = _append(loop, "blocked", stop_reason="iteration_budget_exhausted")
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            validated = _run("validate", "--dir", str(loop))
+            self.assertEqual(validated.returncode, 0, validated.stdout)
+
+    def test_validate_holds_the_last_iteration_to_the_same_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            _init(loop, max_iterations=1, extra=("--formal-policy", "on"))
+            # Banked before the path reads formal-track, so the append gate has
+            # nothing to require; the run turns formal-track afterwards, which
+            # is what an agent rewriting loop_state.json leaves behind.
+            res = _append(loop, "stop", stop_reason="proof")
+            self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+            self.assertEqual(_run("validate", "--dir", str(loop)).returncode, 0)
+            self._turn_formal_track(loop)
+            validated = _run("validate", "--dir", str(loop))
+            self.assertEqual(validated.returncode, 1, validated.stdout)
+            self.assertIn(
+                "iteration 1 success stop on a formal-track run requires "
+                "a host-authored formal/terminal_state.json with "
+                "terminal_state=sorry_free_artifact",
+                _out(validated)["errors"],
+            )
+
+
 class RetractIterationTests(unittest.TestCase):
     def test_retract_only_record_restores_initialized_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
