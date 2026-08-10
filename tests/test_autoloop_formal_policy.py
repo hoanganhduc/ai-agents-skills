@@ -104,7 +104,10 @@ def _audit_result(status: str, **report_extra: Any) -> dict[str, Any]:
     }
     report.update(report_extra)
     clean = status == "audited" and not report["unsanctioned_axioms"]
-    return {"ok": clean, "status": status, "report": report}
+    # The real payload always carries its own verdict, and callers read it: a
+    # fixture that omits `ok` tests a report the gate never emits.
+    report.setdefault("ok", clean)
+    return {"ok": report["ok"], "status": status, "report": report}
 
 
 _AUDIT_CLEAN = _audit_result("audited")

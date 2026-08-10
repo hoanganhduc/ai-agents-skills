@@ -1087,6 +1087,7 @@ def formal_force_tick(
                 evidence.append("formal_axiom_audit")
                 audit_clean = (
                     audit["status"] == "audited"
+                    and audit["ok"]
                     and not audit["unsanctioned_axioms"]
                     and not audit["unresolved_declarations"]
                 )
@@ -1307,13 +1308,19 @@ def _run_axiom_audit(
     """Trust-base evidence for a would-be sorry-free artifact. Never raises.
 
     An empty report means the audit never ran, which is reported as such and
-    never as a clean trust base.
+    never as a clean trust base. ``ok`` carries the audit's own verdict rather
+    than leaving callers to reconstruct it from the fields below: the audit
+    refuses for reasons this summary does not model — a declaration line the
+    walk could not read is one — and a summary that dropped the refusal let a
+    partial scan read as a clean trust base.
     """
     summary: dict[str, Any] = {
         "status": "not_run",
+        "ok": False,
         "declarations": 0,
         "unsanctioned_axioms": [],
         "unresolved_declarations": [],
+        "unparsed_declarations": [],
     }
     try:
         result = runner(
@@ -1330,8 +1337,12 @@ def _run_axiom_audit(
             summary["status"] = str(result["status"])
         return summary
     summary["status"] = str(report.get("axiom_audit_status") or "not_run")
+    summary["ok"] = bool(report.get("ok"))
     rows = [row for row in (report.get("declarations") or []) if isinstance(row, dict)]
     summary["declarations"] = len(rows)
+    summary["unparsed_declarations"] = [
+        str(line) for line in (report.get("declarations_unparsed") or [])
+    ][:50]
     summary["unsanctioned_axioms"] = sorted(
         {str(axiom) for axiom in (report.get("unsanctioned_axioms") or [])}
     )[:50]
@@ -1473,6 +1484,13 @@ def evaluate_formal_terminal_state(
                 if audit["status"] != "audited":
                     verdict["terminal_state"] = "indeterminate"
                     verdict["detail"] = f"axiom_audit_{audit['status']}"
+                elif audit["unparsed_declarations"]:
+                    # A declaration line the walk could not read a name off is
+                    # a coverage hole: it may have hidden a theorem, so the
+                    # trust base reported here covers an unknown subset of the
+                    # project and certifies nothing.
+                    verdict["terminal_state"] = "indeterminate"
+                    verdict["detail"] = "axiom_audit_declaration_unparsed"
                 elif audit["unresolved_declarations"]:
                     # Source declares what the built environment does not have:
                     # the artifact and the build disagree, so nothing is certified.
@@ -1484,6 +1502,13 @@ def evaluate_formal_terminal_state(
                         {"file": "", "kind": "unsanctioned_axiom", "detail": axiom}
                         for axiom in audit["unsanctioned_axioms"]
                     )
+                elif not audit["ok"]:
+                    # The audit refused for a reason none of the branches above
+                    # model. Certifying anyway would make every refusal the
+                    # audit learns to report next a silent pass here, so the
+                    # unmodelled case is the indeterminate one by default.
+                    verdict["terminal_state"] = "indeterminate"
+                    verdict["detail"] = "axiom_audit_refused"
                 else:
                     verdict["terminal_state"] = "sorry_free_artifact"
             elif typecheck_status == "typecheck_failed" or findings:

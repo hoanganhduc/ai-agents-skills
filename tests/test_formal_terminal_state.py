@@ -301,7 +301,22 @@ AUDIT_SORRY_AX = _audit(
 )
 AUDIT_UNRESOLVED = _audit(
     "audited",
+    ok=False,
     declarations=[{"declaration": "Ghost.t", "axioms": [], "status": "unresolved"}],
+)
+# The audit walked the sources, could not read a name off one declaration line,
+# and audited the rest: status "audited" over an unknown fraction of the project.
+AUDIT_UNPARSED = _audit(
+    "audited",
+    ok=False,
+    declarations=[{"declaration": "t", "axioms": ["propext"], "status": "sanctioned"}],
+    declarations_unparsed=["Demo: theorem"],
+)
+# Refused, and none of the fields the summary models say why.
+AUDIT_REFUSED = _audit(
+    "audited",
+    ok=False,
+    declarations=[{"declaration": "t", "axioms": ["propext"], "status": "sanctioned"}],
 )
 AUDIT_UNAVAILABLE = _audit("tool_unavailable")
 
@@ -437,6 +452,28 @@ class EvaluateTerminalStateTests(unittest.TestCase):
             verdict = self._verdict_with_audit(tmp, AUDIT_UNRESOLVED)
             self.assertEqual(verdict["terminal_state"], "indeterminate")
             self.assertEqual(verdict["detail"], "axiom_audit_unresolved_declaration")
+
+    def test_a_declaration_line_the_walk_could_not_read_blocks_certification(self) -> None:
+        """The audit still says "audited" — over a scan with a hole in it.
+
+        A wrapped `theorem` line may have hidden a proof, so the trust base
+        reported covers an unknown subset of the project. Certifying it would
+        turn the audit's own refusal into a pass.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = self._verdict_with_audit(tmp, AUDIT_UNPARSED)
+            self.assertEqual(verdict["terminal_state"], "indeterminate")
+            self.assertEqual(verdict["detail"], "axiom_audit_declaration_unparsed")
+            self.assertEqual(
+                verdict["gate"]["axiom_audit"]["unparsed_declarations"], ["Demo: theorem"]
+            )
+
+    def test_an_audit_refusal_this_host_cannot_name_is_still_a_refusal(self) -> None:
+        """Fail closed on a reason the summary does not model, not open."""
+        with tempfile.TemporaryDirectory() as tmp:
+            verdict = self._verdict_with_audit(tmp, AUDIT_REFUSED)
+            self.assertEqual(verdict["terminal_state"], "indeterminate")
+            self.assertEqual(verdict["detail"], "axiom_audit_refused")
 
     def test_findings_yield_open_ledger_with_obligations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
