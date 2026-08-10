@@ -292,7 +292,11 @@ Import-AasSecretEnvFile `
                 check=False,
                 text=True,
                 capture_output=True,
-                timeout=30,
+                # pwsh cold start plus two Set-Acl round trips runs well past
+                # 30s on a loaded Windows runner, and the timeout fails the
+                # job rather than skipping. A long ceiling costs nothing when
+                # the loader behaves and still bounds a genuine hang.
+                timeout=180,
             )
             if completed.returncode != 0:
                 ancestor_gate_messages = (

@@ -613,6 +613,23 @@ class AxiomAuditTests(unittest.TestCase):
                 gate.project_declarations(root), ["real", "staged_only"]
             )
 
+    def test_module_order_does_not_depend_on_the_host_filesystem(self) -> None:
+        """`Zeta` sorts before `alpha` by byte, after it when case-folded.
+
+        Sorting `Path` objects picks the second order on Windows and the first
+        everywhere else, so the same project reported two different
+        declaration orders depending on which runner audited it.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "lakefile.toml").write_text('name = "proj"\n', encoding="utf-8")
+            for stem in ("Zeta", "alpha"):
+                (root / f"{stem}.lean").write_text(
+                    f"theorem {stem.lower()}_thm : True := trivial\n", encoding="utf-8"
+                )
+            self.assertEqual(gate.project_modules(root), ["Zeta", "alpha"])
+            self.assertEqual(gate.project_declarations(root), ["zeta_thm", "alpha_thm"])
+
     def test_an_unbuilt_project_reports_that_rather_than_no_modules(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
