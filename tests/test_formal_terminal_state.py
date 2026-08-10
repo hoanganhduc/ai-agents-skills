@@ -539,6 +539,32 @@ class EvaluateTerminalStateTests(unittest.TestCase):
             scan = verdict["gate"]["scan"]
             self.assertEqual(scan["manifest_files"], 1)
             self.assertTrue(scan["coverage_digest"])
+            self.assertEqual(scan["source_digest_scope"], "project_sources")
+
+    def test_a_manifest_entirely_inside_the_loop_says_so_in_the_stamp(self) -> None:
+        """The fallback digest is the whole manifest and must be labelled it.
+
+        With every scanned file under the loop directory the exclusion leaves
+        nothing, so `source_digest` falls back to covering the loop's own
+        staged copies. A reader comparing that field is otherwise told it
+        excludes them, when here every later staging moves it.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            proj = self._project(Path(tmp))
+            run_dir = proj / "loop"
+            run_dir.mkdir()
+            verdict = fp.evaluate_formal_terminal_state(
+                run_dir,
+                root=Path(tmp),
+                policy=_policy(project=str(proj)),
+                runner=_runner_for(
+                    _scan(("loop/Staged.lean", "aaaaaaaaaaaaaaaa")), TYPECHECK_OK
+                ),
+                reason="unit",
+            )
+            scan = verdict["gate"]["scan"]
+            self.assertEqual(scan["source_digest_scope"], "whole_manifest")
+            self.assertEqual(scan["source_digest"], scan["coverage_digest"])
 
     def test_a_scan_without_a_manifest_digests_to_nothing(self) -> None:
         # An empty manifest must not collide with a real one-file manifest.
@@ -562,6 +588,21 @@ class EvaluateTerminalStateTests(unittest.TestCase):
         # A prefix must not match a sibling that merely starts with the same
         # characters.
         self.assertEqual(fp._coverage_digest(coverage, exclude_prefix="loo")[1], 2)
+
+    def test_the_exclusion_holds_on_a_manifest_written_with_backslashes(self) -> None:
+        """The gate records each path with the host's separator.
+
+        A Windows manifest therefore reads `loop\\proof_artifacts\\Demo.lean`,
+        which a POSIX prefix never matches: the exclusion would quietly cover
+        nothing, and staging one artifact would move the digest and refuse the
+        bank it was meant to allow.
+        """
+        coverage = _scan(
+            ("Demo.lean", "aaaaaaaaaaaaaaaa"),
+            ("loop\\proof_artifacts\\Demo.lean", "bbbbbbbbbbbbbbbb"),
+        )["report"]["coverage"]
+        self.assertEqual(fp._coverage_digest(coverage, exclude_prefix="loop")[1], 1)
+        self.assertEqual(fp._coverage_digest(coverage, exclude_prefix="loop\\")[1], 1)
 
     def test_a_loop_directory_outside_the_project_has_no_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -772,6 +813,96 @@ class ReverificationTests(unittest.TestCase):
             self.assertEqual(result["status"], "unavailable")
             self.assertEqual(result["detail"], "staged_verdict_has_no_manifest")
 
+    def _decoy_project(self, tmp: Path) -> Path:
+        """A second Lake project the agent would rather have re-checked."""
+        decoy = tmp / "decoy"
+        decoy.mkdir(parents=True, exist_ok=True)
+        (decoy / "lakefile.toml").write_text(
+            'name = "decoy"\ndefaultTargets = ["Decoy"]\n\n[[lean_lib]]\nname = "Decoy"\n',
+            encoding="utf-8",
+        )
+        (decoy / "Decoy.lean").write_text("theorem d : True := trivial\n", encoding="utf-8")
+        return decoy
+
+    def _agent_policy(self, run_dir: Path, project: Path) -> None:
+        """The policy file the agent can write inside its own loop tree."""
+        formal = run_dir / "formal"
+        formal.mkdir(parents=True, exist_ok=True)
+        (formal / "formal_policy.json").write_text(
+            json.dumps({"policy": "on", "project": str(project)}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def test_the_caller_pin_decides_which_project_is_rechecked(self) -> None:
+        # `project` is privileged: without a pin the agent's own policy file
+        # answers "which project", and the re-check confirms a verdict over a
+        # directory the drive never looked at.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            decoy = self._decoy_project(tmp)
+            self._agent_policy(run_dir, decoy)
+
+            pinned = fp.reverify_formal_evidence(
+                run_dir,
+                root=tmp,
+                pin={"project": str(proj)},
+                runner=_runner_for(CLEAN_SCAN, TYPECHECK_OK),
+            )
+            self.assertEqual(pinned["policy"]["pin_source"], "caller")
+            self.assertEqual(pinned["policy"]["project"], str(proj))
+            self.assertEqual(pinned["status"], "reverified")
+
+            unpinned = fp.reverify_formal_evidence(
+                run_dir, root=tmp, runner=_runner_for(CLEAN_SCAN, TYPECHECK_OK)
+            )
+            self.assertEqual(unpinned["policy"]["pin_source"], "unpinned")
+            self.assertEqual(unpinned["policy"]["project"], str(decoy))
+
+    def test_a_caller_without_a_pin_falls_back_to_the_drive_start_pin(self) -> None:
+        # A separate append-iteration process has no in-memory pin, so it reads
+        # the one the drive persisted rather than resolving policy unpinned.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            self._agent_policy(run_dir, self._decoy_project(tmp))
+            fp.write_host_pin(run_dir, {"project": str(proj), "root": str(tmp)})
+
+            result = fp.reverify_formal_evidence(
+                run_dir, runner=_runner_for(CLEAN_SCAN, TYPECHECK_OK)
+            )
+            self.assertEqual(result["policy"]["pin_source"], "drive_start_pin_file")
+            self.assertEqual(result["policy"]["project"], str(proj))
+            # The root travels with the pin, so the project resolves the way
+            # the drive resolved it instead of against the loop directory.
+            self.assertEqual(result["policy"]["root"], str(tmp))
+            self.assertEqual(result["status"], "reverified")
+
+    def test_a_missing_pin_file_reads_as_no_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            run_dir = Path(raw) / "loop"
+            run_dir.mkdir()
+            self.assertEqual(fp.read_host_pin(run_dir), {})
+            (run_dir / "formal").mkdir()
+            (run_dir / "formal" / "host_policy.pin.json").write_text(
+                "[not, a, pin]\n", encoding="utf-8"
+            )
+            self.assertEqual(fp.read_host_pin(run_dir), {})
+
+    def test_a_staged_verdict_that_cannot_be_read_is_never_a_pass(self) -> None:
+        # Truncating the stamp must not look like a run that never staged one:
+        # "no verdict to check" passes, "the verdict is unreadable" cannot.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            run_dir, proj = self._staged(tmp)
+            (run_dir / "formal" / "terminal_state.json").write_text(
+                '{"terminal_state": "sorry_free_art', encoding="utf-8"
+            )
+            result = self._reverify(run_dir, tmp, proj, CLEAN_SCAN)
+            self.assertEqual(result["status"], "unavailable")
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["detail"], "staged_verdict_unreadable")
+
     def test_a_refused_recheck_leaves_the_staged_stamp_in_place(self) -> None:
         # Otherwise a first refusal would erase the certified stamp and the
         # retry would find nothing to check, banking unverified.
@@ -932,6 +1063,30 @@ class EarlyStopGuardTests(unittest.TestCase):
             self.assertEqual(
                 (run_dir / "iterations.jsonl").read_text(encoding="utf-8"), ""
             )
+
+    def test_a_verdict_that_vanishes_before_the_recheck_refuses_the_stop(self) -> None:
+        """Deleting the stamp must not read as "there was nothing to check".
+
+        The gate is reached only after a certified verdict has been read off
+        disk. If the re-check then finds none, the stamp went away in the
+        window between — the one move that would otherwise turn a re-check the
+        agent cannot survive into no re-check at all.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            run_dir.mkdir(parents=True)
+            vanished = {
+                "status": "not_applicable",
+                "ok": True,
+                "detail": "no_certified_verdict_staged",
+            }
+            with mock.patch.object(
+                rt, "reverify_formal_evidence", return_value=vanished
+            ):
+                with self.assertRaises(rt.GuardError) as caught:
+                    rt._require_legacy_host_reverification(run_dir)
+            self.assertIn("not_applicable", str(caught.exception))
+            self.assertIn("no_certified_verdict_staged", str(caught.exception))
 
     def test_non_formal_loop_success_stop_is_unaffected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

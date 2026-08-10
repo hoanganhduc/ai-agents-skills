@@ -2414,6 +2414,161 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             self.assertEqual(everything(), before)
             self.assertFalse((loop / "iteration_candidate.json").exists())
 
+    @staticmethod
+    def _formal_track_loop(arl: Any, gf: Any, tmp: Path, activate) -> tuple[Path, dict]:
+        """An enforce-mode, formal-track loop with one dispatch-bound proof."""
+        loop = tmp / "loop"
+        proj = tmp / "proj"
+        proj.mkdir(parents=True, exist_ok=True)
+        (proj / "lakefile.toml").write_text(
+            'name = "demo"\ndefaultTargets = ["Demo"]\n\n[[lean_lib]]\nname = "Demo"\n',
+            encoding="utf-8",
+        )
+        (proj / "Demo.lean").write_text("theorem t : True := trivial\n", encoding="utf-8")
+        init_args = arl.selftest_init_args(loop, max_iterations=3)
+        init_args.goal_focus_mode = "enforce"
+        init_args.formal_policy = "on"
+        init_args.formal_project = str(proj)
+        arl.init_loop(init_args)
+        activate(arl, gf, loop)
+
+        # The formal-track signal has to come from recovery.md here:
+        # loop_state.next_preferred_path is bound to the activated plan under
+        # enforce mode, and rewriting it invalidates the dispatch authority.
+        recovery = loop / "recovery.md"
+        text = recovery.read_text(encoding="utf-8")
+        recovery.write_text(
+            "\n".join(
+                "- Next safe action: formal-track: build the Lean artifact"
+                if line.startswith("- Next safe action:")
+                else line
+                for line in text.splitlines()
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        dispatch = gf.prepare_iteration_dispatch(
+            loop,
+            executor_provider="claude",
+            executor_family="anthropic",
+            executor_attestation=_provider_attestation("claude", loop),
+            started_at="2026-07-29T12:00:00Z",
+        )["dispatch"]
+        write_text_evidence(loop, dispatch, "proof-artifact-1")
+        (loop / "proofs").mkdir(parents=True, exist_ok=True)
+        (loop / "proofs" / "proof.txt").write_text("checked proof\n", encoding="utf-8")
+        artifacts = loop / "proof_artifacts"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        (artifacts / "proof-artifact-1.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "id": "proof-artifact-1",
+                    "artifact_type": "python-verifier",
+                    "machine_checkable": True,
+                    "target": "the main theorem",
+                    "proof_path": "proofs/proof.txt",
+                    "checker": {"name": "fixture-checker", "status": "passed"},
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return loop, dispatch
+
+    @staticmethod
+    def _submit_satisfied(arl: Any, loop: Path, dispatch: dict) -> dict[str, Any]:
+        """The enforce-mode submission `finalize_candidate` banks as a stop.
+
+        Staging needs the host resource attestation, which only ever reaches
+        `append_iteration` through the host control channel, so this goes in
+        process the way the host-mediated claim path does.
+        """
+        args = arl.build_parser().parse_args(
+            [
+                "append-iteration",
+                "--dir",
+                str(loop),
+                "--mode",
+                "bounded-research",
+                "--objective",
+                "report the goal satisfied",
+                "--decision",
+                "revise",
+                "--global-delta",
+                "satisfied",
+                "--claim-id",
+                "dispatch-bound-claim",
+                "--evidence-id",
+                "proof-artifact-1",
+                "--compute-none",
+            ]
+        )
+        return arl.append_iteration(
+            args,
+            _host_control={
+                "AAS_AUTOLOOP_PRIMARY_PROVIDER": "claude",
+                "AAS_AUTOLOOP_DISPATCH_ID": dispatch["dispatch_id"],
+                "AAS_AUTOLOOP_CANDIDATE_ID": dispatch["candidate_id"],
+                "AAS_AUTOLOOP_ITERATION_STARTED_AT": "2026-07-29T12:00:00Z",
+                "AAS_AUTOLOOP_RESOURCE_ATTESTATION": _primary_resource_attestation(),
+            },
+        )
+
+    def test_enforce_satisfied_claim_needs_the_host_formal_verdict(self) -> None:
+        # An enforce-mode submission never says "stop": it reports the goal
+        # satisfied and `finalize_candidate` rewrites the row to a success
+        # stop. Hanging the formal-track requirement off the decision alone
+        # would let this route bank a proof claim with no host verdict.
+        arl, gf = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop, dispatch = self._formal_track_loop(
+                arl, gf, Path(tmp), self._activate_single_direction
+            )
+            with self.assertRaises(ValueError) as caught:
+                self._submit_satisfied(arl, loop, dispatch)
+            self.assertIn("sorry_free_artifact", str(caught.exception))
+            self.assertFalse((loop / "iteration_candidate.json").exists())
+            self.assertEqual(
+                (loop / "iterations.jsonl").read_text(encoding="utf-8"), ""
+            )
+
+    def test_a_satisfied_claim_stamps_the_verdict_it_stands_on(self) -> None:
+        # The stamp is what lets the re-check at finalize tell "this run never
+        # staged a verdict" from "the verdict this row stands on is gone".
+        arl, gf = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as tmp:
+            loop, dispatch = self._formal_track_loop(
+                arl, gf, Path(tmp), self._activate_single_direction
+            )
+            formal = loop / "formal"
+            formal.mkdir(parents=True, exist_ok=True)
+            (formal / "terminal_state.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "formal_terminal_state.v1",
+                        "writer": "host_formal_force_tick",
+                        "terminal_state": "sorry_free_artifact",
+                        "decided_at": "2026-07-29T12:30:00Z",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            accepted = self._submit_satisfied(arl, loop, dispatch)
+            self.assertEqual(accepted["staging_status"], "staged")
+            staged = json.loads(
+                (loop / "iteration_candidate.json").read_text(encoding="utf-8")
+            )
+            record = staged.get("record", staged)
+            self.assertEqual(
+                record["formal_terminal_state"]["terminal_state"],
+                "sorry_free_artifact",
+            )
+
     def test_panel_goal_resolution_factor_reaches_core_scorer(self) -> None:
         arl, gf = self._runtime_modules()
         registry = gf.default_approach_registry()
@@ -5698,6 +5853,36 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                 args.prompt_file = str(linked)
                 with self.assertRaises(OSError):
                     arl.panel_command(args)
+
+    def test_explicit_providers_naming_nobody_is_refused_not_defaulted(self) -> None:
+        # An explicit roster that parses empty used to fall through to the
+        # default roster, so the dispatch went to providers the operator never
+        # named while the reported results map described nobody.
+        arl, _gf = self._runtime_modules()
+        with self.assertRaises(ValueError):
+            arl.parse_explicit_provider_roster(",")
+        self.assertEqual(arl.parse_explicit_provider_roster(" codex , claude "), ["codex", "claude"])
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            loop = root / "research" / "loop"
+            loop.mkdir(parents=True)
+            args = argparse.Namespace(
+                root=str(root),
+                dir=str(loop),
+                providers=", ,",
+                smoke=True,
+                phase=None,
+                prompt=None,
+                prompt_file=None,
+                iter_dir=None,
+                timeout=5,
+            )
+            with mock.patch.object(arl, "panel_smoke") as smoke:
+                result = arl.panel_command(args)
+            smoke.assert_not_called()
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("names no provider", result["error"])
 
     def test_failed_exclusive_log_create_is_never_reopened(self) -> None:
         arl, _gf = self._runtime_modules()

@@ -13,9 +13,17 @@
 #   - formal_policy=force          = host formal hygiene tick credits (optional)
 #     Those two "force" words are NOT the same thing.
 #
-# Secrets: never source key files here. If LeanExplore is needed, the operator
-# must pre-export LEANEXPLORE_API_KEY via their secret manager before launch.
-# Do not print env dumps.
+# Secrets: never source key files here, and do not print env dumps.
+#
+# LEANEXPLORE_API_KEY cannot be delivered from this fragment, or from any other
+# env fragment. The primary child environment is strictly allowlist-built by
+# build_primary_child_env (PRIMARY_BASE_ENV_ALLOWLIST, AAS_RUNTIME_*, and the
+# attestation-gated provider/compute credential lists); LEANEXPLORE_API_KEY is
+# on none of them, so pre-exporting it before launch is stripped and LeanExplore
+# stays unconfigured. The only sanctioned channel is the per-server "env" block
+# of a curated MCP config — see production_formalization_env.inc.sh and
+# curated_mcp.claude.example.json in this pack for the lane rules and the
+# operator-owned 0600 placement that channel requires.
 
 # Default sample policy is "on" (prompt binding + F1–F7 positions when path is
 # formal-track). Override before sourcing, or export after.

@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -1031,6 +1032,76 @@ class TerminalStateWriteHardeningTests(unittest.TestCase):
             ]
             self.assertEqual(leftovers, [])
 
+    def test_planted_symlink_cannot_redirect_the_host_pin_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            run_dir = base / "loop"
+            formal = run_dir / "formal"
+            formal.mkdir(parents=True)
+            victim = base / "victim.txt"
+            victim.write_text("host-owned bytes\n", encoding="utf-8")
+            (formal / "host_policy.pin.json").symlink_to(victim)
+            fp.write_host_pin(run_dir, {"policy": "force"})
+            self.assertEqual(victim.read_text(encoding="utf-8"), "host-owned bytes\n")
+            final = formal / "host_policy.pin.json"
+            self.assertFalse(final.is_symlink())
+            self.assertEqual(json.loads(final.read_text(encoding="utf-8"))["policy"], "force")
+            self.assertEqual(stat.S_IMODE(final.stat().st_mode), 0o600)
+
+    def test_planted_symlink_cannot_redirect_the_standing_orders_merge(self) -> None:
+        # The merge already reads through O_NOFOLLOW, so the link has to be
+        # planted after a real loop_state.json exists for the write to be the
+        # step under test.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            run_dir = base / "loop"
+            run_dir.mkdir()
+            real_state = base / "real_loop_state.json"
+            real_state.write_text(json.dumps({"standing_orders": {}}), encoding="utf-8")
+            victim = base / "victim.txt"
+            victim.write_text("host-owned bytes\n", encoding="utf-8")
+            state_path = run_dir / "loop_state.json"
+            state_path.symlink_to(real_state)
+            # Reading a symlinked loop_state.json is refused outright, so the
+            # merge reports failure rather than writing anywhere.
+            self.assertFalse(
+                fp.merge_standing_orders_formal(run_dir, updates={"policy": "force"})
+            )
+            self.assertEqual(victim.read_text(encoding="utf-8"), "host-owned bytes\n")
+            self.assertEqual(
+                json.loads(real_state.read_text(encoding="utf-8")),
+                {"standing_orders": {}},
+            )
+
+    def test_planted_symlink_cannot_redirect_the_recovery_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            run_dir = base / "loop"
+            run_dir.mkdir()
+            victim = base / "victim.md"
+            victim.write_text("host-owned bytes\n", encoding="utf-8")
+            (run_dir / "recovery.md").symlink_to(victim)
+            fp._append_recovery_note(run_dir, "formal_hygiene: scan_clean")
+            self.assertEqual(victim.read_text(encoding="utf-8"), "host-owned bytes\n")
+
+    def test_planted_symlink_cannot_redirect_a_force_loop_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            run_dir = base / "loop"
+            reports = run_dir / "formal" / "force_loop_reports"
+            reports.mkdir(parents=True)
+            victim = base / "victim.txt"
+            victim.write_text("host-owned bytes\n", encoding="utf-8")
+            # The report name is timestamped, so plant the link on the name the
+            # writer is about to choose.
+            name = f"force_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+            (reports / name).symlink_to(victim)
+            fp._write_force_report(run_dir, {"writer": "host"})
+            self.assertEqual(victim.read_text(encoding="utf-8"), "host-owned bytes\n")
+            written = [p for p in reports.iterdir() if not p.is_symlink()]
+            self.assertTrue(written, list(reports.iterdir()))
+            self.assertTrue(all(p.suffix == ".json" for p in written), written)
+
 
 class PromptContractTests(unittest.TestCase):
     def test_binding_block_declares_build_config_host_owned(self) -> None:
@@ -1252,6 +1323,73 @@ class DriveIntegrityTests(unittest.TestCase):
             self.assertIn(
                 "active_placeholder", {o["kind"] for o in verdict["obligations"]}
             )
+
+    def test_failure_exit_reports_a_computed_formal_verdict(self) -> None:
+        # The graceful-stop twin above covers reason="done". A failure exit
+        # takes the same shutdown path with require_typecheck=False, and its
+        # verdict is what an acceptance reviewer reads for an abandoned run —
+        # so the exception fallback (empty formal_terminal_state) must not be
+        # able to hide behind a nonzero exit code.
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            loop, reg = base / "loop", base / "reg"
+            _init(loop, max_iterations=5, extra=("--formal-policy", "on"))
+            proj = loop / "formal"
+            proj.mkdir(exist_ok=True)
+            (proj / "lakefile.lean").write_text("-- host-owned\n", encoding="utf-8")
+            (proj / "Demo.lean").write_text(
+                "theorem demo : 1 = 1 := sorry\n", encoding="utf-8"
+            )
+            # Tamper with a banked ledger row on the second iteration: the
+            # integrity watch charges a failure and --max-failures 1 turns the
+            # next one into a max_failures exit.
+            script = self.HONEST_STEP + (
+                "n = honest()\n"
+                "if n == 2:\n"
+                "    lp = os.path.join(d, 'iterations.jsonl')\n"
+                "    text = open(lp).read().replace('honest 1', 'redacted')\n"
+                "    open(lp, 'w').write(text)\n"
+            )
+            missing = str(base / "missing-toolchain")
+            res = self._drive(
+                loop,
+                reg,
+                script,
+                "--max-failures",
+                "1",
+                env_extra={"AAS_LEAN": missing, "AAS_LAKE": missing},
+            )
+            self.assertEqual(
+                res.returncode,
+                rt.DRIVE_EXIT_CODES["max_failures"],
+                res.stdout + res.stderr,
+            )
+            body = _out(res)
+            events = [
+                json.loads(line)
+                for line in Path(str(body["progress_jsonl"]))
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            stops = [e for e in events if e.get("event") == "drive_stop"]
+            self.assertEqual(len(stops), 1, [e.get("event") for e in events])
+            self.assertEqual(stops[0].get("terminal_reason"), "max_failures")
+            # Non-empty and a real terminal state: an empty string here is the
+            # shutdown exception fallback, never a decision.
+            self.assertIn(
+                stops[0].get("formal_terminal_state"), fp.TERMINAL_STATES, stops[0]
+            )
+            self.assertNotEqual(
+                stops[0].get("formal_terminal_state"), "sorry_free_artifact"
+            )
+            verdict = json.loads(
+                (proj / "terminal_state.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(verdict["terminal_state"], "open_ledger")
+            self.assertEqual(verdict["reason"], "drive_stop:max_failures")
+            # The abandoned run's integrity record travels with the verdict.
+            self.assertTrue(verdict["run_integrity"]["ledger_violations"], verdict)
 
     def test_build_config_lock_fails_the_cycle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

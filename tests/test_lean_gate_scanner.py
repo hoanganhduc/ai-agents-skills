@@ -413,7 +413,7 @@ class AxiomAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             gate.scan_declarations(source),
-            (["Foo.Bar.beta", "Foo.Bar.gamma", "top"], ["Foo.Bar.alpha"]),
+            (["Foo.Bar.beta", "Foo.Bar.gamma", "top"], ["Foo.Bar.alpha"], []),
         )
 
     def test_a_mutual_block_does_not_close_the_enclosing_namespace(self) -> None:
@@ -437,6 +437,24 @@ class AxiomAuditTests(unittest.TestCase):
             ["Foo.alpha", "Foo.beta", "Foo.gamma"],
         )
 
+    def test_a_noncomputable_section_does_not_close_the_enclosing_namespace(self) -> None:
+        """The modifier form of a section opener still has to push a scope.
+
+        `noncomputable section` is the common one in real Lean sources, and
+        matching bare `section` alone let its `end` pop the namespace above
+        it: `Foo.gamma` would then be audited as `gamma`, which either fails
+        to resolve or resolves to an entirely different declaration.
+        """
+        source = (
+            "namespace Foo\n"
+            "noncomputable section\n"
+            "theorem alpha : True := trivial\n"
+            "end\n"
+            "theorem gamma : True := trivial\n"
+            "end Foo\n"
+        )
+        self.assertEqual(gate.declaration_names(source), ["Foo.alpha", "Foo.gamma"])
+
     def test_modifiers_and_an_open_prefix_do_not_hide_a_declaration(self) -> None:
         """A declaration the walk misses is never audited at all."""
         source = (
@@ -449,7 +467,59 @@ class AxiomAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             gate.scan_declarations(source),
-            (["alpha", "gamma", "delta"], ["beta", "beta2"]),
+            (["alpha", "gamma", "delta"], ["beta", "beta2"], []),
+        )
+
+    def test_any_command_prefix_on_the_declaration_line_stays_visible(self) -> None:
+        """`open ... in` is one of several commands that can share the line.
+
+        Matching only `open` hid `set_option`, `attribute`, `variable` and
+        `notation` prefixes from the walk, and a declaration the walk cannot
+        see is never asked about — the audit reports a clean trust base over a
+        theorem it skipped.
+        """
+        source = (
+            "set_option maxHeartbeats 400000 in theorem alpha : True := trivial\n"
+            "attribute [simp] Nat.add_zero in theorem beta : True := trivial\n"
+            "variable (n : Nat) in theorem gamma : True := trivial\n"
+            'local notation "srt" => 1 in theorem delta : True := trivial\n'
+            "set_option pp.all true in open Nat in @[simp] theorem eps : True := trivial\n"
+        )
+        self.assertEqual(
+            gate.scan_declarations(source),
+            (["alpha", "beta", "gamma", "delta", "eps"], [], []),
+        )
+
+    def test_an_in_prefix_does_not_swallow_an_ordinary_declaration(self) -> None:
+        """The widened prefix must not eat a statement that contains ` in `."""
+        source = (
+            "theorem in_bounds : True := trivial\n"
+            "theorem mem_all : forall x in S, True := trivial\n"
+            "  exact Foo.lemma h\n"
+            "  have h := my_theorem x\n"
+        )
+        self.assertEqual(
+            gate.scan_declarations(source),
+            (["in_bounds", "mem_all"], [], []),
+        )
+
+    def test_a_declaration_line_without_a_readable_name_is_reported(self) -> None:
+        """Silent non-coverage is the one failure the audit cannot survive.
+
+        A line the walk cannot read a name off may have hidden a theorem, so it
+        comes back as `unparsed` for the caller to refuse on, rather than
+        vanishing into a report that looks complete.
+        """
+        source = "theorem\n    split_over_two_lines : True := trivial\n"
+        self.assertEqual(gate.scan_declarations(source), ([], [], ["theorem"]))
+
+    def test_an_axiom_after_a_same_line_command_prefix_is_a_trust_base_hit(self) -> None:
+        """`set_option ... in axiom` never reaches the start of a line."""
+        payload = _scan_text("set_option pp.all true in axiom evil : False\n")
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["trust_base_status"], "unsanctioned_axiom_or_unsafe")
+        self.assertIn(
+            {"kind": "trust_base_blocker", "detail": "axiom"}, payload["findings"]
         )
 
     def test_private_theorems_are_separated_rather_than_audited(self) -> None:
@@ -467,7 +537,7 @@ class AxiomAuditTests(unittest.TestCase):
         )
         self.assertEqual(
             gate.scan_declarations(source),
-            (["Foo.public_result"], ["Foo.helper"]),
+            (["Foo.public_result"], ["Foo.helper"], []),
         )
         self.assertEqual(gate.declaration_names(source), ["Foo.public_result"])
 
@@ -719,6 +789,35 @@ class AuditCliTests(unittest.TestCase):
             self.assertTrue(
                 any("private theorems" in line for line in payload["limitations"]),
                 payload["limitations"],
+            )
+
+    def test_a_declaration_line_the_walk_cannot_read_refuses_the_audit(self) -> None:
+        """Partial coverage must never be reported as a clean trust base.
+
+        The walk is a regex, so a declaration written in a shape it does not
+        recognize would otherwise be skipped in silence and the audit would
+        pass on the theorems it happened to see.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            (root / "Proj" / "Basic.lean").write_text(
+                "theorem good : True := trivial\n"
+                "theorem\n"
+                "    wrapped_name : True := trivial\n",
+                encoding="utf-8",
+            )
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            result = self._run_gate(
+                "axiom-audit", "--input", str(root), "--strict",
+                env_extra={"AAS_LAKE": str(lake)},
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["declarations_unparsed"], ["Proj.Basic: theorem"])
+            self.assertIn(
+                {"kind": "declaration_unparsed", "detail": "Proj.Basic: theorem"},
+                payload["findings"],
             )
 
     def test_a_clean_audit_reports_no_compiler_trust(self) -> None:

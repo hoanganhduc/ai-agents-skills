@@ -234,6 +234,31 @@ def _read_regular_text(
         os.close(fd)
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Replace one host-authored file without following a planted link.
+
+    Every destination this module writes sits in a tree the agent can write:
+    the loop directory itself, or ``formal/`` inside it. A plain ``write_text``
+    follows a symlink at the destination, so an agent that plants one turns a
+    host write into an arbitrary-file overwrite. ``mkstemp`` gives an
+    exclusive-create 0600 file at an unpredictable name, and ``os.replace``
+    swaps out whatever sits at the final name without following it.
+    """
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except OSError:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 def _read_json(path: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(_read_regular_text(path))
@@ -618,13 +643,27 @@ def write_host_pin(run_dir: Path, pin: dict[str, Any]) -> None:
         d = Path(run_dir) / "formal"
         d.mkdir(parents=True, exist_ok=True)
         path = d / "host_policy.pin.json"
-        path.write_text(json.dumps(pin, indent=2) + "\n", encoding="utf-8")
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        _atomic_write_text(path, json.dumps(pin, indent=2) + "\n")
     except OSError:
         pass
+
+
+def read_host_pin(run_dir: Path | str) -> dict[str, Any]:
+    """The drive-start pin, for a host process that has no in-memory one.
+
+    A verdict reached in the drive process carries its pin in memory. A verdict
+    reached in a separate ``append-iteration`` process has none, and resolving
+    policy without one lets the agent's own ``formal_policy.json`` pick which
+    project the host re-checks. This reads the pin the drive persisted so those
+    callers resolve the same privileged keys the drive did.
+
+    The pin file sits in the agent-writable loop tree, so this narrows the
+    attack rather than closing it: an agent that rewrites the pin still has to
+    make the re-scan of the project it names agree with the staged digest.
+    Prefer passing the in-memory pin whenever the caller has one. Never raises.
+    """
+    pin = _read_json(Path(run_dir) / "formal" / "host_policy.pin.json")
+    return pin if isinstance(pin, dict) else {}
 
 
 def export_formal_env(pol: FormalPolicy) -> dict[str, str]:
@@ -663,7 +702,7 @@ def merge_standing_orders_formal(
         so["formal"] = formal
         state["standing_orders"] = so
         state["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(path, json.dumps(state, indent=2) + "\n")
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -1127,7 +1166,7 @@ def _write_force_report(
         # iteration-ish name from ledger length or timestamp
         name = f"force_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
         path = d / name
-        path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(path, json.dumps(report, indent=2) + "\n")
     except OSError:
         pass
 
@@ -1144,7 +1183,10 @@ def _append_recovery_note(run_dir: Path, note: str) -> None:
         note = "formal_hygiene: tool_unavailable"
     try:
         path = Path(run_dir) / "recovery.md"
-        text = path.read_text(encoding="utf-8") if path.is_file() else ""
+        # This one runs after the iteration agent has had a write window, so
+        # read through the O_NOFOLLOW helper too: a link planted at recovery.md
+        # would otherwise leak an arbitrary file into the text we write back.
+        text = _read_regular_text(path) if path.is_file() else ""
         line = f"\n- Formal hygiene note: `{note}`\n"
         if note in text:
             return
@@ -1153,7 +1195,7 @@ def _append_recovery_note(run_dir: Path, note: str) -> None:
             text = text.rstrip() + "\n\n## Formal hygiene\n" + line
         else:
             text = text.rstrip() + line
-        path.write_text(text + "\n", encoding="utf-8")
+        _atomic_write_text(path, text + "\n")
     except OSError:
         pass
 
@@ -1163,40 +1205,38 @@ def _write_terminal_state(run_dir: Path, state: dict[str, Any]) -> None:
         d = Path(run_dir) / "formal"
         d.mkdir(parents=True, exist_ok=True)
         path = d / "terminal_state.json"
-        # formal/ is agent-writable, so a fixed tmp name could be pre-planted
-        # as a symlink and a plain write would follow it, turning this host
-        # verdict write into an arbitrary-file overwrite. mkstemp gives an
-        # exclusive-create 0600 file at an unpredictable name, and os.replace
-        # swaps out any planted link at the final name without following it.
-        fd, tmp_name = tempfile.mkstemp(
-            prefix="terminal_state.", suffix=".tmp", dir=str(d)
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(state, indent=2) + "\n")
-            os.replace(tmp_name, path)
-        except OSError:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
-            raise
+        _atomic_write_text(path, json.dumps(state, indent=2) + "\n")
     except OSError:
         pass
 
 
+def read_formal_terminal_state(run_dir: Path | str) -> tuple[dict[str, Any] | None, str]:
+    """The staged verdict, plus why it is missing when it is. Never raises.
+
+    Status is ``present``, ``absent``, or ``unreadable``. The distinction is
+    the point: a run that never staged a verdict has nothing to confirm, while
+    a verdict that is there but truncated, off-schema, or unreadable is a host
+    that *cannot* confirm. Collapsing both to "no verdict" lets destroying the
+    evidence read the same as never having produced any.
+    """
+    path = Path(run_dir) / "formal" / "terminal_state.json"
+    try:
+        if not path.is_file():
+            return None, "absent"
+    except OSError:
+        return None, "unreadable"
+    try:
+        data = json.loads(_read_regular_text(path))
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return None, "unreadable"
+    if isinstance(data, dict) and data.get("terminal_state") in TERMINAL_STATES:
+        return data, "present"
+    return None, "unreadable"
+
+
 def load_formal_terminal_state(run_dir: Path | str) -> dict[str, Any] | None:
     """Read formal/terminal_state.json if present and well-formed. Never raises."""
-    try:
-        path = Path(run_dir) / "formal" / "terminal_state.json"
-        if not path.is_file():
-            return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict) and data.get("terminal_state") in TERMINAL_STATES:
-            return data
-        return None
-    except Exception:  # noqa: BLE001
-        return None
+    return read_formal_terminal_state(run_dir)[0]
 
 
 def _coverage_digest(
@@ -1217,12 +1257,31 @@ def _coverage_digest(
     """
     rows = [row for row in (coverage.get("files") or []) if isinstance(row, dict)]
     if exclude_prefix:
-        prefix = exclude_prefix.rstrip("/") + "/"
-        rows = [row for row in rows if not str(row.get("file") or "").startswith(prefix)]
+        # The manifest records each path as the host's os.sep joined them, so
+        # a POSIX prefix never matches a Windows row and the exclusion turns
+        # into a silent no-op there: staging one artifact would then read as a
+        # changed project and refuse the bank. Compare on one separator.
+        prefix = exclude_prefix.replace("\\", "/").rstrip("/") + "/"
+        rows = [
+            row
+            for row in rows
+            if not str(row.get("file") or "").replace("\\", "/").startswith(prefix)
+        ]
     if not rows:
         return "", 0
-    lines = sorted(f"{row.get('file')}\t{row.get('sha256')}" for row in rows)
-    digest = hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+    # JSON-encode each row instead of joining the raw values with a tab. A
+    # POSIX .lean filename may legally contain a tab or a newline, so an
+    # unescaped separator lets one row serialize to exactly what two rows
+    # serialize to and two different projects share a digest. The row count is
+    # folded in ahead of the rows for the same reason. Note this changes the
+    # digest of every manifest: a stamp written by an older build re-verifies
+    # as a mismatch, which refuses rather than passes.
+    lines = sorted(
+        json.dumps([str(row.get("file")), str(row.get("sha256"))], ensure_ascii=True)
+        for row in rows
+    )
+    payload = "\n".join([str(len(lines)), *lines])
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     return digest, len(rows)
 
 
@@ -1355,10 +1414,15 @@ def evaluate_formal_terminal_state(
         source_digest, source_files = _coverage_digest(
             coverage, exclude_prefix=_run_dir_prefix(run_path, proj)
         )
+        source_scope = "project_sources"
         if not source_digest:
             # Nothing outside the loop directory, so there is no narrower
             # scope to compare: the whole manifest is the project.
             source_digest, source_files = coverage_digest, manifest_files
+            # Say so in the stamp. A reader comparing `source_digest` is
+            # otherwise told it excludes the loop's own staged copies when in
+            # this one case it does not, and every later staging moves it.
+            source_scope = "whole_manifest"
         verdict["gate"]["scan"] = {
             "ok": bool(scan_report.get("ok")),
             "findings": len(findings),
@@ -1374,6 +1438,7 @@ def evaluate_formal_terminal_state(
             # still moves it.
             "source_digest": source_digest,
             "source_files": source_files,
+            "source_digest_scope": source_scope,
         }
         verdict["obligations"] = [
             {
@@ -1480,6 +1545,11 @@ def reverify_formal_evidence(
     A re-run reuses whatever the operator's toolchain resolves to and whatever
     the project's build cache holds; only ``lean_strict_verification_gate
     kernel-check`` replays proof terms independently of that cache.
+
+    ``pin`` and ``root`` decide *which* project is re-checked. Resolving them
+    from the loop directory alone would let the agent's own policy file answer
+    that question, so a caller without an in-memory pin falls back to the pin
+    the drive persisted, and the pin it used is reported in ``policy``.
     """
     run_path = Path(run_dir)
     result: dict[str, Any] = {
@@ -1489,10 +1559,41 @@ def reverify_formal_evidence(
         "detail": "",
         "staged": {},
         "observed": {},
+        "policy": {},
         "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     try:
-        staged = load_formal_terminal_state(run_path)
+        pin_source = "caller"
+        if pin is None:
+            pin = read_host_pin(run_path) or None
+            pin_source = "drive_start_pin_file" if pin else "unpinned"
+        if root is None and pin:
+            # The drive resolves the project against its own root, so a
+            # re-check that resolves against the loop directory alone can land
+            # on a different directory and read as a mismatch.
+            pinned_root = str(pin.get("root") or "").strip()
+            if pinned_root:
+                root = pinned_root
+        policy = policy or load_formal_policy(run_path, pin=pin)
+        result["policy"] = {
+            "pin_source": pin_source,
+            "policy": policy.policy,
+            "project": policy.project,
+            "root": str(root) if root else "",
+            # Whether this run was expected to produce formal evidence at all.
+            # A caller deciding what to make of `not_applicable` needs it: on a
+            # formal-track run with the policy on, "nothing staged" is a very
+            # different statement than it is on an ordinary run.
+            "formal_track": bool(is_formal_track(run_path)),
+        }
+        staged, staged_status = read_formal_terminal_state(run_path)
+        if staged_status == "unreadable":
+            # A verdict that is there but cannot be read is not the same as no
+            # verdict: the host cannot confirm, and that is never a pass.
+            result["status"] = "unavailable"
+            result["ok"] = False
+            result["detail"] = "staged_verdict_unreadable"
+            return result
         if not staged or staged.get("terminal_state") != "sorry_free_artifact":
             result["detail"] = "no_certified_verdict_staged"
             return result

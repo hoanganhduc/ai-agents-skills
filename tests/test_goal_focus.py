@@ -4452,12 +4452,16 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
 class HostReverificationAtFinalizeTests(_AttestedGoalFocusTestCase):
     """WS1: a certified formal claim is re-checked by the host before it banks."""
 
-    def _bank(self, root: Path, reverifier) -> dict:
+    def _bank(self, root: Path, reverifier, **record_extra: object) -> dict:
         plan = _activate(root)
         staged = _stage_enforced_candidate(
             root,
             plan,
-            {"output": "a formal result", "evidence_ids": ["proof.json"]},
+            {
+                "output": "a formal result",
+                "evidence_ids": ["proof.json"],
+                **record_extra,
+            },
         )
         return gf.finalize_candidate(
             root,
@@ -4505,6 +4509,9 @@ class HostReverificationAtFinalizeTests(_AttestedGoalFocusTestCase):
                         "ok": False,
                         "detail": "coverage_digest_mismatch",
                     },
+                    # The row the append gate admitted on a host verdict: this
+                    # is the one whose claim the re-check speaks to.
+                    formal_terminal_state={"terminal_state": "sorry_free_artifact"},
                 )
             self.assertIn("host re-verification gate", str(caught.exception))
             self.assertIn("coverage_digest_mismatch", str(caught.exception))
@@ -4524,8 +4531,35 @@ class HostReverificationAtFinalizeTests(_AttestedGoalFocusTestCase):
                         "ok": False,
                         "detail": "gate_scan_unavailable",
                     },
+                    formal_terminal_state={"terminal_state": "sorry_free_artifact"},
                 )
             self.assertIn("unavailable", str(caught.exception))
+
+    def test_a_stale_verdict_does_not_wedge_the_rows_that_never_claimed_it(self) -> None:
+        """An ordinary iteration is not refused for an earlier row's stamp.
+
+        A run that reaches `sorry_free_artifact` and keeps going leaves that
+        stamp behind, and the next iteration's own source edits move the
+        digest away from it. The mismatch is real, but it is a statement about
+        the stamped row, not this one — refusing here would stop every
+        remaining iteration of the run. Record it and let the row bank.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            result = self._bank(
+                root,
+                lambda _root: {
+                    "status": "mismatch",
+                    "ok": False,
+                    "detail": "coverage_digest_mismatch",
+                },
+            )
+            recheck = result["record"]["host_reverification"]
+            self.assertEqual(recheck["status"], "mismatch")
+            self.assertEqual(recheck["detail"], "coverage_digest_mismatch")
+            rows = gf._read_iteration_rows(root)
+            self.assertEqual(rows[-1]["host_reverification"]["status"], "mismatch")
 
     def test_a_broken_reverifier_refuses_rather_than_banks(self) -> None:
         def _boom(_root):
@@ -4573,6 +4607,63 @@ class HostReverificationAtFinalizeTests(_AttestedGoalFocusTestCase):
             # was staged, so the real re-verifier reports not_applicable.
             result = self._bank(root, None)
             self.assertNotIn("host_reverification", result["record"])
+
+    def test_a_row_admitted_on_a_host_verdict_refuses_when_it_is_gone(self) -> None:
+        # The append gate stamps the verdict it admitted the row on. If the
+        # re-check then finds nothing staged, the evidence was removed between
+        # submission and bank — "nothing to check" must not read as a pass.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            with self.assertRaises(ValueError) as caught:
+                self._bank(
+                    root,
+                    lambda _root: {
+                        "status": "not_applicable",
+                        "ok": True,
+                        "detail": "no_certified_verdict_staged",
+                    },
+                    formal_terminal_state={
+                        "terminal_state": "sorry_free_artifact",
+                        "coverage_digest": "abc",
+                    },
+                )
+            self.assertIn("host re-verification gate", str(caught.exception))
+            self.assertIn("no_certified_verdict_staged", str(caught.exception))
+            self.assertEqual(gf._read_iteration_rows(root), [])
+            self.assertTrue((root / gf.PENDING_CANDIDATE_FILE).exists())
+
+    def test_a_stamped_row_banks_when_the_verdict_still_re_verifies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            result = self._bank(
+                root,
+                lambda _root: {"status": "reverified", "ok": True},
+                formal_terminal_state={"terminal_state": "sorry_free_artifact"},
+            )
+            self.assertEqual(
+                result["record"]["host_reverification"]["status"], "reverified"
+            )
+
+    def test_a_formal_run_records_the_recheck_even_with_nothing_staged(self) -> None:
+        # On a formal run the gate having run is itself evidence worth banking,
+        # so an ordinary iteration keeps the not_applicable result on the row.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            result = self._bank(
+                root,
+                lambda _root: {
+                    "status": "not_applicable",
+                    "ok": True,
+                    "detail": "no_certified_verdict_staged",
+                    "policy": {"policy": "on", "pin_source": "caller"},
+                },
+            )
+            recheck = result["record"]["host_reverification"]
+            self.assertEqual(recheck["status"], "not_applicable")
+            self.assertEqual(recheck["policy"]["pin_source"], "caller")
 
 
 if __name__ == "__main__":
