@@ -1796,6 +1796,36 @@ def consume_iteration_submission(
         os.close(directory_fd)
 
 
+def _require_formal_terminal_state_for_success(run_dir: Path) -> dict[str, Any]:
+    """The host verdict a formal-track success has to stand on, or a refusal.
+
+    Returns the summary to stamp on the row, and ``{}`` when the run is not
+    formal-track (nothing to require). Stamping matters as much as checking:
+    the row records which verdict admitted it, so the re-check at finalize can
+    tell a run that never staged one from a run whose stamp went missing.
+    """
+    formal_pol_local = load_formal_policy(run_dir)
+    if formal_pol_local.policy not in {"on", "force"} or not is_formal_track(run_dir):
+        return {}
+    terminal = load_formal_terminal_state(run_dir)
+    if not terminal or terminal.get("terminal_state") != "sorry_free_artifact":
+        raise GuardError(
+            "formal policy is active on a formal-track path: an early "
+            "success stop requires a host-authored formal/terminal_state.json "
+            "with terminal_state=sorry_free_artifact "
+            "(run the formal-terminal-state command first)",
+            **early_stop_contract(),
+        )
+    gate = terminal.get("gate") if isinstance(terminal.get("gate"), dict) else {}
+    scan = gate.get("scan") if isinstance(gate.get("scan"), dict) else {}
+    return {
+        "terminal_state": str(terminal.get("terminal_state") or ""),
+        "decided_at": str(terminal.get("decided_at") or ""),
+        "coverage_digest": str(scan.get("coverage_digest") or ""),
+        "source_digest": str(scan.get("source_digest") or ""),
+    }
+
+
 def _require_legacy_host_reverification(run_dir: Path) -> dict[str, Any]:
     """Re-run the host formal checks before a legacy run banks a proof claim.
 
@@ -1805,6 +1835,11 @@ def _require_legacy_host_reverification(run_dir: Path) -> dict[str, Any]:
     still holds, and the project stays agent-writable up to it. Refuse on
     anything other than agreement, so "the host could not re-check" never
     banks as "the host confirmed".
+
+    ``not_applicable`` is refused here too. The only caller reaches this after
+    reading a certified verdict off disk, so "there is nothing staged to
+    re-check" means the stamp went away in between — which is how an agent
+    turns a re-check it cannot survive into no re-check at all.
     """
     try:
         result = reverify_formal_evidence(run_dir)
@@ -1819,7 +1854,7 @@ def _require_legacy_host_reverification(run_dir: Path) -> dict[str, Any]:
             **early_stop_contract(),
         )
     status = str(result.get("status") or "").strip()
-    if status in {"reverified", "not_applicable"}:
+    if status == "reverified":
         return dict(result)
     detail = str(result.get("detail") or "").strip()
     raise GuardError(
@@ -1927,6 +1962,7 @@ def append_iteration(
             "for material claim review"
         )
     host_reverification: dict[str, Any] | None = None
+    formal_terminal_claim: dict[str, Any] = {}
     if args.decision == "stop" and remaining_after_append > 0:
         if str(args.stop_reason or "").strip() == "formal_open_ledger":
             # Honest negative for formal-track runs: allowed early only when the
@@ -1968,23 +2004,13 @@ def append_iteration(
                     + "; ".join(proof_errors),
                     **early_stop_contract(),
                 )
-            formal_pol_local = load_formal_policy(run_dir)
-            if formal_pol_local.policy in {"on", "force"} and is_formal_track(run_dir):
-                terminal = load_formal_terminal_state(run_dir)
-                if not terminal or terminal.get("terminal_state") != "sorry_free_artifact":
-                    raise GuardError(
-                        "formal policy is active on a formal-track path: an early "
-                        "success stop requires a host-authored formal/terminal_state.json "
-                        "with terminal_state=sorry_free_artifact "
-                        "(run the formal-terminal-state command first)",
-                        **early_stop_contract(),
-                    )
-                if not enforced_goal_focus:
-                    # Enforce mode re-checks the staged verdict when the host
-                    # finalizes the candidate. A legacy run never reaches that
-                    # step, so it re-checks here instead of banking a verdict
-                    # nothing has confirmed since it was written.
-                    host_reverification = _require_legacy_host_reverification(run_dir)
+            formal_terminal_claim = _require_formal_terminal_state_for_success(run_dir)
+            if formal_terminal_claim and not enforced_goal_focus:
+                # Enforce mode re-checks the staged verdict when the host
+                # finalizes the candidate. A legacy run never reaches that
+                # step, so it re-checks here instead of banking a verdict
+                # nothing has confirmed since it was written.
+                host_reverification = _require_legacy_host_reverification(run_dir)
     now = utc_now()
     record = {
         "schema_version": SCHEMA_VERSION,
@@ -2070,11 +2096,22 @@ def append_iteration(
                 "an early Goal-Focus global_delta=satisfied claim requires at least "
                 "one staged evidence_id with a valid proof artifact"
             )
+        # An enforce-mode submission never says "stop": it reports the goal
+        # satisfied, and `finalize_candidate` rewrites the accepted row to a
+        # success stop. The formal-track requirement therefore cannot hang off
+        # the decision alone, or this route banks a goal success on a
+        # formal-track run with no host verdict behind it.
+        formal_terminal_claim = _require_formal_terminal_state_for_success(run_dir)
     record["progress_assessment"] = {
         "campaign_delta": campaign_delta,
         "global_delta": global_delta,
         "obligation_ids": parse_many(getattr(args, "obligation_id", None)),
     }
+    if formal_terminal_claim:
+        # Which host verdict admitted this row. The re-check at finalize reads
+        # it to tell "this run never staged a verdict" — a pass — from "the
+        # verdict this row stands on is gone", which is not.
+        record["formal_terminal_state"] = formal_terminal_claim
     claimed_executor = str(getattr(args, "executor_provider", None) or "").strip()
     host_executor = str(control.get("AAS_AUTOLOOP_PRIMARY_PROVIDER") or "").strip()
     if enforced_goal_focus and host_executor:
@@ -2865,6 +2902,14 @@ def _apply_formal_drive_start(
         formal_cli = _formal_cli_from_args(args)
         pol = load_formal_policy(run_dir, cli=formal_cli or None)
         pin = pin_privileged_policy(pol)
+        # The root belongs in the pin for the same reason the project does: a
+        # later host process re-checking this verdict has to resolve the Lake
+        # project the way the drive did, and it has no other record of where.
+        pin["root"] = str(
+            Path(args.root).expanduser().resolve()
+            if getattr(args, "root", None)
+            else Path(run_dir)
+        )
         write_host_pin(run_dir, pin)
         # Persist when host explicitly set CLI/env or non-off policy so nested tools see it.
         env_set = any(
@@ -10561,6 +10606,10 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                 review=review,
                                 ledger_record=ledger_record,
                                 expected_plan_revision=int(pending.get("plan_revision") or 0),
+                                # In-memory pin, not the persisted one: the
+                                # re-check must resolve the project the drive
+                                # pinned, from a copy the agent cannot rewrite.
+                                formal_pin=formal_pin,
                             )
                         except Exception as exc:  # noqa: BLE001 - preserve pending on failed commit
                             _progress(
@@ -11888,6 +11937,10 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                 expected_plan_revision=int(
                                     pending.get("plan_revision") or 0
                                 ),
+                                # In-memory pin, not the persisted one: the
+                                # re-check must resolve the project the drive
+                                # pinned, from a copy the agent cannot rewrite.
+                                formal_pin=formal_pin,
                             )
                         except Exception as exc:  # noqa: BLE001 - preserve pending
                             failures += 1
@@ -12920,11 +12973,20 @@ def goal_focus_replan_command(args: argparse.Namespace) -> dict[str, Any]:
                 + (f": {primary_identity_error}" if primary_identity_error else "")
             ),
         }
-    providers = (
-        [item.strip() for item in str(args.providers).split(",") if item.strip()]
-        if args.providers
-        else None
-    )
+    if args.providers:
+        try:
+            providers = parse_explicit_provider_roster(args.providers)
+        except ValueError as exc:
+            return {
+                "status": "failed",
+                "action": "goal-focus-replan",
+                "dir": str(run_dir),
+                "dry_run": False,
+                "committed": False,
+                "error": str(exc),
+            }
+    else:
+        providers = None
     iter_dir = ensure_iter_dir(run_dir)
     previous_primary = os.environ.get("AAS_AUTOLOOP_PRIMARY_PROVIDER")
     os.environ["AAS_AUTOLOOP_PRIMARY_PROVIDER"] = primary_provider
@@ -13724,6 +13786,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_explicit_provider_roster(raw: str) -> list[str]:
+    """Split an explicit ``--providers`` value, refusing one that names nobody.
+
+    ``--providers ','`` parses to an empty list, and every panel entry point
+    reads an empty roster as "no roster supplied" and substitutes the default
+    one. The dispatch then goes to providers the operator never asked for, and
+    ``panel`` prints a ``results`` map keyed by the empty roster, so the report
+    describes nobody while the run described somebody. Refuse instead: passing
+    the flag and naming no provider is always a mistake.
+    """
+    roster = [item.strip() for item in str(raw).split(",") if item.strip()]
+    if not roster:
+        raise ValueError(
+            f"--providers {raw!r} names no provider; omit the flag to use the "
+            "configured default roster"
+        )
+    return roster
+
+
 def panel_command(args: argparse.Namespace) -> dict[str, Any]:
     """CLI entry for host-owned panel dispatch (does not start drive)."""
     root = Path(args.root).expanduser().resolve() if args.root else None
@@ -13733,14 +13814,13 @@ def panel_command(args: argparse.Namespace) -> dict[str, Any]:
     if run_dir is None:
         run_dir = root
     cfg = load_panel_config(run_dir)
-    providers = (
-        [p.strip() for p in args.providers.split(",") if p.strip()]
-        if args.providers
-        else list(
-            cfg.get("providers")
-            or ["codex", "claude", "codewhale"]
-        )
-    )
+    if args.providers:
+        try:
+            providers = parse_explicit_provider_roster(args.providers)
+        except ValueError as exc:
+            return {"status": "failed", "action": "panel", "error": str(exc)}
+    else:
+        providers = list(cfg.get("providers") or ["codex", "claude", "codewhale"])
     if args.smoke or args.phase == "smoke":
         timeout = args.timeout or int((cfg.get("timeouts") or {}).get("smoke", 120))
         summary = panel_smoke(root, providers=providers, timeout_s=timeout)

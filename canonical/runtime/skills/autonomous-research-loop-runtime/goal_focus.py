@@ -5706,7 +5706,9 @@ def _negative_space_entry_for_finalize(
         return None
 
 
-def _default_formal_reverifier(root: Path) -> dict[str, Any]:
+def _default_formal_reverifier(
+    root: Path, *, pin: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     try:
         import formal_policy as fp  # type: ignore
     except ImportError:  # pragma: no cover - package-relative import
@@ -5722,13 +5724,18 @@ def _default_formal_reverifier(root: Path) -> dict[str, Any]:
                 "ok": True,
                 "detail": "formal_policy_unavailable",
             }
-    return fp.reverify_formal_evidence(root)
+    # Without the pin the re-check resolves its policy from files the agent can
+    # write, and `project` is privileged: the agent would choose which project
+    # the host re-checks. The pin is the host's own drive-start snapshot.
+    return fp.reverify_formal_evidence(root, pin=dict(pin) if pin else None)
 
 
 def _require_host_reverification(
     root: Path,
     *,
     reverifier: Any | None = None,
+    pin: Mapping[str, Any] | None = None,
+    require_verdict: bool = False,
 ) -> dict[str, Any]:
     """Re-run the host formal checks before a certified proof claim banks.
 
@@ -5737,10 +5744,25 @@ def _require_host_reverification(
     the verdict and the bank. Banking therefore re-executes the checks and
     refuses whenever the re-run disagrees or cannot decide, so "the host could
     not re-check" never reads as "the host confirmed".
+
+    ``require_verdict`` marks a row that was admitted on a host verdict, and
+    only such a row is held to the re-check. Everything else is recorded and
+    let through, including a disagreement: an ordinary iteration banks no
+    proof claim, so a mismatch there is a statement about some *earlier* row's
+    stamp, and refusing this one for it would wedge every remaining iteration
+    of a run the moment a certified stamp goes stale — which is what editing
+    the sources for the next obligation does.
+
+    On a row that does claim a verdict the reading inverts. ``not_applicable``
+    means nothing certified is staged, which for that row means the stamp it
+    stands on went away: an agent that deletes it between append and finalize
+    would otherwise turn a re-check it could not survive into no re-check.
     """
-    call = reverifier if reverifier is not None else _default_formal_reverifier
     try:
-        result = call(root)
+        if reverifier is not None:
+            result = reverifier(root)
+        else:
+            result = _default_formal_reverifier(root, pin=pin)
     except Exception as exc:  # noqa: BLE001
         raise ValueError(
             f"host re-verification gate: re-verification failed: {exc}"
@@ -5748,8 +5770,16 @@ def _require_host_reverification(
     if not isinstance(result, Mapping):
         raise ValueError("host re-verification gate: re-verifier returned no result")
     status = _clean_text(result.get("status"))
-    if status == "not_applicable":
+    if not require_verdict:
+        # Recorded, not enforced: this row claims no host verdict, so whatever
+        # the re-check says it is not saying it about this row.
         return dict(result)
+    if status == "not_applicable":
+        detail = _clean_text(result.get("detail")) or "no_certified_verdict_staged"
+        raise ValueError(
+            "host re-verification gate: the staged row was admitted on a host "
+            f"formal verdict, but none is there to re-check: {detail}"
+        )
     if status != "reverified":
         detail = _clean_text(result.get("detail"))
         raise ValueError(
@@ -5772,6 +5802,7 @@ def finalize_candidate(
     registry_postimage: Mapping[str, Any] | None = None,
     expected_plan_revision: int | None = None,
     formal_reverifier: Any | None = None,
+    formal_pin: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     root = Path(run_dir)
     recover_transactions(root)
@@ -5902,9 +5933,19 @@ def finalize_candidate(
     if accepted:
         _validate_accepted_review_coverage(record, review)
         reverification = _require_host_reverification(
-            root, reverifier=formal_reverifier
+            root,
+            reverifier=formal_reverifier,
+            pin=formal_pin,
+            # The append gate stamps the host verdict it admitted the row on.
+            # That is the one case where "nothing staged" means the evidence
+            # was removed rather than never produced.
+            require_verdict=bool(record.get("formal_terminal_state")),
         )
-        if reverification.get("status") != "not_applicable":
+        reverification_policy = reverification.get("policy")
+        formal_run = isinstance(reverification_policy, Mapping) and _clean_text(
+            reverification_policy.get("policy")
+        ) in {"on", "force"}
+        if reverification.get("status") != "not_applicable" or formal_run:
             # The banked row carries the proof that the host re-checked, so a
             # later audit can tell a re-verified bank from an unchecked one.
             record["host_reverification"] = reverification

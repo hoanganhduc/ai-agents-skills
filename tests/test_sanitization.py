@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 import unittest
@@ -79,6 +80,28 @@ class SanitizationTests(unittest.TestCase):
             ignored = sanitization_check.git_ignored_prefixes(root)
             self.assertTrue(sanitization_check.should_skip_path(Path("secrets/local.json"), ignored))
             self.assertFalse(sanitization_check.should_skip_path(Path("kept.md"), ignored))
+
+    def test_an_ignored_path_that_is_not_utf8_still_reads_as_ignored(self) -> None:
+        """The prefix has to round-trip whatever bytes the filesystem holds.
+
+        Decoding git's output with `replace` turns an undecodable byte into
+        U+FFFD, so the prefix stops matching the name `rglob` yields and the
+        ignored file is scanned after all.
+        """
+        if os.name != "posix":
+            self.skipTest("non-UTF-8 filenames are a POSIX-only case")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            if subprocess.run(["git", "init", "-q", str(root)], check=False).returncode != 0:
+                self.skipTest("git unavailable")
+            (root / ".gitignore").write_text("*-tmp/\n", encoding="utf-8")
+            name = os.fsdecode(b"caf\xe9-tmp")
+            (root / name).mkdir()
+            (root / name / "note.md").write_text("# note\n", encoding="utf-8")
+            ignored = sanitization_check.git_ignored_prefixes(root)
+            self.assertTrue(
+                sanitization_check.should_skip_path(Path(name) / "note.md", ignored)
+            )
 
 
 if __name__ == "__main__":

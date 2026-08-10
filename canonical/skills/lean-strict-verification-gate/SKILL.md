@@ -110,12 +110,21 @@ the payload gains a matching limitation. The autonomous research loop passes no
 allowlist, so a `native_decide` proof is refused there.
 
 Declaration discovery is a line walk, not a Lean parser. It covers `theorem`
-and `lemma` under `namespace`, `section`, and `mutual` scopes, through
-attributes, an `open … in` prefix, and modifiers such as `noncomputable` and
+and `lemma` under `namespace`, `section` (including `noncomputable section`),
+and `mutual` scopes, through
+attributes, a same-line command prefix such as `open … in`, `set_option … in`,
+`attribute … in`, or `variable … in`, and modifiers such as `noncomputable` and
 `nonrec`. Definitions (`def`, `abbrev`, `instance`) are out of scope by
 design — a theorem that uses one inherits its axioms, so an unsound definition
 still surfaces through the theorem depending on it — and `example` has no name
 `#print axioms` could be asked about.
+
+A line that names `theorem` or `lemma` but that the walk cannot read a name off
+fails the audit rather than being skipped: it is listed in
+`declarations_unparsed` with a `declaration_unparsed` finding and `ok: false`.
+Silent non-coverage is the one outcome the audit cannot survive, since it would
+report a clean trust base over a scan that missed a proof. Pass `--declaration`
+to name the targets explicitly when a project trips this.
 
 `private` theorems are discovered but not audited: Lean mangles the name, so an
 importing harness cannot ask about one and asking anyway would fail the audit

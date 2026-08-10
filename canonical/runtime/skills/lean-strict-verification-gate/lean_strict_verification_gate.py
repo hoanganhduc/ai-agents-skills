@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 
 PLACEHOLDER_PATTERNS = {
@@ -22,7 +22,10 @@ PLACEHOLDER_PATTERNS = {
     "sorryAx": re.compile(r"\bsorryAx\b"),
 }
 TRUST_BASE_PATTERNS = {
-    "axiom": re.compile(r"^\s*axiom\s+", re.M),
+    # A command prefix may share the declaration's line, so `set_option x y in
+    # axiom evil : False` never reaches the start of one — the anchor has to
+    # allow an `... in` run ahead of the keyword.
+    "axiom": re.compile(r"(?:^\s*|\sin\s+)axiom\s+", re.M),
     "unsafe": re.compile(r"\bunsafe\b"),
     # Proof-by-native-evaluation trusts the compiler and native code, not just
     # the kernel — a trust-base expansion the gate must surface.
@@ -61,6 +64,9 @@ NEVER_SANCTIONED_AXIOMS = {"sorryAx"}
 # therefore permitted and always reported, never silent.
 COMPILER_TRUST_AXIOMS = {"Lean.ofReduceBool", "Lean.trustCompiler"}
 AXIOM_AUDIT_MAX_DECLARATIONS = 500
+# Unparsed lines are named in the report, but a pathological file must not be
+# able to grow the payload without bound; the count past the cap is summarized.
+AXIOM_AUDIT_MAX_UNPARSED = 20
 KERNEL_CHECK_MAX_MODULES = 50
 # A lakefile is a build script, not a library module: importing it into the
 # audit harness would be a build-time error, never a proof dependency.
@@ -667,26 +673,48 @@ _AXIOM_DEPENDS_RE = re.compile(r"'(?P<decl>[^']+)' depends on axioms: \[(?P<axio
 _AXIOM_NONE_RE = re.compile(r"'(?P<decl>[^']+)' does not depend on any axioms")
 _MODIFIERS = r"(?:(?:protected|noncomputable|partial|nonrec|unsafe|scoped)\s+)*"
 _DECLARATION_RE = re.compile(
-    # `open X in` may sit on the declaration's own line, ahead of the attributes.
-    r"^\s*(?:open\s+[^\n]*?\sin\s+)?(?:@\[[^\]]*\]\s*)*"
+    # Any command may be scoped to the next declaration with `... in`, and it
+    # may sit on that declaration's own line: `open X in`, `set_option k v in`,
+    # `attribute [simp] f in`, `variable (n : Nat) in`, `local notation ... in`.
+    # Matching only `open` here hid every other one from the audit. The inner
+    # `[^\n]*?` also spans a chain of them, since each ` in ` can be absorbed.
+    r"^\s*(?:\S[^\n]*?\sin\s+)?(?:@\[[^\]]*\]\s*)*"
     # `private` may sit anywhere in the modifier run, so both sides allow one.
     + _MODIFIERS
     + r"(?P<private>private\s+)?"
     + _MODIFIERS
     + r"(?:theorem|lemma)\s+(?P<name>[^\s:({\[]+)"
 )
+# What a declaration line looks like before the walk tries to read a name off
+# it. `theorem`/`lemma` are reserved, so the only way the keyword appears
+# elsewhere is inside a longer identifier or after a dot — both excluded here.
+_DECLARATION_KEYWORD_RE = re.compile(r"(?<![.\w])(?:theorem|lemma)\b")
 _NAMESPACE_RE = re.compile(r"^\s*namespace\s+(?P<name>[A-Za-z_][A-Za-z0-9_.'!?]*)")
 # Every block `end` closes must push a scope, or the walk pops a namespace it
-# never entered and every later name loses its prefix.
-_ANONYMOUS_SCOPE_RE = re.compile(r"^\s*(?:section|mutual)\b")
+# never entered and every later name loses its prefix. `noncomputable section`
+# is the common one: matching bare `section` alone left its `end` to pop the
+# enclosing namespace, so every declaration after it was audited under a name
+# that is either unresolvable or, worse, some other declaration's.
+_ANONYMOUS_SCOPE_RE = re.compile(r"^\s*" + _MODIFIERS + r"(?:section|mutual)\b")
 
 
-def scan_declarations(text: str) -> tuple[list[str], list[str]]:
-    """Qualified theorem/lemma names, split into auditable and private ones.
+class DeclarationScan(NamedTuple):
+    """What a source walk found, split by what the audit can do with it."""
 
-    This is a line walk over comment-stripped source, not a Lean parser: a
-    declaration it misses is simply never audited, and a name it invents is
-    reported back as ``declaration_unresolved`` rather than silently passing.
+    names: list[str]
+    private: list[str]
+    unparsed: list[str]
+
+
+def scan_declarations(text: str) -> DeclarationScan:
+    """Qualified theorem/lemma names, split by what the audit can do with them.
+
+    This is a line walk over comment-stripped source, not a Lean parser, so a
+    name it invents comes back as ``declaration_unresolved`` rather than
+    silently passing. A line it cannot read a name off is the dangerous half of
+    that: a missed declaration would simply never be audited, and the report
+    would present a clean trust base over a scan that skipped it. Those lines
+    are returned as ``unparsed`` so the caller can refuse instead.
     Definitions (``def``, ``abbrev``, ``instance``) are deliberately out of
     scope — a theorem that uses one inherits its axioms, so an unsound
     definition still surfaces through the theorem that depends on it — and
@@ -701,6 +729,7 @@ def scan_declarations(text: str) -> tuple[list[str], list[str]]:
     scopes: list[str] = []
     names: list[str] = []
     private: list[str] = []
+    unparsed: list[str] = []
     for line in strip_comments_and_strings(text).splitlines():
         namespace = _NAMESPACE_RE.match(line)
         if namespace:
@@ -719,12 +748,14 @@ def scan_declarations(text: str) -> tuple[list[str], list[str]]:
             name = declaration.group("name")
             qualified = f"{prefix}.{name}" if prefix else name
             (private if declaration.group("private") else names).append(qualified)
-    return names, private
+        elif _DECLARATION_KEYWORD_RE.search(line):
+            unparsed.append(line.strip())
+    return DeclarationScan(names, private, unparsed)
 
 
 def declaration_names(text: str) -> list[str]:
     """The auditable half of :func:`scan_declarations`."""
-    return scan_declarations(text)[0]
+    return scan_declarations(text).names
 
 
 def project_module_sources(root: Path) -> list[tuple[str, Path]]:
@@ -772,19 +803,19 @@ def built_project_modules(root: Path) -> tuple[list[str], list[str]]:
     return present, missing
 
 
-def project_declaration_scan(
-    root: Path, modules: list[str] | None = None
-) -> tuple[list[str], list[str]]:
-    """Auditable and private declaration names, optionally limited to modules.
+def project_declaration_scan(root: Path, modules: list[str] | None = None) -> DeclarationScan:
+    """Declaration names across the project, optionally limited to modules.
 
     Limiting matters for the audit: a declaration that lives only in a source
     Lake never built cannot be resolved against the compiled environment, and
     would be reported as an unresolved declaration — a refusal caused by a
-    stray copy rather than by anything wrong with the proof.
+    stray copy rather than by anything wrong with the proof. An unparsed line
+    is reported with its module, since the line alone rarely says where to look.
     """
     allowed = set(modules) if modules is not None else None
     names: list[str] = []
     private: list[str] = []
+    unparsed: list[str] = []
     for module, lean_file in project_module_sources(root):
         if allowed is not None and module not in allowed:
             continue
@@ -792,20 +823,21 @@ def project_declaration_scan(
             text = lean_file.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        found, found_private = scan_declarations(text)
-        names.extend(found)
-        private.extend(found_private)
+        found = scan_declarations(text)
+        names.extend(found.names)
+        private.extend(found.private)
+        unparsed.extend(f"{module}: {line}" for line in found.unparsed)
 
     def _unique(values: list[str]) -> list[str]:
         seen: set[str] = set()
         return [v for v in values if not (v in seen or seen.add(v))]
 
-    return _unique(names), _unique(private)
+    return DeclarationScan(_unique(names), _unique(private), _unique(unparsed))
 
 
 def project_declarations(root: Path, modules: list[str] | None = None) -> list[str]:
     """The auditable half of :func:`project_declaration_scan`."""
-    return project_declaration_scan(root, modules)[0]
+    return project_declaration_scan(root, modules).names
 
 
 def parse_axiom_report(text: str) -> dict[str, list[str]]:
@@ -896,10 +928,28 @@ def axiom_audit_payload(
         )
 
     if declarations:
-        targets, private_targets = declarations, []
+        targets, private_targets, unparsed_lines = declarations, [], []
     else:
-        targets, private_targets = project_declaration_scan(root, modules)
+        targets, private_targets, unparsed_lines = project_declaration_scan(root, modules)
     payload["declarations_requested"] = len(targets)
+    if unparsed_lines:
+        # A line the walk could not read a name off is a coverage hole, not a
+        # warning: it may have hidden a theorem, and an audit that reports a
+        # clean trust base over a partial scan is worse than no audit. Refuse
+        # and name the lines so the operator can pass --declaration instead.
+        shown = unparsed_lines[:AXIOM_AUDIT_MAX_UNPARSED]
+        payload["declarations_unparsed"] = shown
+        payload["findings"].extend(
+            {"kind": "declaration_unparsed", "detail": line} for line in shown
+        )
+        if len(unparsed_lines) > len(shown):
+            payload["findings"].append(
+                {
+                    "kind": "declaration_unparsed",
+                    "detail": f"{len(unparsed_lines) - len(shown)} further unparsed declaration lines",
+                }
+            )
+        payload["ok"] = False
     if private_targets:
         # Named, not hidden: an operator reading the report can see exactly
         # which proofs the harness was unable to ask about.

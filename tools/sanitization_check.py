@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -44,8 +45,11 @@ def git_ignored_prefixes(root: Path) -> frozenset[Path]:
         )
     except (OSError, subprocess.CalledProcessError):
         return frozenset()
+    # os.fsdecode, not decode(..., "replace"): a path git reports that is not
+    # valid UTF-8 has to round-trip to the same string rglob produces, or the
+    # prefix never matches and an ignored file is scanned anyway.
     return frozenset(
-        Path(entry) for entry in completed.stdout.decode("utf-8", "replace").split("\0") if entry
+        Path(os.fsdecode(entry)) for entry in completed.stdout.split(b"\0") if entry
     )
 
 
