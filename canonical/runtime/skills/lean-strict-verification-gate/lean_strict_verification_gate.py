@@ -348,8 +348,12 @@ def scan_input(path: Path, artifact_stage: str, allowed_imports: set[str]) -> di
 
 
 def project_lean_files(root: Path) -> list[Path]:
+    # Sort on the project-relative POSIX text, not on Path. Path ordering is
+    # case-folded on Windows and byte-ordered elsewhere, so `Proj/` and `loop/`
+    # come back in opposite orders on the two platforms and every downstream
+    # list — declarations, manifest rows, audit findings — reorders with them.
     files = []
-    for candidate in sorted(root.rglob("*.lean")):
+    for candidate in sorted(root.rglob("*.lean"), key=lambda p: p.relative_to(root).as_posix()):
         if any(part in PROJECT_EXCLUDED_DIRS for part in candidate.relative_to(root).parts):
             continue
         files.append(candidate)

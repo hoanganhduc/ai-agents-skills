@@ -96,7 +96,12 @@ class SanitizationTests(unittest.TestCase):
                 self.skipTest("git unavailable")
             (root / ".gitignore").write_text("*-tmp/\n", encoding="utf-8")
             name = os.fsdecode(b"caf\xe9-tmp")
-            (root / name).mkdir()
+            try:
+                (root / name).mkdir()
+            except OSError:
+                # APFS and other UTF-8-enforcing filesystems reject the name
+                # outright, so there is nothing to round-trip there.
+                self.skipTest("filesystem refuses non-UTF-8 filenames")
             (root / name / "note.md").write_text("# note\n", encoding="utf-8")
             ignored = sanitization_check.git_ignored_prefixes(root)
             self.assertTrue(
