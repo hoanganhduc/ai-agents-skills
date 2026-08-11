@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 SCHEMA_VERSION = "formal_policy.v1"
 FORMAL_POLICIES = frozenset({"off", "mention-only", "auto", "on", "force"})
@@ -438,11 +438,8 @@ def load_formal_policy(
     )
 
 
-def is_formal_track(run_dir: Path | str | None) -> bool:
-    """Exact formal-track predicate. Never raises."""
-    if run_dir is None:
-        return False
-    run_path = Path(run_dir)
+def _derive_formal_track(run_path: Path) -> bool:
+    """Read the formal track off the loop files the agent maintains."""
     try:
         state = _read_json(run_path / "loop_state.json") or {}
         npp = str(state.get("next_preferred_path") or "")
@@ -477,6 +474,94 @@ def is_formal_track(run_dir: Path | str | None) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return False
+
+
+class FormalTrackStatus(NamedTuple):
+    """What the host dispatched, what the loop files say, and whether they agree."""
+
+    formal_track: bool
+    derived: bool
+    pinned: bool | None
+    pin_source: str
+    pin_iteration: int | None
+
+    @property
+    def drift(self) -> bool:
+        return self.pinned is not None and self.pinned != self.derived
+
+
+def write_track_pin(
+    run_dir: Path | str,
+    *,
+    formal_track: bool,
+    source: str,
+    iteration: int | None = None,
+) -> None:
+    """Record the track the host is dispatching this iteration on. Never raises."""
+    try:
+        d = Path(run_dir) / "formal"
+        d.mkdir(parents=True, exist_ok=True)
+        pin = {
+            "schema_version": SCHEMA_VERSION,
+            "formal_track": bool(formal_track),
+            "source": str(source),
+            "iteration": int(iteration) if iteration is not None else None,
+            "pinned_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        _atomic_write_text(d / "track.pin.json", json.dumps(pin, indent=2) + "\n")
+    except OSError:
+        pass
+
+
+def read_track_pin(run_dir: Path | str) -> dict[str, Any]:
+    """The host's dispatch-time track observation, or ``{}``. Never raises."""
+    pin = _read_json(Path(run_dir) / "formal" / "track.pin.json")
+    return pin if isinstance(pin, dict) else {}
+
+
+def formal_track_status(run_dir: Path | str | None) -> FormalTrackStatus:
+    """Whether formal-track rules apply, from both the host and the loop files.
+
+    The derived reading comes from ``loop_state.next_preferred_path`` and
+    ``recovery.md``, which the agent under review can rewrite. That matters
+    because ``_require_formal_terminal_state_for_success`` keys off this
+    predicate: an agent that spends an iteration on Lean and then rewrites the
+    committed path to something without a formal token would face no host
+    terminal-state requirement when it claims the proof.
+
+    So the host records the track it dispatched on, before handing control over,
+    and the two readings are combined with OR. The pin is rewritten at every
+    dispatch rather than latched, so a run that genuinely leaves the formal
+    track stops carrying the requirement on the next iteration. OR is also what
+    makes the pin safe to keep in the agent-writable loop tree: forging
+    ``formal_track: false`` changes nothing, and forging ``true`` only adds a
+    host check the forger then has to pass.
+
+    A run with no pin — an archived run, a manual ``append-iteration``, any loop
+    that never went through drive — falls back to the derived reading alone.
+    Never raises.
+    """
+    if run_dir is None:
+        return FormalTrackStatus(False, False, None, "", None)
+    run_path = Path(run_dir)
+    derived = _derive_formal_track(run_path)
+    pin = read_track_pin(run_path)
+    pinned = pin.get("formal_track")
+    if not isinstance(pinned, bool):
+        return FormalTrackStatus(derived, derived, None, "", None)
+    iteration = pin.get("iteration")
+    return FormalTrackStatus(
+        formal_track=derived or pinned,
+        derived=derived,
+        pinned=pinned,
+        pin_source=str(pin.get("source") or ""),
+        pin_iteration=iteration if isinstance(iteration, int) else None,
+    )
+
+
+def is_formal_track(run_dir: Path | str | None) -> bool:
+    """Exact formal-track predicate. Never raises."""
+    return formal_track_status(run_dir).formal_track
 
 
 def _read_candidates(run_dir: Path) -> list[dict[str, Any]]:

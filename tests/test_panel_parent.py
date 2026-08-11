@@ -2203,6 +2203,98 @@ class PanelParentUnitTests(unittest.TestCase):
             self.assertIn("PATH-A", brief)
 
 
+class PanelRosterWithdrawalTests(unittest.TestCase):
+    """An empty roster means every reviewer is excluded, not "use the defaults".
+
+    ``load_panel_config`` already substitutes ``DEFAULT_PROVIDERS`` for a config
+    that names none and only then applies the exclusions, so an empty list
+    reaching the drive entry point can only mean withdrawal. Falling back to the
+    defaults there re-invited exactly the providers credit exhaustion had just
+    removed, and every invite failed.
+    """
+
+    @staticmethod
+    def _run_dir(root: Path, **panel: object) -> Path:
+        run_dir = root / "loop"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "panel.json").write_text(
+            json.dumps({"enabled": True, **panel}, indent=2) + "\n", encoding="utf-8"
+        )
+        return run_dir
+
+    def test_excluding_every_provider_is_reported_not_papered_over(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = self._run_dir(
+                root,
+                providers=["claude", "codex"],
+                exclude_until_credit=["claude"],
+                exclude_providers=["codex"],
+            )
+            self.assertEqual(pp.load_panel_config(run_dir)["providers"], [])
+
+            def runner(cmd, env, cwd, timeout_s):  # noqa: ANN001
+                raise AssertionError("a withdrawn roster must invite nobody")
+
+            summary = pp.run_panel_phase_for_drive(
+                run_dir, root, "result_review", runner=runner
+            )
+
+            self.assertTrue(summary["panel_roster_withdrawn"])
+            self.assertEqual(summary["usable_providers"], [])
+            self.assertFalse(summary["panel_content_pass"])
+            self.assertEqual(summary["excluded_providers"], ["claude", "codex"])
+
+    def test_a_surviving_provider_keeps_the_phase_running(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = self._run_dir(
+                root,
+                providers=["claude", "codex"],
+                exclude_until_credit=["codex"],
+                timeout_mode="fixed",
+                timeouts={"smoke": 5},
+            )
+            self.assertEqual(pp.load_panel_config(run_dir)["providers"], ["claude"])
+            invited: list[str] = []
+
+            def runner(cmd, env, cwd, timeout_s):  # noqa: ANN001
+                invited.append(" ".join(cmd))
+                return 0, "PANEL_SMOKE_OK", ""
+
+            summary = pp.run_panel_phase_for_drive(
+                run_dir, root, "smoke", prompt="status?", runner=runner
+            )
+
+            self.assertNotIn("panel_roster_withdrawn", summary)
+            self.assertEqual(len(invited), 1)
+
+    def test_an_explicit_provider_list_overrides_the_configured_roster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = self._run_dir(
+                root,
+                providers=["claude"],
+                exclude_providers=["claude"],
+                timeout_mode="fixed",
+                timeouts={"smoke": 5},
+            )
+
+            def runner(cmd, env, cwd, timeout_s):  # noqa: ANN001
+                return 0, "PANEL_SMOKE_OK", ""
+
+            summary = pp.run_panel_phase_for_drive(
+                run_dir,
+                root,
+                "smoke",
+                prompt="status?",
+                providers=["codex"],
+                runner=runner,
+            )
+
+            self.assertNotIn("panel_roster_withdrawn", summary)
+
+
 class PanelPiiPhonePatternTests(unittest.TestCase):
     """The phone detector must not fire on bare research digit runs."""
 

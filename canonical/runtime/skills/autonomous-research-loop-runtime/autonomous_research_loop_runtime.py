@@ -99,6 +99,7 @@ try:
         export_formal_env,
         formal_force_tick,
         formal_policy_prompt_addon,
+        formal_track_status,
         is_force_tick_enabled,
         is_formal_track,
         load_formal_policy,
@@ -108,6 +109,7 @@ try:
         resolve_formal_project,
         reverify_formal_evidence,
         write_host_pin,
+        write_track_pin,
     )
 except ImportError:  # pragma: no cover - package-style import during tests
     from .panel_parent import (  # type: ignore
@@ -170,6 +172,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
         export_formal_env,
         formal_force_tick,
         formal_policy_prompt_addon,
+        formal_track_status,
         is_force_tick_enabled,
         is_formal_track,
         load_formal_policy,
@@ -179,6 +182,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
         resolve_formal_project,
         reverify_formal_evidence,
         write_host_pin,
+        write_track_pin,
     )
 
 
@@ -1809,12 +1813,26 @@ def _require_formal_terminal_state_for_success(run_dir: Path) -> dict[str, Any]:
     it lands on.
     """
     formal_pol_local = load_formal_policy(run_dir)
-    if formal_pol_local.policy not in {"on", "force"} or not is_formal_track(run_dir):
+    track = formal_track_status(run_dir)
+    if formal_pol_local.policy not in {"on", "force"} or not track.formal_track:
         return {}
     terminal = load_formal_terminal_state(run_dir)
     if not terminal or terminal.get("terminal_state") != "sorry_free_artifact":
+        # Name the pin when it is the reason: the committed path no longer reads
+        # as formal, so without this line the refusal looks like it contradicts
+        # loop_state, and the honest fix (write the path back, or produce the
+        # terminal state) is not obvious from the message.
+        why = (
+            "formal policy is active on a formal-track path"
+            if track.derived
+            else (
+                "formal policy is active and the host dispatched this iteration "
+                "on the formal track (formal/track.pin.json), whatever the "
+                "committed path now says"
+            )
+        )
         raise GuardError(
-            "formal policy is active on a formal-track path: a success claim "
+            f"{why}: a success claim "
             "requires a host-authored formal/terminal_state.json "
             "with terminal_state=sorry_free_artifact "
             "(run the formal-terminal-state command first)",
@@ -1827,6 +1845,7 @@ def _require_formal_terminal_state_for_success(run_dir: Path) -> dict[str, Any]:
         "decided_at": str(terminal.get("decided_at") or ""),
         "coverage_digest": str(scan.get("coverage_digest") or ""),
         "source_digest": str(scan.get("source_digest") or ""),
+        "track_source": "loop_state" if track.derived else "host_dispatch_pin",
     }
 
 
@@ -2948,6 +2967,17 @@ def _apply_formal_drive_start(
             else Path(run_dir)
         )
         write_host_pin(run_dir, pin)
+        # The track the host is starting on, read before the agent runs. Every
+        # later reading ORs this in, so an agent that rewrites the committed
+        # path mid-iteration cannot shed the formal terminal-state requirement
+        # its own Lean work incurred. Pin the derived reading rather than the
+        # combined one: refreshing beats latching, so a run that legitimately
+        # leaves the formal track stops carrying the requirement.
+        write_track_pin(
+            run_dir,
+            formal_track=formal_track_status(run_dir).derived,
+            source="drive_start",
+        )
         # Persist when host explicitly set CLI/env or non-off policy so nested tools see it.
         env_set = any(
             os.environ.get(k)
@@ -9797,6 +9827,7 @@ DRIVE_EXIT_CODES = {
     "candidate_quarantined": 9,
     "quarantine_persistence_unverified": 10,
     "review_wait_exhausted": 16,
+    "panel_roster_withdrawn": 17,
     "bad_arguments": 2,
 }
 
@@ -10626,6 +10657,28 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             )
                             reason = "resource_cleanup_unverified"
                             break
+                        if review_summary.get("panel_roster_withdrawn"):
+                            _progress(
+                                "result_review_error",
+                                source="drive",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="error",
+                                review_status="error",
+                                completed_summary="No result was banked because every panel reviewer is withdrawn.",
+                                current_summary=(
+                                    "All configured reviewers are excluded, so the independent "
+                                    "result review cannot run: "
+                                    + (
+                                        ", ".join(
+                                            review_summary.get("excluded_providers") or []
+                                        )
+                                        or "no reviewers remain"
+                                    )
+                                ),
+                                next_action="Restore credit for at least one reviewer or clear exclude_until_credit, then resume.",
+                            )
+                            reason = "panel_roster_withdrawn"
+                            break
                         review_outcome = _result_review_from_panel(pending, review_summary)
                     except Exception as exc:  # noqa: BLE001 - pending must survive
                         review_outcome = {
@@ -10794,6 +10847,27 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             )
                             reason = "resource_cleanup_unverified"
                             break
+                        if strategy_summary.get("panel_roster_withdrawn"):
+                            _progress(
+                                "strategy_review_error",
+                                source="drive",
+                                iteration_status="error",
+                                review_status="error",
+                                completed_summary="No direction was committed because every panel reviewer is withdrawn.",
+                                current_summary=(
+                                    "All configured reviewers are excluded, so the strategy "
+                                    "review cannot run: "
+                                    + (
+                                        ", ".join(
+                                            strategy_summary.get("excluded_providers") or []
+                                        )
+                                        or "no reviewers remain"
+                                    )
+                                ),
+                                next_action="Restore credit for at least one reviewer or clear exclude_until_credit, then resume.",
+                            )
+                            reason = "panel_roster_withdrawn"
+                            break
                         strategy = _strategy_selection_from_panel(run_dir, strategy_summary)
                     except Exception as exc:  # noqa: BLE001 - no unreviewed dispatch
                         strategy = {"status": "waiting", "reason": str(exc)}
@@ -10953,6 +11027,21 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         )
                         reason = "resource_cleanup_unverified"
                         break
+                    if target_summary.get("panel_roster_withdrawn"):
+                        _progress(
+                            "panel_target_fail",
+                            source="drive",
+                            drive_cycle=iterations_run + 1,
+                            error=(
+                                "every panel reviewer is withdrawn: "
+                                + (
+                                    ", ".join(target_summary.get("excluded_providers") or [])
+                                    or "no reviewers remain"
+                                )
+                            ),
+                        )
+                        reason = "panel_roster_withdrawn"
+                        break
                     _progress(
                         "panel_target_ok" if target_summary.get("panel_content_pass") else "panel_target_fail",
                         source="drive",
@@ -10971,6 +11060,19 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
 
             iteration_started_at = utc_now()
             iteration_started_monotonic = time.monotonic()
+            # Read the committed path while the host still owns the loop files,
+            # and pin it for the append-time formal gate. Refreshed here rather
+            # than latched: a pivot off the formal track was itself committed
+            # through review, so the next dispatch is entitled to drop the pin.
+            try:
+                write_track_pin(
+                    run_dir,
+                    formal_track=formal_track_status(run_dir).derived,
+                    source="drive_dispatch",
+                    iteration=iterations_run + 1,
+                )
+            except Exception:  # noqa: BLE001 - the pin only ever adds a check
+                pass
             dispatch_intent: dict[str, Any] = {}
             if goal_focus_mode == "enforce":
                 identity_overrides = (
@@ -11949,6 +12051,28 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                             )
                             reason = "resource_cleanup_unverified"
                             break
+                        if review_summary.get("panel_roster_withdrawn"):
+                            _progress(
+                                "result_review_error",
+                                source="drive",
+                                candidate_id=str(pending.get("candidate_id") or ""),
+                                iteration_status="error",
+                                review_status="error",
+                                completed_summary="No result was banked because every panel reviewer is withdrawn.",
+                                current_summary=(
+                                    "All configured reviewers are excluded, so the independent "
+                                    "result review cannot run: "
+                                    + (
+                                        ", ".join(
+                                            review_summary.get("excluded_providers") or []
+                                        )
+                                        or "no reviewers remain"
+                                    )
+                                ),
+                                next_action="Restore credit for at least one reviewer or clear exclude_until_credit, then resume.",
+                            )
+                            reason = "panel_roster_withdrawn"
+                            break
                         review_outcome = _result_review_from_panel(
                             pending, review_summary
                         )
@@ -12286,6 +12410,23 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                 error="panel resource cleanup was not verified",
                             )
                             reason = "resource_cleanup_unverified"
+                            break
+                        if review_summary.get("panel_roster_withdrawn"):
+                            _progress(
+                                "panel_review_fail",
+                                source="drive",
+                                drive_cycle=iterations_run,
+                                error=(
+                                    "every panel reviewer is withdrawn: "
+                                    + (
+                                        ", ".join(
+                                            review_summary.get("excluded_providers") or []
+                                        )
+                                        or "no reviewers remain"
+                                    )
+                                ),
+                            )
+                            reason = "panel_roster_withdrawn"
                             break
                         _progress(
                             "panel_review_ok"

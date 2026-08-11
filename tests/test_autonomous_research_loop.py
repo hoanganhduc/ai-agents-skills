@@ -3892,6 +3892,55 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
             result["exit_code"], arl.DRIVE_EXIT_CODES["review_wait_exhausted"]
         )
 
+    def test_a_withdrawn_panel_roster_stops_the_drive_instead_of_spending_it(self) -> None:
+        # Every reviewer excluded means the independent review cannot run at
+        # all. Left unreported it looks like an ordinary review wait: the drive
+        # burns its waits, exits, and the supervisor restarts it into the same
+        # dead end for the rest of the night, banking nothing.
+        arl, _gf = self._runtime_modules()
+        base = self.provider_fixture.root / "panel-roster-withdrawn"
+        project = base / "project"
+        loop = project / ".autoloop" / "loop"
+        project.mkdir(parents=True, mode=0o700)
+        registry_dir = self._trusted_registry_root("panel-roster-withdrawn")
+        init_args = arl.selftest_init_args(loop, max_iterations=2)
+        init_args.goal_focus_mode = "enforce"
+        arl.init_loop(init_args)
+        args = arl.selftest_drive_args(loop, registry_dir, "unused")
+        args.root = str(project)
+        args.cmd = None
+        args.provider = "claude"
+        profile = arl.provider_resource_limits(60, role="primary")
+        withdrawn = {
+            "phase": "strategy_review",
+            "panel_roster_withdrawn": True,
+            "excluded_providers": ["codex", "grok"],
+            "usable_providers": [],
+            "panel_content_pass": False,
+        }
+        with mock.patch.dict(
+            os.environ,
+            {"AAS_AUTOLOOP_PROVIDER_TRANSPORT": "trusted-local"},
+            clear=False,
+        ), mock.patch.object(
+            arl, "preflight_resource_backend", return_value=profile
+        ), mock.patch.object(
+            arl, "run_panel_phase_for_drive", return_value=withdrawn
+        ) as panel, mock.patch.object(
+            arl,
+            "interruptible_sleep",
+            side_effect=AssertionError("withdrawal must break before sleeping"),
+        ), mock.patch.object(
+            arl, "run_primary_subprocess"
+        ) as primary:
+            result = arl.drive_command(args)
+        panel.assert_called_once()
+        primary.assert_not_called()
+        self.assertEqual(result["reason"], "panel_roster_withdrawn", result)
+        self.assertEqual(
+            result["exit_code"], arl.DRIVE_EXIT_CODES["panel_roster_withdrawn"]
+        )
+
     def test_unopenable_evidence_root_is_not_reported_as_a_missing_submission(self) -> None:
         arl, _ = self._runtime_modules()
         missing = self.provider_fixture.root / "no-such-evidence-root"
@@ -7334,6 +7383,10 @@ if command == "drive":
         raise SystemExit(9)
     if (loop / "stub.exit10").exists():
         raise SystemExit(10)
+    if (loop / "stub.exit16").exists():
+        raise SystemExit(16)
+    if (loop / "stub.exit17").exists():
+        raise SystemExit(17)
     if provider == "claude":
         raise SystemExit(5)
     (loop / "stub.done").write_text("done\\n", encoding="utf-8")
@@ -7534,6 +7587,41 @@ raise SystemExit(2)
             self.assertEqual([row["provider"] for row in drive_rows], ["claude"])
             excluded = loop / "driver" / "EXCLUDED"
             self.assertTrue(not excluded.exists() or not excluded.read_text(encoding="utf-8").strip())
+
+    def test_supervisor_never_retries_an_unreachable_result_review(self) -> None:
+        # Exit 16 means the independent review never completed. Retrying it
+        # rotates providers and burns the restart budget against a review that
+        # cannot pass, and the catch-all reported it as "unclassified".
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            loop.mkdir(mode=0o700)
+            (loop / "stub.exit16").write_text("review waits exhausted\n", encoding="utf-8")
+
+            result = self._run(root, loop, self._config(max_restarts=50))
+
+            self.assertEqual(result.returncode, 17, result.stdout + result.stderr)
+            drive_rows = [
+                json.loads(line)
+                for line in (loop / "stub-drive.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual([row["provider"] for row in drive_rows], ["claude"])
+
+    def test_supervisor_never_retries_a_withdrawn_panel_roster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            loop.mkdir(mode=0o700)
+            (loop / "stub.exit17").write_text("no reviewers left\n", encoding="utf-8")
+
+            result = self._run(root, loop, self._config(max_restarts=50))
+
+            self.assertEqual(result.returncode, 18, result.stdout + result.stderr)
+            drive_rows = [
+                json.loads(line)
+                for line in (loop / "stub-drive.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual([row["provider"] for row in drive_rows], ["claude"])
 
     @staticmethod
     def _seed_excluded(loop: Path, content: str) -> None:

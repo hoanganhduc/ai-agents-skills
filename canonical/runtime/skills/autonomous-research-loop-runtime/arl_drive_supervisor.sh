@@ -15,6 +15,12 @@
 #  13  resource_cleanup_unverified (non-retryable safety stop)
 #  14  candidate_quarantined (non-retryable safety stop)
 #  15  quarantine_persistence_unverified (non-retryable safety stop)
+#  17  review_wait_exhausted (independent review never completed)
+#  18  panel_roster_withdrawn (every reviewer excluded; review cannot run)
+#
+# Note: 10 above is a supervisor exit set by LAUNCH_supervisor.sh. It is a
+# different namespace from *drive* exit 10 (quarantine_persistence_unverified),
+# which the case block below maps to supervisor exit 15.
 set -uo pipefail
 
 SUPERVISOR_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -516,6 +522,14 @@ while :; do
     10)
       notify "failed-completion quarantine could not be persisted; supervisor is stopping without retry or failover."
       exit 15
+      ;;
+    16)
+      notify "the independent result review never completed (review waits exhausted); supervisor is stopping rather than retrying a review that cannot pass. Check reviewer availability and panel timeouts."
+      exit 17
+      ;;
+    17)
+      notify "every panel reviewer is withdrawn, so no independent review can run; supervisor is stopping. Restore reviewer credit or clear exclude_until_credit before resuming."
+      exit 18
       ;;
     *)
       notify "driver exited $rc under $provider (unclassified); retrying in ${RETRY_SLEEP_S}s."
