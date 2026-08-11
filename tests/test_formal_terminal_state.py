@@ -9,6 +9,7 @@ runs only when the pinned toolchain is installed.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
@@ -1150,6 +1151,145 @@ class EarlyStopGuardTests(unittest.TestCase):
             self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
             status = json.loads(_run_runtime("status", "--dir", str(run_dir)).stdout)
             self.assertEqual(status["state_status"], "stopped")
+
+
+class FormalTrackPinTests(unittest.TestCase):
+    """The track a success claim is judged against is the one the host dispatched.
+
+    ``is_formal_track`` reads ``loop_state.next_preferred_path`` and
+    ``recovery.md``, both of which the agent under review maintains. The pin the
+    drive writes before handing control over is what keeps an agent from
+    spending an iteration on Lean and then rewriting the committed path so the
+    terminal-state requirement no longer applies to its own proof claim.
+    """
+
+    @staticmethod
+    def _clear_formal_track(run_dir: Path) -> None:
+        path = run_dir / "loop_state.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        state["next_preferred_path"] = "write up the counting argument"
+        path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    def test_no_pin_falls_back_to_the_derived_reading(self) -> None:
+        # Archived runs and manual append-iteration calls never go through
+        # drive, so the pin is absent and behaviour is unchanged.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            self.assertEqual(fp.read_track_pin(run_dir), {})
+            self.assertFalse(fp.is_formal_track(run_dir))
+
+            _set_formal_track(run_dir)
+            status = fp.formal_track_status(run_dir)
+            self.assertTrue(status.formal_track)
+            self.assertTrue(status.derived)
+            self.assertIsNone(status.pinned)
+            self.assertFalse(status.drift)
+
+    def test_a_pinned_track_survives_a_rewritten_committed_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            _set_formal_track(run_dir)
+            fp.write_track_pin(
+                run_dir, formal_track=True, source="drive_dispatch", iteration=1
+            )
+
+            self._clear_formal_track(run_dir)
+            status = fp.formal_track_status(run_dir)
+            self.assertTrue(status.formal_track)
+            self.assertFalse(status.derived)
+            self.assertTrue(status.pinned)
+            self.assertTrue(status.drift)
+            self.assertEqual(status.pin_source, "drive_dispatch")
+            self.assertEqual(status.pin_iteration, 1)
+
+    def test_a_forged_false_pin_cannot_shed_the_derived_track(self) -> None:
+        # The pin file sits in the agent-writable loop tree. Combining the two
+        # readings with OR is what makes that safe: writing false changes
+        # nothing, and writing true only adds a check the writer must pass.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            _set_formal_track(run_dir)
+            fp.write_track_pin(run_dir, formal_track=False, source="forged")
+
+            status = fp.formal_track_status(run_dir)
+            self.assertTrue(status.formal_track)
+            self.assertTrue(status.drift)
+
+    def test_a_pin_dropped_at_the_next_dispatch_releases_the_requirement(self) -> None:
+        # The pin is refreshed per dispatch rather than latched, so a run that
+        # genuinely leaves the formal track is not stuck carrying a Lean
+        # terminal-state requirement it can never satisfy.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            _set_formal_track(run_dir)
+            fp.write_track_pin(run_dir, formal_track=True, source="drive_dispatch")
+            self._clear_formal_track(run_dir)
+            fp.write_track_pin(
+                run_dir, formal_track=False, source="drive_dispatch", iteration=2
+            )
+
+            status = fp.formal_track_status(run_dir)
+            self.assertFalse(status.formal_track)
+            self.assertFalse(status.drift)
+
+    def test_the_success_gate_holds_when_only_the_pin_says_formal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            _set_formal_track(run_dir)
+            _write_proof_artifact(run_dir)
+            fp.write_track_pin(
+                run_dir, formal_track=True, source="drive_dispatch", iteration=1
+            )
+            self._clear_formal_track(run_dir)
+
+            rejected = _append_stop(
+                run_dir, stop_reason="proof_found", evidence_id="proof-artifact-1"
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            output = rejected.stdout + rejected.stderr
+            self.assertIn("sorry_free_artifact", output)
+            self.assertIn("track.pin.json", output)
+            self.assertEqual(
+                (run_dir / "iterations.jsonl").read_text(encoding="utf-8"), ""
+            )
+
+    def test_a_run_never_dispatched_on_the_formal_track_is_not_gated(self) -> None:
+        # The complement of the test above: a pin that says non-formal must not
+        # invent a Lean requirement for a run that never did Lean work.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            _write_proof_artifact(run_dir)
+            fp.write_track_pin(
+                run_dir, formal_track=False, source="drive_dispatch", iteration=1
+            )
+
+            accepted = _append_stop(
+                run_dir, stop_reason="proof_found", evidence_id="proof-artifact-1"
+            )
+            self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+
+    def test_drive_start_pins_the_track_it_resolved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            _set_formal_track(run_dir)
+            args = argparse.Namespace(root=str(run_dir))
+            # Drive start exports the resolved policy into os.environ so nested
+            # tools inherit it. In-process that would leak AAS_AUTOLOOP_FORMAL_*
+            # into every later test in the run, where load_formal_policy ranks
+            # env above the loop's own policy file.
+            with mock.patch.dict(os.environ, {}, clear=False):
+                rt._apply_formal_drive_start(run_dir, args)
+
+            pin = fp.read_track_pin(run_dir)
+            self.assertIs(pin.get("formal_track"), True)
+            self.assertEqual(pin.get("source"), "drive_start")
 
 
 class TerminalStateCliTests(unittest.TestCase):

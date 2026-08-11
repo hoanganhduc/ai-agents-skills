@@ -4467,7 +4467,29 @@ def run_panel_phase_for_drive(
 ) -> dict[str, Any]:
     """High-level entry used by drive_command."""
     cfg = load_panel_config(run_dir)
-    prov = providers or list(cfg.get("providers") or DEFAULT_PROVIDERS)
+    # load_panel_config already substituted DEFAULT_PROVIDERS for a config that
+    # names none, then applied exclude_until_credit / exclude_providers. An
+    # empty roster here therefore means every candidate reviewer is withdrawn,
+    # and falling back to the built-in defaults would invite exactly the
+    # providers that were excluded. Report the withdrawal instead so the caller
+    # stops rather than spending the run on invites that cannot be answered.
+    configured = list(cfg.get("providers") or [])
+    if providers:
+        prov = list(providers)
+    elif configured:
+        prov = configured
+    else:
+        return {
+            "phase": phase,
+            "panel_roster_withdrawn": True,
+            "iter_dir": str(iter_dir) if iter_dir is not None else "",
+            "excluded_providers": sorted(
+                set(cfg.get("exclude_until_credit") or [])
+                | set(_normalize_name_list(cfg.get("exclude_providers")))
+            ),
+            "usable_providers": [],
+            "panel_content_pass": False,
+        }
     timeouts = cfg.get("timeouts") or DEFAULT_TIMEOUT_S
     t_default = int(timeouts.get(phase, DEFAULT_TIMEOUT_S.get(phase, 600)))
     # 0 / None → let adaptive formula use phase base only

@@ -116,14 +116,61 @@ def open_mechanism_fingerprints(run_dir: str | Path, approach_id: str) -> set[st
     }
 
 
-def approach_blocked_by_negative_space(run_dir: str | Path, approach_id: str) -> str:
-    """Return exclusion reason when an open negative-space row covers the approach."""
+def dangling_supersessions(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Rows retired by a ``superseded_by`` that resolves to no row in the ledger.
 
-    open_rows = open_entries(run_dir, approach_id=approach_id)
-    if not open_rows:
-        return ""
+    ``superseded`` is how a refuted approach becomes attemptable again, and the
+    only thing standing behind the retirement is the row it names. Nothing was
+    checking that the named row exists, so a retirement pointing at a typo, a
+    deleted row, or itself read exactly like a real one.
+    """
+
+    by_id = {
+        _clean(row.get("entry_id")): row
+        for row in rows
+        if _clean(row.get("entry_id"))
+    }
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if _clean(row.get("status")).lower() != "superseded":
+            continue
+        target = _clean(row.get("superseded_by"))
+        if not target:
+            continue  # validate_entry already reports the missing field
+        if target == _clean(row.get("entry_id")) or target not in by_id:
+            out.append(dict(row))
+    return out
+
+
+def approach_blocked_by_negative_space(run_dir: str | Path, approach_id: str) -> str:
+    """Return exclusion reason when a negative-space row still covers the approach.
+
+    A row counts as still covering the approach when it is ``open``, and also
+    when it was retired by a ``superseded_by`` that resolves to nothing. The
+    second case is what keeps an unresolvable retirement from handing the loop
+    back an approach that was refuted on the evidence: the retirement has to
+    name a row that exists before the approach is attemptable again.
+    """
+
+    rows = load_negative_space(run_dir)
+    wanted = _clean(approach_id)
+    open_rows = [
+        row
+        for row in rows
+        if _clean(row.get("status")).lower() == "open"
+        and _clean(row.get("approach_id")) == wanted
+    ]
     entry_ids = sorted(_clean(r.get("entry_id")) for r in open_rows if _clean(r.get("entry_id")))
-    return "negative_space_open:" + ",".join(entry_ids[:5])
+    if entry_ids:
+        return "negative_space_open:" + ",".join(entry_ids[:5])
+    dangling = sorted(
+        _clean(r.get("entry_id"))
+        for r in dangling_supersessions(rows)
+        if _clean(r.get("approach_id")) == wanted and _clean(r.get("entry_id"))
+    )
+    if dangling:
+        return "negative_space_dangling_supersession:" + ",".join(dangling[:5])
+    return ""
 
 
 def build_entry(
@@ -303,6 +350,20 @@ def validate_negative_space(
                 errors.append(
                     f"duplicate open mechanism_fingerprint for approach {aid}: {fp}"
                 )
+
+    # validate_entry only sees one row, so it can check that superseded_by is
+    # present and never that it resolves. Resolving it is the whole point: an
+    # unresolvable retirement is how a refuted approach comes back without
+    # anything having superseded it.
+    for row in dangling_supersessions(rows):
+        eid = _clean(row.get("entry_id")) or "<no entry_id>"
+        target = _clean(row.get("superseded_by"))
+        if target == _clean(row.get("entry_id")):
+            errors.append(f"negative_space entry {eid} is superseded by itself")
+        else:
+            errors.append(
+                f"negative_space entry {eid} is superseded by unknown entry_id: {target}"
+            )
 
     if isinstance(registry, Mapping):
         campaigns = registry.get("campaigns")

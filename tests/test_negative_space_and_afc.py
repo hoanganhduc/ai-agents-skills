@@ -208,6 +208,110 @@ class NegativeSpaceUnitTest(unittest.TestCase):
             self.assertEqual(rows[1]["status"], "open")
             self.assertFalse(hasattr(ns, "delete_entry"))
 
+    def _refuted(self, root: Path, approach_id: str = "approach-a") -> dict:
+        entry = ns.build_entry(
+            kind="falsified_hypothesis",
+            mechanism_text="counterexample at n=7",
+            failure_summary="refuted",
+            reopen_condition="new mechanism",
+            approach_id=approach_id,
+            evidence_ids=["E1"],
+        )
+        ns.append_entries(root, [entry])
+        return entry
+
+    def test_a_real_supersession_clears_the_approach_and_validates(self) -> None:
+        # The complement of the two tests below: a supersession that names a row
+        # actually in the ledger still retires the old row and reopens nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entry = self._refuted(root)
+            closed, new = ns.supersession_rows(
+                old_entry=entry,
+                new_mechanism_text="different mechanism",
+                failure_summary="still exploring",
+                reopen_condition="r2",
+                different_family_review_fingerprint="fp-df",
+                evidence_ids=["E2"],
+            )
+            ns.rewrite_ledger(root, [closed, new])
+
+            self.assertEqual(ns.dangling_supersessions(ns.load_negative_space(root)), [])
+            report = ns.validate_negative_space(root)
+            self.assertEqual(report["status"], "ok", report["errors"])
+
+    def test_a_supersession_naming_no_row_keeps_the_approach_blocked(self) -> None:
+        # Flipping a refuted row to superseded is how an approach becomes
+        # attemptable again. Nothing checked that the named successor existed,
+        # so a retirement pointing at a row that was never written read exactly
+        # like a real one and handed the approach back.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entry = self._refuted(root)
+            retired = dict(entry)
+            retired["status"] = "superseded"
+            retired["superseded_by"] = "ns-does-not-exist"
+            retired["closed_at"] = ns.utc_now()
+            ns.rewrite_ledger(root, [retired])
+
+            reason = ns.approach_blocked_by_negative_space(root, "approach-a")
+            self.assertTrue(reason.startswith("negative_space_dangling_supersession:"))
+            self.assertIn(entry["entry_id"], reason)
+
+            report = ns.validate_negative_space(root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(
+                any("superseded by unknown entry_id" in err for err in report["errors"]),
+                report["errors"],
+            )
+
+            eligible, excluded = gf._eligible_approaches(
+                _registry_with_approaches(), run_dir=root
+            )
+            self.assertNotIn("approach-a", {row["id"] for row in eligible})
+            self.assertTrue(
+                any(
+                    row["approach_id"] == "approach-a"
+                    and "negative_space_dangling_supersession" in row["reason"]
+                    for row in excluded
+                )
+            )
+
+    def test_a_row_superseded_by_itself_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            entry = self._refuted(root)
+            retired = dict(entry)
+            retired["status"] = "superseded"
+            retired["superseded_by"] = entry["entry_id"]
+            retired["closed_at"] = ns.utc_now()
+            ns.rewrite_ledger(root, [retired])
+
+            report = ns.validate_negative_space(root)
+            self.assertEqual(report["status"], "error")
+            self.assertTrue(
+                any("superseded by itself" in err for err in report["errors"]),
+                report["errors"],
+            )
+            self.assertTrue(
+                ns.approach_blocked_by_negative_space(root, "approach-a").startswith(
+                    "negative_space_dangling_supersession:"
+                )
+            )
+
+    def test_an_open_row_still_blocks_under_its_own_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._refuted(root)
+            self.assertTrue(
+                ns.approach_blocked_by_negative_space(root, "approach-a").startswith(
+                    "negative_space_open:"
+                )
+            )
+            self.assertEqual(
+                ns.approach_blocked_by_negative_space(root, "approach-b"), ""
+            )
+
 
 class AntiFalseConsensusUnitTest(unittest.TestCase):
     def test_evidence_delta_and_wording_only(self) -> None:
