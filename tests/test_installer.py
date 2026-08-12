@@ -22,6 +22,7 @@ from installer.ai_agents_skills.apply import apply_plan, replace_with_text
 from installer.ai_agents_skills.agents import KNOWN_AGENT_NAMES, detect_agents, target_for
 from installer.ai_agents_skills.cli import (
     INSTALL_CONFIRMATION_PHRASE,
+    build_parser,
     main,
     require_complete_install_plan,
     resolve_install_selection,
@@ -3155,6 +3156,14 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
 
 class DocsAndLauncherTests(unittest.TestCase):
+    def test_cli_delegate_agent_default_timeout_is_ten_minutes(self) -> None:
+        args = build_parser().parse_args(["delegate-agent", "--task", "Review the claim."])
+        self.assertEqual(args.timeout, 600)
+        overridden = build_parser().parse_args(
+            ["delegate-agent", "--task", "Review the claim.", "--timeout", "45"]
+        )
+        self.assertEqual(overridden.timeout, 45)
+
     def assert_target_precheck_schema(self, target: dict[str, object]) -> None:
         expected = {
             "target",

@@ -185,7 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
     delegate_agent.add_argument("--resolved-model")
     delegate_agent.add_argument("--resolved-thinking")
     delegate_agent.add_argument("--max-providers", type=int, default=1)
-    delegate_agent.add_argument("--timeout", type=int, default=120)
+    delegate_agent.add_argument(
+        "--timeout",
+        type=int,
+        default=600,
+        help="per smoke/task timeout in seconds (default: 600)",
+    )
     delegate_agent.add_argument("--run-dir", type=Path)
     delegate_agent.add_argument("--dry-run", action="store_true")
     delegate_agent.add_argument("--allow-external-cli", action="store_true")

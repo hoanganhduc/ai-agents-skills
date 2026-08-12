@@ -82,7 +82,8 @@ and `reason_code`. Never record endpoints, ports, or node identities.
 
 Use `./installer/bootstrap.sh delegate-agent` for external CLI participants.
 Default to `--dry-run` while planning. Actual external process launch requires
-`--allow-external-cli`.
+`--allow-external-cli`. Each smoke/task command defaults to a 600-second timeout;
+use `--timeout <seconds>` when a different bounded duration is required.
 
 For research roles, dispatch is blocked unless the provider has:
 
