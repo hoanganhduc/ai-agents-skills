@@ -16,6 +16,8 @@ The managed CLI entrypoint is:
 Actual process launch requires `--allow-external-cli`. Research launch also
 requires a resolved latest model, highest thinking/reasoning value, and an
 explicit provider dispatch command such as `AAS_CLAUDE_DISPATCH_COMMAND`.
+The parent dispatcher gives each smoke/task command 600 seconds by default;
+override it with `--timeout <seconds>` for a different bounded duration.
 
 ## Scope
 
