@@ -67,11 +67,19 @@ so the estimate matches the kernels the run loop will actually launch.
 
 ## Runtime commands
 
-Linux (resolve the installed runtime root for the current agent, then call `run_skill.sh`):
+Linux (resolve the launcher for the current agent — a root-owned component generation when one is installed, otherwise the per-user runtime — then call it):
 
 ```bash
-runtime="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"
-run() { bash "$runtime/run_skill.sh" skills/kaggle-research-compute/run_kaggle_research_compute.sh "$@"; }
+# Credential-bearing lanes must launch from a root-owned AAS component
+# generation; the per-user runtime copy is refused by the credential gate.
+launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
+for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
+  gen="${gen%/}"
+  [ -f "$gen/manifest/credential-runtime.json" ] \
+    && [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] \
+    && launcher="$gen/canonical/runtime/runners/run_skill.sh"
+done
+run() { bash "$launcher" skills/kaggle-research-compute/run_kaggle_research_compute.sh "$@"; }
 ```
 
 ```bash

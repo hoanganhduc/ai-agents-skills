@@ -148,7 +148,16 @@ default cc/bcc, and the selected config path.
 Run via the managed runner (POSIX shown; see Windows Runtime Commands above):
 
 ```bash
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/send-email/run_send_email.sh <command> [args...]
+# Credential-bearing lanes must launch from a root-owned AAS component
+# generation; the per-user runtime copy is refused by the credential gate.
+launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
+for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
+  gen="${gen%/}"
+  [ -f "$gen/manifest/credential-runtime.json" ] \
+    && [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] \
+    && launcher="$gen/canonical/runtime/runners/run_skill.sh"
+done
+bash "$launcher" skills/send-email/run_send_email.sh <command> [args...]
 ```
 
 - `send` -- compose and send. Recipients (`--to`, `--cc`, `--bcc`) are repeatable
@@ -181,16 +190,16 @@ Examples:
 
 ```bash
 # preview without sending
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/send-email/run_send_email.sh \
+bash "$launcher" skills/send-email/run_send_email.sh \
   send --to <recipient> --subject "Report" --body "See attached." --attach ~/report.pdf --dry-run
 
 # send a text + HTML message to several recipients
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/send-email/run_send_email.sh \
+bash "$launcher" skills/send-email/run_send_email.sh \
   send --to <recipient> --cc <reviewer> --subject "Update" \
   --body "Plain fallback." --html "<p>Rich <b>body</b>.</p>"
 
 # test the server and credentials
-bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/send-email/run_send_email.sh verify
+bash "$launcher" skills/send-email/run_send_email.sh verify
 ```
 
 Every command prints a single JSON object. On success it includes `"ok": true`;

@@ -170,9 +170,17 @@ configured `project-scope` label. It requires a fresh protected lease and an exa
 bound to the current target count and digest. First obtain the read-only inventory:
 
 ```bash
-runtime="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"
+# Credential-bearing lanes must launch from a root-owned AAS component
+# generation; the per-user runtime copy is refused by the credential gate.
+launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
+for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
+  gen="${gen%/}"
+  [ -f "$gen/manifest/credential-runtime.json" ] \
+    && [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] \
+    && launcher="$gen/canonical/runtime/runners/run_skill.sh"
+done
 AAS_COMPUTE_SECRETS_FILE="$HOME/.config/ai-agents-skills/compute.env" \
-  bash "$runtime/run_skill.sh" \
+  bash "$launcher" \
   skills/hetzner-research-compute/run_hetzner_reaper.sh \
   kill --dry-run
 ```
@@ -181,7 +189,7 @@ Review every target, then copy the exact `required_confirmation` string from tha
 
 ```bash
 AAS_COMPUTE_SECRETS_FILE="$HOME/.config/ai-agents-skills/compute.env" \
-  bash "$runtime/run_skill.sh" \
+  bash "$launcher" \
   skills/hetzner-research-compute/run_hetzner_reaper.sh \
   kill --confirm-project-wide 'DELETE-AAS-HETZNER project=... count=... digest=...'
 ```

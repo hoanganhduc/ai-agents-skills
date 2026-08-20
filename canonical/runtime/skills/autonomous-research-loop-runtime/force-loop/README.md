@@ -44,11 +44,19 @@ force-loop smoke --loop DIR [--live] --policy-file ABS_PATH
 ### POSIX
 
 ```bash
-RUNTIME="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"
+# Credential-bearing lanes must launch from a root-owned AAS component
+# generation; the per-user runtime copy is refused by the credential gate.
+launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
+for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
+  gen="${gen%/}"
+  [ -f "$gen/manifest/credential-runtime.json" ] \
+    && [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] \
+    && launcher="$gen/canonical/runtime/runners/run_skill.sh"
+done
 POLICY=/abs/path/host-policy.env
 ROOT=/abs/path/project
 LOOP="$ROOT/loop"
-bash "$RUNTIME/run_skill.sh" \
+bash "$launcher" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
   bootstrap --loop "$LOOP" --root "$ROOT" --profile formal \
   --goal "…" --success-criteria "…" \
