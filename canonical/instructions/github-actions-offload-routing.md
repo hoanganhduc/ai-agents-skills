@@ -40,8 +40,17 @@ and runs via `run_skill.sh`. Resolve the runtime root for the current agent, the
 once (generate config if absent, authenticate `gh`, check deps, run `doctor`):
 ```
 # codex -> ~/.codex/runtime ; claude and others -> ~/.local/share/ai-agents-skills/runtime
+# Credential-bearing lanes must launch from a root-owned AAS component
+# generation; the per-user runtime copy is refused by the credential gate.
 runtime="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"; [ -d "$runtime" ] || runtime="$HOME/.codex/runtime"
-run() { bash "$runtime/run_skill.sh" skills/modal-research-compute/run_modal_research_compute.sh "$@"; }
+launcher="$runtime/run_skill.sh"
+for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
+  gen="${gen%/}"
+  [ -f "$gen/manifest/credential-runtime.json" ] \
+    && [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] \
+    && launcher="$gen/canonical/runtime/runners/run_skill.sh"
+done
+run() { bash "$launcher" skills/modal-research-compute/run_modal_research_compute.sh "$@"; }
 
 run bootstrap                  # one-time setup (config + gh auth + deps + doctor)
 run doctor                     # routing_order + gha readiness

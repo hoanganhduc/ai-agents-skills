@@ -52,8 +52,16 @@ loop allowlists Hetzner and the job is adequate), agents must call the lane skil
 Prefer:
 
 ```bash
-runtime="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}"
-het() { bash "$runtime/run_skill.sh" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
+# Credential-bearing lanes must launch from a root-owned AAS component
+# generation; the per-user runtime copy is refused by the credential gate.
+launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
+for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
+  gen="${gen%/}"
+  [ -f "$gen/manifest/credential-runtime.json" ] \
+    && [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] \
+    && launcher="$gen/canonical/runtime/runners/run_skill.sh"
+done
+het() { bash "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
 
 # free: inspect the JSON and approve its exact required_bundle_sha256
 het preflight --job /path/to/bundle --json
