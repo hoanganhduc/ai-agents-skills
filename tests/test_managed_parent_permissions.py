@@ -7,8 +7,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from installer.ai_agents_skills.agents import target_for
+from installer.ai_agents_skills.agents import detect_agents, target_for
 from installer.ai_agents_skills.apply import apply_plan
+from installer.ai_agents_skills.cli import skipped_agent_names
 from installer.ai_agents_skills.lifecycle import uninstall
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.managed_permissions import (
@@ -302,6 +303,33 @@ class ManagedParentPermissionTests(unittest.TestCase):
                     str(antigravity) in str(action.get("path"))
                     for action in plan["actions"]
                 )
+            )
+
+    def test_a_plan_blocked_agent_is_reported_as_skipped(self) -> None:
+        # doctor, precheck and audit-system are the commands run to find out
+        # whether a target is healthy, and they all report skipped_agent_names.
+        # It used to answer from agent home detection alone, so a target that
+        # plan and install skip was reported as neither detected-missing nor
+        # skipped -- the freeze was invisible in exactly the three places that
+        # exist to surface it.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".codex").mkdir()
+            antigravity = root / ".gemini" / "antigravity-cli"
+            antigravity.mkdir(parents=True)
+            migrated = root / ".gemini" / "config" / "skills"
+            migrated.mkdir(parents=True)
+            (antigravity / "skills").symlink_to(migrated)
+
+            requested = ["codex", "antigravity"]
+            agents = detect_agents(root, requested)
+            self.assertEqual(
+                sorted(agent.name for agent in agents),
+                ["antigravity", "codex"],
+            )
+            self.assertEqual(
+                skipped_agent_names(root, requested, agents),
+                ["antigravity"],
             )
 
     def test_absent_skill_directory_is_not_a_block(self) -> None:

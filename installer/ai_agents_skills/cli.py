@@ -63,6 +63,7 @@ from .planner import (
     build_plan,
     openclaw_skill_content_block_reason,
     openclaw_skill_support_block_reason,
+    plannable_agents,
     support_file_platform_block_reason,
     support_file_platform_exclusion_declared,
 )
@@ -937,12 +938,22 @@ def list_artifacts(manifests: dict[str, Any]) -> dict[str, Any]:
 
 
 def skipped_agent_names(root: Path, requested_agents: list[str] | None, agents: list[Any]) -> list[str]:
-    detected = {target.name for target in agents}
+    """Return the agents an install would not serve, by name.
+
+    Detecting an agent home is a weaker question than being able to install into
+    it, so ``detect_agents`` is not enough on its own: ``build_plan`` drops a
+    detected target whose managed skill directory it refuses to write through,
+    and a target missing from here looks healthy in exactly the commands run to
+    find that out.  Such a target stays in the caller's ``detected_agents`` --
+    the home really was found -- and appears here as well, which reads as
+    "detected, but skipped".
+    """
+    served = {target.name for target in plannable_agents(root, agents)[0]}
     candidates = requested_agents if requested_agents is not None else all_agent_names()
     return [
         str(status["agent"])
         for status in agent_home_statuses(root, candidates)
-        if status["agent"] not in detected
+        if status["agent"] not in served
     ]
 
 
