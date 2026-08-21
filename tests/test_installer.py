@@ -18,7 +18,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from installer.ai_agents_skills.apply import apply_action, apply_plan, replace_with_text
+from installer.ai_agents_skills.apply import apply_action, apply_plan, artifact_key, relocate_moved_artifact_records, replace_with_text
 from installer.ai_agents_skills.agents import KNOWN_AGENT_NAMES, detect_agents, target_for
 from installer.ai_agents_skills.cli import (
     INSTALL_CONFIRMATION_PHRASE,
@@ -5034,6 +5034,76 @@ class AntigravityTargetTests(unittest.TestCase):
             self.assertEqual([agent.name for agent in detect_agents(root)], ["antigravity"])
             self.assertEqual([agent.name for agent in detect_agents(root, ["antigravity"])], ["antigravity"])
 
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics for the vendor compat link")
+    def test_migrated_home_targets_the_migrated_skills_directory(self) -> None:
+        from installer.ai_agents_skills.agents import antigravity_skills_dir, target_for
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            legacy = root / ".gemini" / "antigravity-cli" / "skills"
+            migrated = root / ".gemini" / "config" / "skills"
+
+            # Unmigrated: the marker is what says the vendor moved the tree, and
+            # without it the original location is still the live one.
+            legacy.parent.mkdir(parents=True)
+            legacy.mkdir()
+            self.assertEqual(antigravity_skills_dir(root), legacy)
+
+            # Migrated: the installer will not write through the compatibility
+            # symlink, so it follows the vendor to the real directory.
+            migrated.mkdir(parents=True)
+            (root / ".gemini" / "config" / ".migrated").touch()
+            legacy.rmdir()
+            legacy.symlink_to(migrated)
+            self.assertEqual(antigravity_skills_dir(root), migrated)
+
+            target = target_for(root, "antigravity")
+            self.assertEqual(target.skills_dir, migrated)
+            self.assertEqual(target.artifact_dirs["entrypoint-alias"], migrated)
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics for the vendor compat link")
+    def test_a_link_pointing_elsewhere_is_not_followed(self) -> None:
+        from installer.ai_agents_skills.agents import antigravity_skills_dir
+
+        # The link is read to confirm the documented migration, never to be
+        # obeyed: a link aimed somewhere else must not redirect managed writes
+        # there, so the unmigrated location stays the answer and the planner's
+        # symlink guard refuses it.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            legacy = root / ".gemini" / "antigravity-cli" / "skills"
+            legacy.parent.mkdir(parents=True)
+            (root / ".gemini" / "config").mkdir(parents=True)
+            (root / ".gemini" / "config" / ".migrated").touch()
+            elsewhere = root / "elsewhere"
+            elsewhere.mkdir()
+            legacy.symlink_to(elsewhere)
+
+            self.assertEqual(antigravity_skills_dir(root), legacy)
+
+    def test_antigravity_rules_carry_the_frontmatter_their_loader_requires(self) -> None:
+        from installer.ai_agents_skills.render import MANAGED_MARKER, render_artifact_content
+        from installer.ai_agents_skills.verify import skill_metadata_valid
+
+        # Antigravity rejects a plugin rule file with no frontmatter and loads
+        # nothing from it, which no installer check notices because the file is
+        # written and verified exactly as intended.
+        manifests = load_manifests()
+        name = "autonomous-loop-enforcement"
+        spec = manifests["artifacts"]["artifacts"]["instruction-doc"][name]
+
+        rendered = render_artifact_content("instruction-doc", name, spec, "antigravity")
+        self.assertTrue(rendered.startswith("---\n"))
+        self.assertTrue(skill_metadata_valid(rendered, name))
+        # The managed marker has to survive, and after the frontmatter block --
+        # ahead of it the frontmatter is no longer first and the loader fails.
+        self.assertIn(MANAGED_MARKER, rendered)
+        self.assertGreater(rendered.index(MANAGED_MARKER), rendered.index("\n---\n"))
+
+        for agent in ("codex", "claude", "opencode", "grok", "kimi", "deepseek"):
+            other = render_artifact_content("instruction-doc", name, spec, agent)
+            self.assertFalse(other.startswith("---\n"), agent)
+
     def test_antigravity_support_is_visible_in_describe_output(self) -> None:
         manifests = load_manifests()
 
@@ -5853,6 +5923,96 @@ class VerifyManagedMarkerTests(unittest.TestCase):
             names = [c["name"] for c in res["checks"]]
             self.assertIn("managed-marker", names, res)
             self.assertEqual(res["status"], "failed", res)
+
+
+class RelocatedArtifactRecordTests(unittest.TestCase):
+    """A record follows its artifact when the agent's managed directory moves."""
+
+    def _state(self, path: Path) -> dict:
+        return {
+            "schema_version": 2,
+            "artifacts": [
+                {
+                    "key": f"antigravity:demo-skill:{path}",
+                    "agent": "antigravity",
+                    "skill": "demo-skill",
+                    "artifact": str(path),
+                    "artifact_type": "skill-file",
+                    "uninstall": {"action": "delete-created"},
+                }
+            ],
+            "runs": [],
+        }
+
+    def test_a_record_follows_the_artifact_through_a_moved_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            moved = root / "config" / "skills"
+            moved.mkdir(parents=True)
+            (moved / "demo-skill.md").write_text("body\n", encoding="utf-8")
+            old_dir = root / "cli" / "skills"
+            old_dir.parent.mkdir(parents=True)
+            old_dir.symlink_to(moved)
+            state = self._state(old_dir / "demo-skill.md")
+            action = {
+                "kind": "managed-file",
+                "agent": "antigravity",
+                "skill": "demo-skill",
+                "path": str(moved / "demo-skill.md"),
+            }
+
+            moves = relocate_moved_artifact_records(state, [action])
+
+            self.assertEqual([m["from"] for m in moves], [str(old_dir / "demo-skill.md")])
+            record = state["artifacts"][0]
+            self.assertEqual(record["artifact"], str(moved / "demo-skill.md"))
+            self.assertEqual(record["key"], artifact_key(action))
+            # The move is bookkeeping, so the record still knows how to be undone.
+            self.assertEqual(record["uninstall"], {"action": "delete-created"})
+            self.assertEqual(len(state["artifacts"]), 1)
+            self.assertTrue((moved / "demo-skill.md").exists())
+
+    def test_a_separate_file_at_the_new_path_is_left_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_dir = root / "cli" / "skills"
+            new_dir = root / "config" / "skills"
+            old_dir.mkdir(parents=True)
+            new_dir.mkdir(parents=True)
+            (old_dir / "demo-skill.md").write_text("body\n", encoding="utf-8")
+            (new_dir / "demo-skill.md").write_text("body\n", encoding="utf-8")
+            state = self._state(old_dir / "demo-skill.md")
+            action = {
+                "kind": "managed-file",
+                "agent": "antigravity",
+                "skill": "demo-skill",
+                "path": str(new_dir / "demo-skill.md"),
+            }
+
+            # Identical bytes are not identity: two files still need two records.
+            self.assertEqual(relocate_moved_artifact_records(state, [action]), [])
+            self.assertEqual(state["artifacts"][0]["artifact"], str(old_dir / "demo-skill.md"))
+
+    def test_another_agent_record_is_not_claimed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            moved = root / "config" / "skills"
+            moved.mkdir(parents=True)
+            (moved / "demo-skill.md").write_text("body\n", encoding="utf-8")
+            old_dir = root / "cli" / "skills"
+            old_dir.parent.mkdir(parents=True)
+            old_dir.symlink_to(moved)
+            state = self._state(old_dir / "demo-skill.md")
+            state["artifacts"][0]["agent"] = "claude"
+            action = {
+                "kind": "managed-file",
+                "agent": "antigravity",
+                "skill": "demo-skill",
+                "path": str(moved / "demo-skill.md"),
+            }
+
+            self.assertEqual(relocate_moved_artifact_records(state, [action]), [])
+            self.assertEqual(state["artifacts"][0]["artifact"], str(old_dir / "demo-skill.md"))
 
 
 if __name__ == "__main__":

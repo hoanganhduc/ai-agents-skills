@@ -217,7 +217,36 @@ def render_artifact_content(
         return render_persona(name, spec, agent, raw)
     if artifact_type == "entrypoint-alias":
         return render_entrypoint(name, spec, agent, raw)
+    if artifact_type == "instruction-doc" and agent == "antigravity":
+        raw = add_antigravity_rule_frontmatter(name, spec, raw)
     return add_managed_support_header(raw, agent, f"{artifact_type}:{spec['source']}")
+
+
+def add_antigravity_rule_frontmatter(name: str, spec: dict[str, Any], body: str) -> str:
+    """Prefix an Antigravity plugin rule with the frontmatter its loader requires.
+
+    Antigravity parses every ``.md`` under ``plugins/<name>/rules/`` and rejects
+    the file outright when it carries no frontmatter, logging ``invalid
+    frontmatter format`` to its own log and loading nothing.  Documents written
+    without it are installed and verified perfectly well and still never reach
+    the agent, because whether the consumer accepts an artifact is a question no
+    installer check asks.
+
+    ``name`` and ``description`` are the fields the vendor documents for plugin
+    markdown, and the entrypoint aliases this installer writes for the same CLI
+    use exactly that pair and parse cleanly.  ``add_managed_support_header``
+    puts the managed marker after a frontmatter block when it finds one, so the
+    marker stays where verification looks for it.
+    """
+    if body.startswith("---\n"):
+        return body
+    return (
+        f"---\n"
+        f"name: {yaml_scalar(name)}\n"
+        f"description: {yaml_scalar(str(spec['description']))}\n"
+        f"---\n\n"
+        f"{body.lstrip()}"
+    )
 
 
 def render_persona(name: str, spec: dict[str, Any], agent: str, body: str) -> str:

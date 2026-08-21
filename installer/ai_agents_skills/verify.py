@@ -182,6 +182,8 @@ def verify_artifact(artifact: dict[str, Any]) -> dict[str, Any]:
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
         if artifact.get("agent") == "antigravity" and artifact.get("artifact_type") == "entrypoint-alias":
             checks.append({"name": "antigravity-skill-frontmatter", "ok": skill_metadata_valid(text, str(artifact.get("artifact_name")))})
+        if artifact.get("agent") == "antigravity" and artifact.get("artifact_type") == "instruction-doc":
+            checks.append({"name": "antigravity-rule-frontmatter", "ok": skill_metadata_valid(text, str(artifact.get("artifact_name")))})
     if artifact.get("artifact_type") == "plugin" and path.exists():
         text = path.read_text(encoding="utf-8", errors="replace")
         checks.append({"name": "no-secret-leak", "ok": not has_sensitive_material(text)})
