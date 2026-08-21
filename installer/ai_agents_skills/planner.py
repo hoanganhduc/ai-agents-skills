@@ -9,7 +9,7 @@ from .agents import AgentTarget, agent_home_statuses, agent_supports_manifest_en
 from .capabilities import effective_install_mode_with_evidence
 from .discovery import current_platform
 from .manifest import REPO_ROOT
-from .managed_permissions import plan_managed_parent_chain
+from .managed_permissions import managed_boundary_block_reason, plan_managed_parent_chain
 from .openclaw_target_gate import openclaw_target_block_reason
 from .openclaw_target_paths import path_leak_block_reason
 from .render import (
@@ -199,8 +199,10 @@ def plannable_agents(root: Path, agents: list[AgentTarget]) -> tuple[list[AgentT
 
 def target_plan_block_reason(root: Path, agent: AgentTarget) -> str | None:
     if agent.name == "openclaw":
-        return openclaw_target_block_reason(root, operation="plan", agent=agent.name)
-    return None
+        reason = openclaw_target_block_reason(root, operation="plan", agent=agent.name)
+        if reason is not None:
+            return reason
+    return managed_boundary_block_reason(root, agent)
 
 
 def skill_supported_by_agent(spec: dict[str, Any], agent: AgentTarget) -> bool:

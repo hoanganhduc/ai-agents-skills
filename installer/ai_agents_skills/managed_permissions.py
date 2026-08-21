@@ -6,7 +6,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from .agents import target_for
+from .agents import AgentTarget, target_for
 from .capabilities import normalized_path_within
 
 
@@ -43,6 +43,52 @@ def managed_parent_boundary(root: Path, action: dict[str, Any]) -> Path | None:
     if not contained:
         return None
     return max(contained, key=lambda candidate: len(candidate.parts))
+
+
+def managed_boundary_dirs(target: AgentTarget) -> list[Path]:
+    """Return the managed directory roots an install would normalize for ``target``.
+
+    This mirrors the candidate set ``managed_parent_boundary`` selects from.  The
+    support-directory parent does not depend on the skill, so the placeholder
+    name never reaches the result.
+    """
+    return sorted({target.skills_dir, target.support_dir_for("_").parent}, key=str)
+
+
+def managed_boundary_block_reason(root: Path, target: AgentTarget) -> str | None:
+    """Return why ``target``'s managed directories cannot be planned, if any.
+
+    ``plan_managed_parent_chain`` fails closed on a component that is a symlink,
+    is not a directory, or is owned by neither root nor the caller.  It raises
+    from the per-action loop, so one unusable target aborts the whole plan and
+    takes every other agent down with it -- an agent CLI that migrates its own
+    layout and leaves a compatibility symlink where the skills directory used to
+    be is enough to do that.  Detecting the same condition per target turns the
+    abort into a reported skip, without relaxing any check: a blocked target is
+    still never written to.
+
+    A missing directory is not a block.  Installing into a fresh agent home is
+    the normal case, and the chain planner creates what is absent.
+    """
+    if os.name != "posix":
+        return None
+    for boundary in managed_boundary_dirs(target):
+        if not normalized_path_within(root, boundary):
+            continue
+        current = root
+        for component in boundary.relative_to(root).parts:
+            current /= component
+            try:
+                info = current.lstat()
+            except OSError:
+                break
+            if stat.S_ISLNK(info.st_mode):
+                return f"managed skill directory is a symlink: {current}"
+            if not stat.S_ISDIR(info.st_mode):
+                return f"managed skill directory is not a directory: {current}"
+            if int(info.st_uid) not in {0, os.geteuid()}:
+                return f"managed skill directory has an untrusted owner: {current}"
+    return None
 
 
 def _normalize_managed_parent_chain(

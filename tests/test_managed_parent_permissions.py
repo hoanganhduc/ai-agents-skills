@@ -11,7 +11,10 @@ from installer.ai_agents_skills.agents import target_for
 from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.lifecycle import uninstall
 from installer.ai_agents_skills.manifest import load_manifests
-from installer.ai_agents_skills.managed_permissions import plan_managed_parent_chain
+from installer.ai_agents_skills.managed_permissions import (
+    managed_boundary_block_reason,
+    plan_managed_parent_chain,
+)
 from installer.ai_agents_skills.planner import build_plan, classify_file_action
 from installer.ai_agents_skills.runtime import runtime_file_action
 
@@ -259,6 +262,56 @@ class ManagedParentPermissionTests(unittest.TestCase):
             self.assertTrue(target.is_file())
             self.assertTrue(
                 all(stat.S_IMODE(path.stat().st_mode) == 0o775 for path in managed_dirs)
+            )
+
+    def test_symlinked_agent_skill_directory_skips_only_that_agent(self) -> None:
+        # An agent CLI that migrates its own layout can leave a compatibility
+        # symlink where its skills directory used to be. plan_managed_parent_chain
+        # fails closed on that, and it raises from the per-action loop, so before
+        # this was detected per target one such agent aborted the entire plan --
+        # every other agent included.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".codex").mkdir()
+            antigravity = root / ".gemini" / "antigravity-cli"
+            antigravity.mkdir(parents=True)
+            migrated = root / ".gemini" / "config" / "skills"
+            migrated.mkdir(parents=True)
+            (antigravity / "skills").symlink_to(migrated)
+
+            plan = build_plan(
+                root,
+                load_manifests(),
+                ["graph-verifier"],
+                [target_for(root, "codex"), target_for(root, "antigravity")],
+                install_mode="copy",
+                runtime_profile="none",
+            )
+
+            self.assertIn(
+                {
+                    "agent": "antigravity",
+                    "reason": f"managed skill directory is a symlink: {antigravity / 'skills'}",
+                },
+                plan["skipped_agents"],
+            )
+            planned_agents = {action.get("agent") for action in plan["actions"]}
+            self.assertEqual(planned_agents, {"codex"})
+            self.assertFalse(
+                any(
+                    str(antigravity) in str(action.get("path"))
+                    for action in plan["actions"]
+                )
+            )
+
+    def test_absent_skill_directory_is_not_a_block(self) -> None:
+        # Installing into a fresh agent home is the normal case: the chain planner
+        # creates what is absent, so a missing boundary must not read as unusable.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".codex").mkdir()
+            self.assertIsNone(
+                managed_boundary_block_reason(root, target_for(root, "codex"))
             )
 
 
