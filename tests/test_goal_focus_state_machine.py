@@ -854,7 +854,7 @@ class WindowsSharingRetryTests(unittest.TestCase):
             self.assertEqual(result["status"], "committed")
             self.assertFalse((root / st.TRANSACTION_DIRNAME).exists())
 
-    def test_a_transient_denial_is_survived_by_every_wrapped_step(self) -> None:
+    def test_a_transient_denial_is_survived_by_the_wrapped_write_steps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
             st, "_is_windows", lambda: True
         ):
@@ -887,6 +887,34 @@ class WindowsSharingRetryTests(unittest.TestCase):
             with mock.patch.object(st.os, "replace", always_denies):
                 with self.assertRaises(PermissionError):
                     st._atomic_write_bytes(Path(tmp) / "payload.bin", b"payload")
+
+    def test_the_windows_branch_still_refuses_a_denied_lock_open_at_once(self) -> None:
+        """Tolerating a sharing violation must not soften the lock's own answer.
+
+        The lock is where a writer is granted or refused, so a refusal there is
+        a decision rather than a race, and the existing contract is one attempt.
+        This drives the Windows branch on any host, because otherwise only a
+        Windows run can tell that the branch started retrying.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            attempts: list[str] = []
+            real_open = os.open
+
+            def refuse(path: object, *args: object, **kwargs: object) -> int:
+                if str(path).endswith(st.LOCK_FILENAME):
+                    attempts.append(str(path))
+                    raise PermissionError("loop lock open refused")
+                return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+            with mock.patch.object(st, "_is_windows", lambda: True), mock.patch.object(
+                st.os, "open", refuse
+            ):
+                with self.assertRaises(PermissionError):
+                    with st.LoopLock(root, timeout_seconds=5):
+                        pass
+            self.assertEqual(len(attempts), 1)
 
     def test_posix_does_not_retry_a_denial(self) -> None:
         """On POSIX ``EACCES`` is a decision, so retrying it would only stall."""
