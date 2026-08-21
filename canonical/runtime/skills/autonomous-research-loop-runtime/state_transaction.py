@@ -476,12 +476,18 @@ class LoopLock:
                 before = None
             if before is not None and stat.S_ISLNK(before.st_mode):
                 raise TransactionError(f"loop lock is a symlink: {path}")
-            lock_fd = _tolerate_windows_sharing(
-                lambda: os.open(
-                    path,
-                    os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
-                    0o600,
-                )
+            # Deliberately not wrapped in _tolerate_windows_sharing.  Every
+            # other wrapped call is a step inside a commit the caller has
+            # already been granted; a denial there is the platform's, not a
+            # decision about this process.  Opening the lock is where that
+            # decision is made, and the acquire loop above already waits for a
+            # lock another writer holds.  Retrying a refusal here would only
+            # stall an unauthorised writer for the whole lock timeout before
+            # telling it the same thing.
+            lock_fd = os.open(
+                path,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                0o600,
             )
             after = os.fstat(lock_fd)
             if before is not None and (

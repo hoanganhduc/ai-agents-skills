@@ -2976,6 +2976,9 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_post_install_smoke_asks_only_about_runtimes_the_install_planned(self) -> None:
         manifests = load_manifests()
 
+        # The host platform, not a fixed one: the installed runtime smoke only
+        # runs when the target platform is the host, so naming another platform
+        # here would skip the very check this test is about.
         def smoke(selected: list[str], runtime_profile: str) -> dict[str, Any]:
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -2986,7 +2989,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     selected,
                     detect_agents(root, ["claude"]),
                     runtime_profile=runtime_profile,
-                    platform="linux",
+                    platform=current_platform(None),
                     requested_agents=["claude"],
                 )
                 applied = apply_plan(root, plan, dry_run=False)
@@ -2996,7 +2999,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     applied,
                     skills=set(selected),
                     agents={"claude"},
-                    platform="linux",
+                    platform=current_platform(None),
                     runtime_profile=runtime_profile,
                 )
 
@@ -3026,7 +3029,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 selected,
                 detect_agents(root, ["claude"]),
                 runtime_profile="auto",
-                platform="linux",
+                platform=current_platform(None),
                 requested_agents=["claude"],
             )
             applied = apply_plan(root, plan, dry_run=False)
@@ -3044,13 +3047,14 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 applied,
                 skills=set(selected),
                 agents={"claude"},
-                platform="linux",
+                platform=current_platform(None),
                 runtime_profile="auto",
             )
 
             self.assertEqual(report["runtime_smoke"]["status"], "failed")
             self.assertEqual(report["status"], "failed")
 
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_agent_scoped_uninstall_preserves_shared_runtime_for_other_agents(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:
