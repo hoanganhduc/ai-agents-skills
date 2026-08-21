@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
 import unittest
@@ -15,6 +16,13 @@ from installer.ai_agents_skills.render import (
     add_managed_support_header,
     render_skill_md,
 )
+
+
+NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "native Windows apply is dry-run-only until handle-bound mutation lands",
+)
+
 
 CANONICAL_SKILLS = Path("canonical/skills")
 
@@ -61,6 +69,7 @@ class SupportFileRenderTests(unittest.TestCase):
         ]
         self.assertEqual(offenders, [])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_an_opencode_install_ships_no_codex_runtime_path(self) -> None:
         # SKILL.md is neutralized for opencode; a support file in the same installed
         # directory that still says ~/.codex/runtime documents a path that home lacks.
@@ -132,6 +141,7 @@ class AntigravityNoteTests(unittest.TestCase):
         skill_file = next(root.rglob("graph-verifier.md"))
         return skill_file.read_text(encoding="utf-8")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_the_note_names_the_migrated_plugin_tree(self) -> None:
         # install --apply empties the pre-migration plugin tree, so a note naming it
         # sends the reading agent to a directory this same run cleared.
@@ -147,6 +157,7 @@ class AntigravityNoteTests(unittest.TestCase):
             self.assertIn("`~/.gemini/config/skills/`", note)
             self.assertNotIn("~/.gemini/antigravity-cli/plugins", note)
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_the_note_still_names_the_legacy_tree_on_an_unmigrated_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "home"
