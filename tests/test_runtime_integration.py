@@ -855,6 +855,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.assertFalse(runner_path.startswith(installed_runtime))
             self.assertFalse((root / ".codex" / "runtime" / "workspace" / "runtime-smoke").exists())
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "Windows has no POSIX group or other mode bits for chmod to clear",
+    )
     def test_scratch_directory_creation_drops_group_and_other_write(self) -> None:
         # run_skill.sh walks the command's parent chain and refuses any component
         # a group or other can write, and that check is deliberately not
