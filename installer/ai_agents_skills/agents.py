@@ -145,10 +145,11 @@ def target_for(root: Path, agent: str) -> AgentTarget:
     if agent == "antigravity":
         home = antigravity_home(root)
         plugin_home = home / "plugins" / "ai-agents-skills"
+        skills_dir = antigravity_skills_dir(root)
         return AgentTarget(
             name="antigravity",
             home=home,
-            skills_dir=home / "skills",
+            skills_dir=skills_dir,
             instructions_file=root / ".gemini" / "GEMINI.md",
             legacy_skills_dirs=(root / ".gemini" / "skills", root / ".agents" / "skills"),
             optional_skills_dirs=(root / ".agents" / "skills", root / ".gemini" / "skills"),
@@ -156,7 +157,7 @@ def target_for(root: Path, agent: str) -> AgentTarget:
                 "agent-persona": plugin_home / "agents",
                 "template": plugin_home / "templates",
                 "instruction-doc": plugin_home / "rules",
-                "entrypoint-alias": home / "skills",
+                "entrypoint-alias": skills_dir,
                 "command": plugin_home / "skills",
                 "tool-shim": plugin_home / "tools",
                 "plugin": plugin_home,
@@ -239,6 +240,42 @@ def opencode_home(root: Path) -> Path:
 
 def antigravity_home(root: Path) -> Path:
     return root / ".gemini" / "antigravity-cli"
+
+
+def antigravity_skills_dir(root: Path) -> Path:
+    """Return the flat skills directory the Antigravity CLI reads.
+
+    The vendor migrated its own layout, replacing ``antigravity-cli/skills``
+    with a compatibility symlink to ``.gemini/config/skills`` and leaving a
+    ``.migrated`` marker beside the new tree.  The installer refuses to write
+    through a symlinked managed directory -- correctly, since a link is exactly
+    how a write gets redirected -- so on a migrated home it must target the
+    migrated directory itself or install nothing at all.
+
+    The returned path is always a literal this function composes, never the
+    ``readlink`` of the compatibility link.  The installer decides where it
+    writes; following the link would let whatever the vendor points it at
+    receive managed writes.  The link is read only to confirm it goes where the
+    migration is documented to put it, and any other value falls back to the
+    unmigrated location rather than trusting it.
+    """
+    legacy = antigravity_home(root) / "skills"
+    config_home = root / ".gemini" / "config"
+    migrated = config_home / "skills"
+    if not (config_home / ".migrated").exists():
+        return legacy
+    try:
+        if not legacy.is_symlink():
+            # A real directory beside the marker means the migration did not
+            # move this tree, so the files are still where they always were.
+            return legacy if legacy.exists() else migrated
+        link = Path(os.readlink(legacy))
+        target = link if link.is_absolute() else (legacy.parent / link)
+    except OSError:
+        return legacy
+    if os.path.normpath(target) != os.path.normpath(migrated):
+        return legacy
+    return migrated
 
 
 def kimi_home(root: Path) -> Path:

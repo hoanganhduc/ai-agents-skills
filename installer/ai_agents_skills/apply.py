@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,9 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
         return {"run_id": run_id, "dry_run": False, "actions": []}
 
     state = load_state(root)
+    relocated = relocate_moved_artifact_records(state, plan["actions"])
+    if relocated:
+        save_state(root, state)
     preflight_plan(root, plan["actions"])
     for action in plan["actions"]:
         previous_state_artifact = find_state_artifact(state, action)
@@ -76,7 +80,70 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
     upsert_run(state, run_id, len(applied))
     save_state(root, state)
     write_run_record(root, run_id, applied)
-    return {"run_id": run_id, "dry_run": False, "actions": applied}
+    result = {"run_id": run_id, "dry_run": False, "actions": applied}
+    if relocated:
+        result["relocated_records"] = relocated
+    return result
+
+
+def relocate_moved_artifact_records(
+    state: dict[str, Any],
+    actions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Repoint state records at artifacts an agent has since moved, and report them.
+
+    A record is keyed by the path it was installed to, so a target whose managed
+    directory moves is no longer recognised at its own artifacts: the run adds a
+    second record at the new path and the first survives, describing the same
+    file under its former name.  Vendors do move these directories, and they
+    leave a symlink behind, so the stale record keeps resolving -- to the file
+    this run just rewrote.  Nothing then reconciles the two, and ``verify``
+    reports a signature mismatch for every artifact that changed, against a
+    record no installed file disagrees with.
+
+    A record matches an action only when the two paths name one file on disk and
+    belong to the same agent, which is identity, not resemblance: one file cannot
+    hold two of an agent's artifacts.  Matching that way costs nothing when no
+    link is involved, because a path with no link in it resolves to itself and
+    the keys already agree.
+
+    Only the record moves.  Its origin travels with it, so a later uninstall
+    still reverses the artifact the way it was installed, and the file itself is
+    not read, written, or unlinked here.
+    """
+    records = state.get("artifacts", [])
+    if not records:
+        return []
+    by_key = {item.get("key") for item in records}
+    claimed: set[int] = set()
+    relocated: list[dict[str, Any]] = []
+    for action in actions:
+        path = action.get("path")
+        agent = action.get("agent")
+        if not path or not agent:
+            continue
+        try:
+            key = artifact_key(action)
+        except KeyError:
+            continue
+        if key in by_key:
+            continue
+        real = os.path.realpath(path)
+        for index, item in enumerate(records):
+            if index in claimed or item.get("agent") != agent:
+                continue
+            recorded = item.get("artifact")
+            if not recorded or recorded == path:
+                continue
+            if os.path.realpath(recorded) != real:
+                continue
+            claimed.add(index)
+            by_key.add(key)
+            relocated.append({"agent": agent, "from": recorded, "to": path, "key": key})
+            item["key"] = key
+            item["artifact"] = path
+            break
+    return relocated
 
 
 def find_state_artifact(state: dict[str, Any], action: dict[str, Any]) -> dict[str, Any] | None:
