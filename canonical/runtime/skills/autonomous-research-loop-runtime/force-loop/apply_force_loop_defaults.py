@@ -108,7 +108,7 @@ def _legacy_policy_preflight(run_dir: Path) -> tuple[Path | None, dict[str, str]
             )
         descriptor = os.open(
             candidate,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
         )
         try:
             before = os.fstat(descriptor)

@@ -315,13 +315,15 @@ root_owned_metadata() {
 }
 
 trusted_credential_runtime_generation() {
-  local component_root pin manifest current expected
-  if ! [[ "$runtime_real" =~ ^/usr/local/libexec/coding-system/components/ai-agents-skills/([0-9a-f]{40})/canonical/runtime$ ]]; then
+  local component_root manifest current expected
+  # The pattern is anchored at both ends, so the captured pin is by construction the
+  # last segment of the component root stripped below. Re-comparing the two reads as
+  # a second check but cannot fail, which is worse than no check: it makes the pin
+  # look validated against something. The regex is the validation.
+  if ! [[ "$runtime_real" =~ ^/usr/local/libexec/coding-system/components/ai-agents-skills/[0-9a-f]{40}/canonical/runtime$ ]]; then
     return 1
   fi
-  pin="${BASH_REMATCH[1]}"
   component_root="${runtime_real%/canonical/runtime}"
-  [ "${component_root##*/}" = "$pin" ] || return 1
   manifest="$component_root/manifest/credential-runtime.json"
   root_owned_metadata "$manifest" file || return 1
   for expected in "$runtime_real" "$workspace_real" "$command_path"; do

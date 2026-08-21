@@ -718,7 +718,7 @@ def _secure_read_text(
         try:
             file_fd = os.open(
                 name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 dir_fd=dir_fd,
             )
         except FileNotFoundError:
@@ -2520,7 +2520,7 @@ def _copy_sealed_credential(source: Path, vault: Path, index: int) -> Path:
         try:
             source_fd = os.open(
                 source.name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 dir_fd=parent_fd,
             )
         except FileNotFoundError:

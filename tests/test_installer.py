@@ -3085,29 +3085,54 @@ class PlanInstallVerifyTests(unittest.TestCase):
         manifests = load_manifests()
         from installer.ai_agents_skills.agents import detect_agents
 
-        def install_both(root: Path) -> Path:
-            create_agent_homes(root, "claude")
+        def apply_skills(root: Path, skills: str) -> None:
             args = Args()
-            args.skills = "zotero,calibre"
+            args.skills = skills
             selected = resolve_skills(args, manifests)
             plan = build_plan(root, manifests, selected, detect_agents(root, ["claude"]))
             apply_plan(root, plan, dry_run=False)
+
+        def install_both(root: Path) -> Path:
+            create_agent_homes(root, "claude")
+            apply_skills(root, "zotero,calibre")
             return root / ".claude" / "CLAUDE.md"
 
-        for order in (("zotero", "calibre"), ("calibre", "zotero")):
-            with fake_root() as tmp:
-                root = Path(tmp)
-                instructions = install_both(root)
-                self.assertTrue(instructions.exists())
-                for skill in order:
-                    uninstall(root, skills={skill}, dry_run=False)
-                leftover = (
-                    instructions.read_text(encoding="utf-8") if instructions.exists() else None
-                )
-                self.assertIsNone(
-                    leftover,
-                    f"instructions file survived removal in order {order}: {leftover!r}",
-                )
+        def install_then_add(root: Path) -> Path:
+            """Install one skill, then add the second the way a user would.
+
+            ``created_file`` is measured when a block is written, so a single
+            combined apply always records ``True`` on the first block, and the
+            guard's second term -- the ``uninstall.action == "delete-created"``
+            origin carried forward from the previous record -- is never the term
+            that decides.  A re-apply is the only shape where every record says
+            ``created_file: False`` for a file the installer really did create,
+            which is precisely the case the guard's own docstring exists for.
+            """
+
+            create_agent_homes(root, "claude")
+            apply_skills(root, "zotero")
+            apply_skills(root, "zotero,calibre")
+            return root / ".claude" / "CLAUDE.md"
+
+        for build in (install_both, install_then_add):
+            for order in (("zotero", "calibre"), ("calibre", "zotero")):
+                with self.subTest(install=build.__name__, order=order):
+                    with fake_root() as tmp:
+                        root = Path(tmp)
+                        instructions = build(root)
+                        self.assertTrue(instructions.exists())
+                        for skill in order:
+                            uninstall(root, skills={skill}, dry_run=False)
+                        leftover = (
+                            instructions.read_text(encoding="utf-8")
+                            if instructions.exists()
+                            else None
+                        )
+                        self.assertIsNone(
+                            leftover,
+                            f"instructions file survived removal after "
+                            f"{build.__name__} in order {order}: {leftover!r}",
+                        )
 
         with fake_root() as tmp:
             root = Path(tmp)
@@ -5608,6 +5633,109 @@ class AntigravityTargetTests(unittest.TestCase):
                 {"agent": "antigravity", "operation": "skip", "path": str(migrated)}
             ]
             self.assertEqual(antigravity_legacy_plugin_actions(root, agents, skipped, state), [])
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_removing_the_old_payload_also_retires_its_state_record(self) -> None:
+        """A removal has to compute the key of the record it is retiring.
+
+        The other removal passes select by artifact type and reach only records
+        keyed on the skill, so agent-and-skill-and-path is the whole key there.
+        This one selects by path prefix and reaches artifacts -- the plugin
+        manifest, the MCP config, the hook config -- whose key is built from
+        ``artifact_id`` instead.  A removal that dropped the id deleted the file
+        and left the record, and every verify afterwards reported it missing.
+        """
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            (root / ".gemini" / "antigravity-cli").mkdir(parents=True)
+
+            def install() -> None:
+                args = Args()
+                args.skills = "zotero"
+                selected = resolve_skills(args, manifests)
+                plan = build_plan(root, manifests, selected, detect_agents(root))
+                apply_plan(root, plan, dry_run=False)
+
+            # An unmigrated home puts the payload at the pre-migration root.
+            install()
+            legacy_payload = (
+                root / ".gemini" / "antigravity-cli" / "plugins" / "ai-agents-skills"
+            )
+            installed = sorted(
+                path for path in legacy_payload.rglob("*") if path.is_file()
+            )
+            self.assertTrue(installed)
+            recorded = [
+                item for item in load_state(root)["artifacts"]
+                if item.get("agent") == "antigravity"
+                and item.get("artifact", "").startswith(str(legacy_payload))
+            ]
+            self.assertEqual(len(recorded), len(installed))
+            # Without this the test would still pass once the ids were dropped
+            # from the records themselves, which is the thing being relied on.
+            self.assertTrue(all(item.get("artifact_id") for item in recorded))
+
+            # The vendor migration lands: a real plugins directory beside the
+            # marker, and skills replaced by the compatibility link.
+            config = root / ".gemini" / "config"
+            (config / "plugins").mkdir(parents=True)
+            (config / "skills").mkdir(parents=True)
+            (config / ".migrated").touch()
+            legacy_skills = root / ".gemini" / "antigravity-cli" / "skills"
+            if legacy_skills.exists():
+                shutil.copytree(legacy_skills, config / "skills", dirs_exist_ok=True)
+                shutil.rmtree(legacy_skills)
+            legacy_skills.symlink_to(config / "skills")
+
+            install()
+
+            self.assertEqual(
+                [path for path in legacy_payload.rglob("*") if path.is_file()], []
+            )
+            self.assertEqual(
+                [
+                    item for item in load_state(root)["artifacts"]
+                    if item.get("agent") == "antigravity"
+                    and item.get("artifact", "").startswith(str(legacy_payload))
+                ],
+                [],
+            )
+            self.assertEqual(verify(root)["status"], "ok")
+
+    def test_a_legacy_plugin_removal_keys_to_the_record_it_targets(self) -> None:
+        from installer.ai_agents_skills.agents import target_for
+        from installer.ai_agents_skills.planner import antigravity_legacy_plugin_actions
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            (root / ".gemini" / "antigravity-cli" / "plugins").mkdir(parents=True)
+            (root / ".gemini" / "config" / "plugins").mkdir(parents=True)
+            (root / ".gemini" / "config" / ".migrated").touch()
+            agent = target_for(root, "antigravity")
+            stale = (
+                root / ".gemini" / "antigravity-cli" / "plugins"
+                / "ai-agents-skills" / "plugin.json"
+            )
+            record = {
+                "key": f"antigravity:plugin:ai-agents-skills:{stale}",
+                "agent": "antigravity",
+                "skill": "repo-management",
+                "artifact": str(stale),
+                "artifact_type": "plugin",
+                "artifact_id": "plugin:ai-agents-skills",
+                "artifact_name": "ai-agents-skills",
+            }
+            migrated = agent.artifact_dirs["plugin"] / "plugin.json"
+            actions = [
+                {"agent": "antigravity", "operation": "update", "path": str(migrated)}
+            ]
+
+            removals = antigravity_legacy_plugin_actions(
+                root, [agent], actions, {"artifacts": [record]}
+            )
+            self.assertEqual(len(removals), 1)
+            self.assertEqual(artifact_key(removals[0]), record["key"])
 
     def test_the_old_plugin_root_keeps_what_this_run_is_not_replacing(self) -> None:
         from installer.ai_agents_skills.agents import antigravity_legacy_plugin_dir, target_for

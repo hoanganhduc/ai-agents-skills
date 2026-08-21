@@ -8,7 +8,7 @@ This reference contains operational details for the `vnthuquan` skill. Keep
 Use the runtime wrapper through the Codex runner:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh search "QUERY" --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh search "QUERY" --json
 ```
 
 Useful commands:
@@ -35,13 +35,13 @@ Downloads are dry-run by default unless `--execute --yes` is present.
 Dry-run one title:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh download --title "Mưa Đỏ" --format epub --dry-run --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh download --title "Mưa Đỏ" --format epub --dry-run --json
 ```
 
 Execute one title:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh download --title "Mưa Đỏ" --format epub --execute --yes --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh download --title "Mưa Đỏ" --format epub --execute --yes --json
 ```
 
 The wrapper consumes `--yes` and must not forward it to the native package.
@@ -57,7 +57,7 @@ them.
 Create a bounded dry-run queue:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh queue --query "Kim Dung" --limit 5 --format epub --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh queue --query "Kim Dung" --limit 5 --format epub --json
 ```
 
 Queue creation writes a timestamped manifest under
@@ -68,7 +68,7 @@ Queue creation writes a timestamped manifest under
 Execute a queue:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh execute-queue ~/.local/share/ai-agents-skills/runs/vnthuquan/queue-YYYYMMDD-HHMMSS-NNNNNN.json --jobs 1 --yes --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh execute-queue ~/.local/share/ai-agents-skills/runs/vnthuquan/queue-YYYYMMDD-HHMMSS-NNNNNN.json --jobs 1 --yes --json
 ```
 
 Queue execution writes a result log under the run directory and returns
@@ -77,7 +77,7 @@ Queue execution writes a result log under the run directory and returns
 Recover failed queue items:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh requeue-failed ~/.local/share/ai-agents-skills/runs/vnthuquan/queue-result-YYYYMMDD-HHMMSS-NNNNNN.json --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh requeue-failed ~/.local/share/ai-agents-skills/runs/vnthuquan/queue-result-YYYYMMDD-HHMMSS-NNNNNN.json --json
 ```
 
 The retry manifest contains only failed, non-skipped items that still have a
@@ -88,7 +88,7 @@ selector in the queue result.
 Validate a local file:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh validate PATH --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh validate PATH --json
 ```
 
 The wrapper defaults to native `--format auto` when no format is supplied.
@@ -98,7 +98,7 @@ The wrapper defaults to native `--format auto` when no format is supplied.
 Start with a non-mutating dry-run:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --dry-run --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --dry-run --json
 ```
 
 Behavior:
@@ -115,7 +115,7 @@ Real Calibre writes are allowed only after the dry-run result and duplicate
 candidates have been reviewed:
 
 ```bash
-bash ~/.codex/runtime/run_skill.sh skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --execute --yes --duplicates-reviewed --json
+bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --execute --yes --duplicates-reviewed --json
 ```
 
 Write behavior:

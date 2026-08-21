@@ -410,7 +410,7 @@ def _read_regular_bytes(
         try:
             fd = os.open(
                 absolute.name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 dir_fd=dir_fd,
             )
         finally:
@@ -492,7 +492,7 @@ def _migration_claim_snapshot(
         try:
             file_fd = os.open(
                 MIGRATION_CLAIM_FILE,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 dir_fd=directory_fd,
             )
         finally:

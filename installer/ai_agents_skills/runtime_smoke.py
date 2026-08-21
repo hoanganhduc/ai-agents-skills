@@ -1413,7 +1413,65 @@ def smoke_env(manifests: dict[str, Any], skill: str, workspace: Path) -> dict[st
         for key, value in env_canaries.items():
             if isinstance(key, str) and isinstance(value, str):
                 env[key] = value
+    plant_secret_file_canaries(manifests, skill, workspace, env)
     return env
+
+
+def secret_file_canary_spec(manifests: dict[str, Any], skill: str) -> dict[str, Any] | None:
+    """The declared secrets-file canary block for a skill, if it has one."""
+    smoke = manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
+    spec = smoke.get("secret_file_canaries") if isinstance(smoke, dict) else None
+    if not isinstance(spec, dict):
+        return None
+    pointer_env = spec.get("pointer_env")
+    values = spec.get("values")
+    if not isinstance(pointer_env, str) or not pointer_env:
+        return None
+    if not isinstance(values, dict) or not values:
+        return None
+    return spec
+
+
+def plant_secret_file_canaries(
+    manifests: dict[str, Any],
+    skill: str,
+    workspace: Path,
+    env: dict[str, str],
+) -> None:
+    """Hand a credential skill its canaries the way the runner really delivers them.
+
+    An ambient ``FOO_API_KEY=canary`` never survives ``run_skill.sh``: the launcher
+    unsets every known secret name before exec, and a credential-contract command
+    additionally keeps only its retained names and its own projected keys. So a
+    canary planted in the environment reaches nothing, and the resulting
+    ``canary-not-leaked`` check passes because the value was never in the process --
+    a guarantee the check did not measure. Writing the value into the pointer file
+    the runner projects puts it on the real delivery path, where echoing it is a
+    genuine leak and the check can genuinely fail.
+    """
+    spec = secret_file_canary_spec(manifests, skill)
+    if spec is None:
+        return
+    values = {
+        key: value
+        for key, value in spec["values"].items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
+    if not values:
+        return
+    smoke_dir = workspace / "runtime-smoke"
+    smoke_dir.mkdir(parents=True, exist_ok=True)
+    suffix = "json" if spec.get("format") == "json" else "env"
+    pointer = smoke_dir / f"{skill}.smoke-canary.{suffix}"
+    if suffix == "json":
+        body = json.dumps(values, indent=2, sort_keys=True) + "\n"
+    else:
+        body = "".join(f"{key}={value}\n" for key, value in sorted(values.items()))
+    pointer.write_text(body, encoding="utf-8")
+    # The strict loader refuses anything group- or world-readable, so a canary file
+    # that is not owner-private fails the launch instead of exercising it.
+    pointer.chmod(0o600)
+    env[spec["pointer_env"]] = str(pointer.resolve())
 
 
 def env_name_looks_secret(name: str) -> bool:
@@ -1429,8 +1487,9 @@ def canary_checks(
 ) -> list[dict[str, Any]]:
     """Assert that none of the injected canaries came back out.
 
-    ``smoke_env`` plants these values in the child environment, so any occurrence
-    in the output means the skill echoed something it was handed as a secret. The
+    ``smoke_env`` plants these values -- in the child environment, or, for a
+    credential-contract skill, in the secrets file the runner projects -- so any
+    occurrence in the output means the skill echoed something it was handed. The
     scan reads the raw streams rather than the parsed payload: a canary printed to
     stderr, or beside the JSON on stdout, has leaked just as surely as one carried
     inside it. Callers run this on every exit path, because a traceback is the
@@ -1438,12 +1497,16 @@ def canary_checks(
     """
     smoke = manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
     env_canaries = smoke.get("env_canaries", {}) if isinstance(smoke, dict) else {}
-    if not isinstance(env_canaries, dict):
+    declared: dict[str, str] = dict(env_canaries) if isinstance(env_canaries, dict) else {}
+    file_spec = secret_file_canary_spec(manifests, skill)
+    if file_spec is not None:
+        declared.update(file_spec["values"])
+    if not declared:
         return []
     combined = f"{stdout or ''}\n{stderr or ''}"
     return [
         {"name": f"canary-not-leaked:{name}", "ok": value not in combined}
-        for name, value in sorted(env_canaries.items())
+        for name, value in sorted(declared.items())
         if isinstance(name, str) and isinstance(value, str)
     ]
 
@@ -1628,6 +1691,9 @@ def validate_smoke_output(
             "name": "all-passed",
             "ok": isinstance(u2s_passed, int) and isinstance(u2s_total, int) and u2s_passed == u2s_total,
         })
+        # A selftest that asserts nothing also reports nothing failing, so an
+        # empty run has to count as a failure rather than a clean sheet.
+        checks.append({"name": "checks-not-empty", "ok": isinstance(u2s_total, int) and u2s_total > 0})
         checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
         checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
         checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})

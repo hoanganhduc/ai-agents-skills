@@ -238,10 +238,23 @@ def validate_resolved_model_syntax_before_prechecks(
 
 
 def read_task_text(task: str | None, task_file: Path | None) -> str:
-    if bool(task) == bool(task_file):
+    """Return the prompt to dispatch, from exactly one of the two sources.
+
+    The mutual-exclusion guard used to test truthiness while the branch below
+    tested None-ness, and an empty ``--task`` fell between them: ``--task ""
+    --task-file real.txt`` passed the guard, took the ``--task`` branch, and
+    dispatched an empty prompt -- while :func:`task_ref` keyed on ``task_file``
+    and recorded the digest of a file whose contents were never sent.  Both
+    checks now ask the same question, and an empty prompt is refused outright
+    rather than dispatched silently.
+    """
+
+    if (task is None) == (task_file is None):
         raise ValueError("provide exactly one of --task or --task-file")
     if task is not None:
         text = task
+        if not text.strip():
+            raise ValueError("--task must not be empty")
     else:
         path = task_file if task_file is not None else Path()
         if path.is_symlink():
@@ -255,7 +268,9 @@ def read_task_text(task: str | None, task_file: Path | None) -> str:
 
 
 def task_ref(args: Any) -> dict[str, Any]:
-    if args.task_file:
+    # Keyed on the same condition :func:`read_task_text` branches on, so the
+    # record always describes the text that was actually sent.
+    if args.task is None and args.task_file is not None:
         return {"kind": "task-file", "path": str(args.task_file), "sha256": sha256_file_text(args.task_file)}
     return {"kind": "inline-task", "sha256": sha256_text(args.task or "")}
 

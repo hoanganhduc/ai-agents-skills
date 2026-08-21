@@ -11,7 +11,7 @@ from .capabilities import (
     normalized_path_within,
     resolved_path_within,
 )
-from .json_merge import load_json_object, merge_hook_entry
+from .json_merge import extract_hook_entry, load_json_object, merge_hook_entry
 from .lifecycle import mark_created_instruction_file_groups
 from .managed_permissions import normalize_managed_parent_chain, restore_managed_modes
 from .openclaw_target_gate import real_openclaw_path_block_reason
@@ -411,6 +411,10 @@ def apply_json_merge_action(root: Path, run_id: str, action: dict[str, Any]) -> 
     backup = backup_file(root, run_id, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(path, json.dumps(merged, indent=2, sort_keys=True) + "\n")
+    # The installer owns one hook entry, never the whole settings file, so verify
+    # needs the entry itself to compare against; a whole-file hash would report
+    # every ordinary user edit as drift.
+    result["managed_entry"] = extract_hook_entry(merged, action["event"], action["managed_id"])
     result["applied"] = True
     result["backup"] = str(backup) if backup else None
     result["installed_signature"] = artifact_signature(path)
@@ -442,6 +446,9 @@ def apply_toml_merge_action(root: Path, run_id: str, action: dict[str, Any]) -> 
     backup = backup_file(root, run_id, path)
     path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(path, merged)
+    # Same reason as the hook merge above: the managed region is what verify can
+    # legitimately hold the user's config file to.
+    result["managed_body"] = action["body"]
     result["applied"] = True
     result["backup"] = str(backup) if backup else None
     result["installed_signature"] = artifact_signature(path)

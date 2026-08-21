@@ -143,7 +143,7 @@ def attest_openclaw_executable(value: str | os.PathLike[str] | None) -> Attested
     target_identity = _attest_regular_executable(target_path, root_only=False)
     target_descriptor = os.open(
         target_path,
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0),
     )
     try:
         if _executable_identity(os.fstat(target_descriptor)) != target_identity:
@@ -835,11 +835,11 @@ def run_openclaw_text(
         raise ValueError("OpenClaw executable changed after attestation")
     target_descriptor = os.open(
         executable.target_path,
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0),
     )
     node_descriptor = os.open(
         executable.node_path,
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0),
     )
     try:
         if _executable_identity(os.fstat(target_descriptor)) != executable.target_identity:
@@ -884,7 +884,7 @@ def _read_proc_value(path: Path, *, max_bytes: int) -> bytes:
         os.O_RDONLY
         | getattr(os, "O_NOFOLLOW", 0)
         | getattr(os, "O_NONBLOCK", 0)
-        | getattr(os, "O_CLOEXEC", 0),
+        | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0),
     )
     try:
         chunks: list[bytes] = []

@@ -487,8 +487,12 @@
           "subagent_spawn": "forbidden",
           "real_secrets": "forbidden"
         },
-        "env_canaries": {
-          "SMTP_PASSWORD": "SEND-EMAIL-SMOKE-CANARY"
+        "secret_file_canaries": {
+          "pointer_env": "SEND_EMAIL_SECRETS_FILE",
+          "format": "json",
+          "values": {
+            "SMTP_PASSWORD": "SEND-EMAIL-SMOKE-CANARY"
+          }
         }
       }
     },
@@ -655,9 +659,13 @@
           "subagent_spawn": "forbidden",
           "real_secrets": "forbidden"
         },
-        "env_canaries": {
-          "ZULIP_API_KEY": "REMOTE-BRIDGE-SMOKE-CANARY",
-          "TELEGRAM_BOT_TOKEN": "REMOTE-BRIDGE-SMOKE-CANARY"
+        "secret_file_canaries": {
+          "pointer_env": "REMOTE_BRIDGE_SECRETS_FILE",
+          "format": "json",
+          "values": {
+            "TELEGRAM_BOT_TOKEN": "REMOTE-BRIDGE-SMOKE-CANARY",
+            "ZULIP_API_KEY": "REMOTE-BRIDGE-SMOKE-CANARY"
+          }
         }
       }
     },
@@ -2268,8 +2276,12 @@
           "config_write": "forbidden",
           "real_secrets": "forbidden"
         },
-        "env_canaries": {
-          "AXLE_API_KEY": "AXLE-SMOKE-CANARY"
+        "secret_file_canaries": {
+          "pointer_env": "AAS_SKILL_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "AXLE_API_KEY": "AXLE-SMOKE-CANARY"
+          }
         }
       }
     },
@@ -2342,8 +2354,7 @@
           "real_secrets": "forbidden"
         },
         "env_canaries": {
-          "ANTHROPIC_API_KEY": "OPENGAUSS-SMOKE-CANARY",
-          "OPENAI_API_KEY": "OPENGAUSS-SMOKE-CANARY"
+          "AAS_OPENGAUSS_SMOKE_TOKEN": "OPENGAUSS-SMOKE-CANARY"
         }
       }
     },
@@ -2842,9 +2853,13 @@
           "config_write": "forbidden",
           "real_secrets": "forbidden"
         },
-        "env_canaries": {
-          "SEMANTIC_SCHOLAR_API_KEY": "SUBMISSION-VENUE-SELECTOR-CANARY",
-          "UNPAYWALL_EMAIL": "SUBMISSION-VENUE-SELECTOR-CANARY"
+        "secret_file_canaries": {
+          "pointer_env": "AAS_SKILL_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "SEMANTIC_SCHOLAR_API_KEY": "SUBMISSION-VENUE-SELECTOR-CANARY",
+            "UNPAYWALL_EMAIL": "SUBMISSION-VENUE-SELECTOR-CANARY"
+          }
         }
       }
     },
@@ -4864,8 +4879,12 @@
           "config_write": "forbidden",
           "real_secrets": "forbidden"
         },
-        "env_canaries": {
-          "AAS_LEAN_LIBRARY_TOKEN": "LEAN-RESEARCH-LIBRARY-SMOKE-CANARY"
+        "secret_file_canaries": {
+          "pointer_env": "AAS_SKILL_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "ZENODO_TOKEN": "LEAN-RESEARCH-LIBRARY-SMOKE-CANARY"
+          }
         }
       }
     }

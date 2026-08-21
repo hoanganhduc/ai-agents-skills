@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -128,9 +129,68 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
+def install_root(value: str) -> Path:
+    """Resolve a ``--root`` argument to an absolute path.
+
+    The root is not just read: every managed file is recorded against it in
+    ``state.json``, and every later command re-reads those records and asks
+    whether each artifact still lies within the root it was given.  A relative
+    ``--root ./sandbox`` writes relative records, which answer that question
+    against whatever directory the next command happens to run from -- so an
+    uninstall naming the same directory absolutely finds every record "outside
+    selected root", skips all of them, and still reports success.  An unexpanded
+    ``--root=~`` misses in the other direction: the appliers expanduser() it and
+    write to the real home, while the caller's own real-system checks see the
+    literal ``~`` and decide the target is a sandbox.
+
+    ``abspath`` rather than ``resolve``: the root is anchored to a definite
+    place, but a symlinked home stays the path the user named, because that is
+    the path the agents themselves are configured with.
+    """
+    return Path(os.path.abspath(os.path.expanduser(value)))
+
+
+def subcommand_flags_shadowing_a_global(parser: argparse.ArgumentParser) -> dict[str, list[str]]:
+    """Return, per subcommand, the option strings the top level already declares.
+
+    A subparser that redeclares a top-level option gets the same destination,
+    and argparse resolves the subcommand last: it parses into a fresh namespace
+    and copies every name over, so the subparser's default lands on top of the
+    value the top level parsed.  The flag then accepts a value, exits zero, and
+    reports its own default -- the shape of both the runtime probe's --platform
+    and the broker's --agent before they were removed.  ``normalize_global_flags``
+    makes the collision unconditional by hoisting those spellings past the
+    subcommand, so a shadowed flag is unreachable no matter where it is written.
+
+    Nothing here can repair such a pair; the parser has to not build one, which
+    is what the test over this function asserts.
+    """
+    global_flags = {
+        option
+        for action in parser._actions
+        for option in action.option_strings
+    }
+    subparsers = [
+        action for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    ]
+    shadowed: dict[str, list[str]] = {}
+    for action in subparsers:
+        for name, subparser in action.choices.items():
+            collisions = sorted(
+                option
+                for sub_action in subparser._actions
+                for option in sub_action.option_strings
+                if option in global_flags and option not in {"-h", "--help"}
+            )
+            if collisions:
+                shadowed[name] = collisions
+    return shadowed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ai-agents-skills")
-    parser.add_argument("--root", type=Path, default=Path.home(), help="home root to inspect or manage")
+    parser.add_argument("--root", type=install_root, default=Path.home(), help="home root to inspect or manage")
     parser.add_argument("--platform", choices=["linux", "windows", "macos", "wsl"], default=None)
     parser.add_argument("--agent", dest="agents", help="single agent filter")
     parser.add_argument("--agents", help="comma-separated agent filter")
@@ -363,7 +423,12 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_runtime_probe = sub.add_parser("openclaw-runtime-probe")
     openclaw_runtime_probe.add_argument("--skill", required=True)
     openclaw_runtime_probe.add_argument("--runtime-root", type=Path, required=True)
-    openclaw_runtime_probe.add_argument("--platform", default="linux")
+    # --platform is the top-level flag, not a second one declared here.  A
+    # subparser that redeclares a global option shares its destination, and
+    # argparse copies the subparser's default over whatever the top level
+    # parsed, so a locally declared --platform could only ever yield its own
+    # default -- there was no way to mint non-linux runtime evidence at all.
+    # ``subcommand_flags_shadowing_a_global`` above keeps it that way.
     openclaw_runtime_probe.add_argument("--path-style", default="posix")
     openclaw_runtime_probe.add_argument("--no-live", action="store_true", help="skip live native-loader/quiescence probes")
     openclaw_runtime_probe.add_argument("--out-dir", type=Path, help="write each evidence record to this dir")
@@ -371,7 +436,7 @@ def build_parser() -> argparse.ArgumentParser:
     openclaw_broker = sub.add_parser("openclaw-broker")
     openclaw_broker.add_argument("--manifest", type=Path, required=True, help="approved runtime manifest")
     openclaw_broker.add_argument("--runtime-root", type=Path, required=True)
-    openclaw_broker.add_argument("--agent", default="main")
+    # --agent is the top-level flag for the same reason as --platform above.
     openclaw_broker.add_argument("--token-file", type=Path, help="per-machine bearer token file (not synced)")
     openclaw_broker.add_argument("--serve", action="store_true", help="bind + serve (host-gated)")
     openclaw_broker.add_argument("--host", default="127.0.0.1")
@@ -747,7 +812,7 @@ def run(args: argparse.Namespace) -> int:
             root=args.root,
             skill=args.skill,
             runtime_root=args.runtime_root,
-            platform=args.platform,
+            platform=args.platform or "linux",
             path_style=args.path_style,
             live=not args.no_live,
         )
@@ -773,11 +838,28 @@ def run(args: argparse.Namespace) -> int:
             args,
         )
     if args.command == "openclaw-broker":
-        token = args.token_file.read_text(encoding="utf-8").strip() if args.token_file else "broker-token-unset"
+        # A token is the broker's only credential: broker_authorize accepts any
+        # caller that presents it. A fixed placeholder is therefore a published
+        # password, so the no-token-file path gets an unguessable per-process value
+        # that is never printed -- the report below still enumerates commands, but
+        # nothing can authenticate against it -- and serving demands a real file.
+        if args.token_file is not None:
+            token = args.token_file.read_text(encoding="utf-8").strip()
+            if not token:
+                raise ValueError("broker token file is empty")
+        elif args.serve:
+            raise ValueError("serving the broker requires --token-file (a per-machine bearer token)")
+        else:
+            token = "unserved-" + secrets.token_urlsafe(32)
+        # The broker serves one agent, so a comma-separated filter -- which the
+        # shared --agents spelling accepts -- names no agent it could serve.
+        broker_agent = args.agents or "main"
+        if "," in broker_agent:
+            raise ValueError("the broker serves a single agent: --agent takes one name")
         state = broker_state_from_manifest(
             load_runtime_target_manifest(args.manifest),
             runtime_root=args.runtime_root,
-            agent=args.agent,
+            agent=broker_agent,
             token=token,
         )
         if args.serve:  # pragma: no cover - live host only
@@ -788,7 +870,7 @@ def run(args: argparse.Namespace) -> int:
             {
                 "status": "ready",
                 "runtime_root": str(args.runtime_root),
-                "agent": args.agent,
+                "agent": broker_agent,
                 "endpoint": f"{args.host}:{args.port}",
                 "commands": sorted(f"{s}:{c}" for (s, c) in state.commands),
                 "note": "run with --serve to bind (host-gated; bind docker0-gateway + add the managed firewall rule)",
@@ -821,6 +903,13 @@ def run(args: argparse.Namespace) -> int:
             require_complete_install_plan(plan, manifests, platform=args.platform)
         confirm_install_process_understood(args, plan)
         result = apply_plan(args.root, plan, dry_run=not args.apply)
+        # ``plan`` reports the targets it refuses to serve; applying that same
+        # plan did not, and an install that serves none of them still returns
+        # an empty action list and a clean status.  Carrying the field through
+        # gives a JSON consumer the one fact that distinguishes "nothing to do"
+        # from "nothing was done for the target you asked for".
+        if plan.get("skipped_agents"):
+            result["skipped_agents"] = plan["skipped_agents"]
         exit_code = 0
         if args.require_complete_install:
             incomplete = incomplete_install_actions(
@@ -971,6 +1060,15 @@ def resolve_agent_targets(args: argparse.Namespace) -> tuple[list[str] | None, l
         status
         for status in agent_home_statuses(args.root, requested_agents)
         if not status["eligible"]
+    ]
+    # Having a home is a weaker condition than being installable into it: a
+    # target whose managed skill directory the planner refuses to write through
+    # is eligible here and still gets no actions, so requiring every requested
+    # target and then not asking the planner's question passes for an install
+    # that serves nothing.
+    unavailable += [
+        skipped for skipped in plannable_agents(args.root, agents)[1]
+        if skipped["agent"] in requested_agents
     ]
     if unavailable:
         details = ", ".join(

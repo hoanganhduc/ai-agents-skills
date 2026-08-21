@@ -72,7 +72,10 @@ def openclaw_skill_file_attestation(path: Path) -> dict[str, object]:
     if initial.st_size > OPENCLAW_SKILL_FILE_MAX_BYTES:
         raise ValueError("OpenClaw target skill file exceeds the attestation size limit")
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    # O_BINARY: Windows opens descriptors in text mode, which rewrites CRLF and
+    # truncates at Ctrl-Z, so the digest and the byte count would never match the
+    # file on disk and every CRLF file would be misreported as racing.
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     try:
@@ -201,13 +204,19 @@ def validate_openclaw_target_home(root: Path) -> dict[str, str]:
 # equivalent of $HOME) and are intentionally NOT flagged; only their machine/agent-
 # specific runtime suffixes are. POSIX absolute home/workspace roots ARE machine-
 # specific leaks. This is a strict superset of the four legacy Codex markers.
+_HOME_OWNER = r"[A-Za-z0-9._-]*[A-Za-z0-9][A-Za-z0-9._-]*"
+
 OPENCLAW_PATH_LEAK_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\.codex/runtime"), "codex-runtime-path"),
     (re.compile(r"\$codex_home", re.I), "codex-home-var"),
     (re.compile(r"%userprofile%[\\/]+\.?codex", re.I), "windows-codex-path"),
     (re.compile(r"%localappdata%[\\/]+ai-agents-skills[\\/]+runtime", re.I), "windows-aas-runtime-path"),
-    (re.compile(r"/home" r"/[A-Za-z0-9._-]+"), "posix-home-path"),  # split literal: sanitizer-safe
-    (re.compile(r"/Users/[A-Za-z0-9._-]+"), "macos-home-path"),
+    # The segment after a home root has to name somebody for the path to identify a
+    # machine. A prose placeholder such as `/windows/Users/...` documents a mount
+    # point instead, and flagging it stops the whole skill from rendering: this is
+    # a hard gate, so a false positive is not a warning, it is an unusable skill.
+    (re.compile(r"/home" r"/" + _HOME_OWNER), "posix-home-path"),  # split literal: sanitizer-safe
+    (re.compile(r"/Users/" + _HOME_OWNER), "macos-home-path"),
     (re.compile(r"(?<![A-Za-z0-9._])/root/[A-Za-z0-9._-]"), "root-home-path"),
     # NOTE: bare "/workspace" is intentionally NOT flagged. In the OpenClaw sandbox
     # HOME=/workspace, so it is byte-identical across every sandbox (portable, like

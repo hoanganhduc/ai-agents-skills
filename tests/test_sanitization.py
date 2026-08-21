@@ -11,31 +11,91 @@ from tools import sanitization_check
 
 
 class SanitizationTests(unittest.TestCase):
-    def test_sanitize_replaces_personal_paths_and_tokens(self) -> None:
-        fake_token = "gho_" + "abcdefghijklmnopqrstuvwxyz123456"
-        fake_aws_key = "AKIA" + "A" * 16
-        fake_google_key = "AIza" + "A" * 35
-        fake_slack_token = "xoxb-" + "1" * 24
-        text = (
-            "path=/home/exampleuser/project\n"
-            "win=/windows/Users/exampleuser/.codex\n"
-            "email=person@example.com\n"
-            f"token={fake_token}\n"
-            f"aws={fake_aws_key}\n"
-            f"google={fake_google_key}\n"
-            f"slack={fake_slack_token}\n"
+    # One live sample per entry in sanitize.TOKEN_PATTERNS, plus the two home
+    # substitutions that have no other coverage.  The fixture used to supply
+    # four of the seven token patterns and assert only that "<REDACTED_SECRET>"
+    # appeared *somewhere*, which any one of the four satisfied -- so deleting
+    # the ``sk-``, ``github_pat_`` or PEM pattern left the suite fully green
+    # while ``has_sensitive_material`` stopped flagging those secrets, and that
+    # function is both the gate that refuses to install a runtime source
+    # (runtime.py) and the only check ``make sanitize-check`` performs.
+    SECRET_SAMPLES = (
+        ("github oauth", "gho_" + "abcdefghijklmnopqrstuvwxyz123456"),
+        ("github pat", "github_pat_" + "B" * 40),
+        ("openai style", "sk-" + "A" * 40),
+        ("aws access key", "AKIA" + "A" * 16),
+        ("aws session key", "ASIA" + "B" * 16),
+        ("google api key", "AIza" + "A" * 35),
+        ("slack bot token", "xoxb-" + "1" * 24),
+        (
+            "pem private key",
+            "-----BEGIN PRIVATE KEY-----\nQUJD\n-----END PRIVATE KEY-----",
+        ),
+        (
+            "openssh private key",
+            "-----BEGIN OPENSSH PRIVATE KEY-----\nQUJD\n-----END OPENSSH PRIVATE KEY-----",
+        ),
+    )
+    PERSONAL_SAMPLES = (
+        ("linux home", "/home/exampleuser/project", "<LINUX_HOME>"),
+        ("wsl windows home", "/windows/Users/exampleuser/.codex", "<WINDOWS_HOME>"),
+        ("mounted windows home", "/mnt/c/Users/exampleuser/.codex", "<WINDOWS_HOME>"),
+        ("native windows home", "C:\\Users\\exampleuser\\.codex", "<WINDOWS_HOME>"),
+        ("email", "person@example.com", "<EMAIL>"),
+    )
+
+    def test_every_secret_pattern_is_redacted_and_detected(self) -> None:
+        """Each sample is asserted on its own, so no pattern rides on another.
+
+        Both halves matter and fail independently: redaction is what keeps the
+        secret out of a published artifact, and ``has_sensitive_material`` is
+        what refuses to install the source in the first place.
+        """
+
+        for label, sample in self.SECRET_SAMPLES:
+            with self.subTest(secret=label):
+                result = sanitize_text(f"value={sample}\n", canonical_name="sample-skill")
+                self.assertNotIn(sample, result)
+                self.assertIn("<REDACTED_SECRET>", result)
+                self.assertTrue(has_sensitive_material(sample))
+
+    def test_every_personal_path_shape_is_replaced(self) -> None:
+        for label, sample, placeholder in self.PERSONAL_SAMPLES:
+            with self.subTest(personal=label):
+                result = sanitize_text(f"path={sample}\n", canonical_name="sample-skill")
+                self.assertNotIn(sample, result)
+                self.assertIn(placeholder, result)
+
+    def test_the_fixture_covers_every_declared_token_pattern(self) -> None:
+        """Guards against a pattern being added with no sample beside it.
+
+        Every entry in ``TOKEN_PATTERNS`` has to be the one that fires for at
+        least one sample, which is what the four-of-seven fixture could not say.
+        """
+
+        from installer.ai_agents_skills.sanitize import TOKEN_PATTERNS
+
+        matched = {
+            index
+            for index, pattern in enumerate(TOKEN_PATTERNS)
+            for _, sample in self.SECRET_SAMPLES
+            if pattern.search(sample)
+        }
+        self.assertEqual(
+            sorted(matched),
+            list(range(len(TOKEN_PATTERNS))),
+            "TOKEN_PATTERNS entries with no sample in SECRET_SAMPLES",
         )
+
+    def test_sanitize_replaces_personal_paths_and_tokens(self) -> None:
+        text = "".join(f"p{i}={sample}\n" for i, (_, sample, _) in enumerate(self.PERSONAL_SAMPLES))
+        text += "".join(f"s{i}={sample}\n" for i, (_, sample) in enumerate(self.SECRET_SAMPLES))
         result = sanitize_text(text, canonical_name="sample-skill")
-        self.assertNotIn("/home/exampleuser", result)
-        self.assertNotIn("/windows/Users/exampleuser", result)
-        self.assertNotIn("person@example.com", result)
-        self.assertNotIn(fake_token, result)
-        self.assertNotIn(fake_aws_key, result)
-        self.assertNotIn(fake_google_key, result)
-        self.assertNotIn(fake_slack_token, result)
-        self.assertIn("<LINUX_HOME>", result)
-        self.assertIn("<WINDOWS_HOME>", result)
-        self.assertIn("<EMAIL>", result)
+        for _, sample in self.SECRET_SAMPLES:
+            self.assertNotIn(sample, result)
+        for _, sample, placeholder in self.PERSONAL_SAMPLES:
+            self.assertNotIn(sample, result)
+            self.assertIn(placeholder, result)
         self.assertIn("<REDACTED_SECRET>", result)
 
     def test_sanitize_normalizes_frontmatter_name(self) -> None:
