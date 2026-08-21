@@ -7,6 +7,7 @@ import json
 import math
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -2344,6 +2345,46 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertEqual(verify(root)["status"], "no-managed-artifacts")
 
     @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_rollback_survives_more_blocks_in_one_file_than_backups_used_to_allow(self) -> None:
+        # One managed block per skill goes into the same instructions file, and
+        # each one is backed up before its own write.  Two of them happened to
+        # be the number the case above installs, and two is also the number
+        # that survives a backup destination shared by every write -- the
+        # snapshot left over is the one the second record expects.  From three
+        # on, the earlier records point at a file that no longer holds what they
+        # recorded, and rollback refuses the run outright.
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "source-research,zotero,intent-interview"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            instructions = root / ".claude" / "CLAUDE.md"
+            blocks = [
+                action
+                for action in plan["actions"]
+                if action["kind"] == "managed-block" and action["path"] == str(instructions)
+            ]
+            self.assertGreaterEqual(len(blocks), 3)
+
+            result = apply_plan(root, plan, dry_run=False)
+            backups = {
+                item["uninstall"]["backup"]
+                for item in load_state(root)["artifacts"]
+                if item["artifact"] == str(instructions) and (item.get("uninstall") or {}).get("backup")
+            }
+            self.assertGreaterEqual(len(backups), 2)
+
+            rollback(root, run_id=result["run_id"], dry_run=False)
+
+            self.assertFalse(instructions.exists())
+            self.assertEqual(verify(root)["status"], "no-managed-artifacts")
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_rollback_conflict_preflight_prevents_partial_mutation(self) -> None:
         manifests = load_manifests()
         with fake_root() as tmp:
@@ -2887,6 +2928,347 @@ class PlanInstallVerifyTests(unittest.TestCase):
 
             self.assertTrue(support.exists())
             self.assertEqual(support.read_text(encoding="utf-8"), "user-owned support\n")
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_rollback_retires_the_tombstone_for_what_it_restored(self) -> None:
+        manifests = load_manifests()
+        from installer.ai_agents_skills.agents import detect_agents, target_for
+
+        args = Args()
+        args.skills = "source-research"
+        selected = resolve_skills(args, manifests)
+
+        def install_migrated(root: Path) -> tuple[Path, str]:
+            legacy = target_for(root, "claude").skill_file_for("openclaw-research")
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            legacy.write_text("legacy content\n", encoding="utf-8")
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                migrate=True,
+                runtime_profile="none",
+            )
+            result = apply_plan(root, plan, dry_run=False)
+            self.assertEqual(len(load_state(root).get("uninstall_records", [])), 1)
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            return legacy.parent, result["run_id"]
+
+        # The tombstone describes a removal the rollback just undid.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            legacy_dir, _ = install_migrated(root)
+            self.assertTrue(legacy_dir.is_dir())
+            self.assertEqual(load_state(root).get("uninstall_records", []), [])
+            self.assertEqual(uninstall(root, dry_run=True)["actions"], [])
+
+        # And once retired it cannot bring the directory back after the user
+        # deletes it themselves.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            legacy_dir, _ = install_migrated(root)
+            shutil.rmtree(legacy_dir)
+            uninstall(root, dry_run=False)
+            self.assertFalse(legacy_dir.exists())
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_an_uninstall_conflict_reports_why_uninstall_stopped(self) -> None:
+        manifests = load_manifests()
+        from installer.ai_agents_skills.agents import detect_agents, target_for
+
+        args = Args()
+        args.skills = "source-research"
+        selected = resolve_skills(args, manifests)
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            legacy = target_for(root, "claude").skill_file_for("openclaw-research")
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            legacy.write_text("legacy content\n", encoding="utf-8")
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                migrate=True,
+                runtime_profile="none",
+            )
+            apply_plan(root, plan, dry_run=False)
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            legacy.write_text("something else entirely\n", encoding="utf-8")
+
+            conflicts = [
+                action
+                for action in uninstall(root, skills={"source-research"}, dry_run=True)["actions"]
+                if action["operation"] == "skip-conflict"
+            ]
+            self.assertEqual(len(conflicts), 1)
+            self.assertEqual(
+                conflicts[0]["reason"],
+                "something else now occupies the path to restore",
+            )
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_rollback_undoes_a_merged_settings_hook(self) -> None:
+        manifests = load_manifests()
+        from installer.ai_agents_skills.agents import detect_agents
+
+        args = Args()
+        args.skills = "autonomous-research-loop,autonomous-research-loop-runtime"
+        selected = resolve_skills(args, manifests)
+
+        # The installer created settings.json, so rolling the run back must take
+        # the file with it rather than leave a hook invoking a script the same
+        # rollback deleted.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            settings = root / ".claude" / "settings.json"
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["claude"]))
+            result = apply_plan(root, plan, dry_run=False)
+            self.assertTrue(settings.exists())
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertFalse(settings.exists())
+
+        # The user's own settings file keeps its own hooks and only loses the
+        # entry the run merged in.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            settings = root / ".claude" / "settings.json"
+            before = {
+                "model": "opus",
+                "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "my-own-hook"}]}]},
+            }
+            settings.write_text(json.dumps(before, indent=2) + "\n", encoding="utf-8")
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["claude"]))
+            result = apply_plan(root, plan, dry_run=False)
+            self.assertEqual(len(json.loads(settings.read_text(encoding="utf-8"))["hooks"]["Stop"]), 2)
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertTrue(settings.exists())
+            self.assertEqual(json.loads(settings.read_text(encoding="utf-8")), before)
+
+    def test_the_stop_hook_follows_the_runtime_it_invokes(self) -> None:
+        manifests = load_manifests()
+        from installer.ai_agents_skills.agents import detect_agents, target_for
+
+        args = Args()
+        args.skills = "autonomous-research-loop-runtime"
+        selected = resolve_skills(args, manifests)
+
+        def hook_actions(root: Path) -> list[dict]:
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["claude"]))
+            return [
+                action
+                for action in plan["actions"]
+                if action.get("artifact_type") == "settings-hook-merge"
+            ]
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            self.assertEqual(len(hook_actions(root)), 1)
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            skill_file = target_for(root, "claude").skill_file_for("autonomous-research-loop-runtime")
+            skill_file.parent.mkdir(parents=True, exist_ok=True)
+            skill_file.write_text("user-owned, not ours\n", encoding="utf-8")
+            self.assertEqual(hook_actions(root), [])
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_removing_the_last_skill_takes_the_instruction_file_with_it(self) -> None:
+        manifests = load_manifests()
+        from installer.ai_agents_skills.agents import detect_agents
+
+        def install_both(root: Path) -> Path:
+            create_agent_homes(root, "claude")
+            args = Args()
+            args.skills = "zotero,calibre"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root, ["claude"]))
+            apply_plan(root, plan, dry_run=False)
+            return root / ".claude" / "CLAUDE.md"
+
+        for order in (("zotero", "calibre"), ("calibre", "zotero")):
+            with fake_root() as tmp:
+                root = Path(tmp)
+                instructions = install_both(root)
+                self.assertTrue(instructions.exists())
+                for skill in order:
+                    uninstall(root, skills={skill}, dry_run=False)
+                leftover = (
+                    instructions.read_text(encoding="utf-8") if instructions.exists() else None
+                )
+                self.assertIsNone(
+                    leftover,
+                    f"instructions file survived removal in order {order}: {leftover!r}",
+                )
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            instructions = root / ".claude" / "CLAUDE.md"
+            instructions.write_text("my notes\n", encoding="utf-8")
+            install_both(root)
+            for skill in ("zotero", "calibre"):
+                uninstall(root, skills={skill}, dry_run=False)
+            self.assertTrue(instructions.exists())
+            self.assertIn("my notes", instructions.read_text(encoding="utf-8"))
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            instructions = root / ".claude" / "CLAUDE.md"
+            instructions.write_text("", encoding="utf-8")
+            install_both(root)
+            for skill in ("zotero", "calibre"):
+                uninstall(root, skills={skill}, dry_run=False)
+            self.assertTrue(
+                instructions.exists(),
+                "an empty file the user owned was deleted with the last block",
+            )
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_uninstalling_the_runtime_takes_the_hook_that_runs_it(self) -> None:
+        manifests = load_manifests()
+        from installer.ai_agents_skills.agents import detect_agents
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            args = Args()
+            args.skills = "autonomous-research-loop-runtime"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                runtime_profile="auto",
+                platform="linux",
+                requested_agents=["claude"],
+            )
+            apply_plan(root, plan, dry_run=False)
+            settings = root / ".claude" / "settings.json"
+            self.assertIn("hook-check", settings.read_text(encoding="utf-8"))
+            runtime_script = next(
+                Path(item["artifact"])
+                for item in load_state(root)["artifacts"]
+                if item.get("artifact_type") == "runtime-file"
+                and Path(item["artifact"]).name == "autonomous_research_loop_runtime.py"
+            )
+            self.assertTrue(runtime_script.exists())
+
+            uninstall(root, skills={"autonomous-research-loop-runtime"}, dry_run=False)
+
+            self.assertFalse(runtime_script.exists())
+            remaining = [
+                item
+                for item in load_state(root)["artifacts"]
+                if item.get("artifact_type") == "settings-hook-merge"
+            ]
+            self.assertEqual(remaining, [])
+            if settings.exists():
+                self.assertNotIn("hook-check", settings.read_text(encoding="utf-8"))
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_uninstalling_the_loop_skill_leaves_the_runtime_it_did_not_own(self) -> None:
+        manifests = load_manifests()
+        from installer.ai_agents_skills.agents import detect_agents
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            args = Args()
+            args.skills = "autonomous-research-loop,autonomous-research-loop-runtime"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                runtime_profile="auto",
+                platform="linux",
+                requested_agents=["claude"],
+            )
+            apply_plan(root, plan, dry_run=False)
+            runtime_script = next(
+                Path(item["artifact"])
+                for item in load_state(root)["artifacts"]
+                if item.get("artifact_type") == "runtime-file"
+                and Path(item["artifact"]).name == "autonomous_research_loop_runtime.py"
+            )
+
+            uninstall(root, skills={"autonomous-research-loop"}, dry_run=False)
+
+            self.assertTrue(runtime_script.exists())
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    @unittest.skipIf(os.name == "nt", "POSIX file modes")
+    def test_installing_a_block_keeps_the_instruction_file_readable(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            instructions = root / ".claude" / "CLAUDE.md"
+            instructions.write_text("my notes\n", encoding="utf-8")
+            instructions.chmod(0o644)
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "source-research"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            apply_plan(root, plan, dry_run=False)
+
+            self.assertEqual(stat.S_IMODE(instructions.stat().st_mode), 0o644)
+            state_file = root / ".ai-agents-skills" / "state.json"
+            self.assertEqual(stat.S_IMODE(state_file.stat().st_mode), 0o600)
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_uninstall_restores_an_adopted_support_file_a_later_run_removed(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            support = root / ".claude" / "skills" / "deep-research-workflow" / "references" / "output-structure.md"
+            support.parent.mkdir(parents=True)
+            support.write_text("adopted user notes\n", encoding="utf-8")
+            from installer.ai_agents_skills.agents import detect_agents
+
+            args = Args()
+            args.skills = "deep-research-workflow"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root),
+                adopt=True,
+                install_mode="copy",
+            )
+            apply_plan(root, plan, dry_run=False)
+
+            plan = build_plan(root, manifests, selected, detect_agents(root), install_mode="reference")
+            result = apply_plan(root, plan, dry_run=False)
+            removed = [
+                action
+                for action in result["actions"]
+                if action.get("artifact") == str(support)
+            ]
+            self.assertEqual(len(removed), 1)
+            self.assertEqual(removed[0]["uninstall"]["action"], "restore-removed")
+            self.assertFalse(support.exists())
+
+            uninstall(root, skills={"deep-research-workflow"}, dry_run=False)
+
+            self.assertTrue(support.exists())
+            self.assertEqual(support.read_text(encoding="utf-8"), "adopted user notes\n")
 
     @NATIVE_WINDOWS_MUTATION_SKIP
     def test_uninstall_refuses_state_artifact_outside_root(self) -> None:
@@ -5022,6 +5404,43 @@ class OpenCodeTargetTests(unittest.TestCase):
 
 
 class AntigravityTargetTests(unittest.TestCase):
+    def test_migrate_keeps_an_alias_that_shares_a_name_with_a_legacy_skill(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents, target_for
+
+        manifests = load_manifests()
+
+        def plan_with(root: Path, artifacts: list[tuple[str, str]] | None) -> list[dict]:
+            legacy = target_for(root, "antigravity").skill_file_for("deep-research")
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            legacy.write_text("left over from an older layout\n", encoding="utf-8")
+            plan = build_plan(
+                root,
+                manifests,
+                ["deep-research-workflow"],
+                detect_agents(root, ["antigravity"]),
+                artifacts=artifacts,
+                migrate=True,
+                runtime_profile="none",
+            )
+            return [
+                action
+                for action in plan["actions"]
+                if action.get("artifact_type") == "legacy-skill-file"
+            ]
+
+        # deep-research is both a former name of deep-research-workflow and an
+        # entrypoint alias, and antigravity keeps skills and aliases in one flat
+        # directory, so the two want the same file.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "antigravity")
+            self.assertEqual(len(plan_with(root, None)), 1)
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "antigravity")
+            self.assertEqual(plan_with(root, [("entrypoint-alias", "deep-research")]), [])
+
     def test_antigravity_is_known_and_detected_by_default(self) -> None:
         from installer.ai_agents_skills.agents import all_agent_names, detect_agents, known_agent_names
 
@@ -5080,6 +5499,183 @@ class AntigravityTargetTests(unittest.TestCase):
             legacy.symlink_to(elsewhere)
 
             self.assertEqual(antigravity_skills_dir(root), legacy)
+
+    def test_the_migrated_home_takes_the_plugin_payload_too(self) -> None:
+        from installer.ai_agents_skills.agents import antigravity_plugin_root, target_for
+
+        # The migration copied this tree instead of symlinking it, so both
+        # directories stay real and both keep being scanned.  The installer
+        # follows the payload to where the vendor put it rather than leaving it
+        # at the path a minority of loader threads read.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            legacy = root / ".gemini" / "antigravity-cli" / "plugins"
+            migrated = root / ".gemini" / "config" / "plugins"
+
+            legacy.mkdir(parents=True)
+            self.assertEqual(antigravity_plugin_root(root), legacy)
+
+            migrated.mkdir(parents=True)
+            (root / ".gemini" / "config" / ".migrated").touch()
+            self.assertEqual(antigravity_plugin_root(root), migrated)
+
+            target = target_for(root, "antigravity")
+            managed = migrated / "ai-agents-skills"
+            self.assertEqual(target.artifact_dirs["plugin"], managed)
+            self.assertEqual(target.artifact_dirs["agent-persona"], managed / "agents")
+            self.assertEqual(target.artifact_dirs["instruction-doc"], managed / "rules")
+            self.assertEqual(target.support_dir_for("sagemath"), managed / "skills" / "sagemath")
+
+    @unittest.skipIf(os.name == "nt", "POSIX symlink semantics for the vendor compat link")
+    def test_a_symlinked_plugin_root_is_refused_like_a_symlinked_skills_dir(self) -> None:
+        from installer.ai_agents_skills.agents import antigravity_plugin_root
+
+        # A link at the migrated path is how a managed write gets redirected
+        # somewhere this installer never chose, so it is refused rather than
+        # followed, and the unmigrated location stays the answer.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            legacy = root / ".gemini" / "antigravity-cli" / "plugins"
+            legacy.mkdir(parents=True)
+            (root / ".gemini" / "config").mkdir(parents=True)
+            (root / ".gemini" / "config" / ".migrated").touch()
+            elsewhere = root / "elsewhere"
+            elsewhere.mkdir()
+            (root / ".gemini" / "config" / "plugins").symlink_to(elsewhere)
+
+            self.assertEqual(antigravity_plugin_root(root), legacy)
+
+    def test_the_payload_left_at_the_old_plugin_root_is_removed(self) -> None:
+        from installer.ai_agents_skills.agents import antigravity_legacy_plugin_dir, target_for
+        from installer.ai_agents_skills.planner import antigravity_legacy_plugin_actions
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            legacy = root / ".gemini" / "antigravity-cli" / "plugins"
+            legacy.mkdir(parents=True)
+            (root / ".gemini" / "config" / "plugins").mkdir(parents=True)
+            (root / ".gemini" / "config" / ".migrated").touch()
+
+            stale = legacy / "ai-agents-skills" / "rules" / "engineering-lifecycle.md"
+            self.assertEqual(antigravity_legacy_plugin_dir(root), legacy / "ai-agents-skills")
+            state = {
+                "artifacts": [
+                    {
+                        "agent": "antigravity",
+                        "skill": "repo-management",
+                        "artifact": str(stale),
+                        "artifact_type": "instruction-doc",
+                        "installed_signature": {"exists": True},
+                    },
+                    # Written by this run to the migrated root: still current,
+                    # so it must not be swept up with the abandoned copy.
+                    {
+                        "agent": "antigravity",
+                        "skill": "repo-management",
+                        "artifact": str(
+                            target_for(root, "antigravity").artifact_dirs["instruction-doc"]
+                            / "engineering-lifecycle.md"
+                        ),
+                        "artifact_type": "instruction-doc",
+                    },
+                    # Another target's file under its own home stays untouched.
+                    {
+                        "agent": "claude",
+                        "skill": "repo-management",
+                        "artifact": str(stale),
+                        "artifact_type": "instruction-doc",
+                    },
+                ]
+            }
+            agents = [target_for(root, "antigravity")]
+            migrated = (
+                target_for(root, "antigravity").artifact_dirs["instruction-doc"]
+                / "engineering-lifecycle.md"
+            )
+            active = [
+                {"agent": "antigravity", "operation": "update", "path": str(migrated)}
+            ]
+
+            removals = antigravity_legacy_plugin_actions(root, agents, active, state)
+            self.assertEqual([item["path"] for item in removals], [str(stale)])
+            self.assertEqual(removals[0]["kind"], "managed-file-remove")
+            self.assertEqual(removals[0]["operation"], "remove-obsolete")
+            self.assertEqual(removals[0]["installed_signature"], {"exists": True})
+
+            # A target this run is not installing to keeps its files: nothing is
+            # removed on behalf of a plan that writes no replacement.
+            skipped = [
+                {"agent": "antigravity", "operation": "skip", "path": str(migrated)}
+            ]
+            self.assertEqual(antigravity_legacy_plugin_actions(root, agents, skipped, state), [])
+
+    def test_the_old_plugin_root_keeps_what_this_run_is_not_replacing(self) -> None:
+        from installer.ai_agents_skills.agents import antigravity_legacy_plugin_dir, target_for
+        from installer.ai_agents_skills.planner import antigravity_legacy_plugin_actions
+
+        # The state holds every artifact any past run installed; a plan covers
+        # the profile asked for now.  Removing on the record alone would strip
+        # the payload of every skill outside the current selection and put
+        # nothing in its place -- on this machine, 158 files against 29 writes.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            (root / ".gemini" / "antigravity-cli" / "plugins").mkdir(parents=True)
+            (root / ".gemini" / "config" / "plugins").mkdir(parents=True)
+            (root / ".gemini" / "config" / ".migrated").touch()
+
+            legacy_dir = antigravity_legacy_plugin_dir(root)
+            agent = target_for(root, "antigravity")
+            in_profile = "engineering-lifecycle.md"
+            out_of_profile = "verification-patterns.md"
+            state = {
+                "artifacts": [
+                    {
+                        "agent": "antigravity",
+                        "skill": "repo-management",
+                        "artifact": str(legacy_dir / "rules" / name),
+                        "artifact_type": "instruction-doc",
+                    }
+                    for name in (in_profile, out_of_profile)
+                ]
+            }
+            actions = [
+                {
+                    "agent": "antigravity",
+                    "operation": "update",
+                    "path": str(agent.artifact_dirs["instruction-doc"] / in_profile),
+                }
+            ]
+
+            removals = antigravity_legacy_plugin_actions(root, [agent], actions, state)
+            self.assertEqual(
+                [item["path"] for item in removals],
+                [str(legacy_dir / "rules" / in_profile)],
+            )
+
+    def test_an_unmigrated_home_has_no_abandoned_plugin_payload(self) -> None:
+        from installer.ai_agents_skills.agents import antigravity_legacy_plugin_dir, target_for
+        from installer.ai_agents_skills.planner import antigravity_legacy_plugin_actions
+
+        # Without the marker the old root is the live one, so the records under
+        # it describe the files this run is about to rewrite.  Removing them
+        # would delete the payload instead of moving it.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            legacy = root / ".gemini" / "antigravity-cli" / "plugins"
+            legacy.mkdir(parents=True)
+            live = legacy / "ai-agents-skills" / "rules" / "engineering-lifecycle.md"
+
+            self.assertIsNone(antigravity_legacy_plugin_dir(root))
+            state = {"artifacts": [{"agent": "antigravity", "artifact": str(live)}]}
+            self.assertEqual(
+                antigravity_legacy_plugin_actions(
+                    root,
+                    [target_for(root, "antigravity")],
+                    [{"agent": "antigravity", "operation": "update"}],
+                    state,
+                ),
+                [],
+            )
 
     def test_antigravity_rules_carry_the_frontmatter_their_loader_requires(self) -> None:
         from installer.ai_agents_skills.render import MANAGED_MARKER, render_artifact_content
@@ -5429,6 +6025,82 @@ class GrokTargetTests(unittest.TestCase):
             self.assertTrue(persona.read_text(encoding="utf-8").lstrip().startswith("---"))
             self.assertIn("Backing skill", alias.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_uninstalling_the_runtime_takes_the_grok_hook_file(self) -> None:
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            args = Args()
+            args.skills = "autonomous-research-loop-runtime"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["grok"]),
+                runtime_profile="auto",
+                platform="linux",
+                requested_agents=["grok"],
+            )
+            apply_plan(root, plan, dry_run=False)
+            hook_file = next(
+                Path(item["artifact"])
+                for item in load_state(root)["artifacts"]
+                if item.get("artifact_type") == "native-hook-file"
+            )
+            self.assertIn("hook-check", hook_file.read_text(encoding="utf-8"))
+
+            uninstall(root, skills={"autonomous-research-loop-runtime"}, dry_run=False)
+
+            self.assertFalse(hook_file.exists())
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_rollback_undoes_the_grok_compat_block(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        # The compat block turns grok's own skills, agents, rules and hooks off,
+        # so a rollback that leaves it behind leaves the target worse than it
+        # found it, with no record left to clean it up by.
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            config = root / ".grok" / "config.toml"
+            plan = build_plan(
+                root,
+                manifests,
+                ["zotero"],
+                detect_agents(root, ["grok"]),
+                runtime_profile="none",
+                requested_agents=["grok"],
+            )
+            result = apply_plan(root, plan, dry_run=False)
+            self.assertIn("[compat.claude]", config.read_text(encoding="utf-8"))
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertFalse(config.exists())
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            config = root / ".grok" / "config.toml"
+            before = 'model = "grok-4"\n'
+            config.write_text(before, encoding="utf-8")
+            plan = build_plan(
+                root,
+                manifests,
+                ["zotero"],
+                detect_agents(root, ["grok"]),
+                runtime_profile="none",
+                requested_agents=["grok"],
+            )
+            result = apply_plan(root, plan, dry_run=False)
+            self.assertIn("[compat.claude]", config.read_text(encoding="utf-8"))
+            rollback(root, run_id=result["run_id"], dry_run=False)
+            self.assertTrue(config.exists())
+            self.assertNotIn("[compat.claude]", config.read_text(encoding="utf-8"))
+            self.assertIn('model = "grok-4"', config.read_text(encoding="utf-8"))
 
     @NATIVE_WINDOWS_MUTATION_SKIP
     def test_grok_autoloop_installs_native_hook_file_not_settings(self) -> None:
@@ -5992,6 +6664,61 @@ class RelocatedArtifactRecordTests(unittest.TestCase):
             # Identical bytes are not identity: two files still need two records.
             self.assertEqual(relocate_moved_artifact_records(state, [action]), [])
             self.assertEqual(state["artifacts"][0]["artifact"], str(old_dir / "demo-skill.md"))
+
+    def test_a_record_for_a_different_skill_in_the_same_file_is_not_claimed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            moved = root / "config"
+            moved.mkdir(parents=True)
+            (moved / "AGENTS.md").write_text("body\n", encoding="utf-8")
+            old_dir = root / "cli"
+            old_dir.symlink_to(moved)
+            old_file = old_dir / "AGENTS.md"
+
+            # One instructions file holds a managed block per skill, so every
+            # one of this agent's block records names the same path.  Path
+            # identity alone cannot tell them apart, and claiming the wrong one
+            # rewrites it into a duplicate of this action -- losing the record
+            # for a block that is still in the file, and with it the only way
+            # uninstall could ever remove that block.
+            state = {
+                "schema_version": 2,
+                "artifacts": [
+                    {
+                        "key": f"antigravity:source-research:ai-agents-skills:source-research:{old_file}",
+                        "agent": "antigravity",
+                        "skill": "source-research",
+                        "block_id": "ai-agents-skills:source-research",
+                        "artifact": str(old_file),
+                        "artifact_type": "instruction-block",
+                    },
+                    {
+                        "key": f"antigravity:zotero:ai-agents-skills:zotero:{old_file}",
+                        "agent": "antigravity",
+                        "skill": "zotero",
+                        "block_id": "ai-agents-skills:zotero",
+                        "artifact": str(old_file),
+                        "artifact_type": "instruction-block",
+                    },
+                ],
+                "runs": [],
+            }
+            action = {
+                "kind": "managed-block",
+                "agent": "antigravity",
+                "skill": "zotero",
+                "block_id": "ai-agents-skills:zotero",
+                "path": str(moved / "AGENTS.md"),
+            }
+
+            moves = relocate_moved_artifact_records(state, [action])
+
+            self.assertEqual([move["from"] for move in moves], [str(old_file)])
+            source_research, zotero = state["artifacts"]
+            self.assertEqual(source_research["skill"], "source-research")
+            self.assertEqual(source_research["artifact"], str(old_file))
+            self.assertEqual(zotero["artifact"], str(moved / "AGENTS.md"))
+            self.assertEqual(zotero["key"], artifact_key(action))
 
     def test_another_agent_record_is_not_claimed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

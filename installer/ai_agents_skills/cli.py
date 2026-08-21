@@ -854,6 +854,9 @@ def run(args: argparse.Namespace) -> int:
                 skills=set(selected) if selected else None,
                 agents=agents,
                 platform=args.platform,
+                # The same profile the plan was built from, so the runtime smoke
+                # asks about the runtimes this install was meant to write.
+                runtime_profile="none" if getattr(args, "no_runtime", False) else args.runtime_profile,
                 mode=args.post_install_smoke,
                 timeout=args.post_install_smoke_timeout,
             )

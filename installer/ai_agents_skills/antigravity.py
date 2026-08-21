@@ -59,8 +59,8 @@ def build_antigravity_precheck(
             "path": str(target.home),
             "children": {
                 "global_skills": str(target.skills_dir),
-                "plugins": str(target.home / "plugins"),
-                "managed_plugin": str(target.home / "plugins" / "ai-agents-skills"),
+                "plugins": str(target.target_dir_for("plugin").parent),
+                "managed_plugin": str(target.target_dir_for("plugin")),
                 "settings_json": str(target.home / "settings.json"),
                 "global_mcp_config": str(root / ".gemini" / "config" / "mcp_config.json"),
                 "global_context": str(root / ".gemini" / "GEMINI.md"),
