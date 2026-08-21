@@ -225,6 +225,7 @@ class SkippedTargetReportingTests(unittest.TestCase):
                 [item["agent"] for item in report["skipped_agents"]], ["claude"]
             )
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_requiring_every_requested_target_asks_the_planners_question(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = self._blocked_home(Path(tmp))

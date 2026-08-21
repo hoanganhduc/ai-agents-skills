@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import warnings
 from collections import defaultdict
 from pathlib import Path
 
@@ -55,7 +56,17 @@ def check_python_parse(files: list[Path]) -> list[str]:
         if path.suffix != ".py":
             continue
         try:
-            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            with warnings.catch_warnings():
+                # An invalid escape sequence only warns, so a parse that merely
+                # returns would let it through -- and it is a hard SyntaxError in a
+                # future Python, so a file that warns today stops importing later.
+                # CPython moved the diagnostic from DeprecationWarning to
+                # SyntaxWarning in 3.12, and this runs on both, so promote either.
+                warnings.simplefilter("error", SyntaxWarning)
+                warnings.filterwarnings(
+                    "error", category=DeprecationWarning, message="invalid escape sequence"
+                )
+                ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except Exception as exc:  # SyntaxError and UnicodeDecodeError should both fail.
             errors.append(f"python-parse:{path}:{exc}")
     return errors

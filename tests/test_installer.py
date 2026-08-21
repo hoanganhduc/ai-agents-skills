@@ -22,6 +22,7 @@ from pathlib import Path
 from installer.ai_agents_skills.apply import apply_action, apply_plan, artifact_key, relocate_moved_artifact_records, replace_with_text
 from installer.ai_agents_skills.agents import KNOWN_AGENT_NAMES, detect_agents, target_for
 from installer.ai_agents_skills.cli import (
+    INSTALL_CONFIRMATION_ENV,
     INSTALL_CONFIRMATION_PHRASE,
     build_parser,
     main,
@@ -60,6 +61,23 @@ NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
     os.name == "nt",
     "native Windows apply/uninstall/rollback are dry-run-only until handle-bound mutation lands",
 )
+
+
+@contextlib.contextmanager
+def unconfirmed_environment():
+    """Withhold the install confirmation from one block, environment included.
+
+    The gate reads ``AAS_INSTALL_CONFIRM`` before it reads stdin, and the
+    confirmation prompt printed just above the gate tells operators to set that
+    variable for a non-interactive apply.  A refusal test that only empties
+    stdin therefore proves nothing on a machine where the variable is live: the
+    apply answers itself from the environment and exits zero, and the refusal
+    under test never happens.
+    """
+
+    with patch.dict(os.environ):
+        os.environ.pop(INSTALL_CONFIRMATION_ENV, None)
+        yield
 
 
 class Args:
@@ -4070,6 +4088,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             with (
                 contextlib.redirect_stdout(stream),
                 contextlib.redirect_stderr(io.StringIO()),
+                unconfirmed_environment(),
                 patch("sys.stdin", io.StringIO("")),
             ):
                 code = main([
@@ -4086,6 +4105,48 @@ class DocsAndLauncherTests(unittest.TestCase):
             self.assertIn("confirmation required", payload["error"])
             self.assertFalse((root / ".claude" / "skills" / "zotero" / "SKILL.md").exists())
 
+    def test_an_exported_confirmation_does_not_answer_for_a_test_that_gave_none(self) -> None:
+        """A refusal test has to withhold the confirmation from the environment too.
+
+        ``verify_install_confirmation`` prefers ``AAS_INSTALL_CONFIRM`` over
+        stdin; the prompt this gate prints names that variable, and
+        ``docs/windows.md`` carries it in a real ``--apply --real-system``
+        command.  A test that empties stdin and stops there passes on a bare
+        runner and fails on the machine of anyone who followed that advice in
+        their shell -- and it fails by installing, which is the outcome it
+        exists to forbid.
+        """
+
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            stream = io.StringIO()
+            with (
+                patch.dict(
+                    os.environ,
+                    {INSTALL_CONFIRMATION_ENV: INSTALL_CONFIRMATION_PHRASE},
+                ),
+                contextlib.redirect_stdout(stream),
+                contextlib.redirect_stderr(io.StringIO()),
+                unconfirmed_environment(),
+                patch("sys.stdin", io.StringIO("")),
+            ):
+                code = main([
+                    "--json",
+                    "--root",
+                    str(root),
+                    "install",
+                    "--skill",
+                    "formal-skeleton-helper",
+                    "--apply",
+                ])
+            self.assertEqual(code, 1, stream.getvalue())
+            payload = json.loads(stream.getvalue())
+            self.assertIn("install confirmation required", payload["error"])
+            self.assertFalse(
+                (root / ".claude" / "skills" / "formal-skeleton-helper" / "SKILL.md").exists()
+            )
+
     def test_cli_install_apply_rejects_wrong_process_confirmation(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
@@ -4094,6 +4155,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             with (
                 contextlib.redirect_stdout(stream),
                 contextlib.redirect_stderr(io.StringIO()),
+                unconfirmed_environment(),
                 patch("sys.stdin", io.StringIO("yes\n")),
             ):
                 code = main([
@@ -4204,6 +4266,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             with (
                 contextlib.redirect_stdout(stream),
                 contextlib.redirect_stderr(io.StringIO()),
+                unconfirmed_environment(),
                 patch("sys.stdin", io.StringIO("")),
             ):
                 code = main([
@@ -4245,6 +4308,7 @@ class DocsAndLauncherTests(unittest.TestCase):
             with (
                 contextlib.redirect_stdout(stream),
                 contextlib.redirect_stderr(err),
+                unconfirmed_environment(),
                 patch("sys.stdin", io.StringIO("")),
             ):
                 code = main([

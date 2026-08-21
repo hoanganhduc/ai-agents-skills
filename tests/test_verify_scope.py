@@ -5,6 +5,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,12 @@ from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.verify import verify
+
+
+NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
+    os.name == "nt",
+    "native Windows apply is dry-run-only until handle-bound mutation lands",
+)
 
 
 def create_agent_homes(root: Path, *agents: str) -> None:
@@ -42,6 +49,7 @@ def _check(result: dict, name: str) -> dict | None:
 class VerifyScopeTests(unittest.TestCase):
     """verify must hold each artifact to the part of the file the installer owns."""
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_a_user_edit_elsewhere_in_a_merged_config_is_not_drift(self) -> None:
         # The installer owns one block of ~/.grok/config.toml and never the file,
         # so an ordinary user edit must not report the install as damaged.
@@ -55,6 +63,7 @@ class VerifyScopeTests(unittest.TestCase):
             config.write_text(config.read_text(encoding="utf-8") + '\nmodel = "grok-4"\n', encoding="utf-8")
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_damage_inside_the_managed_block_is_still_caught(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "home"
@@ -70,6 +79,7 @@ class VerifyScopeTests(unittest.TestCase):
             result = _result_for(report, "settings-compat-merge")
             self.assertFalse(_check(result, "managed-block-present")["ok"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_a_user_edit_elsewhere_in_a_merged_settings_file_is_not_drift(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "home"
@@ -83,6 +93,7 @@ class VerifyScopeTests(unittest.TestCase):
             settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
             self.assertEqual(verify(root)["status"], "ok")
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_damage_inside_the_managed_hook_entry_is_still_caught(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "home"
@@ -100,6 +111,7 @@ class VerifyScopeTests(unittest.TestCase):
             result = _result_for(report, "settings-hook-merge")
             self.assertFalse(_check(result, "managed-entry-match")["ok"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_one_unreadable_artifact_does_not_abort_the_run(self) -> None:
         # An interrupted sync or a mistaken mkdir can leave a directory where a
         # managed file was. That is one failed artifact, not a failed run.
@@ -121,6 +133,7 @@ class VerifyScopeTests(unittest.TestCase):
             self.assertEqual(len(failed), 1, failed)
             self.assertFalse(_check(failed[0], "artifact-readable")["ok"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_a_marker_less_support_file_verifies_clean_when_undamaged(self) -> None:
         # render only marks comment-bearing formats, so demanding a marker on a
         # .json support file fails a fresh install that has nothing wrong with it.
@@ -147,6 +160,7 @@ class VerifyScopeTests(unittest.TestCase):
                     references.rmdir()
             self.assertEqual(report["status"], "ok", [r for r in report["results"] if r["status"] != "ok"])
 
+    @NATIVE_WINDOWS_MUTATION_SKIP
     def test_agent_visible_fails_when_the_agent_skills_directory_moves(self) -> None:
         # Antigravity resolves its skills directory from its own config, so a
         # migrated home leaves correctly named files where the agent no longer looks.

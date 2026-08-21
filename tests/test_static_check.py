@@ -11,7 +11,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tools.static_check import bash_syntax_path, powershell_parse_script, powershell_single_quoted
+from tools.static_check import (
+    bash_syntax_path,
+    check_python_parse,
+    powershell_parse_script,
+    powershell_single_quoted,
+)
 
 
 class StaticCheckTests(unittest.TestCase):
@@ -449,6 +454,31 @@ Import-AasSecretEnvFile `
         self.assertEqual(mode, "copy")
         self.assertIn("self-contained", reason)
         self.assertEqual(evidence["agent_policy"]["default_mode"], "copy")
+
+    def test_a_file_that_only_warns_is_still_a_parse_failure(self) -> None:
+        """An invalid escape sequence has to fail the gate, not merely warn.
+
+        ``ast.parse`` returns a tree for such a file, so a check that watches
+        only for a raised exception passes it -- and the same file is a hard
+        ``SyntaxError`` in a later CPython, which turns a warning tolerated
+        today into a module that stops importing.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "sample.py"
+            path.write_text('"""a \\Administrators share."""\n', encoding="utf-8")
+
+            errors = check_python_parse([path])
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("invalid escape sequence", errors[0])
+        self.assertIn(str(path), errors[0])
+
+    def test_an_escaped_backslash_still_parses_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "sample.py"
+            path.write_text('"""a \\\\Administrators share."""\n', encoding="utf-8")
+
+            self.assertEqual(check_python_parse([path]), [])
 
 
 if __name__ == "__main__":

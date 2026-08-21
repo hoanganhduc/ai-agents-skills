@@ -267,8 +267,8 @@ def _lstat_nofollow(path: Path) -> os.stat_result | None:
         os.close(directory_fd)
 
 
-def _windows_owner_identity(path: Path) -> tuple[str, str]:
-    """Return ``(owner SID of path, SID of the current process user)``.
+def _windows_owner_identity(path: Path) -> tuple[str, tuple[str, ...]]:
+    """Return ``(owner SID of path, SIDs this process stamps ownership with)``.
 
     Windows has no ``st_uid``: ``os.stat`` synthesises 0 for every file and
     ``os.geteuid`` does not exist on the platform at all.  The ownership guard
@@ -285,6 +285,23 @@ def _windows_owner_identity(path: Path) -> tuple[str, str]:
     that leaves the answer unestablished -- a failed query, a SID that will not
     render -- raises instead of returning a permissive default, because a
     provenance gate that cannot establish provenance has to refuse.
+
+    Two SIDs come back rather than one because Windows does not stamp new
+    objects with the token's *user*.  It stamps them with the token's *owner*,
+    and on an elevated token that owner defaults to ``BUILTIN\\Administrators``
+    (``S-1-5-32-544``) instead of the account behind it.  Comparing the file
+    against ``TokenUser`` alone therefore calls a process's own freshly written
+    post-image foreign whenever the session is elevated -- which is every run
+    on an administrator account, and every run on the Windows CI image.  The
+    guard means "did the identity this process creates files as create this
+    file", and that identity is ``TokenOwner``; ``TokenUser`` is kept beside it
+    for the unelevated case where the two differ the other way.
+
+    This does mean that under elevation the gate cannot separate this process
+    from another administrator on the same host: they share the stamp, so the
+    distinction does not survive in the filesystem for anyone to read.  What it
+    still refuses is the case it exists for -- contents owned by a different
+    account entirely.
     """
 
     import ctypes
@@ -297,6 +314,7 @@ def _windows_owner_identity(path: Path) -> tuple[str, str]:
     SE_FILE_OBJECT = 1
     TOKEN_QUERY = 0x0008
     TOKEN_USER_CLASS = 1
+    TOKEN_OWNER_CLASS = 4
     ERROR_INSUFFICIENT_BUFFER = 122
 
     advapi32.GetNamedSecurityInfoW.argtypes = [
@@ -379,33 +397,35 @@ def _windows_owner_identity(path: Path) -> tuple[str, str]:
             f"cannot open the process token to check the owner of {path}: "
             f"Win32 error {ctypes.get_last_error()}"
         )
-    try:
+    def token_sid(info_class: int, subject: str) -> str:
+        # ``TOKEN_USER`` is one ``SID_AND_ATTRIBUTES`` and ``TOKEN_OWNER`` is a
+        # lone ``PSID``; in both the SID pointer is the first member, so one
+        # read serves for either class.
         size = wintypes.DWORD(0)
-        advapi32.GetTokenInformation(
-            token, TOKEN_USER_CLASS, None, 0, ctypes.byref(size)
-        )
+        ctypes.set_last_error(0)
+        advapi32.GetTokenInformation(token, info_class, None, 0, ctypes.byref(size))
         if ctypes.get_last_error() != ERROR_INSUFFICIENT_BUFFER:
             raise TransactionError(
-                f"cannot size the process token user: "
-                f"Win32 error {ctypes.get_last_error()}"
+                f"cannot size the {subject}: Win32 error {ctypes.get_last_error()}"
             )
         buffer = ctypes.create_string_buffer(int(size.value))
         if not advapi32.GetTokenInformation(
-            token, TOKEN_USER_CLASS, buffer, size, ctypes.byref(size)
+            token, info_class, buffer, size, ctypes.byref(size)
         ):
             raise TransactionError(
-                f"cannot read the process token user: "
-                f"Win32 error {ctypes.get_last_error()}"
+                f"cannot read the {subject}: Win32 error {ctypes.get_last_error()}"
             )
-        # ``TOKEN_USER`` is one ``SID_AND_ATTRIBUTES``, whose SID pointer is
-        # the first member.
-        process_sid = sid_text(
-            ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p)).contents,
-            "process user",
+        return sid_text(
+            ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p)).contents, subject
         )
+
+    try:
+        owner_sid = token_sid(TOKEN_OWNER_CLASS, "process token owner")
+        user_sid = token_sid(TOKEN_USER_CLASS, "process token user")
     finally:
         kernel32.CloseHandle(token)
-    return file_sid, process_sid
+    process_sids = (owner_sid,) if owner_sid == user_sid else (owner_sid, user_sid)
+    return file_sid, process_sids
 
 
 def _owned_by_current_user(path: Path, info: os.stat_result) -> bool:
@@ -420,8 +440,8 @@ def _owned_by_current_user(path: Path, info: os.stat_result) -> bool:
     """
 
     if os.name == "nt":
-        file_sid, process_sid = _windows_owner_identity(path)
-        return file_sid == process_sid
+        file_sid, process_sids = _windows_owner_identity(path)
+        return file_sid in process_sids
     return int(getattr(info, "st_uid", -1)) == int(os.geteuid())
 
 

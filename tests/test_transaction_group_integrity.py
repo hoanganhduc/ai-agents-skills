@@ -341,7 +341,7 @@ class WindowsOwnershipGateTests(unittest.TestCase):
             ), mock.patch.object(
                 st,
                 "_windows_owner_identity",
-                lambda path: ("S-1-5-21-1-2-3-1001", "S-1-5-21-1-2-3-1002"),
+                lambda path: ("S-1-5-21-1-2-3-1001", ("S-1-5-21-1-2-3-1002",)),
             ):
                 with self.assertRaises(st.TransactionError) as ctx:
                     self._read(target)
@@ -358,7 +358,7 @@ class WindowsOwnershipGateTests(unittest.TestCase):
             ), mock.patch.object(
                 st,
                 "_windows_owner_identity",
-                lambda path: ("S-1-5-21-1-2-3-1001", "S-1-5-21-1-2-3-1001"),
+                lambda path: ("S-1-5-21-1-2-3-1001", ("S-1-5-21-1-2-3-1001",)),
             ):
                 self.assertEqual(self._read(target), b"payload")
 
@@ -384,16 +384,48 @@ class WindowsOwnershipGateTests(unittest.TestCase):
                     with self.assertRaises(st.TransactionError):
                         self._read(target)
 
-    @unittest.skipUnless(os.name == "nt", "exercises the real Win32 security API")
-    def test_the_win32_query_reports_this_process_as_the_owner(self) -> None:
-        """On Windows the ctypes body itself has to return a usable answer."""
+    def test_an_elevated_sessions_administrators_stamp_is_this_process(self) -> None:
+        """``BUILTIN\\Administrators`` owning the file is not a foreign owner.
+
+        An elevated token stamps new objects with ``TokenOwner``, which defaults
+        to ``S-1-5-32-544`` rather than the account behind the token.  Comparing
+        only against ``TokenUser`` made a process's own post-image read as
+        someone else's on every elevated session -- the case CI runs in.
+        """
 
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "post.bin"
             target.write_bytes(b"payload")
-            file_sid, process_sid = st._windows_owner_identity(target)
+            with mock.patch.object(st, "_is_windows", lambda: True), mock.patch.object(
+                st.os, "name", "nt"
+            ), mock.patch.object(
+                st,
+                "_windows_owner_identity",
+                lambda path: (
+                    "S-1-5-32-544",
+                    ("S-1-5-32-544", "S-1-5-21-1-2-3-500"),
+                ),
+            ):
+                self.assertEqual(self._read(target), b"payload")
+
+    @unittest.skipUnless(os.name == "nt", "exercises the real Win32 security API")
+    def test_the_win32_query_reports_this_process_as_the_owner(self) -> None:
+        """On Windows the ctypes body itself has to return a usable answer.
+
+        Asserted against the whole stamping set rather than one SID: on an
+        elevated session the file carries ``TokenOwner`` and on an unelevated
+        one it carries ``TokenUser``, and both are this process.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "post.bin"
+            target.write_bytes(b"payload")
+            file_sid, process_sids = st._windows_owner_identity(target)
             self.assertTrue(file_sid.startswith("S-1-"), file_sid)
-            self.assertEqual(file_sid, process_sid)
+            self.assertTrue(
+                all(sid.startswith("S-1-") for sid in process_sids), process_sids
+            )
+            self.assertIn(file_sid, process_sids)
             self.assertEqual(self._read(target), b"payload")
 
 
