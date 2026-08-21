@@ -18,7 +18,7 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from installer.ai_agents_skills.apply import apply_plan, replace_with_text
+from installer.ai_agents_skills.apply import apply_action, apply_plan, replace_with_text
 from installer.ai_agents_skills.agents import KNOWN_AGENT_NAMES, detect_agents, target_for
 from installer.ai_agents_skills.cli import (
     INSTALL_CONFIRMATION_PHRASE,
@@ -32,7 +32,13 @@ from installer.ai_agents_skills.delegation import PROVIDER_CLI_SPECS
 from installer.ai_agents_skills.delegation_dispatch import split_dispatch_command
 from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.docs import check_docs_current, generate_docs, render_docs
-from installer.ai_agents_skills.lifecycle import apply_uninstall_action, plan_uninstall_action, rollback, uninstall
+from installer.ai_agents_skills.lifecycle import (
+    apply_uninstall_action,
+    load_run_actions,
+    plan_uninstall_action,
+    rollback,
+    uninstall,
+)
 from installer.ai_agents_skills.manifest import (
     REPO_ROOT,
     ManifestError,
@@ -2241,6 +2247,47 @@ class PlanInstallVerifyTests(unittest.TestCase):
             self.assertFalse(applied["dry_run"])
             self.assertFalse(target.exists())
             self.assertFalse(instructions.exists())
+
+    @NATIVE_WINDOWS_MUTATION_SKIP
+    def test_interrupted_apply_leaves_the_run_rollback_resolvable(self) -> None:
+        # Artifacts and the run record are persisted after every action, so an
+        # apply that dies part way through still leaves recoverable evidence on
+        # disk. The run index has to keep pace with them: rollback resolves its
+        # target through state["runs"], so a run missing from that list is
+        # refused as unknown however complete its record is.
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "claude")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+            plan = build_plan(root, manifests, selected, detect_agents(root))
+            self.assertGreater(len(plan["actions"]), 2)
+
+            applied_run_ids: list[str] = []
+
+            def interrupt_after_two(
+                root_arg: Path, run_id_arg: str, action_arg: dict
+            ) -> dict:
+                if len(applied_run_ids) >= 2:
+                    raise KeyboardInterrupt("apply interrupted")
+                applied_run_ids.append(run_id_arg)
+                return apply_action(root_arg, run_id_arg, action_arg)
+
+            with patch(
+                "installer.ai_agents_skills.apply.apply_action", interrupt_after_two
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    apply_plan(root, plan, dry_run=False)
+
+            run_id = applied_run_ids[0]
+            state = load_state(root)
+            self.assertEqual([item["run_id"] for item in state["runs"]], [run_id])
+            self.assertEqual(state["runs"][0]["action_count"], 2)
+            self.assertEqual(len(load_run_actions(root, state, run_id)), 2)
+            rolled = rollback(root, run_id=run_id, dry_run=False)
+            self.assertFalse(rolled["dry_run"])
 
     @NATIVE_WINDOWS_MUTATION_SKIP
     def test_rollback_unmanages_adopted_file_without_deleting_or_rechecking_content(self) -> None:

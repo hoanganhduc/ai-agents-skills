@@ -27,6 +27,7 @@ from .state import (
     signatures_match,
     symlink_atomic,
     upsert_artifact,
+    upsert_run,
     upsert_uninstall_record,
     write_text_atomic,
     write_run_record,
@@ -69,9 +70,10 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
                 upsert_uninstall_record(state, recorded_result)
         elif recorded_result.get("managed"):
             upsert_artifact(state, recorded_result)
+        upsert_run(state, run_id, len(applied))
         save_state(root, state)
         write_run_record(root, run_id, applied)
-    state.setdefault("runs", []).append({"run_id": run_id, "action_count": len(applied)})
+    upsert_run(state, run_id, len(applied))
     save_state(root, state)
     write_run_record(root, run_id, applied)
     return {"run_id": run_id, "dry_run": False, "actions": applied}

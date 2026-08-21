@@ -239,6 +239,24 @@ def upsert_uninstall_record(data: dict[str, Any], record: dict[str, Any]) -> Non
     upsert_record(data.setdefault("uninstall_records", []), record)
 
 
+def upsert_run(data: dict[str, Any], run_id: str, action_count: int) -> None:
+    """Record ``run_id`` in the run index, replacing any earlier entry.
+
+    Run entries are keyed by ``run_id`` rather than the ``key`` field
+    ``upsert_record`` expects, so they need their own upsert.  The apply loop
+    calls this after every action: ``load_run_actions`` resolves a rollback
+    target through this list, and a run absent from it is refused as unknown
+    however complete its record is.
+    """
+    runs = data.setdefault("runs", [])
+    entry = {"run_id": run_id, "action_count": action_count}
+    for index, existing in enumerate(runs):
+        if isinstance(existing, dict) and existing.get("run_id") == run_id:
+            runs[index] = entry
+            return
+    runs.append(entry)
+
+
 def run_record_path(root: Path, run_id: str) -> Path:
     validate_run_id(run_id)
     return state_dir(root) / "runs" / f"{run_id}.json"
