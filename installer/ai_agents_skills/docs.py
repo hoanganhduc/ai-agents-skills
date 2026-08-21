@@ -1158,6 +1158,17 @@ Before execution, managed-state integrity is verified; runtime files are then
 descriptor-read, SHA-256 checked, copied into an isolated scratch runtime, and
 only the verified scratch runner is executed.
 
+That scratch runtime is a temporary per-user tree, so it can never be the
+root-owned component generation `run_skill.sh` requires of a credential-bearing
+launch. The harness therefore relaxes `credential_runtime_enforcement` in the
+scratch copy, exactly as `runtime-smoke` relaxes its own ephemeral install, and
+creates every scratch directory owner-write-only so the runner's command-chain
+check still applies. Without both, the gate refuses each credential-bearing
+skill with exit `127` before its offline contract runs, so those contracts go
+unexercised while reporting as skill failures. The installed runtime itself is
+never patched, and the command-chain, workspace, and system-Python checks are
+never relaxed.
+
 Every installed-runtime report, including an early `skipped` result, uses the
 stable top-level schema `ai-agents-skills.installed-runtime-smoke.v1` with
 `schema_version: 1`. Restore orchestrators must require that exact schema and

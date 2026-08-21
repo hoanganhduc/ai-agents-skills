@@ -60,11 +60,12 @@ def relax_ephemeral_credential_enforcement(runtime_root: Path) -> None:
     """Relax the credential-runtime generation gate in an ephemeral copy.
 
     run_skill.sh documents that ``credential_runtime_enforcement=1`` is
-    intentionally patchable only in ephemeral copies.  The temporary smoke
-    install is exactly such a copy: it can never satisfy the root-owned
-    exact-generation check, and the smoke canaries would otherwise turn
-    every credential-bearing case into a gate refusal.  Installed-runtime
-    smoke does not call this.
+    intentionally patchable only in ephemeral copies.  Both smoke harnesses
+    execute exactly such a copy -- the temporary install, and the installed
+    harness's hash-verified scratch tree -- and neither can satisfy the
+    root-owned exact-generation check, so the smoke canaries would otherwise
+    turn every credential-bearing case into a gate refusal.  The installed
+    runtime itself is never patched: the caller passes the scratch root.
     """
     runner = runtime_root / "run_skill.sh"
     if not runner.is_file():
@@ -607,6 +608,14 @@ def run_installed_runtime_smoke(
             # Execute only the descriptor-read, hash-verified scratch copy.  In
             # particular, never invoke a runner from the mutable installed
             # runtime root after its integrity check.
+            #
+            # The scratch tree is a per-user temporary directory, so it can never
+            # be a root-owned component generation.  Left enforcing, the gate
+            # refuses every credential-bearing skill with exit 127 before its
+            # offline contract runs, which reports as a skill failure and leaves
+            # those contracts permanently unexercised.  Relax the scratch copy,
+            # exactly as the temporary harness relaxes its own.
+            relax_ephemeral_credential_enforcement(scratch_workspace.parent)
             runners = runner_invocations(scratch_workspace.parent, target_platform)
             for skill in selected_for_root:
                 if not has_runtime_smoke_contract(manifests, skill):
@@ -1682,6 +1691,25 @@ def validate_smoke_output(
     return checks
 
 
+def make_trusted_scratch_directory(path: Path, ceiling: Path) -> None:
+    """Create ``path`` with an umask-independent, owner-write-only mode.
+
+    run_skill.sh walks the command's parent chain and refuses any component a
+    group or other can write.  A bare ``mkdir`` takes the ambient umask, so on a
+    host carrying the common ``0002`` user-private-group umask every scratch
+    directory lands at ``0775`` and the credential-bearing skills fail the
+    command-chain check before their offline contract ever runs.  The installed
+    runtime this copies from is owner-only, so normalising the copy is what
+    makes it faithful.  ``ceiling`` is the tempfile root, already ``0700`` and
+    left alone.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+    current = path
+    while current != ceiling and ceiling in current.parents:
+        os.chmod(current, 0o755)
+        current = current.parent
+
+
 def copy_installed_runtime_workspace(
     runtime_root: Path,
     artifacts: list[dict[str, Any]],
@@ -1689,7 +1717,7 @@ def copy_installed_runtime_workspace(
 ) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
     runtime_workspace = runtime_root / "workspace"
-    scratch_workspace.mkdir(parents=True, exist_ok=True)
+    make_trusted_scratch_directory(scratch_workspace, scratch_workspace.parent)
     for artifact in artifacts:
         target_relpath = artifact.get("target_relpath")
         if not isinstance(target_relpath, str):
@@ -1743,7 +1771,7 @@ def copy_installed_runtime_workspace(
             if not isinstance(expected_hash, str) or "sha256:" + digest.hexdigest() != expected_hash:
                 checks.append({"name": f"{check_prefix}:source-hash", "ok": False})
                 continue
-            dest.parent.mkdir(parents=True, exist_ok=True)
+            make_trusted_scratch_directory(dest.parent, scratch_workspace.parent)
             dest.write_bytes(payload)
             if isinstance(expected_mode, str):
                 os.chmod(dest, int(expected_mode, 8))
