@@ -38,11 +38,37 @@ def managed_parent_boundary(root: Path, action: dict[str, Any]) -> Path | None:
         target = target_for(root, agent_name)
     except ValueError:
         return None
-    candidates = {target.skills_dir, target.support_dir_for(skill).parent}
+    candidates = managed_boundary_candidates(target, skill)
     contained = [candidate for candidate in candidates if normalized_path_within(candidate, path.parent)]
     if not contained:
         return None
     return max(contained, key=lambda candidate: len(candidate.parts))
+
+
+def managed_boundary_candidates(target: AgentTarget, skill: str) -> set[Path]:
+    """Return the managed directory roots that may bound a file under ``target``.
+
+    Antigravity keeps its plugin manifest, MCP config and hook config directly in
+    the plugin package directory rather than in the skills subdirectory the other
+    two candidates cover.  Without it as a candidate those three files are written
+    through the generic creator instead, which applies the ambient umask: an
+    install selecting a skill that contributes nothing deeper in the package --
+    ``--skills zotero`` is enough -- leaves the directory holding them at 0775
+    beside skill directories the same run put at 0700, and directory write
+    permission is permission to replace any of the three.  A skill that does write
+    a support file happens to create the package on the way to a deeper boundary,
+    which is why the exposure depends on the selection rather than showing up
+    every time.
+
+    The entry is added for Antigravity alone because only there is it a directory
+    the installer owns outright.  The other targets' ``plugin`` entry is the
+    agent's own shared plugin root, holding plugins this installer did not write,
+    and normalizing its mode would reach outside the declared surface.
+    """
+    candidates = {target.skills_dir, target.support_dir_for(skill).parent}
+    if target.name == "antigravity":
+        candidates.add(target.target_dir_for("plugin"))
+    return candidates
 
 
 def managed_boundary_dirs(target: AgentTarget) -> list[Path]:
@@ -52,7 +78,7 @@ def managed_boundary_dirs(target: AgentTarget) -> list[Path]:
     support-directory parent does not depend on the skill, so the placeholder
     name never reaches the result.
     """
-    return sorted({target.skills_dir, target.support_dir_for("_").parent}, key=str)
+    return sorted(managed_boundary_candidates(target, "_"), key=str)
 
 
 def managed_boundary_block_reason(root: Path, target: AgentTarget) -> str | None:

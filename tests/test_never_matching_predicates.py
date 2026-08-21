@@ -344,7 +344,18 @@ class SmokeCanaryTest(unittest.TestCase):
         self.manifests = {"runtime": self.manifest}
 
     def declared(self, skill: str) -> dict:
-        return (self.manifest["skills"][skill].get("smoke") or {}).get("env_canaries") or {}
+        """Both canary vehicles, since a check is produced for either.
+
+        A credential-contract skill cannot receive an ambient canary at all -- the
+        launcher strips it -- so those declarations live in ``secret_file_canaries``
+        and arrive through the pointer file the runner projects.
+        """
+        smoke = self.manifest["skills"][skill].get("smoke") or {}
+        values = dict(smoke.get("env_canaries") or {})
+        file_spec = smoke.get("secret_file_canaries") or {}
+        if isinstance(file_spec.get("values"), dict):
+            values.update(file_spec["values"])
+        return values
 
     def with_canaries(self):
         return [name for name in self.manifest["skills"] if self.declared(name)]
@@ -373,7 +384,7 @@ class SmokeCanaryTest(unittest.TestCase):
                 continue
             with self.subTest(skill=name):
                 self.assertTrue(
-                    smoke.get("env_canaries"),
+                    self.declared(name),
                     f"{name} forbids real secrets but injects nothing that would prove it",
                 )
 

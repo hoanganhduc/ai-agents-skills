@@ -18,6 +18,12 @@ from installer.ai_agents_skills.openclaw_runtime_target_evidence import (
     build_runtime_target_evidence,
     validate_runtime_target_evidence,
 )
+from installer.ai_agents_skills.openclaw_runtime_broker import broker_authorize
+from installer.ai_agents_skills.openclaw_runtime_target_apply import (
+    broker_state_from_manifest,
+    runtime_broker_commands,
+    runtime_target_destinations,
+)
 from installer.ai_agents_skills.openclaw_target_paths import (
     OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE,
     validate_openclaw_target_home,
@@ -80,6 +86,41 @@ def _approved_manifest_file(tmp: Path, root: Path, rroot: Path) -> Path:
     apath = tmp / "approved.json"
     apath.write_text(json.dumps(approved), encoding="utf-8")
     return apath
+
+
+# tikz-draw ships text support files nested several directories deep, which is what
+# makes it the right subject for the destination-layout tests below.
+SUPPORT_SKILL = "tikz-draw"
+SUPPORT_EVIDENCE = (
+    "native-loader", "quiescence-lock", "neutral-runtime-root",
+    "runtime-pre-state", "support-file-pre-state", "compatibility-tuple-match",
+    "helper-invocation",
+)
+
+
+def _approved_support_manifest(tmp: Path, root: Path, rroot: Path) -> tuple[Path, dict]:
+    ev_paths = _write_evidence(tmp, root, rroot, SUPPORT_EVIDENCE)
+    argv = ["--json", "--root", str(root), "openclaw-runtime-dry-run-manifest",
+            "--skill", SUPPORT_SKILL, "--action-class", "managed-support-file",
+            "--runtime-root", str(rroot), "--source-commit", "abc123"]
+    for path in ev_paths:
+        argv += ["--evidence", path]
+    manifest = json.loads(_run(argv)["out"])
+    mpath = tmp / "support-manifest.json"
+    mpath.write_text(json.dumps(manifest), encoding="utf-8")
+    approved = json.loads(_run(
+        ["--json", "openclaw-runtime-approve-manifest", "--manifest", str(mpath),
+         "--reviewer", "me"])["out"])
+    apath = tmp / "support-approved.json"
+    apath.write_text(json.dumps(approved), encoding="utf-8")
+    return apath, approved
+
+
+def _apply(root: Path, apath: Path, rroot: Path) -> dict:
+    return _run(["--json", "--root", str(root), "openclaw-runtime-apply-manifest",
+                 "--manifest", str(apath), "--runtime-root", str(rroot), "--apply",
+                 "--real-system", "--confirm-openclaw-real-write",
+                 OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE])
 
 
 @unittest.skipIf(
@@ -270,6 +311,160 @@ class RuntimeCliTest(unittest.TestCase):
                 argv += ["--evidence", p]
             res = _run(argv)
             self.assertNotEqual(res["code"], 0)
+
+    def test_apply_refuses_a_skill_directory_that_is_a_symlink(self) -> None:
+        # A symlink planted at .openclaw/skills/<skill> redirects every delivered
+        # file outside .openclaw. Apply must notice the parent, not just the leaf.
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "installer.ai_agents_skills.openclaw_runtime_target_apply."
+            "neutral_runtime_root_block_reason",
+            return_value=None,
+        ):
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            outside = tmp / "outside-secrets"
+            outside.mkdir()
+            (root / ".openclaw" / "skills" / SUPPORT_SKILL).symlink_to(outside)
+
+            apath, _ = _approved_support_manifest(tmp, root, rroot)
+            res = _apply(root, apath, rroot)
+            self.assertNotEqual(res["code"], 0, res["out"])
+            self.assertIn("symlink", str(json.loads(res["out"]).get("error") or ""))
+            self.assertEqual(sorted(outside.rglob("*")), [])
+
+    def test_apply_refuses_to_overwrite_content_it_does_not_manage(self) -> None:
+        # This module keeps no state and takes no backup, so an overwrite of a file
+        # the installer never wrote is unrecoverable.
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "installer.ai_agents_skills.openclaw_runtime_target_apply."
+            "neutral_runtime_root_block_reason",
+            return_value=None,
+        ):
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            apath, approved = _approved_support_manifest(tmp, root, rroot)
+
+            destinations = runtime_target_destinations(approved, root=root, runtime_root=rroot)
+            victim = next(
+                dest for rel, dest in sorted(destinations.items())
+                if approved["routing"][rel] == "s3"
+            )
+            victim.parent.mkdir(parents=True, exist_ok=True)
+            victim.write_text("USER-AUTHORED - DO NOT DELETE\n", encoding="utf-8")
+
+            res = _apply(root, apath, rroot)
+            self.assertNotEqual(res["code"], 0, res["out"])
+            self.assertIn("unmanaged", str(json.loads(res["out"]).get("error") or ""))
+            self.assertEqual(victim.read_text(encoding="utf-8"), "USER-AUTHORED - DO NOT DELETE\n")
+
+    def test_apply_reapplied_over_its_own_output_is_accepted(self) -> None:
+        # The clobber guard above must recognize content this installer already
+        # wrote, or a second apply of the same approved manifest would fail.
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "installer.ai_agents_skills.openclaw_runtime_target_apply."
+            "neutral_runtime_root_block_reason",
+            return_value=None,
+        ):
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            apath, _ = _approved_support_manifest(tmp, root, rroot)
+            first = _apply(root, apath, rroot)
+            self.assertEqual(first["code"], 0, first["out"])
+            second = _apply(root, apath, rroot)
+            self.assertEqual(second["code"], 0, second["out"])
+
+    def test_every_delivered_file_keeps_its_own_destination(self) -> None:
+        # Flattening every file into <skill>/ makes two shipped README.md files one
+        # destination, and the loser is silently dropped.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            _, approved = _approved_support_manifest(tmp, root, rroot)
+            routed = [rel for rel, route in approved["routing"].items() if route in ("s3", "s4")]
+            destinations = runtime_target_destinations(approved, root=root, runtime_root=rroot)
+            self.assertEqual(len(destinations), len(routed))
+            self.assertEqual(len(set(destinations.values())), len(routed))
+
+    def test_broker_command_names_resolve_per_platform(self) -> None:
+        # sagemath ships run_sage.sh and run_sage.ps1; one command name, two files.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            ev_paths = _write_evidence(tmp, root, rroot, SUPPORT_EVIDENCE)
+            argv = ["--json", "--root", str(root), "openclaw-runtime-dry-run-manifest",
+                    "--skill", "sagemath", "--action-class", "shared-runtime-file",
+                    "--runtime-root", str(rroot), "--source-commit", "abc123"]
+            for path in ev_paths:
+                argv += ["--evidence", path]
+            manifest = json.loads(_run(argv)["out"])
+
+            chosen = {}
+            for platform in ("linux", "windows"):
+                commands = runtime_broker_commands(manifest, platform=platform)
+                chosen[platform] = commands["run_sage"]["relative_path"]
+            self.assertTrue(chosen["linux"].endswith("run_sage.sh"), chosen)
+            self.assertTrue(chosen["windows"].endswith("run_sage.ps1"), chosen)
+
+
+    def test_broker_never_arms_itself_with_a_published_token(self) -> None:
+        # broker_authorize accepts any caller presenting the token, so a constant
+        # default would be a password printed in the source.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            apath = _approved_manifest_file(tmp, root, rroot)
+
+            captured: dict[str, str] = {}
+            real = broker_state_from_manifest
+
+            def spy(manifest, **kwargs):
+                captured["token"] = kwargs["token"]
+                return real(manifest, **kwargs)
+
+            with patch("installer.ai_agents_skills.cli.broker_state_from_manifest", spy):
+                res = _run(["--json", "openclaw-broker", "--manifest", str(apath),
+                            "--runtime-root", str(rroot), "--agent", "main"])
+            self.assertEqual(res["code"], 0, res["out"])
+            self.assertTrue(json.loads(res["out"])["commands"])
+
+            state = real(json.loads(apath.read_text(encoding="utf-8")),
+                         runtime_root=rroot, agent="main", token=captured["token"])
+            skill, command = sorted(state.commands)[0]
+            agent, reason = broker_authorize("broker-token-unset", skill, command, state=state)
+            self.assertIsNone(agent)
+            self.assertIsNotNone(reason)
+
+    def test_broker_refuses_to_serve_without_a_token_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            apath = _approved_manifest_file(tmp, root, rroot)
+            with patch("installer.ai_agents_skills.openclaw_runtime_broker.serve") as bound:
+                res = _run(["--json", "openclaw-broker", "--manifest", str(apath),
+                            "--runtime-root", str(rroot), "--serve"])
+            self.assertNotEqual(res["code"], 0, res["out"])
+            self.assertIn("--token-file", str(json.loads(res["out"]).get("error") or ""))
+            bound.assert_not_called()
+
+    def test_broker_rejects_an_empty_token_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            root = _mk_root(tmp)
+            rroot = tmp / "neutral-runtime"
+            apath = _approved_manifest_file(tmp, root, rroot)
+            empty = tmp / "token"
+            empty.write_text("   \n", encoding="utf-8")
+            res = _run(["--json", "openclaw-broker", "--manifest", str(apath),
+                        "--runtime-root", str(rroot), "--token-file", str(empty)])
+            self.assertNotEqual(res["code"], 0, res["out"])
+            self.assertIn("empty", str(json.loads(res["out"]).get("error") or ""))
 
 
 if __name__ == "__main__":

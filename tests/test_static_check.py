@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -321,6 +322,72 @@ Import-AasSecretEnvFile `
         self.assertIn('getattr(os, "O_CLOEXEC", 0)', text)
         self.assertIn('getattr(os, "O_BINARY", 0)', text)
         self.assertNotIn("os.O_RDONLY | os.O_CLOEXEC", text)
+
+    def test_every_read_descriptor_on_a_windows_path_opts_into_binary_mode(self) -> None:
+        # Windows opens descriptors in the CRT text mode, which collapses CRLF and
+        # stops at Ctrl-Z. A read that hashes or size-checks its bytes then reports
+        # a phantom mismatch on any file with Windows line endings. Pinning one
+        # module is not enough -- the whole installer package runs on Windows CI.
+        roots = [
+            Path("installer/ai_agents_skills"),
+            Path("canonical/runtime/skills/autonomous-research-loop-runtime"),
+        ]
+        offenders = []
+        for root in roots:
+            for source in sorted(root.rglob("*.py")):
+                tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    if not (
+                        isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "open"
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "os"
+                    ):
+                        continue
+                    if len(node.args) < 2:
+                        continue
+                    flags = ast.unparse(node.args[1])
+                    if "O_DIRECTORY" in flags:
+                        continue  # a directory descriptor has no translation mode
+                    if "O_RDONLY" in flags and "O_BINARY" not in flags:
+                        offenders.append(f"{source}:{node.lineno}")
+        self.assertEqual(offenders, [])
+
+    def test_every_deferred_sibling_import_names_something_that_exists(self) -> None:
+        # Function-local `from .sibling import name` lines are only executed on the
+        # branch that needs them, so a renamed export stays invisible until a user
+        # takes that branch -- and the branches that defer their imports are the
+        # host-only ones the suite cannot run.
+        package = Path("installer/ai_agents_skills")
+        exported: dict[str, set[str]] = {}
+        for source in sorted(package.glob("*.py")):
+            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+            names = set()
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    names.add(node.name)
+                elif isinstance(node, ast.Assign):
+                    names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+                elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                    names.add(node.target.id)
+                elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                    names.update(a.asname or a.name.split(".")[0] for a in node.names)
+            exported[source.stem] = names
+
+        offenders = []
+        for source in sorted(package.glob("*.py")):
+            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.ImportFrom) or node.level != 1 or node.module is None:
+                    continue
+                if node.module not in exported:
+                    continue
+                for alias in node.names:
+                    if alias.name != "*" and alias.name not in exported[node.module]:
+                        offenders.append(f"{source}:{node.lineno}: {node.module}.{alias.name}")
+        self.assertEqual(offenders, [])
 
     def test_wsl_bash_syntax_path_uses_wslpath_with_forward_slashes(self) -> None:
         converted = Mock(returncode=0, stdout="/mnt/c/repo/script.sh\n")

@@ -868,7 +868,21 @@ class StateTransactionSecurityTests(unittest.TestCase):
                 st.recover_transactions(root)
 
             self.assertEqual(victim.read_bytes(), before)
-            self.assertTrue(tx_dir.exists())
+
+            # A manifest this pass refuses is refused by every later pass too,
+            # so leaving it in the journal only re-arms the same failure on
+            # every command. The entry moves to quarantine with its evidence
+            # intact, and the run directory keeps working.
+            self.assertFalse(tx_dir.exists())
+            quarantine = root / st.TRANSACTION_QUARANTINE_DIRNAME
+            manifests = sorted(quarantine.glob("*/manifest.json"))
+            self.assertEqual(len(manifests), 1, manifests)
+            self.assertEqual(
+                json.loads(manifests[0].read_text(encoding="utf-8"))["transaction_id"],
+                tx_dir.name,
+            )
+            self.assertEqual(st.recover_transactions(root), [])
+            self.assertEqual(victim.read_bytes(), before)
 
     def test_committed_journal_is_quarantined_when_live_poststate_is_missing_or_tampered(
         self,
@@ -894,10 +908,16 @@ class StateTransactionSecurityTests(unittest.TestCase):
                 # The evidence is preserved, but out of the journal so the
                 # same failure cannot re-arm on every later command.
                 self.assertFalse(tx_dir.exists())
-                quarantined = (
-                    root / st.TRANSACTION_QUARANTINE_DIRNAME / tx_dir.name
+                # The destination carries a timestamp and a random suffix, so
+                # a repeat of the same transaction id lands beside the first
+                # rather than inside it; the name still starts with the id.
+                quarantine = root / st.TRANSACTION_QUARANTINE_DIRNAME
+                manifests = sorted(quarantine.glob("*/manifest.json"))
+                self.assertEqual(len(manifests), 1, manifests)
+                self.assertTrue(
+                    manifests[0].parent.name.startswith(f"{tx_dir.name}-"),
+                    manifests[0],
                 )
-                self.assertTrue((quarantined / "manifest.json").is_file())
                 if attack == "missing":
                     self.assertFalse(target.exists())
                 else:

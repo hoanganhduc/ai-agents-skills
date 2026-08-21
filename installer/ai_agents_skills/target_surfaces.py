@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from .agents import antigravity_layout_paths
+
 
 SUPPORT_STATES = {"supported", "fallback", "degraded", "blocked", "manual", "unsupported"}
 MECHANISMS = {
@@ -43,6 +45,27 @@ class TargetSurface:
     execution_scope: str
     claim_basis: str
     notes: str
+
+
+# The Antigravity trees exist in two layouts, and which one a home uses is
+# decided per home by the vendor's own ``.migrated`` marker.  Both spellings are
+# rendered from the same composer the installer resolves real paths with, so a
+# note here cannot name a directory the installer does not write to -- which is
+# what these notes did while they were typed out by hand: the migration moved the
+# skill and plugin trees to ``.gemini/config`` and the table went on publishing
+# ``.gemini/antigravity-cli``.  ``docs-check`` cannot catch that on its own,
+# since it only asks whether the generated documents match this table.
+_ANTIGRAVITY_BEFORE = antigravity_layout_paths(PurePosixPath("~"), migrated=False)
+_ANTIGRAVITY_AFTER = antigravity_layout_paths(PurePosixPath("~"), migrated=True)
+
+
+def antigravity_documented_dir(name: str) -> str:
+    """Return both spellings of one Antigravity directory, for a note."""
+    before = _ANTIGRAVITY_BEFORE[name].as_posix()
+    after = _ANTIGRAVITY_AFTER[name].as_posix()
+    if before == after:
+        return before
+    return f"{before}/ (or {after}/ on a home the vendor has migrated)"
 
 
 TARGET_SURFACES: tuple[TargetSurface, ...] = (
@@ -98,7 +121,7 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "copy",
         "Antigravity global flat Markdown skill file with the embedded canonical body",
         "official-docs",
-        "Auto mode writes ~/.gemini/antigravity-cli/skills/<skill>.md with the full canonical skill body and copies support files, matching the documented global skill layout.",
+        f"Auto mode writes <skill>.md under {antigravity_documented_dir('skills')} with the full canonical skill body and copies support files, matching the documented global skill layout.",
     ),
     TargetSurface(
         "openclaw",
@@ -161,7 +184,7 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "native-skill",
         "Antigravity global flat Markdown skill alias",
         "renderer",
-        "Entry-point aliases render as global Antigravity Markdown skills under ~/.gemini/antigravity-cli/skills/.",
+        f"Entry-point aliases render as global Antigravity Markdown skills under {antigravity_documented_dir('skills')}.",
     ),
     TargetSurface(
         "openclaw",
@@ -245,7 +268,7 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "plugin",
         "Antigravity plugin agent definition",
         "official-docs",
-        "Personas are installed under ~/.gemini/antigravity-cli/plugins/ai-agents-skills/agents/ with the plugin manifest.",
+        f"Personas are installed under {antigravity_documented_dir('plugin-package')} in an agents/ subdirectory, with the plugin manifest.",
     ),
     TargetSurface(
         "antigravity",
@@ -254,7 +277,7 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "plugin",
         "Antigravity native plugin package",
         "official-docs",
-        "The installer creates plugin.json and a managed plugin payload under ~/.gemini/antigravity-cli/plugins/ai-agents-skills/.",
+        f"The installer creates plugin.json and a managed plugin payload under {antigravity_documented_dir('plugin-package')}.",
     ),
     TargetSurface(
         "antigravity",
@@ -272,7 +295,7 @@ TARGET_SURFACES: tuple[TargetSurface, ...] = (
         "settings-file",
         "sparse Antigravity settings JSON",
         "official-docs",
-        "A no-op settings.json scaffold is managed under ~/.gemini/antigravity-cli/settings.json when Antigravity artifacts are installed.",
+        f"A no-op settings.json scaffold is managed under {antigravity_documented_dir('settings')} when Antigravity artifacts are installed.",
     ),
     TargetSurface(
         "antigravity",

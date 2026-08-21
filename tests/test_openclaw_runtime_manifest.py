@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 
 sys.dont_write_bytecode = True
@@ -8,10 +9,12 @@ import unittest
 
 from installer.ai_agents_skills.openclaw_runtime_target_evidence import build_runtime_target_evidence
 from installer.ai_agents_skills.openclaw_runtime_target_manifest import (
+    approve_runtime_target_manifest,
     build_openclaw_runtime_target_manifest,
     classify_runtime_files,
     openclaw_runtime_authorization_reason,
     openclaw_runtime_content_id,
+    validate_runtime_target_manifest,
 )
 
 RP = dict(
@@ -101,6 +104,57 @@ class RuntimeManifestTest(unittest.TestCase):
         self.assertEqual(a, b)  # same inputs -> same content_id (no path/HOME inputs)
         c = openclaw_runtime_content_id(source_commit="c2", skill="demo", neutral_skill_md=CLEAN_MD, runtime_files=files)
         self.assertNotEqual(a, c)  # different commit -> different content_id
+
+    def _approved(self) -> dict:
+        manifest = build_openclaw_runtime_target_manifest(
+            skill="demo", action_class="managed-support-file", neutral_skill_md=CLEAN_MD,
+            runtime_files=[{"relative_path": "x/data.json", "mode": "0644", "source_sha256": "sha256:bbb"}],
+            evidence_items=_support_evidence(),
+            source_commit="abc123", created_at="2026-06-20T00:00:00Z", **RP)
+        return approve_runtime_target_manifest(manifest, reviewer="alice", reviewed_at="2026-06-20T01:00:00Z")
+
+    def test_approved_manifest_cannot_be_repointed_at_another_skill(self) -> None:
+        # Authorization is re-derived from stored content, so it accepts whatever
+        # the file carries. What makes the content trustworthy is that it still
+        # hashes to the id the reviewer approved.
+        tampered = self._approved()
+        tampered["skill"] = "other-skill"
+        with self.assertRaisesRegex(ValueError, "content_id does not match"):
+            validate_runtime_target_manifest(tampered, require_approved=True)
+
+    def test_approved_manifest_cannot_have_its_file_list_swapped(self) -> None:
+        approved = self._approved()
+        tampered = json.loads(json.dumps(approved))
+        tampered["files"][0]["relative_path"] = "x/evil.json"
+        tampered["routing"] = {"x/evil.json": approved["routing"]["x/data.json"]}
+        self.assertEqual(tampered["manifest_id"], approved["manifest_id"])
+        self.assertEqual(tampered["approval"], approved["approval"])
+        with self.assertRaisesRegex(ValueError, "content_id does not match"):
+            validate_runtime_target_manifest(tampered, require_approved=True)
+
+    def test_approved_manifest_cannot_have_its_routing_rewritten(self) -> None:
+        # content_id covers paths and hashes but not the S3/S4 decision, so the
+        # routing gets its own re-derivation.
+        tampered = self._approved()
+        tampered["routing"]["x/data.json"] = "s4"
+        with self.assertRaisesRegex(ValueError, "routing does not match"):
+            validate_runtime_target_manifest(tampered, require_approved=True)
+
+    def test_approved_manifest_cannot_have_its_target_paths_rewritten(self) -> None:
+        # The realpaths decide where an apply writes, and content_id is
+        # deliberately machine-independent, so only manifest_id binds them.
+        tampered = self._approved()
+        tampered["target_realpath"] = "/home" "/u/.openclaw-attacker"
+        with self.assertRaisesRegex(ValueError, "content address does not match manifest_id"):
+            validate_runtime_target_manifest(tampered, require_approved=True)
+
+    def test_a_manifest_without_source_commit_is_rejected(self) -> None:
+        # content_id is keyed on the source commit; a manifest that omits it
+        # would otherwise reach the re-derivation and raise KeyError.
+        manifest = self._approved()
+        del manifest["source_commit"]
+        with self.assertRaisesRegex(ValueError, "missing fields: source_commit"):
+            validate_runtime_target_manifest(manifest, require_approved=True)
 
 
 if __name__ == "__main__":

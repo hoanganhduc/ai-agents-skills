@@ -1,5 +1,3 @@
-<!-- Managed by ai-agents-skills. Generated target: grok. Source: references/deferred-roadmap.md. -->
-
 # Deferred roadmap (Phase D)
 
 These items are **not** implemented. Ship only after agent failure logs show

@@ -209,8 +209,18 @@ def build_runtime_actions(
         return []
     runtime_manifest = manifests.get("runtime", {})
     runtime_skills = resolve_runtime_skills(selected_skills, runtime_manifest, runtime_profile)
+    # The retirement sweep is deliberately independent of the selected profile and
+    # the active host (see its docstring), so it has to run even when the selection
+    # resolves to no runtime skill at all -- prose-only selections and
+    # runtime_profile "none" both land here, and they are precisely the installs
+    # that would otherwise strand every retired file on disk and marked managed.
+    obsolete = obsolete_runtime_file_actions(
+        root=root,
+        runtime_manifest=runtime_manifest,
+        state=state or {},
+    )
     if not runtime_skills:
-        return []
+        return obsolete
     platform_name = current_platform(platform)
     target_root = (runtime_root or default_runtime_root(root, agents, platform)).expanduser()
     actions: list[dict[str, Any]] = []
@@ -245,13 +255,7 @@ def build_runtime_actions(
                     seen_targets=seen_targets,
                 )
             )
-    actions.extend(
-        obsolete_runtime_file_actions(
-            root=root,
-            runtime_manifest=runtime_manifest,
-            state=state or {},
-        )
-    )
+    actions.extend(obsolete)
     return actions
 
 

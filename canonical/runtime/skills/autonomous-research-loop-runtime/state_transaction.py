@@ -267,6 +267,164 @@ def _lstat_nofollow(path: Path) -> os.stat_result | None:
         os.close(directory_fd)
 
 
+def _windows_owner_identity(path: Path) -> tuple[str, str]:
+    """Return ``(owner SID of path, SID of the current process user)``.
+
+    Windows has no ``st_uid``: ``os.stat`` synthesises 0 for every file and
+    ``os.geteuid`` does not exist on the platform at all.  The ownership guard
+    below used to be spelled ``hasattr(os, "geteuid") and <uid comparison>``,
+    which on the only platform that branch serves is false in the first term --
+    a check that could not fail, the same shape the ``require_private`` comment
+    beside it records having already been fixed once.  Both callers that ask
+    for the guard are the provenance gates on journal contents, the recovery
+    pass reading ``manifest.json`` and the apply pass reading a post-image, so
+    on Windows neither carried any ownership proof.
+
+    Ownership there is an owner SID rather than a uid, so the question is asked
+    in those terms, through the Win32 calls ``icacls`` reports from.  Anything
+    that leaves the answer unestablished -- a failed query, a SID that will not
+    render -- raises instead of returning a permissive default, because a
+    provenance gate that cannot establish provenance has to refuse.
+    """
+
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    OWNER_SECURITY_INFORMATION = 0x00000001
+    SE_FILE_OBJECT = 1
+    TOKEN_QUERY = 0x0008
+    TOKEN_USER_CLASS = 1
+    ERROR_INSUFFICIENT_BUFFER = 122
+
+    advapi32.GetNamedSecurityInfoW.argtypes = [
+        wintypes.LPCWSTR,
+        ctypes.c_int,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+    advapi32.ConvertSidToStringSidW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.LPWSTR),
+    ]
+    advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+    advapi32.OpenProcessToken.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+
+    def sid_text(sid: Any, subject: str) -> str:
+        rendered = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(rendered)):
+            raise TransactionError(
+                f"cannot render the {subject} security identifier for {path}: "
+                f"Win32 error {ctypes.get_last_error()}"
+            )
+        try:
+            return str(rendered.value)
+        finally:
+            kernel32.LocalFree(rendered)
+
+    owner = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    status = int(
+        advapi32.GetNamedSecurityInfoW(
+            str(path),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            ctypes.byref(owner),
+            None,
+            None,
+            None,
+            ctypes.byref(descriptor),
+        )
+    )
+    if status != 0:
+        raise TransactionError(
+            f"cannot read the owner of {path}: Win32 error {status}"
+        )
+    try:
+        file_sid = sid_text(owner, "file owner")
+    finally:
+        kernel32.LocalFree(descriptor)
+
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(
+        kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)
+    ):
+        raise TransactionError(
+            f"cannot open the process token to check the owner of {path}: "
+            f"Win32 error {ctypes.get_last_error()}"
+        )
+    try:
+        size = wintypes.DWORD(0)
+        advapi32.GetTokenInformation(
+            token, TOKEN_USER_CLASS, None, 0, ctypes.byref(size)
+        )
+        if ctypes.get_last_error() != ERROR_INSUFFICIENT_BUFFER:
+            raise TransactionError(
+                f"cannot size the process token user: "
+                f"Win32 error {ctypes.get_last_error()}"
+            )
+        buffer = ctypes.create_string_buffer(int(size.value))
+        if not advapi32.GetTokenInformation(
+            token, TOKEN_USER_CLASS, buffer, size, ctypes.byref(size)
+        ):
+            raise TransactionError(
+                f"cannot read the process token user: "
+                f"Win32 error {ctypes.get_last_error()}"
+            )
+        # ``TOKEN_USER`` is one ``SID_AND_ATTRIBUTES``, whose SID pointer is
+        # the first member.
+        process_sid = sid_text(
+            ctypes.cast(buffer, ctypes.POINTER(ctypes.c_void_p)).contents,
+            "process user",
+        )
+    finally:
+        kernel32.CloseHandle(token)
+    return file_sid, process_sid
+
+
+def _owned_by_current_user(path: Path, info: os.stat_result) -> bool:
+    """Whether ``path`` belongs to whoever this process is running as.
+
+    This dispatches on ``os.name`` rather than on :func:`_is_windows`, for the
+    reason the two ``msvcrt`` sites already do: an ownership model the host
+    platform does not implement cannot be simulated.  A POSIX run that has
+    pinned ``_is_windows`` to drive the descriptor-free fallbacks still has
+    uids and no SIDs, so it gets the real answer its own platform can give,
+    and the SID comparison stays reachable exactly where SIDs exist.
+    """
+
+    if os.name == "nt":
+        file_sid, process_sid = _windows_owner_identity(path)
+        return file_sid == process_sid
+    return int(getattr(info, "st_uid", -1)) == int(os.geteuid())
+
+
 def _read_bytes_nofollow(
     path: Path,
     *,
@@ -285,11 +443,7 @@ def _read_bytes_nofollow(
             or (require_single_link and int(getattr(info, "st_nlink", 1)) != 1)
         ):
             raise TransactionError(f"transaction input is not a regular file: {path}")
-        if (
-            require_current_owner
-            and hasattr(os, "geteuid")
-            and int(getattr(info, "st_uid", -1)) != int(os.geteuid())
-        ):
+        if require_current_owner and not _owned_by_current_user(path, info):
             raise TransactionError(f"transaction input is not host-owned: {path}")
         # ``require_private`` is not checkable here.  Windows synthesises the
         # POSIX mode bits rather than storing them, so reading them would
@@ -303,7 +457,7 @@ def _read_bytes_nofollow(
         try:
             file_fd = os.open(
                 path.name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 dir_fd=directory_fd,
             )
         finally:
@@ -783,42 +937,113 @@ def _validate_committed_poststate(
             )
 
 
+def _resolve_manifest_targets(
+    run_dir: Path, tx_dir: Path, manifest: Mapping[str, Any]
+) -> list[tuple[Path, bytes | None]]:
+    """Prove a whole transaction is applicable, before any of it is applied.
+
+    The apply pass below replaces live targets one at a time, and every
+    decision it could get wrong is decidable up front: each post-image is
+    already fully present in the journal and carries its own digest, and each
+    target's parent chain is already on disk.  Deciding them there instead
+    meant target *k* failing after targets 1..*k*-1 were replaced, with no
+    rollback of the group.  Two failures proved that.  A run directory holding
+    a symlinked subdirectory made a two-target commit write the first file and
+    then raise ``NotADirectoryError`` on the second, leaving the pair
+    half-updated.  A damaged post-image blob in an armed journal made the
+    recovery pass apply ``current_plan.json`` and then fail the digest check on
+    ``goal_contract.json``, after which the entry was quarantined and removed --
+    so the two files disagreed and no journal remained to finish the group,
+    while the compare-and-swap guards that read them treat that pair as
+    mutually consistent.
+
+    Deciding it here does not make a partial application impossible: a write
+    can still fail for a reason no inspection predicts, and ``ENOSPC`` is the
+    obvious one.  It makes the *predictable* half impossible, and leaves the
+    journal armed and every post-image intact for the unpredictable half, which
+    is what recovery needs to converge.
+
+    Payloads are held for the caller rather than re-read at write time, so the
+    bytes that were digest-checked are the bytes that land.  That costs the
+    size of the transaction in memory, which is what ``commit_transaction``
+    already materialises before the journal exists.
+    """
+
+    post_dir = tx_dir / "postimages"
+    resolved: list[tuple[Path, bytes | None]] = []
+    for entry in manifest.get("targets") or []:
+        rel = _safe_relative_path(str(entry.get("path") or ""))
+        if entry.get("delete"):
+            resolved.append((rel, None))
+            continue
+        blob_name = str(entry.get("blob") or "")
+        blob_rel = _safe_relative_path(blob_name)
+        if len(blob_rel.parts) != 1:
+            raise TransactionError(
+                f"transaction post-image must be a single safe filename: {blob_name!r}"
+            )
+        try:
+            payload = _read_bytes_nofollow(
+                post_dir / blob_rel,
+                require_single_link=True,
+                require_current_owner=True,
+                require_private=True,
+            )
+        except OSError as exc:
+            raise TransactionError(
+                f"transaction post-image is unreadable for {rel}: {exc}"
+            ) from exc
+        if hashlib.sha256(payload).hexdigest() != entry.get("sha256"):
+            raise TransactionError(f"post-image hash mismatch for {rel}")
+        resolved.append((rel, payload))
+
+    for rel, payload in resolved:
+        target = run_dir / rel
+        try:
+            if payload is None:
+                try:
+                    _ensure_directory_chain(target.parent, create=False)
+                except FileNotFoundError:
+                    # A delete whose parent is already gone is the no-op the
+                    # apply pass treats it as, not an unusable target.
+                    continue
+            else:
+                _ensure_directory_chain(target.parent, create=True)
+            info = _lstat_nofollow(target)
+        except OSError as exc:
+            raise TransactionError(
+                f"transaction target is not writable for {rel}: {exc}"
+            ) from exc
+        if info is not None and stat.S_ISDIR(info.st_mode):
+            # ``os.replace`` onto a directory, and ``os.unlink`` of one, both
+            # fail every time they are retried.
+            raise TransactionError(
+                f"transaction target is a directory, not a file: {rel}"
+            )
+    return resolved
+
+
 def _apply_manifest(run_dir: Path, tx_dir: Path, manifest: dict[str, Any], crash_after: Any = None) -> None:
     _validate_manifest(manifest)
     _validate_private_transaction_directory(tx_dir, label="transaction journal entry")
     post_dir = tx_dir / "postimages"
     _validate_private_transaction_directory(post_dir, label="transaction post-image directory")
+    # Everything decidable is decided before the phase marker moves, so a
+    # manifest still reading ``prepared`` proves no live target was touched.
+    resolved = _resolve_manifest_targets(run_dir, tx_dir, manifest)
     manifest["phase"] = "applying"
     _write_manifest(tx_dir, manifest)
     if crash_after in {"prepared", "before_apply"}:
         raise InjectedCrash(f"injected crash at {crash_after}")
 
-    targets = manifest.get("targets") or []
-    for index, entry in enumerate(targets, start=1):
-        rel = _safe_relative_path(str(entry.get("path") or ""))
+    for index, (rel, payload) in enumerate(resolved, start=1):
         target = run_dir / rel
-        if entry.get("delete"):
+        if payload is None:
             try:
                 _unlink_nofollow(target)
             except FileNotFoundError:
                 pass
         else:
-            blob_name = str(entry.get("blob") or "")
-            blob_rel = _safe_relative_path(blob_name)
-            if len(blob_rel.parts) != 1:
-                raise TransactionError(
-                    f"transaction post-image must be a single safe filename: {blob_name!r}"
-                )
-            blob = post_dir / blob_rel
-            payload = _read_bytes_nofollow(
-                blob,
-                require_single_link=True,
-                require_current_owner=True,
-                require_private=True,
-            )
-            digest = hashlib.sha256(payload).hexdigest()
-            if digest != entry.get("sha256"):
-                raise TransactionError(f"post-image hash mismatch for {rel}")
             _atomic_write_bytes(target, payload)
         if crash_after == index or crash_after == f"apply:{rel.as_posix()}":
             raise InjectedCrash(f"injected crash after applying {rel}")
@@ -832,6 +1057,32 @@ def _apply_manifest(run_dir: Path, tx_dir: Path, manifest: dict[str, Any], crash
         raise InjectedCrash("injected crash after commit marker")
 
 
+def _quarantine_destination(run_dir: Path, name: str) -> Path:
+    """Return a fresh quarantine path for one journal entry.
+
+    The destination used to be ``<quarantine>/<transaction id>``, and every
+    production caller derives its transaction id deterministically from the
+    operation, so the same id comes back on every retry of the same work.
+    ``shutil.move`` onto an existing directory does not fail -- it moves the
+    source *inside* it -- so the second quarantine of one id landed at
+    ``<id>/<id>/manifest.json`` and the third failed outright with
+    ``shutil.Error``, which is an ``OSError`` and so wedged the recovery pass.
+    The depth drift alone breaks the runbook, which tells an operator to read
+    the manifest at one fixed level.
+
+    A timestamp and a random suffix keep every entry at that one level and make
+    a second occurrence a sibling of the first rather than a child of it, which
+    is also the more useful record: the two failures are separate events.
+    """
+
+    stamp = _utc_now().replace("-", "").replace(":", "")
+    return (
+        run_dir
+        / TRANSACTION_QUARANTINE_DIRNAME
+        / f"{name}-{stamp}-{uuid.uuid4().hex[:8]}"
+    )
+
+
 def _recover_locked(run_dir: Path) -> list[dict[str, Any]]:
     root = run_dir / TRANSACTION_DIRNAME
     root_info = _lstat_nofollow(root)
@@ -839,38 +1090,44 @@ def _recover_locked(run_dir: Path) -> list[dict[str, Any]]:
         return []
     _validate_private_transaction_directory(root, label="transaction journal root")
     recovered: list[dict[str, Any]] = []
-    tx_dirs: list[Path] = []
-    for path in root.iterdir():
-        info = os.lstat(path)
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
-            raise TransactionError(f"transaction journal entry is unsafe: {path}")
-        _validate_private_transaction_directory(path, label="transaction journal entry")
-        tx_dirs.append(path)
-    for tx_dir in sorted(tx_dirs):
-        manifest_path = tx_dir / "manifest.json"
-        if not manifest_path.exists():
-            shutil.rmtree(tx_dir, ignore_errors=True)
-            continue
+    for tx_dir in sorted(root.iterdir()):
         try:
-            manifest = json.loads(
-                _read_bytes_nofollow(
-                    manifest_path,
-                    require_single_link=True,
-                    require_current_owner=True,
-                    require_private=True,
-                ).decode("utf-8")
+            # The entry's own shape is checked inside the handler, not in a
+            # pass ahead of it.  Checked ahead of it, anything the journal root
+            # picked up that is not one of our directories -- a ``.DS_Store``
+            # from Spotlight, a ``Thumbs.db``, an editor swap file, an NFS
+            # ``.nfs*`` silly-rename -- raised before the escape hatch could
+            # run, so it re-armed on every later command and no command in the
+            # kit could clear it.
+            info = os.lstat(tx_dir)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise TransactionError(f"transaction journal entry is unsafe: {tx_dir}")
+            _validate_private_transaction_directory(
+                tx_dir, label="transaction journal entry"
             )
-        except (OSError, json.JSONDecodeError) as exc:
-            raise TransactionError(f"unreadable transaction manifest {manifest_path}: {exc}") from exc
-        if not isinstance(manifest, dict):
-            raise TransactionError(f"transaction manifest is not an object: {manifest_path}")
-        _validate_manifest(manifest)
-        if _safe_transaction_id(manifest.get("transaction_id")) != tx_dir.name:
-            raise TransactionError(
-                f"transaction manifest id disagrees with journal directory: {manifest_path}"
-            )
-        phase = str(manifest.get("phase") or "")
-        try:
+            manifest_path = tx_dir / "manifest.json"
+            if not manifest_path.exists():
+                shutil.rmtree(tx_dir, ignore_errors=True)
+                continue
+            try:
+                manifest = json.loads(
+                    _read_bytes_nofollow(
+                        manifest_path,
+                        require_single_link=True,
+                        require_current_owner=True,
+                        require_private=True,
+                    ).decode("utf-8")
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                raise TransactionError(f"unreadable transaction manifest {manifest_path}: {exc}") from exc
+            if not isinstance(manifest, dict):
+                raise TransactionError(f"transaction manifest is not an object: {manifest_path}")
+            _validate_manifest(manifest)
+            if _safe_transaction_id(manifest.get("transaction_id")) != tx_dir.name:
+                raise TransactionError(
+                    f"transaction manifest id disagrees with journal directory: {manifest_path}"
+                )
+            phase = str(manifest.get("phase") or "")
             if phase != "committed":
                 _apply_manifest(run_dir, tx_dir, manifest)
                 recovered.append(
@@ -882,13 +1139,27 @@ def _recover_locked(run_dir: Path) -> list[dict[str, Any]]:
                 )
             else:
                 _validate_committed_poststate(run_dir, manifest)
-        except TransactionError as exc:
+        except (TransactionError, OSError) as exc:
             # Leaving the entry in place re-arms the same failure on every
             # later command, and no command in the kit can clear it.  Move it
             # aside so the failure is loud once: the manifest carries the
             # expected-versus-observed digests and must never be auto-deleted.
-            quarantine = run_dir / TRANSACTION_QUARANTINE_DIRNAME / tx_dir.name
+            #
+            # ``OSError`` is caught alongside because the handler used not to,
+            # and the failures that reached it that way were exactly the ones
+            # that could never be cleared: a target whose parent component is a
+            # symlink or a plain file raises ``NotADirectoryError`` or
+            # ``ELOOP`` from the descriptor walk, which is as deterministic as
+            # a digest mismatch and repeated forever.  Most of those are now
+            # refused by the validate pass before anything is written; catching
+            # the class here is what keeps the one nobody predicted from
+            # wedging the run directory instead of being reported once.
+            quarantine = _quarantine_destination(run_dir, tx_dir.name)
             _ensure_directory_chain(quarantine.parent, create=True)
+            if _lstat_nofollow(quarantine) is not None:
+                raise TransactionError(
+                    f"quarantine destination already exists: {quarantine}"
+                ) from exc
             _tolerate_windows_sharing(lambda: shutil.move(str(tx_dir), str(quarantine)))
             try:
                 # Only succeeds when this was the last entry, which is the
@@ -1060,7 +1331,23 @@ def commit_transaction(
         }
         _write_manifest(tx_dir, manifest)
         _fsync_dir(tx_root)
-        _apply_manifest(root, tx_dir, manifest, crash_after=crash_after)
+        try:
+            _apply_manifest(root, tx_dir, manifest, crash_after=crash_after)
+        except BaseException:
+            # The validate pass runs before the phase marker moves and before
+            # the first live write, so a manifest still reading ``prepared``
+            # proves nothing on disk was touched.  Removing the entry there
+            # leaves the run directory exactly as this call found it, instead
+            # of arming a journal the next command has to quarantine before the
+            # loop can move on.  A crash injected at ``prepared`` has already
+            # advanced the marker, so the recovery tests still get their entry.
+            if manifest.get("phase") == "prepared":
+                shutil.rmtree(tx_dir, ignore_errors=True)
+                try:
+                    tx_root.rmdir()
+                except OSError:
+                    pass
+            raise
         _tolerate_windows_sharing(lambda: shutil.rmtree(tx_dir))
         try:
             tx_root.rmdir()

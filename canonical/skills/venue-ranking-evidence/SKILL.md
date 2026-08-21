@@ -3,8 +3,6 @@ name: venue-ranking-evidence
 description: Use when identifying a journal, conference, or proceedings series from a partial name, acronym, alias, ISSN, or source ID; preserving source-specific rank, quartile, metric, classification, membership, or coverage observations; or proving that the public ICORE detail page displayed one ICORE claim. Live bulk paths are ICORE (edition-verified) and DOAJ (public CSV, currentness-unconfirmed). Other built-ins accept authorized normalized imports only; Conference Ranks is legacy. Return every plausible match and never conflate index membership with ranking.
 ---
 
-<!-- Managed by ai-agents-skills. Generated target: grok. -->
-
 # Venue Ranking Evidence
 
 Resolve venues, report source-specific observations, and preserve official-page

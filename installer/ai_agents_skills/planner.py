@@ -20,7 +20,6 @@ from .openclaw_target_gate import openclaw_target_block_reason
 from .openclaw_target_paths import path_leak_block_reason
 from .render import (
     MANAGED_MARKER,
-    add_managed_support_header,
     block_id,
     canonical_skill_dir,
     canonical_skill_path,
@@ -29,6 +28,7 @@ from .render import (
     render_management_notice,
     render_reference_skill_md,
     render_skill_md,
+    render_support_file,
 )
 from .runtime import build_runtime_actions
 from .state import artifact_signature, load_state, sha256_file, sha256_text
@@ -91,9 +91,13 @@ def build_plan(
                 install_mode,
                 source_path,
             )
-            content = skill_content_for_mode(skill, spec, agent.name, action_install_mode, source_path)
+            content = skill_content_for_mode(
+                skill, spec, agent.name, action_install_mode, source_path, antigravity_note_dirs(root, agent)
+            )
             fallback_content = (
-                render_reference_skill_md(skill, spec, agent.name, source_path)
+                render_reference_skill_md(
+                    skill, spec, agent.name, source_path, antigravity_note_dirs(root, agent)
+                )
                 if action_install_mode == "symlink" and source_path.exists()
                 else None
             )
@@ -372,22 +376,32 @@ def antigravity_legacy_plugin_actions(
             continue
         if migrated_dir / path.relative_to(legacy_dir) not in planned:
             continue
-        removals.append(
-            {
-                "kind": "managed-file-remove",
-                "agent": "antigravity",
-                "skill": item.get("skill", "repo-management"),
-                "path": str(path),
-                "classification": "managed",
-                "operation": "remove-obsolete",
-                "artifact_type": item.get("artifact_type", "skill-support-file"),
-                "install_mode": item.get("install_mode"),
-                "source_path": item.get("source_path"),
-                "installed_signature": item.get("installed_signature"),
-                "created_parent_dirs": item.get("created_parent_dirs", []),
-                "reason": "plugin payload moved to the migrated Antigravity plugin root",
-            }
-        )
+        removal = {
+            "kind": "managed-file-remove",
+            "agent": "antigravity",
+            "skill": item.get("skill", "repo-management"),
+            "path": str(path),
+            "classification": "managed",
+            "operation": "remove-obsolete",
+            "artifact_type": item.get("artifact_type", "skill-support-file"),
+            "install_mode": item.get("install_mode"),
+            "source_path": item.get("source_path"),
+            "installed_signature": item.get("installed_signature"),
+            "created_parent_dirs": item.get("created_parent_dirs", []),
+            "reason": "plugin payload moved to the migrated Antigravity plugin root",
+        }
+        # The record's key is what retires it, and for an artifact that key is
+        # built from ``artifact_id`` rather than the skill.  Unlike the other
+        # removal passes, this one selects by path prefix, so it reaches those
+        # artifacts -- the plugin manifest, the MCP and hook configs -- and a
+        # removal that dropped the id would compute a key matching no record:
+        # the file goes and the record stays, and every later verify reports it
+        # missing forever.
+        if item.get("artifact_id"):
+            removal["artifact_id"] = item["artifact_id"]
+        if item.get("artifact_name"):
+            removal["artifact_name"] = item["artifact_name"]
+        removals.append(removal)
     return removals
 
 
@@ -848,7 +862,7 @@ def support_file_actions(
             raw = source.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        content = add_managed_support_header(raw, agent.name, str(relative).replace("\\", "/"))
+        content = render_support_file(raw, agent.name, str(relative).replace("\\", "/"))
         path = agent.support_dir_for(skill) / relative
         platform_reason = support_file_platform_block_reason(relative, platform)
         if platform_reason is not None:
@@ -949,10 +963,35 @@ def skill_content_for_mode(
     agent: str,
     install_mode: str,
     source_path: Path,
+    antigravity_dirs: tuple[str, str] | None = None,
 ) -> str:
     if install_mode == "reference" and source_path.exists():
-        return render_reference_skill_md(skill, spec, agent, source_path)
-    return render_skill_md(skill, spec, agent)
+        return render_reference_skill_md(skill, spec, agent, source_path, antigravity_dirs)
+    return render_skill_md(skill, spec, agent, antigravity_dirs)
+
+
+def antigravity_note_dirs(root: Path, agent: AgentTarget) -> tuple[str, str] | None:
+    """Home-relative paths for the runtime note rendered into Antigravity skill files.
+
+    The vendor's migration moves both managed trees, so a fixed literal names the
+    directory this same run empties.  The paths are written home-relative rather
+    than absolute because an installed file carrying the user's real home is a
+    leak, and ``verify`` checks each installed file for exactly that; a tree that
+    somehow resolves outside the home yields ``None`` and the note falls back to
+    describing the unmigrated layout.
+    """
+    if agent.name != "antigravity":
+        return None
+    plugin_dir = agent.artifact_dirs.get("plugin")
+    if plugin_dir is None:
+        return None
+    try:
+        return (
+            "~/" + agent.skills_dir.relative_to(root).as_posix() + "/",
+            "~/" + plugin_dir.relative_to(root).as_posix() + "/",
+        )
+    except ValueError:
+        return None
 
 
 def blocked_file_action(

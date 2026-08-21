@@ -321,7 +321,7 @@ def _read_regular_text(
         try:
             fd = os.open(
                 absolute.name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 dir_fd=dir_fd,
             )
         finally:
@@ -387,7 +387,7 @@ def _read_contained_regular_text(
             directory_fd = next_fd
         file_fd = os.open(
             relative.parts[-1],
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
             dir_fd=directory_fd,
         )
     finally:
@@ -1672,7 +1672,7 @@ def consume_iteration_submission(
             raise OSError("candidate evidence root is not host-private")
         original_fd = os.open(
             ITERATION_SUBMISSION_FILENAME,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
             dir_fd=directory_fd,
         )
         before = os.fstat(original_fd)
@@ -1720,7 +1720,7 @@ def consume_iteration_submission(
         )
         moved_fd = os.open(
             quarantine,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
             dir_fd=directory_fd,
         )
         moved = os.fstat(moved_fd)
@@ -1767,7 +1767,7 @@ def consume_iteration_submission(
         # retained for inspection and never mistaken for this submission.
         check_fd = os.open(
             quarantine,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
             dir_fd=directory_fd,
         )
         try:
@@ -4086,7 +4086,7 @@ def migration_claim_snapshot(run_dir: Path) -> tuple[dict[str, Any], tuple[int, 
         try:
             fd = os.open(
                 MIGRATION_CLAIM_FILE,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 dir_fd=directory_fd,
             )
         finally:
@@ -4234,7 +4234,7 @@ def release_migration_claim(run_dir: Path, identity: tuple[int, int]) -> None:
         try:
             file_fd = os.open(
                 MIGRATION_CLAIM_FILE,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                 dir_fd=directory_fd,
             )
         except FileNotFoundError:
@@ -4275,7 +4275,7 @@ def release_migration_claim(run_dir: Path, identity: tuple[int, int]) -> None:
             )
         moved_fd = os.open(
             quarantine,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
             dir_fd=directory_fd,
         )
         try:
@@ -4646,7 +4646,10 @@ def _read_registry_snapshot_at(
         before = os.lstat(path)
         if stat.S_ISLNK(before.st_mode):
             raise OSError("registry entry is a symlink")
-        file_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        # O_BINARY: this branch only runs on Windows, where a descriptor opened in
+        # the CRT default text mode rewrites CRLF and truncates the read at Ctrl-Z,
+        # so a registry leaf would parse as silently short.
+        file_fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
         try:
             opened = os.fstat(file_fd)
             directory_info = os.lstat(reg)
@@ -4673,7 +4676,7 @@ def _read_registry_snapshot_at(
         directory_info = os.fstat(directory_fd)
         file_fd = os.open(
             name,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
             dir_fd=directory_fd,
         )
         try:
@@ -9168,7 +9171,7 @@ def read_log_tail(path: Path, limit: int = 8192) -> str:
             try:
                 file_fd = os.open(
                     absolute.name,
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
                     dir_fd=directory_fd,
                 )
             finally:

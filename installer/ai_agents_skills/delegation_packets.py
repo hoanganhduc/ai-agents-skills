@@ -206,6 +206,35 @@ PARENT_POLICY_LIMITS = {
 }
 
 
+RAW_TARGET_PATTERN = re.compile(
+    r"""
+    ^\s*(?:
+        [/~]                      # POSIX absolute path, or a home-relative one
+      | \\\\ | //              # UNC share
+      | [A-Za-z]:[\\/]           # drive-letter path, either separator
+      | [A-Za-z][A-Za-z0-9+.-]*://  # any URL scheme, not just http(s)
+    )
+    """,
+    re.VERBOSE,
+)
+
+
+def is_raw_target(source: Any) -> bool:
+    """Whether ``source`` names a location directly instead of referring to one.
+
+    Both packet contracts forbid "raw absolute paths, URLs, service identifiers,
+    and command strings" in a reference object, because the parent is the only
+    party allowed to resolve a reference into a location.  The check used to be
+    spelled as ``http://``/``https://`` plus a regex requiring a literal
+    backslash, which between them recognise a Windows drive-letter path and two
+    URL schemes -- so on the platform the gates run on, the most ordinary raw
+    target of all, ``/etc/shadow``, validated clean, as did ``~/.aws/credentials``,
+    ``file:///etc/passwd``, ``ssh://box/etc/shadow`` and a UNC share.
+    """
+
+    return bool(RAW_TARGET_PATTERN.match(str(source)))
+
+
 def load_packet(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
@@ -295,9 +324,15 @@ def validate_delegation_constraints(packet: dict[str, Any]) -> list[str]:
     for field in ("constraints", "scope_constraints"):
         values = packet.get(field, [])
         if not isinstance(values, list):
+            # Skipping the field left the parent's caps advisory: the identical
+            # budget string in the wrong container reached no bound check and
+            # the wrong container was not itself reported, so the packet
+            # validated with an empty error list.
+            errors.append("FIELD_NOT_ARRAY")
             continue
         for value in values:
             if not isinstance(value, str):
+                errors.append("CONSTRAINT_NOT_STRING")
                 continue
             kind = budget_constraint_kind(value)
             if kind is None:
@@ -330,7 +365,30 @@ def validate_required_fields(value: Any, required: set[str]) -> list[str]:
 
 
 def validate_enum(value: Any, allowed: set[str], code: str) -> list[str]:
+    # ``value in allowed`` hashes ``value``, so a dict or list where an enum
+    # belongs raised ``TypeError: unhashable type`` out of validation entirely.
+    if not isinstance(value, str):
+        return [code]
     return [] if value in allowed else [code]
+
+
+def packet_array(packet: dict[str, Any], field: str) -> tuple[list[Any], list[str]]:
+    """Return ``(items, errors)`` for one array-typed packet field.
+
+    Every caller used to iterate ``packet.get(field, [])`` directly, so a field
+    holding ``null`` or a scalar raised ``TypeError`` from inside validation.
+    ``cli.py``'s blanket handler turned that into ``{"status": "error", "error":
+    "'NoneType' object is not iterable"}``, losing the ``{status, kind, path,
+    errors}`` shape every other invalid packet reports and naming no field --
+    and since :func:`validate_result` runs on each participant's output, one
+    malformed packet aborted the whole dispatch instead of being recorded as an
+    invalid result.
+    """
+
+    value = packet.get(field, [])
+    if not isinstance(value, list):
+        return [], ["FIELD_NOT_ARRAY"]
+    return value, []
 
 
 def validate_ref(ref: Any) -> list[str]:
@@ -340,8 +398,7 @@ def validate_ref(ref: Any) -> list[str]:
         return errors
     if ref.get("kind") == "workspace" or ref.get("source") in {"entire_workspace", "all_files", "raw_chat"}:
         errors.append("OVERBROAD_REF")
-    raw_target = str(ref.get("source", ""))
-    if raw_target.startswith(("http://", "https://")) or re.search(r"(^|[A-Za-z]):\\", raw_target):
+    if is_raw_target(ref.get("source", "")):
         errors.append("RAW_TARGET_REF")
     return errors
 
@@ -390,11 +447,15 @@ def validate_task(packet: Any) -> list[str]:
     ))
     errors.extend(validate_enum(packet.get("failure_policy"), FAILURE_POLICIES, "FAILURE_POLICY_INVALID"))
     for field in ("input_refs", "artifact_refs"):
-        for ref in packet.get(field, []):
+        refs, shape_errors = packet_array(packet, field)
+        errors.extend(shape_errors)
+        for ref in refs:
             errors.extend(validate_ref(ref))
     if isinstance(context_policy, dict):
         for field in ("summary_context_refs", "context_refs_to_include", "context_refs_to_exclude"):
-            for ref in context_policy.get(field, []):
+            refs, shape_errors = packet_array(context_policy, field)
+            errors.extend(shape_errors)
+            for ref in refs:
                 errors.extend(validate_ref(ref))
     expected = packet.get("expected_output", {})
     if isinstance(expected, dict) and "searched and verified" in str(expected.get("forbidden_claim", "")):
@@ -417,12 +478,18 @@ def validate_result(packet: Any) -> list[str]:
     errors.extend(validate_profile(packet))
     errors.extend(validate_enum(packet.get("status"), RESULT_STATUSES, "RESULT_STATUS_INVALID"))
     errors.extend(validate_enum(packet.get("next_step"), RESULT_NEXT_STEPS, "RESULT_NEXT_STEP_INVALID"))
-    for ref in packet.get("provenance", []):
+    provenance, shape_errors = packet_array(packet, "provenance")
+    errors.extend(shape_errors)
+    for ref in provenance:
         errors.extend(validate_ref(ref))
-    for finding in packet.get("findings", []):
+    findings, shape_errors = packet_array(packet, "findings")
+    errors.extend(shape_errors)
+    for finding in findings:
         errors.extend(validate_closed_object(finding, FINDING_FIELDS))
         errors.extend(validate_required_fields(finding, FINDING_FIELDS))
-    for evidence in packet.get("evidence", []):
+    evidence_items, shape_errors = packet_array(packet, "evidence")
+    errors.extend(shape_errors)
+    for evidence in evidence_items:
         errors.extend(validate_closed_object(evidence, EVIDENCE_FIELDS))
         errors.extend(validate_required_fields(evidence, EVIDENCE_REQUIRED_FIELDS))
         if isinstance(evidence, dict) and "evidence_disposition" in evidence:
@@ -431,11 +498,15 @@ def validate_result(packet: Any) -> list[str]:
                 EVIDENCE_DISPOSITIONS,
                 "EVIDENCE_DISPOSITION_INVALID",
             ))
-    for artifact in packet.get("artifacts", []):
+    artifacts, shape_errors = packet_array(packet, "artifacts")
+    errors.extend(shape_errors)
+    for artifact in artifacts:
         errors.extend(validate_closed_object(artifact, ARTIFACT_FIELDS))
         errors.extend(validate_required_fields(artifact, ARTIFACT_FIELDS))
     for field in ("warnings", "errors"):
-        for diagnostic in packet.get(field, []):
+        diagnostics, shape_errors = packet_array(packet, field)
+        errors.extend(shape_errors)
+        for diagnostic in diagnostics:
             errors.extend(validate_closed_object(diagnostic, DIAGNOSTIC_FIELDS))
             errors.extend(validate_required_fields(diagnostic, DIAGNOSTIC_FIELDS))
     request = packet.get("parent_action_request")
@@ -445,7 +516,9 @@ def validate_result(packet: Any) -> list[str]:
         if isinstance(request, dict):
             errors.extend(validate_closed_object(request.get("side_effects", {}), SIDE_EFFECT_FIELDS))
             errors.extend(validate_required_fields(request.get("side_effects", {}), SIDE_EFFECT_FIELDS))
-            for ref in request.get("target_refs", []):
+            target_refs, shape_errors = packet_array(request, "target_refs")
+            errors.extend(shape_errors)
+            for ref in target_refs:
                 errors.extend(validate_ref(ref))
     errors.extend(recursive_forbidden_key_errors(packet))
     return sorted(set(errors))

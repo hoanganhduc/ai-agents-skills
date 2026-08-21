@@ -246,6 +246,35 @@ def antigravity_home(root: Path) -> Path:
     return root / ".gemini" / "antigravity-cli"
 
 
+def antigravity_layout_paths(root: Any, *, migrated: bool) -> dict[str, Any]:
+    """Return the Antigravity directories for one of the two vendor layouts.
+
+    The functions below choose *between* these layouts by reading the home; this
+    one only composes them, so it is also what the target-surface table renders
+    its documented paths from.  Before that the table spelled those paths out by
+    hand, and when the vendor migration moved the trees the spelling stayed at
+    the pre-migration location: on a migrated home every managed file goes to
+    ``.gemini/config`` while the published table still named
+    ``.gemini/antigravity-cli``.  Nothing caught it, because ``docs-check``
+    compares the generated documents against this table and agrees with whatever
+    the table says.
+
+    ``root`` is only joined onto, never inspected, so the table can pass a
+    ``PurePosixPath("~")`` and get the same paths an install composes from a real
+    home.
+
+    ``settings`` stays under the CLI's own home in both layouts: the migration
+    moved the skill and plugin trees, not the settings file.
+    """
+    base = (root / ".gemini" / "config") if migrated else antigravity_home(root)
+    return {
+        "skills": base / "skills",
+        "plugins": base / "plugins",
+        "plugin-package": base / "plugins" / "ai-agents-skills",
+        "settings": antigravity_home(root) / "settings.json",
+    }
+
+
 def antigravity_plugin_root(root: Path) -> Path:
     """Return the plugins directory the Antigravity CLI loads plugins from.
 
@@ -266,11 +295,10 @@ def antigravity_plugin_root(root: Path) -> Path:
     is exactly how a managed write gets redirected somewhere the installer never
     chose.
     """
-    legacy = antigravity_home(root) / "plugins"
-    config_home = root / ".gemini" / "config"
-    if not (config_home / ".migrated").exists():
+    legacy = antigravity_layout_paths(root, migrated=False)["plugins"]
+    if not (root / ".gemini" / "config" / ".migrated").exists():
         return legacy
-    migrated = config_home / "plugins"
+    migrated = antigravity_layout_paths(root, migrated=True)["plugins"]
     if migrated.is_symlink():
         return legacy
     return migrated
@@ -283,7 +311,7 @@ def antigravity_legacy_plugin_dir(root: Path) -> Path | None:
     is a distinct place on disk, so a home that never migrated -- and one whose
     two paths resolve to the same directory -- yields nothing to remove.
     """
-    legacy = antigravity_home(root) / "plugins"
+    legacy = antigravity_layout_paths(root, migrated=False)["plugins"]
     if antigravity_plugin_root(root) == legacy:
         return None
     try:
@@ -311,10 +339,9 @@ def antigravity_skills_dir(root: Path) -> Path:
     migration is documented to put it, and any other value falls back to the
     unmigrated location rather than trusting it.
     """
-    legacy = antigravity_home(root) / "skills"
-    config_home = root / ".gemini" / "config"
-    migrated = config_home / "skills"
-    if not (config_home / ".migrated").exists():
+    legacy = antigravity_layout_paths(root, migrated=False)["skills"]
+    migrated = antigravity_layout_paths(root, migrated=True)["skills"]
+    if not (root / ".gemini" / "config" / ".migrated").exists():
         return legacy
     try:
         if not legacy.is_symlink():

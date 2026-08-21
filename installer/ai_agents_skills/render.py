@@ -24,11 +24,31 @@ _RUNTIME_PATH_SUBSTITUTIONS = (
     (re.compile(r"\.codex/runtime"), "$AAS_RUNTIME_ROOT"),
 )
 
+# The canonical Windows snippet resolves the runtime root with a fallback:
+#   $runtime = if ($env:AAS_RUNTIME_ROOT) { ... } else { "$env:LOCALAPPDATA\..." }
+# Rewriting the else-branch token by token would substitute the very variable the
+# if-branch just tested as unset, leaving a fallback that always yields the empty
+# string. So the expression is rewritten as a unit, and first, before the
+# token-level entries below can reach inside it.
+_OPENCLAW_POWERSHELL_RUNTIME_FALLBACK = (
+    re.compile(
+        r"if \(\$env:AAS_RUNTIME_ROOT\) \{ \$env:AAS_RUNTIME_ROOT \} else \{ "
+        r'"\$env:LOCALAPPDATA\\ai-agents-skills\\runtime" \}'
+    ),
+    "if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { throw "
+    '"AAS_RUNTIME_ROOT is unset: on OpenClaw the runtime root is resolved by the '
+    'ai-agents-skills host broker" }',
+)
+
 # OpenClaw also cannot consume host-side shared runtime roots from inside the
 # sandbox, so its stricter neutralizer rewrites those to broker-resolved env vars.
-_OPENCLAW_RUNTIME_SUBSTITUTIONS = _RUNTIME_PATH_SUBSTITUTIONS + (
-    (re.compile(r"%LOCALAPPDATA%\\ai-agents-skills\\runtime", re.I), "%AAS_RUNTIME_ROOT%"),
-    (re.compile(r"\$env:LOCALAPPDATA\\ai-agents-skills\\runtime", re.I), "$env:AAS_RUNTIME_ROOT"),
+_OPENCLAW_RUNTIME_SUBSTITUTIONS = (
+    (_OPENCLAW_POWERSHELL_RUNTIME_FALLBACK,)
+    + _RUNTIME_PATH_SUBSTITUTIONS
+    + (
+        (re.compile(r"%LOCALAPPDATA%\\ai-agents-skills\\runtime", re.I), "%AAS_RUNTIME_ROOT%"),
+        (re.compile(r"\$env:LOCALAPPDATA\\ai-agents-skills\\runtime", re.I), "$env:AAS_RUNTIME_ROOT"),
+    )
 )
 
 _OPENCLAW_RUNTIME_NOTE = (
@@ -75,7 +95,12 @@ def render_runtime_path_neutral(
     return neutral, changed
 
 
-def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
+def render_skill_md(
+    skill: str,
+    spec: dict[str, Any],
+    agent: str,
+    antigravity_dirs: tuple[str, str] | None = None,
+) -> str:
     canonical = load_canonical_skill(skill)
     if canonical is not None:
         content = add_managed_header(canonical, agent)
@@ -86,7 +111,7 @@ def render_skill_md(skill: str, spec: dict[str, Any], agent: str) -> str:
             return add_opencode_skill_note(content)
         if agent == "antigravity":
             content, _ = render_runtime_path_neutral(content)
-            return add_antigravity_skill_note(content)
+            return add_antigravity_skill_note(content, antigravity_dirs)
         return content
     description = str(spec["description"])
     optional = spec.get("optional_capabilities", [])
@@ -131,7 +156,13 @@ def canonical_skill_dir(skill: str) -> Path:
     return REPO_ROOT / "canonical" / "skills" / skill
 
 
-def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, source_path: Path) -> str:
+def render_reference_skill_md(
+    skill: str,
+    spec: dict[str, Any],
+    agent: str,
+    source_path: Path,
+    antigravity_dirs: tuple[str, str] | None = None,
+) -> str:
     display_source = display_path_for_agent(source_path)
     description = str(spec["description"])
     short_description = str(spec.get("short_description", description))
@@ -173,7 +204,7 @@ def render_reference_skill_md(skill: str, spec: dict[str, Any], agent: str, sour
     if agent == "openclaw":
         return render_openclaw_runtime_neutral(content)
     if agent == "antigravity":
-        return add_antigravity_skill_note(content)
+        return add_antigravity_skill_note(content, antigravity_dirs)
     return content
 
 
@@ -418,15 +449,25 @@ def add_opencode_skill_note(content: str) -> str:
     return note.lstrip() + "\n\n" + content
 
 
-def add_antigravity_skill_note(content: str) -> str:
+# Where an unmigrated Antigravity home keeps the two managed trees. Both move when
+# the vendor migrates a home, so these are only the fallback: the planner resolves
+# the real pair and passes it in.
+ANTIGRAVITY_DEFAULT_NOTE_DIRS = (
+    "~/.gemini/antigravity-cli/skills/",
+    "~/.gemini/antigravity-cli/plugins/ai-agents-skills/",
+)
+
+
+def add_antigravity_skill_note(content: str, dirs: tuple[str, str] | None = None) -> str:
+    skills_dir, plugin_dir = dirs or ANTIGRAVITY_DEFAULT_NOTE_DIRS
     note = dedent(
-        """\
+        f"""\
 
         ## Antigravity CLI Runtime Notes
 
         This skill is installed as an Antigravity CLI global Markdown skill under
-        `~/.gemini/antigravity-cli/skills/`. Plugin payloads managed by this
-        installer live under `~/.gemini/antigravity-cli/plugins/ai-agents-skills/`.
+        `{skills_dir}`. Plugin payloads managed by this installer live under
+        `{plugin_dir}`.
         """
     )
     if "## Antigravity CLI Runtime Notes" in content:
@@ -437,6 +478,20 @@ def add_antigravity_skill_note(content: str) -> str:
             insert_at = end + len("\n---")
             return content[:insert_at] + note + content[insert_at:]
     return note.lstrip() + "\n\n" + content
+
+
+# Agents whose homes contain no ~/.codex/runtime. Their SKILL.md has always been
+# rewritten to the portable runtime root; support files land in the same installed
+# directory and are read the same way, so a support file left un-neutralized
+# documents a path that does not exist under the install it ships with.
+RUNTIME_PATH_NEUTRAL_AGENTS = frozenset({"opencode", "antigravity", "openclaw"})
+
+
+def render_support_file(content: str, agent: str, relative_path: str) -> str:
+    """Render one canonical support file for an agent's installed skill directory."""
+    if agent in RUNTIME_PATH_NEUTRAL_AGENTS:
+        content, _ = render_runtime_path_neutral(content)
+    return add_managed_support_header(content, agent, relative_path)
 
 
 def toml_escape(value: str) -> str:
@@ -451,10 +506,23 @@ def yaml_scalar(value: str) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
+# The marker's whole job is to name the home a file was generated for, so a
+# stale target is worse than no header at all. A canonical source can arrive
+# carrying one -- a rendered copy committed back over its source is enough --
+# and short-circuiting on the marker alone would then stamp every other agent's
+# install with that source's target.
+_GENERATED_TARGET_RE = re.compile(rf"({re.escape(MANAGED_MARKER)}\. Generated target: )([^.]+)(\.)")
+
+
+def retarget_managed_header(content: str, agent: str) -> str:
+    """Point an already-present managed header at the agent being rendered for."""
+    return _GENERATED_TARGET_RE.sub(lambda m: f"{m.group(1)}{agent}{m.group(3)}", content, count=1)
+
+
 def add_managed_header(content: str, agent: str) -> str:
     header = f"<!-- {MANAGED_MARKER}. Generated target: {agent}. -->"
     if MANAGED_MARKER in content:
-        return content
+        return retarget_managed_header(content, agent)
     if content.startswith("---\n"):
         end = content.find("\n---", 4)
         if end != -1:
@@ -465,7 +533,7 @@ def add_managed_header(content: str, agent: str) -> str:
 
 def add_managed_support_header(content: str, agent: str, relative_path: str) -> str:
     if MANAGED_MARKER in content:
-        return content
+        return retarget_managed_header(content, agent)
     marker = f"{MANAGED_MARKER}. Generated target: {agent}. Source: {relative_path}."
     if relative_path.endswith(".md"):
         header = f"<!-- {marker} -->"

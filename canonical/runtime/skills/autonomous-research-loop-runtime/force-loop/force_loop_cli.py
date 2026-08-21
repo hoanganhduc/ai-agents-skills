@@ -392,7 +392,7 @@ def _load_managed_secrets(
         parent_fd = _open_directory_nofollow(loader_path.parent)
         loader_fd = os.open(
             loader_path.name,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_BINARY", 0),
             dir_fd=parent_fd,
         )
         before = os.fstat(loader_fd)

@@ -106,12 +106,55 @@ def sha256_tree(path: Path) -> str:
     return "sha256:" + digest.hexdigest()
 
 
+STATE_DIR_MODE = 0o700
+
+
 def state_dir(root: Path) -> Path:
     return root / ".ai-agents-skills"
 
 
 def state_file(root: Path) -> Path:
     return state_dir(root) / "state.json"
+
+
+def prepare_state_directory(root: Path, directory: Path) -> Path:
+    """Create ``directory`` inside the installer journal, private to its owner.
+
+    ``mkdir`` applies the ambient umask, so creating the journal with nothing but
+    ``parents=True`` left it at whatever the invoking shell happened to have set
+    -- 0775 under the common 0002, 0777 under 0000 -- directly beside the skill
+    directories the permission pass had deliberately put at 0700.  That the files
+    inside are written 0600 does not settle it: write permission on a directory is
+    permission to unlink an entry and create another under the same name, so a
+    co-group user can replace ``state.json`` wholesale, plant a run record and a
+    matching backup beside it, and have the victim's next ``rollback`` copy bytes
+    of their choosing over any path in the victim's home.  Nothing downstream
+    catches that -- a record carrying no recorded signature makes
+    ``backup_integrity_ok`` return true by construction.
+
+    Components that already exist are tightened too, not just newly created ones.
+    A journal written by an earlier version is group-writable today, and a fix
+    that only applied to fresh installs would leave exactly the homes that have
+    been managed longest still exposed.
+    """
+    journal = state_dir(root)
+    if not normalized_path_within(journal, directory):
+        raise ValueError(f"refusing to create installer state directory outside the journal: {directory}")
+    # Iteration starts below the journal's parent, which is the selected root:
+    # the root is the user's own home and is never created or chmodded here.
+    current = journal.parent
+    for component in Path(directory).relative_to(journal.parent).parts:
+        current = current / component
+        current.mkdir(mode=STATE_DIR_MODE, exist_ok=True)
+        if os.name != "posix":
+            continue
+        info = current.lstat()
+        # A symlinked component is refused by the preflight before any caller
+        # reaches this, and chmod would follow it; skipping keeps that true even
+        # if some later caller forgets the preflight.
+        if stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) & 0o077:
+            current.chmod(STATE_DIR_MODE)
+    return directory
 
 
 def default_state() -> dict[str, Any]:
@@ -203,7 +246,7 @@ def save_state(root: Path, data: dict[str, Any]) -> None:
     validate_state(data)
     path = state_file(root)
     preflight_state_path(root, path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    prepare_state_directory(root, path.parent)
     write_text_atomic(path, json_document_text(data))
 
 
@@ -236,7 +279,7 @@ def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
     rel = str(path).replace(":", "").replace("\\", "/").lstrip("/")
     dest = state_dir(root) / "backups" / run_id / rel
     preflight_state_path(root, dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    prepare_state_directory(root, dest.parent)
     dest = unused_backup_path(dest)
     preflight_state_path(root, dest)
     if path.is_symlink():
@@ -297,7 +340,7 @@ def validate_run_id(run_id: str) -> str:
 def write_run_record(root: Path, run_id: str, actions: list[dict[str, Any]]) -> None:
     path = run_record_path(root, run_id)
     preflight_state_path(root, path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    prepare_state_directory(root, path.parent)
     write_text_atomic(path, json_document_text({"run_id": run_id, "actions": actions}))
 
 

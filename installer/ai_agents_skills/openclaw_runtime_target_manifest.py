@@ -165,21 +165,30 @@ def build_openclaw_runtime_target_manifest(
         "real_write_status": "approval-required",
         "approval": {"review_status": "unreviewed"},
     }
-    # manifest_id is machine/path-bound (includes the realpaths + content_id).
-    seed = json.dumps(
-        {
-            "content_id": content_id,
-            "action_class": action_class,
-            "runtime_realpath": runtime_realpath,
-            "target_realpath": target_realpath,
-            "managed_skills_realpath": managed_skills_realpath,
-            "evidence_ids": sorted(e.get("evidence_id", "") for e in evidence_items),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
+    # The manifest_id addresses the whole manifest, not a summary of it.  The
+    # realpaths are part of that payload, so the id stays machine/path-bound as
+    # before, and every other field an apply acts on -- skill, files, routing,
+    # mode policy -- is bound too.  A seed naming only a few fields leaves the
+    # rest free to be rewritten under an approval that still checks out.
+    manifest["manifest_id"] = "target_manifest_" + stable_digest(
+        canonical_runtime_manifest_payload(manifest)
     )
-    manifest["manifest_id"] = "target_manifest_" + stable_digest(seed)
     return manifest
+
+
+def canonical_runtime_manifest_payload(manifest: dict[str, Any]) -> str:
+    """Serialize everything the manifest_id must cover.
+
+    ``manifest_id`` is excluded because it is the digest being computed, and
+    ``approval`` because approving is what happens after the id exists; the
+    approval binds itself to the id instead.
+    """
+    payload = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"manifest_id", "approval"}
+    }
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 def validate_runtime_target_manifest(manifest: dict[str, Any], *, require_approved: bool = False) -> None:
@@ -188,6 +197,7 @@ def validate_runtime_target_manifest(manifest: dict[str, Any], *, require_approv
     required = {
         "manifest_id", "content_id", "skill", "action_class", "neutral_skill_md", "files",
         "routing", "runtime_realpath", "target_realpath", "managed_skills_realpath", "target_evidence", "approval",
+        "source_commit",
     }
     missing = sorted(required - set(manifest))
     if missing:
@@ -205,6 +215,30 @@ def validate_runtime_target_manifest(manifest: dict[str, Any], *, require_approv
     )
     if reason is not None:
         raise ValueError(f"OpenClaw runtime target manifest is not authorized: {reason}")
+    # Re-derive the three things an apply reads straight out of the manifest.
+    # Authorization above is checked against stored content, so it accepts any
+    # content the file happens to carry; what makes that content trustworthy is
+    # that it still hashes to the id the reviewer approved.  Without this the
+    # approval covers a name, not a payload, and the skill, the file list and
+    # the routing can all be swapped underneath it.
+    expected_content_id = openclaw_runtime_content_id(
+        source_commit=manifest["source_commit"],
+        skill=manifest["skill"],
+        neutral_skill_md=manifest["neutral_skill_md"],
+        runtime_files=manifest["files"],
+    )
+    if manifest["content_id"] != expected_content_id:
+        raise ValueError("OpenClaw runtime target manifest content_id does not match its contents")
+    expected_routing = {
+        record["relative_path"]: support_file_routing(record) for record in manifest["files"]
+    }
+    if manifest["routing"] != expected_routing:
+        raise ValueError("OpenClaw runtime target manifest routing does not match its file records")
+    expected_manifest_id = "target_manifest_" + stable_digest(
+        canonical_runtime_manifest_payload(manifest)
+    )
+    if manifest["manifest_id"] != expected_manifest_id:
+        raise ValueError("OpenClaw runtime target manifest content address does not match manifest_id")
     approval = manifest.get("approval")
     if not isinstance(approval, dict):
         raise ValueError("OpenClaw runtime target manifest approval must be an object")
