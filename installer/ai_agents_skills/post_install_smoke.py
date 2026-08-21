@@ -9,6 +9,7 @@ from .grok import run_grok_native_smoke
 from .kimi import run_kimi_native_smoke
 from .opencode import run_opencode_native_smoke
 from .capabilities import smoke_artifact
+from .runtime import resolve_runtime_skills
 from .runtime_smoke import run_installed_runtime_smoke
 from .state import load_state, preflight_state_path, save_state, state_dir, validate_run_id, write_text_atomic
 from .verify import verify as verify_state
@@ -28,6 +29,7 @@ def run_post_install_smoke(
     skills: set[str] | None = None,
     agents: set[str] | None = None,
     platform: str | None = None,
+    runtime_profile: str = "auto",
     mode: str = "auto",
     timeout: int = 60,
 ) -> dict[str, Any]:
@@ -57,17 +59,24 @@ def run_post_install_smoke(
     result["verify"] = guarded_check("verify", lambda: verify_state(root, skills, agents))
     if mode in {"auto", "strict"}:
         result["skill_smoke"] = guarded_check("skill-smoke", lambda: smoke_state(root, skills, agents))
-        result["runtime_smoke"] = guarded_check(
-            "runtime-smoke",
-            lambda: run_installed_runtime_smoke(
-                root,
-                manifests,
-                skills=skills,
-                agents=agents,
-                platform=platform,
-                timeout=timeout,
-            ),
-        )
+        runtime_scope = runtime_smoke_scope(manifests, skills, runtime_profile)
+        if runtime_scope is not None and not runtime_scope:
+            result["runtime_smoke"] = {
+                "status": "skipped",
+                "reason": "no selected skill has a managed runtime under this runtime profile",
+            }
+        else:
+            result["runtime_smoke"] = guarded_check(
+                "runtime-smoke",
+                lambda: run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills=runtime_scope,
+                    agents=agents,
+                    platform=platform,
+                    timeout=timeout,
+                ),
+            )
         result["opencode_smoke"] = guarded_check(
             "opencode-smoke",
             lambda: run_opencode_native_smoke(
@@ -123,6 +132,29 @@ def run_post_install_smoke(
     )
     write_report_and_state_summary(root, run_id, result)
     return result
+
+
+def runtime_smoke_scope(
+    manifests: dict[str, Any],
+    skills: set[str] | None,
+    runtime_profile: str,
+) -> set[str] | None:
+    """Return the skills this install is supposed to have put a runtime on disk for.
+
+    A selection names the skills to install, not the skills that ship executable
+    files: most of a research profile is prose, and ``--runtime-profile none``
+    asks for no runtime at all.  The runtime smoke fails any skill it is asked
+    about that has no managed runtime surface, which is the right answer to a
+    request naming one by hand and the wrong one here, where the names come from
+    the profile -- it reports the whole install failed for a property of the
+    selection.  Resolving the selection through the same profile the plan used
+    asks only about what the install was meant to write, so a runtime that is
+    genuinely missing is still a failure.  ``None`` keeps an unscoped install
+    unscoped.
+    """
+    if skills is None:
+        return None
+    return set(resolve_runtime_skills(sorted(skills), manifests.get("runtime", {}), runtime_profile))
 
 
 def smoke_state(root: Path, skills: set[str] | None = None, agents: set[str] | None = None) -> dict[str, Any]:

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -206,6 +207,29 @@ def save_state(root: Path, data: dict[str, Any]) -> None:
     write_text_atomic(path, json_document_text(data))
 
 
+def unused_backup_path(dest: Path) -> Path:
+    """Return ``dest``, or the first free ``dest.N`` beside it.
+
+    One run can back the same file up more than once -- a managed block is
+    written per skill, so an agent's instructions file is snapshotted once for
+    each -- and every one of those snapshots is a different file, taken before a
+    different write.  A destination derived only from the run and the path would
+    make them all the same name, so each copy would overwrite the one before it
+    and only the last would survive.  Every record still holds the signature the
+    file had before *its* own write, so the survivor matches at most one of them
+    and rollback refuses the rest.  Giving each copy its own name keeps a
+    snapshot per record, which is what rollback reads back.
+    """
+    if not dest.exists() and not dest.is_symlink():
+        return dest
+    ordinal = 1
+    while True:
+        candidate = dest.with_name(f"{dest.name}.{ordinal}")
+        if not candidate.exists() and not candidate.is_symlink():
+            return candidate
+        ordinal += 1
+
+
 def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
     if not path.exists() and not path.is_symlink():
         return None
@@ -213,6 +237,8 @@ def backup_file(root: Path, run_id: str, path: Path) -> Path | None:
     dest = state_dir(root) / "backups" / run_id / rel
     preflight_state_path(root, dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
+    dest = unused_backup_path(dest)
+    preflight_state_path(root, dest)
     if path.is_symlink():
         symlink_atomic(dest, Path(os.readlink(path)))
     elif path.is_dir():
@@ -333,6 +359,7 @@ def write_text_atomic(path: Path, content: str) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
+        inherit_replaced_file_mode(tmp_name, path)
         os.replace(tmp_name, path)
     except Exception:
         if tmp_name is not None:
@@ -341,6 +368,30 @@ def write_text_atomic(path: Path, content: str) -> None:
             except FileNotFoundError:
                 pass
         raise
+
+
+def inherit_replaced_file_mode(tmp_name: str, path: Path) -> None:
+    """Carry an existing file's permissions onto the replacement written for it.
+
+    An atomic write replaces the destination inode, so the new file's mode is
+    whatever ``mkstemp`` chose -- owner-only -- and not the mode the file being
+    replaced had.  Editing a file is not a request to change who may read it,
+    and the narrowing is silent and permanent: nothing records the previous
+    mode, so no uninstall or rollback puts it back.  Only replacement is
+    covered; a file this call creates keeps the private default.
+    """
+    if os.name == "nt":
+        return
+    try:
+        existing = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return
+    if not stat.S_ISREG(existing.st_mode):
+        return
+    try:
+        os.chmod(tmp_name, stat.S_IMODE(existing.st_mode))
+    except OSError:
+        return
 
 
 def symlink_atomic(path: Path, source_path: Path) -> None:

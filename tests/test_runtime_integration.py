@@ -26,6 +26,7 @@ from installer.ai_agents_skills.discovery import current_platform
 from installer.ai_agents_skills.lifecycle import rollback, uninstall
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
+from installer.ai_agents_skills.post_install_smoke import run_post_install_smoke
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with_runtime_file, runtime_denied_patterns, runtime_inventory
 from installer.ai_agents_skills.runtime_smoke import (
     make_trusted_scratch_directory,
@@ -2972,6 +2973,84 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(entries["workspace/linked"]["reason"], "symlink")
 
     @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
+    def test_post_install_smoke_asks_only_about_runtimes_the_install_planned(self) -> None:
+        manifests = load_manifests()
+
+        def smoke(selected: list[str], runtime_profile: str) -> dict[str, Any]:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                create_agent_home(root, "claude")
+                plan = build_plan(
+                    root,
+                    manifests,
+                    selected,
+                    detect_agents(root, ["claude"]),
+                    runtime_profile=runtime_profile,
+                    platform="linux",
+                    requested_agents=["claude"],
+                )
+                applied = apply_plan(root, plan, dry_run=False)
+                return run_post_install_smoke(
+                    root,
+                    manifests,
+                    applied,
+                    skills=set(selected),
+                    agents={"claude"},
+                    platform="linux",
+                    runtime_profile=runtime_profile,
+                )
+
+        prose_only = smoke(["agent-group-discuss", "draft-writing"], "auto")
+        self.assertEqual(prose_only["verify"]["status"], "ok")
+        self.assertEqual(prose_only["runtime_smoke"]["status"], "skipped")
+        self.assertEqual(prose_only["status"], "ok")
+
+        mixed = smoke(["sagemath", "zotero", "draft-writing"], "auto")
+        self.assertEqual(mixed["runtime_smoke"]["status"], "ok")
+        self.assertEqual(mixed["status"], "ok")
+
+        no_runtime = smoke(["sagemath", "zotero"], "none")
+        self.assertEqual(no_runtime["runtime_smoke"]["status"], "skipped")
+        self.assertEqual(no_runtime["status"], "ok")
+
+    @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
+    def test_post_install_smoke_still_fails_a_runtime_that_went_missing(self) -> None:
+        manifests = load_manifests()
+        selected = ["sagemath", "zotero", "draft-writing"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "claude")
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["claude"]),
+                runtime_profile="auto",
+                platform="linux",
+                requested_agents=["claude"],
+            )
+            applied = apply_plan(root, plan, dry_run=False)
+            installed = [
+                Path(item["artifact"])
+                for item in load_state(root)["artifacts"]
+                if item.get("artifact_type") == "runtime-file" and item.get("skill") == "sagemath"
+            ]
+            self.assertTrue(installed)
+            installed[0].unlink()
+
+            report = run_post_install_smoke(
+                root,
+                manifests,
+                applied,
+                skills=set(selected),
+                agents={"claude"},
+                platform="linux",
+                runtime_profile="auto",
+            )
+
+            self.assertEqual(report["runtime_smoke"]["status"], "failed")
+            self.assertEqual(report["status"], "failed")
+
     def test_agent_scoped_uninstall_preserves_shared_runtime_for_other_agents(self) -> None:
         manifests = load_manifests()
         with tempfile.TemporaryDirectory() as tmp:

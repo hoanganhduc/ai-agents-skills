@@ -5,7 +5,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .agents import AgentTarget, agent_home_statuses, agent_supports_manifest_entry
+from .agents import (
+    AgentTarget,
+    agent_home_statuses,
+    agent_supports_manifest_entry,
+    antigravity_legacy_plugin_dir,
+    antigravity_plugin_root,
+)
 from .capabilities import effective_install_mode_with_evidence
 from .discovery import current_platform
 from .manifest import REPO_ROOT
@@ -57,6 +63,7 @@ def build_plan(
             skipped_agent_names.add(str(status["agent"]))
 
     skill_actions: dict[tuple[str, str], dict[str, Any]] = {}
+    artifact_paths = planned_artifact_paths(agents, artifacts, manifests)
     for skill in skills:
         spec = skill_specs[skill]
         for agent in agents:
@@ -98,7 +105,9 @@ def build_plan(
                 artifact_type="skill-file",
                 adopt=adopt,
                 backup_replace=backup_replace,
-                legacy_path=find_legacy_skill(agent, skill, manifests),
+                legacy_path=find_legacy_skill(
+                    agent, skill, manifests, artifact_paths.get(agent.name, frozenset())
+                ),
                 migrate=migrate,
                 install_mode=action_install_mode,
                 mode_reason=mode_reason,
@@ -154,9 +163,22 @@ def build_plan(
                 )
             )
     actions.extend(antigravity_native_scaffold_actions(agents, actions, adopt, backup_replace))
+    actions.extend(antigravity_legacy_plugin_actions(root, agents, actions, state))
     actions.extend(
+        # The same skill list the runtime install is planned from: the hook's only
+        # job is to invoke a runtime script, so writing it for a skill whose files
+        # this run is not installing leaves every Stop event running a command
+        # against a path that does not exist.
         autoloop_stop_hook_actions(
-            root, manifests, skills, agents, runtime_profile, runtime_root, platform, adopt, backup_replace
+            root,
+            manifests,
+            runtime_enabled_skills(skills, skill_actions),
+            agents,
+            runtime_profile,
+            runtime_root,
+            platform,
+            adopt,
+            backup_replace,
         )
     )
     actions.extend(grok_native_config_actions(agents, actions, adopt, backup_replace))
@@ -289,6 +311,84 @@ def antigravity_native_scaffold_actions(
         action["artifact_name"] = artifact_name
         scaffold_actions.append(action)
     return scaffold_actions
+
+
+def antigravity_legacy_plugin_actions(
+    root: Path,
+    agents: list[AgentTarget],
+    actions: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Remove what earlier runs wrote to the pre-migration plugin directory.
+
+    Once the plugin root follows the vendor's migration, everything installed
+    under the old one stops being refreshed while still being loaded, under the
+    same plugin name as the payload this run writes.  Two same-named copies is
+    worse than one in the wrong place, so the records left behind at the old
+    path are removed rather than abandoned.
+
+    Only files this installer recorded are named: the removal is driven by the
+    state records, and ``apply`` compares each file against the signature it was
+    installed with and skips it when it no longer matches, so anything edited
+    since is left alone.  Removal is also conditional on this run planning real
+    work for the target, matching the scaffold pass above -- a target that is
+    skipped keeps its files.
+
+    A record is removed only when this run is writing the same file at the
+    migrated root, which is what makes the move a move.  The state holds every
+    artifact any past run installed, while a plan covers the profile asked for
+    now, so removing on the record alone would strip the payload of every skill
+    outside the current selection and put nothing in its place.  What is left
+    behind is a stale managed artifact, which is what an out-of-profile artifact
+    already is, and the run that installs it is the run that clears it.
+    """
+    if not any(agent.name == "antigravity" for agent in agents):
+        return []
+    if not any(
+        action.get("agent") == "antigravity" and skill_action_is_active(action)
+        for action in actions
+    ):
+        return []
+    legacy_dir = antigravity_legacy_plugin_dir(root)
+    if legacy_dir is None:
+        return []
+    migrated_dir = antigravity_plugin_root(root) / "ai-agents-skills"
+    planned = {
+        Path(action["path"])
+        for action in actions
+        if action.get("agent") == "antigravity"
+        and action.get("path")
+        and skill_action_is_active(action)
+    }
+    removals = []
+    for item in state.get("artifacts", []):
+        if item.get("agent") != "antigravity":
+            continue
+        recorded = item.get("artifact")
+        if not recorded:
+            continue
+        path = Path(recorded)
+        if not path.is_relative_to(legacy_dir):
+            continue
+        if migrated_dir / path.relative_to(legacy_dir) not in planned:
+            continue
+        removals.append(
+            {
+                "kind": "managed-file-remove",
+                "agent": "antigravity",
+                "skill": item.get("skill", "repo-management"),
+                "path": str(path),
+                "classification": "managed",
+                "operation": "remove-obsolete",
+                "artifact_type": item.get("artifact_type", "skill-support-file"),
+                "install_mode": item.get("install_mode"),
+                "source_path": item.get("source_path"),
+                "installed_signature": item.get("installed_signature"),
+                "created_parent_dirs": item.get("created_parent_dirs", []),
+                "reason": "plugin payload moved to the migrated Antigravity plugin root",
+            }
+        )
+    return removals
 
 
 AUTOLOOP_HOOK_MANAGED_ID = "autoloop-stop"
@@ -436,6 +536,11 @@ def autoloop_stop_hook_actions(
             "path": str(settings),
             "artifact_type": "settings-hook-merge",
             "artifact_id": f"settings-hook:{AUTOLOOP_HOOK_MANAGED_ID}",
+            # The hook is named for the skill it serves, but what it runs belongs to
+            # the runtime skill guarded above. Nothing else on the record says so,
+            # so an uninstall scoped to that runtime would delete the script and
+            # leave this entry firing a missing path on every Stop event.
+            "runtime_skill": "autonomous-research-loop-runtime",
             "event": AUTOLOOP_HOOK_EVENT,
             "managed_id": AUTOLOOP_HOOK_MANAGED_ID,
             "entry": entry,
@@ -473,6 +578,7 @@ def autoloop_stop_hook_actions(
         )
         grok_action["artifact_id"] = f"native-hook-file:{AUTOLOOP_HOOK_MANAGED_ID}"
         grok_action["artifact_name"] = AUTOLOOP_HOOK_MANAGED_ID
+        grok_action["runtime_skill"] = "autonomous-research-loop-runtime"
         actions.append(grok_action)
     return actions
 
@@ -982,11 +1088,25 @@ def classify_file_action(
     return result
 
 
-def find_legacy_skill(agent: AgentTarget, skill: str, manifests: dict[str, Any]) -> Path | None:
+def find_legacy_skill(
+    agent: AgentTarget,
+    skill: str,
+    manifests: dict[str, Any],
+    claimed_paths: frozenset[Path] = frozenset(),
+) -> Path | None:
+    """Locate a file left behind under one of ``skill``'s former names.
+
+    ``claimed_paths`` names the artifacts this same plan installs for this agent.
+    A legacy name and an artifact name can land on one path where a target keeps
+    skills and artifacts in a single flat directory, and there the file found is
+    not a leftover at all but something the run just wrote: removing it deletes a
+    live artifact and leaves its state record pointing at nothing.  A path the
+    plan owns is therefore never legacy.
+    """
     aliases = manifests["skills"].get("legacy_aliases", {}).get(skill, [])
     for name in aliases:
         candidate = agent.skill_file_for(name)
-        if candidate.exists():
+        if candidate.exists() and candidate not in claimed_paths:
             return candidate
     names = [skill, *aliases]
     for skills_dir in agent.legacy_skills_dirs:
@@ -995,9 +1115,29 @@ def find_legacy_skill(agent: AgentTarget, skill: str, manifests: dict[str, Any])
                 candidate = skills_dir / f"{name}.md"
             else:
                 candidate = skills_dir / name / "SKILL.md"
-            if candidate.exists():
+            if candidate.exists() and candidate not in claimed_paths:
                 return candidate
     return None
+
+
+def planned_artifact_paths(
+    agents: list[AgentTarget],
+    artifacts: list[tuple[str, str]] | None,
+    manifests: dict[str, Any],
+) -> dict[str, frozenset[Path]]:
+    """Map each agent to the paths the selected artifacts will be installed to."""
+    claimed: dict[str, set[Path]] = {agent.name: set() for agent in agents}
+    for artifact_type, name in artifacts or []:
+        # Management notices are written as a block inside an instructions file
+        # rather than to a path of their own, so they claim nothing here.
+        if artifact_type == "management-notice":
+            continue
+        spec = manifests["artifacts"]["artifacts"][artifact_type][name]
+        for agent in agents:
+            if not artifact_supported_by_agent(artifact_type, spec, agent):
+                continue
+            claimed[agent.name].add(artifact_target_path(agent, artifact_type, name, spec))
+    return {agent_name: frozenset(paths) for agent_name, paths in claimed.items()}
 
 
 def legacy_removal_action(

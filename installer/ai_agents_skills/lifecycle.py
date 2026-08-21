@@ -110,11 +110,22 @@ def rollback(
         )
         restored.append(item)
         created_parent_dirs.extend(item.get("created_parent_dirs", []))
+    target_keys = {target.get("key") for target in targets}
     remaining = [
         item for item in state.get("artifacts", [])
-        if item.get("key") not in {target.get("key") for target in targets}
+        if item.get("key") not in target_keys
     ]
     state["artifacts"] = remaining
+    # A tombstone describes a removal this rollback has just undone.  Left in
+    # place it outlives every artifact record, so a later uninstall either keeps
+    # reporting a conflict for a path already in its pre-install state, or -- if
+    # the user has since deleted that path themselves -- restores it from the old
+    # backup, resurrecting what they deleted at a point when nothing is
+    # installed.  Uninstall already retires its own records this way.
+    state["uninstall_records"] = [
+        item for item in state.get("uninstall_records", [])
+        if item.get("key") not in target_keys
+    ]
     for target in targets:
         previous = target.get("previous_state_artifact")
         if previous:
@@ -190,6 +201,24 @@ def expand_runtime_lifecycle_scope(artifacts: list[Any], selected: list[dict[str
         if skill in selected_skills and skill not in remaining_skill_consumers:
             selected.append(item)
             selected_keys.add(item.get("key"))
+
+    # A hook is recorded under the skill it serves, which is not the skill whose
+    # script it runs, so the loop above never reaches it.  Removing a runtime
+    # without it leaves the entry in place invoking a path this same scope just
+    # deleted, and it fires on every Stop event from then on.  The record names
+    # the runtime it depends on; that is what decides.
+    removed_runtime_skills = {
+        item.get("skill")
+        for item in runtime_skill_records
+        if item.get("key") in selected_keys and isinstance(item.get("skill"), str)
+    }
+    if removed_runtime_skills:
+        for item in artifacts:
+            if not isinstance(item, dict) or item.get("key") in selected_keys:
+                continue
+            if item.get("runtime_skill") in removed_runtime_skills:
+                selected.append(item)
+                selected_keys.add(item.get("key"))
 
     remaining_runtime_skills = [
         item for item in runtime_skill_records
@@ -275,7 +304,14 @@ def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dic
     if origin_action == "unmanage-only":
         action["operation"] = "unmanage-only"
     elif origin_action == "restore-removed":
-        action["operation"] = "restore-removed" if not path.exists() and not path.is_symlink() else "skip-conflict"
+        # Each conflict carries the reason it was detected for.  Without one the
+        # record's own install-time reason is reported instead, describing why
+        # the artifact was written rather than why uninstall left it alone.
+        if not path.exists() and not path.is_symlink():
+            action["operation"] = "restore-removed"
+        else:
+            action["operation"] = "skip-conflict"
+            action["reason"] = "something else now occupies the path to restore"
     elif origin_action == "restore-backup":
         installed = item.get("installed_signature")
         current = artifact_signature(path)
@@ -283,6 +319,7 @@ def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dic
             action["operation"] = "restore-backup"
         else:
             action["operation"] = "skip-conflict"
+            action["reason"] = "artifact changed since install"
     elif origin_action == "delete-created":
         current = artifact_signature(path)
         if not current.get("exists"):
@@ -291,6 +328,7 @@ def plan_uninstall_action(item: dict[str, Any], root: Path | None = None) -> dic
             action["operation"] = "delete-created"
         else:
             action["operation"] = "skip-conflict"
+            action["reason"] = "artifact changed since install"
     elif origin_action == "merge-remove":
         if not path.exists():
             action["operation"] = "forget-missing"
@@ -449,6 +487,9 @@ def remove_artifact(item: dict[str, Any], root: Path | None = None) -> None:
     }:
         remove_file(path)
         cleanup_recorded_parent_dirs(root, item)
+        return
+    # Falling off the end would report the artifact removed without touching it.
+    raise ValueError(f"no removal handler for artifact type: {item.get('artifact_type')!r}")
 
 
 def _apply_merge_remove(action: dict[str, Any]) -> None:
@@ -593,8 +634,20 @@ def rollback_artifact(item: dict[str, Any], root: Path | None = None) -> None:
         if not backup_integrity_ok(item, backup_path):
             raise ValueError(f"refusing rollback because backup changed since it was recorded: {backup}")
         restore_backup(backup_path, path)
-    else:
-        remove_artifact(item, root)
+        return
+    # A merged settings file holds the user's own configuration around the entry
+    # this run added, so undoing the run means removing that entry, not deleting
+    # the file.  remove_artifact has no case for either type: it would return
+    # having done nothing while the caller counted the artifact as restored,
+    # leaving a Stop hook pointing at a script this same rollback deleted, or a
+    # compat block still disabling the target's own surfaces.
+    if item.get("artifact_type") == "settings-hook-merge":
+        _apply_merge_remove(item)
+        return
+    if item.get("artifact_type") == "settings-compat-merge":
+        _apply_toml_block_remove(item)
+        return
+    remove_artifact(item, root)
 
 
 def restore_backup(backup_path: Path, path: Path) -> None:
@@ -716,13 +769,32 @@ def preflight_uninstall_actions(root: Path, actions: list[dict[str, Any]]) -> No
                 raise ValueError(f"refusing uninstall because backup is missing: {backup}")
 
 
+def instruction_file_was_created_by_installer(item: dict[str, Any]) -> bool:
+    """Say whether this block's record shows the installer made the file it sits in.
+
+    ``created_file`` is measured when the block is written, so a re-apply sees the
+    file already there and records ``False`` for a file the installer did create.
+    The uninstall origin is the durable half of the same fact: it is carried
+    forward from the previous record on every re-apply, which is why removing a
+    lone block already deletes the file it created.
+    """
+    return bool(item.get("created_file")) or item.get("uninstall", {}).get("action") == "delete-created"
+
+
 def mark_created_instruction_file_groups(actions: list[dict[str, Any]]) -> None:
+    """Share one file's created-by-installer fact across every block written into it.
+
+    Only the first block written to a file records having created it, so the
+    others must be told, or removing them leaves an installer-made file behind
+    holding nothing.  Marking the whole group is what makes the last removal
+    delete it whichever block that turns out to be.
+    """
     grouped: dict[str, list[dict[str, Any]]] = {}
     for action in actions:
         if action.get("artifact_type") in {"instruction-block", "management-notice"}:
             grouped.setdefault(action["artifact"], []).append(action)
     for group in grouped.values():
-        if any(item.get("created_file") for item in group):
+        if any(instruction_file_was_created_by_installer(item) for item in group):
             for item in group:
                 item["delete_instruction_file_if_empty"] = True
 

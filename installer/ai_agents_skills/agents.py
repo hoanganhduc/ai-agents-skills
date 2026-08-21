@@ -59,7 +59,11 @@ class AgentTarget:
 
     def support_dir_for(self, skill: str) -> Path:
         if self.name == "antigravity":
-            return self.home / "plugins" / "ai-agents-skills" / "skills" / skill
+            # Composed from the plugin directory this target already carries
+            # rather than from ``home``: the plugin root moves with the
+            # vendor's migration, and a second composition of the same path
+            # would have to be kept in step with it by hand.
+            return self.target_dir_for("plugin") / "skills" / skill
         return self.skills_dir / skill
 
 
@@ -144,7 +148,7 @@ def target_for(root: Path, agent: str) -> AgentTarget:
         )
     if agent == "antigravity":
         home = antigravity_home(root)
-        plugin_home = home / "plugins" / "ai-agents-skills"
+        plugin_home = antigravity_plugin_root(root) / "ai-agents-skills"
         skills_dir = antigravity_skills_dir(root)
         return AgentTarget(
             name="antigravity",
@@ -240,6 +244,54 @@ def opencode_home(root: Path) -> Path:
 
 def antigravity_home(root: Path) -> Path:
     return root / ".gemini" / "antigravity-cli"
+
+
+def antigravity_plugin_root(root: Path) -> Path:
+    """Return the plugins directory the Antigravity CLI loads plugins from.
+
+    The same migration that moved ``skills`` also moved this tree, but it moved
+    it differently: ``skills`` was replaced by a compatibility symlink, while
+    ``plugins`` was copied and both directories were left real.  Both are still
+    scanned -- in the vendor's own logs every session has loader threads on each
+    -- so a payload written to only the pre-migration path is read by a small
+    minority of them, and the copy left at the migrated path keeps being served
+    to the rest under the same plugin name.  Which of two same-named plugins
+    wins is not something those logs answer, so the installer keeps exactly one:
+    it writes to the migrated path and, through
+    ``antigravity_legacy_plugin_dir`` below, removes what it previously wrote to
+    the other.
+
+    As with the skills directory, the path returned is a literal composed here.
+    A symlink at the migrated path is refused rather than followed, since a link
+    is exactly how a managed write gets redirected somewhere the installer never
+    chose.
+    """
+    legacy = antigravity_home(root) / "plugins"
+    config_home = root / ".gemini" / "config"
+    if not (config_home / ".migrated").exists():
+        return legacy
+    migrated = config_home / "plugins"
+    if migrated.is_symlink():
+        return legacy
+    return migrated
+
+
+def antigravity_legacy_plugin_dir(root: Path) -> Path | None:
+    """Return the abandoned plugin payload directory, when there is one.
+
+    ``None`` unless the migrated root is in use and the pre-migration directory
+    is a distinct place on disk, so a home that never migrated -- and one whose
+    two paths resolve to the same directory -- yields nothing to remove.
+    """
+    legacy = antigravity_home(root) / "plugins"
+    if antigravity_plugin_root(root) == legacy:
+        return None
+    try:
+        if legacy.exists() and legacy.samefile(antigravity_plugin_root(root)):
+            return None
+    except OSError:
+        return None
+    return legacy / "ai-agents-skills"
 
 
 def antigravity_skills_dir(root: Path) -> Path:

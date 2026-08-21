@@ -12,6 +12,7 @@ from .capabilities import (
     resolved_path_within,
 )
 from .json_merge import load_json_object, merge_hook_entry
+from .lifecycle import mark_created_instruction_file_groups
 from .managed_permissions import normalize_managed_parent_chain, restore_managed_modes
 from .openclaw_target_gate import real_openclaw_path_block_reason
 from .render import replace_or_append_block
@@ -46,11 +47,14 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
     if not plan["actions"]:
         return {"run_id": run_id, "dry_run": False, "actions": []}
 
+    # Preflight before the relocation is written: a plan refused here applies
+    # nothing, so it must also leave nothing behind, and re-keyed records are as
+    # much a change to the installed state as a written file is.
+    preflight_plan(root, plan["actions"])
     state = load_state(root)
     relocated = relocate_moved_artifact_records(state, plan["actions"])
     if relocated:
         save_state(root, state)
-    preflight_plan(root, plan["actions"])
     for action in plan["actions"]:
         previous_state_artifact = find_state_artifact(state, action)
         result = apply_action(root, run_id, action)
@@ -77,6 +81,13 @@ def apply_plan(root: Path, plan: dict[str, Any], dry_run: bool = True) -> dict[s
         upsert_run(state, run_id, len(applied))
         save_state(root, state)
         write_run_record(root, run_id, applied)
+    # An instructions file holds a block per skill, and only the block that
+    # created it records having done so.  Uninstall is scoped, so the block
+    # removed last is usually not that one, and by then the record holding the
+    # fact is gone from the state: the file survives every skill it ever held,
+    # empty and owned by nobody.  Recording the fact on each of the file's
+    # blocks keeps it available to whichever removal turns out to be the last.
+    mark_created_instruction_file_groups(state.get("artifacts", []))
     upsert_run(state, run_id, len(applied))
     save_state(root, state)
     write_run_record(root, run_id, applied)
@@ -102,10 +113,15 @@ def relocate_moved_artifact_records(
     record no installed file disagrees with.
 
     A record matches an action only when the two paths name one file on disk and
-    belong to the same agent, which is identity, not resemblance: one file cannot
-    hold two of an agent's artifacts.  Matching that way costs nothing when no
-    link is involved, because a path with no link in it resolves to itself and
-    the keys already agree.
+    the record's key is the one this action would have had at the old path.  The
+    path alone is not identity: an agent's instructions file holds a managed
+    block per skill, so every one of that agent's block records names the same
+    file and a path-only match would claim whichever came first.  The claimed
+    record is then rewritten with this action's key, which is how a record for
+    one skill silently becomes a duplicate of another and the block it described
+    is left in the file with nothing recording it.  Rebuilding the key at the
+    recorded path costs nothing when no link is involved, because a path with no
+    link in it resolves to itself and the keys already agree.
 
     Only the record moves.  Its origin travels with it, so a later uninstall
     still reverses the artifact the way it was installed, and the file itself is
@@ -136,6 +152,8 @@ def relocate_moved_artifact_records(
             if not recorded or recorded == path:
                 continue
             if os.path.realpath(recorded) != real:
+                continue
+            if item.get("key") != artifact_key({**action, "path": recorded}):
                 continue
             claimed.add(index)
             by_key.add(key)
@@ -616,6 +634,7 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         "file_type",
         "platforms",
         "runtime_root",
+        "runtime_skill",
         "reason",
         "declared_exclusion",
         "exclusion_code",
@@ -661,10 +680,13 @@ def uninstall_origin(
             "backup": result.get("backup"),
         }
     if result.get("state_operation") == "remove":
-        if previous_origin and previous_origin.get("action") == "delete-created":
-            return {"action": "forget-missing"}
-        if previous_origin and previous_origin.get("action") != "delete-created":
-            return previous_origin
+        # The guard above lets only an ``unmanage-only`` origin reach here, and
+        # only alongside a backup this removal just took.  That origin describes
+        # a file left where it was found, which the file no longer is: carrying
+        # it forward records the one outcome that cannot bring it back, and
+        # because ``unmanage-only`` keeps no tombstone the backup holding the
+        # user's own text becomes unreachable.  What makes a removal reversible
+        # is the backup, so the backup decides.
         if result.get("backup"):
             return {
                 "action": "restore-removed",
