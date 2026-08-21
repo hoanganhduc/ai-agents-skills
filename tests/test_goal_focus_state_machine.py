@@ -6,10 +6,12 @@ import hashlib
 import json
 import multiprocessing
 import os
+import shutil
 import stat
 import sys
 import tempfile
 import threading
+import traceback
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -410,7 +412,10 @@ class TransactionStateMachineTests(unittest.TestCase):
                 except st.RevisionConflict:
                     outcome = "conflict"
                 except BaseException as exc:  # pragma: no cover - reported, not swallowed
-                    outcome = f"error:{type(exc).__name__}:{exc}"
+                    # The stack, not just the type: an unexpected outcome here is
+                    # a race, so the one run that reproduces it has to carry
+                    # enough to locate the call that failed.
+                    outcome = f"error:{type(exc).__name__}:{exc}\n{traceback.format_exc()}"
                 with outcome_lock:
                     outcomes.append(outcome)
 
@@ -763,12 +768,140 @@ class DescriptorFreeDirectoryChainTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 st._ensure_directory_chain_by_lstat(Path(tmp) / "absent")
 
+    def test_a_component_another_writer_created_first_is_tolerated(self) -> None:
+        """The chain is walked before the loop lock exists, so it must lose races.
+
+        The lock file lives inside the chain, so two writers starting in one
+        fresh run directory both walk it unserialised and one of them is told
+        the component already exists. ``_open_directory_nofollow`` tolerates
+        exactly this on POSIX.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real_mkdir = os.mkdir
+
+            def losing_mkdir(path, mode=0o777, **kwargs):
+                real_mkdir(path, mode, **kwargs)
+                raise FileExistsError(17, "File exists")
+
+            with mock.patch.object(st.os, "mkdir", losing_mkdir):
+                st._ensure_directory_chain_by_lstat(root / "run", create=True)
+            self.assertTrue((root / "run").is_dir())
+
     def test_a_file_in_the_chain_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             regular = Path(tmp) / "regular"
             regular.write_text("payload", encoding="utf-8")
             with self.assertRaises(st.TransactionError):
                 st._ensure_directory_chain_by_lstat(regular / "post", create=True)
+
+
+def _denies_once(real, calls):
+    """Wrap ``real`` so its first call fails the way Windows reports contention."""
+
+    def wrapper(*args, **kwargs):
+        calls.append(args)
+        if len(calls) == 1:
+            raise PermissionError(13, "Permission denied")
+        return real(*args, **kwargs)
+
+    return wrapper
+
+
+class WindowsSharingRetryTests(unittest.TestCase):
+    """Windows reports a held handle as a permission failure, not as contention.
+
+    ``ERROR_ACCESS_DENIED`` is what the platform returns both for a real
+    access-control denial and for a file some other handle still holds, and the
+    scanner that opens every freshly renamed file supplies such a handle without
+    a second writer of ours. These drive the Windows fallbacks on the host
+    platform through :func:`state_transaction._is_windows`.
+    """
+
+    def test_a_transient_denial_while_replacing_does_not_fail_the_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            st, "_is_windows", lambda: True
+        ):
+            root = Path(tmp)
+            _write_json(root / "current_plan.json", {"plan_revision": 1, "winner": "none"})
+            calls: list[tuple] = []
+            with mock.patch.object(st.os, "replace", _denies_once(os.replace, calls)):
+                result = st.commit_transaction(
+                    root,
+                    json_files={"current_plan.json": {"plan_revision": 2, "winner": "A"}},
+                    expected_revisions={"current_plan.json": ("plan_revision", 1)},
+                )
+            self.assertEqual(result["status"], "committed")
+            self.assertEqual(
+                json.loads((root / "current_plan.json").read_text(encoding="utf-8")),
+                {"plan_revision": 2, "winner": "A"},
+            )
+
+    def test_a_transient_denial_while_removing_the_journal_does_not_fail_the_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            st, "_is_windows", lambda: True
+        ):
+            root = Path(tmp)
+            _write_json(root / "current_plan.json", {"plan_revision": 1})
+            calls: list[tuple] = []
+            with mock.patch.object(st.shutil, "rmtree", _denies_once(shutil.rmtree, calls)):
+                result = st.commit_transaction(
+                    root,
+                    json_files={"current_plan.json": {"plan_revision": 2}},
+                    expected_revisions={"current_plan.json": ("plan_revision", 1)},
+                )
+            self.assertEqual(result["status"], "committed")
+            self.assertFalse((root / st.TRANSACTION_DIRNAME).exists())
+
+    def test_a_transient_denial_is_survived_by_every_wrapped_step(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            st, "_is_windows", lambda: True
+        ):
+            target = Path(tmp) / "journal" / "payload.bin"
+            calls: list[tuple] = []
+            with mock.patch.object(st.os, "replace", _denies_once(os.replace, calls)):
+                st._atomic_write_bytes(target, b"payload")
+            self.assertEqual(target.read_bytes(), b"payload")
+
+            calls = []
+            with mock.patch.object(st.os, "lstat", _denies_once(os.lstat, calls)):
+                self.assertIsNotNone(st._lstat_nofollow(target))
+
+            calls = []
+            with mock.patch.object(Path, "read_bytes", _denies_once(Path.read_bytes, calls)):
+                self.assertEqual(st._read_bytes_nofollow(target), b"payload")
+
+            calls = []
+            with mock.patch.object(Path, "unlink", _denies_once(Path.unlink, calls)):
+                st._unlink_nofollow(target)
+            self.assertFalse(target.exists())
+
+    def test_a_denial_that_never_clears_is_still_raised(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            st, "_is_windows", lambda: True
+        ), mock.patch.object(st, "WINDOWS_SHARING_RETRY_SECONDS", 0.05):
+            def always_denies(*args, **kwargs):
+                raise PermissionError(13, "Permission denied")
+
+            with mock.patch.object(st.os, "replace", always_denies):
+                with self.assertRaises(PermissionError):
+                    st._atomic_write_bytes(Path(tmp) / "payload.bin", b"payload")
+
+    def test_posix_does_not_retry_a_denial(self) -> None:
+        """On POSIX ``EACCES`` is a decision, so retrying it would only stall."""
+
+        calls: list[tuple] = []
+
+        def denies(*args, **kwargs):
+            calls.append(args)
+            raise PermissionError(13, "Permission denied")
+
+        with mock.patch.object(st, "_is_windows", lambda: False):
+            with self.assertRaises(PermissionError):
+                st._tolerate_windows_sharing(denies)
+        self.assertEqual(len(calls), 1)
+
 
 
 if __name__ == "__main__":

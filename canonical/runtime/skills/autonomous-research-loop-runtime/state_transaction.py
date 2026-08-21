@@ -22,12 +22,29 @@ import tempfile
 import time
 import uuid
 from pathlib import Path, PureWindowsPath
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 TRANSACTION_DIRNAME = ".goal_focus_transactions"
 TRANSACTION_QUARANTINE_DIRNAME = ".goal_focus_transactions_quarantine"
 LOCK_FILENAME = ".goal_focus.lock"
 MAX_TRANSACTION_BYTES = 64_000_000
+WINDOWS_SHARING_RETRY_SECONDS = 2.0
+
+
+def _is_windows() -> bool:
+    """Whether the descriptor-free filesystem fallbacks apply.
+
+    Every ``os`` call in this module that Windows cannot serve has a fallback
+    beside it, and those fallbacks used to be reachable only on Windows: pinning
+    ``os.name`` is not an option, because ``pathlib`` dispatches on it and
+    cannot build a ``WindowsPath`` on a POSIX host.  Routing the choice through
+    one predicate lets a test drive the fallbacks on either platform, which is
+    how the retry below is proven.  The two ``msvcrt`` sites keep testing
+    ``os.name`` directly, because a lock the platform does not implement cannot
+    be simulated.
+    """
+
+    return os.name == "nt"
 
 
 class TransactionError(RuntimeError):
@@ -115,7 +132,7 @@ def _json_bytes(value: Any) -> bytes:
 def _fsync_dir(path: Path) -> None:
     """Best-effort directory fsync (not supported by every platform)."""
 
-    if os.name == "nt":  # pragma: no cover - Windows cannot open a directory
+    if _is_windows():
         return
     try:
         fd = _open_directory_nofollow(path)
@@ -129,6 +146,32 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _tolerate_windows_sharing(operation: Callable[[], Any]) -> Any:
+    """Run one filesystem step, retrying the contention Windows reports as denial.
+
+    Windows refuses to open, stat, replace, or unlink a file while any other
+    handle still holds it, and reports that refusal as ``ERROR_ACCESS_DENIED``
+    -- the code a real access-control denial also carries, so the two cannot be
+    told apart at the call site.  Such a handle appears without a second writer
+    of ours: the platform opens a file for scanning as soon as it is created or
+    renamed, so holding the loop lock is no defence.  Retrying for a bounded
+    moment turns the transient case into a short wait, and leaves a genuine
+    denial failing exactly as it did before, one bounded delay later.  POSIX is
+    passed straight through, where ``EACCES`` is a decision rather than a race.
+    """
+
+    if not _is_windows():
+        return operation()
+    deadline = time.monotonic() + WINDOWS_SHARING_RETRY_SECONDS
+    while True:
+        try:
+            return operation()
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.025)
+
+
 def _ensure_directory_chain_by_lstat(absolute: Path, *, create: bool = False) -> None:
     """Validate a directory chain component by component, without descriptors."""
 
@@ -138,7 +181,14 @@ def _ensure_directory_chain_by_lstat(absolute: Path, *, create: bool = False) ->
         except FileNotFoundError:
             if not create:
                 raise
-            os.mkdir(component, 0o700)
+            try:
+                os.mkdir(component, 0o700)
+            except FileExistsError:
+                # A second writer creating the same chain is expected here:
+                # this runs before the loop lock is taken, because the lock
+                # file lives inside the chain.  ``_open_directory_nofollow``
+                # tolerates the same race on POSIX.
+                pass
             info = os.lstat(component)
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             raise TransactionError(
@@ -155,7 +205,7 @@ def _ensure_directory_chain(path: Path, *, create: bool = False) -> None:
     """
 
     absolute = Path(os.path.abspath(path))
-    if os.name == "nt":  # pragma: no cover - Windows CI exercises this branch
+    if _is_windows():
         _ensure_directory_chain_by_lstat(absolute, create=create)
         return
     os.close(_open_directory_nofollow(absolute, create=create))
@@ -168,7 +218,7 @@ def _open_directory_nofollow(path: Path, *, create: bool = False) -> int:
     need the chain validated use :func:`_ensure_directory_chain`.
     """
 
-    if os.name == "nt":  # pragma: no cover - guards against a POSIX-only path
+    if _is_windows():
         raise TransactionError(
             "directory descriptors are not available on this platform"
         )
@@ -199,9 +249,9 @@ def _open_directory_nofollow(path: Path, *, create: bool = False) -> int:
 def _lstat_nofollow(path: Path) -> os.stat_result | None:
     """Stat a leaf without following it or any parent symlink."""
 
-    if os.name == "nt":  # pragma: no cover - Windows CI exercises fallback paths
+    if _is_windows():
         try:
-            return os.lstat(path)
+            return _tolerate_windows_sharing(lambda: os.lstat(path))
         except FileNotFoundError:
             return None
     try:
@@ -227,8 +277,8 @@ def _read_bytes_nofollow(
 ) -> bytes:
     """Read one bounded regular file through no-follow descriptors."""
 
-    if os.name == "nt":  # pragma: no cover - Windows CI exercises fallback paths
-        info = os.lstat(path)
+    if _is_windows():
+        info = _tolerate_windows_sharing(lambda: os.lstat(path))
         if (
             stat.S_ISLNK(info.st_mode)
             or not stat.S_ISREG(info.st_mode)
@@ -241,13 +291,13 @@ def _read_bytes_nofollow(
             and int(getattr(info, "st_uid", -1)) != int(os.geteuid())
         ):
             raise TransactionError(f"transaction input is not host-owned: {path}")
-        if (
-            require_private
-            and os.name == "posix"
-            and stat.S_IMODE(info.st_mode) & 0o077
-        ):
-            raise TransactionError(f"transaction input is not private: {path}")
-        payload = path.read_bytes()
+        # ``require_private`` is not checkable here.  Windows synthesises the
+        # POSIX mode bits rather than storing them, so reading them would
+        # reject every file instead of the world-readable ones; privacy on this
+        # platform is a property of the inherited ACL.  The guard used to test
+        # ``os.name == "posix"`` inside this Windows-only branch, which never
+        # held, and so read as a check while being none.
+        payload = _tolerate_windows_sharing(path.read_bytes)
     else:
         directory_fd = _open_directory_nofollow(path.parent)
         try:
@@ -293,7 +343,7 @@ def _validate_private_transaction_directory(path: Path, *, label: str) -> None:
 
 
 def _atomic_write_bytes(path: Path, payload: bytes) -> None:
-    if os.name == "nt":  # pragma: no cover - Windows CI exercises fallback paths
+    if _is_windows():
         _ensure_directory_chain(path.parent, create=True)
         fd, tmp_name = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
@@ -303,7 +353,7 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(tmp_name, path)
+            _tolerate_windows_sharing(lambda: os.replace(tmp_name, path))
             _fsync_dir(path.parent)
         except BaseException:
             try:
@@ -346,9 +396,9 @@ def _atomic_write_bytes(path: Path, payload: bytes) -> None:
 def _unlink_nofollow(path: Path) -> None:
     """Unlink a leaf relative to a no-follow parent descriptor."""
 
-    if os.name == "nt":  # pragma: no cover - Windows CI exercises fallback paths
+    if _is_windows():
         _ensure_directory_chain(path.parent)
-        path.unlink()
+        _tolerate_windows_sharing(path.unlink)
         _fsync_dir(path.parent)
         return
     directory_fd = _open_directory_nofollow(path.parent)
@@ -418,7 +468,7 @@ class LoopLock:
         retries this step while the lock path keeps vanishing.
         """
 
-        if os.name == "nt":  # pragma: no cover
+        if _is_windows():
             _ensure_directory_chain(self.run_dir, create=True)
             try:
                 before = os.lstat(path)
@@ -426,10 +476,12 @@ class LoopLock:
                 before = None
             if before is not None and stat.S_ISLNK(before.st_mode):
                 raise TransactionError(f"loop lock is a symlink: {path}")
-            lock_fd = os.open(
-                path,
-                os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
-                0o600,
+            lock_fd = _tolerate_windows_sharing(
+                lambda: os.open(
+                    path,
+                    os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                    0o600,
+                )
             )
             after = os.fstat(lock_fd)
             if before is not None and (
@@ -831,7 +883,7 @@ def _recover_locked(run_dir: Path) -> list[dict[str, Any]]:
             # expected-versus-observed digests and must never be auto-deleted.
             quarantine = run_dir / TRANSACTION_QUARANTINE_DIRNAME / tx_dir.name
             _ensure_directory_chain(quarantine.parent, create=True)
-            shutil.move(str(tx_dir), str(quarantine))
+            _tolerate_windows_sharing(lambda: shutil.move(str(tx_dir), str(quarantine)))
             try:
                 # Only succeeds when this was the last entry, which is the
                 # case that would otherwise leave an empty journal behind.
@@ -841,7 +893,7 @@ def _recover_locked(run_dir: Path) -> list[dict[str, Any]]:
             raise TransactionQuarantined(
                 f"transaction journal quarantined at {quarantine}: {exc}"
             ) from exc
-        shutil.rmtree(tx_dir)
+        _tolerate_windows_sharing(lambda: shutil.rmtree(tx_dir))
     try:
         root.rmdir()
     except OSError:
@@ -1003,7 +1055,7 @@ def commit_transaction(
         _write_manifest(tx_dir, manifest)
         _fsync_dir(tx_root)
         _apply_manifest(root, tx_dir, manifest, crash_after=crash_after)
-        shutil.rmtree(tx_dir)
+        _tolerate_windows_sharing(lambda: shutil.rmtree(tx_dir))
         try:
             tx_root.rmdir()
         except OSError:
