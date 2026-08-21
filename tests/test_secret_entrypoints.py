@@ -2227,7 +2227,9 @@ class SecretEntrypointStaticTests(unittest.TestCase):
             "ExecStartPost=",
             "--scheduler-id hetzner-reaper.timer",
             "/usr/sbin/runuser --user REPLACE_AGENT_USER",
-            "root-owned runtime: `/opt/ai-agents-skills/runtime`",
+            "root-owned launcher resolver: `/usr/local/sbin/aas-credential-launcher`",
+            "/usr/local/sbin/aas-credential-launcher "
+            "skills/hetzner-research-compute/run_hetzner_reaper.sh",
             "`&&` is deliberate",
             "Native Windows status (recovery only)",
             "Live `up` and `oneshot` fail closed",
@@ -2235,6 +2237,12 @@ class SecretEntrypointStaticTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 self.assertIn(expected, guide)
         self.assertNotIn("AAS_HETZNER_DURABLE_REAPER_ATTESTED", guide)
+        # The credential gate matches the component-store layout literally, so a
+        # scheduler launching from /opt exits 127 on every verb. The guide may
+        # still name that path to explain why; it must not launch from it.
+        self.assertNotIn(
+            "/opt/ai-agents-skills/runtime/run_skill.sh", guide
+        )
 
 
 if __name__ == "__main__":

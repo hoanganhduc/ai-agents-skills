@@ -71,12 +71,18 @@ Linux (resolve the launcher for the current agent — a root-owned component gen
 ```bash
 # Credential-bearing lanes must launch from a root-owned AAS component
 # generation; the per-user runtime copy is refused by the credential gate.
+# The generation directory is named for a git commit, so its name carries no
+# ordering -- pick the newest publish, which the store records as its mtime.
 launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
+newest=0
 for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
   gen="${gen%/}"
-  [ -f "$gen/manifest/credential-runtime.json" ] \
-    && [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] \
-    && launcher="$gen/canonical/runtime/runners/run_skill.sh"
+  [ -f "$gen/manifest/credential-runtime.json" ] || continue
+  [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] || continue
+  stamp="$(stat -c %Y "$gen" 2>/dev/null || stat -f %m "$gen" 2>/dev/null)" || continue
+  [ "${stamp:-0}" -gt "$newest" ] || continue
+  newest="$stamp"
+  launcher="$gen/canonical/runtime/runners/run_skill.sh"
 done
 run() { bash "$launcher" skills/hetzner-research-compute/run_hetzner_research_compute.sh "$@"; }
 ```

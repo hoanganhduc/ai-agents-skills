@@ -39,15 +39,20 @@ source "${HERE}/formal_env.inc.sh"
 # Prefer installed runtime when operators want a one-liner drive (not a fork).
 # The ARL command path is credential-bearing, so run_skill.sh refuses to launch
 # unless it is executing from a root-owned AAS component generation. Select on
-# the credential-runtime manifest and keep the last match; the per-user runtime
-# stays as the fallback for hosts with no component store.
+# the credential-runtime manifest and keep the newest publish -- the directory
+# is named for a git commit, so the name itself carries no ordering. The
+# per-user runtime stays as the fallback for hosts with no component store.
 RUNTIME_ROOT="${AAS_RUNTIME_ROOT:-${HOME}/.local/share/ai-agents-skills/runtime}"
 RUN_SKILL="${RUNTIME_ROOT}/run_skill.sh"
+newest=0
 for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
   gen="${gen%/}"
-  [[ -f "${gen}/manifest/credential-runtime.json" ]] \
-    && [[ -x "${gen}/canonical/runtime/runners/run_skill.sh" ]] \
-    && RUN_SKILL="${gen}/canonical/runtime/runners/run_skill.sh"
+  [[ -f "${gen}/manifest/credential-runtime.json" ]] || continue
+  [[ -x "${gen}/canonical/runtime/runners/run_skill.sh" ]] || continue
+  stamp="$(stat -c %Y "${gen}" 2>/dev/null || stat -f %m "${gen}" 2>/dev/null)" || continue
+  [[ "${stamp:-0}" -gt "$newest" ]] || continue
+  newest="$stamp"
+  RUN_SKILL="${gen}/canonical/runtime/runners/run_skill.sh"
 done
 ARL_SH="skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh"
 
