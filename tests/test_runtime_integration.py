@@ -9,6 +9,7 @@ import os
 import re
 import select
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.runtime import RUNTIME_SOURCE_ROOT, replace_with_runtime_file, runtime_denied_patterns, runtime_inventory
 from installer.ai_agents_skills.runtime_smoke import (
+    make_trusted_scratch_directory,
     run_installed_runtime_smoke,
     run_runtime_smoke,
     run_smoke_case,
@@ -852,6 +854,71 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 self.assertIn("aas-installed-runtime-smoke-", runner_path)
                 self.assertFalse(runner_path.startswith(installed_runtime))
             self.assertFalse((root / ".codex" / "runtime" / "workspace" / "runtime-smoke").exists())
+
+    def test_scratch_directory_creation_drops_group_and_other_write(self) -> None:
+        # run_skill.sh walks the command's parent chain and refuses any component
+        # a group or other can write, and that check is deliberately not
+        # relaxable. A bare mkdir takes the ambient umask, so on the common 0002
+        # user-private-group host every scratch directory would land at 0775.
+        previous_umask = os.umask(0o002)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                ceiling = Path(tmp)
+                leaf = ceiling / "workspace" / "skills" / "send-email"
+                make_trusted_scratch_directory(leaf, ceiling)
+                current = leaf
+                while current != ceiling:
+                    self.assertEqual(
+                        stat.S_IMODE(current.stat().st_mode) & 0o022, 0, current
+                    )
+                    current = current.parent
+        finally:
+            os.umask(previous_umask)
+
+    def test_installed_runtime_smoke_runs_a_credential_bearing_contract(self) -> None:
+        # The scratch copy is ephemeral, so it can never be the root-owned
+        # component generation the credential gate requires. Left enforcing, the
+        # gate exits 127 before the offline contract runs and every
+        # credential-bearing skill reports as a skill failure -- the contract is
+        # never exercised at all. The relaxation belongs to the copy only.
+        platform = current_platform(None)
+        if platform == "windows":
+            self.skipTest("the credential gate is POSIX-only")
+        manifests = load_manifests()
+        smoke_skills = {"send-email"}
+        previous_umask = os.umask(0o002)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                create_agent_home(root, "codex")
+                plan = build_plan(
+                    root,
+                    manifests,
+                    sorted(smoke_skills),
+                    detect_agents(root, ["codex"]),
+                    platform=platform,
+                )
+                apply_plan(root, plan, dry_run=False)
+                result = run_installed_runtime_smoke(
+                    root,
+                    manifests,
+                    skills=smoke_skills,
+                    platform=platform,
+                    timeout=60,
+                )
+                self.assertEqual(result["status"], "ok", result)
+                executed = [
+                    item for item in result["results"]
+                    if item.get("status") == "ok" and item.get("skill") == "send-email"
+                ]
+                self.assertTrue(executed, result)
+                installed_runner = root / ".codex" / "runtime" / "run_skill.sh"
+                self.assertIn(
+                    "credential_runtime_enforcement=1",
+                    installed_runner.read_text(encoding="utf-8"),
+                )
+        finally:
+            os.umask(previous_umask)
 
     def test_installed_graph_runtime_smoke_requires_managed_shared_python(self) -> None:
         expected_python = (
