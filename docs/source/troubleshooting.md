@@ -41,6 +41,7 @@ Common cases:
 | Symptom | Likely meaning | Next step |
 |---|---|---|
 | Agent is listed under skipped agents | The agent home was not detected under `--root`. | Install that agent first, change `--root`, or ignore it. |
+| Agent is skipped for a managed skill directory | That directory is a symlink, is not a directory, or is owned by neither root nor you, so the installer will not write through it. Some agent CLIs migrate their own layout and leave a compatibility symlink behind. | Inspect the path in the reason. Skipping is per target: every other agent is still planned and applied. |
 | Required dependency is missing | A selected installed skill needs software that was not found. | Install the package, use an override, or select fewer skills. |
 | Dependency is degraded | The tool or install root was found but not fully executable from this substrate. | Re-run precheck from the native substrate, such as Windows or WSL. |
 | Plan skips unmanaged files | Existing user-owned content would be overwritten by a naive install. | Review the file, then choose `--adopt` or `--backup-replace` if appropriate. |
