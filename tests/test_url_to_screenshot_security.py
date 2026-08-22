@@ -104,6 +104,103 @@ class MetadataDenylistTests(unittest.TestCase):
             security.revalidate_resolved_address("::ffff:100.100.100.200", allow_private=True)
         self.assertEqual(ctx.exception.reason, security.BLOCKED_METADATA_ENDPOINT)
 
+    # IPv6 carries an IPv4 address five standard ways. Finding #5 unwrapped one of
+    # them (``ipv4_mapped``); each literal below is the SAME metadata address in
+    # one of the other four, and each was ADMITTED under --allow-private-targets
+    # against a module docstring that calls this denylist "UNCONDITIONAL. Never
+    # disabled by ``--allow-private-targets``". NAT64 is the live one: an
+    # IPv6-only cloud subnet reaches IPv4 IMDS through exactly 64:ff9b::/96.
+    TRANSITION_ENCODED_METADATA = (
+        ("ipv4-compatible ::/96", "::169.254.169.254"),
+        ("ipv4-compatible ::/96", "::100.100.100.200"),
+        ("6to4 2002::/16", "2002:a9fe:a9fe::"),
+        ("6to4 2002::/16", "2002:6464:64c8::"),
+        ("nat64 well-known 64:ff9b::/96", "64:ff9b::169.254.169.254"),
+        ("nat64 well-known 64:ff9b::/96", "64:ff9b::100.100.100.200"),
+        ("nat64 local-use 64:ff9b:1::/48", "64:ff9b:1::169.254.169.254"),
+        ("nat64 local-use 64:ff9b:1::/48", "64:ff9b:1::100.100.100.200"),
+        ("teredo 2001:0::/32", "2001:0:4136:e378:8000:63bf:5601:5601"),
+        ("teredo 2001:0::/32", "2001:0:4136:e378:8000:63bf:9b9b:9b37"),
+    )
+
+    def test_transition_encoded_metadata_blocked_even_with_override(self) -> None:
+        from u2s import security
+
+        for encoding, literal in self.TRANSITION_ENCODED_METADATA:
+            with self.subTest(encoding=encoding, literal=literal):
+                with self.assertRaises(security.TargetBlocked) as ctx:
+                    security.validate_target_url(f"http://[{literal}]/", allow_private=True)
+                self.assertEqual(
+                    ctx.exception.reason, security.BLOCKED_METADATA_ENDPOINT, literal
+                )
+
+    def test_revalidate_blocks_transition_encoded_metadata_too(self) -> None:
+        """The redirect/sub-resource hook shares the unwrap, so it must share the fix."""
+
+        from u2s import security
+
+        for encoding, literal in self.TRANSITION_ENCODED_METADATA:
+            with self.subTest(encoding=encoding, literal=literal):
+                with self.assertRaises(security.TargetBlocked) as ctx:
+                    security.revalidate_resolved_address(literal, allow_private=True)
+                self.assertEqual(
+                    ctx.exception.reason, security.BLOCKED_METADATA_ENDPOINT, literal
+                )
+
+    def test_dns_resolving_to_transition_encoded_metadata_blocked(self) -> None:
+        """A hostname whose AAAA record carries IMDS through NAT64 is the realistic
+        delivery: the literal never appears in the URL the caller passes."""
+
+        from u2s import security
+
+        with mock.patch(
+            "u2s.security.socket.getaddrinfo",
+            return_value=_addrinfo("64:ff9b::169.254.169.254"),
+        ):
+            with self.assertRaises(security.TargetBlocked) as ctx:
+                security.validate_target_url(
+                    "http://innocent.example.com/", allow_private=True
+                )
+        self.assertEqual(ctx.exception.reason, security.BLOCKED_METADATA_ENDPOINT)
+
+    def test_transition_encodings_of_a_public_ipv4_stay_admitted(self) -> None:
+        """The control on over-blocking. Widening the unwrap denies the metadata
+        addresses and nothing else: the same encodings of a public IPv4 pass."""
+
+        from u2s import security
+
+        for literal in ("::ffff:93.184.216.34", "::93.184.216.34", "2002:5db8:d822::",
+                        "64:ff9b::93.184.216.34", "64:ff9b:1::93.184.216.34",
+                        "2001:0:4136:e378:8000:63bf:a247:27dd"):
+            with self.subTest(literal=literal):
+                result = security.validate_target_url(
+                    f"http://[{literal}]/", allow_private=True
+                )
+                self.assertEqual(result.host, literal)
+
+    def test_rfc6052_embeds_ipv4_at_every_prefix_length(self) -> None:
+        """Pins the bit layout: RFC 6052 skips the reserved u-byte at bits 64-71,
+        so the extraction is not simply "the low 32 bits" for prefixes under /96."""
+
+        import ipaddress
+
+        from u2s import security
+
+        cases = {
+            32: "2001:db8:c000:221::",
+            40: "2001:db8:1c0:2:21::",
+            48: "2001:db8:122:c000:2:2100::",
+            56: "2001:db8:122:3c0:0:221::",
+            64: "2001:db8:122:344:c0:2:2100::",
+            96: "2001:db8:122:344::192.0.2.33",
+        }
+        for prefix_len, literal in cases.items():
+            with self.subTest(prefix_len=prefix_len):
+                self.assertEqual(
+                    security._rfc6052_ipv4(int(ipaddress.IPv6Address(literal)), prefix_len),
+                    ipaddress.IPv4Address("192.0.2.33"),
+                )
+
 
 class OverrideTests(unittest.TestCase):
     def test_override_relaxes_private_only(self) -> None:

@@ -11,7 +11,9 @@ Layers, in order, each fail-closed:
      stdlib ``ipaddress``: reject loopback, private, link-local, ``0.0.0.0/8``,
      multicast, reserved, and IPv4-mapped IPv6.
   3. Cloud-metadata host/IP denylist -- UNCONDITIONAL. Never disabled by
-     ``--allow-private-targets``.
+     ``--allow-private-targets``. Applied to the literal and to every IPv4
+     address an IPv6 literal embeds (IPv4-mapped, IPv4-compatible, 6to4,
+     Teredo, NAT64), so a transition encoding is not a way around it.
 
 The opt-in relaxation requires the CLI flag (``allow_private=True``); the env var
 ``URL_TO_SCREENSHOT_ALLOW_PRIVATE=1`` alone never enables it, so an inherited or
@@ -100,6 +102,59 @@ def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
     return False
 
 
+# NAT64 prefixes and the RFC 6052 prefix lengths each one may embed IPv4 with.
+# The well-known prefix is defined at /96 only; the RFC 8215 local-use prefix is
+# a /48, so any RFC 6052 length from /48 down is legal beneath it.
+_NAT64_PREFIXES = (
+    (ipaddress.ip_network("64:ff9b::/96"), (96,)),
+    (ipaddress.ip_network("64:ff9b:1::/48"), (48, 56, 64, 96)),
+)
+# The deprecated IPv4-compatible format, ``::a.b.c.d``.
+_IPV4_COMPATIBLE = ipaddress.ip_network("::/96")
+
+
+def _rfc6052_ipv4(value: int, prefix_len: int) -> ipaddress.IPv4Address:
+    """The IPv4 address RFC 6052 embeds after a prefix of ``prefix_len`` bits.
+
+    Bits 64-71 are the reserved u-byte, which every prefix length shorter than 96
+    skips; the 32 address bits resume immediately after it.
+    """
+
+    bits = format(value, "0128b")
+    if prefix_len >= 96:
+        return ipaddress.IPv4Address(int(bits[96:128], 2))
+    return ipaddress.IPv4Address(int((bits[prefix_len:64] + bits[72:])[:32], 2))
+
+
+def _embedded_ipv4(ip: ipaddress.IPv6Address) -> list[ipaddress.IPv4Address]:
+    """Every IPv4 address an IPv6 literal carries under a standard transition encoding.
+
+    ``ipv4_mapped`` is one of five. The rest matter for the same reason it does: a
+    globally-classified metadata IP such as Alibaba's 100.100.100.200 is not caught
+    by the private/link-local block, so under ``--allow-private-targets`` the only
+    thing standing between it and the browser is this denylist -- and a denylist
+    that reads one encoding is bypassed by the other four. NAT64 is the sharpest
+    case, because ``64:ff9b::169.254.169.254`` is exactly how an IPv6-only cloud
+    subnet reaches IMDS over IPv4.
+    """
+
+    found: list[ipaddress.IPv4Address] = []
+    for attr in ("ipv4_mapped", "sixtofour"):
+        value = getattr(ip, attr, None)
+        if value is not None:
+            found.append(value)
+    teredo = getattr(ip, "teredo", None)
+    if teredo is not None:
+        found.extend(teredo)  # (server, client)
+    packed = int(ip)
+    if ip in _IPV4_COMPATIBLE:
+        found.append(ipaddress.IPv4Address(packed & 0xFFFFFFFF))
+    for network, prefix_lens in _NAT64_PREFIXES:
+        if ip in network:
+            found.extend(_rfc6052_ipv4(packed, length) for length in prefix_lens)
+    return found
+
+
 def _is_metadata_ip(text: str) -> bool:
     if text in METADATA_IPS:
         return True
@@ -114,14 +169,8 @@ def _is_metadata_ip(text: str) -> bool:
                 return True
         except ValueError:
             continue
-    # Unwrap IPv4-mapped IPv6 (e.g. ``::ffff:100.100.100.200`` or its compressed
-    # alias ``::ffff:6464:64c8``) and re-check the embedded v4. Without this, a
-    # globally-classified metadata IP like Alibaba's 100.100.100.200 -- which is
-    # NOT caught by the private/link-local block -- would slip past the metadata
-    # denylist in its mapped form under ``--allow-private-targets``.
-    mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:
-        return _is_metadata_ip(str(mapped))
+    if isinstance(ip, ipaddress.IPv6Address):
+        return any(_is_metadata_ip(str(v4)) for v4 in _embedded_ipv4(ip))
     return False
 
 
