@@ -1218,11 +1218,10 @@ def validate_delivery(
     decision = delivery.get("decision")
     if decision not in DELIVERY_DECISIONS:
         add_error(errors, "DELIVERY_DECISION_INVALID", path, f"unsupported decision {decision!r}")
-    report_ref = delivery.get("report_ref")
     delivery_guard_ids = require_string_list(delivery.get("guard_output_ids"), errors, path, None, "guard_output_ids")
     blockers = require_list(delivery.get("blockers"), errors, path, None, "blockers")
     gaps = require_string_list(delivery.get("gaps"), errors, path, None, "gaps")
-    caveats = require_string_list(delivery.get("caveats"), errors, path, None, "caveats")
+    require_string_list(delivery.get("caveats"), errors, path, None, "caveats")
     for guard_id in delivery_guard_ids:
         if guard_id not in guard_map:
             add_error(errors, "UNKNOWN_GUARD_ID", path, f"delivery references unknown guard_output_id {guard_id}")

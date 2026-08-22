@@ -132,6 +132,8 @@ def _run_runtime(
         [sys.executable, str(RUNTIME_PY), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
         env=env or _clean_env(),
     )
@@ -1468,6 +1470,8 @@ def _lean_toolchain_ready() -> bool:
             ["elan", "toolchain", "list"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             check=False,
         )

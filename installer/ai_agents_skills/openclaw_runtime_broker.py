@@ -151,6 +151,8 @@ def exec_plan(plan: dict[str, Any], *, timeout: float = 120.0) -> dict[str, Any]
             env=plan.get("env"),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             shell=False,
         )

@@ -1187,7 +1187,7 @@ def run_smoke_case(
             **({"runtime_root": str(runtime_root)} if runtime_root is not None else {}),
         }
     try:
-        checks = validate_smoke_output(manifests, skill, completed, args) if checks_override is None else checks_override
+        checks = validate_smoke_output(skill, completed, args) if checks_override is None else checks_override
     except Exception as exc:
         checks = [
             {"name": "exit-zero", "ok": completed.returncode == 0},
@@ -1270,7 +1270,6 @@ def run_deep_research_workflow_smoke(
     validate_result = run_smoke_process(command, args=validate_args, timeout=timeout, env=env)
     try:
         validate_checks = validate_smoke_output(
-            {},
             "deep-research-workflow",
             validate_result,
             validate_args,
@@ -1512,7 +1511,6 @@ def canary_checks(
 
 
 def validate_smoke_output(
-    manifests: dict[str, Any],
     skill: str,
     completed: subprocess.CompletedProcess[str],
     args: list[str],

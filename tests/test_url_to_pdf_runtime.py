@@ -149,6 +149,8 @@ class PdfCliSurfaceTests(unittest.TestCase):
                 [sys.executable, str(RUNTIME), "verify-pdf", "--pdf", str(structural)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
@@ -162,6 +164,8 @@ class PdfCliSurfaceTests(unittest.TestCase):
                 [sys.executable, str(RUNTIME), "verify-pdf", "--pdf", str(malformed)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
             self.assertEqual(rejected.returncode, 2, rejected.stdout + rejected.stderr)
@@ -663,6 +667,8 @@ class ChromiumCaptureSecurityFixtureTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=45,
             )
             self.assertEqual(captured.returncode, 0, captured.stdout + captured.stderr)
@@ -726,6 +732,8 @@ class ChromiumCaptureSecurityFixtureTests(unittest.TestCase):
                     ],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=45,
                 )
                 self.assertEqual(
@@ -787,6 +795,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=45,
             )
             self.assertEqual(captured.returncode, 0, captured.stdout + captured.stderr)
@@ -832,6 +842,8 @@ class ChromiumPdfFixtureTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=45,
             )
             self.assertEqual(printed.returncode, 0, printed.stdout + printed.stderr)
@@ -852,6 +864,8 @@ class ChromiumPdfFixtureTests(unittest.TestCase):
                 [sys.executable, str(RUNTIME), "verify-pdf", "--pdf", str(out)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=15,
             )
             self.assertEqual(verified.returncode, 0, verified.stdout + verified.stderr)
@@ -888,6 +902,8 @@ class ChromiumPdfFixtureTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=45,
             )
             self.assertEqual(printed.returncode, 2, printed.stdout + printed.stderr)

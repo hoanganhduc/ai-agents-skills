@@ -90,6 +90,8 @@ def detect_nvidia_gpus() -> List[Dict[str, Any]]:
              "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5
         )
 
@@ -124,6 +126,8 @@ def detect_amd_gpus() -> List[Dict[str, Any]]:
             ["rocm-smi", "--showid", "--showmeminfo", "vram"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5
         )
 
@@ -158,6 +162,8 @@ def detect_apple_silicon_gpu() -> Optional[Dict[str, Any]]:
             ["sysctl", "-n", "machdep.cpu.brand_string"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5
         )
 
@@ -179,19 +185,25 @@ def detect_apple_silicon_gpu() -> Optional[Dict[str, Any]]:
                     ["system_profiler", "SPDisplaysDataType"],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=10
                 )
 
-                # Parse GPU core info from system_profiler
+                # Parse GPU core info from system_profiler.  Both fields are the
+                # same split, so they get the same guard: a line carrying the field
+                # name without a colon used to raise IndexError out of the chipset
+                # branch into the `except Exception: pass` below, which abandoned the
+                # loop and lost every field after it -- including a core count whose
+                # own line was intact.  Skipping the malformed line reads the rest.
                 for line in result.stdout.split('\n'):
+                    if ':' not in line:
+                        continue
+                    value = line.split(':', 1)[1].strip()
                     if 'Chipset Model' in line:
-                        gpu_info["chipset"] = line.split(':')[1].strip()
+                        gpu_info["chipset"] = value
                     elif 'Total Number of Cores' in line:
-                        try:
-                            cores = line.split(':')[1].strip()
-                            gpu_info["gpu_cores"] = cores
-                        except:
-                            pass
+                        gpu_info["gpu_cores"] = value
             except Exception:
                 pass
 

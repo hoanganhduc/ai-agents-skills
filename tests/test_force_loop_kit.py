@@ -274,6 +274,82 @@ class ApplyDefaultsTests(unittest.TestCase):
                 self.assertNotIn("AAS_FORCE_LOOP_POLICY_PROJECTED", os.environ)
                 self.assertNotIn("AAS_AUTOLOOP_GOAL_PRIORITY", os.environ)
 
+
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
+    def test_an_explicit_title_renames_a_loop_that_already_has_one(self) -> None:
+        """``--research-title`` on an existing loop has to rename it.
+
+        ``apply_notify_identity`` wrote the three identity aliases with
+        ``setdefault``, so on a loop whose ``notify.json`` already carried them
+        the operator's title was resolved and then discarded.
+        ``apply_standing_orders`` assigns the same field directly, so the run
+        finished ``ok`` with the two surfaces disagreeing -- and
+        ``resolve_loop_notify_identity`` reads ``notify.json`` first, so the
+        stale one is the one that wins.
+        """
+
+        old = "Token sliding on split graphs"
+        new = "Token jumping on chordal graphs"
+        arl = _load("force_loop_arl_identity", RUNTIME_PY)
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            policy = Path(tmp) / "host-policy.env"
+            self._seed_plan(loop)
+            (loop / "notify.json").write_text(
+                json.dumps(
+                    {
+                        "research_title": old,
+                        "notify_title": old,
+                        "display_name": old,
+                        "body_profile": "operator_full",
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self.apply.apply_defaults(
+                loop, profile="general", policy_file=policy, research_title=new
+            )
+
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(result["notify_identity"]["research_title"], new)
+            notify = json.loads((loop / "notify.json").read_text(encoding="utf-8"))
+            for alias in ("research_title", "notify_title", "display_name"):
+                self.assertEqual(notify[alias], new, alias)
+            state = json.loads((loop / "loop_state.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["standing_orders"]["notify"]["research_title"], new
+            )
+            identity = arl.resolve_loop_notify_identity(loop)
+            self.assertEqual(identity["title"], new)
+            self.assertEqual(identity["slug"], "token-jumping-on-chordal-graphs")
+
+    @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
+    def test_without_an_explicit_title_the_existing_file_is_untouched(self) -> None:
+        """Only a supplied title renames anything.
+
+        With no ``--research-title`` the guard below the assignment leaves an
+        existing ``notify.json`` unwritten, so the check is byte equality, not
+        the aliases: those are filled in the returned view alone.
+        """
+
+        old = "Token sliding on split graphs"
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            policy = Path(tmp) / "host-policy.env"
+            self._seed_plan(loop)
+            path = loop / "notify.json"
+            before = json.dumps({"research_title": old}, sort_keys=True) + "\n"
+            path.write_text(before, encoding="utf-8")
+            result = self.apply.apply_defaults(
+                loop, profile="general", policy_file=policy
+            )
+            self.assertTrue(result["ok"], result)
+            self.assertEqual(path.read_text(encoding="utf-8"), before)
+            self.assertEqual(result["notify_identity"]["research_title"], old)
+
     @unittest.skipUnless(os.name == "posix", "native Windows force-loop policy must be loaded by PowerShell")
     def test_formal_apply_has_enforce_hard_notify(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -578,7 +654,6 @@ class ProcessBackendTests(unittest.TestCase):
                 self.proc.build_supervisor_command(
                     pack_parent=parent,
                     loop_dir=parent / "loop",
-                    project_root=parent,
                 ),
                 ["/bin/bash", str(supervisor), "--loop-tag", str(parent / "loop")],
             )
@@ -795,13 +870,13 @@ class CliSmokeTests(unittest.TestCase):
                     "--goal", "ordering check", "--success-criteria", "smoke exits 0",
                     "--goal-focus-mode", "enforce",
                 ],
-                capture_output=True, text=True, check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
             )
             self.assertEqual(init.returncode, 0, init.stderr or init.stdout)
             cli.apply_compute_policy(bad, "general")
             validate = subprocess.run(
                 [sys.executable, str(RUNTIME_PY), "goal-focus", "validate", "--dir", str(bad)],
-                capture_output=True, text=True, check=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
             )
             self.assertNotEqual(validate.returncode, 0, validate.stdout)
             self.assertIn("compute_policy", validate.stdout)
@@ -1481,6 +1556,8 @@ class PowerShellLaunchTests(unittest.TestCase):
             ["pwsh", "-NoProfile", "-File", str(launcher), *arguments],
             check=False,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             env=env,
             timeout=120,
@@ -1528,6 +1605,8 @@ class PowerShellLaunchTests(unittest.TestCase):
                 ],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=120,

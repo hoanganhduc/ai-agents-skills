@@ -278,6 +278,8 @@ def detect_version(command: str, platform: str | None = None) -> str:
             result = subprocess.run(
                 [parts[0], *parts[1:], *args],
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 timeout=5,
@@ -496,6 +498,8 @@ fi
     probe = subprocess.run(
         [*wsl_exec, "sh", "-lc", resolve_script, "sh", command_name],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=10,
@@ -642,6 +646,8 @@ def detect_wsl_version(wsl: str, command_name: str, distro: str | None = None) -
     result = subprocess.run(
         [*wsl_exec, command_name, "--version"],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         timeout=10,

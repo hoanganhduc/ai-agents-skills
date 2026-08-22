@@ -160,7 +160,7 @@ def _run_broker(ws: Path, command: str, job: dict, *, creds: bool = True) -> dic
         env["KAGGLE_API_TOKEN"] = "offline-token-for-test"
     proc = subprocess.run(
         [sys.executable, "-m", "research_compute", command, str(ws / "job.json")],
-        env=env, capture_output=True, text=True, timeout=60,
+        env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -759,9 +759,9 @@ class KaggleLaneUnitTests(unittest.TestCase):
             gha_gpu_enabled = False
         order = ["local", "kaggle", "modal", "hetzner", "gha"]
         # Within cap -> Kaggle-GPU wins ahead of Modal.
-        kg_ok = {"available": True, "reason": "available", "est_runs": 1, "est_kernels": 1,
-                 "concurrency": 5, "session_hours": 12.0, "gpu_hours_est": 4.0, "gpu_hours_cap": 18.0,
-                 "within_gpu_cap": True}
+        kg_ok = {"available": True, "adequate": True, "reason": "available", "est_runs": 1,
+                 "est_kernels": 1, "concurrency": 5, "session_hours": 12.0,
+                 "gpu_hours_est": 4.0, "gpu_hours_cap": 18.0, "within_gpu_cap": True}
         dec, be, _ = planner.select_gpu_lane(
             order=order, local_gpu=False, config=Cfg(), kg=kg_ok, kg_in_order=True,
             modal_ok=(True, "ok"), gha_ok=lambda: (True, "cap"))
@@ -773,6 +773,71 @@ class KaggleLaneUnitTests(unittest.TestCase):
             modal_ok=(True, "ok"), gha_ok=lambda: (True, "cap"))
         self.assertEqual((dec2, be2), ("modal_gpu", "modal"))
         self.assertFalse(next(t for t in trail2 if t["backend"] == "kaggle")["available"])
+
+    def test_gpu_lane_reads_the_probes_adequacy_verdict(self) -> None:
+        """`available` and `adequate` are two verdicts and the cascade owes both.
+
+        `kaggle_backend.probe` reports a GPU job whose peak RSS exceeds one kernel's
+        RAM as available (the lane is up and inside the weekly GPU-hour cap) and
+        inadequate (it does not fit). The GPU cascade read only `available` and then
+        published `adequate` as a copy of it, so the routing trail asserted
+        `adequate: true` beside the probe's own "exceeds kernel RAM" reason and the
+        job was sent to a kernel that would OOM it.
+        """
+
+        class Cfg:
+            gha_gpu_enabled = False
+
+        order = ["local", "kaggle", "modal", "hetzner", "gha"]
+        # What probe() returns for a 64GB-peak GPU job against a 32GB kernel.
+        kg_too_big = {
+            "available": True,
+            "adequate": False,
+            "reason": "peak_ram 64GB exceeds kernel RAM 32GB",
+            "within_gpu_cap": True,
+        }
+        dec, be, trail = planner.select_gpu_lane(
+            order=order, local_gpu=False, config=Cfg(), kg=kg_too_big, kg_in_order=True,
+            modal_ok=(True, "ok"), gha_ok=lambda: (True, "cap"))
+        self.assertEqual((dec, be), ("modal_gpu", "modal"))
+        kaggle_entry = next(t for t in trail if t["backend"] == "kaggle")
+        self.assertTrue(kaggle_entry["available"])
+        self.assertFalse(kaggle_entry["adequate"])
+        # The trail must not claim adequacy next to the reason it is inadequate.
+        self.assertIn("exceeds kernel RAM", kaggle_entry["reason"])
+
+    def test_gpu_lane_adequacy_matches_what_probe_actually_reports(self) -> None:
+        """The fixtures above are hand-built; this one comes from the probe itself,
+        so the cascade is pinned to the real contract rather than to a guess."""
+
+        class Cfg:
+            gha_gpu_enabled = False
+            kaggle_enabled = True
+            kaggle_kernel_cores = 4
+            kaggle_kernel_ram_gb = 32.0
+            kaggle_session_hours = 12.0
+            kaggle_max_runs = 5
+            kaggle_concurrency = 5
+            kaggle_weekly_gpu_hours_cap = 18.0
+
+        resources = {"liveness": {"kaggle": {"usable": True, "reason": "injected-usable"}}}
+        estimate = {"core_hours": 2.0, "parallelism": 1, "peak_ram_gb": 64.0,
+                    "gpu": True, "runtime_sec": 7200, "total_units": 1}
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ,
+                                 {"KAGGLE_API_TOKEN": "offline-token-for-test",
+                                  "KAGGLE_CONFIG_DIR": tmp}, clear=False):
+                for stale in ("KAGGLE_USERNAME", "KAGGLE_KEY"):
+                    os.environ.pop(stale, None)
+                kg = kaggle_backend.probe(estimate, config=Cfg(), resources=resources,
+                                          state_root=Path(tmp))
+        self.assertTrue(kg["available"], kg)
+        self.assertFalse(kg["adequate"], kg)
+        dec, be, trail = planner.select_gpu_lane(
+            order=["local", "kaggle", "modal"], local_gpu=False, config=Cfg(),
+            kg=kg, kg_in_order=True, modal_ok=(True, "ok"), gha_ok=lambda: (True, "cap"))
+        self.assertNotEqual(be, "kaggle")
+        self.assertFalse(next(t for t in trail if t["backend"] == "kaggle")["adequate"])
 
 
 def _make_bundle(tmp: Path, manifest: dict, *, with_run: bool = True) -> Path:

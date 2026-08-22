@@ -39,6 +39,21 @@ def _norm(name: str) -> str:
     return (name or "").strip().lower()
 
 
+def _panel_json_excludes(panel_path: Path) -> list[Any]:
+    """The exclusion list ``panel.json`` contributes to the merge."""
+
+    if not panel_path.is_file():
+        return []
+    try:
+        data = json.loads(panel_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    excl = data.get("exclude_until_credit")
+    return excl if isinstance(excl, list) else []
+
+
 def sync_exclude(run_dir: Path, provider: str) -> dict[str, Any]:
     prov = _norm(provider)
     if not prov:
@@ -62,10 +77,21 @@ def sync_exclude(run_dir: Path, provider: str) -> dict[str, Any]:
             state["standing_orders"] = so
         panel = so.get("panel")
         if isinstance(panel, dict):
+            # Seed from the set that is actually in force. load_panel_config
+            # merges panel.json first and then lets standing_orders.panel
+            # replace whole values, so when the standing-orders block carries no
+            # list of its own it is panel.json's list that is in force. Seeding
+            # from the block alone wrote a one-name list into the store that
+            # outranks panel.json, and every provider parked for being out of
+            # credit was invited again on the next iteration.
             excl = panel.get("exclude_until_credit")
             if not isinstance(excl, list):
-                excl = []
-            names = [_norm(str(x)) for x in excl if str(x).strip()]
+                excl = _panel_json_excludes(panel_path)
+            names: list[str] = []
+            for item in excl:
+                name = _norm(str(item))
+                if name and name not in names:
+                    names.append(name)
             if prov not in names:
                 names.append(prov)
             panel["exclude_until_credit"] = names

@@ -510,7 +510,6 @@ def command_extract(args: argparse.Namespace) -> int:
 
 def command_privacy_gate(args: argparse.Namespace) -> int:
     run_dir = workspace(args)
-    draft = read_json(run_dir / "draft.json")
     refs = read_jsonl(run_dir / "references.jsonl")
     queries: list[dict[str, Any]] = []
     unsafe: list[str] = []
@@ -1252,7 +1251,6 @@ def normalize_base_rate_sources(
 
 
 def build_chance_estimates(
-    run_dir: Path,
     venues: list[dict[str, Any]],
     scores: list[dict[str, Any]],
     base_sources: list[dict[str, Any]],
@@ -1352,7 +1350,6 @@ def command_score(args: argparse.Namespace) -> int:
         eligible = venue.get("eligibility_status") == "eligible"
         venue_evidence_ids = [ev["evidence_id"] for ev in evidence if venue["venue_id"] in ev.get("venue_ids", [])]
         recent_evidence_ids = sorted({ev_id for item in countable_items for ev_id in item.get("evidence_ids", [])})
-        ready_evidence_ids = sorted({ev_id for item in ready_items for ev_id in item.get("evidence_ids", [])})
         bibliography_evidence_ids = venue.get("classification_evidence_ids", []) or venue_evidence_ids
         scope_evidence_ids = venue.get("provenance_evidence_ids", []) or venue_evidence_ids
         venue_topic_score = ordinal_score(min(overlap, 5) / 5)
@@ -1399,7 +1396,8 @@ def command_score(args: argparse.Namespace) -> int:
                 "evidence_ids": [],
             },
         ]
-        normalized = round(sum(value for value in ordinal_values if value is not None) / (4 * len(ordinal_values)), 4)
+        ordinal_sum = sum(value for value in ordinal_values if value is not None)
+        normalized = round(ordinal_sum / (4 * len(ordinal_values)), 4)
         confidence = 0.3 + min(0.5, 0.05 * overlap + 0.08 * ready_count + 0.03 * countable_count)
         evidence_ids = sorted({ev_id for criterion in criteria for ev_id in criterion.get("evidence_ids", [])})
         score_id = f"SC{len(scores)+1}"
@@ -1445,7 +1443,13 @@ def command_score(args: argparse.Namespace) -> int:
                 "fit_band": band,
                 "support_status": support_status,
                 "criteria": criteria,
-                "raw_score": normalized,
+                # `raw_score` is the unnormalized measurement and its neighbour is that
+                # measurement scaled -- the same pair the criteria above publish, where
+                # `raw_score` is an overlap count or a comparator count and
+                # `ordinal_score` is the 0-4 anchor.  Publishing `normalized` under both
+                # names put a 0-1 fraction under the one key that, one nesting level
+                # down in the same record, means the opposite.
+                "raw_score": ordinal_sum,
                 "normalized_score": normalized,
                 "evidence_ids": evidence_ids,
                 "missing_data_policy": "downgrade-confidence",
@@ -1479,7 +1483,7 @@ def command_score(args: argparse.Namespace) -> int:
     scores.sort(key=lambda row: ({"strong fit": 0, "plausible fit": 1, "evidence-limited": 2, "not-ready/excluded": 3}.get(row["fit_band"], 99), row["tie_breaker"]))
     scorecards.sort(key=lambda row: (row["rank_band_order"], row["dominance_order"]))
     base_sources = normalize_base_rate_sources(run_dir, venues, load_fixture_jsonl(args, "base_rate_sources.jsonl"))
-    chance_estimates = build_chance_estimates(run_dir, venues, scores, base_sources, countable_recent_by_venue, ready_recent_by_venue)
+    chance_estimates = build_chance_estimates(venues, scores, base_sources, countable_recent_by_venue, ready_recent_by_venue)
     write_jsonl(run_dir / "scores.jsonl", scores)
     write_jsonl(run_dir / "scorecards.jsonl", scorecards)
     write_jsonl(run_dir / "base_rate_sources.jsonl", base_sources)
@@ -1506,7 +1510,6 @@ def delivery_status(run_dir: Path) -> tuple[str, list[str]]:
         reasons.append("no papers resolved")
     if not venues:
         reasons.append("no candidate venues")
-    eligible_score_count = sum(1 for score in scores if score.get("fit_band") != "not-ready/excluded")
     supported_score_count = sum(1 for score in scores if score.get("support_status") == "supported")
     caveated_score_count = sum(1 for score in scores if score.get("support_status") == "caveated")
     if scores and any(score.get("venue_id") not in countable_recent_venues and score.get("fit_band") != "not-ready/excluded" for score in scores):
@@ -1559,7 +1562,7 @@ def command_report(args: argparse.Namespace) -> int:
             if is_ready_comparator_recent(row):
                 ready_by_venue.setdefault(row["venue_id"], []).append(row)
         base_sources = normalize_base_rate_sources(run_dir, venue_rows, load_fixture_jsonl(args, "base_rate_sources.jsonl"))
-        chance_estimates = build_chance_estimates(run_dir, venue_rows, scores, base_sources, countable_by_venue, ready_by_venue)
+        chance_estimates = build_chance_estimates(venue_rows, scores, base_sources, countable_by_venue, ready_by_venue)
         write_jsonl(run_dir / "base_rate_sources.jsonl", base_sources)
         write_jsonl(run_dir / "chance_estimates.jsonl", chance_estimates)
     chance_by_venue = {row["venue_id"]: row for row in chance_estimates}

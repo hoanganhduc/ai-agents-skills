@@ -68,7 +68,7 @@ class CredentialRuntimeGateTests(unittest.TestCase):
             + "if trusted_credential_runtime_generation; then echo accept; else echo refuse; fi\n"
         )
         completed = subprocess.run(
-            ["bash", "-c", script], check=False, text=True, capture_output=True, timeout=30
+            ["bash", "-c", script], check=False, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=30
         )
         return completed.stdout.strip()
 
@@ -143,6 +143,8 @@ class CredentialRuntimeGateCallSiteTests(unittest.TestCase):
                 ["bash", str(runner), "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh"],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=60,
             )

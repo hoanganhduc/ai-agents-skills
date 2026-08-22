@@ -239,10 +239,13 @@ def max_runs(config: Any) -> int:
     return max(1, int(getattr(config, "kaggle_max_runs", 0) or 5))
 
 
-def estimate_gpu_hours(estimate: dict[str, Any], config: Any) -> float:
+def estimate_gpu_hours(estimate: dict[str, Any]) -> float:
     """GPU wall-hours estimate for the weekly-cap arithmetic. Uses an explicit gpu_hours
     field when the manifest provides one, else the core-hour estimate as a proxy for GPU
-    wall time, else the runtime estimate."""
+    wall time, else the runtime estimate.
+
+    The cap itself is config; this is only the estimate side of the comparison, so
+    no config is read here. It used to take one and ignore it."""
     gpu_hours = estimate.get("gpu_hours")
     if gpu_hours in (None, 0, 0.0):
         gpu_hours = estimate.get("core_hours")
@@ -331,7 +334,7 @@ def probe(
 
     # GPU-only weekly cap (a local self-cap; CPU is free and ungated).
     cap = float(getattr(config, "kaggle_weekly_gpu_hours_cap", 0.0) or 0.0)
-    gpu_hours_est = estimate_gpu_hours(estimate, config) if gpu else 0.0
+    gpu_hours_est = estimate_gpu_hours(estimate) if gpu else 0.0
     used_week = gpu_hours_used(config, resources, state_root) if gpu else 0.0
     within_gpu_cap = (not gpu) or (cap > 0.0 and (used_week + gpu_hours_est) <= cap)
 
@@ -379,7 +382,7 @@ def gpu_budget_gate(*, job_id: str, estimate: dict[str, Any], config: Any,
     usage ledger so concurrent GPU submits cannot collectively blow the cap. CPU jobs never
     call this -- CPU is free and quota-free. Returns the reservation record or raises."""
     cap = float(getattr(config, "kaggle_weekly_gpu_hours_cap", 0.0) or 0.0)
-    est = estimate_gpu_hours(estimate, config)
+    est = estimate_gpu_hours(estimate)
     used = gpu_hours_used_this_week(Path(state_root))
     if cap <= 0.0:
         raise KaggleBudgetError("fail-closed: Kaggle GPU weekly cap is 0 (GPU lane disabled)")

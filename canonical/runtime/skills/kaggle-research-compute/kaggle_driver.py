@@ -118,7 +118,7 @@ def _resolve_username(config: Any | None, *, required: bool) -> str | None:
 def _default_command_runner(argv: list[str], *, env: dict[str, str], timeout: float) -> dict[str, Any]:  # pragma: no cover - real subprocess path is never exercised offline
     import subprocess
 
-    proc = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=timeout)
+    proc = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, timeout=timeout)
     return {"returncode": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
 
 

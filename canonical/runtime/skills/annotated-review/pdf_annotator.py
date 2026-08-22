@@ -142,9 +142,14 @@ def markup_page(
     annotations_on_page: List[Tuple[int, dict]],
     verification_results_map: Dict[int, dict],
     trust_refs_map: Dict[str, list],
-    page_offset: int = 1,
 ) -> None:
-    """Add highlights and sticky notes to a PDF page."""
+    """Add highlights and sticky notes to a PDF page.
+
+    The caller owns the page mapping: it computes `adjusted_page = page_num - 1 +
+    page_offset` and hands over `doc[page_idx]`. This function used to declare a
+    `page_offset` of its own and never read it, which read as a second mapping
+    applied here.
+    """
     try:
         import fitz
     except ImportError:
@@ -614,7 +619,7 @@ def annotate_pdf(
         page = doc[page_idx]
 
         if anns_on_page:
-            markup_page(page, anns_on_page, ver_results_map, trust_refs_map, page_offset)
+            markup_page(page, anns_on_page, ver_results_map, trust_refs_map)
 
         # Additional verifier issues
         for issue in add_issues_on_page:

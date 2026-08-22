@@ -21,6 +21,8 @@ def run_selector(*args: str, check: bool = True) -> subprocess.CompletedProcess[
         [sys.executable, str(SCRIPT), *args],
         cwd=REPO_ROOT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
     )
     if check and completed.returncode != 0:
@@ -303,6 +305,92 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
         self.assertIn("not-ready", adapter)
         self.assertIn("comparator-paper evidence", instruction_block)
         self.assertIn("not-ready", instruction_block)
+
+
+
+class ScoreRawAndNormalizedTests(unittest.TestCase):
+    """A score row's `raw_score` is the ordinal sum; `normalized_score` scales it.
+
+    The criteria inside the same row already use that pair honestly -- `raw_score` is
+    an overlap count, a comparator count, or the string `not_scored`, and
+    `ordinal_score` is the 0-4 anchor.  The row itself published `normalized` under
+    both names, so `raw_score` carried a 0-1 fraction under the one key that one
+    nesting level down means the opposite.
+    """
+
+    def _scores(self) -> list[dict[str, object]]:
+        helper = SubmissionVenueSelectorRuntimeTests(
+            "test_smoke_output_declares_offline_no_mutation_contract"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            draft = helper.write_sample_draft(root)
+            fixture = helper.write_recent_fixture(
+                root, evidence_level="abstract_inspected", per_venue=3
+            )
+            run_dir = root / "venue-run"
+            run_selector(
+                "run", "--dir", str(run_dir), "--draft", str(draft),
+                "--offline", "--fixture-dir", str(fixture),
+            )
+            rows = [
+                json.loads(line)
+                for line in (run_dir / "scores.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        self.assertTrue(rows, "the fixture run produced no score rows")
+        return rows
+
+    def test_raw_score_is_the_sum_of_the_anchored_ordinals(self) -> None:
+        for score in self._scores():
+            with self.subTest(venue=score["venue_id"]):
+                scored = [c for c in score["criteria"] if c["raw_score"] != "not_scored"]
+                self.assertEqual(
+                    score["raw_score"],
+                    sum(c["ordinal_score"] for c in scored),
+                )
+
+    def test_normalized_score_is_that_sum_over_its_maximum(self) -> None:
+        for score in self._scores():
+            with self.subTest(venue=score["venue_id"]):
+                scored = [c for c in score["criteria"] if c["raw_score"] != "not_scored"]
+                self.assertEqual(
+                    score["normalized_score"],
+                    round(score["raw_score"] / (4 * len(scored)), 4),
+                )
+
+    def test_the_two_are_not_the_same_number(self) -> None:
+        """The regression, stated directly: one key per quantity."""
+
+        for score in self._scores():
+            with self.subTest(venue=score["venue_id"]):
+                self.assertNotEqual(
+                    score["raw_score"],
+                    score["normalized_score"],
+                    "raw_score is publishing the normalized value",
+                )
+
+    def test_the_two_live_on_different_scales(self) -> None:
+        for score in self._scores():
+            with self.subTest(venue=score["venue_id"]):
+                self.assertIsInstance(score["raw_score"], int)
+                self.assertGreater(score["raw_score"], 1)
+                self.assertLessEqual(score["normalized_score"], 1.0)
+
+    def test_the_criterion_level_pair_is_unchanged(self) -> None:
+        """The control: criterion `raw_score` was already the measurement, and the
+        `not_scored` sentinel the report gate reads must survive."""
+
+        for score in self._scores():
+            with self.subTest(venue=score["venue_id"]):
+                by_id = {c["criterion_id"]: c for c in score["criteria"]}
+                self.assertEqual(
+                    by_id["presentation_discourse_alignment"]["raw_score"], "not_scored"
+                )
+                self.assertIsNone(
+                    by_id["presentation_discourse_alignment"]["ordinal_score"]
+                )
+                self.assertIsInstance(by_id["comparator_pattern_fit"]["raw_score"], int)
 
 
 if __name__ == "__main__":

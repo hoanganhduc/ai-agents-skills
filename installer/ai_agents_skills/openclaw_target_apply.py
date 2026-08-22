@@ -228,7 +228,7 @@ def apply_target_manifest(
     superseded_records: list[dict[str, Any]] = []
     try:
         for planned_action, action in zip(planned, manifest["actions"], strict=True):
-            result = apply_one_action(expanded, run_id, manifest, action, planned_action)
+            result = apply_one_action(expanded, run_id, action, planned_action)
             applied.append(result)
             if result_is_state_recordable(result):
                 record = state_record(result)
@@ -372,7 +372,6 @@ def plan_apply_action(root: Path, manifest: dict[str, Any], action: dict[str, An
 def apply_one_action(
     root: Path,
     run_id: str,
-    manifest: dict[str, Any],
     action: dict[str, Any],
     planned_action: dict[str, Any],
 ) -> dict[str, Any]:
@@ -864,6 +863,8 @@ def run_openclaw_text(
             cwd=str(root),
             env=openclaw_env(root),
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             pass_fds=(node_descriptor, target_descriptor),

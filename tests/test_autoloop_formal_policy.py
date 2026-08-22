@@ -741,5 +741,94 @@ class FormalDriveWireTests(unittest.TestCase):
             self.assertIn("Never auto-spawn OpenGauss", text)
 
 
+class PartialStandingOrdersTests(unittest.TestCase):
+    """A standing-orders entry must set the keys it names and no others.
+
+    ``_normalize_policy_dict`` used to build its result on
+    ``default_formal_config()``, so every source came back as a *complete*
+    policy. ``_shallow_merge`` skips only ``None`` and no default is ``None``,
+    so a ``standing_orders.formal`` that named one key silently rewrote the
+    other six from ``formal/formal_policy.json`` -- ``policy`` back to ``off``,
+    ``project`` back to ``formal/``, ``force_credits`` back to 3. The formal
+    track switched itself off and reported nothing.
+
+    ``test_fp02_full_merge_cli_wins`` covers the precedence order, but its
+    standing-orders block names every key, which is exactly the shape that
+    hides this.
+    """
+
+    def tearDown(self) -> None:
+        for key in list(os.environ):
+            if key.startswith("AAS_AUTOLOOP_FORMAL"):
+                os.environ.pop(key, None)
+
+    _FILE_POLICY = {
+        "policy": "force",
+        "project": "MyProject/",
+        "force_credits": 7,
+        "typecheck": True,
+        "status": {"phase": "proving"},
+    }
+
+    def _loop_with_file_policy(self, tmp: Path) -> Path:
+        run_dir = _init_loop(tmp)
+        formal_dir = run_dir / "formal"
+        formal_dir.mkdir(parents=True, exist_ok=True)
+        (formal_dir / "formal_policy.json").write_text(
+            json.dumps(self._FILE_POLICY, indent=2) + "\n", encoding="utf-8"
+        )
+        return run_dir
+
+    def test_a_one_key_standing_order_leaves_the_rest_of_the_file_standing(
+        self,
+    ) -> None:
+        """Both SKILL.md files offer the two surfaces as alternatives."""
+
+        for partial in (
+            {"allow_create_skeleton": True},
+            {"status": {"sorry_count": 4}},
+            {"notes": ["hand-edited"]},
+        ):
+            with self.subTest(partial=partial):
+                with tempfile.TemporaryDirectory() as tmp:
+                    run_dir = self._loop_with_file_policy(Path(tmp))
+                    _set_standing_formal(run_dir, partial)
+                    pol = fp.load_formal_policy(run_dir, environ={})
+                    self.assertEqual(pol.policy, "force")
+                    self.assertEqual(pol.project, "MyProject/")
+                    self.assertEqual(pol.force_credits, 7)
+                    self.assertTrue(pol.typecheck)
+                    self.assertEqual(pol.status.get("phase"), "proving")
+
+    def test_a_named_key_still_overrides_the_file(self) -> None:
+        """Standing orders outrank the file; that ordering is not what changed."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self._loop_with_file_policy(Path(tmp))
+            _set_standing_formal(run_dir, {"policy": "off", "force_credits": 1})
+            pol = fp.load_formal_policy(run_dir, environ={})
+            self.assertEqual(pol.policy, "off")
+            self.assertEqual(pol.force_credits, 1)
+            self.assertEqual(pol.project, "MyProject/")
+            self.assertTrue(pol.typecheck)
+
+    def test_a_named_key_with_an_unusable_value_still_fails_closed(self) -> None:
+        """A malformed privileged value resolves to its default, as before.
+
+        Reading it as "unset" would let a typo in standing orders inherit a
+        permissive value from the file, which is the wrong direction for a key
+        the host pin exists to protect.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self._loop_with_file_policy(Path(tmp))
+            _set_standing_formal(
+                run_dir, {"policy": "not-a-policy", "typecheck": 1}
+            )
+            pol = fp.load_formal_policy(run_dir, environ={})
+            self.assertEqual(pol.policy, "off")
+            self.assertFalse(pol.typecheck)
+
+
 if __name__ == "__main__":
     unittest.main()

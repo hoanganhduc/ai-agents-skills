@@ -26,8 +26,9 @@ if str(KAGGLE_SKILL) not in sys.path:
     sys.path.insert(0, str(KAGGLE_SKILL))
 
 import kaggle_driver  # noqa: E402
-from research_compute import kaggle_backend, modal_backend  # noqa: E402
-from research_compute.planner import plan_job  # noqa: E402
+from research_compute import hetzner_backend, kaggle_backend, modal_backend  # noqa: E402
+from research_compute import planner  # noqa: E402
+from research_compute.planner import build_estimate, plan_job  # noqa: E402
 
 
 class _Cfg:
@@ -341,6 +342,176 @@ class KagglePreflightHardwareTests(unittest.TestCase):
                 os.environ.update(legacy)
         self.assertEqual(got["total_units"], 5)
         self.assertEqual(got["est_kernels"], 5)
+
+
+
+class DocumentedConstraintKeyTests(unittest.TestCase):
+    """A manifest written the way the planner documents must size the same as one
+    written the way the planner reads.
+
+    `unknown_manifest_keys_error` and `canonical/templates/
+    compute-offload-sizing-gate.md` both spell the width `constraints.cores`.
+    `build_estimate` read only `parallelism`/`cpu`, so a 48-way sweep spelled as
+    documented planned as a one-core job: Hetzner picked the cheapest 2-vCPU box
+    and Modal reported capacity_ok with no oversubscription note.
+    """
+
+    WIDTH = 48
+    BASE = {"memory_mb": 4096, "core_hours": 24}
+
+    def _estimate(self, constraints):
+        return build_estimate(
+            parameters={},
+            constraints=constraints,
+            policy={"backends": ["hetzner"]},
+            gpu_signal=False,
+            runtime_sec=24 * 3600,
+        )
+
+    def test_every_documented_spelling_of_the_width_sizes_the_same(self) -> None:
+        for key in planner.PARALLELISM_CONSTRAINT_KEYS:
+            with self.subTest(key=key):
+                est = self._estimate({key: self.WIDTH, **self.BASE})
+                self.assertEqual(est["parallelism"], self.WIDTH)
+
+    def test_the_width_reaches_the_lane_that_buys_the_hardware(self) -> None:
+        """Hetzner sizes on `estimate["parallelism"]`; a 48-way job must not be
+        planned onto a 2-vCPU server."""
+
+        est = self._estimate({"cores": self.WIDTH, **self.BASE})
+        spec, reason = hetzner_backend.select_server_spec(est, _Cfg())
+        self.assertIsNotNone(spec, reason)
+        self.assertGreaterEqual(int(spec["vcpu"]), self.WIDTH)
+
+    def test_the_width_reaches_the_modal_oversubscription_note(self) -> None:
+        est = self._estimate({"cores": self.WIDTH, **self.BASE})
+        fits, reason = modal_backend.capacity_fit(est, "modal_cpu", _Cfg())
+        self.assertTrue(fits, reason)
+        self.assertIn("cores_oversubscribed", reason)
+
+    def test_a_manifest_with_no_width_is_still_one_core(self) -> None:
+        self.assertEqual(self._estimate(dict(self.BASE))["parallelism"], 1)
+
+    def test_an_explicit_parallelism_outranks_a_core_count(self) -> None:
+        """`parallelism` is the fan-out width proper; a manifest carrying both
+        means the fan-out, not the reservation."""
+
+        est = self._estimate({"parallelism": 4, "cores": 48, **self.BASE})
+        self.assertEqual(est["parallelism"], 4)
+
+    def test_the_rejection_message_names_only_keys_the_planner_reads(self) -> None:
+        """The message tells a caller where resource requests belong. Every key it
+        names has to be one the planner actually sizes on, or the instruction
+        produces the silently-ignored manifest it exists to prevent."""
+
+        message = planner.unknown_manifest_keys_error(
+            {"job_id": "x", "estimate": {"cores": 4}}
+        )
+        self.assertIsNotNone(message)
+        for key in planner.DOCUMENTED_CONSTRAINT_KEYS:
+            with self.subTest(key=key):
+                self.assertIn(key, message)
+        self.assertIn("cores", planner.PARALLELISM_CONSTRAINT_KEYS)
+
+
+
+class ModalCapacityNoteInTrailTests(unittest.TestCase):
+    """The cpu note has to reach the trail, on the path where the lane is TAKEN.
+
+    `capacity_fit` calls its cpu note "sizing information the caller needs in the
+    trail, not grounds to refuse the lane", and modal-research-compute/SKILL.md
+    tells the agent to read `cores_oversubscribed=...` off "Modal's trail reason".
+    All three call sites kept the capacity string only when the lane was refused,
+    so an accepted 12x-over-subscribed plan reported `"reason": "available"` and
+    the note was computed and thrown away.
+    """
+
+    # 48-way against run_cpu_job, which is deployed with cpu=4.0.
+    WIDE = {"parallelism": 48, "memory_mb": 4096, "core_hours": 24}
+
+    def _estimate(self, constraints):
+        return build_estimate(
+            parameters={},
+            constraints=constraints,
+            policy={"backends": ["modal"]},
+            gpu_signal=False,
+            runtime_sec=24 * 3600,
+        )
+
+    def _fit(self, constraints, *, gpu=False):
+        est = dict(self._estimate(constraints))
+        est["gpu"] = gpu
+        return lambda decision: modal_backend.capacity_fit(est, decision, _Cfg())
+
+    def test_an_accepted_cpu_hop_carries_the_oversubscription_note(self) -> None:
+        _, _, trail = planner.select_remote_lane(
+            order=["modal"], modal_decision="modal_cpu", gpu_signal=False,
+            hz=None, hz_in_order=False, modal_ok=(True, "available"),
+            modal_fit=self._fit(self.WIDE), gha_ok=lambda: (False, "off"))
+        modal_hop = next(t for t in trail if t["backend"] == "modal")
+        self.assertTrue(modal_hop["adequate"], modal_hop)
+        self.assertIn("cores_oversubscribed=48>4", modal_hop["reason"])
+        self.assertIn("available", modal_hop["reason"])
+
+    def test_an_accepted_gpu_hop_carries_it_too(self) -> None:
+        _, _, trail = planner.select_gpu_lane(
+            order=["modal"], local_gpu=False, config=_Cfg(),
+            modal_ok=(True, "available"), modal_fit=self._fit(self.WIDE, gpu=True),
+            gha_ok=lambda: (False, "off"))
+        modal_hop = next(t for t in trail if t["backend"] == "modal")
+        self.assertTrue(modal_hop["adequate"], modal_hop)
+        self.assertIn("cores_oversubscribed=48>8", modal_hop["reason"])
+
+    def test_an_end_to_end_plan_reports_it(self) -> None:
+        """The agent reads the plan, not the cascade; the note must survive to it."""
+
+        job = {
+            "job_id": "wide-sweep",
+            "task_family": "enumeration",
+            "policy": {"backends": ["modal"]},
+            "constraints": dict(self.WIDE),
+            "payload": {"python_source": "def main():\n    return {}\n",
+                        "entrypoint": "main"},
+        }
+        plan = _plan(job, modal_ready=True)
+        self.assertEqual(plan["decision"], "modal_cpu", plan)
+        modal_hop = next(t for t in plan["routing_trail"] if t["backend"] == "modal")
+        self.assertIn("cores_oversubscribed", modal_hop["reason"])
+
+    def test_a_refused_hop_still_reports_the_capacity_verdict_alone(self) -> None:
+        """The control: a refusal's decisive reason is the capacity verdict, not the
+        liveness string it would otherwise be prefixed with."""
+
+        too_big = {"parallelism": 1, "memory_mb": 65536, "core_hours": 1}
+        _, _, trail = planner.select_remote_lane(
+            order=["modal"], modal_decision="modal_cpu", gpu_signal=False,
+            hz=None, hz_in_order=False, modal_ok=(True, "available"),
+            modal_fit=self._fit(too_big), gha_ok=lambda: (False, "off"))
+        modal_hop = next(t for t in trail if t["backend"] == "modal")
+        self.assertFalse(modal_hop["adequate"], modal_hop)
+        self.assertTrue(
+            modal_hop["reason"].startswith("modal_capacity_exceeded"), modal_hop
+        )
+
+    def test_an_unchecked_hop_says_so_rather_than_reading_as_fitted(self) -> None:
+        """No estimate supplied is reported, not silently asserted to fit."""
+
+        _, _, trail = planner.select_remote_lane(
+            order=["modal"], modal_decision="modal_cpu", gpu_signal=False,
+            hz=None, hz_in_order=False, modal_ok=(True, "available"),
+            modal_fit=None, gha_ok=lambda: (False, "off"))
+        modal_hop = next(t for t in trail if t["backend"] == "modal")
+        self.assertIn("modal_capacity_unchecked", modal_hop["reason"])
+
+    def test_the_composer_keeps_both_halves_on_the_accepted_path(self) -> None:
+        self.assertEqual(
+            planner.modal_trail_reason("available", "modal_capacity_ok:x", True),
+            "available; modal_capacity_ok:x",
+        )
+        self.assertEqual(
+            planner.modal_trail_reason("available", "modal_capacity_exceeded:x", False),
+            "modal_capacity_exceeded:x",
+        )
 
 
 if __name__ == "__main__":

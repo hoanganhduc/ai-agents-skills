@@ -230,7 +230,6 @@ def build_runtime_actions(
             continue
         actions.append(
             runtime_file_action(
-                root=root,
                 runtime_root=target_root,
                 entry=entry,
                 skill="runtime-runner",
@@ -246,7 +245,6 @@ def build_runtime_actions(
                 continue
             actions.append(
                 runtime_file_action(
-                    root=root,
                     runtime_root=target_root,
                     entry=entry,
                     skill=skill,
@@ -360,7 +358,6 @@ def runtime_entry_applies(entry: dict[str, Any], platform_name: str) -> bool:
 
 def runtime_file_action(
     *,
-    root: Path,
     runtime_root: Path,
     entry: dict[str, Any],
     skill: str,

@@ -5,11 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import ast
 import shlex
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -409,7 +412,7 @@ class PanelParentUnitTests(unittest.TestCase):
             cwd=cwd,
         )
         completed = subprocess.run(
-            probe, capture_output=True, text=True, timeout=10, check=False
+            probe, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, check=False
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
@@ -446,7 +449,7 @@ class PanelParentUnitTests(unittest.TestCase):
             "reachable",
         ]
         outside = subprocess.run(
-            probe, capture_output=True, text=True, timeout=5, check=False
+            probe, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=False
         )
         if outside.returncode != 0:
             self.skipTest("default tmux server is not reachable")
@@ -454,7 +457,7 @@ class PanelParentUnitTests(unittest.TestCase):
             probe, cwd=Path.cwd().resolve()
         )
         inside = subprocess.run(
-            contained, capture_output=True, text=True, timeout=5, check=False
+            contained, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=False
         )
         self.assertNotEqual(inside.returncode, 0)
         self.assertNotIn("reachable", inside.stdout)
@@ -471,7 +474,7 @@ class PanelParentUnitTests(unittest.TestCase):
                 cwd=cwd,
             )
             completed = subprocess.run(
-                contained, capture_output=True, text=True, timeout=5, check=False
+                contained, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, check=False
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
@@ -2495,6 +2498,220 @@ class DescriptorFreeDependencyAttestationTests(unittest.TestCase):
 
         self.assertTrue(pp._is_link_like(_Junction()))
         self.assertFalse(pp._is_link_like(_Regular()))
+
+
+class _WalkTookTooLong(BaseException):
+    """Raised out of the alarm handler to observe a blocked ``os.open``.
+
+    It derives from ``BaseException`` on purpose: the walk catches ``OSError``
+    in several places, and a watchdog that a caught handler can swallow proves
+    nothing.
+    """
+
+
+class DependencyWalkCannotBlockTests(unittest.TestCase):
+    """The descriptor walk must reject a FIFO instead of waiting on one.
+
+    Every type check in the walk reads the ``fstat`` that follows the open, so
+    the open has to be the part that cannot block. It was
+    ``O_RDONLY | O_NOFOLLOW``, and ``O_RDONLY`` on a FIFO waits for a writer:
+    a FIFO planted in an attested dependency root parked the walk there for as
+    long as the operator was willing to wait. It runs in the panel worker
+    thread before any provider is spawned, so the per-provider timeout was not
+    armed yet, and the thread pool's own shutdown joins on that worker.
+
+    ``DescriptorFreeDependencyAttestationTests.test_a_non_regular_file_fails_closed``
+    plants the same FIFO but walks it with ``_dependency_tree_attestation_by_lstat``,
+    which reads ``S_ISREG`` from the ``lstat`` before it opens anything. That is
+    the Windows path, and it is exactly why the defect stayed hidden: the walk
+    the POSIX hosts actually run had no such test.
+    """
+
+    BUDGET_SECONDS = 5
+
+    def _closure_with_a_fifo(self, base: Path) -> Path:
+        root = base / "node_modules" / "provider"
+        root.mkdir(parents=True)
+        (root / "cli.js").write_bytes(b"provider payload\n")
+        os.mkfifo(root / "control.sock", 0o600)
+        os.chmod(root / "cli.js", 0o600)
+        os.chmod(root, 0o700)
+        os.chmod(root.parent, 0o700)
+        return root
+
+    def _within_budget(self, call, root: Path) -> tuple[float, BaseException]:
+        """Run ``call`` under an alarm and report how it ended.
+
+        PEP 475 restarts an ``open`` interrupted by a signal unless the handler
+        raises, so a raising handler is the only way to see the block from
+        inside this process.
+        """
+
+        def _fire(_signum, _frame):  # noqa: ANN001
+            raise _WalkTookTooLong()
+
+        previous = signal.signal(signal.SIGALRM, _fire)
+        signal.alarm(self.BUDGET_SECONDS)
+        started = time.monotonic()
+        try:
+            call(root)
+        except BaseException as exc:  # noqa: BLE001
+            return time.monotonic() - started, exc
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+        self.fail("the walk accepted a FIFO inside the dependency closure")
+
+    @unittest.skipUnless(
+        os.name == "posix" and hasattr(signal, "SIGALRM"),
+        "requires a POSIX named pipe and SIGALRM",
+    )
+    def test_the_descriptor_walk_rejects_a_fifo_as_promptly_as_the_lstat_walk(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._closure_with_a_fifo(Path(tmp))
+            elapsed, raised = self._within_budget(
+                pp._dependency_tree_attestation, root
+            )
+            self.assertNotIsInstance(
+                raised,
+                _WalkTookTooLong,
+                f"still blocked after {self.BUDGET_SECONDS}s in os.open",
+            )
+            self.assertIsInstance(raised, pp.PanelIsolationError)
+            self.assertIn("not a regular file/directory", str(raised))
+            self.assertLess(elapsed, 1.0)
+
+            _, by_name = self._within_budget(
+                lambda path: pp._dependency_tree_attestation_by_lstat(
+                    path, max_files=250_000, max_bytes=2_000_000_000
+                ),
+                root,
+            )
+            self.assertEqual(str(raised), str(by_name))
+
+    def test_every_read_open_that_could_reach_a_fifo_is_non_blocking(self) -> None:
+        """A later read-open must not quietly reintroduce the block.
+
+        Only two ``O_RDONLY`` masks are exempt, and both carry ``O_DIRECTORY``
+        against ``path.anchor or os.sep`` -- a filesystem root, which no
+        operator can replace with a FIFO.
+        """
+
+        source = (RUNTIME_DIR / "panel_parent.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        operands = {
+            id(side)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.BinOp)
+            for side in (node.left, node.right)
+        }
+        masks = [
+            (node.lineno, ast.unparse(node))
+            for node in ast.walk(tree)
+            if isinstance(node, ast.BinOp)
+            and id(node) not in operands
+            and "O_RDONLY" in ast.unparse(node)
+        ]
+        self.assertTrue(masks, "no O_RDONLY flag masks found to check")
+        blocking = [
+            f"panel_parent.py:{lineno}: {text}"
+            for lineno, text in masks
+            if "O_DIRECTORY" not in text and "NONBLOCKING_OPEN" not in text
+        ]
+        self.assertEqual(blocking, [])
+
+
+
+class SecureReadUsesTheValidatedDirectoryTests(unittest.TestCase):
+    """The Windows branch must read through the parent chain it just validated.
+
+    ``os.name`` cannot be patched on a POSIX host -- ``pathlib`` dispatches on it --
+    so the branch is asserted structurally instead.  It bound the resolved absolute
+    parent from ``_assert_real_directory`` and then dropped it, running the ``lstat``
+    and the read against the caller's own path: the one call in the branch that
+    establishes the chain is real contributed nothing to the operation after it.
+    """
+
+    def _nt_branch(self) -> ast.If:
+        source = (RUNTIME_DIR / "panel_parent.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_secure_read_text"
+        )
+        for node in ast.walk(function):
+            if not isinstance(node, ast.If):
+                continue
+            test = ast.unparse(node.test)
+            if "os.name" in test and "nt" in test:
+                return node
+        raise AssertionError("no os.name == 'nt' branch in _secure_read_text")
+
+    def test_the_validated_directory_is_read_not_merely_checked(self) -> None:
+        branch = self._nt_branch()
+        bound = {
+            target.id
+            for node in branch.body
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_assert_real_directory"
+        }
+        self.assertTrue(bound, "_assert_real_directory is not called in the nt branch")
+
+        loaded = {
+            node.id
+            for node in ast.walk(branch)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+        for name in sorted(bound):
+            self.assertIn(
+                name,
+                loaded,
+                f"{name} holds the validated directory and nothing reads it",
+            )
+
+    def test_the_read_and_the_stat_agree_on_one_target(self) -> None:
+        """Whatever is stat-ed is what is read; two different expressions would be a
+        check-then-open race written out in full."""
+
+        branch = self._nt_branch()
+        stat_targets = {
+            ast.unparse(node.args[0])
+            for node in ast.walk(branch)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "lstat"
+            and node.args
+        }
+        read_targets = {
+            ast.unparse(node.func.value)
+            for node in ast.walk(branch)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "read_bytes"
+        }
+        self.assertEqual(len(stat_targets), 1, stat_targets)
+        self.assertEqual(stat_targets, read_targets)
+
+    def test_the_posix_branch_still_pins_a_descriptor(self) -> None:
+        """The control: the platform that can pin one still does."""
+
+        source = (RUNTIME_DIR / "panel_parent.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        function = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_secure_read_text"
+        )
+        body = ast.unparse(function)
+        self.assertIn("_open_real_directory_descriptor", body)
+        self.assertIn("dir_fd=dir_fd", body)
 
 
 if __name__ == "__main__":

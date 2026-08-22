@@ -21,7 +21,7 @@ def _tool_version_from_path(path: str | None) -> str | None:
         return None
     for flag in ("--version", "-version"):
         try:
-            out = subprocess.run([path, flag], capture_output=True, text=True, timeout=15)
+            out = subprocess.run([path, flag], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
         except Exception:
             continue
         if out.returncode != 0:
@@ -47,7 +47,7 @@ def _has_font(substr: str) -> bool:
     if not fc:
         return False
     try:
-        out = subprocess.run([fc, ":family"], capture_output=True, text=True, timeout=10)
+        out = subprocess.run([fc, ":family"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         return substr.lower() in out.stdout.lower()
     except Exception:
         return False

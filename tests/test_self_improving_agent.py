@@ -18,6 +18,8 @@ class SelfImprovingAgentRuntimeTests(unittest.TestCase):
             [sys.executable, str(HELPER), *args],
             input=input_text,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             check=False,
         )

@@ -50,7 +50,7 @@ def _tool_version(name: str) -> str | None:
     if not path:
         return None
     try:
-        out = subprocess.run([path, "-version"], capture_output=True, text=True, timeout=10)
+        out = subprocess.run([path, "-version"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         return (out.stdout or out.stderr).splitlines()[0] if (out.stdout or out.stderr) else path
     except Exception:
         return path

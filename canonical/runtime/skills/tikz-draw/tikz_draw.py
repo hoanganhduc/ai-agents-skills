@@ -337,6 +337,8 @@ def probe_tool(tool_path: str, args: list[str]) -> dict[str, Any]:
         proc = subprocess.run(
             [tool_path, *args],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=20,
             env=tool_environment(),
@@ -2218,7 +2220,7 @@ def compile_tex(tex_path: Path, svg: bool) -> dict[str, Any]:
         }
     env = tool_environment()
     cmd = [latexmk, "-pdf", "-interaction=nonstopmode", "-halt-on-error", tex_path.name]
-    proc = subprocess.run(cmd, cwd=tex_path.parent, text=True, capture_output=True, env=env)
+    proc = subprocess.run(cmd, cwd=tex_path.parent, text=True, encoding="utf-8", errors="replace", capture_output=True, env=env)
     result: dict[str, Any] = {
         "status": "PASS" if proc.returncode == 0 else "FAIL",
         "exit_code": proc.returncode,
@@ -2237,7 +2239,7 @@ def compile_tex(tex_path: Path, svg: bool) -> dict[str, Any]:
         if dvisvgm:
             svg_path = tex_path.with_suffix(".svg")
             svg_cmd = [dvisvgm, "--pdf", str(pdf_path), "-n", "-o", str(svg_path)]
-            svg_proc = subprocess.run(svg_cmd, cwd=tex_path.parent, text=True, capture_output=True, env=env)
+            svg_proc = subprocess.run(svg_cmd, cwd=tex_path.parent, text=True, encoding="utf-8", errors="replace", capture_output=True, env=env)
             result["svg_command"] = svg_cmd
             result["svg_stdout"] = svg_proc.stdout
             result["svg_stderr"] = svg_proc.stderr

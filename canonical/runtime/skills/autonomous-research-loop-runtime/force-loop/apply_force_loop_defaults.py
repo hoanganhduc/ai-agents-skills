@@ -292,14 +292,33 @@ def apply_compute_policy(run_dir: Path, profile: str) -> dict[str, Any]:
 
 
 def apply_notify_identity(run_dir: Path, *, research_title: str | None) -> dict[str, Any]:
+    """Write the loop's notify identity, renaming it when one is supplied.
+
+    ``notify_title`` and ``display_name`` are aliases of ``research_title``:
+    ``resolve_loop_notify_identity`` takes the first non-empty of the three, and
+    it reads ``notify.json`` before standing orders. So ``setdefault`` was wrong
+    for an explicit ``--research-title``: on a loop that already had the keys
+    every assignment was a no-op, ``apply_standing_orders`` wrote the new title
+    to ``loop_state.json`` anyway, and the stale file then outranked it. The
+    command exited ``ok`` and every later notification -- and the Zulip topic
+    slug derived from the title -- kept the old name.
+
+    Without an explicit title the old defaulting is right: it is filling a gap,
+    not renaming anything.
+    """
+
     path = run_dir / "notify.json"
     existing = _read_json_strict(path)
     data = dict(existing) if existing else {}
-    title = research_title or data.get("research_title") or data.get("notify_title")
-    if title:
-        data.setdefault("research_title", str(title))
-        data.setdefault("notify_title", str(title))
-        data.setdefault("display_name", str(title))
+    if research_title:
+        for key in ("research_title", "notify_title", "display_name"):
+            data[key] = str(research_title)
+    else:
+        title = data.get("research_title") or data.get("notify_title")
+        if title:
+            data.setdefault("research_title", str(title))
+            data.setdefault("notify_title", str(title))
+            data.setdefault("display_name", str(title))
     data.setdefault("body_profile", "operator_full")
     if not path.is_file() or research_title:
         _atomic_write_json(path, data)

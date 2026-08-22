@@ -60,6 +60,8 @@ class CredentialProjectionProbeTests(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
                 check=False,
             )
@@ -91,6 +93,8 @@ class CredentialProjectionProbeTests(unittest.TestCase):
             env={**os_child_env(), "PATH": os.environ.get("PATH", "")},
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             check=False,
         )
@@ -162,6 +166,8 @@ class CredentialProjectionProbeTests(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=30,
                 check=False,
             )

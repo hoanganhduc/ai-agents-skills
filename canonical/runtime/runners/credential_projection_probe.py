@@ -158,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         command.extend(("--forbid-key", key))
     try:
         result = subprocess.run(
-            command, env=child_env, capture_output=True, text=True, timeout=15, check=False
+            command, env=child_env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, check=False
         )
     except (OSError, subprocess.SubprocessError):
         return _fail(lane, "checker-launch-failed")

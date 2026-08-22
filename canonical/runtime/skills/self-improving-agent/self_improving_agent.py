@@ -15,12 +15,26 @@ HEADER_RE = re.compile(r"^## \[(.+?)\]\s*(.*)$")
 
 SAFETY_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        # Flags are matched as a set, not by position. Pinning the short
+        # spellings to the two slots after "rm " meant any long option or any
+        # extra flag pushed the target out of reach, so "rm --no-preserve-root
+        # -rf /" -- the one spelling GNU rm does not refuse on its own -- was
+        # waved through. Kept byte-for-byte in step with the POSIX-ERE twin in
+        # canonical/skills/self-improving-agent/scripts/check_command_safety.sh.
         "destructive rm targeting root or home directory",
-        re.compile(r"rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?(/|/home(\s|$)|~/?(\s|$))"),
+        re.compile(r"rm(\s+-\S*)*\s+[\"]?(/|~|\$HOME|\$\{HOME\})"),
     ),
     (
+        # Same shape of defect: the force flag had to precede the refspec, so
+        # "git push origin main --force" matched nothing. Presence of the flag
+        # and of the protected branch is now tested independently of order.
         "force push to main/master",
-        re.compile(r"git\s+push\s+.*--force.*\s+(origin\s+)?(main|master)\b", re.IGNORECASE),
+        re.compile(
+            r"git\s+push"
+            r"(?=.*(?:^|\s)(?:--force(?:[-=]\S*)?|-[a-zA-Z]*f[a-zA-Z]*)(?:\s|$))"
+            r"(?=.*(?:^|[\s/:])(?:main|master)(?:[^\w.-]|$))",
+            re.IGNORECASE,
+        ),
     ),
     (
         "pipe-to-shell pattern",

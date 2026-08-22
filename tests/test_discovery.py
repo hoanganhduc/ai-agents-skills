@@ -13,6 +13,7 @@ from unittest.mock import patch
 from installer.ai_agents_skills.discovery import (
     candidates_for_platform,
     check_capabilities,
+    detect_version,
     discover_python_package,
     discover_tool,
     discover_wsl_candidate,
@@ -439,6 +440,55 @@ class DiscoveryTests(unittest.TestCase):
             )
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["detection"], "site-packages")
+
+
+@unittest.skipIf(os.name == "nt", "the stub tool is a POSIX shell script")
+class VersionBannerDecodingTests(unittest.TestCase):
+    """A version banner is whatever bytes the tool chose to write.
+
+    `--version` output is one of the least controlled byte streams a program reads:
+    TeX Live, fontconfig and a long tail of C tools still emit latin-1 copyright
+    lines. `detect_version` captured it with text=True and no encoding, so the decode
+    raised UnicodeDecodeError, the surrounding `except Exception: continue` swallowed
+    it, and an installed tool was recorded as version "unknown".
+    """
+
+    # "Copyright (c) 2024 Jose Munoz", latin-1. 0xa9/0xe9/0xf1 are all invalid UTF-8.
+    BANNER = "tool 4.2. Copyright \xa9 Jos\xe9 Mu\xf1oz.".encode("latin-1")
+
+    def _stub_on_path(self, tmp: Path) -> None:
+        octal = "".join("\\%03o" % byte for byte in self.BANNER)
+        stub = tmp / "aas-banner-stub"
+        stub.write_text(f"#!/bin/sh\nprintf '{octal}\\n'\nexit 0\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+    def test_a_latin1_banner_is_read_rather_than_lost(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._stub_on_path(tmp)
+            with patch.dict(os.environ, {"PATH": f"{tmp}{os.pathsep}{os.environ['PATH']}"}):
+                # The stub really does exit 0 with exactly those bytes.
+                probe = subprocess.run(
+                    [str(tmp / "aas-banner-stub"), "--version"], capture_output=True
+                )
+                self.assertEqual(probe.returncode, 0)
+                self.assertEqual(probe.stdout, self.BANNER + b"\n")
+
+                version = detect_version("aas-banner-stub")
+
+        self.assertNotEqual(version, "unknown")
+        self.assertTrue(version.startswith("tool 4.2."), version)
+
+    def test_an_ascii_banner_is_unaffected(self) -> None:
+        """The control: pinning the codec must not change the ordinary case."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            stub = tmp / "aas-ascii-stub"
+            stub.write_text("#!/bin/sh\necho 'tool 4.2'\nexit 0\n", encoding="utf-8")
+            stub.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": f"{tmp}{os.pathsep}{os.environ['PATH']}"}):
+                self.assertEqual(detect_version("aas-ascii-stub"), "tool 4.2")
 
 
 if __name__ == "__main__":

@@ -4,7 +4,9 @@
 # The driver is implemented cross-platform inside the runtime as the `drive`
 # subcommand; this shim only forwards its arguments there so existing POSIX call
 # sites keep working. `drive` runs one iteration command per loop (with
-# AUTOLOOP_DRIVER=1, AUTOLOOP_DIR, AUTOLOOP_ROOT, AUTOLOOP_PROMPT exported) until
+# AUTOLOOP_DRIVER=1, AUTOLOOP_DIR and AUTOLOOP_ROOT exported, plus
+# AUTOLOOP_PROMPT for --cmd; with --provider the prompt travels privately by
+# argv or stdin instead of the environment) until
 # the runtime reports the loop is done, the command fails too many times in a
 # row, or the state cannot be read, and it fails safe (stops) on any inability
 # to determine state.

@@ -106,6 +106,8 @@ class ZoteroSendFileTests(unittest.TestCase):
                 ),
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=15,
             )
@@ -176,6 +178,8 @@ class ZoteroSendFileTests(unittest.TestCase):
                 input="{}",
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=15,
             )
@@ -229,6 +233,8 @@ class ZoteroSendFileTests(unittest.TestCase):
                 env=env,
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=15,
             )
@@ -272,6 +278,8 @@ class ZoteroSendFileTests(unittest.TestCase):
                 env=env,
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=15,
             )

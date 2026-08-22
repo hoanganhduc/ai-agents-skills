@@ -39,7 +39,6 @@ class RuntimeSourceIntegrityTest(unittest.TestCase):
         rroot.mkdir(parents=True)
         with patch.object(rt, "RUNTIME_SOURCE_ROOT", src_root):
             action = rt.runtime_file_action(
-                root=root,
                 runtime_root=rroot,
                 entry=_entry(),
                 skill="demo",

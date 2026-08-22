@@ -98,7 +98,7 @@ def _synth_piper(text: str, voice: Optional[str], out_wav: Path) -> str:
     if not piper:
         raise TTSUnavailable("piper CLI not found on PATH or in the active runtime venv")
     subprocess.run([piper, "-m", chosen, "-f", str(out_wav)],
-                   input=text, text=True, check=True, capture_output=True)
+                   input=text, text=True, encoding="utf-8", errors="replace", check=True, capture_output=True)
     return chosen
 
 
@@ -111,7 +111,7 @@ def synth(text: str, locale: str, role: str, engine_policy: str, work: Path,
     prosody = languages.prosody_for(locale, role)
     errors: list[str] = []
     for engine in languages.engine_ladder(locale, engine_policy):
-        voice = languages.resolve_voice(locale, engine, role, gender, explicit_voice)
+        voice = languages.resolve_voice(locale, engine, gender, explicit_voice)
         try:
             if engine == "edge":
                 raw = work / f"slide_{index:04d}_edge.mp3"

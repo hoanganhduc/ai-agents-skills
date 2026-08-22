@@ -274,8 +274,6 @@ def wrap_display_math(tex_content: str) -> str:
         "alignat", "alignat\\*",
     ]
     for env_pattern in envs:
-        # Build plain env name for use in replacement
-        env_name_raw = env_pattern.replace("\\*", "*")
         begin_pat = r"(\\begin\{" + env_pattern + r"\})"
         end_pat = r"(\\end\{" + env_pattern + r"\})"
 
@@ -322,7 +320,13 @@ def build_reviewer_todo(ann: dict, todo_macro: str = "\\todo") -> str:
     title = ann.get("title", "")
     body = ann.get("body", "")
 
-    label = f"[{severity_upper}, {line_range} — {type_label}: {_escape_for_latex(title)}]"
+    # The whole label is escaped once at emission, below. Escaping the title here
+    # too ran it through utf8tolatex twice, and that function is not idempotent:
+    # a title reading "Erdős bound is off by 50%" came out as
+    # "Erd{\\{}{\\textbackslash}H{\\{}o{\\}}{\\}}s ... 50{\\{}{\\textbackslash}{\\%}{\\}}",
+    # so every special and every non-ASCII character in a reviewer's title
+    # typeset as literal macro text in the annotated PDF.
+    label = f"[{severity_upper}, {line_range} — {type_label}: {title}]"
     body_escaped = _escape_for_latex(body)
 
     return (
@@ -388,7 +392,11 @@ def build_verifier_addition_todo(issue: dict, todo_macro: str = "\\todo") -> str
     title = issue.get("title", "")
     body = issue.get("body", "")
 
-    label = f"[+ VERIFIER ADDITION -- {severity_upper}, {line_range}]"
+    # The title belongs in the label, the way build_reviewer_todo puts it there for
+    # a record of the same shape. It was read and dropped, which left the annotated
+    # LaTeX PDF as the one artifact of the three that renders `additional_issues`
+    # without a title -- pdf_annotator.py and zotero_note.py both print it.
+    label = f"[+ VERIFIER ADDITION -- {severity_upper}, {line_range}: {title}]"
     body_escaped = _escape_for_latex(body)
 
     return (
@@ -640,7 +648,7 @@ def precompile_preview(source_dir: str) -> Tuple[Optional[str], Optional[str]]:
         result = subprocess.run(
             ["latexmk", "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
             cwd=preview_dir,
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         )
     except subprocess.TimeoutExpired:
         return None, "pre-compile timed out after 120s"

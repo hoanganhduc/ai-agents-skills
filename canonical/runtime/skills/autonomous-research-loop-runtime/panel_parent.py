@@ -505,6 +505,18 @@ def _artifact_component(value: str, *, label: str) -> str:
     return clean
 
 
+# Every type check in this module reads the ``fstat`` that follows the open, so
+# the open itself has to be the part that cannot block. ``O_RDONLY`` on a FIFO
+# waits for a writer, and a FIFO planted in an attested provider dependency root
+# parked the walk there permanently: it runs in the panel worker thread before
+# any provider is spawned, so the per-provider timeout was never armed and the
+# thread pool's own shutdown joined on it. ``O_NONBLOCK`` hands back a
+# descriptor immediately for a FIFO or a slow device and lets the ``S_ISREG``
+# check one line later do its job; regular files and directories ignore it, and
+# so does the ``os.read`` loop that follows.
+NONBLOCKING_OPEN = getattr(os, "O_NONBLOCK", 0)
+
+
 def _open_real_directory_descriptor(
     path: Path, *, create: bool, purpose: str
 ) -> tuple[Path, int | None]:
@@ -703,13 +715,19 @@ def _secure_read_text(
     if not name or name in {".", ".."} or Path(name).name != name:
         raise PanelArtifactError(f"invalid panel artifact name: {name!r}")
     if os.name == "nt":  # lstat check is safe after the primary worker exits.
+        # Read through the directory the chain check just validated.  The validated
+        # absolute parent was bound and then dropped, and the lstat and the read went
+        # back to the caller's path, so the one call in this branch that establishes
+        # the parent chain is real looked load-bearing while contributing nothing to
+        # the operation that follows it.
         directory = _assert_real_directory(path.parent)
-        info = os.lstat(path)
+        target = directory / name
+        info = os.lstat(target)
         if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
             raise PanelArtifactError(f"panel artifact is not a regular file: {path}")
         if info.st_size > max_bytes:
             raise PanelArtifactError(f"panel artifact exceeds {max_bytes} bytes: {path}")
-        return path.read_bytes().decode("utf-8", errors=errors)
+        return target.read_bytes().decode("utf-8", errors=errors)
     _directory, dir_fd = _open_real_directory_descriptor(
         path.parent, create=False, purpose="input"
     )
@@ -718,7 +736,10 @@ def _secure_read_text(
         try:
             file_fd = os.open(
                 name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | NONBLOCKING_OPEN
+                | getattr(os, "O_BINARY", 0),
                 dir_fd=dir_fd,
             )
         except FileNotFoundError:
@@ -827,7 +848,10 @@ def _read_executable_attestation(
     # O_BINARY: Windows opens descriptors in text mode, which rewrites CRLF and
     # truncates at Ctrl-Z, so the digest would never match the file on disk.
     flags = (
-        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | NONBLOCKING_OPEN
+        | getattr(os, "O_BINARY", 0)
     )
     try:
         fd = os.open(path if parent_fd is None else path.name, flags, dir_fd=parent_fd)
@@ -1012,6 +1036,7 @@ def _dependency_tree_attestation_by_lstat(
                 child_path,
                 os.O_RDONLY
                 | getattr(os, "O_NOFOLLOW", 0)
+                | NONBLOCKING_OPEN
                 | getattr(os, "O_BINARY", 0),
             )
             try:
@@ -1112,7 +1137,7 @@ def _dependency_tree_attestation(root: Path) -> dict[str, Any]:
         for name in sorted(os.listdir(directory_fd)):
             if name in {".", ".."} or "/" in name or "\x00" in name:
                 raise PanelIsolationError("provider dependency tree has an unsafe name")
-            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | NONBLOCKING_OPEN
             child_fd = os.open(name, flags, dir_fd=directory_fd)
             try:
                 before = os.fstat(child_fd)
@@ -2520,7 +2545,10 @@ def _copy_sealed_credential(source: Path, vault: Path, index: int) -> Path:
         try:
             source_fd = os.open(
                 source.name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | NONBLOCKING_OPEN
+                | getattr(os, "O_BINARY", 0),
                 dir_fd=parent_fd,
             )
         except FileNotFoundError:

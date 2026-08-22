@@ -208,6 +208,8 @@ def _default_modal_liveness_probe(config: Any) -> tuple[bool, str]:  # pragma: n
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -267,6 +269,16 @@ KNOWN_JOB_KEYS = frozenset({
 })
 
 
+# The constraint keys this message directs a caller to, and the widths
+# `build_estimate` sizes on. Both were written by hand and drifted: the message and
+# the sizing-gate template say `cores`, and `build_estimate` read only
+# `parallelism`/`cpu`, so a manifest written exactly as instructed planned as a
+# one-core job -- Hetzner picked the cheapest 2-vCPU box for a 48-way sweep and
+# Modal reported capacity_ok with no oversubscription note.
+PARALLELISM_CONSTRAINT_KEYS = ("parallelism", "cores", "cpu")
+DOCUMENTED_CONSTRAINT_KEYS = ("cores", "memory_mb", "core_hours", "gpu")
+
+
 def unknown_manifest_keys_error(job: dict[str, Any]) -> str | None:
     """Reject a job manifest carrying keys the planner does not read. Returns an error
     naming the offending keys and the valid set, or None when every key is recognized."""
@@ -276,9 +288,10 @@ def unknown_manifest_keys_error(job: dict[str, Any]) -> str | None:
     return (
         f"Unrecognized top-level job manifest key(s): {', '.join(unknown)}. "
         f"Valid keys are: {', '.join(sorted(KNOWN_JOB_KEYS))}. "
-        "Resource requests belong under 'constraints' (cores, memory_mb, core_hours, "
-        "gpu); the flat resource block is the Kaggle bundle manifest.json dialect, not "
-        "this one. Fix the manifest and re-plan."
+        f"Resource requests belong under 'constraints' "
+        f"({', '.join(DOCUMENTED_CONSTRAINT_KEYS)}); the flat resource block is the "
+        "Kaggle bundle manifest.json dialect, not this one. Fix the manifest and "
+        "re-plan."
     )
 
 
@@ -295,6 +308,25 @@ def modal_capacity_check(modal_fit: Any, decision: str) -> tuple[bool, str]:
         return True, "modal_capacity_unchecked:no_estimate_supplied"
     fits, reason = modal_fit(decision)
     return bool(fits), str(reason)
+
+
+def modal_trail_reason(liveness_reason: Any, fit_reason: Any, adequate: bool) -> str:
+    """The `reason` a Modal routing-trail hop carries.
+
+    `capacity_fit` documents its cpu note as "sizing information the caller needs in
+    the trail, not grounds to refuse the lane", and modal-research-compute/SKILL.md
+    tells the agent to "read Modal's trail reason: ... `cores_oversubscribed=...`
+    means it fits but will run at a fraction of the estimated throughput". Every call
+    site kept the capacity string only when the lane was REFUSED, so on the one path
+    where that note exists to be read -- the lane is taken, over-subscribed -- the
+    trail carried the liveness string alone and the note was computed and dropped.
+
+    A refusal still reports the capacity verdict by itself: it is the decisive reason.
+    """
+
+    if not adequate:
+        return str(fit_reason)
+    return f"{liveness_reason}; {fit_reason}"
 
 
 def select_remote_lane(*, order: list[str], modal_decision: str, gpu_signal: bool,
@@ -326,10 +358,8 @@ def select_remote_lane(*, order: list[str], modal_decision: str, gpu_signal: boo
         elif backend == "modal":
             ok, reason = modal_ok() if callable(modal_ok) else modal_ok
             adequate, fit_reason = modal_capacity_check(modal_fit, modal_decision)
-            if not adequate:
-                reason = fit_reason
             trail.append({"backend": "modal", "available": bool(ok), "adequate": adequate,
-                          "reason": reason})
+                          "reason": modal_trail_reason(reason, fit_reason, adequate)})
             if ok and adequate:
                 return modal_decision, "modal", trail
         elif backend == "hetzner":
@@ -390,19 +420,25 @@ def select_gpu_lane(*, order: list[str], local_gpu: bool, config: Any,
                 continue
             # Kaggle offers free GPU kernels; `kg.available` already folds in the weekly
             # GPU-hour self-cap, so an exhausted quota makes the lane unavailable here.
+            # Adequacy is the probe's *other* verdict and has to be read separately: a
+            # GPU job whose peak RSS exceeds one kernel's RAM comes back available and
+            # inadequate. Publishing `adequate` as a copy of `available` put
+            # "adequate": true in the routing trail directly beside the probe's own
+            # "peak_ram 64GB exceeds kernel RAM 32GB" and sent the job to a kernel that
+            # would OOM it. The CPU cascade above reads both verdicts; so does this one.
             kg_result = kg() if callable(kg) else kg
             available = bool(kg_result.get("available"))
+            adequate = bool(kg_result.get("adequate"))
             trail.append({"backend": "kaggle", "gpu_capable": True, "available": available,
-                          "adequate": available, "reason": str(kg_result.get("reason", ""))})
-            if available:
+                          "adequate": adequate, "reason": str(kg_result.get("reason", ""))})
+            if available and adequate:
                 return "kaggle_gpu", "kaggle", trail
         elif backend == "modal":
             ok, reason = modal_ok() if callable(modal_ok) else modal_ok
             adequate, fit_reason = modal_capacity_check(modal_fit, "modal_gpu")
-            if not adequate:
-                reason = fit_reason
             trail.append({"backend": "modal", "gpu_capable": True, "available": bool(ok),
-                          "adequate": adequate, "reason": reason})
+                          "adequate": adequate,
+                          "reason": modal_trail_reason(reason, fit_reason, adequate)})
             if ok and adequate:
                 return "modal_gpu", "modal", trail
         elif backend == "hetzner":
@@ -1226,7 +1262,7 @@ def plan_job(
             "backend": "modal",
             "available": modal_available,
             "adequate": adequate,
-            "reason": modal_reason if adequate else fit_reason,
+            "reason": modal_trail_reason(modal_reason, fit_reason, adequate),
         })
         if modal_available and adequate:
             decision = modal_decision
@@ -1505,8 +1541,15 @@ def build_estimate(
 ) -> dict[str, Any]:
     """Backend-agnostic job estimate consumed by the local veto and the Hetzner probe.
     core_hours is the manifest's explicit core-hour estimate when present, else a floor of
-    one core's wall time; parallelism is the requested fan-out width."""
-    parallelism = int(constraints.get("parallelism") or constraints.get("cpu") or 1)
+    one core's wall time; parallelism is the requested fan-out width under any of the
+    spellings the planner documents (PARALLELISM_CONSTRAINT_KEYS), first one present
+    wins."""
+    parallelism = 1
+    for key in PARALLELISM_CONSTRAINT_KEYS:
+        value = constraints.get(key)
+        if value:
+            parallelism = int(value)
+            break
     core_hours = constraints.get("core_hours")
     if core_hours in (None, 0, 0.0):
         core_hours = parameters.get("core_hours")

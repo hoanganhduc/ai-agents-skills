@@ -802,7 +802,7 @@ def _fanout_plan(ws: Path, job: dict) -> dict:
     env["KAGGLE_API_TOKEN"] = "dummy-token-for-offline-test"
     proc = subprocess.run(
         [sys.executable, "-m", "research_compute", "fanout-plan", str(ws / "job.json")],
-        env=env, capture_output=True, text=True, timeout=60,
+        env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

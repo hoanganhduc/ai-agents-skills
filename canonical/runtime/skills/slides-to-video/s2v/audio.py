@@ -35,7 +35,7 @@ def _missing(name: str) -> str:
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(argv, check=True, capture_output=True, text=True)
+    return subprocess.run(argv, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def probe_duration(path: Path) -> float:

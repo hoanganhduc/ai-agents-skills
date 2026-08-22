@@ -210,6 +210,8 @@ def _run_runtime_json(
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
     except OSError:
         return 1, {}
@@ -867,7 +869,6 @@ def cmd_start(args: argparse.Namespace) -> int:
     supervisor = build_supervisor_command(
         pack_parent=RUNTIME_PARENT,
         loop_dir=loop,
-        project_root=root,
     )
     # The supervisor is only a supervisor when it has a failover config; without
     # one it exits 2 before any drive iteration, so fall back to direct drive.
@@ -1116,6 +1117,8 @@ def cmd_status(args: argparse.Namespace) -> int:
                 [_python(), str(_runtime_py()), "goal-focus", "status", "--dir", str(loop)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=60,
                 check=False,
             )
@@ -1149,6 +1152,8 @@ def cmd_drain(args: argparse.Namespace) -> int:
                 [_python(), str(_runtime_py()), "goal-focus", *extra, "--dir", str(loop)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
                 check=False,
             )
@@ -1218,6 +1223,8 @@ def _goal_focus_validate_errors(loop: Path) -> list[str]:
             [_python(), str(_runtime_py()), "goal-focus", "validate", "--dir", str(loop)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             check=False,
         )
@@ -1256,6 +1263,8 @@ def _detect_notify_channels() -> list[str] | None:
             [_python(), "-c", snippet, str(RUNTIME_PARENT)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=120,
             check=False,
         )

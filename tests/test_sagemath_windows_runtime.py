@@ -47,6 +47,8 @@ class SageMathWindowsRuntimeTests(unittest.TestCase):
             [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), "--timeout", "0", "print(2)"],
             check=False,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=30,
         )
@@ -57,6 +59,8 @@ class SageMathWindowsRuntimeTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), "print(2)"],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,

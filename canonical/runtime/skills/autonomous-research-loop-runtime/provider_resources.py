@@ -828,6 +828,8 @@ if (Path('/sys/fs/cgroup') / 'memory.max').exists():
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
             env=execution_environment,
             check=False,
@@ -881,6 +883,8 @@ def cleanup_resource_scope(scope_unit: str) -> str | None:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -909,6 +913,8 @@ def cleanup_resource_scope(scope_unit: str) -> str | None:
             ],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -933,6 +939,8 @@ def cleanup_resource_scope(scope_unit: str) -> str | None:
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 check=False,
             )

@@ -116,7 +116,7 @@ def compile_latex(
         result = subprocess.run(
             ["latexmk", "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
             cwd=annotated_dir,
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         )
     except subprocess.TimeoutExpired:
         return None, "compile timed out after 120s", []
@@ -142,7 +142,7 @@ def compile_latex(
             result2 = subprocess.run(
                 ["latexmk", "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
                 cwd=annotated_dir,
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
             )
             log2 = result2.stdout + result2.stderr
             with open(log_path, "a", encoding="utf-8") as f:
@@ -200,7 +200,7 @@ def _send_file(
     try:
         proc = subprocess.run(
             [script],
-            input=request, capture_output=True, text=True, timeout=180,
+            input=request, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
             env=delivery_env,
         )
         try:

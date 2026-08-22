@@ -159,7 +159,7 @@ def _run_getscipapers(staging_dir, args, identifier):
     output_path = _staging_path(staging_dir, identifier)
     cmd = ["getscipapers", "getpapers"] + args + ["--output", output_path]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
             return output_path
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:

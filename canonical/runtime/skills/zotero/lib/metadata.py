@@ -416,6 +416,8 @@ def _fetch_url_via_wsl(url, config):
             command,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=240,
             check=False,
         )

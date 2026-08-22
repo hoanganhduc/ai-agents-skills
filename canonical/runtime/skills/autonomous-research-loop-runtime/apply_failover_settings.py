@@ -46,12 +46,26 @@ def main(argv: list[str] | None = None) -> int:
 
     run_dir = Path(args.dir).expanduser().resolve()
     out = run_dir / "failover.json"
+    # Read what the loop already has before deciding anything. --force is the
+    # flag documented as "overwrite existing file", so it is the one -- and the
+    # only one -- that discards this.
+    existing: dict[str, Any] = {}
+    if out.is_file() and not args.force:
+        existing = json.loads(out.read_text(encoding="utf-8"))
     data: dict[str, Any] = {"schema_version": "failover.v1"}
     if args.from_json:
         src = Path(args.from_json).expanduser().resolve()
         data.update(json.loads(src.read_text(encoding="utf-8")))
-    elif out.is_file() and not args.force:
-        data.update(json.loads(out.read_text(encoding="utf-8")))
+    # Settings already on disk outrank the seed. The seed used to take an
+    # exclusive branch that skipped the read above, so --from-json on a live
+    # loop replaced the whole file and still reported ok: tuned values went back
+    # to the seed's, keys the seed does not carry were dropped, and because
+    # resolve_loop_notify_identity reads failover.json before notify.json the
+    # loop was renamed and its Zulip topic slug moved mid-run. Without --force
+    # a seed may fill gaps -- that is how a loop picks up a field added to the
+    # example -- but the named flags below stay the way to change a value that
+    # is already set.
+    data.update(existing)
     if args.research_title:
         data["research_title"] = args.research_title
     if args.job_slug:

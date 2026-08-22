@@ -91,7 +91,7 @@ def _ensure_db(config, sync=False):
     if not os.path.exists(db_path) or sync:
         ds = DriveSync(config)
         with ds.db_lock():
-            downloaded = ds.pull_db(force=sync)
+            ds.pull_db(force=sync)
         if not os.path.exists(db_path):
             _err("metadata.db not available locally. Run 'cal sync' or check Drive credentials.")
     return db_path
@@ -317,7 +317,7 @@ def cmd_add(args):
         file_size = 0
         if args.file:
             fmt = os.path.splitext(args.file)[1].lower().lstrip(".")
-            file_name = make_filename(meta["title"], meta.get("authors"), meta.get("year"))
+            file_name = make_filename(meta["title"])
             file_size = os.path.getsize(args.file)
 
         with CalibreDB(config["db_local_path"]) as db:
@@ -458,7 +458,7 @@ def cmd_get(args):
             delivery_env["PATH"] = "/usr/bin:/bin"
             proc = subprocess.run(
                 [send_script],
-                input=request, capture_output=True, text=True, env=delivery_env
+                input=request, capture_output=True, text=True, encoding="utf-8", errors="replace", env=delivery_env
             )
             try:
                 result["send_result"] = json.loads(proc.stdout)
@@ -722,12 +722,12 @@ def cmd_convert(args):
         _err(f"Could not download source file from Drive ({src_fmt}).")
 
     dst_fmt = args.to_format.lower()
-    dst_name = make_filename(book["title"], book["authors"], book["year"])
+    dst_name = make_filename(book["title"])
     dst_path = os.path.join(config["staging_dir"], f"{dst_name}.{dst_fmt}")
 
     proc = subprocess.run(
         [ebook_convert, src_path, dst_path],
-        capture_output=True, text=True
+        capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
     if proc.returncode != 0:
         _err(f"ebook-convert failed: {proc.stderr[:500]}")

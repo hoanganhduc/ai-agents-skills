@@ -69,7 +69,10 @@ def main() -> None:
         return
 
     try:
-        digest = action_digest(
+        # Probe only: the per-request loop below recomputes the digest with each
+        # request's own nonce. What this call is here for is its exception, which
+        # denies rather than letting an undigestible payload proceed.
+        action_digest(
             provider=provider,
             job_id=job_id,
             workspace_root=cwd,

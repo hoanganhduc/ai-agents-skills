@@ -3101,7 +3101,7 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                 root = Path(tmp)
                 _initialize(root)
                 plan = _activate(root)
-                staged = _stage_enforced_candidate(
+                _stage_enforced_candidate(
                     root,
                     plan,
                     {

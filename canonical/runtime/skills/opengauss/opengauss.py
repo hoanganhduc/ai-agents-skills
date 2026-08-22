@@ -426,10 +426,6 @@ def cmd_launch(args: argparse.Namespace) -> int:
         )
         return 4
 
-    # Reuse preflight logic unless test force
-    class NS:
-        work_dir = str(work)
-
     if not args.force_unqualified:
         # Capture preflight by calling logic
         spike = load_spike(work)
@@ -1019,6 +1015,8 @@ def _run_capture(
             argv,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             cwd=cwd,
             timeout=timeout_sec,

@@ -92,6 +92,8 @@ class CalibreConfigSecretsTests(unittest.TestCase):
                 cwd=CALIBRE_ROOT,
                 env=env,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 check=False,
             )

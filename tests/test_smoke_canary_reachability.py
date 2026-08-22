@@ -117,7 +117,7 @@ def reachable_canaries(
         env["PATH"] = f"{interpreter_bin}:/usr/bin:/bin"
         env["HOME"] = str(work)
         completed = subprocess.run(
-            ["bash", str(runner), relative], env=env, text=True, capture_output=True, timeout=120
+            ["bash", str(runner), relative], env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=120
         )
         seen = dict(
             line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line
