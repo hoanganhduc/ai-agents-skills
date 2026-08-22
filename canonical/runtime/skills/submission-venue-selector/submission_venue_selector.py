@@ -349,6 +349,41 @@ def latest_privacy_guard_ok(run_dir: Path) -> bool:
     return bool(guards and guards[-1].get("status") == "ok")
 
 
+UNIMPLEMENTED_CAPABILITY_FLAGS = (
+    (
+        "allow_downloads",
+        "--allow-downloads",
+        "paper download is out of scope; use zotero, then getscipapers-requester",
+    ),
+    (
+        "allow_zotero_mutation",
+        "--allow-zotero-mutation",
+        "Zotero mutation is out of scope; use zotero",
+    ),
+    (
+        "allow_unpaywall_email",
+        "--allow-unpaywall-email",
+        "unpaywall is not an implemented live provider in this runtime",
+    ),
+)
+
+
+def ensure_unimplemented_gates_refused(args: argparse.Namespace) -> None:
+    """Refuse a permission flag whose capability this runtime does not have.
+
+    The plan calls these "fail-closed gates for actions that are forbidden by
+    default", and this skill's routing boundary sends paper download and Zotero
+    mutation to other skills. No code path in this module performs any of the
+    three, and nothing read the flags, so passing one parsed cleanly and granted
+    nothing -- leaving a caller unable to tell "enabled, and there was nothing to
+    do" apart from "never enabled at all". Refusing names the boundary instead.
+    """
+
+    for dest, flag, routing in UNIMPLEMENTED_CAPABILITY_FLAGS:
+        if getattr(args, dest, False):
+            raise SelectorError(f"{flag} is not supported by this skill: {routing}")
+
+
 def allowed_providers(args: argparse.Namespace) -> set[str]:
     return set(getattr(args, "allow_provider", None) or [])
 
@@ -547,8 +582,21 @@ def command_privacy_gate(args: argparse.Namespace) -> int:
     return json_result({"status": guard["status"], "unsafe_query_ids": unsafe}, 1 if guard["status"] == "blocked" else 0)
 
 
-def provider_records(args: argparse.Namespace) -> list[dict[str, Any]]:
+def provider_records(args: argparse.Namespace, run_dir: Path) -> list[dict[str, Any]]:
+    """Provider capability rows for `provider_status.json`.
+
+    `network_allowed` has to answer the question the next network command asks.
+    `ensure_network_allowed` refuses unless the workspace holds an ok privacy
+    guard, so a row computed from the flags alone reported `provider_status: ok`
+    and `network_allowed: true` for a workspace whose very next `resolve` failed
+    with "network access requires a prior ok privacy-gate in this workspace".
+    `provider_status.json` is a required artifact and the documented workflow
+    records capabilities before resolving, so it must not assert an
+    authorization the runtime withholds.
+    """
+
     allow = set(args.allow_provider or [])
+    gate_ok = latest_privacy_guard_ok(run_dir)
     base = [
         ("openalex", ["resolve_by_doi", "resolve_by_title", "venue_recent_by_source", "citation_refs"]),
         ("crossref", ["resolve_by_doi", "resolve_by_title", "venue_recent_by_source"]),
@@ -565,7 +613,7 @@ def provider_records(args: argparse.Namespace) -> list[dict[str, Any]]:
             name not in {"semantic-scholar", "unpaywall"}
             or bool(os.environ.get("SEMANTIC_SCHOLAR_API_KEY" if name == "semantic-scholar" else "UNPAYWALL_EMAIL"))
         )
-        allowed = bool(args.allow_network and allow and name in allow)
+        allowed = bool(args.allow_network and allow and name in allow and gate_ok)
         if not implemented:
             provider_status = "unsupported"
         elif not configured:
@@ -585,6 +633,7 @@ def provider_records(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "auth_configured": configured,
                 "email_configured": bool(os.environ.get("UNPAYWALL_EMAIL")) if name == "unpaywall" else False,
                 "network_allowed": bool(allowed and configured),
+                "privacy_gate_ok": gate_ok,
                 "cache_ttl_days": 30,
                 "checked_at": now_iso(),
             }
@@ -594,7 +643,7 @@ def provider_records(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 def command_providers(args: argparse.Namespace) -> int:
     run_dir = workspace(args)
-    rows = provider_records(args)
+    rows = provider_records(args, run_dir)
     write_json(run_dir / "provider_status.json", {"schema_version": SCHEMA_VERSION, "providers": rows})
     update_status(run_dir, "providers", "ok")
     return json_result({"status": "ok", "providers": rows})
@@ -1914,6 +1963,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        ensure_unimplemented_gates_refused(args)
         return args.func(args)
     except SelectorError as exc:
         print(json.dumps({"status": "error", "error": str(exc)}, indent=2, sort_keys=True), file=sys.stderr)

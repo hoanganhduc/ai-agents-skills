@@ -72,8 +72,10 @@ Shared options:
   semantics.
 - `--retain-draft-text`: allow raw draft text in artifacts.
 - `--allow-downloads`, `--allow-zotero-mutation`, and
-  `--allow-unpaywall-email`: fail-closed gates for actions that are forbidden
-  by default.
+  `--allow-unpaywall-email`: accepted for compatibility but refused. No
+  download, Zotero-mutation, or Unpaywall provider is implemented in this
+  runtime, so passing one exits 2 with the routing target rather than granting
+  a capability that does not exist.
 
 Exit/status semantics:
 
