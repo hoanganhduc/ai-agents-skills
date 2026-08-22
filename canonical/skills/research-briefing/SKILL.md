@@ -54,7 +54,7 @@ Use the compact template in `references/brief-template.md` when helpful.
   style, and supplied examples before drafting; if they are absent, say so and
   state the style assumption before writing
 - for downstream writing, require the selected workflow to load
-  `writing-style-settings.md` and record `style_profile_ref`,
+  `writing-style-settings.md` and record `style_profile_ref`, `policy_hash`,
   `active_overlays`, `active_requirement_ids`, and `style_applied` before final
   output
 - if the task is simple, say so and skip heavyweight planning

@@ -685,8 +685,9 @@ Next Action: ...
 If material evidence remains unchecked, explicitly say `incomplete analysis`
 before the provisional recommendation.
 For finalizable prose artifacts created during the loop, record
-`style_profile_ref`, `active_overlays`, `active_requirement_ids`, and
-`style_applied` in the loop ledger or artifact-adjacent style record. Do not
+`style_profile_ref`, `policy_hash`, `active_overlays`,
+`active_requirement_ids`, and `style_applied` in the loop ledger or
+artifact-adjacent style record. Do not
 count a bare `style_applied: true` value as force-use evidence.
 
 ## Recommended templates

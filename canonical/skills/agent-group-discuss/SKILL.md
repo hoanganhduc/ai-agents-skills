@@ -68,7 +68,8 @@ syntheses, every role prompt and final synthesis must include a writing-style
 block referencing `writing-style-settings.md`. Add `math-manuscript-style.md`
 when the task involves mathematical manuscripts, TCS, graph theory, formal
 proofs, or LaTeX prose. Final artifacts must record `style_profile_ref`,
-`active_overlays`, `active_requirement_ids`, and `style_applied`. A bare
+`policy_hash`, `active_overlays`, `active_requirement_ids`, and
+`style_applied`. A bare
 `style_applied: true` assertion is not sufficient without the policy-load and
 requirement-selection evidence recorded by the workflow.
 

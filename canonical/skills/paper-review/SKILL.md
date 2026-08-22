@@ -53,8 +53,9 @@ Before writing review prose, load `writing-style-settings.md` and record the
 active style profile for the review artifact. If the paper is a mathematical,
 TCS, graph-theoretic, Lean, or LaTeX manuscript, also load
 `math-manuscript-style.md`. Final review artifacts should record
-`style_profile_ref`, `active_overlays`, `active_requirement_ids`, and
-`style_applied`; do not treat a bare `style_applied: true` assertion as
+`style_profile_ref`, `policy_hash`, `active_overlays`,
+`active_requirement_ids`, and `style_applied`; do not treat a bare
+`style_applied: true` assertion as
 evidence that the style policy was loaded.
 
 ## Zotero rule

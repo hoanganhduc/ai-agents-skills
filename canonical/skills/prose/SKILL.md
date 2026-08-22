@@ -31,8 +31,8 @@ This is a Codex adaptation of OpenClaw OpenProse, not the OpenProse VM itself.
 6. Before final writing, load `writing-style-settings.md`, select any relevant
    overlay such as `math-manuscript-style.md`, and record the active style
    profile in the workflow manifest or final synthesis artifact. Final writing
-   records should include `style_profile_ref`, `active_overlays`,
-   `active_requirement_ids`, and `style_applied`.
+   records should include `style_profile_ref`, `policy_hash`,
+   `active_overlays`, `active_requirement_ids`, and `style_applied`.
 
 ## Good patterns
 

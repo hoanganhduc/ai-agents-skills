@@ -124,7 +124,8 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 
 Companion review artifacts are still useful even if LaTeX compilation fails. Report the best available artifact and any compile error explicitly.
 Final review or annotation artifacts should include `style_profile_ref`,
-`active_overlays`, `active_requirement_ids`, and `style_applied`; a bare
+`policy_hash`, `active_overlays`, `active_requirement_ids`, and
+`style_applied`; a bare
 `style_applied: true` value is not enough unless it is backed by the workflow's
 record of the loaded policy and selected requirements.
 
