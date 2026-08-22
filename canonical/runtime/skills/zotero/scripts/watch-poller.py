@@ -38,7 +38,7 @@ def main():
     try:
         result = subprocess.run(
             [sys.executable, GSP_HELPER, "list-watches"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         if result.returncode != 0:
             print(f"Failed to list watches: {result.stderr}", file=sys.stderr)
@@ -78,7 +78,7 @@ def main():
         try:
             r = subprocess.run(
                 [sys.executable, ZOT_PY, "update", zotero_key, "--attach-pdf"],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
             )
             if r.returncode == 0:
                 out = json.loads(r.stdout)

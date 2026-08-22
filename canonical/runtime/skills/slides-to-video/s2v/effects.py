@@ -89,8 +89,12 @@ def _laser(eff: EffectSpec, total: float) -> str:
     )
 
 
-def _reveal(eff: EffectSpec, total: float) -> str:
-    """Cover regions with opaque masks that disappear at their reveal time."""
+def _reveal(eff: EffectSpec) -> str:
+    """Cover regions with opaque masks that disappear at their reveal time.
+
+    Each cover carries its own ``at``, so unlike the other effects this one needs
+    no clip duration; it used to accept ``total`` and never read it.
+    """
     covers = eff.params.get("covers", [])
     parts = []
     for cover in covers:
@@ -119,7 +123,7 @@ def build_filtergraph(width: int, height: int, fps: int, total: float, effects: 
         elif eff.type == "laser":
             chain.append(_laser(eff, total))
         elif eff.type == "reveal":
-            frag = _reveal(eff, total)
+            frag = _reveal(eff)
             if frag:
                 chain.append(frag)
     chain.append("format=yuv420p")

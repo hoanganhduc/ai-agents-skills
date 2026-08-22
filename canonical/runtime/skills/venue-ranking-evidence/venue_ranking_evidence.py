@@ -1424,7 +1424,6 @@ def filter_venues_by_types(
 def build_delivery(
     *,
     query: str,
-    status: str,
     warnings: list[str],
     synthetic: bool,
     matches: list[dict[str, Any]],
@@ -2389,7 +2388,6 @@ def cmd_lookup(args: argparse.Namespace) -> int:
 
     delivery = build_delivery(
         query=args.query,
-        status="not-ready",
         warnings=warnings,
         synthetic=synthetic,
         matches=matches,
@@ -2599,7 +2597,7 @@ def run_json_command(
     command: list[str], *, accepted_returncodes: tuple[int, ...] = (0,)
 ) -> dict[str, Any]:
     try:
-        completed = subprocess.run(command, text=True, capture_output=True, timeout=180)
+        completed = subprocess.run(command, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=180)
     except subprocess.TimeoutExpired as exc:
         raise VenueError("browser runtime exceeded its hard timeout") from exc
     if completed.returncode not in accepted_returncodes:
@@ -2962,9 +2960,13 @@ def cmd_proof(args: argparse.Namespace) -> int:
         resolved = delivery.get("resolved_venue_id") if isinstance(delivery, dict) else None
         if delivery.get("match_status") == "matched" and resolved:
             args.venue_id = str(resolved)
-        elif delivery.get("ambiguity_requires_selection"):
-            raise VenueError("ambiguous lookup: provide --venue-id before proof")
         else:
+            # More than one match and no --venue-id is the same dead end whether or
+            # not delivery recorded ambiguity_requires_selection, and the remedy the
+            # message names is the same one.  The branch that tested the flag raised
+            # the byte-identical error, so it only made the flag look load-bearing
+            # here; it still is where it is actually read, in the delivery report and
+            # the artifact.
             raise VenueError("ambiguous lookup: provide --venue-id before proof")
     selected = [row for row in observations if row.get("observation_id") == args.observation_id]
     if args.venue_id:

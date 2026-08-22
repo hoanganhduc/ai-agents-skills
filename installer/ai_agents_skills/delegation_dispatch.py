@@ -784,6 +784,8 @@ def probe_grok_remote_profile(
         help_result = subprocess.run(
             [executable, "--help"],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
             env=env,
@@ -800,6 +802,8 @@ def probe_grok_remote_profile(
         completed = subprocess.run(
             [executable, "doctor", "--json"],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
             env=env,
@@ -1419,6 +1423,8 @@ def run_command(
             parts,
             input=stdin_prompt,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
             env=command_env,

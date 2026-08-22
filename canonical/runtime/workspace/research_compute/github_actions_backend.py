@@ -49,7 +49,7 @@ def runner_multiplier(runner_os: Any) -> float:
 def _gh(args: list[str], *, timeout: float = 60.0) -> str:
     try:
         proc = subprocess.run(
-            ["gh", *args], capture_output=True, text=True, timeout=timeout
+            ["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise GhaError(
@@ -84,7 +84,16 @@ def _require_object(value: Any, context: str) -> dict[str, Any]:
 
 # ---- budget (fail-closed) ----------------------------------------------------
 
-def included_minutes(owner: str, config: Any) -> int:
+def included_minutes(config: Any) -> int:
+    """Included Actions minutes for the *authenticated* account.
+
+    Deliberately not owner-scoped, unlike its partner `minutes_used_this_cycle`:
+    the plan is read off `/user`, so it describes the token, and the lane is
+    user-owned-repo only -- an org owner fails closed in the usage probe, whose
+    `/users/{owner}/settings/billing/usage` call 404s for an organization. It
+    used to declare an `owner` it never read, which read as an owner-scoped plan
+    lookup this does not perform.
+    """
     override = getattr(config, "gha_included_minutes", 0)
     if override:
         return int(override)
@@ -281,7 +290,7 @@ def usage_probe(owner: str, config: Any) -> dict[str, float]:  # pragma: no cove
     hook for the lane's usage read; tests replace USAGE_PROBE (in-process) or inject a
     result via resources['liveness']['gha']. The real call fires only at plan/doctor time."""
     return {"used_this_cycle": float(minutes_used_this_cycle(owner)),
-            "included_minutes": float(included_minutes(owner, config))}
+            "included_minutes": float(included_minutes(config))}
 
 
 USAGE_PROBE = usage_probe
@@ -384,7 +393,7 @@ def budget_gate(*, job_id: str, repo_cfg: dict[str, Any], config: Any, state_roo
     owner = str(repo_cfg["repo"]).split("/")[0]
     try:
         used = minutes_used_this_cycle(owner)
-        inc = included_minutes(owner, config)
+        inc = included_minutes(config)
     except GhaError as exc:
         raise GhaBudgetError(f"fail-closed: could not verify GHA budget ({exc})") from exc
     fraction = float(getattr(config, "gha_max_usage_fraction", DEFAULT_MAX_USAGE_FRACTION))
@@ -578,7 +587,7 @@ def doctor(config: Any) -> dict[str, Any]:
     that the registered repos are private. Drives `gha_enabled`."""
     out: dict[str, Any] = {"gha_enabled": bool(getattr(config, "gha_enabled", False))}
     try:
-        status = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=20)
+        status = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
         out["gh_authenticated"] = status.returncode == 0
         out["billing_scope"] = "user" in (status.stdout + status.stderr)
     except Exception as exc:  # pragma: no cover

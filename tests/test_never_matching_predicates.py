@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,7 @@ from tests.test_zotero_webdav_metadata import load_zot_module
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_SKILLS = ROOT / "canonical" / "runtime" / "skills"
 SAFETY_SCRIPT = ROOT / "canonical" / "skills" / "self-improving-agent" / "scripts" / "check_command_safety.sh"
+SAFETY_RUNTIME = RUNTIME_SKILLS / "self-improving-agent" / "self_improving_agent.py"
 
 
 def load_module(name: str, path: Path, extra_syspath: Path | None = None):
@@ -288,6 +290,88 @@ class SafetyScriptPortabilityTest(unittest.TestCase):
                 self.assertNotIn(r"\b", rule, "use an explicit non-word class so the rule survives POSIX grep")
 
 
+class SafetyRuleFlagOrderTest(unittest.TestCase):
+    """The rm and push rules pinned flag spellings to fixed positions.
+
+    Both rules required the flags to sit immediately after the command word and
+    the operand to follow them directly, so one extra flag or one long-option
+    spelling moved the target out of reach and the rule matched nothing. The
+    checker then printed ALLOW -- a safety gate whose failure mode is a silent
+    pass. ``rm --no-preserve-root -rf /`` is the sharpest case: it is the one
+    spelling GNU rm does not refuse on its own, and it was waved through while
+    the ``rm -rf /`` that rm already refuses was blocked.
+    """
+
+    BLOCKED = (
+        'rm -rf /',
+        'rm -fr /',
+        'rm -rf /home/...',
+        'rm -rf ~',
+        'rm --no-preserve-root -rf /',
+        'rm --recursive --force /',
+        'rm --force --recursive /',
+        'rm -rf --no-preserve-root /',
+        'rm --no-preserve-root -rf /home',
+        'rm -rf $HOME',
+        'rm -rf ${HOME}',
+        'rm -rf "$HOME"',
+        'rm -rf ~/x',
+        'git push --force origin main',
+        'git push origin main --force',
+        'git push -f origin master',
+        'git push origin master --force-with-lease',
+    )
+
+    ALLOWED = (
+        'rm -rf ./build',
+        'rm -f file.txt',
+        'rm -rf build/',
+        'ls -la /',
+        'echo rm',
+        'git push origin feature/x',
+        'git push --force origin feature/x',
+        'git status',
+        'make test',
+    )
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.module = load_module("self_improving_agent_safety", SAFETY_RUNTIME)
+
+    def matched(self, command: str) -> bool:
+        return any(pattern.search(command) for _, pattern in self.module.SAFETY_RULES)
+
+    def test_every_dangerous_spelling_is_blocked(self) -> None:
+        for command in self.BLOCKED:
+            with self.subTest(command=command):
+                self.assertTrue(self.matched(command), f"waved through: {command}")
+
+    def test_ordinary_commands_are_still_allowed(self) -> None:
+        for command in self.ALLOWED:
+            with self.subTest(command=command):
+                self.assertFalse(self.matched(command), f"false positive: {command}")
+
+    @unittest.skipUnless(shutil.which("bash"), "bash is unavailable on this platform")
+    def test_the_shell_twin_reaches_the_same_verdict(self) -> None:
+        """The POSIX-ERE script and the Python rules must not drift apart.
+
+        They are separate implementations of one rule set: the script is what a
+        shell hook calls and the module is what the skill calls, so a fix landing
+        in only one of them leaves the other still waving the command through.
+        """
+
+        for command, expected in [(c, 2) for c in self.BLOCKED] + [(c, 0) for c in self.ALLOWED]:
+            with self.subTest(command=command):
+                proc = subprocess.run(
+                    ["bash", str(SAFETY_SCRIPT), command],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                self.assertEqual(proc.returncode, expected, proc.stdout + proc.stderr)
+
+
 class DeepResearchFallbackTest(unittest.TestCase):
     """The legacy-runtime fallback was gated on a string argparse never emits.
 
@@ -480,7 +564,7 @@ class SmokeSelftestBranchTest(unittest.TestCase):
         completed = subprocess.CompletedProcess(
             args=["selftest"], returncode=0, stdout=json.dumps(payload), stderr=""
         )
-        return self.smoke.validate_smoke_output({}, skill, completed, ["selftest"])
+        return self.smoke.validate_smoke_output(skill, completed, ["selftest"])
 
     def test_a_healthy_report_passes(self) -> None:
         for skill, payload in self.GOOD.items():

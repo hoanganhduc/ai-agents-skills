@@ -37,9 +37,9 @@ def _fontconfig_has_font(family: str) -> bool | None:
         return None
     try:
         if Path(fc).name.startswith("fc-match"):
-            out = subprocess.run([fc, family], capture_output=True, text=True, timeout=10)
+            out = subprocess.run([fc, family], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         else:
-            out = subprocess.run([fc, ":family"], capture_output=True, text=True, timeout=10)
+            out = subprocess.run([fc, ":family"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
     except Exception:
         return None
     return _squash(family) in _squash(out.stdout)

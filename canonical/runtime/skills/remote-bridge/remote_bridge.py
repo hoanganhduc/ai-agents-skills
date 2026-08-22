@@ -703,17 +703,28 @@ class Mailbox:
             "created_at": utc_now(),
             "consumed": False,
         }
-        # CAS: exclusive create
-        tmp = reply_path.with_suffix(".tmp")
-        try:
-            fd = os.open(str(reply_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            existing = self.read_json(reply_path) or {}
-            return {"already_resolved": True, **existing}
+        # CAS: write the reply in full, then link it into place.  Claiming the reply
+        # path with an exclusive create and filling it in afterwards leaves it
+        # observable as a zero-byte file for the length of the write: `check_approval`
+        # reads it, `read_json` returns None, `if not reply: continue` skips it, and an
+        # action that IS approved is denied; a second principal meanwhile takes the
+        # FileExistsError branch and gets back `{"already_resolved": True}` with no
+        # decision in it.  Linking a finished temp file gives the same first-writer-wins
+        # guarantee -- `os.link` raises FileExistsError when the destination is taken --
+        # and it is the pattern the loop runtime's registry writer already uses.
+        tmp = reply_path.with_name(f".{reply_path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        fd = os.open(str(tmp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             os.write(fd, (json.dumps(reply, indent=2, sort_keys=True) + "\n").encode("utf-8"))
         finally:
             os.close(fd)
+        try:
+            os.link(str(tmp), str(reply_path))
+        except FileExistsError:
+            existing = self.read_json(reply_path) or {}
+            return {"already_resolved": True, **existing}
+        finally:
+            os.unlink(tmp)
         req["status"] = "resolved"
         req["decision"] = decision
         self.write_json(jdir / "requests" / f"{request_id}.json", req)
@@ -2205,7 +2216,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     req["digest"] = dig
     req["digest_short"] = short_digest(dig)
     mb.write_json(mb.job_dir("testjob") / "requests" / f"{req['request_id']}.json", req)
-    r1 = mb.write_reply("testjob", req["request_id"], decision="allow", principal="user1")
+    mb.write_reply("testjob", req["request_id"], decision="allow", principal="user1")
     r2 = mb.write_reply("testjob", req["request_id"], decision="deny", principal="user2")
     if not r2.get("already_resolved"):
         return _fail("selftest", "cas_failed", "second reply should be already_resolved")
@@ -2409,8 +2420,11 @@ def cmd_send(args: argparse.Namespace) -> int:
             )
         try:
             notify_v2 = load_notify_v2_module()
+            # redact_event normalizes internally, and it has to do so *after*
+            # scrubbing: normalizing here first clipped the freeform sections
+            # while they still held unredacted credentials.
             event = notify_v2.redact_event(
-                notify_v2.ensure_event(load_event_json(event_source)),
+                load_event_json(event_source),
                 secret_values=cfg.secret_values(),
             )
             rendered = notify_v2.render_all(
@@ -2655,7 +2669,9 @@ def cmd_handle_command(args: argparse.Namespace) -> int:
         else str(getattr(args, "text", "") or "")
     )
     mb = Mailbox()
-    cfg = build_config(args.secrets_file)
+    # This command reads no secrets, but an explicit --secrets-file that is missing
+    # or malformed must still be an error rather than silently ignored.
+    build_config(args.secrets_file)
     principal = "local-operator"
     parsed = parse_aas_command(text, bot_username=args.bot_username)
     if not parsed:

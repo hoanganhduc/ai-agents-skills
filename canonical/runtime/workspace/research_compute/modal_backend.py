@@ -65,7 +65,7 @@ def deploy_modal_app(*, config: Any, workspace_root: Path) -> dict[str, Any]:
         "-e",
         config.modal_environment,
     ]
-    result = subprocess.run(command, cwd=workspace_root, env=env, capture_output=True, text=True)
+    result = subprocess.run(command, cwd=workspace_root, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return {
         "ok": result.returncode == 0,
         "command": command,

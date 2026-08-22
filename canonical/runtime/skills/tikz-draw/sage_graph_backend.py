@@ -395,6 +395,8 @@ def run_sage_graph_query(query: dict[str, Any]) -> dict[str, Any]:
             proc = subprocess.run(
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "--file", str(temp_file)],
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
             )
@@ -404,6 +406,8 @@ def run_sage_graph_query(query: dict[str, Any]) -> dict[str, Any]:
         proc = subprocess.run(
             ["bash", str(script), code],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             env=env,
         )

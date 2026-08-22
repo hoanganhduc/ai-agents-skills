@@ -1022,9 +1022,17 @@ def redact_event(
     human message.  In particular, a secret-shaped caller-supplied event ID is
     replaced with a deterministic opaque ID derived from the already-redacted
     envelope before anything is returned or persisted.
-    """
 
-    event = ensure_event(payload)
+    Scrubbing runs before normalization, not after it.  ``ensure_event`` clips
+    every freeform section to ``FREEFORM_SECTION_MAX``, and a configured secret
+    is removed by exact match, so normalizing first meant a section longer than
+    the cap could be cut through the middle of a credential: the tail went, the
+    head stayed, and ``str.replace`` no longer had anything to match.  The
+    configured list exists for exactly the credentials the shape heuristics
+    cannot recognize, so nothing downstream caught the surviving prefix.  It is
+    scrubbed again afterwards, because normalization also fills in defaults and
+    reassembles legacy payloads.
+    """
 
     def scrub(value: Any, *, key_hint: str = "") -> Any:
         if isinstance(value, str):
@@ -1040,7 +1048,14 @@ def redact_event(
             }
         return value
 
-    original_event_id = _text(event.get("event_id"))
+    # Normalize once unredacted to learn the event ID the caller would have got;
+    # it never leaves this function, and the comparison below still has to see
+    # whether scrubbing changed it.
+    original_event_id = _text(ensure_event(payload).get("event_id"))
+    try:
+        event = ensure_event(scrub(payload))
+    except NotifyValidationError as exc:
+        raise NotifyValidationError(f"redacted event invalid: {exc}") from exc
     event = scrub(event)
     if not isinstance(event, dict):  # defensive: the validated root is an object
         raise NotifyValidationError("redacted event root is not an object")

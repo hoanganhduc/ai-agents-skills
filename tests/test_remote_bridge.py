@@ -37,6 +37,8 @@ def _run(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedP
         [sys.executable, "-B", str(RB), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=_subprocess_env(env),
         check=False,
     )
@@ -274,6 +276,8 @@ class RemoteBridgeMailbox(unittest.TestCase):
             input="/aas status j5",
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=_subprocess_env(self.env),
             check=False,
         )
@@ -345,6 +349,8 @@ class RemoteBridgePathSync(unittest.TestCase):
                 [sys.executable, "-B", str(sync_py), "--json"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env,
                 check=False,
             )
@@ -372,6 +378,8 @@ class RemoteBridgeOpenClawPublish(unittest.TestCase):
                     argv,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=_subprocess_env(),
                     check=False,
                 )
@@ -413,6 +421,8 @@ class RemoteBridgeOpenClawPublish(unittest.TestCase):
                     [sys.executable, "-B", str(pub), "--dest", str(dest), "--json"],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=_subprocess_env(),
                     check=False,
                 )
@@ -473,6 +483,8 @@ class RemoteBridgeOpenClawPublish(unittest.TestCase):
                 [sys.executable, "-B", str(target_dir / "sync_remote_bridge_paths.py"), "--json"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=_subprocess_env(),
                 check=False,
             )
@@ -487,6 +499,8 @@ class RemoteBridgeOpenClawPublish(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=_subprocess_env(),
                 check=False,
             )
@@ -1185,6 +1199,67 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
             dry_run=False,
         )
 
+    # A long opaque key: the shape heuristics cannot recognize it, so only the
+    # configured-secret list removes it -- the case the clip defeated.
+    _LONG_API_KEY = "Qk9SR0lTVEhFV0FMUlVTMjAyNk9QQVFVRVRPS0VOWlo"
+
+    def _secrets_with_a_long_key(self, root: Path) -> Path:
+        path = self._secrets(root)
+        blob = json.loads(path.read_text(encoding="utf-8"))
+        blob["zulip"]["api_key"] = self._LONG_API_KEY
+        path.write_text(json.dumps(blob) + "\n", encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
+    def test_a_configured_key_cut_by_the_section_cap_never_reaches_a_transport(
+        self,
+    ) -> None:
+        """An event file is whatever wrote it, including sections over the cap.
+
+        ``send`` normalized the event before redacting it, so a section longer
+        than ``FREEFORM_SECTION_MAX`` was clipped while it still held the
+        credential. The cut landed inside the key, exact-match redaction then
+        found nothing, and the leading half went out in the Zulip body.
+        """
+
+        mod = self._mod()
+        notify = mod.load_notify_v2_module()
+        limit = notify.FREEFORM_SECTION_MAX
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            secrets = self._secrets_with_a_long_key(root)
+            event = self._event(mod)
+            lead = "the provider echoed its environment while probing the lane. "
+            head = len(self._LONG_API_KEY) // 2
+            filler = "x" * (limit - head - len(lead) - 1)
+            event["sections"]["completed"] = (
+                f"{lead}{filler} {self._LONG_API_KEY} and then some."
+            )
+            self.assertGreater(len(event["sections"]["completed"]), limit)
+            event_path = root / "event.json"
+            event_path.write_text(json.dumps(event), encoding="utf-8")
+            result = _run(
+                "send",
+                "--event-json",
+                str(event_path),
+                "--dry-run",
+                env={
+                    "REMOTE_BRIDGE_SECRETS_FILE": str(secrets),
+                    "AAS_REMOTE_BRIDGE_STATE": str(root / "state"),
+                    "AAS_REMOTE_BRIDGE_SYNC": "0",
+                },
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        emitted = result.stdout + result.stderr
+        longest = ""
+        for size in range(len(self._LONG_API_KEY), 3, -1):
+            if self._LONG_API_KEY[:size] in emitted:
+                longest = self._LONG_API_KEY[:size]
+                break
+        self.assertEqual(longest, "")
+        content = json.loads(result.stdout)["results"]["zulip"]["payload"]["content"]
+        self.assertIn(notify.REDACTION, content)
+
     def test_event_json_path_uses_markdown_and_stable_zulip_topic(self) -> None:
         mod = self._mod()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1571,6 +1646,8 @@ class RemoteBridgeStructuredNotify(unittest.TestCase):
                 input=json.dumps(self._event(mod)),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env,
                 check=False,
             )
@@ -1844,6 +1921,8 @@ raise SystemExit(bridge.cmd_send(args))
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=env,
                 )
                 for path in (first_path, retry_path)
@@ -2026,6 +2105,150 @@ class RemoteBridgeNotificationLockRetry(unittest.TestCase):
                     with lock:
                         pass
             self.assertEqual(attempts, 1)
+
+
+
+class RemoteBridgeReplyCommitIsAtomic(unittest.TestCase):
+    """A reply becomes visible whole or not at all.
+
+    `write_reply` used to claim the reply path with an exclusive create and write the
+    JSON into the open descriptor afterwards, which leaves the file present and empty
+    for the length of the write.  In that window `check_approval` reads it,
+    `read_json` returns None, the loop does `if not reply: continue`, and an action
+    that *is* approved is denied; a second principal arriving in the same window takes
+    the FileExistsError branch and is handed `{"already_resolved": True}` with no
+    decision in it.  The reply is now built in a temp file and linked into place, which
+    keeps first-writer-wins -- `os.link` raises FileExistsError when the destination is
+    taken -- while never publishing a half-written file.
+    """
+
+    def _module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("aas_remote_bridge_atomic", RB)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _armed(self, mod, work: Path):
+        mb = mod.Mailbox(work / "state")
+        mb.ensure()
+        mb.arm("testjob", provider="grok", cwd=str(work), force=True)
+        digest = mod.action_digest(
+            provider="grok",
+            job_id="testjob",
+            workspace_root=str(work),
+            tool="Bash",
+            args={"command": "echo hi"},
+            nonce="n1",
+        )
+        req = mb.create_request(
+            "testjob",
+            req_type="approve_tool",
+            provider="grok",
+            tool="Bash",
+            args={"command": "echo hi"},
+            summary="echo hi",
+        )
+        req["digest"] = digest
+        req["digest_short"] = mod.short_digest(digest)
+        mb.write_json(mb.job_dir("testjob") / "requests" / f"{req['request_id']}.json", req)
+        return mb, req, digest
+
+    def _observe_midwrite(self, mod, mb, req, digest):
+        """Stand exactly where a concurrent reader stands, inside the write."""
+
+        reply_path = mb.job_dir("testjob") / "replies" / f"{req['request_id']}.json"
+        seen: dict[str, object] = {}
+        real_write = os.write
+
+        def observing_write(fd, data):
+            if not seen:
+                seen["exists"] = reply_path.exists()
+                seen["parsed"] = mb.read_json(reply_path)
+                seen["other_principal"] = mb.write_reply(
+                    "testjob", req["request_id"], decision="deny", principal="user2"
+                )
+            return real_write(fd, data)
+
+        original = mod.os.write
+        mod.os.write = observing_write
+        try:
+            mb.write_reply("testjob", req["request_id"], decision="allow", principal="user1")
+        finally:
+            mod.os.write = original
+        return seen, reply_path
+
+    def test_a_reply_is_never_observable_half_written(self) -> None:
+        mod = self._module()
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+            mb, req, digest = self._armed(mod, work)
+            seen, _ = self._observe_midwrite(mod, mb, req, digest)
+
+            self.assertFalse(
+                bool(seen["exists"]) and seen["parsed"] is None,
+                "the reply path exists but does not parse",
+            )
+
+    def test_the_other_principal_is_told_the_decision(self) -> None:
+        mod = self._module()
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+            mb, req, digest = self._armed(mod, work)
+            seen, _ = self._observe_midwrite(mod, mb, req, digest)
+
+            other = seen["other_principal"]
+            self.assertIn("decision", other)
+            self.assertIn(other["decision"], {"allow", "deny"})
+
+    def test_first_writer_wins_and_the_loser_reads_the_winning_reply(self) -> None:
+        mod = self._module()
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+            mb, req, _ = self._armed(mod, work)
+
+            first = mb.write_reply(
+                "testjob", req["request_id"], decision="allow", principal="user1"
+            )
+            second = mb.write_reply(
+                "testjob", req["request_id"], decision="deny", principal="user2"
+            )
+
+            self.assertEqual(first["decision"], "allow")
+            self.assertTrue(second["already_resolved"])
+            self.assertEqual(second["decision"], "allow")
+            self.assertEqual(second["principal"], "user1")
+
+    def test_the_committed_reply_is_complete_and_approves(self) -> None:
+        mod = self._module()
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+            mb, req, digest = self._armed(mod, work)
+
+            mb.write_reply("testjob", req["request_id"], decision="allow", principal="user1")
+
+            approval = mb.check_approval("testjob", digest)
+            self.assertIsNotNone(approval)
+            self.assertEqual(approval["decision"], "allow")
+
+    def test_no_temp_file_survives_the_commit(self) -> None:
+        mod = self._module()
+        with tempfile.TemporaryDirectory() as raw:
+            work = Path(raw)
+            mb, req, _ = self._armed(mod, work)
+
+            mb.write_reply("testjob", req["request_id"], decision="allow", principal="user1")
+            mb.write_reply("testjob", req["request_id"], decision="deny", principal="user2")
+
+            leftovers = sorted(
+                p.name
+                for p in (mb.job_dir("testjob") / "replies").iterdir()
+                if p.name.endswith(".tmp")
+            )
+            self.assertEqual(leftovers, [])
 
 
 if __name__ == "__main__":

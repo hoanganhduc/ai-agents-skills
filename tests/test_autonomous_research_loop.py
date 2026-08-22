@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import errno
 import hashlib
 import importlib.util
 import io
@@ -1158,7 +1159,6 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             env=_subprocess_env(),
         )
         checks = validate_smoke_output(
-            manifests,
             "autonomous-research-loop-runtime",
             completed,
             ["selftest"],
@@ -1599,7 +1599,6 @@ class AutonomousLoopEnforcementTests(unittest.TestCase):
             listed = arl.format_notify_body_block(
                 "First clause here is long enough; Second clause also long enough; "
                 "Third clause also long enough",
-                style="markdown",
             )
             self.assertIn("• ", listed)
             self.assertGreaterEqual(listed.count("•"), 2)
@@ -4020,8 +4019,11 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
                     b"integrity-claim-1", b"integrity-claim-X", 1
                 )
                 ledger.write_bytes(tampered)
-            evidence_dir = Path(kwargs["evidence_dir"])
             child_env = kwargs["child_env"]
+            # The same channel the real child reads it from: the driver exports
+            # AAS_AUTOLOOP_EVIDENCE_DIR into the child environment, and
+            # `_write_worker_iteration_submission` reads it out of os.environ there.
+            evidence_dir = Path(child_env["AAS_AUTOLOOP_EVIDENCE_DIR"])
             evidence_id = f"integrity-evidence-{n}.txt"
             evidence = evidence_dir / evidence_id
             evidence.write_text(
@@ -4275,8 +4277,11 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
         profile = arl.provider_resource_limits(60, role="primary")
 
         def write_early_submission(*_args, **kwargs):  # noqa: ANN002, ANN003
-            evidence_dir = Path(kwargs["evidence_dir"])
             child_env = kwargs["child_env"]
+            # The same channel the real child reads it from: the driver exports
+            # AAS_AUTOLOOP_EVIDENCE_DIR into the child environment, and
+            # `_write_worker_iteration_submission` reads it out of os.environ there.
+            evidence_dir = Path(child_env["AAS_AUTOLOOP_EVIDENCE_DIR"])
             evidence_id = "early-evidence.txt"
             evidence = evidence_dir / evidence_id
             evidence.write_text(
@@ -4399,8 +4404,11 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
         submission_paths: list[Path] = []
 
         def write_submission_then_timeout(*_args, **kwargs):  # noqa: ANN002, ANN003
-            evidence_dir = Path(kwargs["evidence_dir"])
             child_env = kwargs["child_env"]
+            # The same channel the real child reads it from: the driver exports
+            # AAS_AUTOLOOP_EVIDENCE_DIR into the child environment, and
+            # `_write_worker_iteration_submission` reads it out of os.environ there.
+            evidence_dir = Path(child_env["AAS_AUTOLOOP_EVIDENCE_DIR"])
             request: dict[str, object] = {}
             for field in arl.ITERATION_SUBMISSION_ARG_FIELDS:
                 if field in arl.ITERATION_SUBMISSION_LIST_FIELDS:
@@ -8849,3 +8857,887 @@ class SelftestScratchPathTests(unittest.TestCase):
             result = arl.selftest_command(argparse.Namespace())
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["validation_status"], "ok")
+
+
+class LedgerAppendAtomicityTests(unittest.TestCase):
+    """A short write used to leave a half-finished JSON line in the ledger.
+
+    ``append_jsonl`` wrote the record with a bare ``os.write`` loop and never
+    recorded where the record started, so when the write stopped short -- ENOSPC,
+    a filesystem quota, or the ``RLIMIT_FSIZE`` this skill imposes on its own
+    iteration agents -- the bytes already written stayed behind. Every reader
+    treats a malformed line as fatal, so the run directory was left permanently
+    unreadable: validate, status, append-iteration and the documented
+    retract-iteration recovery all failed on the same parse error long after the
+    disk pressure had cleared.
+    """
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    @contextlib.contextmanager
+    def _short_write(self, arl, keep: int):
+        """Let the first write land ``keep`` bytes, then fail it."""
+
+        real_write = os.write
+        calls = {"n": 0}
+
+        def short(fd, data):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                real_write(fd, bytes(data)[:keep])
+                raise OSError(errno.EFBIG, "File too large")
+            return real_write(fd, data)
+
+        with mock.patch.object(arl.os, "write", short):
+            yield
+
+    def test_a_short_write_leaves_the_ledger_byte_for_byte_unchanged(self) -> None:
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "iterations.jsonl"
+            arl.append_jsonl(ledger, {"iteration": 1, "summary": "first"})
+            before = ledger.read_bytes()
+
+            with self._short_write(arl, keep=16):
+                with self.assertRaises(OSError):
+                    arl.append_jsonl(ledger, {"iteration": 2, "summary": "second"})
+
+            self.assertEqual(ledger.read_bytes(), before)
+
+    def test_the_ledger_is_still_readable_after_a_short_write(self) -> None:
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "iterations.jsonl"
+            arl.append_jsonl(ledger, {"iteration": 1, "summary": "first"})
+
+            with self._short_write(arl, keep=16):
+                with self.assertRaises(OSError):
+                    arl.append_jsonl(ledger, {"iteration": 2, "summary": "second"})
+
+            records = arl.read_iterations(ledger)
+            self.assertEqual([r["iteration"] for r in records], [1])
+            arl.append_jsonl(ledger, {"iteration": 2, "summary": "second"})
+            self.assertEqual([r["iteration"] for r in arl.read_iterations(ledger)], [1, 2])
+
+    def test_the_rollback_never_discards_another_writers_record(self) -> None:
+        """Truncating blind would destroy a complete record that landed in between.
+
+        The POSIX branch holds an exclusive flock so this cannot happen there,
+        but the Windows branch has no lock, and a rollback that trusts its own
+        arithmetic would delete a neighbour's data rather than only its own.
+        """
+
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "iterations.jsonl"
+            arl.append_jsonl(ledger, {"iteration": 1, "summary": "first"})
+            intruder = (json.dumps({"iteration": 99}, sort_keys=True) + "\n").encode("utf-8")
+
+            real_write = os.write
+            calls = {"n": 0}
+
+            def short(fd, data):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    real_write(fd, bytes(data)[:16])
+                    with open(ledger, "ab") as other:
+                        other.write(intruder)
+                    raise OSError(errno.EFBIG, "File too large")
+                return real_write(fd, data)
+
+            with mock.patch.object(arl.os, "write", short):
+                with self.assertRaises(OSError):
+                    arl.append_jsonl(ledger, {"iteration": 2, "summary": "second"})
+
+            self.assertIn(intruder, ledger.read_bytes())
+
+
+_CRASH_CHILD = """
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
+RUNTIME = Path(sys.argv[1])
+RUN_DIR = Path(sys.argv[2])
+CRASH_AT = int(sys.argv[3])
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(RUNTIME.parent))
+spec = importlib.util.spec_from_file_location("arl_crash_child", RUNTIME)
+arl = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(arl)
+
+real_fsync = os.fsync
+calls = {"n": 0}
+
+
+def dying_fsync(fd):
+    calls["n"] += 1
+    if calls["n"] == CRASH_AT:
+        real_fsync(fd)
+        os._exit(137)
+    return real_fsync(fd)
+
+
+os.fsync = dying_fsync
+arl.append_iteration(arl.build_parser().parse_args(sys.argv[4:]))
+"""
+
+
+class IterationBankAtomicityTests(unittest.TestCase):
+    """Banking an iteration used to be three unlinked writes and no lock.
+
+    ``append_iteration`` appended the ledger record first and only then rewrote
+    loop_state.json and budget.json, so anything that stopped the process in
+    between banked an iteration the budget could not account for. Because the
+    same function refuses to run until ``validate_loop_dir`` passes, and
+    validation rejects exactly that mismatch, one interruption wedged the run
+    directory permanently -- recoverable only by an operator discarding the
+    banked iteration by hand.
+
+    The numbering had the same shape of hole. ``number = len(iterations) + 1``
+    was decided about 290 lines before the append, with nothing held across the
+    gap, so two appends racing on one run directory read the same length and
+    banked the same number.
+    """
+
+    ARGV = (
+        "append-iteration",
+        "--mode",
+        "bounded-research",
+        "--decision",
+        "continue",
+        "--source-id",
+        "S1",
+        "--guard-ref",
+        "G1",
+        "--remaining-gap",
+        "second pass",
+    )
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    def _append_argv(self, run_dir: Path, objective: str) -> list[str]:
+        return [*self.ARGV, "--dir", str(run_dir), "--objective", objective]
+
+    def _append(self, arl, run_dir: Path, objective: str):
+        return arl.append_iteration(
+            arl.build_parser().parse_args(self._append_argv(run_dir, objective))
+        )
+
+    def _make_loop(self, arl, run_dir: Path, max_iterations: int = 8) -> None:
+        init = arl.build_parser().parse_args(
+            [
+                "init",
+                "--dir",
+                str(run_dir),
+                "--goal",
+                "iteration bank atomicity",
+                "--success-criteria",
+                "ledger validates",
+                "--max-iterations",
+                str(max_iterations),
+                "--goal-focus-mode",
+                "off",
+            ]
+        )
+        init.func(init)
+
+    def _numbers(self, arl, run_dir: Path) -> list[int]:
+        paths = arl.loop_paths(run_dir)
+        return [record["iteration"] for record in arl.read_iterations(paths["iterations"])]
+
+    def test_a_second_append_inside_the_window_cannot_bank_the_same_number(self) -> None:
+        """The interleaving the process race is waiting for, made deterministic.
+
+        The hook wraps both the write the old implementation made and the commit
+        the current one makes, so the same experiment reaches either.
+        """
+
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            self._make_loop(arl, run_dir)
+
+            real_append_jsonl = arl.append_jsonl
+            real_commit = getattr(arl, "commit_transaction", None)
+            fired = {"done": False}
+
+            def install() -> None:
+                arl.append_jsonl = racing_append
+                if real_commit is not None:
+                    arl.commit_transaction = racing_commit
+
+            def let_the_other_append_finish() -> None:
+                if fired["done"]:
+                    return
+                fired["done"] = True
+                arl.append_jsonl = real_append_jsonl
+                if real_commit is not None:
+                    arl.commit_transaction = real_commit
+                try:
+                    self._append(arl, run_dir, "B")
+                finally:
+                    install()
+
+            def racing_append(path, record):
+                let_the_other_append_finish()
+                return real_append_jsonl(path, record)
+
+            def racing_commit(*args, **kwargs):
+                let_the_other_append_finish()
+                return real_commit(*args, **kwargs)
+
+            install()
+            try:
+                with self.assertRaises(ValueError):
+                    self._append(arl, run_dir, "A")
+            finally:
+                arl.append_jsonl = real_append_jsonl
+                if real_commit is not None:
+                    arl.commit_transaction = real_commit
+
+            self.assertTrue(fired["done"], "the racing append never ran")
+            numbers = self._numbers(arl, run_dir)
+            self.assertEqual(numbers, sorted(set(numbers)))
+            self.assertEqual(arl.validate_loop_dir(run_dir)["errors"], [])
+            self._append(arl, run_dir, "later")
+
+    def test_the_whole_bank_is_one_commit(self) -> None:
+        """A failed commit must leave all three files exactly as they were.
+
+        Pinning the bank to a single commit is what keeps the ledger and the
+        counters from disagreeing; a later change that splits them again fails
+        here, because the ledger would move while the commit did not.
+        """
+
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            self._make_loop(arl, run_dir)
+            self._append(arl, run_dir, "first")
+
+            paths = arl.loop_paths(run_dir)
+            before = {
+                name: paths[name].read_bytes()
+                for name in ("iterations", "state", "budget", "recovery")
+            }
+
+            def refuse(*args, **kwargs):
+                raise OSError(errno.ENOSPC, "No space left on device")
+
+            with mock.patch.object(arl, "commit_transaction", refuse):
+                with self.assertRaises(OSError):
+                    self._append(arl, run_dir, "second")
+
+            for name, payload in before.items():
+                self.assertEqual(paths[name].read_bytes(), payload, name)
+            self.assertEqual(arl.validate_loop_dir(run_dir)["errors"], [])
+
+    def test_a_process_killed_mid_bank_never_wedges_the_run_directory(self) -> None:
+        """Kill the process at every durable write and the loop still runs.
+
+        ``os._exit`` skips every cleanup path, so what survives is what the
+        kernel already holds -- the same thing an OOM kill or a power loss
+        leaves behind. At each of those points the directory has to be either
+        fully banked or fully un-banked, or repairable into one of the two by
+        the next append; anything else is a run the operator can only rescue by
+        discarding work.
+        """
+
+        arl = self._runtime()
+        child = Path(tempfile.gettempdir()) / f"arl_crash_child_{os.getpid()}.py"
+        child.write_text(_CRASH_CHILD, encoding="utf-8")
+        try:
+            for crash_at in range(1, 25):
+                with self.subTest(crash_at=crash_at), tempfile.TemporaryDirectory() as tmp:
+                    run_dir = Path(tmp) / "loop"
+                    self._make_loop(arl, run_dir)
+                    self._append(arl, run_dir, "first")
+
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            "-B",
+                            str(child),
+                            str(HELPER),
+                            str(run_dir),
+                            str(crash_at),
+                            *self._append_argv(run_dir, "crashing"),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        timeout=120,
+                        env=_subprocess_env(),
+                        check=False,
+                    )
+
+                    # The next append is the operator's next move, and it has to
+                    # work. It may find the directory already consistent or have
+                    # to replay an interrupted commit first; either is fine, a
+                    # refusal is not.
+                    self._append(arl, run_dir, "after the crash")
+                    self.assertEqual(arl.validate_loop_dir(run_dir)["errors"], [])
+                    numbers = self._numbers(arl, run_dir)
+                    self.assertEqual(numbers, sorted(set(numbers)))
+        finally:
+            child.unlink(missing_ok=True)
+
+
+_ENV_DUMP_CHILD = """
+import json
+import os
+import pathlib
+import sys
+
+pathlib.Path(sys.argv[1]).write_text(json.dumps(dict(os.environ)), encoding="utf-8")
+pathlib.Path(os.environ["AUTOLOOP_DIR"], "STOP_REQUESTED").write_text("done\\n")
+"""
+
+
+class DriveCmdPromptDeliveryTests(unittest.TestCase):
+    """``drive --cmd`` used to compute the iteration prompt and then discard it.
+
+    Three channels can carry a prompt to a primary process: the argv the runtime
+    builds, the private stdin transport, and the environment. The first two
+    belong to the ``--provider`` lane -- the runtime builds that argv itself and
+    scrubs the prompt out of it, which is what keeps a provider's prompt out of
+    an environment other same-user processes can read. ``--cmd`` has neither:
+    the command string is the operator's, untouched, and the stdin transport is
+    gated behind ``if provider:``. The environment is the only channel it has,
+    and it is the one the driver shim, the adapter header, and the drive loop
+    itself (``control_env["AUTOLOOP_PROMPT"] = prompt``) all promise.
+
+    ``build_primary_child_env`` dropped it for every caller, so a ``--cmd`` loop
+    ran its command once per iteration with no work order at all.
+    """
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    @staticmethod
+    def _shell_command(parts: list[str]) -> str:
+        if os.name == "nt":
+            return subprocess.list2cmdline(parts)
+        return shlex.join(parts)
+
+    def test_the_cmd_lane_receives_every_documented_variable(self) -> None:
+        """Drive a real loop with a real child and read its environment back.
+
+        The child records the environment it was actually given, so this asserts
+        what reaches the operator's command rather than what the driver intended
+        to send.
+        """
+
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "loop"
+            dump = root / "child_env.json"
+            child = root / "iteration_child.py"
+            child.write_text(_ENV_DUMP_CHILD, encoding="utf-8")
+
+            init = arl.build_parser().parse_args(
+                [
+                    "init",
+                    "--dir",
+                    str(run_dir),
+                    "--goal",
+                    "prompt delivery",
+                    "--success-criteria",
+                    "the iteration command receives its work order",
+                    "--max-iterations",
+                    "3",
+                    "--goal-focus-mode",
+                    "off",
+                ]
+            )
+            init.func(init)
+
+            drive = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(HELPER),
+                    "drive",
+                    "--dir",
+                    str(run_dir),
+                    "--root",
+                    str(root),
+                    "--cmd",
+                    self._shell_command(
+                        [sys.executable, "-B", str(child), str(dump)]
+                    ),
+                    "--poll",
+                    "0",
+                    "--max-failures",
+                    "1",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=300,
+                env=_subprocess_env(),
+                check=False,
+            )
+            self.assertTrue(
+                dump.exists(),
+                f"the iteration command never ran: {drive.stderr[-2000:]}",
+            )
+
+            child_env = json.loads(dump.read_text(encoding="utf-8"))
+            for name in ("AUTOLOOP_DRIVER", "AUTOLOOP_DIR", "AUTOLOOP_ROOT"):
+                self.assertIn(name, child_env)
+            self.assertEqual(
+                child_env.get("AUTOLOOP_PROMPT"),
+                arl.iteration_prompt(
+                    run_dir, panel_enabled=False, panel_iter_dir=None
+                ),
+            )
+
+    def test_a_provider_process_never_receives_the_prompt_by_environment(self) -> None:
+        """The escape hatch cannot be pointed at a provider.
+
+        ``allow_prompt_env`` exists for the one lane with no private transport.
+        A caller that passes it alongside a provider is asking for the prompt to
+        be readable from that provider's environment, which is the property the
+        argv/stdin transport exists to prevent, so the flag has no effect there.
+        """
+
+        arl = self._runtime()
+        prompt = "PROVIDER_PROMPT_MUST_NOT_APPEAR_IN_ENV"
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            loop.mkdir()
+            for provider in ("claude", "codex", "grok"):
+                with self.subTest(provider=provider):
+                    child_env = arl.build_primary_child_env(
+                        provider,
+                        executable_attestation=None,
+                        control={
+                            "AUTOLOOP_DIR": str(loop),
+                            "AUTOLOOP_PROMPT": prompt,
+                        },
+                        environ=dict(os.environ),
+                        include_provider_credentials=False,
+                        allow_prompt_env=True,
+                    )
+                    self.assertNotIn("AUTOLOOP_PROMPT", child_env)
+                    self.assertNotIn(prompt, child_env.values())
+
+
+_NON_ASCII_GROK = """#!/bin/sh
+if [ "$1" = "models" ]; then
+  printf 'Available models \\342\\234\\223\\n'
+  printf '  * grok-4-fast (default)\\n'
+  exit 0
+fi
+exit 1
+"""
+
+
+class ProviderProbeDecodingTests(unittest.TestCase):
+    """Provider CLI output was decoded with whatever codec the locale named.
+
+    The probes ran ``subprocess.run(..., text=True, encoding="utf-8", errors="replace")`` with no ``encoding``, so
+    the codec came from the process locale: ASCII under a POSIX-locale image,
+    cp1252 or cp932 under a legacy Windows console. Provider banners carry
+    non-ASCII glyphs as a matter of course, and one of them raised
+    ``UnicodeDecodeError`` inside ``communicate()`` -- which the probes do not
+    catch, because they catch ``TimeoutExpired`` and ``OSError`` and a decode
+    error is neither.
+
+    It then escaped as a ``ValueError`` subclass, and the two callers turned that
+    into: ``agent-cmd`` reporting a codec error instead of a command, and
+    ``drive`` ending the whole run at exit 2. The run ended silently, because the
+    handler that caught it was the one break in the drive loop that printed
+    nothing.
+    """
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    @unittest.skipUnless(os.name == "posix", "uses a /bin/sh provider stub and POSIX locale names")
+    def test_a_provider_banner_survives_an_ascii_process_locale(self) -> None:
+        """The same probe, the same stub, two locales, one answer.
+
+        ``PYTHONCOERCECLOCALE=0`` is what keeps CPython from quietly upgrading
+        the C locale to C.UTF-8; without it this host cannot express the
+        configuration a legacy Windows console has by default.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bindir = root / "bin"
+            bindir.mkdir()
+            stub = bindir / "grok"
+            stub.write_text(_NON_ASCII_GROK, encoding="utf-8")
+            stub.chmod(0o755)
+            run_dir = root / "loop"
+
+            base = _subprocess_env(
+                {
+                    "PATH": f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}",
+                    "AAS_GROK_LATEST_MODEL": "grok-4-fast",
+                }
+            )
+            for name in [key for key in base if key.startswith("AAS_AUTOLOOP_")]:
+                del base[name]
+            base["AAS_AUTOLOOP_NOTIFY"] = "off"
+
+            utf8 = dict(base, LC_ALL="C.utf8", LANG="C.utf8")
+            ascii_locale = dict(
+                base,
+                LC_ALL="C",
+                LANG="C",
+                PYTHONCOERCECLOCALE="0",
+                PYTHONUTF8="0",
+            )
+
+            init = self._runtime().build_parser().parse_args(
+                [
+                    "init",
+                    "--dir",
+                    str(run_dir),
+                    "--goal",
+                    "locale independent probes",
+                    "--success-criteria",
+                    "the probe reads the same bytes on every host",
+                    "--max-iterations",
+                    "2",
+                    "--goal-focus-mode",
+                    "off",
+                ]
+            )
+            init.func(init)
+
+            answers = {}
+            for label, env in (("utf8", utf8), ("ascii", ascii_locale)):
+                probed = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(HELPER),
+                        "agent-cmd",
+                        "--provider",
+                        "grok",
+                        "--dir",
+                        str(run_dir),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    timeout=120,
+                    env=env,
+                    check=False,
+                )
+                self.assertEqual(
+                    probed.returncode, 0, f"{label}: {probed.stdout[-500:]}"
+                )
+                entry = json.loads(probed.stdout)["providers"]["grok"]
+                answers[label] = entry["grok_selection"]["status"]
+            self.assertEqual(answers["ascii"], "confirmed")
+            self.assertEqual(answers["ascii"], answers["utf8"])
+
+    def test_every_decoded_subprocess_in_the_runtime_names_its_codec(self) -> None:
+        """Guard the class, not just the three call sites that were caught.
+
+        Any new ``text=True`` call added to this runtime inherits the same
+        locale-dependent decode, and the symptom only shows up on a host whose
+        locale nobody runs the suite under.
+        """
+
+        tree = ast.parse(HELPER.read_text(encoding="utf-8"))
+        offenders = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            target = node.func
+            if not (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "subprocess"
+                and target.attr in {"run", "Popen", "check_output", "check_call"}
+            ):
+                continue
+            names = {kw.arg for kw in node.keywords if kw.arg}
+            decodes = any(
+                kw.arg in {"text", "universal_newlines"}
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is True
+                for kw in node.keywords
+            )
+            spreads = {
+                kw.value.id
+                for kw in node.keywords
+                if kw.arg is None and isinstance(kw.value, ast.Name)
+            }
+            if decodes and "encoding" not in names and "SUBPROCESS_TEXT_DECODING" not in spreads:
+                offenders.append(node.lineno)
+        self.assertEqual(offenders, [], f"{HELPER.name} lines decoding by locale: {offenders}")
+
+    def test_drive_reports_why_it_could_not_build_the_iteration_command(self) -> None:
+        """Exit 2 with no cause is not a report.
+
+        The exception this handler swallows already carries the operator-facing
+        reason. Every other break in the drive loop prints one; the injection
+        stands in for the host-attestation fixtures the natural triggers need.
+        """
+
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "loop"
+            init = arl.build_parser().parse_args(
+                [
+                    "init",
+                    "--dir",
+                    str(run_dir),
+                    "--goal",
+                    "explain the stop",
+                    "--success-criteria",
+                    "the operator is told why",
+                    "--max-iterations",
+                    "2",
+                    "--goal-focus-mode",
+                    "off",
+                ]
+            )
+            init.func(init)
+
+            args = arl.build_parser().parse_args(
+                [
+                    "drive",
+                    "--dir",
+                    str(run_dir),
+                    "--root",
+                    str(root),
+                    "--provider",
+                    "claude",
+                    "--poll",
+                    "0",
+                    "--max-failures",
+                    "1",
+                ]
+            )
+            message = "AAS_CLAUDE_LATEST_MODEL conflicts with the host-attested model"
+
+            def refuse(*_args, **_kwargs):
+                raise ValueError(message)
+
+            captured = io.StringIO()
+            # drive_command exports the resolved formal policy into its own
+            # environment so nested tools inherit it -- correct for a driver
+            # process, and a leak when the driver is this interpreter.
+            with mock.patch.dict(os.environ, {}, clear=False):
+                with mock.patch.object(arl, "resolve_provider_command", refuse):
+                    with contextlib.redirect_stderr(captured):
+                        result = arl.drive_command(args)
+
+            self.assertEqual(result["reason"], "bad_arguments")
+            self.assertIn(message, captured.getvalue())
+
+
+class ProviderArgTemplateSplitTests(unittest.TestCase):
+    """``AAS_AUTOLOOP_ARGS_<PROVIDER>`` was split with POSIX escape rules everywhere.
+
+    POSIX ``shlex`` treats a backslash as an escape and drops it. On Windows the
+    backslash is the path separator, so an operator who writes a native path into
+    the template had every separator eaten: ``--add-dir C:\\Users\\me\\project``
+    reached the provider as ``C:Usersmeproject``. Nothing rejected it -- the
+    template split cleanly, it just no longer named a directory that exists -- and
+    Windows is a supported install target for every provider in this table.
+    """
+
+    @staticmethod
+    def _runtime():
+        runtime = HELPER.parent
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        import autonomous_research_loop_runtime as arl  # noqa: WPS
+
+        return arl
+
+    def test_a_native_windows_path_reaches_the_provider_intact(self) -> None:
+        """The whole point of the override is to name a directory the provider opens."""
+
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            run_dir.mkdir()
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("AAS_")
+            }
+            env["AAS_AUTOLOOP_NOTIFY"] = "off"
+            env["AAS_AUTOLOOP_ARGS_CLAUDE"] = (
+                r"--add-dir C:\Users\...\project -p {prompt}"
+            )
+            with mock.patch.object(arl, "runtime_platform_name", lambda: "windows"):
+                resolved = arl.resolve_provider_command(
+                    "claude", run_dir, environ=env
+                )
+            argv = list(resolved["argv"])
+            self.assertIn("--add-dir", argv)
+            self.assertEqual(
+                argv[argv.index("--add-dir") + 1],
+                r"C:\Users\...\project",
+            )
+
+    def test_a_quoted_windows_path_loses_exactly_its_quotes(self) -> None:
+        """A space in the path is what quoting is for; the separators are not escapes."""
+
+        split = self._runtime().split_provider_arg_template
+        for template in (
+            r'--add-dir "C:\Users\...\My Project" -p {prompt}',
+            r"--add-dir 'C:\Users\...\My Project' -p {prompt}",
+        ):
+            with self.subTest(template=template):
+                self.assertEqual(
+                    split(template, platform="windows"),
+                    [
+                        "--add-dir",
+                        r"C:\Users\...\My Project",
+                        "-p",
+                        "{prompt}",
+                    ],
+                )
+
+    def test_posix_hosts_keep_posix_escaping(self) -> None:
+        """The Windows rule must not cost POSIX operators their escape character.
+
+        ``runtime_platform_name`` answers ``wsl`` under WSL, where the shell and
+        the paths are POSIX -- so only the literal ``windows`` answer switches
+        rules.
+        """
+
+        split = self._runtime().split_provider_arg_template
+        for platform in ("linux", "darwin", "wsl"):
+            with self.subTest(platform=platform):
+                self.assertEqual(
+                    split(r"--add-dir /srv/a\ b -p {prompt}", platform=platform),
+                    ["--add-dir", "/srv/a b", "-p", "{prompt}"],
+                )
+
+
+class ContainmentBoundaryAdvertisesOnlyWhatItReadsTests(unittest.TestCase):
+    """``run_primary_subprocess`` used to take three arguments it never read.
+
+    ``run_dir``, ``evidence_dir`` and ``executable_attestation`` were declared,
+    passed by both call sites -- the drive loop threaded the live attestation in,
+    and the credential broker forwarded the revalidated one -- and referenced
+    nowhere in the 344-line body. The last of the three reads as a spawn-boundary
+    identity check happening inside the spawn, which is exactly where a reader
+    would look for it and exactly where it is not: the broker re-attests every
+    brokered primary before calling, and the drive loop re-attests under
+    Goal-Focus enforce, the mode that requires a host-pinned family at all.
+    """
+
+    BROKER = REPO_ROOT / "canonical" / "runtime" / "runners" / "arl_credential_broker.py"
+
+    def _function(self, tree: ast.AST, name: str) -> ast.FunctionDef:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        raise AssertionError(f"{name} not found")
+
+    def test_the_spawn_boundary_reads_every_argument_it_declares(self) -> None:
+        """Guard the class: any argument added back has to be used."""
+
+        tree = ast.parse(HELPER.read_text(encoding="utf-8"))
+        fn = self._function(tree, "run_primary_subprocess")
+        declared = [
+            arg.arg
+            for arg in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)
+        ]
+        loaded = {
+            node.id
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+        }
+        inert = [name for name in declared if name not in loaded]
+        self.assertEqual(inert, [], f"run_primary_subprocess ignores: {inert}")
+
+    def test_no_call_site_still_passes_the_dropped_arguments(self) -> None:
+        dropped = {"run_dir", "evidence_dir", "executable_attestation"}
+        for path in (HELPER, self.BROKER):
+            with self.subTest(module=path.name):
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    target = node.func
+                    name = (
+                        target.attr
+                        if isinstance(target, ast.Attribute)
+                        else getattr(target, "id", "")
+                    )
+                    if name != "run_primary_subprocess":
+                        continue
+                    passed = {kw.arg for kw in node.keywords if kw.arg}
+                    self.assertEqual(
+                        passed & dropped,
+                        set(),
+                        f"{path.name}:{node.lineno} passes {passed & dropped}",
+                    )
+
+    def test_the_brokered_path_still_re_attests_before_it_spawns(self) -> None:
+        """The check the removed argument implied lives here, and must stay here."""
+
+        tree = ast.parse(self.BROKER.read_text(encoding="utf-8"))
+        primary = self._function(tree, "primary")
+        revalidations = [
+            node.lineno
+            for node in ast.walk(primary)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "revalidate_provider_executable_attestation"
+        ]
+        spawns = [
+            node.lineno
+            for node in ast.walk(primary)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "run_primary_subprocess"
+        ]
+        self.assertEqual(len(revalidations), 1, revalidations)
+        self.assertEqual(len(spawns), 1, spawns)
+        self.assertLess(revalidations[0], spawns[0])
+
+    def test_the_enforce_drive_path_still_re_attests_before_it_spawns(self) -> None:
+        source = HELPER.read_text(encoding="utf-8")
+        revalidate = source.index(
+            "revalidate_provider_executable_attestation(\n"
+            "                                    driver_execution_attestation,\n"
+            "                                    forbidden_roots=(root, run_dir),"
+        )
+        spawn = source.index("rc, timed_out, cleanup_error = run_primary_subprocess(")
+        self.assertLess(revalidate, spawn)

@@ -112,6 +112,8 @@ if (!(Test-Path -LiteralPath $env:S2V_PPTX_PDF)) {
         [ps, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"],
         input=script,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         timeout=300,
         env=env,
@@ -134,6 +136,8 @@ def _libreoffice_to_pdf(source: Path, work_dir: Path) -> Path:
         check=True,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     pdf = out_dir / (Path(source).stem + ".pdf")
     if not pdf.exists():

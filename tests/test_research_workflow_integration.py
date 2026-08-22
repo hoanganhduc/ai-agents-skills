@@ -43,6 +43,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             [sys.executable, str(DEEP_RESEARCH_RUNTIME), "validate", "--dir", str(research_dir), *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             check=False,
         )
@@ -356,6 +358,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env,
                 check=False,
             )
@@ -377,6 +381,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                 [sys.executable, str(DEEP_RESEARCH_RUNTIME), "validate", "--dir", str(research_dir)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env,
                 check=False,
             )
@@ -402,6 +408,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env,
                 check=False,
             )
@@ -451,6 +459,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             [sys.executable, str(DEEP_RESEARCH_RUNTIME), "selftest"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -569,6 +579,8 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
                 [sys.executable, str(DEEP_RESEARCH_RUNTIME), "validate", "--dir", str(research_dir)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 env=env,
                 check=False,
             )

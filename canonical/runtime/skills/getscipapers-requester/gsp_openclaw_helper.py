@@ -348,6 +348,8 @@ def run_subprocess(argv: list[str], timeout: int = DEFAULT_TIMEOUT, cwd: str | N
             argv,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             cwd=cwd,
             check=False,
@@ -758,7 +760,6 @@ def update_watch(settings: Settings, watch_id: str, patch: dict[str, Any]) -> di
 
 
 def cmd_doctor(args: argparse.Namespace, settings: Settings) -> None:
-    exe = find_getscipapers()
     payload = introspect()
     payload.update({
         "python": sys.executable,

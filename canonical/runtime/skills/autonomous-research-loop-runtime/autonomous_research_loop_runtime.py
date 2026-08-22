@@ -90,9 +90,13 @@ try:
     import goal_focus as goal_focus_v2  # type: ignore
     import notify_v2  # type: ignore
     from state_transaction import (  # type: ignore
+        ITERATION_LEDGER_FILE,
         LoopLock,
+        RevisionConflict,
         TransactionQuarantined,
+        commit_transaction,
         iteration_ledger_paths,
+        recover_transactions,
     )
     from formal_policy import (  # type: ignore
         evaluate_formal_terminal_state,
@@ -163,9 +167,13 @@ except ImportError:  # pragma: no cover - package-style import during tests
     from . import goal_focus as goal_focus_v2  # type: ignore
     from . import notify_v2  # type: ignore
     from .state_transaction import (  # type: ignore
+        ITERATION_LEDGER_FILE,
         LoopLock,
+        RevisionConflict,
         TransactionQuarantined,
+        commit_transaction,
         iteration_ledger_paths,
+        recover_transactions,
     )
     from .formal_policy import (  # type: ignore
         evaluate_formal_terminal_state,
@@ -410,6 +418,21 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"{path.name} must contain a JSON object")
     return data
+
+
+def _read_json_snapshot(path: Path) -> tuple[dict[str, Any], str]:
+    """Read one JSON object and hash the exact bytes it was decoded from.
+
+    The hash is the compare-and-swap guard the commit checks, so it has to come
+    from the same read that fed the decision. Re-reading the file to hash it
+    would reopen the window the guard exists to close.
+    """
+
+    text = _read_regular_text(path)
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path.name} must contain a JSON object")
+    return data, hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
@@ -823,6 +846,48 @@ def read_iterations(path: Path) -> list[dict[str, Any]]:
     return records
 
 
+def _append_all_or_nothing(file_fd: int, payload: bytes, pre_size: int) -> None:
+    """Write the whole record or leave the file exactly as it was.
+
+    ``os.write`` can stop short -- ENOSPC, a filesystem quota, or the
+    ``RLIMIT_FSIZE`` this skill imposes on its own iteration agents -- and the
+    bytes it already wrote stay behind as a half-finished JSON line. Every
+    reader treats a malformed line as fatal, so one short write leaves the run
+    directory permanently unreadable: validate, status, append-iteration and the
+    documented retract-iteration recovery all fail on the same parse error long
+    after the disk pressure has cleared. Rolling the file back to its pre-write
+    size makes the append atomic, which is what those readers already assume.
+
+    The rollback discards only bytes this call is provably responsible for: the
+    trailing bytes are read back and truncation happens only when they are a
+    prefix of the record being written. Anything else means another appender
+    landed data in between, and dropping it would trade this call's corruption
+    for someone else's data loss. Under the POSIX branch's exclusive flock that
+    cannot happen; the check matters on Windows, which has no such lock.
+    """
+
+    try:
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(file_fd, remaining)
+            if written <= 0:
+                raise OSError("could not append JSONL record")
+            remaining = remaining[written:]
+        os.fsync(file_fd)
+    except BaseException:
+        try:
+            grown = os.fstat(file_fd).st_size - pre_size
+            if grown > 0:
+                os.lseek(file_fd, pre_size, os.SEEK_SET)
+                tail = os.read(file_fd, grown)
+                if payload.startswith(tail):
+                    os.ftruncate(file_fd, pre_size)
+                    os.fsync(file_fd)
+        except OSError:
+            pass
+        raise
+
+
 def append_jsonl(path: Path, data: dict[str, Any]) -> None:
     """Append one line through pinned parents and a private no-follow leaf."""
 
@@ -832,19 +897,13 @@ def append_jsonl(path: Path, data: dict[str, Any]) -> None:
         raise OSError(f"invalid JSONL destination name: {name!r}")
     payload = (json.dumps(data, sort_keys=True) + "\n").encode("utf-8")
     if os.name == "nt":  # pragma: no cover - exercised by Windows CI
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
+        flags = os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
         file_fd = os.open(directory / name, flags, 0o600)
         try:
             info = os.fstat(file_fd)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise OSError("JSONL destination is not a single-link regular file")
-            remaining = memoryview(payload)
-            while remaining:
-                written = os.write(file_fd, remaining)
-                if written <= 0:
-                    raise OSError("could not append JSONL record")
-                remaining = remaining[written:]
-            os.fsync(file_fd)
+            _append_all_or_nothing(file_fd, payload, info.st_size)
         finally:
             os.close(file_fd)
         return
@@ -859,7 +918,7 @@ def append_jsonl(path: Path, data: dict[str, Any]) -> None:
             raise OSError("JSONL parent directory is not host-controlled")
         file_fd = os.open(
             name,
-            os.O_WRONLY
+            os.O_RDWR
             | os.O_APPEND
             | os.O_CREAT
             | getattr(os, "O_NOFOLLOW", 0),
@@ -878,13 +937,7 @@ def append_jsonl(path: Path, data: dict[str, Any]) -> None:
                 or stat.S_IMODE(info.st_mode) & 0o077
             ):
                 raise OSError("JSONL destination is not a private host-owned file")
-            remaining = memoryview(payload)
-            while remaining:
-                written = os.write(file_fd, remaining)
-                if written <= 0:
-                    raise OSError("could not append JSONL record")
-                remaining = remaining[written:]
-            os.fsync(file_fd)
+            _append_all_or_nothing(file_fd, payload, info.st_size)
         finally:
             os.close(file_fd)
         os.fsync(directory_fd)
@@ -1909,6 +1962,12 @@ def append_iteration(
     if not math.isfinite(float(args.usd)) or float(args.usd) < 0:
         raise ValueError("usd must be a finite non-negative number")
     paths = loop_paths(run_dir)
+    # Finish any commit a previous append was interrupted mid-way through
+    # before reading the files it was replacing. Validation runs against the
+    # replayed state, so a crash during the bank below costs one iteration at
+    # worst instead of leaving a directory every later append refuses. Every
+    # other reader of this run directory already opens with the same replay.
+    recover_transactions(run_dir)
     errors = validate_loop_dir(run_dir)["errors"]
     if errors:
         raise ValueError("cannot append iteration before validation passes: " + "; ".join(errors))
@@ -1947,8 +2006,14 @@ def append_iteration(
     if args.mode not in VALID_MODES:
         raise ValueError(f"mode must be one of {sorted(VALID_MODES)}")
 
-    state = read_json(paths["state"])
-    budget = read_json(paths["budget"])
+    # Every preimage is hashed as it is read. The iteration number below is
+    # derived from these bytes, and the commit at the end of this function
+    # refuses to land if any of them changed in between, so a second appender
+    # racing on the same run directory cannot bank the same number twice.
+    state, state_hash = _read_json_snapshot(paths["state"])
+    budget, budget_hash = _read_json_snapshot(paths["budget"])
+    ledger_text = _read_regular_text(paths["iterations"])
+    ledger_hash = hashlib.sha256(ledger_text.encode("utf-8")).hexdigest()
     iterations = read_iterations(paths["iterations"])
     max_iterations = int(budget["max_iterations"])
     spent_iterations = int(budget.get("spent_iterations", 0))
@@ -2248,8 +2313,6 @@ def append_iteration(
             "would_append": record,
             "warnings": collect_goal_priority_warnings(run_dir, latest_record=record),
         }
-    append_jsonl(paths["iterations"], record)
-
     state["last_iteration"] = number
     state["updated_at"] = now
     state["status"] = "blocked" if args.decision == "blocked" else "stopped" if args.decision == "stop" else "running"
@@ -2257,28 +2320,62 @@ def append_iteration(
     budget["spent_tokens"] = int(budget.get("spent_tokens", 0)) + args.tokens
     budget["spent_usd"] = float(budget.get("spent_usd", 0.0)) + args.usd
     budget["updated_at"] = now
-    write_json(paths["state"], state)
-    write_json(paths["budget"], budget)
 
     remaining_iterations = max(0, int(budget["max_iterations"]) - int(budget["spent_iterations"]))
-    # Path.write_text lacks the newline argument before Python 3.10.
-    with paths["recovery"].open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(
-            "\n".join(
-                [
-                    "# Autonomous Research Loop Recovery",
-                    "",
-                    f"- Goal: {state.get('goal', '')}",
-                    f"- Status: {state.get('status', '')}",
-                    f"- Last completed iteration: {number}",
-                    f"- Next safe action: {'report stop status' if args.decision in {'stop', 'blocked'} else 'continue from the last recorded decision'}",
-                    f"- Remaining evidence gaps: {', '.join(record['remaining_gaps']) if record['remaining_gaps'] else 'none recorded'}",
-                    f"- Active blockers: {args.stop_reason if args.decision == 'blocked' and args.stop_reason else 'none recorded'}",
-                    f"- Budget remaining: {remaining_iterations} iterations",
-                    "",
-                ]
-            )
+    recovery_text = "\n".join(
+        [
+            "# Autonomous Research Loop Recovery",
+            "",
+            f"- Goal: {state.get('goal', '')}",
+            f"- Status: {state.get('status', '')}",
+            f"- Last completed iteration: {number}",
+            f"- Next safe action: {'report stop status' if args.decision in {'stop', 'blocked'} else 'continue from the last recorded decision'}",
+            f"- Remaining evidence gaps: {', '.join(record['remaining_gaps']) if record['remaining_gaps'] else 'none recorded'}",
+            f"- Active blockers: {args.stop_reason if args.decision == 'blocked' and args.stop_reason else 'none recorded'}",
+            f"- Budget remaining: {remaining_iterations} iterations",
+            "",
+        ]
+    )
+
+    # One journaled commit for the whole bank. Appending the ledger first and
+    # then rewriting the counters left a window in which the ledger held an
+    # iteration the budget could not account for: write_json has to create a
+    # temp file in the run directory, so ENOSPC, a quota, or a read-only
+    # remount after the append banked a record nothing would ever reconcile,
+    # and validate_loop_dir then refused every later append. The enforce lane
+    # already commits this same group as one transaction; the legacy lane now
+    # uses it too, and _recover_locked replays an interrupted commit on the
+    # next run.
+    #
+    # The preimage hashes are the ones taken at the top of this function, where
+    # the iteration number was decided. A concurrent appender that banked first
+    # changes them, so this commit is refused rather than writing a duplicate
+    # iteration number into the ledger.
+    try:
+        commit_transaction(
+            run_dir,
+            text_files={
+                ITERATION_LEDGER_FILE: ledger_text
+                + json.dumps(record, sort_keys=True)
+                + "\n",
+                paths["recovery"].name: recovery_text,
+            },
+            json_files={
+                paths["state"].name: state,
+                paths["budget"].name: budget,
+            },
+            expected_hashes={
+                ITERATION_LEDGER_FILE: ledger_hash,
+                paths["state"].name: state_hash,
+                paths["budget"].name: budget_hash,
+            },
         )
+    except RevisionConflict as exc:
+        raise ValueError(
+            "cannot append iteration because the run directory changed while "
+            f"iteration {number} was being prepared (a concurrent append or an "
+            f"external edit): {exc}"
+        ) from exc
     gp_warnings = collect_goal_priority_warnings(run_dir, latest_record=record)
     return {
         "status": "ok",
@@ -3096,6 +3193,20 @@ GROK_PROFILE_REDACTED_BLOCKED_REASONS = {
 }
 
 
+# Every CLI this runtime reads back speaks UTF-8, and their banners routinely
+# carry non-ASCII glyphs -- a checkmark, an arrow, an em dash. ``text=True`` on
+# its own decodes with whatever codec the process locale names, which is ASCII
+# under a POSIX-locale image and cp1252/cp932 under a legacy Windows console, so
+# one cosmetic byte raised UnicodeDecodeError from inside communicate(). The
+# probes catch TimeoutExpired and OSError; a decode error is neither, and it
+# escaped as a ValueError to end the run. Name the codec, and never let an
+# undecodable byte outrank whatever is being probed.
+SUBPROCESS_TEXT_DECODING: dict[str, str] = {
+    "encoding": "utf-8",
+    "errors": "replace",
+}
+
+
 def provider_subprocess_options(provider: str | None) -> dict[str, int]:
     """Return provider-scoped subprocess hardening without changing Windows."""
     if provider == "grok" and os.name == "posix":
@@ -3282,9 +3393,6 @@ def run_primary_subprocess(
     provider: str | None,
     enforce_mode: bool = False,
     trusted_local: bool = False,
-    run_dir: Path | None = None,
-    evidence_dir: Path | None = None,
-    executable_attestation: Mapping[str, Any] | None = None,
     stdin_text: str | None = None,
     resource_metadata: dict[str, Any] | None = None,
 ) -> tuple[int, bool, str | None]:
@@ -3294,6 +3402,14 @@ def run_primary_subprocess(
     escape the namespace lifetime. Windows uses a kill-on-close Job Object.
     Other POSIX platforms fail closed because process groups alone are not a
     security boundary against a deliberately daemonizing child.
+
+    Containment is all this boundary owns. Provider identity is revalidated by
+    the caller, because the policy that decides whether to revalidate lives
+    there: the credential broker re-attests every brokered primary, and the
+    drive loop re-attests under Goal-Focus enforce, which is the mode that
+    requires a host-pinned family in the first place. This function used to
+    accept ``run_dir``, ``evidence_dir`` and ``executable_attestation`` and read
+    none of them, which read as an identity check happening here.
     """
 
     options: dict[str, Any] = dict(provider_subprocess_options(provider))
@@ -5269,10 +5385,17 @@ def hook_check_command(args: argparse.Namespace) -> dict[str, Any]:
 # Each spec builds the exact one-iteration headless invocation for one agent
 # CLI. `agent-cmd` only constructs and PATH-probes commands (offline); `drive
 # --provider` executes them. Operator overrides (highest first):
-#   AAS_AUTOLOOP_CMD_<PROVIDER>  full shell command template; {prompt} is
-#                                substituted shell-quoted, {dir} verbatim, and
-#                                the prompt is also exported as $AUTOLOOP_PROMPT
-#   AAS_AUTOLOOP_ARGS_<PROVIDER> replacement argument template (shlex-split;
+#   AAS_AUTOLOOP_CMD_<PROVIDER>  full shell command template for `agent-cmd`;
+#                                {prompt} is substituted shell-quoted and {dir}
+#                                verbatim. `drive --provider` refuses it: a
+#                                shell string cannot satisfy the primary prompt
+#                                privacy gate, which requires argv execution.
+#                                $AUTOLOOP_PROMPT is exported by `drive --cmd`
+#                                only -- provider processes receive the prompt
+#                                by scrubbed argv or stdin, never by environment
+#   AAS_AUTOLOOP_ARGS_<PROVIDER> replacement argument template (shlex-split
+#                                under the host's own quoting rules, so a native
+#                                Windows path keeps its separators;
 #                                {prompt}/{dir} placeholders substituted)
 #   AAS_AUTOLOOP_BIN_<PROVIDER>  replacement binary path
 #   AAS_GROK                     (grok only) binary override when AAS_AUTOLOOP_BIN_GROK
@@ -6239,8 +6362,22 @@ def build_primary_child_env(
     include_provider_credentials: bool = True,
     include_compute_credentials: bool = False,
     compute_policy_run_dir: str | Path | None = None,
+    allow_prompt_env: bool = False,
 ) -> dict[str, str]:
-    """Build the strict environment for one primary execution process."""
+    """Build the strict environment for one primary execution process.
+
+    ``AUTOLOOP_PROMPT`` is withheld from every provider process. A provider's
+    prompt travels by scrubbed argv or by stdin precisely so it never sits in an
+    environment that any same-user process can read back out of /proc, and
+    ``prepare_primary_private_prompt_transport`` is what guarantees it.
+
+    ``drive --cmd`` has no such transport. The runtime never touches the command
+    string the operator supplied, so the environment is the only channel that
+    lane has -- and it is the channel the driver shim and this module's adapter
+    header both document. ``allow_prompt_env`` opens it. The provider guarantee
+    is not left to the caller to remember: the flag only takes effect when no
+    provider was named, which is exactly the ``--cmd`` lane.
+    """
 
     source = os.environ if environ is None else environ
     normalized = str(provider or "custom").strip().lower().replace("_", "-")
@@ -6264,8 +6401,9 @@ def build_primary_child_env(
             for name in PRIMARY_COMPUTE_LANE_ENV_ALLOWLIST[lane]:
                 if str(source.get(name) or ""):
                     child[name] = str(source[name])
+    prompt_env_allowed = bool(allow_prompt_env) and not str(provider or "").strip()
     for name, value in control.items():
-        if str(name) == "AUTOLOOP_PROMPT":
+        if str(name) == "AUTOLOOP_PROMPT" and not prompt_env_allowed:
             continue
         text = str(value if value is not None else "")
         if text:
@@ -6427,6 +6565,7 @@ def probe_grok_model_membership(
         completed = subprocess.run(
             [binary, "models"],
             text=True,
+            **SUBPROCESS_TEXT_DECODING,
             capture_output=True,
             timeout=timeout,
             env=probe_env,
@@ -6542,6 +6681,7 @@ def probe_grok_remote_profile(
         help_result = subprocess.run(
             [binary, "--help"],
             text=True,
+            **SUBPROCESS_TEXT_DECODING,
             capture_output=True,
             timeout=timeout,
             env=environ,
@@ -6558,6 +6698,7 @@ def probe_grok_remote_profile(
         completed = subprocess.run(
             [binary, "doctor", "--json"],
             text=True,
+            **SUBPROCESS_TEXT_DECODING,
             capture_output=True,
             timeout=timeout,
             env=environ,
@@ -6810,6 +6951,34 @@ def resolve_provider_binary(
     return binary, found, tried
 
 
+def split_provider_arg_template(
+    raw: str, *, platform: str | None = None
+) -> list[str]:
+    """Split an operator argument template under its own platform's quoting.
+
+    ``shlex.split`` defaults to POSIX rules, where a backslash escapes the next
+    character and is then dropped. That is correct on POSIX, where an operator
+    writes ``/srv/a\\ b`` to mean one argument containing a space. On Windows the
+    backslash is the path separator, so the same rule silently eats it: an
+    unquoted ``C:\\Users\\me\\project`` becomes ``C:Usersmeproject`` and the
+    provider is launched against a directory that cannot exist. Nothing reports
+    it, because a template is only ever splittable, never wrong.
+
+    Windows templates are therefore split on quoting alone. shlex still decides
+    where the tokens end, so the quote characters it used to group a token are
+    the ones removed here.
+    """
+
+    if (platform or runtime_platform_name()) != "windows":
+        return shlex.split(raw)
+    tokens: list[str] = []
+    for token in shlex.split(raw, posix=False):
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'":
+            token = token[1:-1]
+        tokens.append(token)
+    return tokens
+
+
 def resolve_provider_command(
     provider: str,
     run_dir: Path,
@@ -6872,7 +7041,9 @@ def resolve_provider_command(
         raise ValueError(
             "a host-attested provider cannot use custom argument overrides"
         )
-    template = shlex.split(args_raw) if args_raw else list(spec["args"])
+    template = (
+        split_provider_arg_template(args_raw) if args_raw else list(spec["args"])
+    )
     # Per-binary arg templates: a spec may declare different flags per resolved
     # binary (e.g. antigravity: `agy -p ... --dangerously-skip-permissions` vs
     # `gemini --yolo -p ...`). An explicit AAS_AUTOLOOP_ARGS_* override wins.
@@ -7226,7 +7397,6 @@ def parse_recovery_table_field(recovery_md: str, field_name: str) -> str:
 
 def build_progress_why_where(
     run_dir: Path,
-    record: dict[str, Any],
     state: dict[str, Any],
     *,
     attempt_event: bool,
@@ -7413,14 +7583,18 @@ def split_notify_items(text: str, *, max_items: int = 10) -> list[str]:
 def format_notify_body_block(
     text: str,
     *,
-    style: str = "markdown",
     max_chars: int = 900,
     max_items: int = 10,
 ) -> str:
     """Normalize math Unicode and render as a bullet list when multi-item.
 
-    *style*: ``markdown`` (Zulip) or ``plain`` (Telegram after HTML-escape of
-    each line by the caller).
+    The block is the same for every channel.  There used to be a *style*
+    parameter documented as ``markdown`` (Zulip) or ``plain`` (Telegram after
+    HTML-escape of each line by the caller), and both callers dutifully passed
+    their own value, but the one branch that read it appended the identical
+    string either way -- the bullet is a fixed ``"•"`` and neither channel needs
+    it marked up: Zulip shows it literally and Telegram's HTML leaves it alone.
+    So the parameter promised the callers a distinction that did not exist.
     """
     normalized = normalize_math_unicode((text or "").strip())
     if not normalized:
@@ -7443,10 +7617,7 @@ def format_notify_body_block(
             break
         if len(piece) > room:
             piece = piece[: room - 1].rstrip() + "…"
-        if style == "markdown":
-            rendered.append(f"{bullet} {piece}")
-        else:
-            rendered.append(f"{bullet} {piece}")
+        rendered.append(f"{bullet} {piece}")
         used += len(piece)
     return "\n".join(rendered)
 
@@ -7504,9 +7675,7 @@ def format_progress_notify_text(
         lines.append(f"🕒 {timestamp}")
 
     def _section(title: str, body: str, *, max_chars: int) -> None:
-        block = format_notify_body_block(
-            body, style="markdown", max_chars=max_chars
-        )
+        block = format_notify_body_block(body, max_chars=max_chars)
         if not block:
             return
         lines.append("")
@@ -7585,7 +7754,7 @@ def format_progress_notify_telegram_html(
         lines.append(f"🕒 {esc(timestamp)}")
 
     def _section(title: str, body: str, *, max_chars: int) -> None:
-        block = format_notify_body_block(body, style="plain", max_chars=max_chars)
+        block = format_notify_body_block(body, max_chars=max_chars)
         if not block:
             return
         lines.append("")
@@ -7772,7 +7941,6 @@ def _build_notify_v2_envelope(
     *,
     record: dict[str, Any],
     state: dict[str, Any],
-    budget: dict[str, Any],
     extra: dict[str, Any],
     iteration: int,
     spent: int,
@@ -8215,7 +8383,7 @@ def build_progress_event(
         progress_note = ""
 
     why, where = build_progress_why_where(
-        run_dir, record, state, attempt_event=attempt_event
+        run_dir, state, attempt_event=attempt_event
     )
 
     # Research-topic title for notify identity (not bare "loop" / dir only).
@@ -8320,7 +8488,6 @@ def build_progress_event(
             event,
             record=record,
             state=state,
-            budget=budget,
             extra=extra_data,
             iteration=iteration,
             spent=spent,
@@ -8925,6 +9092,7 @@ def emit_loop_progress(
                         timeout=60,
                         capture_output=True,
                         text=True,
+                        **SUBPROCESS_TEXT_DECODING,
                         input=(
                             json.dumps(notify_event, ensure_ascii=False)
                             if isinstance(notify_event, dict)
@@ -11144,7 +11312,7 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                         panel_enabled=effective_panel_enabled,
                         panel_iter_dir=panel_iter_dir,
                     )
-                except ValueError:
+                except ValueError as exc:
                     _cancel_prepared_dispatch(
                         dispatch_intent, "provider_command_resolution_failed"
                     )
@@ -11157,6 +11325,10 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
                     reason = "bad_arguments"
+                    sys.stderr.write(
+                        f"autoloop-driver: could not build the {provider} iteration "
+                        f"command: {exc}\n"
+                    )
                     break
                 if spec["mode"] == "argv" and not spec["binary_found"]:
                     tried = spec.get("tried") or PROVIDER_SPECS[provider]["binaries"]
@@ -11357,6 +11529,9 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                 include_compute_credentials=(
                     provider_transport == TRUSTED_LOCAL_TRANSPORT
                 ),
+                # Only the operator's own command gets the prompt by environment;
+                # provider processes keep the private argv/stdin transport.
+                allow_prompt_env=not provider,
             )
             iterations_run += 1
             stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -11436,10 +11611,6 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                         "enforce_mode": goal_focus_mode == "enforce",
                                         "trusted_local": provider_transport
                                         == TRUSTED_LOCAL_TRANSPORT,
-                                        "run_dir": str(run_dir),
-                                        "evidence_dir": str(evidence_dir)
-                                        if evidence_dir is not None
-                                        else None,
                                         "executable_attestation": driver_execution_attestation,
                                         "stdin_text": primary_stdin_text,
                                         "compute_lanes": sorted(
@@ -11475,9 +11646,6 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
                                     trusted_local=(
                                         provider_transport == TRUSTED_LOCAL_TRANSPORT
                                     ),
-                                    run_dir=run_dir,
-                                    evidence_dir=evidence_dir,
-                                    executable_attestation=driver_execution_attestation,
                                     stdin_text=primary_stdin_text,
                                     resource_metadata=primary_resource_metadata,
                                 )

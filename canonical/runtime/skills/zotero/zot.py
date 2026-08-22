@@ -649,7 +649,7 @@ def cmd_add(args):
         "status": "ok", "action": "add", "title": title, "key": item_key,
         "version": version, "verified": verified,
         "collections": coll_names,
-        "message": _build_add_message(version, verified, pdf_source, coll_names, args.no_pdf),
+        "message": _build_add_message(version, verified, coll_names, args.no_pdf),
     }
 
     if pdf_source:
@@ -700,7 +700,7 @@ def _cmd_add_batch(args, config, client):
                 cmd.extend(["--collection", c])
         elif args.no_collection:
             cmd.append("--no-collection")
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         try:
             return json.loads(r.stdout)
         except json.JSONDecodeError:
@@ -763,7 +763,7 @@ def _cmd_add_from_manifest(args, config, client):
                 cmd.extend(["--collection", c])
 
         import subprocess
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
         try:
             results.append(json.loads(r.stdout))
         except json.JSONDecodeError:
@@ -1159,7 +1159,7 @@ def _try_extract_doi(pdf_path):
         _progress("2/5 Extracting DOI from PDF content...")
         result = subprocess.run(
             ["getscipapers", "getpapers", "--extract-doi-from-pdf", pdf_path, "--no-download"],
-            capture_output=True, text=True, timeout=60
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60
         )
         for line in result.stdout.splitlines():
             if "Extracted DOI from PDF:" in line:
@@ -1171,7 +1171,7 @@ def _try_extract_doi(pdf_path):
     return None
 
 
-def _build_add_message(version, verified, source, collections, no_pdf):
+def _build_add_message(version, verified, collections, no_pdf):
     parts = ["Item created"]
     if no_pdf:
         parts.append("(metadata only)")
@@ -1181,7 +1181,7 @@ def _build_add_message(version, verified, source, collections, no_pdf):
         parts.append("with published PDF")
     elif version == "author_copy":
         if verified:
-            parts.append(f"with author copy")
+            parts.append("with author copy")
         else:
             parts.append("with unverified copy — please check")
     elif version == "preprint":
@@ -1242,7 +1242,8 @@ def _log_orphan(config, attachment_key, error_msg):
     orphan_log = os.path.join(config["workspace"], "data", "research", "zotero", "orphaned-keys.log")
     os.makedirs(os.path.dirname(orphan_log), exist_ok=True)
     with open(orphan_log, "a", encoding="utf-8") as f:
-        f.write(f"{datetime.datetime.utcnow().isoformat()} {attachment_key} {error_msg}\n")
+        stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        f.write(f"{stamp} {attachment_key} {error_msg}\n")
 
 
 def _progress(msg):
@@ -1432,7 +1433,7 @@ def _send_file(file_path, channel, target, title):
     try:
         proc = subprocess.run(
             [script],
-            input=request, capture_output=True, text=True, timeout=180,
+            input=request, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
             env=delivery_env,
         )
         try:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import argparse
+import ast
 import json
 import hashlib
 import importlib.util
@@ -24,6 +26,8 @@ def run_runtime(*args: str, check: bool = True) -> subprocess.CompletedProcess[s
         [sys.executable, str(SCRIPT), *args],
         cwd=REPO_ROOT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
     )
     if check and completed.returncode != 0:
@@ -52,6 +56,8 @@ def call_runtime_function(function: str, **kwargs: object) -> object:
         cwd=REPO_ROOT,
         input=json.dumps({"function": function, "kwargs": kwargs}),
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -399,6 +405,8 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
                 ],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -2164,6 +2172,123 @@ class VenueRankingEvidenceRuntimeTests(unittest.TestCase):
         )
         self.assertTrue(any("collision:" in item for item in warnings))
 
+
+
+class AmbiguousProofSelectionTests(unittest.TestCase):
+    """`cmd_proof`'s multi-match guard, on every branch of its chain.
+
+    The guard used to read::
+
+        if delivery.get("match_status") == "matched" and resolved:
+            args.venue_id = str(resolved)
+        elif delivery.get("ambiguity_requires_selection"):
+            raise VenueError("ambiguous lookup: provide --venue-id before proof")
+        else:
+            raise VenueError("ambiguous lookup: provide --venue-id before proof")
+
+    The `elif` guard was evaluated and thrown away: whichever way the flag read, the
+    caller got one byte-identical error, so the flag only looked load-bearing here.
+    It is load-bearing elsewhere -- the delivery report and the artifact both carry
+    it -- and these tests hold both halves of that: the same refusal on every
+    ambiguous path, and the key still read outside this function.
+    """
+
+    MESSAGE = "ambiguous lookup: provide --venue-id before proof"
+
+    def _proof(self, delivery, *, venue_id=None):
+        """Drive the real cmd_proof to the multi-match guard and report the outcome.
+
+        Everything the guard does not consult is stubbed out; two matches and no
+        --venue-id is what puts control inside it.
+        """
+
+        module = load_runtime_module()
+        matches = [{"venue_id": "venue-a"}, {"venue_id": "venue-b"}]
+        module.checked_run_dir = lambda directory: Path(directory)
+        module.require_recorded_artifact_integrity = lambda *a, **k: None
+        module.read_json = lambda path: delivery
+        module.read_jsonl = lambda path: (
+            matches if Path(path).name == "matches.jsonl" else []
+        )
+        args = argparse.Namespace(
+            dir="run-dir-not-touched", venue_id=venue_id, observation_id="obs-1"
+        )
+        try:
+            module.cmd_proof(args)
+        except module.VenueError as exc:
+            return args, str(exc)
+        raise AssertionError("cmd_proof returned without raising")
+
+    def test_the_flag_being_set_refuses_with_the_remedy(self) -> None:
+        _args, message = self._proof(
+            {"match_status": "ambiguous", "ambiguity_requires_selection": True}
+        )
+        self.assertEqual(message, self.MESSAGE)
+
+    def test_the_flag_being_clear_refuses_identically(self) -> None:
+        _args, message = self._proof(
+            {"match_status": "ambiguous", "ambiguity_requires_selection": False}
+        )
+        self.assertEqual(message, self.MESSAGE)
+
+    def test_the_flag_being_absent_refuses_identically(self) -> None:
+        _args, message = self._proof({"match_status": "ambiguous"})
+        self.assertEqual(message, self.MESSAGE)
+
+    def test_a_resolved_match_is_selected_instead_of_refused(self) -> None:
+        """The one branch of the chain that is not a refusal still is not one."""
+
+        args, message = self._proof(
+            {"match_status": "matched", "resolved_venue_id": "venue-a"}
+        )
+        self.assertEqual(args.venue_id, "venue-a")
+        self.assertNotEqual(message, self.MESSAGE)
+        self.assertEqual(message, "observation was not found or is not uniquely selected")
+
+    def test_a_matched_status_without_a_resolved_id_still_refuses(self) -> None:
+        _args, message = self._proof({"match_status": "matched"})
+        self.assertEqual(message, self.MESSAGE)
+
+    def test_an_explicit_venue_id_skips_the_guard_entirely(self) -> None:
+        args, message = self._proof({"match_status": "ambiguous"}, venue_id="venue-b")
+        self.assertEqual(args.venue_id, "venue-b")
+        self.assertNotEqual(message, self.MESSAGE)
+
+
+class ProofGuardShapeTests(unittest.TestCase):
+    """Structural companions to the tests above, so the collapse cannot come undone."""
+
+    @staticmethod
+    def _cmd_proof_node() -> ast.FunctionDef:
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "cmd_proof":
+                return node
+        raise AssertionError("cmd_proof is not defined in the runtime")
+
+    def test_no_branch_in_cmd_proof_has_identical_arms(self) -> None:
+        for inner in ast.walk(self._cmd_proof_node()):
+            if isinstance(inner, ast.If) and inner.orelse:
+                body = "\n".join(ast.dump(s) for s in inner.body)
+                orelse = "\n".join(ast.dump(s) for s in inner.orelse)
+                self.assertNotEqual(
+                    body,
+                    orelse,
+                    f"line {inner.lineno}: both arms of "
+                    f"`if {ast.unparse(inner.test)}` do the same thing",
+                )
+
+    def test_the_ambiguity_flag_is_still_read_outside_the_guard(self) -> None:
+        """Removing a dead read must not be mistaken for retiring the key."""
+
+        source = SCRIPT.read_text(encoding="utf-8")
+        inside = ast.unparse(self._cmd_proof_node())
+        # assertFalse, not assertNotIn: the haystack is the whole function.
+        self.assertFalse(
+            "ambiguity_requires_selection" in inside,
+            "cmd_proof reads a flag it does not act on",
+        )
+        self.assertGreater(source.count('"ambiguity_requires_selection"'), 1)
 
 if __name__ == "__main__":
     unittest.main()

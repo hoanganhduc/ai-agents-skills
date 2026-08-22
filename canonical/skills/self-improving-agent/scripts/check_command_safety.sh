@@ -33,14 +33,25 @@ if [[ -z "$cmd" ]]; then
   exit 2
 fi
 
-if echo "$cmd" | grep -qE 'rm[[:space:]]+(-[a-zA-Z]*f[a-zA-Z]*[[:space:]]+)?(-[a-zA-Z]*r[a-zA-Z]*[[:space:]]+)?(/|/home([[:space:]]|$)|~/?([[:space:]]|$))'; then
+# Flags are matched as a set, not by position. The previous rule pinned the
+# short spellings to the two slots right after "rm ", so any long option or any
+# extra flag pushed the target out of reach and the command was waved through --
+# including "rm --no-preserve-root -rf /", the one spelling GNU rm does not
+# refuse on its own.
+if echo "$cmd" | grep -qE 'rm([[:space:]]+-[^[:space:]]*)*[[:space:]]+["]?(/|~|\$HOME|\$\{HOME\})'; then
   echo "BLOCKED: destructive rm -rf targeting root or home directory." >&2
   exit 2
 fi
 
-if echo "$cmd" | grep -qE 'git[[:space:]]+push[[:space:]]+.*--force.*[[:space:]]+(origin[[:space:]]+)?(main|master)([^[:alnum:]_]|$)'; then
-  echo "BLOCKED: force push to main/master." >&2
-  exit 2
+# Same shape of defect: the force flag had to precede the refspec, so
+# "git push origin main --force" -- the order git's own documentation uses in
+# its examples -- matched nothing. Presence is now tested independently of order.
+if echo "$cmd" | grep -qE '(^|[^[:alnum:]_-])git[[:space:]]+push([^[:alnum:]_-]|$)'; then
+  if echo "$cmd" | grep -qE '(^|[[:space:]])(--force([-=][^[:space:]]*)?|-[a-zA-Z]*f[a-zA-Z]*)([[:space:]]|$)' \
+    && echo "$cmd" | grep -qE '(^|[[:space:]/:])(main|master)([^[:alnum:]_.-]|$)'; then
+    echo "BLOCKED: force push to main/master." >&2
+    exit 2
+  fi
 fi
 
 if echo "$cmd" | grep -qE '(curl|wget)[[:space:]]+[^|]*\|[[:space:]]*(ba)?sh'; then

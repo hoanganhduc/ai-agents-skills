@@ -185,7 +185,7 @@ def build_plan(
             backup_replace,
         )
     )
-    actions.extend(grok_native_config_actions(agents, actions, adopt, backup_replace))
+    actions.extend(grok_native_config_actions(agents, actions))
     actions.extend(
         build_runtime_actions(
             root=root,
@@ -423,8 +423,6 @@ GROK_COMPAT_CLAUDE_BODY = "\n".join(
 def grok_native_config_actions(
     agents: list[AgentTarget],
     actions: list[dict[str, Any]],
-    adopt: bool,
-    backup_replace: bool,
 ) -> list[dict[str, Any]]:
     # Grok's ``[compat.claude]`` ride-along is default-on, so when both claude
     # and grok are installed grok double-loads every managed surface from both

@@ -30,6 +30,8 @@ def _run(*args: str, env: dict[str, str] | None = None) -> subprocess.CompletedP
         [sys.executable, str(HELPER), *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         env=base,
         check=False,
     )
@@ -95,7 +97,7 @@ class OpenGaussRuntimeTests(unittest.TestCase):
     def test_validate_smoke_branch(self) -> None:
         res = _run("smoke", env={"ANTHROPIC_API_KEY": "OPENGAUSS-SMOKE-CANARY"})
         self.assertEqual(res.returncode, 0)
-        checks = validate_smoke_output({}, "opengauss", res, ["smoke"])
+        checks = validate_smoke_output("opengauss", res, ["smoke"])
         self.assertTrue(all(c["ok"] for c in checks), checks)
 
     def test_live_prove_smoke_refuses_without_opt_in(self) -> None:

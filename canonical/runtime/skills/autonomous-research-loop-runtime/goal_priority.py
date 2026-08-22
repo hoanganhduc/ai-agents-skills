@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,41 @@ except ImportError:  # pragma: no cover - package-relative install layouts
     from .state_transaction import iteration_ledger_paths  # type: ignore
 
 SCHEMA_VERSION = "goal_priority.v1"
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Replace a loop file whole, or leave the old one exactly as it was.
+
+    ``write_text`` opens with mode ``"w"``, which truncates the destination
+    before the first byte of the replacement is written. The three files this
+    module rewrites are the loop's own state, its recovery record and its audit
+    log, so a write that dies partway -- a full disk, a file-size limit, a
+    killed supervisor -- left the loop holding a state file cut off mid-token.
+    The caller was told the write failed and the loop was unrecoverable anyway.
+
+    The runtime's own writer for ``loop_state.json`` has never done this, and
+    says so: "Write atomically (temp file + os.replace) so a crash mid-write
+    cannot truncate the destination and lose loop state." This is that, and it
+    keeps the ``mkstemp`` + ``os.replace`` shape used elsewhere in the pack, so
+    a symlink planted at the destination is replaced rather than followed.
+    """
+
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except OSError:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
 
 GENERIC_LOCAL_TAGS = [
     "finite_sample_only",
@@ -49,20 +85,30 @@ CONTRIBUTION_VOCABULARY = frozenset(
 
 DISCIPLINE_MODES = frozenset({"soft", "advise", "hard"})
 
-# Contributions that count as real residual/goal progress for host streak (advise/hard).
-PROGRESS_CONTRIBUTIONS = frozenset(
-    {
-        "eliminate",
-        "construct",
-        "scope_lift",
-        "bridge",
-        "separate",
-        "replan",
-        "formalize",
-    }
+# Contributions that count as real residual/goal progress for host streak
+# (advise/hard). Ordered because the guidance this module emits is built from it.
+# The two were maintained separately and drifted: the guidance named
+# ``verify_trust`` among the labels to prefer over a bare ``advance``, while the
+# streak counter had it in LOW_VALUE_CONTRIBUTIONS and so treated it exactly like
+# the ``advance`` it was telling the agent to avoid -- three independent audits of
+# three different residuals hit the cap and forced a replan. Meanwhile
+# ``formalize`` counted as progress but went unmentioned. An independent audit is
+# a gate discharged, the same as the formal gate beside it.
+PROGRESS_CONTRIBUTIONS_ORDERED = (
+    "eliminate",
+    "construct",
+    "scope_lift",
+    "bridge",
+    "separate",
+    "verify_trust",
+    "replan",
+    "formalize",
 )
+PROGRESS_CONTRIBUTIONS = frozenset(PROGRESS_CONTRIBUTIONS_ORDERED)
+# The one rendering of that list the agent ever reads, so it cannot drift again.
+PREFERRED_CONTRIBUTIONS_TEXT = "/".join(PROGRESS_CONTRIBUTIONS_ORDERED)
 # Low-value labels: same residual_id + these can count as local in advise/hard.
-LOW_VALUE_CONTRIBUTIONS = frozenset({"advance", "verify_trust", "operational", ""})
+LOW_VALUE_CONTRIBUTIONS = frozenset({"advance", "operational", ""})
 
 _ENV_ON = frozenset({"1", "on", "true", "yes"})
 _ENV_OFF = frozenset({"0", "off", "false", "no"})
@@ -360,12 +406,22 @@ def _counts_as_local(
     *,
     require: bool,
     mode: str = "soft",
-    newer_row: dict[str, Any] | None = None,
 ) -> bool:
     """Whether a ledger row counts as local-without-goal-delta for streak.
 
     soft: explicit flag or missing contribution (when require).
-    advise/hard: also bare advance / low-value labels continuing the same residual_id.
+    advise/hard: also any low-value label, whatever residual_id the row names.
+
+    The residual_id does not enter the verdict. This function used to compare each row
+    against the newer one beside it and count a low-value label only when it continued
+    the same residual, but the two clauses below that comparison already returned True
+    for a low-value label with no residual_id and for one with any residual_id --
+    between them, every low-value row -- so the comparison decided nothing. An
+    exhaustive sweep of the input space found no row whose verdict it changed, and the
+    comment on the last clause, "(no newer row to compare)", named a condition the
+    clause did not test. Counting on any residual is what the streak is specified
+    against: three bare `advance` iterations are three iterations without a goal delta
+    whether or not they happen to name one residual.
     """
     flagged = row.get("local_without_goal_delta") is True
     if flagged:
@@ -376,18 +432,7 @@ def _counts_as_local(
     if mode in {"advise", "hard"}:
         if gc in PROGRESS_CONTRIBUTIONS:
             return False
-        rid = str(row.get("residual_id") or "").strip()
-        # Low-value on same residual as the more-recent row (walking reverse).
-        if newer_row is not None:
-            nrid = str(newer_row.get("residual_id") or "").strip()
-            if rid and nrid and rid == nrid and gc in LOW_VALUE_CONTRIBUTIONS:
-                return True
-        # Bare advance / operational with no residual_id: local risk in advise/hard.
-        if not rid and gc in LOW_VALUE_CONTRIBUTIONS:
-            return True
-        # Same residual_id with only advance (no newer row to compare): still local.
-        if rid and gc in LOW_VALUE_CONTRIBUTIONS:
-            return True
+        return gc in LOW_VALUE_CONTRIBUTIONS
     return False
 
 
@@ -415,7 +460,6 @@ def local_without_goal_delta_streak(run_dir: Path, cfg: dict[str, Any] | None = 
     mode = discipline_mode(cfg)
     epoch = cfg.get("host_signal_epoch_iteration")
     streak = 0
-    newer: dict[str, Any] | None = None
     for row in reversed(rows[start:]):
         try:
             n = int(row.get("iteration") or 0)
@@ -427,9 +471,8 @@ def local_without_goal_delta_streak(run_dir: Path, cfg: dict[str, Any] | None = 
                     break
             except (TypeError, ValueError):
                 pass
-        if _counts_as_local(row, require=require, mode=mode, newer_row=newer):
+        if _counts_as_local(row, require=require, mode=mode):
             streak += 1
-            newer = row
         else:
             break
     return streak
@@ -647,9 +690,7 @@ def apply_hard_path_discipline(run_dir: Path) -> dict[str, Any]:
             gp_so["last_hard_replan_path"] = new_path[:500]
             gp_so["last_hard_replan_reason"] = str(proposal.get("reason") or "")
             state["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            state_path.write_text(
-                json.dumps(state, indent=2) + "\n", encoding="utf-8"
-            )
+            _atomic_write_text(state_path, json.dumps(state, indent=2) + "\n")
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
             result["reason"] = f"loop_state_write_failed:{exc}"
             return result
@@ -684,7 +725,7 @@ def apply_hard_path_discipline(run_dir: Path) -> dict[str, Any]:
                 if not inserted:
                     out2.append(bullet)
                 new_lines = out2
-            recovery_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            _atomic_write_text(recovery_path, "\n".join(new_lines) + "\n")
         except OSError as exc:
             result["reason"] = f"recovery_write_failed:{exc}"
             # path was already updated in loop_state; still report partial
@@ -709,8 +750,9 @@ def apply_hard_path_discipline(run_dir: Path) -> dict[str, Any]:
             "old_path": old_path[:500],
             "streak": local_without_goal_delta_streak(run_dir, cfg),
         }
-        (log_dir / "goal_priority_hard_replan.json").write_text(
-            json.dumps(audit, indent=2) + "\n", encoding="utf-8"
+        _atomic_write_text(
+            log_dir / "goal_priority_hard_replan.json",
+            json.dumps(audit, indent=2) + "\n",
         )
     except OSError:
         pass
@@ -813,8 +855,8 @@ def goal_priority_prompt_addon(run_dir: Path, cfg: dict[str, Any] | None = None)
         )
     lines.append(
         "- When appending, prefer ledger fields: "
-        "`--goal-contribution` (prefer eliminate/construct/scope_lift/bridge/"
-        "separate/verify_trust/replan over bare advance), `--campaign-id`, "
+        f"`--goal-contribution` (prefer {PREFERRED_CONTRIBUTIONS_TEXT} over bare "
+        "advance), `--campaign-id`, "
         "optional `--residual-id` / `--scope-lock`, and if applicable "
         "`--local-without-goal-delta` / `--local-without-goal-delta-tag`."
     )
@@ -901,8 +943,8 @@ def collect_goal_priority_warnings(
             if contribution_is_generic_advance(gc):
                 warnings.append(
                     "goal_priority advise+: bare goal_contribution 'advance' is "
-                    "discouraged; prefer eliminate/construct/scope_lift/bridge/"
-                    "separate/verify_trust/replan when accurate"
+                    f"discouraged; prefer {PREFERRED_CONTRIBUTIONS_TEXT} when "
+                    "accurate"
                 )
             elif gc and gc not in CONTRIBUTION_VOCABULARY:
                 # Soft open vocabulary still allowed; advise+ notes unknown labels.

@@ -116,7 +116,6 @@ class ManagedParentPermissionTests(unittest.TestCase):
 
             def plan() -> dict:
                 action = runtime_file_action(
-                    root=root,
                     runtime_root=runtime_root,
                     entry=entry,
                     skill="probe",
@@ -177,7 +176,6 @@ class ManagedParentPermissionTests(unittest.TestCase):
                         directory.chmod(0o775)
 
                     action = runtime_file_action(
-                        root=root,
                         runtime_root=runtime_root,
                         entry=entry,
                         skill="zotero",

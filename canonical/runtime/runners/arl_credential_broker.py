@@ -456,9 +456,6 @@ class CredentialState:
                 provider=provider,
                 enforce_mode=bool(request.get("enforce_mode")),
                 trusted_local=bool(request.get("trusted_local")),
-                run_dir=Path(str(request["run_dir"])) if request.get("run_dir") else None,
-                evidence_dir=Path(str(request["evidence_dir"])) if request.get("evidence_dir") else None,
-                executable_attestation=attestation,
                 stdin_text=str(request["stdin_text"]) if request.get("stdin_text") is not None else None,
                 resource_metadata=metadata,
             )
@@ -568,7 +565,7 @@ class CredentialState:
                 env[key] = lane_values[key]
         completed = subprocess.run(
             ["/usr/bin/python3", str(driver), *arguments],
-            cwd=str(cwd), env=env, text=True, capture_output=True,
+            cwd=str(cwd), env=env, text=True, encoding="utf-8", errors="replace", capture_output=True,
             timeout=86_400, check=False,
         )
         rc, stdout, stderr = self._block_secret_output(completed.returncode, completed.stdout, completed.stderr)

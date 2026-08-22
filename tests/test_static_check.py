@@ -13,9 +13,13 @@ from unittest.mock import Mock, patch
 
 from tools.static_check import (
     bash_syntax_path,
+    check_duplicate_keyword_spread,
     check_python_parse,
+    check_subprocess_text_encoding,
+    module_dict_constants,
     powershell_parse_script,
     powershell_single_quoted,
+    tracked_files,
 )
 
 
@@ -297,6 +301,8 @@ Import-AasSecretEnvFile `
                 [str(powershell), "-NoProfile", "-NonInteractive", "-Command", command],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 # pwsh cold start plus two Set-Acl round trips runs well past
                 # 30s on a loaded Windows runner, and the timeout fails the
@@ -480,6 +486,217 @@ Import-AasSecretEnvFile `
 
             self.assertEqual(check_python_parse([path]), [])
 
+
+class SubprocessTextEncodingTests(unittest.TestCase):
+    """`text=True` with no `encoding=` decodes with whatever the host locale says.
+
+    On the Linux runners that is UTF-8 and on the Windows one it is the ANSI code
+    page, so the same child output becomes two different strings; and the implied
+    errors='strict' turns one byte the codec rejects into a UnicodeDecodeError raised
+    inside subprocess.run. Callers that wrap the call in `except Exception` then
+    report a tool that exited 0 as failed or unknown; callers that do not, crash.
+    """
+
+    def _errors_for(self, body: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "sample.py"
+            path.write_text("import subprocess\n" + body, encoding="utf-8")
+            return check_subprocess_text_encoding([path])
+
+    def test_an_unpinned_text_call_is_reported(self) -> None:
+        errors = self._errors_for('subprocess.run(["x"], capture_output=True, text=True)\n')
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("subprocess-encoding:", errors[0])
+        self.assertIn("subprocess.run", errors[0])
+
+    def test_the_older_spelling_is_reported_too(self) -> None:
+        """`universal_newlines=True` is the same switch under its pre-3.7 name."""
+
+        errors = self._errors_for(
+            'subprocess.check_output(["x"], universal_newlines=True)\n'
+        )
+
+        self.assertEqual(len(errors), 1, errors)
+
+    def test_a_pinned_call_is_accepted(self) -> None:
+        self.assertEqual(
+            self._errors_for(
+                'subprocess.run(["x"], text=True, encoding="utf-8", errors="replace")\n'
+            ),
+            [],
+        )
+
+    def test_a_bytes_call_is_not_the_rules_business(self) -> None:
+        """Without text=True nothing is decoded, so there is no codec to pin."""
+
+        self.assertEqual(
+            self._errors_for('subprocess.run(["x"], capture_output=True)\n'), []
+        )
+
+    def test_a_local_helper_named_run_is_not_mistaken_for_subprocess(self) -> None:
+        self.assertEqual(self._errors_for('run(job, text=True)\n'), [])
+
+    def test_every_tracked_call_site_in_the_tree_is_pinned(self) -> None:
+        """The regression guard proper: one unpinned site anywhere fails this."""
+
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(check_subprocess_text_encoding(tracked_files(root)), [])
+
+
+
+class SpreadSuppliedEncodingTests(unittest.TestCase):
+    """A shared codec constant satisfies the encoding rule; it must not be a trap.
+
+    Reading only inline keywords made the rule reject
+    ``subprocess.run(..., text=True, **SUBPROCESS_TEXT_DECODING)`` even though the
+    constant is exactly ``{"encoding": "utf-8", "errors": "replace"}``.  The way to
+    quiet a check that will not accept the constant is to write the keyword as well
+    as the spread -- and the same keyword twice is a TypeError, raised while Python
+    packs the arguments, so the callee never runs and any mock in its place records
+    nothing.  Four call sites in the loop runtime reached that state.
+    """
+
+    DECODING = 'DECODING = {"encoding": "utf-8", "errors": "replace"}\n'
+
+    def _errors_for(self, body: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "sample.py"
+            path.write_text(
+                "import subprocess\n" + self.DECODING + body, encoding="utf-8"
+            )
+            return check_subprocess_text_encoding([path])
+
+    def test_a_spread_constant_supplies_the_codec(self) -> None:
+        errors = self._errors_for(
+            'subprocess.run(["x"], text=True, **DECODING)\n'
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_a_spread_constant_without_the_codec_does_not(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "sample.py"
+            path.write_text(
+                'import subprocess\nOPTS = {"timeout": 60}\n'
+                'subprocess.run(["x"], text=True, **OPTS)\n',
+                encoding="utf-8",
+            )
+            errors = check_subprocess_text_encoding([path])
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("subprocess-encoding:", errors[0])
+
+    def test_an_unknown_spread_name_does_not_excuse_the_call(self) -> None:
+        errors = self._errors_for(
+            'subprocess.run(["x"], text=True, **whatever_the_caller_passed)\n'
+        )
+
+        self.assertEqual(len(errors), 1, errors)
+
+    def test_the_inline_keyword_still_works_on_its_own(self) -> None:
+        errors = self._errors_for(
+            'subprocess.run(["x"], text=True, encoding="utf-8")\n'
+        )
+
+        self.assertEqual(errors, [])
+
+
+class DuplicateKeywordSpreadTests(unittest.TestCase):
+    """The collision itself, wherever it appears -- not only in subprocess calls."""
+
+    def _errors_for(self, source: str) -> list[str]:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "sample.py"
+            path.write_text(source, encoding="utf-8")
+            return check_duplicate_keyword_spread([path])
+
+    def test_a_keyword_supplied_inline_and_by_spread_is_reported(self) -> None:
+        errors = self._errors_for(
+            'D = {"encoding": "utf-8", "errors": "replace"}\n'
+            'run(x, encoding="utf-8", **D)\n'
+        )
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("duplicate-keyword:", errors[0])
+        self.assertIn("encoding", errors[0])
+        self.assertIn("**D", errors[0])
+
+    def test_every_colliding_name_is_named(self) -> None:
+        errors = self._errors_for(
+            'D = {"encoding": "utf-8", "errors": "replace"}\n'
+            'run(x, encoding="utf-8", errors="replace", **D)\n'
+        )
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("encoding, errors", errors[0])
+
+    def test_the_report_matches_what_python_actually_raises(self) -> None:
+        """The check claims a TypeError; this is that TypeError."""
+
+        constant = {"encoding": "utf-8"}
+
+        def receiver(**kwargs: object) -> None:  # pragma: no cover - never runs
+            raise AssertionError("the call never reaches the callee")
+
+        with self.assertRaises(TypeError) as caught:
+            receiver(encoding="utf-8", **constant)
+        self.assertIn("multiple values for keyword argument", str(caught.exception))
+
+    def test_a_spread_that_does_not_collide_is_left_alone(self) -> None:
+        errors = self._errors_for(
+            'D = {"timeout": 60}\n'
+            'run(x, encoding="utf-8", **D)\n'
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_a_spread_alone_is_left_alone(self) -> None:
+        errors = self._errors_for(
+            'D = {"encoding": "utf-8"}\n'
+            'run(x, **D)\n'
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_a_locally_built_mapping_is_not_guessed_at(self) -> None:
+        """Only module-level dict displays are read; a name built elsewhere is not
+        assumed to collide, so the check does not invent failures it cannot prove."""
+
+        errors = self._errors_for(
+            "def f(overrides):\n"
+            "    D = dict(overrides)\n"
+            '    return run(x, encoding="utf-8", **D)\n'
+        )
+
+        self.assertEqual(errors, [])
+
+
+class ModuleDictConstantTests(unittest.TestCase):
+    def _constants(self, source: str) -> dict[str, set[str]]:
+        return module_dict_constants(ast.parse(source))
+
+    def test_plain_and_annotated_assignments_are_both_read(self) -> None:
+        constants = self._constants(
+            'PLAIN = {"a": 1}\n'
+            'ANNOTATED: dict[str, int] = {"b": 2}\n'
+        )
+
+        self.assertEqual(constants, {"PLAIN": {"a"}, "ANNOTATED": {"b"}})
+
+    def test_only_string_keys_are_collected(self) -> None:
+        constants = self._constants('D = {"a": 1, 2: "b", **other}\n')
+
+        self.assertEqual(constants, {"D": {"a"}})
+
+    def test_a_nested_assignment_is_not_module_level(self) -> None:
+        constants = self._constants(
+            "def f():\n"
+            '    D = {"a": 1}\n'
+            "    return D\n"
+        )
+
+        self.assertEqual(constants, {})
 
 if __name__ == "__main__":
     unittest.main()

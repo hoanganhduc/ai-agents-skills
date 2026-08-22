@@ -202,9 +202,18 @@ Driver behavior:
   4 runtime error, 5 quota waits exhausted, 6 provider binary unavailable,
   7 auth/session dead.
 - Overrides: `AAS_AUTOLOOP_BIN_<PROVIDER>` (binary), `AAS_AUTOLOOP_ARGS_<PROVIDER>`
-  (argument template; `{prompt}`/`{dir}` placeholders), `AAS_AUTOLOOP_CMD_<PROVIDER>`
-  (full shell template; `{prompt}` is inserted shell-quoted and also exported as
-  `AUTOLOOP_PROMPT`).
+  (argument template; `{prompt}`/`{dir}` placeholders; split under the host's own
+  quoting rules, so a native Windows path keeps its backslashes and a POSIX
+  template keeps backslash escaping), `AAS_AUTOLOOP_CMD_<PROVIDER>`
+  (full shell template; `{prompt}` is inserted shell-quoted). The shell template
+  is an `agent-cmd` override only: `drive --provider` refuses it (exit 2,
+  "provider prompt privacy requires argv execution") because a shell string
+  cannot carry the prompt privately.
+- Prompt delivery: `drive --cmd` exports the iteration prompt as
+  `AUTOLOOP_PROMPT` alongside `AUTOLOOP_DRIVER`, `AUTOLOOP_DIR`, and
+  `AUTOLOOP_ROOT`, because the operator's command string is the one the runtime
+  never rewrites. `drive --provider` never puts the prompt in the environment;
+  it travels by scrubbed argv or stdin so no same-user process can read it back.
 
 ### Host-owned multi-agent panel (hybrid model)
 

@@ -3796,6 +3796,8 @@ class DocsAndLauncherTests(unittest.TestCase):
                 ],
                 cwd=REPO_ROOT,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 check=False,
                 timeout=30,

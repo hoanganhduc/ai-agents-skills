@@ -114,6 +114,8 @@ class BrokeredProviderContainmentTests(unittest.TestCase):
                 cwd=str(project),
                 env=child_env,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=10,
                 check=False,
@@ -364,6 +366,8 @@ class ProviderResourceLinuxBehaviorTests(unittest.TestCase):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=5,
                 check=False,
             )

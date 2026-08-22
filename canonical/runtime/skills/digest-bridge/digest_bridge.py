@@ -144,7 +144,7 @@ def create_manifest(papers: list[dict]) -> dict | None:
     try:
         result = subprocess.run(
             [sys.executable, str(GSP_HELPER), "build-manifest", "--kind", "auto", "--source", identifier_text],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         if result.returncode == 0:
             return json.loads(result.stdout)
@@ -165,7 +165,7 @@ def create_watches(papers: list[dict]) -> list[dict]:
                  "--identifier-type", "doi",
                  "--identifier", identifier,
                  "--services", "all"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
             )
             if result.returncode == 0:
                 return {"identifier": p["identifier"], "status": "created"}

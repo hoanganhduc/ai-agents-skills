@@ -12,14 +12,17 @@ import re
 import unicodedata
 
 
-def make_filename(title, authors=None, year=None):
+def make_filename(title):
     """Generate a base filename (without extension) for a book file.
 
-    Follows Calibre convention: sanitized title. Used as data.name value.
+    Follows Calibre convention: the sanitized title alone. Used as data.name
+    value. The author and year live in the Calibre directory layout, not in the
+    file stem, so they are not accepted here -- the signature used to take them
+    and drop them, and the example below showed an author being passed to a
+    result that never contains one.
 
     Examples:
-      "One Hundred Years of Solitude", ["Gabriel García Márquez"] →
-        "One_Hundred_Years_of_Solitude"
+      "One Hundred Years of Solitude" → "One_Hundred_Years_of_Solitude"
     """
     base = sanitize(title)
     # Calibre uses the title for the base filename

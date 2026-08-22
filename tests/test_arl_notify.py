@@ -854,5 +854,104 @@ class NotifyV2Tests(unittest.TestCase):
         self.assertNotIn("No claims banked", md)
 
 
+class RedactionOrderTests(unittest.TestCase):
+    """A configured secret must not survive by being cut in half.
+
+    ``redact_event`` normalized before it scrubbed, and normalization clips
+    every freeform section to ``FREEFORM_SECTION_MAX``. A configured secret is
+    removed by exact match, so a section longer than the cap that carried a
+    credential across the cut lost the tail and kept the head, and
+    ``str.replace`` had nothing left to match. The configured list exists for
+    the credentials the ``sk-``/``ghp_``/``TOKEN=`` heuristics cannot
+    recognize, so no fallback caught the surviving prefix.
+
+    The existing redaction tests all place the secret comfortably inside the
+    cap, which is why the ordering never showed.
+    """
+
+    # No recognizable prefix and no assignment syntax: only secret_values can
+    # remove this, which is the case the ordering defect exposed.
+    SECRET = "Qk9SR0lTVEhFV0FMUlVTMjAyNk9QQVFVRVRPS0VOWlo"
+
+    def setUp(self) -> None:
+        self.notify = _module()
+
+    def _event_with_secret_across_the_cap(self, section: str):
+        event = self.notify.build_event(
+            event="iteration_ok",
+            event_id="evt-redaction-order",
+            occurred_at="2026-07-29T12:00:00Z",
+            title="Sample open question",
+            topic_slug="sample-open-question",
+            goal="Resolve the main open question.",
+            completed="Banked a verified obstruction.",
+            current="The bridge obligation remains open.",
+            plan="Test the next registered direction.",
+            iteration_status="success",
+            loop_status="running",
+        )
+        limit = self.notify.FREEFORM_SECTION_MAX
+        lead = "the provider echoed its environment while probing the lane. "
+        head = len(self.SECRET) // 2
+        filler = "x" * (limit - head - len(lead) - 1)
+        event["sections"][section] = f"{lead}{filler} {self.SECRET} and then some."
+        self.assertGreater(len(event["sections"][section]), limit)
+        return event
+
+    def _longest_surviving_prefix(self, haystack: str) -> str:
+        for size in range(len(self.SECRET), 3, -1):
+            if self.SECRET[:size] in haystack:
+                return self.SECRET[:size]
+        return ""
+
+    def test_a_secret_cut_by_the_section_cap_is_still_removed(self) -> None:
+        for section in ("completed", "current", "plan", "goal"):
+            with self.subTest(section=section):
+                event = self._event_with_secret_across_the_cap(section)
+                safe = self.notify.redact_event(event, secret_values=[self.SECRET])
+                text = safe["sections"][section]
+                self.assertEqual(self._longest_surviving_prefix(text), "")
+                self.assertIn(self.notify.REDACTION, text)
+
+    def test_no_rendering_carries_a_fragment_of_the_secret(self) -> None:
+        event = self._event_with_secret_across_the_cap("completed")
+        rendered = self.notify.render_all(event, secret_values=[self.SECRET])
+        for channel, text in rendered.items():
+            with self.subTest(channel=channel):
+                self.assertEqual(self._longest_surviving_prefix(text), "")
+
+    def test_a_secret_well_inside_the_cap_is_unaffected(self) -> None:
+        """The ordering changed; what redaction does to a short section did not."""
+
+        event = self.notify.build_event(
+            event="iteration_ok",
+            event_id="evt-redaction-order-short",
+            occurred_at="2026-07-29T12:00:00Z",
+            title="Sample open question",
+            topic_slug="sample-open-question",
+            goal="Resolve the main open question.",
+            completed=f"probe returned {self.SECRET} before exiting.",
+            current="The bridge obligation remains open.",
+            plan="Test the next registered direction.",
+            iteration_status="success",
+            loop_status="running",
+        )
+        safe = self.notify.redact_event(event, secret_values=[self.SECRET])
+        self.assertEqual(
+            safe["sections"]["completed"],
+            f"probe returned {self.notify.REDACTION} before exiting.",
+        )
+
+    def test_an_already_redacted_event_survives_a_second_pass(self) -> None:
+        """Scrubbing now runs twice per call, so it has to be idempotent."""
+
+        event = self._event_with_secret_across_the_cap("completed")
+        once = self.notify.redact_event(event, secret_values=[self.SECRET])
+        twice = self.notify.redact_event(once, secret_values=[self.SECRET])
+        self.assertEqual(
+            once["sections"]["completed"], twice["sections"]["completed"]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

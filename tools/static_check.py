@@ -26,6 +26,8 @@ def main() -> int:
     errors: list[str] = []
     files = tracked_files(root)
     errors.extend(check_python_parse(files))
+    errors.extend(check_subprocess_text_encoding(files))
+    errors.extend(check_duplicate_keyword_spread(files))
     errors.extend(check_shell_syntax(files))
     errors.extend(check_powershell_syntax(files))
     errors.extend(check_windows_path_hazards(files))
@@ -72,6 +74,131 @@ def check_python_parse(files: list[Path]) -> list[str]:
     return errors
 
 
+SUBPROCESS_TEXT_CALLS = {"run", "check_output", "check_call", "call", "Popen"}
+
+
+def check_subprocess_text_encoding(files: list[Path]) -> list[str]:
+    """A subprocess call that hands back str must say which codec produced it.
+
+    With `text=True` and no `encoding=`, subprocess decodes the child's bytes with
+    `locale.getpreferredencoding(False)` and errors='strict'. That is UTF-8 on the
+    Linux runners and the ANSI code page on the Windows one, so the same child output
+    becomes different strings per platform; and one byte the codec rejects -- a
+    latin-1 copyright line in a version banner, an accented name in a TeX log --
+    raises UnicodeDecodeError inside subprocess.run. Callers that wrap the call in
+    `except Exception` then report a tool that exited 0 as failed or unknown, and
+    callers that do not, crash.
+    """
+
+    errors: list[str] = []
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except Exception:
+            continue  # check_python_parse owns reporting unparseable files.
+        constants = module_dict_constants(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not isinstance(func, ast.Attribute) or func.attr not in SUBPROCESS_TEXT_CALLS:
+                continue
+            if not (isinstance(func.value, ast.Name) and func.value.id == "subprocess"):
+                continue
+            names = {kw.arg for kw in node.keywords}
+            textual = any(
+                kw.arg in {"text", "universal_newlines"}
+                and isinstance(kw.value, ast.Constant)
+                and kw.value.value is True
+                for kw in node.keywords
+            )
+            # A module-level ``{"encoding": ..., "errors": ...}`` spread into the call
+            # supplies the codec just as an inline keyword does.  Reading only inline
+            # keywords made this check reject the shared constant, which pushes the
+            # author into writing both -- and a keyword that arrives twice raises
+            # TypeError at the call site, before the callee runs.
+            spread = set()
+            for keyword in node.keywords:
+                if keyword.arg is None and isinstance(keyword.value, ast.Name):
+                    spread |= constants.get(keyword.value.id, set())
+            if textual and "encoding" not in names and "encoding" not in spread:
+                errors.append(
+                    f"subprocess-encoding:{path}:{node.lineno}:"
+                    f"subprocess.{func.attr} decodes with the host locale; pass encoding="
+                )
+    return errors
+
+
+def module_dict_constants(tree: ast.Module) -> dict[str, set[str]]:
+    """Module-level names bound to a dict display, mapped to their string keys."""
+
+    constants: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = [t for t in node.targets if isinstance(t, ast.Name)]
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        if not isinstance(value, ast.Dict):
+            continue
+        keys = {
+            key.value
+            for key in value.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+        for target in targets:
+            constants[target.id] = keys
+
+
+    return constants
+
+
+def check_duplicate_keyword_spread(files: list[Path]) -> list[str]:
+    """An argument supplied twice is a TypeError, and the mock never sees the call.
+
+    ``f(encoding="utf-8", **D)`` where ``D`` carries ``"encoding"`` raises
+    ``TypeError: f() got multiple values for keyword argument 'encoding'`` while
+    Python is still packing the arguments -- so the callee never runs, and a test
+    that patched the callee records nothing and reports "called 0 times" rather
+    than the collision.  Wrapped in ``except Exception``, it is silent: the branch
+    that was supposed to run the child simply does not.
+    """
+
+    errors: list[str] = []
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except Exception:
+            continue  # check_python_parse owns reporting unparseable files.
+        constants = module_dict_constants(tree)
+        if not constants:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            explicit = {keyword.arg for keyword in node.keywords if keyword.arg}
+            if not explicit:
+                continue
+            for keyword in node.keywords:
+                if keyword.arg is not None or not isinstance(keyword.value, ast.Name):
+                    continue
+                clash = explicit & constants.get(keyword.value.id, set())
+                if clash:
+                    errors.append(
+                        f"duplicate-keyword:{path}:{node.lineno}:"
+                        f"{', '.join(sorted(clash))} passed both inline and by "
+                        f"**{keyword.value.id}"
+                    )
+    return errors
+
+
 def check_shell_syntax(files: list[Path]) -> list[str]:
     bash = shutil.which("bash")
     if not bash:
@@ -80,7 +207,7 @@ def check_shell_syntax(files: list[Path]) -> list[str]:
     for path in files:
         if path.suffix != ".sh":
             continue
-        result = subprocess.run([bash, "-n", bash_syntax_path(path, bash)], capture_output=True, text=True)
+        result = subprocess.run([bash, "-n", bash_syntax_path(path, bash)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if result.returncode != 0:
             errors.append(f"bash-syntax:{path}:{result.stderr.strip()}")
     return errors
@@ -106,6 +233,8 @@ def bash_syntax_path(path: Path, bash: str) -> str:
         [wsl, "--", "wslpath", "-a", forward],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if converted.returncode == 0 and converted.stdout.strip():
         return converted.stdout.strip().splitlines()[0]
@@ -124,6 +253,8 @@ def check_powershell_syntax(files: list[Path]) -> list[str]:
             [shell, "-NoProfile", "-Command", powershell_parse_script(path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode != 0:
             errors.append(f"powershell-syntax:{path}:{(result.stderr or result.stdout).strip()}")

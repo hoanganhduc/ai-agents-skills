@@ -292,8 +292,8 @@ def render(work_dir: Path) -> dict:
 
         argv = assemble.build_burn_args(str(final), str(work_dir / "captions.srt"),
                                         str(burned), languages.font_hint(config.language),
-                                        fps=config.fps, ffmpeg=audio.ffmpeg_bin())
-        subprocess.run(argv, check=True, capture_output=True, text=True)
+                                        ffmpeg=audio.ffmpeg_bin())
+        subprocess.run(argv, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
     report = {
         "video": str(final),

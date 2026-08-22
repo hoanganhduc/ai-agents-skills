@@ -66,11 +66,11 @@ def render(spec: SceneSpec, out_path: str, quality: str = "-qh",
     script.write_text(scenegen.generate_scene(spec, scene), encoding="utf-8")
     media_dir = work / "media"
     subprocess.run(build_manim_args(str(script), scene, str(media_dir), quality, manim_bin()),
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     produced = sorted(media_dir.glob(f"videos/**/{scene}.mp4"))
     if not produced:
         raise RuntimeError("manim did not produce an output mp4")
     subprocess.run(build_normalize_args(str(produced[-1]), out_path, spec.width, spec.height,
                                         spec.fps, ffmpeg_bin()),
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return Path(out_path)

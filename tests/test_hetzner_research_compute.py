@@ -178,7 +178,7 @@ def _run_broker(ws: Path, command: str, job: dict, *, token: bool = True) -> dic
         env["HCLOUD_TOKEN"] = "dummy-token-for-offline-test"
     proc = subprocess.run(
         [sys.executable, "-m", "research_compute", command, str(ws / "job.json")],
-        env=env, capture_output=True, text=True, timeout=60,
+        env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -1374,12 +1374,12 @@ class LivenessAndCapTests(unittest.TestCase):
             with self.subTest(case=label), mock.patch.object(
                 gha, "_gh_api", return_value=response
             ):
-                self.assertEqual(gha.included_minutes("owner", config), 2000)
+                self.assertEqual(gha.included_minutes(config), 2000)
 
         with mock.patch.object(
             gha, "_gh_api", return_value={"plan": {"name": "Pro"}}
         ):
-            self.assertEqual(gha.included_minutes("owner", config), 3000)
+            self.assertEqual(gha.included_minutes(config), 3000)
 
     def test_gha_correlate_rejects_malformed_workflow_run_shapes(self) -> None:
         cases = (
@@ -3938,7 +3938,7 @@ class HetznerReaperTests(unittest.TestCase):
         now = 2_000_000.0
         runner = _ReaperRunner(self._servers(now))
         hetzner_driver.COMMAND_RUNNER = runner
-        out = hetzner_reaper.reap(config=self.config, state_root=None, now=now)
+        hetzner_reaper.reap(config=self.config, state_root=None, now=now)
         self.assertNotIn("1", runner.deleted)  # not deleted as orphan
         self.assertNotIn("4", runner.deleted)  # orphan check disabled without a ledger
         self.assertEqual(sorted(runner.deleted), ["2", "3"])  # only off + past-TTL

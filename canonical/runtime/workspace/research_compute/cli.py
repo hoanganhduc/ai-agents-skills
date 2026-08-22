@@ -899,7 +899,7 @@ def _bootstrap_gh(*, auth: bool) -> dict[str, Any]:
     if shutil.which("gh") is None:
         return {"installed": False, "hint": "install the GitHub CLI: https://cli.github.com"}
     try:
-        status = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, timeout=20)
+        status = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
     except (subprocess.SubprocessError, OSError) as exc:
         # A `gh` hiccup (e.g. a slow/hung probe on a loaded Windows runner that
         # trips the timeout) must never crash bootstrap: report it as data so

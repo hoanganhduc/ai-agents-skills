@@ -20,17 +20,42 @@ MAX_MESSAGE_BYTES = 32 * 1024 * 1024
 # parent or per-provider capability.
 _BROKER_SOCKET = os.environ.pop(BROKER_SOCKET_ENV, "")
 _BROKER_TOKEN = os.environ.pop(BROKER_TOKEN_ENV, "")
-_BROKER_PROXY = os.environ.pop(BROKER_PROXY_ENV, "")
+# The proxy is not a bearer.  It is the path of arl_compute_proxy.py, and running
+# that script still needs the socket and the capability the two lines above just
+# took out of the environment, so popping it confined nothing.  What it did do was
+# delete the pointer: every descendant of this process lost the only name it had
+# for the proxy, while the value went into a module global that no code in the tree
+# ever read.  Read it, and leave it where the broker put it.
+_BROKER_PROXY = os.environ.get(BROKER_PROXY_ENV, "")
 
 
 class BrokerError(OSError):
     """The exact-generation credential broker rejected or lost a request."""
 
 
-def broker_active(environ: Mapping[str, str] | None = None) -> bool:
-    if environ is None:
-        return bool(_BROKER_SOCKET and _BROKER_TOKEN)
-    return bool(environ.get(BROKER_SOCKET_ENV) and environ.get(BROKER_TOKEN_ENV))
+def broker_active() -> bool:
+    """Whether this process holds a broker capability.
+
+    This used to take an `environ` mapping to consult instead of module memory.  No
+    caller ever passed one, and the only mapping a caller has to hand is os.environ
+    -- where the answer is always False, because the import above pops the socket
+    and the token out of it.  Under a live broker the two paths returned opposite
+    verdicts about the same process, so the parameter could only mislead.
+    """
+
+    return bool(_BROKER_SOCKET and _BROKER_TOKEN)
+
+
+def compute_proxy() -> str:
+    """Path of the compute proxy the broker published, or "" outside a broker.
+
+    The broker sets AAS_ARL_COMPUTE_PROXY to its own copy of arl_compute_proxy.py;
+    this is how a caller in this process reads it.  Holding a path is not holding a
+    capability: the proxy talks to the broker over the socket, and it is `request`
+    below, not this, that requires the token.
+    """
+
+    return _BROKER_PROXY
 
 
 def _recv_exact(sock: socket.socket, count: int) -> bytes:
@@ -73,4 +98,10 @@ def request(payload: Mapping[str, Any], *, timeout_s: int) -> dict[str, Any]:
     return response
 
 
-__all__ = ["BROKER_PROXY_ENV", "BrokerError", "broker_active", "request"]
+__all__ = [
+    "BROKER_PROXY_ENV",
+    "BrokerError",
+    "broker_active",
+    "compute_proxy",
+    "request",
+]

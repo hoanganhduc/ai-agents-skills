@@ -98,7 +98,7 @@ def parse_json_output(stdout: str) -> dict[str, Any] | None:
 
 
 def run_command(command: list[str]) -> dict[str, Any]:
-    proc = subprocess.run(command, text=True, capture_output=True)
+    proc = subprocess.run(command, text=True, encoding="utf-8", errors="replace", capture_output=True)
     payload = parse_json_output(proc.stdout)
     return {
         "command": command,

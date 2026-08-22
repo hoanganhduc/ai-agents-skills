@@ -605,14 +605,14 @@ def run_landed_gate(root: Path, module: str) -> dict[str, Any]:
     try:
         listed = subprocess.run(
             [lake, "env", "lean", "--run", "scripts/list_decls.lean", f"{module}.Mathlib"],
-            cwd=root, capture_output=True, text=True, timeout=600, check=False,
+            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600, check=False,
         )
         if listed.returncode != 0:
             return {"executed": False, "reason": f"list_decls failed (library built?): {listed.stderr[-400:]}"}
         (root / "staged_decls.txt").write_text(listed.stdout, encoding="utf-8")
         gate = subprocess.run(
             [lake, "env", "lean", "scripts/check_landed.lean"],
-            cwd=root, capture_output=True, text=True, timeout=1800, check=False,
+            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800, check=False,
         )
         return {
             "executed": True,

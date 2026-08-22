@@ -65,8 +65,13 @@ def build_concat_args(list_file: str, out: str, ffmpeg: str = "ffmpeg") -> list[
 
 
 def build_burn_args(video: str, subs: str, out: str, font: str, fonts_dir: str | None = None,
-                    fps: int = 30, ffmpeg: str = "ffmpeg") -> list[str]:
-    """Argv to burn captions with libass, forcing a Vietnamese-covering font."""
+                    ffmpeg: str = "ffmpeg") -> list[str]:
+    """Argv to burn captions with libass, forcing a Vietnamese-covering font.
+
+    No frame rate is set: the burn re-encodes an already-rendered clip and keeps
+    the input's rate. The signature used to take an ``fps`` that reached no flag
+    in the argv, so a caller could believe it was re-timing the video here.
+    """
     style = f"subtitles={subs}:force_style='FontName={font},Fontsize=24'"
     if fonts_dir:
         style += f":fontsdir={fonts_dir}"
@@ -84,19 +89,19 @@ def write_concat_list(clips: list[str], list_file: Path) -> Path:
 def render_clip(image: str, audio: str, duration: float, width: int, height: int,
                 fps: int, effs: list[EffectSpec], out: str) -> Path:
     argv = build_clip_args(image, audio, duration, width, height, fps, effs, out, ffmpeg_bin())
-    subprocess.run(argv, check=True, capture_output=True, text=True)
+    subprocess.run(argv, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return Path(out)
 
 
 def render_clip_segment(clip: str, audio: str, duration: float, width: int, height: int,
                         fps: int, out: str) -> Path:
     argv = build_clip_segment_args(clip, audio, duration, width, height, fps, out, ffmpeg_bin())
-    subprocess.run(argv, check=True, capture_output=True, text=True)
+    subprocess.run(argv, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return Path(out)
 
 
 def concat_clips(clips: list[str], out: str, work_dir: Path) -> Path:
     list_file = write_concat_list(clips, Path(work_dir) / "clips.txt")
     subprocess.run(build_concat_args(str(list_file), out, ffmpeg_bin()),
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, encoding="utf-8", errors="replace")
     return Path(out)

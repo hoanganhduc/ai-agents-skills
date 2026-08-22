@@ -2046,7 +2046,7 @@ def render_current_path(plan: Mapping[str, Any]) -> str:
 
 
 def render_recovery_managed(
-    contract: Mapping[str, Any], plan: Mapping[str, Any], registry: Mapping[str, Any] | None = None
+    contract: Mapping[str, Any], plan: Mapping[str, Any]
 ) -> str:
     goal = _clean_text(contract.get("goal"), 2000)
     targets = ", ".join(str(item) for item in plan.get("target_obligation_ids") or []) or "none selected"
@@ -2103,7 +2103,6 @@ def _managed_view_snapshot(
 
 def _managed_postimages(
     contract: Mapping[str, Any],
-    registry: Mapping[str, Any],
     plan: Mapping[str, Any],
     *,
     state_preimage: Mapping[str, Any],
@@ -2132,7 +2131,7 @@ def _managed_postimages(
             state["updated_at"] = now
     recovery = _merge_managed(
         recovery_preimage,
-        render_recovery_managed(contract, plan, registry),
+        render_recovery_managed(contract, plan),
     )
     return state, recovery
 
@@ -2153,7 +2152,6 @@ def reconcile_goal_focus(run_dir: str | Path, *, apply: bool = False) -> dict[st
     )
     state, recovery = _managed_postimages(
         contract,
-        registry,
         plan,
         state_preimage=previous_state,
         recovery_preimage=previous_recovery,
@@ -2486,7 +2484,6 @@ def set_enforcement_mode(
         )
         state, recovery = _managed_postimages(
             contract,
-            registry,
             plan,
             state_preimage=previous_state,
             recovery_preimage=previous_recovery,
@@ -2966,7 +2963,6 @@ def commit_selected_direction(
     )
     state, recovery = _managed_postimages(
         contract,
-        registry,
         plan,
         state_preimage=previous_state,
         recovery_preimage=previous_recovery,
@@ -5616,7 +5612,6 @@ def validate_host_finalized_goal_success(
 
 
 def _negative_space_entry_for_finalize(
-    run_dir: Path,
     *,
     candidate: Mapping[str, Any],
     record: Mapping[str, Any],
@@ -6184,7 +6179,6 @@ def finalize_candidate(
     else:
         jsonl_appends[ITERATION_LEDGER_FILE] = [record]
     ns_entry = _negative_space_entry_for_finalize(
-        root,
         candidate=candidate,
         record=record,
         review=review,

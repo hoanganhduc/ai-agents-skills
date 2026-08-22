@@ -40,7 +40,7 @@ def main():
     try:
         result = subprocess.run(
             [sys.executable, DIGEST_BRIDGE, "scan", "--source", args.source, "--min-score", str(min_score)],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         if result.returncode != 0:
             print(f"Digest-bridge scan failed: {result.stderr}", file=sys.stderr)
@@ -60,7 +60,7 @@ def main():
     try:
         coll_result = subprocess.run(
             [sys.executable, ZOT_PY, "--json", "list-collections", "--json"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         collections = json.loads(coll_result.stdout).get("collections", [])
         coll_names = _flatten_collection_names(collections)
@@ -86,7 +86,7 @@ def main():
                 coll_args.extend(["--collection", c])
             cmd = [sys.executable, ZOT_PY, "add", identifier, "--no-pdf"] + coll_args
             try:
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
                 if r.returncode == 0:
                     out = json.loads(r.stdout)
                     return {"title": out.get("title", title), "key": out.get("key", ""),
@@ -134,8 +134,14 @@ def main():
     print(json.dumps(output, ensure_ascii=False))
 
 
-def _flatten_collection_names(tree, prefix=""):
-    """Extract all collection names from tree."""
+def _flatten_collection_names(tree):
+    """Extract all collection names from tree, unqualified.
+
+    `zot add --collection` matches on the bare name, so the names are collected
+    without their parent path. The recursion used to declare a `prefix` that it
+    neither read nor passed down, which read as a qualified "Parent > Child"
+    result this never produced.
+    """
     names = []
     for node in tree:
         names.append(node["name"])
@@ -147,7 +153,6 @@ def _flatten_collection_names(tree, prefix=""):
 def _match_collections(title, collection_names):
     """Simple keyword matching of paper title against collection names."""
     title_lower = title.lower()
-    title_words = set(title_lower.split())
     matched = []
     for name in collection_names:
         name_lower = name.lower()

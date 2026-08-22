@@ -81,6 +81,8 @@ def systemd_user_available() -> bool:
             ["systemctl", "--user", "is-system-running"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
             check=False,
         )
@@ -268,6 +270,8 @@ def _iter_cmdlines() -> list[tuple[int, str, tuple[str, ...]]]:
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=15,
                 check=False,
             )
@@ -290,6 +294,8 @@ def _iter_cmdlines() -> list[tuple[int, str, tuple[str, ...]]]:
             ["ps", "-ax", "-o", "pid=,command="],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
             check=False,
         )
@@ -435,7 +441,6 @@ def build_supervisor_command(
     *,
     pack_parent: Path,
     loop_dir: Path,
-    project_root: Path,
 ) -> list[str] | None:
     """POSIX supervisor script if present; else None (caller uses drive)."""
     supervisor = pack_parent / "arl_drive_supervisor.sh"

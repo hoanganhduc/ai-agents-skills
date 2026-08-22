@@ -1335,7 +1335,14 @@ def add_to_calibre(args: list[str]) -> dict[str, Any]:
     payload.update(
         {
             "ok": write_ok,
-            "executed": write_ok,
+            # `executed` answers whether the write RAN, not whether it succeeded --
+            # that is `ok`, right above it, and it is what every other producer in this
+            # module means by the key (`bool(execute)` on the queue path, `False`
+            # alongside `write_attempted: False` on the dry-run path).  Reporting the
+            # outcome here made a write that reached Calibre and was rejected come back
+            # `write_attempted: true, executed: false`, and an agent reading that would
+            # retry -- the one thing the `recovery_notes` in this same payload forbid.
+            "executed": True,
             "write_attempted": True,
             "calibre_write_result": write_json or write_result,
             "calibre_write_result_path": result_path,

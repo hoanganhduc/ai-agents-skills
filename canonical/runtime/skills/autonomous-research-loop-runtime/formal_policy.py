@@ -268,7 +268,26 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _normalize_policy_dict(raw: dict[str, Any]) -> dict[str, Any]:
-    cfg = default_formal_config()
+    """Normalize one policy source into an overlay of only the keys it states.
+
+    This is an overlay, not a configuration: it must carry the keys ``raw``
+    actually names and nothing else. Building it on ``default_formal_config()``
+    instead made every source a complete policy, and since ``_shallow_merge``
+    skips only ``None`` -- and no default is ``None`` -- a one-key
+    ``standing_orders.formal`` came back carrying six defaults and erased the
+    six matching values from ``formal/formal_policy.json``. A loop set to
+    ``policy: force`` on ``MyProject/`` reverted to ``off`` on ``formal/`` the
+    moment standing orders recorded a sorry count, and nothing said so. Both
+    SKILL.md files offer the two surfaces as alternatives, so the operator's
+    reading -- each names what it sets -- is the one to honour.
+
+    A key that is present but uninterpretable still resolves to its default:
+    that is the existing fail-closed reading of a malformed privileged value,
+    and it is unrelated to the absent-key defect above.
+    """
+
+    defaults = default_formal_config()
+    cfg: dict[str, Any] = {}
     if "policy" in raw:
         p = str(raw.get("policy") or "").strip().lower()
         cfg["policy"] = p if p in FORMAL_POLICIES else "off"
@@ -287,11 +306,15 @@ def _normalize_policy_dict(raw: dict[str, Any]) -> dict[str, Any]:
             if isinstance(v, bool):
                 cfg[bkey] = v
             elif isinstance(v, str):
-                cfg[bkey] = _env_bool(v, bool(cfg[bkey]))
+                cfg[bkey] = _env_bool(v, bool(defaults[bkey]))
+            else:
+                cfg[bkey] = bool(defaults[bkey])
     if isinstance(raw.get("notes"), list):
         cfg["notes"] = [str(x)[:200] for x in raw["notes"][:20]]
     if isinstance(raw.get("status"), dict):
-        cfg["status"] = _shallow_merge(cfg["status"], raw["status"])
+        cfg["status"] = {
+            key: value for key, value in raw["status"].items() if value is not None
+        }
     return cfg
 
 
@@ -584,8 +607,14 @@ def _read_candidates(run_dir: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def checklist_stable(run_dir: Path | str | None, policy: FormalPolicy | None = None) -> bool:
-    """True if auto checklist may inject (not sole-primary mandate). Never raises."""
+def checklist_stable(run_dir: Path | str | None) -> bool:
+    """True if auto checklist may inject (not sole-primary mandate). Never raises.
+
+    The verdict is read off the run directory alone -- formal-track marker, or a
+    stable candidate whose source is the user or a host intake. It used to accept
+    a `FormalPolicy` it never consulted; the policy gate is applied by the caller,
+    which has already branched on `pol.policy` before asking.
+    """
     if run_dir is None:
         return False
     run_path = Path(run_dir)
@@ -628,7 +657,7 @@ def formal_policy_prompt_addon(
             return "\n\n" + MENTION_ONLY_BLOCK
 
         track = is_formal_track(run_dir) if run_dir else False
-        stable = checklist_stable(run_dir, pol) if run_dir else False
+        stable = checklist_stable(run_dir) if run_dir else False
 
         if pol.policy == "auto":
             if not stable and not track:
@@ -925,6 +954,8 @@ def default_gate_runner(name: str, payload: dict[str, Any]) -> dict[str, Any]:
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout + 60.0,
             check=False,
         )

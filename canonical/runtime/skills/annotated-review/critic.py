@@ -197,8 +197,27 @@ def _validate_verification(ver: dict, num_annotations: int) -> List[str]:
                     continue
                 if "annotation_index" not in result:
                     errors.append(f"verification.results[{i}] missing 'annotation_index'")
-                elif not isinstance(result["annotation_index"], int):
+                elif isinstance(result["annotation_index"], bool) or not isinstance(
+                    result["annotation_index"], int
+                ):
+                    # `bool` is a subclass of `int`, so a JSON `true` used to pass this
+                    # check and then index annotation 1: the verifier's response was
+                    # attached to a different annotation than the one it judged.
                     errors.append(f"verification.results[{i}].annotation_index must be int")
+                elif not 0 <= result["annotation_index"] < num_annotations:
+                    # This is what `num_annotations` is passed in for. Each renderer keys
+                    # its results map on the annotation's enumerate position -- latex
+                    # _annotator, both pdf_annotator passes, and zotero_note all do
+                    # `ver_results_map[result["annotation_index"]]`, read back as
+                    # `verification_results.get(i)` -- so an index outside the review
+                    # matches nothing and the response vanishes from all three artifacts.
+                    # `count_verification` still counts it, so the summary reported
+                    # "2 disputed" above a body that contained none of them.
+                    errors.append(
+                        f"verification.results[{i}].annotation_index "
+                        f"{result['annotation_index']} is out of range for "
+                        f"{num_annotations} annotation(s)"
+                    )
                 if "status" not in result:
                     errors.append(f"verification.results[{i}] missing 'status'")
                 elif result["status"] not in _VALID_VER_STATUS:

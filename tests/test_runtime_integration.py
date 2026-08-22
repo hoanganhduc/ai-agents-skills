@@ -945,6 +945,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             [str(expected_python), "-I", "-c", "import networkx"],
             check=False,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=30,
         )
@@ -2040,6 +2042,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     [sys.executable, str(helper), command],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=env,
                     check=False,
                 )
@@ -2075,6 +2079,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     [sys.executable, str(helper), command],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     cwd=root,
                     env=env,
                     check=False,
@@ -2118,6 +2124,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     [sys.executable, str(helper), *command],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=env,
                     check=False,
                 )
@@ -2227,6 +2235,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             descendant_pids: list[int] = []
             try:
@@ -2326,6 +2336,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
             )
             child_pid: int | None = None
             try:
@@ -2442,6 +2454,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     [sys.executable, str(helper), *command],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     cwd=root,
                     env=env,
                     check=False,
@@ -2503,6 +2517,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             pass_fds=(closure_fd, key_read),
             bufsize=1,
@@ -2585,6 +2601,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     [sys.executable, str(helper), "doctor"],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=env,
                     check=False,
                 )
@@ -2623,6 +2641,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     [sys.executable, str(helper), "doctor"],
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=env,
                     check=False,
                 )
@@ -2792,7 +2812,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(bad_payload["findings"][0]["kind"], "invalid_utf8")
 
     def run_json_helper(self, argv: list[str], *, expected_returncode: int = 0, env: dict[str, str] | None = None) -> dict[str, Any]:
-        completed = subprocess.run(argv, capture_output=True, text=True, check=False, env=env)
+        completed = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, env=env)
         self.assertEqual(completed.returncode, expected_returncode, completed.stderr)
         return json.loads(completed.stdout)
 
@@ -3177,6 +3197,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 ],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -3214,6 +3236,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(docling_dir / "run_docling.ps1"), "convert", *args],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -3247,6 +3271,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(docling_dir / "run_docling.ps1"), "doctor", "arg1", "arg2"],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -3368,6 +3394,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 ["bash", str(runner), "skills/demo/run.sh"],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
             )
@@ -3400,6 +3428,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 ["bash", str(runner), "skills/demo/run.sh"],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
             )
@@ -3445,6 +3475,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 ],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
             )
@@ -3478,6 +3510,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             completed_link = subprocess.run(
                 ["cmd", "/c", "mklink", "/J", str(link), str(external_script_dir)],
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
             )
             if completed_link.returncode != 0:
@@ -3495,6 +3529,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 ],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
             )
 
@@ -3526,6 +3562,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(rss_dir / "run_and_summarize.ps1")],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
             )
@@ -3612,6 +3650,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=60,
             )
@@ -3699,6 +3739,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=60,
             )
@@ -3758,6 +3800,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 timeout=60,
             )
@@ -3814,6 +3858,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -3860,6 +3906,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner), *arguments],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -3881,6 +3929,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
             check=False,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             env=env,
             timeout=30,
@@ -3894,6 +3944,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -3927,6 +3979,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                         [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
                         check=False,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         capture_output=True,
                         env=env,
                         timeout=30,
@@ -3971,6 +4025,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -4000,6 +4056,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -4037,6 +4095,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -4085,6 +4145,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                         [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), *arguments],
                         check=False,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         capture_output=True,
                         env=env,
                         timeout=30,
@@ -4115,6 +4177,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper)],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -4157,6 +4221,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                         [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), "space value", "amp&value"],
                         check=False,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         capture_output=True,
                         env=env,
                         timeout=30,
@@ -4220,6 +4286,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runtime / "run_skill.ps1"), "record.ps1", *arguments],
                 check=False,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 capture_output=True,
                 env=env,
                 timeout=30,
@@ -4258,6 +4326,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                         ],
                         check=False,
                         text=True,
+                        encoding="utf-8",
+                        errors="replace",
                         capture_output=True,
                         timeout=30,
                     )

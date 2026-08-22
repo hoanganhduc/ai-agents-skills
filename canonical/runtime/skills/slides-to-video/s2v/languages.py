@@ -97,13 +97,17 @@ def engine_ladder(locale: str, policy: str = "auto") -> list[str]:
 def resolve_voice(
     locale: str,
     engine: str,
-    role: str = "presenter",
     gender: Optional[str] = None,
     explicit: Optional[str] = None,
 ) -> Optional[str]:
     """Pick a voice id for (locale, engine). ``None`` -> resolve at runtime.
 
     For edge-tts a ``None`` result means "enumerate voices for this locale live".
+
+    The presenter role is not part of this: a lexicon's ``voices`` map is keyed by
+    engine and then by gender, and the role only reaches the audio through
+    ``prosody_for``. This used to take a ``role`` and ignore it, which read as
+    role-specific voices the lexicons do not define.
     """
     if explicit:
         return explicit

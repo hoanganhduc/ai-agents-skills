@@ -56,10 +56,12 @@ class UrlToScreenshotSmokeContractTests(unittest.TestCase):
             [sys.executable, str(DISPATCHER), "selftest"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=60,
             check=True,
         )
-        checks = validate_smoke_output(manifests, "url-to-screenshot-runtime", completed, ["selftest"])
+        checks = validate_smoke_output("url-to-screenshot-runtime", completed, ["selftest"])
         self.assertTrue(all(check["ok"] for check in checks), checks)
         names = {c["name"] for c in checks}
         # The branch must machine-check the JSON contract, not just the exit code.
@@ -77,7 +79,7 @@ class UrlToScreenshotSmokeContractTests(unittest.TestCase):
             '"server_started": false, "browser_launched": false}'
         )
         completed = _FakeCompleted(0, payload)
-        checks = validate_smoke_output(manifests, "url-to-screenshot-runtime", completed, ["selftest"])
+        checks = validate_smoke_output("url-to-screenshot-runtime", completed, ["selftest"])
         self.assertFalse(all(check["ok"] for check in checks), checks)
 
     def test_validator_rejects_browser_launched_true(self) -> None:
@@ -89,7 +91,7 @@ class UrlToScreenshotSmokeContractTests(unittest.TestCase):
             '"server_started": false, "browser_launched": true}'
         )
         completed = _FakeCompleted(0, payload)
-        checks = validate_smoke_output(manifests, "url-to-screenshot-runtime", completed, ["selftest"])
+        checks = validate_smoke_output("url-to-screenshot-runtime", completed, ["selftest"])
         self.assertFalse(all(check["ok"] for check in checks), checks)
 
     def test_validator_rejects_missing_safety_key(self) -> None:
@@ -100,7 +102,7 @@ class UrlToScreenshotSmokeContractTests(unittest.TestCase):
             '"status": "ok", "smoke_mode": "offline", "network_required": false}'
         )
         completed = _FakeCompleted(0, payload)
-        checks = validate_smoke_output(manifests, "url-to-screenshot-runtime", completed, ["selftest"])
+        checks = validate_smoke_output("url-to-screenshot-runtime", completed, ["selftest"])
         self.assertFalse(all(check["ok"] for check in checks), checks)
 
     def test_validator_rejects_missing_passed_and_total(self) -> None:
@@ -112,7 +114,7 @@ class UrlToScreenshotSmokeContractTests(unittest.TestCase):
             '"package_install_attempted": false, "server_started": false, "browser_launched": false}'
         )
         completed = _FakeCompleted(0, payload)
-        checks = validate_smoke_output(manifests, "url-to-screenshot-runtime", completed, ["selftest"])
+        checks = validate_smoke_output("url-to-screenshot-runtime", completed, ["selftest"])
         all_passed = next(c for c in checks if c["name"] == "all-passed")
         self.assertFalse(all_passed["ok"], checks)
 
