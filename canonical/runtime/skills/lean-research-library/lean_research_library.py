@@ -671,11 +671,16 @@ EMBEDDED_ARTIFACT_FILES: dict[str, str] = {
 
 
 def artifact_new_payload(cfg: dict[str, Any], paper: str, directory: Path, library_rev: str) -> dict[str, Any]:
-    template_root = Path(str(cfg.get("template_root", ""))).expanduser()
+    # template_root is optional, and Path("") is Path("."), whose is_dir() is always
+    # true. Reading it as a path meant an unconfigured key selected the copytree
+    # branch and copied the process's working directory into the artifact, while the
+    # payload still reported source=template_root with an empty note. Absent is absent.
+    configured = str(cfg.get("template_root") or "").strip()
+    template_root = Path(configured).expanduser() if configured else None
     if directory.exists() and any(directory.iterdir()):
         return {"schema_version": SCHEMA, "status": "error", "error": f"{directory} exists and is not empty"}
     used = "template_root"
-    if template_root.is_dir():
+    if template_root is not None and template_root.is_dir():
         shutil.copytree(template_root, directory, ignore=shutil.ignore_patterns(".git", ".lake"))
     else:
         used = "embedded-minimal"
