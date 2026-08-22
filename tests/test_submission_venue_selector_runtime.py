@@ -233,6 +233,102 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
             self.assertNotEqual(no_provider.returncode, 0)
             self.assertIn("--allow-provider", no_provider.stderr)
 
+    def test_provider_report_does_not_claim_network_without_a_privacy_gate(self) -> None:
+        """`provider_status.json` must not authorize what the next command refuses.
+
+        `provider_records` derived `network_allowed` from `--allow-network` and
+        `--allow-provider` alone, while `ensure_network_allowed` additionally
+        requires an ok privacy guard in the workspace. So `providers` recorded
+        `provider_status: "ok"` and `network_allowed: true` for a workspace whose
+        very next `resolve` exited 2 with "network access requires a prior ok
+        privacy-gate in this workspace". One workspace, two artifacts, opposite
+        answers to the same question.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            draft = self.write_sample_draft(root)
+            run_dir = root / "venue-run"
+            run_selector("init", "--dir", str(run_dir), "--draft", str(draft))
+            run_selector("extract", "--dir", str(run_dir), "--draft", str(draft))
+            self.assertFalse((run_dir / "guards.jsonl").exists())
+
+            reported = run_selector(
+                "providers", "--dir", str(run_dir),
+                "--allow-network", "--allow-provider", "openalex",
+            )
+            row = next(
+                entry
+                for entry in last_json(reported.stdout)["providers"]
+                if entry["provider"] == "openalex"
+            )
+            self.assertFalse(row["privacy_gate_ok"])
+            self.assertFalse(row["network_allowed"])
+            self.assertEqual(row["provider_status"], "skipped")
+
+            # ... and that is what the workspace actually does.
+            refused = run_selector(
+                "resolve", "--dir", str(run_dir),
+                "--allow-network", "--allow-provider", "openalex", check=False,
+            )
+            self.assertEqual(refused.returncode, 2)
+            self.assertIn("privacy-gate", refused.stderr)
+
+    def test_provider_report_claims_network_once_the_gate_is_ok(self) -> None:
+        """The control: the new predicate is not hardwired to refuse."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            draft = self.write_sample_draft(root)
+            run_dir = root / "venue-run"
+            run_selector("init", "--dir", str(run_dir), "--draft", str(draft))
+            run_selector("extract", "--dir", str(run_dir), "--draft", str(draft))
+            run_selector("privacy-gate", "--dir", str(run_dir), "--draft", str(draft), "--allow-network")
+
+            reported = run_selector(
+                "providers", "--dir", str(run_dir),
+                "--allow-network", "--allow-provider", "openalex",
+            )
+            row = next(
+                entry
+                for entry in last_json(reported.stdout)["providers"]
+                if entry["provider"] == "openalex"
+            )
+            self.assertTrue(row["privacy_gate_ok"])
+            self.assertTrue(row["network_allowed"])
+            self.assertEqual(row["provider_status"], "ok")
+
+    def test_permission_flags_for_absent_capabilities_are_refused(self) -> None:
+        """A gate that grants nothing must say so rather than parse cleanly.
+
+        `--allow-downloads`, `--allow-zotero-mutation`, and
+        `--allow-unpaywall-email` reached `add_argument` and were never read
+        anywhere in the tree. No code path in the module downloads, mutates
+        Zotero, or sends an Unpaywall email -- the skill's own routing boundary
+        sends all three elsewhere -- so passing one used to succeed and grant
+        nothing, and a caller could not tell that apart from "enabled, and there
+        was nothing to do".
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "venue-run"
+            for flag, routed_to in (
+                ("--allow-downloads", "getscipapers-requester"),
+                ("--allow-zotero-mutation", "zotero"),
+                ("--allow-unpaywall-email", "unpaywall"),
+            ):
+                with self.subTest(flag=flag):
+                    completed = run_selector(
+                        "providers", "--dir", str(run_dir), flag, check=False
+                    )
+                    self.assertEqual(completed.returncode, 2, completed.stdout)
+                    self.assertIn(flag, completed.stderr)
+                    self.assertIn(routed_to, completed.stderr)
+
+            # The control: the same command without the flag still works.
+            ok = run_selector("providers", "--dir", str(run_dir))
+            self.assertTrue(last_json(ok.stdout)["providers"])
+
     def test_validate_fails_incomplete_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "venue-run"

@@ -88,8 +88,10 @@ Useful commands:
 - Local/offline by default.
 - Network requires a prior ok `privacy-gate`, `--allow-network`, and explicit
   `--allow-provider <name>`.
-- Downloads, Zotero mutations, and Unpaywall email use are forbidden unless
-  explicitly enabled by command flags.
+- Downloads, Zotero mutations, and Unpaywall email use are out of scope. The
+  runtime refuses `--allow-downloads`, `--allow-zotero-mutation`, and
+  `--allow-unpaywall-email` rather than acting on them; route downloads through
+  `zotero`, then `getscipapers-requester`.
 - Raw draft text is not persisted unless `--retain-draft-text` is used.
 - Reports separate observed evidence from inferred venue fit and must mark
   placeholder-only output as `incomplete analysis`.
