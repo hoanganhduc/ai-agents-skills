@@ -20,21 +20,39 @@ def run_doctor(config):
 
 
 def _check_translation_server(config):
+    """The translation server is optional, but only a refusal to connect is benign.
+
+    A missing `requests` (a declared dependency in requirements.txt) or a malformed
+    `translation_server` URL are installation and configuration faults, and reporting
+    them as `ok: True` "Unreachable at <url>" hides the fault behind a cause the check
+    never observed. Every other handler here reports `ok: False` with `str(e)`.
+    """
+
     url = config.get("translation_server", "http://localhost:1969")
     try:
         import requests
-        r = requests.get(url, timeout=5)
-        if r.status_code < 500:
-            return {"name": "Translation Server", "ok": True, "message": f"Reachable at {url}"}
+    except ImportError as e:
         return {"name": "Translation Server", "ok": False,
-                "message": f"Server returned {r.status_code}. Try: docker compose up -d"}
-    except Exception as e:
+                "message": (
+                    f"Cannot check {url}: {e}. "
+                    "Install the zotero runtime dependencies from requirements.txt."
+                )}
+    try:
+        r = requests.get(url, timeout=5)
+    except (requests.ConnectionError, requests.Timeout, ConnectionError, TimeoutError):
         return {"name": "Translation Server", "ok": True,
                 "message": (
                     f"Unreachable at {url}. "
                     "Direct DOI/arXiv/ISBN fallback is enabled; generic URL metadata can also use "
                     "the WSL helper path when configured."
                 )}
+    except Exception as e:
+        return {"name": "Translation Server", "ok": False,
+                "message": f"Cannot check {url}: {e}"}
+    if r.status_code < 500:
+        return {"name": "Translation Server", "ok": True, "message": f"Reachable at {url}"}
+    return {"name": "Translation Server", "ok": False,
+            "message": f"Server returned {r.status_code}. Try: docker compose up -d"}
 
 
 def _check_url_metadata(config):

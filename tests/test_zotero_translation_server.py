@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import builtins
+import contextlib
+import importlib.util
 import os
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
+import types
 import unittest
 from pathlib import Path
 
@@ -28,6 +33,22 @@ AMD64_IMAGE = (
     "6bb209778e0403d81285404fc9ca5bd142f91e090d14a5541ac33018531c1329"
 )
 COMPOSE_IMAGE = "${ZOTERO_TS_IMAGE:?ZOTERO_TS_IMAGE must be set}"
+DOCTOR_PATH = (
+    REPO_ROOT / "canonical" / "runtime" / "skills" / "zotero" / "lib" / "doctor.py"
+)
+
+
+def load_doctor_module():
+    spec = importlib.util.spec_from_file_location("canonical_zotero_doctor", DOCTOR_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = previous
+    return module
 
 
 @unittest.skipIf(os.name == "nt", "Translation Server container startup is Linux-only")
@@ -238,6 +259,106 @@ class ZoteroTranslationServerTests(unittest.TestCase):
         self.assertIn("integer from 1 to 60", result.stderr)
         self.assertNotIn("|up|-d|", self.read_log())
 
+
+
+class ZoteroDoctorTranslationServerCheckTests(unittest.TestCase):
+    """`zot doctor` must not report an installation fault as a healthy check.
+
+    `_check_translation_server` put `import requests` inside its `try` and caught
+    bare `Exception`, returning `ok: True` "Unreachable at <url>" for every cause.
+    A missing `requests` -- a declared dependency in the skill's requirements.txt --
+    and a malformed `translation_server` URL both landed there, so the one command
+    whose job is to surface installation faults reported them as healthy.
+    """
+
+    def setUp(self) -> None:
+        self.doctor = load_doctor_module()
+        self.config = {"translation_server": "http://localhost:1969"}
+
+    @contextlib.contextmanager
+    def _requests(self, module):
+        """Bind what `import requests` resolves to inside the check."""
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "requests":
+                if module is None:
+                    raise ModuleNotFoundError("No module named 'requests'")
+                return module
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = fake_import
+        try:
+            yield
+        finally:
+            builtins.__import__ = real_import
+
+    @staticmethod
+    def _fake_requests(*, get):
+        module = types.ModuleType("requests")
+
+        class ConnectionError_(Exception):
+            pass
+
+        class Timeout(Exception):
+            pass
+
+        module.ConnectionError = ConnectionError_
+        module.Timeout = Timeout
+        module.get = get
+        return module
+
+    def test_missing_requests_fails_the_check_instead_of_claiming_unreachable(self) -> None:
+        with self._requests(None):
+            result = self.doctor._check_translation_server(self.config)
+
+        self.assertFalse(result["ok"], result)
+        self.assertIn("requests", result["message"])
+        self.assertIn("requirements.txt", result["message"])
+        self.assertNotIn("Unreachable at", result["message"])
+
+    def test_an_unexpected_error_is_reported_rather_than_absorbed(self) -> None:
+        """A malformed `translation_server` URL raises neither ConnectionError nor
+        Timeout; it is a config fault and has to read as one."""
+
+        def get(url, timeout=None):
+            raise ValueError(f"No connection adapters were found for {url!r}")
+
+        with self._requests(self._fake_requests(get=get)):
+            result = self.doctor._check_translation_server(
+                {"translation_server": "localhost:1969"}
+            )
+
+        self.assertFalse(result["ok"], result)
+        self.assertIn("No connection adapters", result["message"])
+        self.assertNotIn("Unreachable at", result["message"])
+
+    def test_a_refused_connection_is_still_the_benign_optional_case(self) -> None:
+        """The control. The server is optional, so a real refusal keeps `ok: True`
+        and the fallback message the fix must not have changed."""
+
+        module = self._fake_requests(get=None)
+
+        def get(url, timeout=None):
+            raise module.ConnectionError("connection refused")
+
+        module.get = get
+        with self._requests(module):
+            result = self.doctor._check_translation_server(self.config)
+
+        self.assertTrue(result["ok"], result)
+        self.assertIn("Unreachable at http://localhost:1969", result["message"])
+        self.assertIn("Direct DOI/arXiv/ISBN fallback", result["message"])
+
+    def test_a_reachable_server_and_a_failing_one_keep_their_verdicts(self) -> None:
+        for status, expected_ok in ((200, True), (404, True), (503, False)):
+            with self.subTest(status=status):
+                response = types.SimpleNamespace(status_code=status)
+                module = self._fake_requests(get=lambda url, timeout=None: response)
+                with self._requests(module):
+                    result = self.doctor._check_translation_server(self.config)
+                self.assertEqual(result["ok"], expected_ok, result)
 
 if __name__ == "__main__":
     unittest.main()
