@@ -11,7 +11,7 @@ targets; Linux / macOS / Windows / WSL).
 ## Default operator entry
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
   bootstrap --loop "$LOOP" --root "$ROOT" --profile formal --goal "…"
 ```

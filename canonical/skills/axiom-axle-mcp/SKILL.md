@@ -29,21 +29,21 @@ Use this skill only for explicit optional AXLE MCP setup. It never installs pack
 Check local readiness without running `uvx`:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/axiom-axle-mcp/run_axiom_axle_mcp.sh doctor
 ```
 
 Emit a manual MCP config snippet:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/axiom-axle-mcp/run_axiom_axle_mcp.sh config-snippet
 ```
 
 Run offline smoke:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/axiom-axle-mcp/run_axiom_axle_mcp.sh smoke
 ```
 

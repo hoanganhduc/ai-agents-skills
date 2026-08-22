@@ -50,9 +50,9 @@ The executable engine ships as the `url-to-screenshot-runtime` skill. Run it via
 the managed runner:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh doctor
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh capture --url https://example.com/ --out shot.png
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh verify --png shot.png --expected-width 1280 --expected-height 800
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh doctor
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh capture --url https://example.com/ --out shot.png
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh verify --png shot.png --expected-width 1280 --expected-height 800
 ```
 
 Verbs: `doctor` (readiness), `capture` (URL -> PNG, SSRF-gated), `verify` (the

@@ -10,7 +10,7 @@ OCR.space is the only supported online OCR fallback, and only through explicit
 CLI flags:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/file.pdf" \
   --ocr-fallback ocrspace \
   --allow-remote-ocr
@@ -30,7 +30,7 @@ page, but it cannot bypass account-level quota, rate, or concurrency limits.
 Live smoke testing is available through a separate explicit command:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
   --allow-remote-ocr
 ```
 

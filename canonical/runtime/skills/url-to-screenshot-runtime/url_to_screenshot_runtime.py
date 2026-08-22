@@ -10,7 +10,7 @@ Subcommands:
   selftest  offline smoke (no network/browser/socket/install)
 
 Invoke via the managed runner, e.g.:
-  bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh doctor
+  bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh doctor
 """
 
 from __future__ import annotations

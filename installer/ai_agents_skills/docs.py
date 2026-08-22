@@ -409,8 +409,8 @@ are rejected from config. Use `scan-heavy` when you want stronger local OCR
 for image-backed papers:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh doctor
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \\
+bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh doctor
+bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh convert \\
   --source "/path/to/paper.pdf" \\
   --to md \\
   --preset scan-heavy
@@ -419,7 +419,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \\
 OCR.space fallback is available only through explicit remote upload flags:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \\
+bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh convert \\
   --source "/path/to/paper.pdf" \\
   --to md \\
   --preset scan-heavy \\
@@ -431,7 +431,7 @@ To test the live OCR.space adapter, run the explicit smoke command. It
 generates and uploads a synthetic one-page PDF, not a user document:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \\
+bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \\
   --allow-remote-ocr
 ```
 
@@ -1196,7 +1196,7 @@ Docling environment and heavier OCR/model packages that are not part of the
 default runtime-smoke harness:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh doctor
+bash "${{AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}}/run_skill.sh" skills/docling/run_docling.sh doctor
 ```
 
 `smoke` can also return `no-managed-artifacts` when no managed skill-file
@@ -2428,12 +2428,12 @@ and WSL without requiring systemd. Discovery template: `arl-scripted-force-loop`
 
 ```bash
 # Bootstrap pins + smoke (init if needed)
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \\
   bootstrap --loop research/run --root "$PWD" --profile formal --goal "…"
 
 # Foreground start (default supervision mode)
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \\
   start --loop research/run --root "$PWD" --provider codex
 
@@ -2452,7 +2452,7 @@ compositions. Prefer force-loop for new campaigns.
 
 ```bash
 # Enable host panel around each drive iteration
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \\
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \\
   skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh \\
   drive --dir research/run --provider codex --panel on
 

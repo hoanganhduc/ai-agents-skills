@@ -82,7 +82,7 @@ the same workspace environment Claude uses.
 
 Shared runner:
 
-- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
+- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## Workflow imported from the bot
 
@@ -109,15 +109,15 @@ Shared runner:
 ## Execution patterns
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/annotated-review/run_review.sh --precompile --source <path>
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/annotated-review/run_review.sh --precompile --source <path>
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/annotated-review/run_review.sh --review-file /tmp/review.json --pdf <file>
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/annotated-review/run_review.sh --review-file /tmp/review.json --pdf <file>
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/annotated-review/run_review.sh --review-file /tmp/review.json --source <dir> --zotero-key <key>
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/annotated-review/run_review.sh --review-file /tmp/review.json --source <dir> --zotero-key <key>
 ```
 
 ## Output rule

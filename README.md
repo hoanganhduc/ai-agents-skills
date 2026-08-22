@@ -323,8 +323,8 @@ are rejected from config. Use `scan-heavy` when you want stronger local OCR
 for image-backed papers:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh doctor
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh doctor
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/paper.pdf" \
   --to md \
   --preset scan-heavy
@@ -333,7 +333,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \
 OCR.space fallback is available only through explicit remote upload flags:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh convert \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh convert \
   --source "/path/to/paper.pdf" \
   --to md \
   --preset scan-heavy \
@@ -345,7 +345,7 @@ To test the live OCR.space adapter, run the explicit smoke command. It
 generates and uploads a synthetic one-page PDF, not a user document:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/docling/run_docling.sh ocrspace-smoke \
   --allow-remote-ocr
 ```
 

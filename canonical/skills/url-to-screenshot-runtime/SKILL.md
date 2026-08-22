@@ -34,29 +34,29 @@ POSIX examples below use `run_skill.sh` and the `.sh` command target.
 From a configured ai-agents-skills runtime, prefer:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh selftest
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh selftest
 ```
 
 Common commands:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh doctor
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh doctor
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh capture --url https://example.com/ --out shot.png
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh capture --url https://example.com/ --out shot.png
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh verify --png shot.png --expected-width 1280 --expected-height 800
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh verify --png shot.png --expected-width 1280 --expected-height 800
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh print-pdf --url https://example.com/ --out page.pdf --same-origin-only
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh print-pdf --url https://example.com/ --out page.pdf --same-origin-only
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh verify-pdf --pdf page.pdf
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/url-to-screenshot-runtime/run_url_to_screenshot.sh verify-pdf --pdf page.pdf
 ```
 
 ## Verbs

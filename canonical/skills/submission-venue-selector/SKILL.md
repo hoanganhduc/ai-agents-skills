@@ -48,7 +48,7 @@ Do not use this skill for:
 POSIX:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/submission-venue-selector/run_submission_venue_selector.sh \
   run --dir /path/to/venue-run --draft /path/to/draft.tex --offline
 ```

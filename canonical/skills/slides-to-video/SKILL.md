@@ -75,8 +75,8 @@ Step 2 - create the dedicated venv and check readiness. Once the skill is
 installed into an agent home, use the managed runner:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/slides-to-video/run_slides_to_video.sh setup
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/slides-to-video/run_slides_to_video.sh doctor
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/slides-to-video/run_slides_to_video.sh setup
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/slides-to-video/run_slides_to_video.sh doctor
 ```
 
 To try it straight from the repo before installing, call the script directly:

@@ -56,7 +56,7 @@ Read these references as needed:
 POSIX:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/venue-ranking-evidence/run_venue_ranking_evidence.sh \
   lookup --dir /path/to/run --query "ISAAC" --source icore --offline
 ```
@@ -64,7 +64,8 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
 Windows PowerShell:
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.ps1" `
   "skills/venue-ranking-evidence/run_venue_ranking_evidence.ps1" `
   lookup --dir "$env:TEMP\venue-ranking-run" --query "TCS" --offline
 ```

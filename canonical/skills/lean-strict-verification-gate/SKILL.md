@@ -34,7 +34,7 @@ Use this skill to prevent overclaiming from generated Lean, skeletons, partial f
 Check the local tool status:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh doctor
 ```
 
@@ -42,14 +42,14 @@ Run non-installing version/toolchain probes when you need reproducibility
 metadata:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh doctor --probe
 ```
 
 Scan a Lean file without running Lean:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh scan \
   --input formal/final/proof.lean \
   --artifact-stage final_candidate
@@ -58,7 +58,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
 Optionally typecheck only when Lean is already installed:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh verify \
   --input formal/final/proof.lean \
   --artifact-stage final_candidate \
@@ -71,7 +71,7 @@ The helper requires a project root containing `lakefile.lean` or
 typechecking:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh verify \
   --input formal/final/proof.lean \
   --artifact-stage final_candidate \
@@ -135,7 +135,7 @@ nothing outside their module can cite one, and a public theorem that uses one
 inherits its axioms.
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh axiom-audit \
   --input /path/to/lean/project \
   --strict
@@ -147,7 +147,7 @@ It requires `lean4checker` on `PATH`, in `AAS_LEAN4CHECKER`, or built into the
 project's `.lake/build/bin`.
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh kernel-check \
   --input /path/to/lean/project \
   --strict

@@ -16,32 +16,32 @@ support runtime skill helpers. It is not an OpenClaw skill-file target.
 From a configured ai-agents-skills runtime, prefer:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh selftest
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh selftest
 ```
 
 Common commands:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh init --dir research/run --goal "..." --success-criteria "..."
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh init --dir research/run --goal "..." --success-criteria "..."
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh append-iteration --dir research/run --mode bounded-research --objective "Check evidence gaps" --decision continue
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh append-iteration --dir research/run --mode bounded-research --objective "Check evidence gaps" --decision continue
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh validate --dir research/run
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh validate --dir research/run
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh status --dir research/run
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh status --dir research/run
 ```
 
 Initialize a new goal-focused loop in enforce mode (the default for new v2
 state), or select an explicit compatibility mode:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh init \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh init \
   --dir research/run \
   --goal "..." \
   --success-criteria "..." \
@@ -120,11 +120,11 @@ Every command that writes or reads pins needs the host policy file, either as
 `--policy-file ABS_PATH` or via `AAS_FORCE_LOOP_POLICY_FILE`:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
   bootstrap --loop research/run --root "$PWD" --profile formal --goal "..." \
   --policy-file /abs/path/host-policy.env
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/autonomous-research-loop-runtime/force-loop/run_force_loop.sh \
   start --loop research/run --root "$PWD" --provider claude \
   --policy-file /abs/path/host-policy.env
@@ -133,7 +133,8 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
 Windows (PowerShell only; the same policy file is read by `Load-LoopEnv.ps1`):
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1 bootstrap --loop research\run --root $PWD --profile formal --goal "..." --policy-file C:\abs\path\host-policy.env
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.ps1" skills/autonomous-research-loop-runtime/force-loop/run_force_loop.ps1 bootstrap --loop research\run --root $PWD --profile formal --goal "..." --policy-file C:\abs\path\host-policy.env
 ```
 
 Pack docs: `force-loop/README.md`, `OPERATOR_RUNBOOK.md`. Discovery template:
@@ -143,10 +144,15 @@ supported as advanced paths.
 Start a raw unattended `drive` (POSIX, advanced):
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh drive --dir research/run --provider claude
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.sh drive --dir research/run --provider claude
 ```
 
-On Windows use `& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" ... run_autonomous_research_loop.ps1 drive --dir research\run --provider codex`.
+On Windows:
+
+```powershell
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.ps1" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1 drive --dir research\run --provider codex
+```
 Wrap with a persistent user service or Task Scheduler for multi-day runs. A
 managed executor may reap ordinary `nohup` descendants when its command ends;
 on Linux, prefer a `systemd-run --user` service whose command is a loop-owned
@@ -745,7 +751,8 @@ itself.
 On Windows, use the installed runtime runner with the native launcher target:
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1 selftest
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.ps1" skills/autonomous-research-loop-runtime/run_autonomous_research_loop.ps1 selftest
 ```
 
 ## Guarantees

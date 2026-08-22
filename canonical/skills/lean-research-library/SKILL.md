@@ -81,7 +81,8 @@ exists or route through the compute-lane skills.
 Runtime helpers live under the shared runtime root. From PowerShell:
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" "skills/lean-research-library/run_lean_research_library.ps1" doctor
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.ps1" "skills/lean-research-library/run_lean_research_library.ps1" doctor
 ```
 
 or directly from PowerShell: `skills/lean-research-library/run_lean_research_library.ps1`
@@ -89,7 +90,7 @@ and `skills/lean-research-library/run_lean_research_library.ps1` (both
 resolve Python via `run_python.ps1`/`AAS_RUNTIME_PYTHON`). On POSIX:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/lean-research-library/run_lean_research_library.sh doctor
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/lean-research-library/run_lean_research_library.sh doctor
 ```
 
 ## Recommended templates

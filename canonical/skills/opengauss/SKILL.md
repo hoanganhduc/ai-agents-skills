@@ -41,17 +41,17 @@ Live install is **manual-native**. Unattended auto-launch is **out of scope unti
 ## Runtime Helper
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/opengauss/run_opengauss.sh doctor
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/opengauss/run_opengauss.sh config-snippet
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/opengauss/run_opengauss.sh smoke
 ```
 
@@ -61,7 +61,7 @@ Offline CI stays on `smoke` / `doctor`. Live coverage is **explicit**:
 
 ```bash
 # 1) Tool/PATH/project readiness (no /prove, no claim-support)
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/opengauss/run_opengauss.sh live-preflight \
   --project-root /path/to/lean-project \
   --run-gauss-doctor
@@ -69,7 +69,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
 # 2) Backend ping + optional short gauss chat probe (LLM; costs quota)
 # NEVER set this in default CI.
 export AAS_OPENGAUSS_LIVE_PROVE=1
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/opengauss/run_opengauss.sh live-prove-smoke \
   --project-root /path/to/lean-project \
   --backend claude-code \
@@ -152,16 +152,16 @@ After installing OpenGauss yourself (see `references/local-install.md`):
 Handoff helpers (offline JSON):
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/opengauss/run_opengauss.sh \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/opengauss/run_opengauss.sh \
   handoff-intake --claim-id C1 --informal-statement-ref claims/C1.md --project-root /path/to/lean
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/opengauss/run_opengauss.sh \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/opengauss/run_opengauss.sh \
   handoff-gate --run-id manual-1 --project-root /path/to/lean --workflow prove --gauss-exit success
 ```
 
 ## Feasibility spike (Phase 1)
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/opengauss/run_opengauss.sh \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/opengauss/run_opengauss.sh \
   spike --work-dir /tmp/og-spike
 ```
 

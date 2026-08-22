@@ -14,6 +14,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -372,7 +373,8 @@ def _load_cal():
 class CalibreSyncProgressTests(unittest.TestCase):
     """calibre/SKILL.md documents `sync --progress` and the shape it emits.
 
-        bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh sync [--force] [--progress]
+        bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+            skills/calibre/run_cal.sh sync [--force] [--progress]
 
         - Use `sync --progress` when pulling `metadata.db` may take time. Progress is
           emitted as JSON lines on stderr so stdout remains the final JSON result.
@@ -434,6 +436,103 @@ class CalibreSyncProgressTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 self.cal.cmd_sync(Args())
         self.assertTrue(self.cal._PROGRESS_ENABLED)
+
+
+
+class DocumentedLauncherResolvesTests(unittest.TestCase):
+    """A documented launch command has to name a launcher that exists.
+
+    `AAS_RUNTIME_ROOT` is assigned in exactly two places in the tree --
+    `runners/run_skill.sh` and `runners/run_skill.ps1` -- where the launcher
+    exports it for its own children. No installer writes it into an agent's
+    environment, so a doc line spelled `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
+    asks the reader to already hold the value the launcher itself produces. In
+    the fresh shell an agent actually has, it expanded to `/run_skill.sh` and
+    exited 127 before any skill argument was read.
+    """
+
+    # Launcher spellings only. Runtime code that reads a bare $AAS_RUNTIME_ROOT
+    # runs as a child of run_skill.sh and is correct as it stands.
+    POSIX_UNRESOLVED = '"$AAS_RUNTIME_ROOT/run_skill'
+    WINDOWS_UNRESOLVED = ('"$env:AAS_RUNTIME_ROOT\\run_skill',
+                          '"$env:AAS_RUNTIME_ROOT\\run_python')
+    SUFFIXES = {".md", ".py", ".sh", ".ps1"}
+
+    def _sources(self):
+        roots = [REPO_ROOT / "canonical", REPO_ROOT / "docs"]
+        files = [REPO_ROOT / "README.md", REPO_ROOT / "installer" / "ai_agents_skills" / "docs.py"]
+        for root in roots:
+            files += [f for f in sorted(root.rglob("*"))
+                      if f.is_file() and f.suffix in self.SUFFIXES]
+        return files
+
+    def _offenders(self, needles) -> list[str]:
+        found = []
+        for path in self._sources():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for i, line in enumerate(text.splitlines(), 1):
+                if any(needle in line for needle in needles):
+                    found.append(f"{path.relative_to(REPO_ROOT)}:{i}")
+        return found
+
+    def test_no_documented_posix_launcher_is_unresolved(self) -> None:
+        self.assertEqual(self._offenders((self.POSIX_UNRESOLVED,)), [])
+
+    def test_no_documented_windows_launcher_is_unresolved(self) -> None:
+        self.assertEqual(self._offenders(self.WINDOWS_UNRESOLVED), [])
+
+    def test_the_scan_reaches_the_files_it_claims_to(self) -> None:
+        """A zero result is only evidence if the scan is not vacuous."""
+
+        sources = self._sources()
+        self.assertGreater(len(sources), 100, len(sources))
+        resolved = sum(
+            "${AAS_RUNTIME_ROOT:-" in f.read_text(encoding="utf-8", errors="replace")
+            for f in sources
+        )
+        self.assertGreater(resolved, 20, resolved)
+
+    def test_the_guard_fires_on_the_form_it_forbids(self) -> None:
+        """The predicate itself, against the line the fix removed."""
+
+        bad = 'bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh sync'
+        self.assertIn(self.POSIX_UNRESOLVED, bad)
+        good = ('bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}'
+                '/run_skill.sh" skills/calibre/run_cal.sh sync')
+        self.assertNotIn(self.POSIX_UNRESOLVED, good)
+
+    @unittest.skipIf(os.name == "nt", "POSIX parameter expansion")
+    def test_the_two_forms_expand_differently_in_a_shell_with_it_unset(self) -> None:
+        env = {k: v for k, v in os.environ.items() if k != "AAS_RUNTIME_ROOT"}
+        env.setdefault("HOME", str(Path.home()))
+
+        def expand(word: str) -> str:
+            return subprocess.run(
+                ["bash", "-c", f'printf "%s" "{word}"'],
+                capture_output=True, text=True, encoding="utf-8", env=env, check=True,
+            ).stdout
+
+        self.assertEqual(expand("$AAS_RUNTIME_ROOT/run_skill.sh"), "/run_skill.sh")
+        self.assertEqual(
+            expand("${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"),
+            f"{env['HOME']}/.local/share/ai-agents-skills/runtime/run_skill.sh",
+        )
+
+    def test_the_documented_default_is_the_one_the_installer_would_pick(self) -> None:
+        """Docs and installer must not drift on where the runtime lands."""
+
+        from installer.ai_agents_skills.runtime import default_runtime_root
+
+        class _Agent:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        chosen = default_runtime_root(
+            Path("/h"), [_Agent("claude"), _Agent("codex")], platform="linux"
+        )
+        self.assertEqual(
+            str(chosen), "/h/.local/share/ai-agents-skills/runtime", chosen
+        )
 
 
 if __name__ == "__main__":

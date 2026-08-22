@@ -44,7 +44,7 @@ sets `OPENCLAW_WORKSPACE`, `PYTHONPATH`, secrets, and workspace-local binaries.
 
 Shared runner:
 
-- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
+- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## First-time setup
 
@@ -53,7 +53,7 @@ Before the core commands work, provision the dedicated venv once. This creates
 branch. The run scripts then export `GETSCIPAPERS_BIN` to the venv binary.
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_setup.sh setup
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/getscipapers_requester/run_gsp_setup.sh setup
 ```
 
 On native Windows, use the Windows runner and command target:
@@ -65,19 +65,19 @@ On native Windows, use the Windows runner and command target:
 ## Core commands
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh run-getscipapers --timeout 180 -- getpapers --doi <DOI>
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh run-getscipapers --timeout 180 -- getpapers --doi <DOI>
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh resolve auto "<title>" --best
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh resolve auto "<title>" --best
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh make-manifest auto "<text-or-file>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh make-manifest auto "<text-or-file>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh doctor
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/getscipapers_requester/run_gsp_helper.sh doctor
 ```
 
 ## Z-Library and DJVU fallback

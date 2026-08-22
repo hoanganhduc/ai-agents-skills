@@ -56,38 +56,38 @@ Use the managed runtime runner rather than invoking `run_sage.sh` directly.
 
 Shared runner:
 
-- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
+- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## Core commands
 
 Use `functions.exec_command`.
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh "<sage_code>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh "<sage_code>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --timeout 1800 "<sage_code>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh --timeout 1800 "<sage_code>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --file skills/sagemath/templates/<template>.sage
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh --file skills/sagemath/templates/<template>.sage
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --file skills/sagemath/templates/reconfiguration_check.sage
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh --file skills/sagemath/templates/reconfiguration_check.sage
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --plot "<sage_code>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh --plot "<sage_code>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --session "<name>" "<sage_code>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh --session "<name>" "<sage_code>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh --cancel <job_id>
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh --cancel <job_id>
 ```
 
 ## Templates
