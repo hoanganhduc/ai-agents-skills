@@ -142,5 +142,100 @@ class ExecutedMeansTheWriteRanTests(unittest.TestCase):
         self.assertTrue(payload["executed"], "an agent must not read this as a no-op")
 
 
+
+class HelpReportsAMissingPackageLikeEveryOtherPathTests(unittest.TestCase):
+    """`--help` must fail through the wrapper's error contract, not a traceback.
+
+    Every command in `main` runs inside a `try/except WrapperError` that turns a
+    missing `vnthuquan` executable into `missing_executable` with exit 127. The
+    `--help` branch returns before that block, so `native_help` -- which shells
+    out to the package -- let the exception escape `main` entirely. An agent
+    running `doctor --help` to find out whether the skill is usable got a Python
+    traceback on stderr, nothing on stdout, and exit 1.
+    """
+
+    #: Every verb whose help is answered by the package rather than by a
+    #: built-in string, i.e. every verb that reaches `run_pkg` from the help
+    #: branch. Kept as a literal so adding a verb to the module's set without
+    #: re-checking this path shows up as a failure here.
+    NATIVE = (
+        "archive", "categories", "completion", "config", "doctor", "download",
+        "formats", "list", "mirrors", "search", "show", "validate",
+    )
+
+    def _run(self, argv):
+        """Run `main(argv)` with the package absent.
+
+        Returns (exit code, stdout-or-parsed-payload, stderr). Text mode reports
+        failures on stderr as `error: <message>`, so both streams matter here.
+        """
+
+        import contextlib
+        import io
+        import json as _json
+
+        with tempfile.TemporaryDirectory() as raw:
+            vtq = load_wrapper(Path(raw))
+
+            def no_executable():
+                raise vtq.WrapperError(
+                    "vnthuquan command not found", "missing_executable", 127
+                )
+
+            out_buf, err_buf = io.StringIO(), io.StringIO()
+            with mock.patch.object(vtq, "resolve_vnthuquan", no_executable), \
+                 contextlib.redirect_stdout(out_buf), \
+                 contextlib.redirect_stderr(err_buf):
+                code = vtq.main(argv)
+            out = out_buf.getvalue()
+        payload = _json.loads(out) if out.strip().startswith("{") else out
+        return code, payload, err_buf.getvalue()
+
+    def test_the_module_set_matches_the_verbs_this_test_covers(self) -> None:
+        """Non-vacuity anchor: these verbs really do take the package help path."""
+
+        with tempfile.TemporaryDirectory() as raw:
+            vtq = load_wrapper(Path(raw))
+        self.assertEqual(set(self.NATIVE), set(vtq.NATIVE_HELP_COMMANDS))
+
+    def test_every_native_help_verb_reports_the_contract_error(self) -> None:
+        for verb in self.NATIVE:
+            with self.subTest(verb=verb):
+                code, payload, _ = self._run([verb, "--help", "--json"])
+                self.assertEqual(code, 127)
+                self.assertIsInstance(payload, dict)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["error_code"], "missing_executable")
+                self.assertEqual(payload["exit_code"], 127)
+
+    def test_help_and_non_help_agree_on_the_same_missing_package(self) -> None:
+        """The bug was the divergence, so pin the two paths to each other."""
+
+        help_code, help_payload, _ = self._run(["show", "--help", "--json"])
+        run_code, run_payload, _ = self._run(["show", "123", "--json"])
+
+        self.assertEqual(help_code, run_code)
+        for key in ("ok", "error_code", "message", "exit_code", "command"):
+            self.assertEqual(help_payload[key], run_payload[key], key)
+
+    def test_text_mode_reports_it_too(self) -> None:
+        """Without --json the same failure is reported on stderr, not raised."""
+
+        code, out, err = self._run(["doctor", "--help"])
+
+        self.assertEqual(code, 127)
+        self.assertEqual(out, "")
+        self.assertEqual(err.strip(), "error: vnthuquan command not found")
+
+    def test_help_that_never_touches_the_package_is_unaffected(self) -> None:
+        """The built-in help paths must keep printing help and exiting 0."""
+
+        for argv in (["--help"], ["queue", "--help"], ["add-to-calibre", "--help"]):
+            with self.subTest(argv=argv):
+                code, out, _ = self._run(argv)
+                self.assertEqual(code, 0)
+                self.assertIn("vnthuquan assistant wrapper", out)
+
+
 if __name__ == "__main__":
     unittest.main()
