@@ -530,8 +530,10 @@ class DocumentedLauncherResolvesTests(unittest.TestCase):
         chosen = default_runtime_root(
             Path("/h"), [_Agent("claude"), _Agent("codex")], platform="linux"
         )
+        # as_posix, not str: the assertion is about path components, and on a
+        # Windows runner str() renders the same components with backslashes.
         self.assertEqual(
-            str(chosen), "/h/.local/share/ai-agents-skills/runtime", chosen
+            chosen.as_posix(), "/h/.local/share/ai-agents-skills/runtime", chosen
         )
 
 
