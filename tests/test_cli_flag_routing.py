@@ -7,16 +7,21 @@ a requested target the plan quietly declined to serve.
 """
 from __future__ import annotations
 
+import ast
 import contextlib
+import importlib.util
 import io
 import json
 import os
+import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from installer.ai_agents_skills import cli
+from installer.ai_agents_skills.manifest import REPO_ROOT
 from installer.ai_agents_skills.cli import (
     build_parser,
     install_root,
@@ -252,6 +257,183 @@ class SkippedTargetReportingTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertNotIn("skipped_agents", report)
             self.assertTrue(report["actions"])
+
+
+
+FLAG = re.compile(r"(?<![\w-])(--[a-z0-9][a-z0-9-]{1,40})")
+
+
+def flags_a_runtime_accepts(runtime: Path) -> set:
+    """Every `--flag` literal the runtime names, in Python or in its shell runners."""
+
+    accepted = set()
+    for path in runtime.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                    and node.value.startswith("--") and " " not in node.value:
+                accepted.add(node.value)
+    for path in list(runtime.rglob("*.sh")) + list(runtime.rglob("*.bat")):
+        try:
+            accepted.update(FLAG.findall(path.read_text(encoding="utf-8", errors="replace")))
+        except OSError:
+            continue
+    return accepted
+
+
+def documented_own_runner_flags(skill: str) -> list:
+    """(flag, line) for each flag on a fenced command invoking this skill's runner.
+
+    Anchoring on the skill's own `run_*.sh` is what makes this checkable: skill
+    docs also show other skills' runners and `make ... ARGS=` lines, and those
+    flags belong to a different parser.
+    """
+
+    doc = REPO_ROOT / "canonical" / "skills" / skill / "SKILL.md"
+    own = re.compile(r"skills/" + re.escape(skill) + r"/run_[a-z0-9_]+\.(?:sh|bat)")
+    found = []
+    for block in re.findall(r"```[a-z]*\n(.*?)```", doc.read_text(encoding="utf-8"), flags=re.S):
+        for line in block.splitlines():
+            if own.search(line):
+                found.extend((flag, line.strip()) for flag in FLAG.findall(line))
+    return found
+
+
+class DocumentedFlagsExistTests(unittest.TestCase):
+    """A flag a SKILL.md tells the agent to type has to exist in the parser.
+
+    The agent reads the skill and types what it shows. argparse answers an
+    undeclared flag with exit 2 before the command body is entered, so the lane
+    the doc was describing never runs -- and the failure surfaces as a usage
+    error, which reads like the agent mistyped rather than like the doc is wrong.
+    """
+
+    def test_every_documented_flag_is_one_the_runtime_accepts(self) -> None:
+        skills_dir = REPO_ROOT / "canonical" / "skills"
+        undeclared = []
+        checked = 0
+        for doc in sorted(skills_dir.glob("*/SKILL.md")):
+            skill = doc.parent.name
+            runtime = REPO_ROOT / "canonical" / "runtime" / "skills" / skill
+            if not runtime.is_dir():
+                continue
+            documented = documented_own_runner_flags(skill)
+            if not documented:
+                continue
+            accepted = flags_a_runtime_accepts(runtime)
+            for flag, line in documented:
+                checked += 1
+                if flag not in accepted:
+                    undeclared.append(f"{skill}: {flag}\n    {line}")
+        self.assertEqual(undeclared, [], "\n".join(undeclared))
+        # A zero result is only evidence if the scan reached something.
+        self.assertGreater(checked, 40, "the flag scan matched almost nothing")
+
+
+def _load_cal():
+    """Import calibre's cal.py against calibre's own `lib`, not whoever ran first.
+
+    calibre and zotero each ship a top-level `lib` package, and their module
+    names overlap (cache, config, doctor, filetype, gdrive, parallel, renamer,
+    verifier). Each runtime runs in its own process in real use, so the clash is
+    invisible there -- but the suite runs in one process, and whichever runtime a
+    test imported first owns `lib` for every test after it. Loading cal.py on the
+    ambient path passes alone and fails under `unittest discover` with
+    `cannot import name 'remove_from_cache' from 'lib.cache'` pointing at
+    zotero's copy. Prepend calibre's runtime and hand `lib` back afterwards.
+    """
+
+    runtime = REPO_ROOT / "canonical" / "runtime" / "skills" / "calibre"
+    saved_path = list(sys.path)
+    saved_modules = {
+        name: module for name, module in sys.modules.items()
+        if name == "lib" or name.startswith("lib.")
+    }
+    for name in saved_modules:
+        del sys.modules[name]
+    sys.path.insert(0, str(runtime))
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_cal_under_test", runtime / "cal.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path[:] = saved_path
+        for name in [n for n in sys.modules if n == "lib" or n.startswith("lib.")]:
+            del sys.modules[name]
+        sys.modules.update(saved_modules)
+
+
+class CalibreSyncProgressTests(unittest.TestCase):
+    """calibre/SKILL.md documents `sync --progress` and the shape it emits.
+
+        bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/calibre/run_cal.sh sync [--force] [--progress]
+
+        - Use `sync --progress` when pulling `metadata.db` may take time. Progress is
+          emitted as JSON lines on stderr so stdout remains the final JSON result.
+
+    The subparser declared only `--force`, so the documented command exited 2 --
+    on exactly the slow pull the guidance was written for -- and `_progress`
+    wrote a bare string, which no reader tailing stderr can parse.
+    """
+
+    def setUp(self) -> None:
+        self.cal = _load_cal()
+
+    def test_the_documented_command_parses(self) -> None:
+        parsed = self.cal.build_parser().parse_args(["sync", "--force", "--progress"])
+        self.assertTrue(parsed.force)
+        self.assertTrue(parsed.progress)
+
+    def test_sync_without_the_flag_still_parses(self) -> None:
+        parsed = self.cal.build_parser().parse_args(["sync"])
+        self.assertFalse(parsed.progress)
+
+    def _emit(self, enabled: bool) -> str:
+        self.cal._set_progress(enabled)
+        buffer = io.StringIO()
+        with contextlib.redirect_stderr(buffer):
+            self.cal._progress("metadata.db: downloading 40% (4.0 MB / 10.0 MB)")
+        return buffer.getvalue()
+
+    def test_progress_lines_are_json(self) -> None:
+        line = self._emit(True).rstrip("\n")
+        self.assertEqual(
+            json.loads(line),
+            {"status": "progress",
+             "message": "metadata.db: downloading 40% (4.0 MB / 10.0 MB)"},
+        )
+
+    def test_one_line_per_message(self) -> None:
+        self.assertEqual(self._emit(True).count("\n"), 1)
+
+    def test_it_stays_quiet_until_asked(self) -> None:
+        self.assertEqual(self._emit(False), "")
+
+    def test_the_stream_is_stderr_so_stdout_stays_the_result(self) -> None:
+        self.cal._set_progress(True)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.cal._progress("metadata.db: checking Google Drive")
+        self.assertEqual(out.getvalue(), "")
+
+    def test_cmd_sync_arms_the_stream_from_the_flag(self) -> None:
+        """The flag has to reach the toggle, not merely parse."""
+
+        class Args:
+            force = False
+            progress = True
+
+        self.cal._set_progress(False)
+        with patch.object(self.cal, "load_config", side_effect=RuntimeError("stop here")):
+            with self.assertRaises(RuntimeError):
+                self.cal.cmd_sync(Args())
+        self.assertTrue(self.cal._PROGRESS_ENABLED)
 
 
 if __name__ == "__main__":
