@@ -4,14 +4,17 @@ Three contracts are pinned here.  The Apple Silicon parse owes its caller one
 thing: a malformed line in `system_profiler` output costs that line and nothing
 else.  The CPU and memory probes owe a harder one -- the numbers they report are
 the budget *this process* has, not the machine's, because a worker count sized off
-hardware the run may not touch is the outcome the preflight exists to prevent.  And
-the disk probe owes a failure shape its own consumers can read, since both of them
+hardware the run may not touch is the outcome the preflight exists to prevent.  The
+GPU probes owe the same per-line resilience the Apple parse already has, and owe
+the caller a broken probe named rather than reported as an absent GPU.  And the
+disk probe owes a failure shape its own consumers can read, since both of them
 index its numeric keys unconditionally.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 import types
 import unittest
@@ -452,6 +455,132 @@ class DiskProbeFailureStillYieldsAPreflightTests(unittest.TestCase):
         self.assertEqual(
             recommendations["large_data_handling"]["strategy"], "disk_abundant"
         )
+
+
+
+class NvidiaProbeLosesOnlyWhatItCannotReadTests(unittest.TestCase):
+    """One unreadable field must not discard the GPUs around it.
+
+    `nvidia-smi` prints `[N/A]` for a field it cannot supply for a given GPU or
+    driver.  The conversions sat unguarded inside the parse loop under a bare
+    `except ...: pass`, so such a field raised out of the loop, the partial list
+    was returned as the complete answer, and a `[N/A]` on the first line reported
+    a GPU host as having no GPU -- which drops CUDA from `available_backends` and
+    routes work off the GPU lane.  The sibling Apple Silicon parse in this same
+    module was already hardened against exactly this; the NVIDIA one was not.
+    """
+
+    QUERY = "0, NVIDIA A100-SXM4-80GB, 81920, 81000, 550.54.15, 8.0"
+
+    def _listing(self, lines):
+        return _Completed("\n".join(lines))
+
+    def _probe(self, completed):
+        with mock.patch.object(dr.subprocess, "run", lambda *a, **k: completed):
+            return dr.detect_nvidia_gpus()
+
+    def test_a_field_the_driver_cannot_report_costs_only_that_field(self) -> None:
+        gpus = self._probe(self._listing([
+            self.QUERY,
+            "1, NVIDIA A100-SXM4-80GB, 81920, [N/A], 550.54.15, 8.0",
+            "2, NVIDIA A100-SXM4-80GB, 81920, 81000, 550.54.15, 8.0",
+            "3, NVIDIA A100-SXM4-80GB, 81920, 81000, 550.54.15, 8.0",
+        ]))
+        self.assertEqual(len(gpus), 4)
+        self.assertIsNone(gpus[1]["memory_free_mb"])
+        self.assertEqual(gpus[1]["memory_total_mb"], 81920.0)
+        self.assertEqual([g["index"] for g in gpus], [0, 1, 2, 3])
+
+    def test_it_on_the_first_line_does_not_erase_the_hosts_gpus(self) -> None:
+        """The worst case: the preflight used to answer "no GPU" to a GPU host."""
+
+        listing = self._listing([
+            "0, NVIDIA A100-SXM4-80GB, 81920, [N/A], 550.54.15, 8.0",
+            self.QUERY.replace("0,", "1,"),
+        ])
+        with mock.patch.object(dr.subprocess, "run", lambda *a, **k: listing), \
+                mock.patch.object(dr, "detect_amd_gpus", lambda: []), \
+                mock.patch.object(dr, "detect_apple_silicon_gpu", lambda: None):
+            info = dr.get_gpu_info()
+        self.assertEqual(info["total_gpus"], 2)
+        self.assertEqual(info["available_backends"], ["CUDA"])
+
+    def test_a_truncated_line_is_skipped_and_the_rest_still_read(self) -> None:
+        gpus = self._probe(self._listing([
+            "0, NVIDIA A100-SXM4-80GB, 81920",
+            self.QUERY.replace("0,", "1,"),
+        ]))
+        self.assertEqual([g["index"] for g in gpus], [1])
+
+    def test_a_clean_listing_is_read_exactly_as_before(self) -> None:
+        """The control: nothing about the working path changed."""
+
+        gpus = self._probe(self._listing([self.QUERY]))
+        self.assertEqual(gpus, [{
+            "index": 0,
+            "name": "NVIDIA A100-SXM4-80GB",
+            "memory_total_mb": 81920.0,
+            "memory_free_mb": 81000.0,
+            "driver_version": "550.54.15",
+            "compute_capability": "8.0",
+            "type": "NVIDIA",
+            "backend": "CUDA",
+        }])
+
+    def test_an_absent_or_hung_nvidia_smi_is_no_gpu_and_no_error(self) -> None:
+        """Neither is a fault: this host simply has no CUDA to report."""
+
+        for exc in (FileNotFoundError(2, "nvidia-smi"),
+                    subprocess.TimeoutExpired("nvidia-smi", 5)):
+            with self.subTest(exc=type(exc).__name__):
+                with mock.patch.object(
+                    dr.subprocess, "run", mock.Mock(side_effect=exc)
+                ):
+                    self.assertEqual(dr.detect_nvidia_gpus(), [])
+                    self.assertEqual(dr.detect_amd_gpus(), [])
+
+
+class ABrokenProbeIsNamedNotSilentTests(unittest.TestCase):
+    """"The probe broke" and "there is no such GPU" are different answers.
+
+    Both used to arrive as an empty list, so a preflight whose GPU detection was
+    failing reported "GPU: None detected" with the confidence of a real negative.
+    """
+
+    def _info(self, **broken):
+        detectors = {
+            "detect_nvidia_gpus": lambda: [],
+            "detect_amd_gpus": lambda: [],
+            "detect_apple_silicon_gpu": lambda: None,
+        }
+        detectors.update(broken)
+        with mock.patch.multiple(dr, **{k: mock.Mock(side_effect=v)
+                                        if isinstance(v, Exception) else v
+                                        for k, v in detectors.items()}):
+            return dr.get_gpu_info()
+
+    def test_an_unexpected_failure_is_reported_under_its_probe_name(self) -> None:
+        info = self._info(detect_nvidia_gpus=RuntimeError("driver mismatch"))
+        self.assertEqual(info["probe_errors"],
+                         {"nvidia": "RuntimeError: driver mismatch"})
+        self.assertEqual(info["total_gpus"], 0)
+        self.assertEqual(info["nvidia_gpus"], [])
+
+    def test_one_broken_probe_does_not_cost_the_others(self) -> None:
+        info = self._info(
+            detect_nvidia_gpus=RuntimeError("driver mismatch"),
+            detect_amd_gpus=lambda: [{"index": 0, "type": "AMD", "backend": "ROCm"}],
+        )
+        self.assertEqual(info["total_gpus"], 1)
+        self.assertEqual(info["available_backends"], ["ROCm"])
+        self.assertIn("nvidia", info["probe_errors"])
+
+    def test_a_host_with_no_gpus_reports_no_errors_either(self) -> None:
+        """The control: a genuine negative stays a clean negative."""
+
+        info = self._info()
+        self.assertEqual(info["probe_errors"], {})
+        self.assertEqual(info["total_gpus"], 0)
 
 
 if __name__ == "__main__":
