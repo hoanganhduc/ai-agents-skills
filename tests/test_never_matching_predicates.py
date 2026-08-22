@@ -54,6 +54,30 @@ def load_module(name: str, path: Path, extra_syspath: Path | None = None):
     return module
 
 
+def _bash_executes() -> bool:
+    """Whether a `bash` on PATH actually runs a command, not merely resolves.
+
+    Every windows-latest image ships `C:\\Windows\\System32\\bash.exe`, the WSL
+    launcher, so `shutil.which("bash")` is truthy there. With no distribution
+    installed it prints "Windows Subsystem for Linux has no installed
+    distributions." and exits 1 without running anything, which a presence check
+    reads as a working bash and every rc assertion below then fails against. A
+    distinctive exit code separates the two: only a bash that ran the script can
+    return it. A real WSL bash still passes, so this narrows the gate to the
+    broken case rather than to the platform.
+    """
+
+    if not shutil.which("bash"):
+        return False
+    try:
+        probe = subprocess.run(
+            ["bash", "-c", "exit 7"], capture_output=True, timeout=30, check=False
+        )
+    except OSError:
+        return False
+    return probe.returncode == 7
+
+
 class DoclingWordFloorTest(unittest.TestCase):
     """The words-per-page floor counted only ASCII-shaped words.
 
@@ -351,7 +375,9 @@ class SafetyRuleFlagOrderTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertFalse(self.matched(command), f"false positive: {command}")
 
-    @unittest.skipUnless(shutil.which("bash"), "bash is unavailable on this platform")
+    @unittest.skipUnless(
+        _bash_executes(), "no bash on this host actually executes a script"
+    )
     def test_the_shell_twin_reaches_the_same_verdict(self) -> None:
         """The POSIX-ERE script and the Python rules must not drift apart.
 

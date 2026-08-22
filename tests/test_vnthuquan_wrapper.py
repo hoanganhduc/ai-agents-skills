@@ -58,6 +58,16 @@ class ExecutedMeansTheWriteRanTests(unittest.TestCase):
     """
 
     def _add(self, write_result, *, flags=("--execute", "--yes", "--duplicates-reviewed")):
+        """Run one add against a stubbed Calibre and return the payload.
+
+        `calibre_display_command` is stubbed with the rest: `add_to_calibre` calls
+        it only to render the handoff lines it publishes, but it resolves a real
+        runner script beside `VNTHUQUAN_ASSISTANT_HOME` and, on Windows, raises
+        "PowerShell Calibre runner not found" when the `.ps1` is absent -- which
+        it always is under a tempdir. These tests are about `executed` versus
+        `ok`, so the display command is scaffolding, not subject.
+        """
+
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             vtq = load_wrapper(root)
@@ -80,6 +90,9 @@ class ExecutedMeansTheWriteRanTests(unittest.TestCase):
                      vtq,
                      "calibre_cache_candidates",
                      lambda t, a, n: {"ok": True, "count": 0, "candidates": []},
+                 ), \
+                 mock.patch.object(
+                     vtq, "calibre_display_command", lambda a: ["calibre-stub", *a]
                  ):
                 return vtq.add_to_calibre([str(book), *flags])
 
