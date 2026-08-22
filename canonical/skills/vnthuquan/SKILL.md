@@ -45,7 +45,7 @@ Use this skill only for Vietnam Thu Quan site-specific ebook work:
 Use the managed runtime runner rather than invoking the wrapper directly:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh diagnose --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh diagnose --json
 ```
 
 Runtime wrapper:
@@ -90,35 +90,35 @@ includes:
 ## Examples
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh search "Kim Dung" --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh search "Kim Dung" --json
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh categories list --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh categories list --json
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh show --title "Mưa Đỏ" --links --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh show --title "Mưa Đỏ" --links --json
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh mirrors check --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh mirrors check --json
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh download --title "Mưa Đỏ" --format epub --dry-run --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh download --title "Mưa Đỏ" --format epub --dry-run --json
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh queue --query "Kim Dung" --limit 5 --format epub --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh queue --query "Kim Dung" --limit 5 --format epub --json
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --dry-run --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --dry-run --json
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --execute --yes --duplicates-reviewed --json
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/vnthuquan/run_vnthuquan.sh add-to-calibre PATH --execute --yes --duplicates-reviewed --json
 ```
 
 ## Safety Rules

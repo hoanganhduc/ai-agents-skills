@@ -14,7 +14,7 @@ $env:AAS_SAGE_BIN = "/path/to/sage-10.4/sage"  # use this when sage is not on th
 Linux/WSL:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh "print(2+2)"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh "print(2+2)"
 ```
 
 If WSL has only a Bash alias such as `alias sage=...`, create a real executable

@@ -27,7 +27,7 @@ Use the managed runtime runner rather than invoking the digest script directly.
 
 Shared runner:
 
-- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
+- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## Use cases
 
@@ -39,7 +39,7 @@ Shared runner:
 ## Core execution
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh <COMMAND AND ARGS>
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh <COMMAND AND ARGS>
 ```
 
 ## Common actions
@@ -63,11 +63,11 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/research-digest-wrapper/run_researc
 Verified example shapes:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh run --tag graph-theory --min-priority 3
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh run --tag graph-theory --min-priority 3
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh add-topic "Token sliding" --tag reconfiguration --priority 5
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/research-digest-wrapper/run_research_digest.sh add-topic "Token sliding" --tag reconfiguration --priority 5
 ```
 
 ## After execution

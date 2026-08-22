@@ -45,14 +45,14 @@ ledger or final artifact metadata.
 Initialize a deep-research scaffold with:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh init --dir /path/to/workspace
 ```
 
 For machine-checkable research runs, initialize structured ledgers too:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh init --structured --dir /path/to/workspace
 ```
 
@@ -60,35 +60,35 @@ For research where formal verification may help, initialize the optional v2
 formal lane:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh init --structured --schema-version 2 --formal --dir /path/to/workspace
 ```
 
 Validate the structured ledgers before delivery with:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh validate --dir /path/to/workspace/research
 ```
 
 Validate a v2/formal workspace with:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh validate --schema-version 2 --dir /path/to/workspace/research
 ```
 
 Verify the helper setup with:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh doctor
 ```
 
 Run the offline strict workflow smoke with:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/deep-research-workflow/run_deep_research_workflow.sh selftest
 ```
 
@@ -263,13 +263,13 @@ formal support on its own.
 Use the local helpers as optional gates:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh assess --claim-id C1 --claim "..."
 ```
 Use `lean-research-library` for the personal-library reuse gate before any Lean formalization and the user-gated intake after it.
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-strict-verification-gate/run_lean_strict_verification_gate.sh verify --input formal/artifacts/C1.lean --artifact-stage final_candidate --typecheck
 ```
 

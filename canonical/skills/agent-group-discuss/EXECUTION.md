@@ -166,13 +166,13 @@ You are the {ROLE_NAME} in a {TEMPLATE_NAME} multi-agent research session.
 {FOR COMPUTATION ROLES}
 - To run SageMath:
   functions.exec_command with:
-  bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/sagemath/run_sage.sh "<sage_code>"
+  bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/sagemath/run_sage.sh "<sage_code>"
 - To verify graph properties:
   functions.exec_command with:
-  bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/graph-verifier/run_graph_verifier.sh --input /tmp/graph_input.json
+  bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/graph-verifier/run_graph_verifier.sh --input /tmp/graph_input.json
 - To scaffold a formal claim:
   functions.exec_command with:
-  bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/formal-skeleton-helper/run_formal_skeleton.sh --input /tmp/formal_input.json
+  bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/formal-skeleton-helper/run_formal_skeleton.sh --input /tmp/formal_input.json
 
 {FOR PURE REASONING ROLES}
 - Read files or search if needed, but do not run computations unless explicitly instructed.

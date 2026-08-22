@@ -50,7 +50,7 @@ workflow.
 
 Shared runner:
 
-- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
+- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## Local Library Profile Gate
 
@@ -164,7 +164,7 @@ Treat other failed `doctor` checks as blockers unless the user explicitly asks
 for a degraded diagnostic path:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh doctor
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh doctor
 ```
 
 ## Core commands
@@ -174,31 +174,31 @@ Use `functions.exec_command`.
 Common patterns:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh --json get --link "<query>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get --link "<query>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --index 0
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --index 0
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh add "<DOI or arXiv or URL>" --collection "<name>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh add "<DOI or arXiv or URL>" --collection "<name>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh add "/path/to/file.ext" --collection "<name>"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh add "/path/to/file.ext" --collection "<name>"
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh update <key> --item-type manuscript
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh update <key> --item-type manuscript
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh update <key> --attach-file "/path/to/file.pdf"
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh update <key> --attach-file "/path/to/file.pdf"
 ```
 
 ```bash
@@ -210,7 +210,7 @@ cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHO
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --no-local-storage
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/zotero/run_zot.sh --json get "<query>" --no-local-storage
 ```
 
 ```bash

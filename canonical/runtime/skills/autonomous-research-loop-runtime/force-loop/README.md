@@ -75,7 +75,8 @@ bash "$launcher" \
 $Policy = "C:\abs\path\host-policy.env"
 $Root = "C:\abs\path\project"
 $Loop = "$Root\loop"
-& "$env:AAS_RUNTIME_ROOT\run_skill.ps1" `
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_skill.ps1" `
   skills\autonomous-research-loop-runtime\force-loop\run_force_loop.ps1 `
   bootstrap --loop $Loop --root $Root --profile formal `
   --goal "…" --success-criteria "…" `

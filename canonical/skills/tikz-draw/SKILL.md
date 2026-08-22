@@ -51,7 +51,7 @@ The runtime helper exposes one stable verb set:
 Run it through the shared runtime wrapper:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh doctor
 ```
 
@@ -64,7 +64,7 @@ $runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOC
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh render \
   --brief /abs/path/to/figure-brief.json
 ```
@@ -72,7 +72,7 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
 Direct bootstrap without prewriting a brief:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh render \
   --request "Draw a validation pipeline for statement X"
 ```
@@ -93,7 +93,7 @@ For research or mathematical figures, first let the runtime write the intent
 contract or provide one explicitly:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh contract \
   --out /abs/path/to/F1.figure-contract.json \
   --request "Draw a graph hardness reduction where an edge is replaced by a gadget"
@@ -136,7 +136,7 @@ vertices and graph edges; a box-only flowchart is a contract violation.
 Forced structural loop:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh force-check \
   --artifacts /abs/path/to/F1.artifacts.json \
   --work-dir /abs/path/to/work-dir
@@ -161,7 +161,7 @@ figure appear correct.
 Strict approval command:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/tikz-draw/run_tikz_draw.sh approve \
   --artifacts /abs/path/to/F1.artifacts.json \
   --work-dir /abs/path/to/work-dir
@@ -249,7 +249,8 @@ cases that guard against graph-hardness requests becoming flowcharts.
 On Windows, use:
 
 ```powershell
-& "$env:AAS_RUNTIME_ROOT\run_python.ps1" `
+$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
+& "$runtime\run_python.ps1" `
   "skills/tikz-draw/semantic_regression_runner.py" --platform codex
 ```
 

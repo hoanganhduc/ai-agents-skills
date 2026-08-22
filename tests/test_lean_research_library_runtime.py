@@ -289,7 +289,7 @@ class ArtifactScaffoldTests(unittest.TestCase):
             root = Path(tmp)
             out = root / "artifact"
             self._scaffold({}, from_dir=self._populated_cwd(root), out=out)
-            written = {str(p.relative_to(out)) for p in out.rglob("*")}
+            written = {p.relative_to(out).as_posix() for p in out.rglob("*")}
         self.assertEqual(
             written,
             {
@@ -338,7 +338,7 @@ class ArtifactScaffoldTests(unittest.TestCase):
                 from_dir=self._populated_cwd(root),
                 out=out,
             )
-            written = {str(p.relative_to(out)) for p in out.rglob("*")}
+            written = {p.relative_to(out).as_posix() for p in out.rglob("*")}
         self.assertEqual(payload["source"], "template_root")
         self.assertEqual(payload["note"], "")
         self.assertIn("README.md", written)
@@ -360,7 +360,7 @@ class ArtifactScaffoldTests(unittest.TestCase):
                 from_dir=self._populated_cwd(root),
                 out=out,
             )
-            written = {str(p.relative_to(out)) for p in out.rglob("*")}
+            written = {p.relative_to(out).as_posix() for p in out.rglob("*")}
         self.assertEqual(written, {"README.md"})
 
     def test_a_configured_template_that_is_missing_falls_back_with_the_note(self) -> None:
@@ -382,7 +382,7 @@ class ArtifactScaffoldTests(unittest.TestCase):
             out.mkdir()
             (out / "keep.txt").write_text("mine\n", encoding="utf-8")
             payload = self._scaffold({}, from_dir=self._populated_cwd(root), out=out)
-            written = {str(p.relative_to(out)) for p in out.rglob("*")}
+            written = {p.relative_to(out).as_posix() for p in out.rglob("*")}
         self.assertEqual(payload["status"], "error")
         self.assertIn("is not empty", payload["error"])
         self.assertEqual(written, {"keep.txt"})

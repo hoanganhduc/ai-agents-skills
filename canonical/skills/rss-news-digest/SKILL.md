@@ -28,7 +28,7 @@ Use the managed runtime runner rather than invoking the RSS script directly.
 
 Shared runner:
 
-- `bash "$AAS_RUNTIME_ROOT/run_skill.sh"`
+- `bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"`
 
 ## Use cases
 
@@ -40,7 +40,7 @@ Shared runner:
 ## Core execution
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/rss-news-digest/run_rss_news_digest.sh <COMMAND AND ARGS>
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/rss-news-digest/run_rss_news_digest.sh <COMMAND AND ARGS>
 ```
 
 ## Common actions
@@ -64,11 +64,11 @@ bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/rss-news-digest/run_rss_news_digest
 Verified example shapes:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/rss-news-digest/run_rss_news_digest.sh run --tag research --max-items 25 --per-feed-limit 5
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/rss-news-digest/run_rss_news_digest.sh run --tag research --max-items 25 --per-feed-limit 5
 ```
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/rss-news-digest/run_rss_news_digest.sh add-feed "https://example.com/rss.xml" --tag research --priority 5
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/rss-news-digest/run_rss_news_digest.sh add-feed "https://example.com/rss.xml" --tag research --priority 5
 ```
 
 ## After execution

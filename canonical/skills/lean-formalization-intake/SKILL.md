@@ -36,7 +36,7 @@ Use this skill before spending effort on Lean formalization. It decides whether 
 Check the local tool status:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh doctor
 ```
 
@@ -44,14 +44,14 @@ Run non-installing version/toolchain probes when you need reproducibility
 metadata:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh doctor --probe
 ```
 
 Assess a claim:
 
 ```bash
-bash "$AAS_RUNTIME_ROOT/run_skill.sh" \
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
   skills/lean-formalization-intake/run_lean_formalization_intake.sh assess \
   --claim "Every finite tree has a leaf" \
   --claim-id C1 \

@@ -15,7 +15,7 @@ as ``GETSCIPAPERS_BIN`` and ``gsp_openclaw_helper.find_getscipapers`` discovers.
 
 Invoke via the managed runner. POSIX uses the executable shell wrapper; Windows
 passes the Python target to ``run_skill.ps1``, which delegates to ``run_python.ps1``:
-  bash "$AAS_RUNTIME_ROOT/run_skill.sh" skills/getscipapers_requester/run_gsp_setup.sh setup
+  bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" skills/getscipapers_requester/run_gsp_setup.sh setup
 """
 
 from __future__ import annotations
