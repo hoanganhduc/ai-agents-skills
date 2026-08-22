@@ -1520,7 +1520,10 @@ def main(argv: list[str]) -> int:
         rest = merge_batch_split_format_values(rest)
     if has_help(rest):
         if command in NATIVE_HELP_COMMANDS:
-            return native_help(command, rest, json_out)
+            try:
+                return native_help(command, rest, json_out)
+            except WrapperError as exc:
+                return finish(normalize_error(command, str(exc), exc.code, exc.exit_code), json_out)
         command_help = command_help_text(command)
         if command_help is not None:
             print(command_help, end="")
