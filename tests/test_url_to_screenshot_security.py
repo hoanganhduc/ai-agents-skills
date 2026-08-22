@@ -531,5 +531,107 @@ class DocumentedLimitationTests(unittest.TestCase):
         self.assertEqual(pin, ("example.com", "93.184.216.34"))
 
 
+
+class SharedAddressSpaceTests(unittest.TestCase):
+    """RFC 6598 shared address space must fail layer 2 like any RFC 1918 block.
+
+    ``ipaddress`` classifies 100.64.0.0/10 as neither private nor globally
+    reachable -- the one documented exception to that dichotomy -- so a check
+    written on ``is_private`` alone admitted the whole range. That matters here
+    specifically: Alibaba's metadata endpoint 100.100.100.200 lives inside it,
+    and it was pinned as a single literal while every neighbour on its own /24
+    was reachable.
+    """
+
+    IN_RANGE = ("100.64.0.0", "100.64.0.1", "100.100.100.1", "100.127.255.255")
+    # The addresses immediately below and above the /10; both are public.
+    OUT_OF_RANGE = ("100.63.255.255", "100.128.0.0")
+
+    def test_the_stdlib_really_does_classify_the_range_as_neither(self) -> None:
+        """The premise of the bug. If this ever fails, the guard's shape can change."""
+
+        import ipaddress
+
+        addr = ipaddress.ip_address("100.64.0.1")
+        self.assertFalse(addr.is_private)
+        self.assertFalse(addr.is_global)
+        self.assertFalse(addr.is_reserved)
+        self.assertFalse(addr.is_loopback)
+        self.assertFalse(addr.is_link_local)
+        self.assertFalse(addr.is_multicast)
+
+    def test_blocks_every_literal_in_the_range(self) -> None:
+        from u2s import security
+
+        for literal in self.IN_RANGE:
+            with self.subTest(literal=literal):
+                with self.assertRaises(security.TargetBlocked) as ctx:
+                    security.validate_target_url(f"http://{literal}/")
+                self.assertEqual(ctx.exception.reason, security.BLOCKED_PRIVATE_ADDRESS)
+
+    def test_blocks_a_hostname_that_resolves_into_the_range(self) -> None:
+        from u2s import security
+
+        with mock.patch.object(security.socket, "getaddrinfo",
+                               return_value=_addrinfo("100.100.100.1")):
+            with self.assertRaises(security.TargetBlocked) as ctx:
+                security.validate_target_url("http://cgnat.example.com/")
+        self.assertEqual(ctx.exception.reason, security.BLOCKED_PRIVATE_ADDRESS)
+
+    def test_the_neighbours_of_the_pinned_metadata_ip_are_blocked_too(self) -> None:
+        """The whole /24 around Alibaba's IMDS, not just the one pinned literal."""
+
+        from u2s import security
+
+        for host in ("100.100.100.1", "100.100.100.199", "100.100.100.201"):
+            with self.subTest(host=host):
+                with self.assertRaises(security.TargetBlocked):
+                    security.validate_target_url(f"http://{host}/")
+        # and the pinned literal still reports the stronger reason
+        with self.assertRaises(security.TargetBlocked) as ctx:
+            security.validate_target_url("http://100.100.100.200/")
+        self.assertEqual(ctx.exception.reason, security.BLOCKED_METADATA_ENDPOINT)
+
+    def test_does_not_over_block_the_boundaries(self) -> None:
+        """A /10, not a /8: the addresses either side stay reachable."""
+
+        from u2s import security
+
+        for literal in self.OUT_OF_RANGE:
+            with self.subTest(literal=literal):
+                result = security.validate_target_url(f"http://{literal}/")
+                self.assertEqual(result.host, literal)
+
+    def test_redirects_and_subresources_are_revalidated_against_the_range(self) -> None:
+        from u2s import security
+
+        for literal in self.IN_RANGE:
+            with self.subTest(literal=literal):
+                with self.assertRaises(security.TargetBlocked):
+                    security.revalidate_resolved_address(literal)
+
+    def test_the_explicit_flag_relaxes_it_exactly_like_rfc1918(self) -> None:
+        """Layer 2, not layer 3: --allow-private-targets reaches it."""
+
+        from u2s import security
+
+        for literal in ("100.64.0.1", "10.0.0.1"):
+            with self.subTest(literal=literal):
+                result = security.validate_target_url(
+                    f"http://{literal}/", allow_private=True
+                )
+                self.assertEqual(result.host, literal)
+        security.revalidate_resolved_address("100.64.0.1", allow_private=True)
+
+    def test_the_flag_still_never_reaches_the_metadata_endpoint_inside_it(self) -> None:
+        from u2s import security
+
+        with self.assertRaises(security.TargetBlocked) as ctx:
+            security.validate_target_url(
+                "http://100.100.100.200/", allow_private=True
+            )
+        self.assertEqual(ctx.exception.reason, security.BLOCKED_METADATA_ENDPOINT)
+
+
 if __name__ == "__main__":
     unittest.main()
