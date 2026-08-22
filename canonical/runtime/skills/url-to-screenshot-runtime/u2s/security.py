@@ -9,7 +9,8 @@ Layers, in order, each fail-closed:
   1. Scheme allow-list -- only ``http``/``https``. Never overridable.
   2. Resolve-then-check every resolved A/AAAA via ``socket.getaddrinfo`` +
      stdlib ``ipaddress``: reject loopback, private, link-local, ``0.0.0.0/8``,
-     multicast, reserved, and IPv4-mapped IPv6.
+     RFC 6598 shared address space (``100.64.0.0/10``), multicast, reserved,
+     and IPv4-mapped IPv6.
   3. Cloud-metadata host/IP denylist -- UNCONDITIONAL. Never disabled by
      ``--allow-private-targets``. Applied to the literal and to every IPv4
      address an IPv6 literal embeds (IPv4-mapped, IPv4-compatible, 6to4,
@@ -35,6 +36,14 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
 
 ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+# RFC 6598 shared address space. CPython classifies this range as neither
+# private nor globally reachable -- the one documented exception to that
+# dichotomy -- so a layer-2 check written on ``is_private`` alone admits it.
+# Carrier-grade NAT and several cloud fabrics address internal hosts here, and
+# Alibaba's metadata endpoint 100.100.100.200 sits inside it, so the range is
+# treated exactly like the RFC 1918 blocks above it.
+SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
 # Cloud-metadata endpoints that must never be reachable, by host or literal IP.
 # Kept lowercase; matching is exact on host and on every resolved IP.
@@ -87,13 +96,20 @@ def _normalize_host(host: str) -> str:
 
 
 def _ip_is_blocked(ip: ipaddress._BaseAddress) -> bool:
-    """True if an address must be refused regardless of the override flag's layer-2 relaxation."""
+    """True if an address fails the layer-2 address block.
+
+    Layer 2 is the part ``--allow-private-targets`` relaxes; the scheme
+    allow-list and the metadata denylist are enforced by the caller and are
+    never reached through this predicate.
+    """
     if ip.is_loopback or ip.is_private or ip.is_link_local:
         return True
     if ip.is_multicast or ip.is_reserved or ip.is_unspecified:
         return True
     if isinstance(ip, ipaddress.IPv4Address):
         if ip in ipaddress.ip_network("0.0.0.0/8"):
+            return True
+        if ip in SHARED_ADDRESS_SPACE:
             return True
     if isinstance(ip, ipaddress.IPv6Address):
         # Unwrap IPv4-mapped IPv6 (::ffff:a.b.c.d) and re-check the embedded v4.
