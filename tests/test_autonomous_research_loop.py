@@ -9243,6 +9243,41 @@ class DriveCmdPromptDeliveryTests(unittest.TestCase):
             return subprocess.list2cmdline(parts)
         return shlex.join(parts)
 
+    def test_a_host_without_containment_refuses_to_spawn_rather_than_running_bare(
+        self,
+    ) -> None:
+        """Why the end-to-end test below is gated, asserted rather than assumed.
+
+        ``run_primary_subprocess`` fails closed on every POSIX platform that is
+        not Linux -- "process groups alone are not a security boundary against a
+        deliberately daemonizing child" -- so no ``--cmd`` iteration can run
+        there at all. Showing the runtime the platform macOS reports pins that
+        contract from any host, which is what keeps the skip honest: the
+        behaviour of the platform that skips is still covered.
+        """
+
+        arl = self._runtime()
+        with tempfile.TemporaryDirectory() as tmp:
+            for platform in ("darwin", "freebsd13"):
+                with self.subTest(platform=platform):
+                    with mock.patch.object(sys, "platform", platform):
+                        with self.assertRaises(OSError) as caught:
+                            arl.run_primary_subprocess(
+                                _py_iteration("pass"),
+                                use_shell=True,
+                                child_env={"PATH": os.defpath},
+                                cwd=Path(tmp),
+                                timeout_s=30,
+                                output=io.StringIO(),
+                                provider=None,
+                            )
+                        self.assertIn("PID namespaces", str(caught.exception))
+                        self.assertFalse(_primary_containment_available())
+
+    @unittest.skipUnless(
+        _primary_containment_available(),
+        "driving a real iteration requires Linux bubblewrap or a Windows Job Object",
+    )
     def test_the_cmd_lane_receives_every_documented_variable(self) -> None:
         """Drive a real loop with a real child and read its environment back.
 
