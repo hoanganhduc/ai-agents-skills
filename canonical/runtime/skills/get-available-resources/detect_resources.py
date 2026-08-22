@@ -225,6 +225,21 @@ def get_disk_info(path: str = None) -> Dict[str, Any]:
         }
 
 
+def _optional_number(text: str, cast):
+    """A numeric nvidia-smi field, or None when the driver could not report it.
+
+    nvidia-smi prints `[N/A]` for any field it cannot supply for a given GPU or
+    driver. The conversions used to sit unguarded inside the parse loop, so one
+    such field raised out of the loop into a bare `except ...: pass` and every
+    GPU after it was discarded -- and when it landed on the first line, a GPU host
+    reported none at all. The GPU is still there; only that field is unknown.
+    """
+    try:
+        return cast(text)
+    except (TypeError, ValueError):
+        return None
+
+
 def detect_nvidia_gpus() -> List[Dict[str, Any]]:
     """Detect NVIDIA GPUs using nvidia-smi."""
     gpus = []
@@ -243,20 +258,23 @@ def detect_nvidia_gpus() -> List[Dict[str, Any]]:
 
         if result.returncode == 0:
             for line in result.stdout.strip().split('\n'):
-                if line:
-                    parts = [p.strip() for p in line.split(',')]
-                    if len(parts) >= 6:
-                        gpus.append({
-                            "index": int(parts[0]),
-                            "name": parts[1],
-                            "memory_total_mb": float(parts[2]),
-                            "memory_free_mb": float(parts[3]),
-                            "driver_version": parts[4],
-                            "compute_capability": parts[5],
-                            "type": "NVIDIA",
-                            "backend": "CUDA"
-                        })
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                parts = [p.strip() for p in line.split(',')]
+                if len(parts) < 6:
+                    continue
+                gpus.append({
+                    "index": _optional_number(parts[0], int),
+                    "name": parts[1],
+                    "memory_total_mb": _optional_number(parts[2], float),
+                    "memory_free_mb": _optional_number(parts[3], float),
+                    "driver_version": parts[4],
+                    "compute_capability": parts[5],
+                    "type": "NVIDIA",
+                    "backend": "CUDA"
+                })
+    except (subprocess.SubprocessError, OSError):
+        # nvidia-smi absent, or it hung past the timeout. Either way this host has
+        # no CUDA to report and nothing went wrong; anything else that raises is
+        # reported by `get_gpu_info` rather than read as "no NVIDIA GPU".
         pass
 
     return gpus
@@ -291,7 +309,8 @@ def detect_amd_gpus() -> List[Dict[str, Any]]:
                         "info": line.strip()
                     })
                     gpu_index += 1
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+    except (subprocess.SubprocessError, OSError):
+        # rocm-smi absent or unresponsive; see the note in detect_nvidia_gpus.
         pass
 
     return gpus
@@ -361,13 +380,30 @@ def detect_apple_silicon_gpu() -> Optional[Dict[str, Any]]:
 
 
 def get_gpu_info() -> Dict[str, Any]:
-    """Detect all available GPUs."""
+    """Detect all available GPUs.
+
+    A probe that fails unexpectedly is named under `probe_errors` instead of
+    reading as an absent GPU. "The NVIDIA probe broke" and "there is no NVIDIA
+    GPU" route work differently, and a preflight that cannot tell them apart
+    reports the second with the confidence of the first.
+    """
+    probe_errors: Dict[str, str] = {}
+
+    def probe(name: str, detect, empty):
+        """Run one detector; its own expected failures are handled inside it."""
+        try:
+            return detect()
+        except Exception as exc:
+            probe_errors[name] = f"{type(exc).__name__}: {exc}"
+            return empty
+
     gpu_info = {
-        "nvidia_gpus": detect_nvidia_gpus(),
-        "amd_gpus": detect_amd_gpus(),
-        "apple_silicon": detect_apple_silicon_gpu(),
+        "nvidia_gpus": probe("nvidia", detect_nvidia_gpus, []),
+        "amd_gpus": probe("amd", detect_amd_gpus, []),
+        "apple_silicon": probe("apple_silicon", detect_apple_silicon_gpu, None),
         "total_gpus": 0,
-        "available_backends": []
+        "available_backends": [],
+        "probe_errors": probe_errors,
     }
 
     # Count total GPUs and available backends
