@@ -9254,19 +9254,30 @@ class DriveCmdPromptDeliveryTests(unittest.TestCase):
         there at all. Showing the runtime the platform macOS reports pins that
         contract from any host, which is what keeps the skip honest: the
         behaviour of the platform that skips is still covered.
+
+        ``os.name`` is patched alongside ``sys.platform`` because the guard is
+        nested under ``if os.name == "posix"``. A Windows host left at ``nt``
+        never reaches it -- it takes the Job Object path instead and spawns the
+        child for real -- so patching the platform alone made this test assert a
+        contract only POSIX hosts could see. Both are restored by the context
+        manager, and the guard raises before anything downstream builds a
+        ``Path``, so no ``os.name``-dependent construction runs under the patch.
         """
 
         arl = self._runtime()
+        command = _py_iteration("pass")
         with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
             for platform in ("darwin", "freebsd13"):
                 with self.subTest(platform=platform):
-                    with mock.patch.object(sys, "platform", platform):
+                    with mock.patch.object(os, "name", "posix"), \
+                            mock.patch.object(sys, "platform", platform):
                         with self.assertRaises(OSError) as caught:
                             arl.run_primary_subprocess(
-                                _py_iteration("pass"),
+                                command,
                                 use_shell=True,
                                 child_env={"PATH": os.defpath},
-                                cwd=Path(tmp),
+                                cwd=cwd,
                                 timeout_s=30,
                                 output=io.StringIO(),
                                 provider=None,
