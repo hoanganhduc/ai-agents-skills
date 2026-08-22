@@ -308,15 +308,6 @@
       },
       "capabilities": ["phonemize"]
     },
-    "libreoffice-system-tool": {
-      "description": "LibreOffice (soffice) headless for rendering PPTX decks to PDF.",
-      "version_constraint": "any",
-      "candidates": {
-        "linux": ["soffice", "libreoffice"],
-        "windows": ["soffice.exe", "soffice"]
-      },
-      "capabilities": ["pptx-render"]
-    },
     "pptx-render-system-tool": {
       "description": "PPTX renderer: Microsoft PowerPoint on Windows or LibreOffice elsewhere.",
       "version_constraint": "any",
@@ -625,7 +616,6 @@
     "svgelements-python-package": {"type": "python", "module": "svgelements"},
     "numpy-python-package": {"type": "python", "module": "numpy"},
     "requests-python-package": {"type": "python", "module": "requests"},
-    "beautifulsoup4-python-package": {"type": "python", "module": "bs4"},
     "feedparser-python-package": {"type": "python", "module": "feedparser"},
     "vnu-eoffice-python-package": {"type": "python", "module": "vnu_eoffice", "modules": ["vnu_eoffice", "requests", "bs4"], "candidate_set": "vnu-eoffice", "authoritative_first_existing": true},
     "course-hoanganhduc-python-package": {"type": "python", "module": "course_hoanganhduc", "candidate_set": "course", "authoritative_first_existing": true},
@@ -645,7 +635,6 @@
     "torchvision-python-package": {"type": "python", "module": "torchvision", "candidate_set": "docling"},
     "ocr-runtime": {"type": "tool", "logical_tool": "ocr-runtime"},
     "zotero-credentials": {"type": "remote-service"},
-    "telegram-bot-config": {"type": "remote-service"},
     "modal-auth": {"type": "remote-service"},
     "hetzner-auth": {"type": "remote-service"},
     "kaggle-auth": {"type": "remote-service"},
@@ -671,7 +660,6 @@
     "ffmpeg-system-tool": {"type": "tool", "logical_tool": "ffmpeg-system-tool"},
     "gnupg-system-tool": {"type": "tool", "logical_tool": "gnupg-system-tool"},
     "espeak-ng-system-tool": {"type": "tool", "logical_tool": "espeak-ng-system-tool"},
-    "libreoffice-system-tool": {"type": "tool", "logical_tool": "libreoffice-system-tool"},
     "pptx-render-system-tool": {"type": "tool", "logical_tool": "pptx-render-system-tool"},
     "manim-python-package": {"type": "python", "module": "manim", "candidate_set": "manim", "authoritative_first_existing": true},
     "manim-tex-runtime": {"type": "tool", "logical_tool": "manim-tex-runtime"},
