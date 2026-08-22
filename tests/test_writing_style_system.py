@@ -172,6 +172,7 @@ class WritingStyleSystemTests(unittest.TestCase):
             "writing-style-settings.md",
             "math-manuscript-style.md",
             "style_profile_ref",
+            "policy_hash",
             "active_overlays",
             "active_requirement_ids",
             "style_applied",

@@ -21,7 +21,8 @@ Use this as the last gate before claiming a research output is ready.
   other format-matched writing
 - the active writing-style profile from `writing-style-settings.md` was loaded
   and recorded for finalizable writing, including `style_profile_ref`,
-  `active_overlays`, `active_requirement_ids`, and `style_applied`
+  `policy_hash`, `active_overlays`, `active_requirement_ids`, and
+  `style_applied`
 - mathematical, TCS, graph-theoretic, formal-proof, or LaTeX writing loaded
   `math-manuscript-style.md`
 - every input the conclusions rest on was read whole, or its truncation is
@@ -52,8 +53,8 @@ Include:
 - `Gaps` — anything still blocking delivery
 - `Residual uncertainty` — unfinished / disputed / negative-space items
 - `Next step` — deliver now or fix specific gaps first
-- `Style` — `style_profile_ref`, active overlays, `active_requirement_ids`, and
-  whether `style_applied` is supported
+- `Style` — `style_profile_ref`, `policy_hash`, active overlays,
+  `active_requirement_ids`, and whether `style_applied` is supported
 - `Formal status` (when formal claims appear) —
   - `opengauss_run`: completed | failed | not_used
   - `lean_check_status` / placeholder / trust-base from strict gate

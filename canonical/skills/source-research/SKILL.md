@@ -54,8 +54,9 @@ Formal candidates that pass intake also run `lean-research-library search` befor
 5. Synthesize after evidence collection, not before.
 6. Cite concrete sources and dates whenever the answer depends on live or specific facts.
 7. For writing-producing outputs, record or surface `style_profile_ref`,
-   `active_overlays`, `active_requirement_ids`, and `style_applied`; do not
-   treat a bare `style_applied: true` assertion as sufficient evidence.
+   `policy_hash`, `active_overlays`, `active_requirement_ids`, and
+   `style_applied`; do not treat a bare `style_applied: true` assertion as
+   sufficient evidence.
 8. For report-only research requests, stop after the requested answer or
    findings. Do not create durable artifacts, patch reports, retrieve
    nonessential follow-up files, or begin remediation unless the user explicitly

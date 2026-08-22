@@ -389,8 +389,8 @@ Output structure guidance:
       before format-matched writing, or their absence was disclosed
 - [ ] `writing-style-settings.md` was loaded before final writing
 - [ ] Mathematical or LaTeX output loaded `math-manuscript-style.md`
-- [ ] Finalizable writing records `style_profile_ref`, `active_overlays`,
-      `active_requirement_ids`, and `style_applied`
+- [ ] Finalizable writing records `style_profile_ref`, `policy_hash`,
+      `active_overlays`, `active_requirement_ids`, and `style_applied`
 - [ ] Dropped or excluded sources are explained
 - [ ] Nontrivial runs include guard outputs with `guard_output_id`
 - [ ] Supported `pass` or `warn` guard outputs cite source or evidence IDs
