@@ -60,3 +60,6 @@ cd "$AAS_RUNTIME_WORKSPACE" && PYTHONPATH="$AAS_RUNTIME_WORKSPACE/.local:${PYTHO
 - Respect `--source` and `--min-score` filters instead of broad requests when the user wants a narrower batch.
 - If the user wants actual external retrieval, follow the manifest or request output into `getscipapers-requester`.
 - `scan` is the dry-run discovery step; `request` is the transition into manifest/watch creation.
+- If the manifest cannot be built, `request` exits 2 with `manifest_failed` and records
+  nothing. The papers stay unrequested, so rerun it once getscipapers works rather than
+  rescanning for them.
