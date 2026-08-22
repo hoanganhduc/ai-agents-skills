@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -130,6 +132,110 @@ class StartupSecretSchemaTests(unittest.TestCase):
 
     def test_compute_schema_covers_every_advertised_lane(self) -> None:
         self.assertTrue(broker.COMPUTE_PROJECTION_KEYS <= broker.COMPUTE_KEYS)
+
+
+# Runs in a subprocess with both TOML parsers blocked, standing in for the
+# declared Python 3.10 floor on a host that never installed tomli.
+_FLOOR_PROBE = """
+import builtins, importlib.util, json, sys
+
+blocked = {"tomllib", "tomli"}
+real = builtins.__import__
+
+
+def guard(name, *args, **kwargs):
+    if name.split(".")[0] in blocked:
+        raise ModuleNotFoundError("No module named %r" % name.split(".")[0])
+    return real(name, *args, **kwargs)
+
+
+builtins.__import__ = guard
+sys.dont_write_bytecode = True
+
+result = {}
+spec = importlib.util.spec_from_file_location("arl_credential_broker", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(module)
+except BaseException as exc:
+    print(json.dumps({"imported": False, "error": "%s: %s" % (type(exc).__name__, exc)}))
+    raise SystemExit(0)
+result["imported"] = True
+result["verbs"] = sorted(v for v in ("main", "serve", "_load_modal_authority") if hasattr(module, v))
+try:
+    module._toml_parser()
+except BaseException as exc:
+    result["parser_error_type"] = type(exc).__name__
+    result["parser_error"] = str(exc)
+print(json.dumps(result))
+"""
+
+
+class TomlParserResolvesLateTests(unittest.TestCase):
+    """The Modal authority is the only TOML the broker reads.
+
+    Importing the parser at module scope made tomli a hard requirement for every
+    broker verb on the declared Python 3.10 floor (manifest/dependencies.yaml
+    pins ">=3.10"), so a host without it could not start the broker at all --
+    not even for provider projections, Hetzner env files or Kaggle JSON, none of
+    which are TOML. research_compute/config.py already deferred its own import
+    for exactly this reason; the broker did not.
+    """
+
+    BROKER = RUNNERS_DIR / "arl_credential_broker.py"
+
+    def _floor(self) -> dict:
+        completed = subprocess.run(
+            [sys.executable, "-c", _FLOOR_PROBE, str(self.BROKER)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout.strip().splitlines()[-1])
+
+    def test_the_broker_imports_without_any_toml_parser(self) -> None:
+        result = self._floor()
+        self.assertTrue(result["imported"], result.get("error"))
+        self.assertIn("main", result["verbs"])
+        self.assertIn("_load_modal_authority", result["verbs"])
+
+    def test_the_missing_parser_is_reported_with_the_way_out(self) -> None:
+        result = self._floor()
+        self.assertEqual("RuntimeError", result.get("parser_error_type"), result)
+        message = result["parser_error"]
+        self.assertIn("tomli", message)
+        self.assertIn("3.10", message)
+        self.assertIn("3.11", message)
+        self.assertNotIn("Traceback", message)
+
+    def test_a_host_with_a_parser_is_unaffected(self) -> None:
+        parser = broker._toml_parser()
+        self.assertIn(parser.__name__, {"tomllib", "tomli"})
+        self.assertEqual({"a": 1}, parser.loads("a = 1"))
+
+    def test_the_parser_is_not_bound_at_module_scope(self) -> None:
+        """A module-level name would make the late resolution decorative."""
+        self.assertFalse(hasattr(broker, "tomllib"), "tomllib rebound at import")
+        self.assertFalse(hasattr(broker, "tomli"), "tomli rebound at import")
+
+    def test_the_dependency_record_names_every_consumer(self) -> None:
+        """The table said tomli was a Docling concern; four other lanes need it."""
+        record = json.loads((REPO_ROOT / "manifest" / "system-dependencies.yaml").read_text(
+            encoding="utf-8"
+        ))["python_packages"]["tomli"]
+        for consumer in (
+            "docling",
+            "modal-research-compute",
+            "hetzner-research-compute",
+            "kaggle-research-compute",
+        ):
+            self.assertIn(consumer, record["used_by"], record["used_by"])
+        self.assertTrue(
+            any("ARL" in entry for entry in record["used_by"]), record["used_by"]
+        )
+        self.assertNotIn("Docling TOML config parsing", record["requirement"])
 
 
 if __name__ == "__main__":

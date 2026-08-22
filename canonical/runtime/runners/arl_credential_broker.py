@@ -25,10 +25,6 @@ import sys
 import tempfile
 import threading
 
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
-    import tomli as tomllib  # type: ignore[no-redef]
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -231,6 +227,31 @@ def _within(path: Path, root: Path) -> bool:
         return False
 
 
+def _toml_parser():
+    """The TOML parser, resolved at use rather than at import.
+
+    Only the Modal authority is TOML; provider projections, Hetzner env files and
+    Kaggle JSON are not. Importing at module scope made tomli a hard requirement
+    for every broker verb on the declared Python 3.10 floor, so a host without it
+    could not start the broker at all.
+    """
+    try:
+        import tomllib  # Python 3.11+
+
+        return tomllib
+    except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+        try:
+            import tomli
+
+            return tomli
+        except ModuleNotFoundError:
+            raise RuntimeError(
+                "reading the Modal authority needs a TOML parser: "
+                "install tomli (pip install --user 'tomli>=2') on Python 3.10, "
+                "or run on Python 3.11+ where tomllib is in the standard library"
+            ) from None
+
+
 def _load_modal_authority() -> dict[str, str]:
     """Read CSR's native 0600 ~/.modal.toml into an in-memory projection."""
 
@@ -264,7 +285,7 @@ def _load_modal_authority() -> dict[str, str]:
     finally:
         os.close(descriptor)
     try:
-        document = tomllib.loads(bytes(payload).decode("utf-8"))
+        document = _toml_parser().loads(bytes(payload).decode("utf-8"))
     finally:
         for index in range(len(payload)):
             payload[index] = 0
