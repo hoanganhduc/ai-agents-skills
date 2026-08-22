@@ -287,11 +287,11 @@
       "source": "Windows Claude docling installation instructions."
     },
     "PyMuPDF": {
-      "requirement": "pymupdf; tikz semantic verifier pins PyMuPDF==1.27.2.2",
+      "requirement": "pymupdf; tikz semantic verifier pins PyMuPDF==1.27.2.2; slides-to-video pins PyMuPDF>=1.24",
       "import_name": "fitz",
       "platforms": ["linux", "windows"],
-      "used_by": ["annotated-review", "tikz-draw"],
-      "source": "Annotated-review requirements and TikZ semantic verifier requirements."
+      "used_by": ["annotated-review", "tikz-draw", "slides-to-video"],
+      "source": "Annotated-review requirements, TikZ semantic verifier requirements, and the slides-to-video venv requirements."
     },
     "pylatexenc": {
       "requirement": "pylatexenc",
@@ -315,11 +315,11 @@
       "source": "TikZ semantic verifier requirements and integration notes."
     },
     "numpy": {
-      "requirement": "numpy==1.26.4 for TikZ semantic verifier; numpy in Modal CPU image",
+      "requirement": "numpy==1.26.4 for TikZ semantic verifier; numpy>=1.26 for slides-to-video audio; numpy in Modal CPU image",
       "import_name": "numpy",
       "platforms": ["linux", "windows", "remote-modal"],
-      "used_by": ["tikz-draw", "modal-research-compute"],
-      "source": "TikZ semantic verifier requirements and Modal app image."
+      "used_by": ["tikz-draw", "modal-research-compute", "slides-to-video"],
+      "source": "TikZ semantic verifier requirements, the slides-to-video venv requirements, and the Modal app image."
     },
     "networkx": {
       "requirement": "networkx",

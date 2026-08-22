@@ -206,7 +206,7 @@ Evidence inspected:
 | Package | Import | Requirement | Platforms | Used By |
 |---|---|---|---|---|
 | `Pillow` | `PIL` | Pillow>=10.2 | `linux`, `windows` | `slides-to-video`, `url-to-screenshot-runtime`, `venue-ranking-evidence` |
-| `PyMuPDF` | `fitz` | pymupdf; tikz semantic verifier pins PyMuPDF==1.27.2.2 | `linux`, `windows` | `annotated-review`, `tikz-draw` |
+| `PyMuPDF` | `fitz` | pymupdf; tikz semantic verifier pins PyMuPDF==1.27.2.2; slides-to-video pins PyMuPDF>=1.24 | `linux`, `windows` | `annotated-review`, `tikz-draw`, `slides-to-video` |
 | `PyPDF2` | `PyPDF2` | PyPDF2>=3.0.0 | `linux`, `windows` | `zotero`, `calibre` |
 | `docling` | `docling` | docling>=2.88.0,<3 | `linux`, `windows` | `docling` |
 | `docling-mcp` | `docling_mcp` | docling-mcp | `windows` | `docling MCP integration` |
@@ -223,7 +223,7 @@ Evidence inspected:
 | `manim` | `manim` | manim==0.20.1 on Python >=3.11; manim==0.19.1 on Python 3.10 | `linux`, `windows` | `manim-math-animation` |
 | `modal` | `modal` | modal | `linux`, `windows` | `modal-research-compute` |
 | `networkx` | `networkx` | networkx | `linux`, `windows`, `remote-modal` | `graph-verifier`, `modal-research-compute` |
-| `numpy` | `numpy` | numpy==1.26.4 for TikZ semantic verifier; numpy in Modal CPU image | `linux`, `windows`, `remote-modal` | `tikz-draw`, `modal-research-compute` |
+| `numpy` | `numpy` | numpy==1.26.4 for TikZ semantic verifier; numpy>=1.26 for slides-to-video audio; numpy in Modal CPU image | `linux`, `windows`, `remote-modal` | `tikz-draw`, `modal-research-compute`, `slides-to-video` |
 | `pdf2image` | `pdf2image` | pdf2image>=1.17 | `linux`, `windows` | `slides-to-video` |
 | `pdfplumber` | `pdfplumber` | pdfplumber>=0.10.0 | `linux`, `windows` | `zotero` |
 | `piper-tts` | `piper` | piper-tts>=1.2 | `linux`, `windows` | `slides-to-video` |
@@ -239,7 +239,7 @@ Evidence inspected:
 | `shapely` | `shapely` | shapely==2.1.2 for TikZ semantic verifier | `linux`, `windows` | `tikz-draw` |
 | `soundfile` | `soundfile` | soundfile>=0.12 | `linux`, `windows` | `slides-to-video` |
 | `svgelements` | `svgelements` | svgelements==1.9.6 for optional SVG parsing parity | `linux`, `windows` | `tikz-draw` |
-| `tomli` | `tomli` | tomli>=2 on Python <3.11 for Docling TOML config parsing | `linux`, `windows` | `docling` |
+| `tomli` | `tomli` | tomli>=2 on Python <3.11 for TOML config and authority parsing | `linux`, `windows` | `docling`, `modal-research-compute`, `hetzner-research-compute`, `kaggle-research-compute`, `ARL credential broker Modal authority` |
 | `torch` | `torch` | torch CPU wheel for Windows docling; torch in Modal GPU image | `windows`, `remote-modal` | `docling Windows setup`, `modal GPU jobs` |
 | `torchvision` | `torchvision` | torchvision CPU wheel for Windows docling | `windows` | `docling Windows setup` |
 | `websocket-client` | `websocket` | websocket-client>=1.6 | `linux`, `windows` | `url-to-screenshot-runtime`, `venue-ranking-evidence` |
