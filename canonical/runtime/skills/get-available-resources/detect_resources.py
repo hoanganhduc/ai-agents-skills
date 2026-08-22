@@ -21,11 +21,122 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 
+def _read_first_line(path: str) -> Optional[str]:
+    """First line of a sysfs file, or None when it is absent or unreadable."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.readline().strip()
+    except OSError:
+        return None
+
+
+def _quota_cores(quota_text: Optional[str], period_text: Optional[str]) -> Optional[float]:
+    """Whole cores for a quota/period pair, or None for "no cap" and unreadable.
+
+    Both cgroup versions spell "unlimited" differently: v2 writes the word `max`,
+    v1 writes `-1`. Either way the answer is the same -- there is no cap, so the
+    caller should keep whatever budget it already had.
+    """
+    if not quota_text or quota_text == "max":
+        return None
+    try:
+        quota = int(quota_text)
+        period = int(period_text) if period_text else 100000
+    except ValueError:
+        return None
+    if quota <= 0 or period <= 0:
+        return None
+    return quota / period
+
+
+def cgroup_cpu_quota() -> Optional[float]:
+    """The cgroup CPU quota in whole cores, or None when there is no cap.
+
+    A container started with `--cpus=2` on a 64-core host still reports 64 online
+    cores to every psutil field; the cap exists only here. v2 keeps it in one file
+    as "<quota> <period>", v1 splits it across two.
+    """
+    v2 = _read_first_line("/sys/fs/cgroup/cpu.max")
+    if v2 is not None:
+        quota_text, _, period_text = v2.partition(" ")
+        return _quota_cores(quota_text, period_text)
+    return _quota_cores(
+        _read_first_line("/sys/fs/cgroup/cpu/cpu.cfs_quota_us"),
+        _read_first_line("/sys/fs/cgroup/cpu/cpu.cfs_period_us"),
+    )
+
+
+def usable_cpu_count() -> tuple:
+    """How many cores this process may actually use, and where that came from.
+
+    `psutil.cpu_count(logical=True)` is the machine's online core count. Two
+    mechanisms bound a process below it and appear in no psutil field: CPU
+    affinity -- taskset, a cpuset, a scheduler policy -- and the cgroup CPU quota.
+    Sizing a worker pool off the machine count over-subscribes whichever one is in
+    force, which is the outcome this preflight exists to prevent. The machine
+    count is still reported, under `machine_logical_cores`.
+    """
+    online = psutil.cpu_count(logical=True) or os.cpu_count() or 1
+    budget, source = online, "online_cores"
+
+    get_affinity = getattr(os, "sched_getaffinity", None)
+    if get_affinity is not None:
+        try:
+            affinity = len(get_affinity(0))
+        except OSError:
+            affinity = 0
+        if affinity and affinity < budget:
+            budget, source = affinity, "affinity"
+
+    quota = cgroup_cpu_quota()
+    if quota is not None:
+        capped = max(1, int(quota))
+        if capped < budget:
+            budget, source = capped, "cgroup_quota"
+
+    return budget, source
+
+
+def cgroup_memory_limit_bytes() -> Optional[int]:
+    """The cgroup memory cap in bytes, or None when there is no cap.
+
+    v2 writes the word `max` when uncapped. v1 has no sentinel word: it writes a
+    number near the top of the address space, so anything at or above the
+    machine's own RAM is read here as "no cap" rather than as a limit.
+    """
+    v2 = _read_first_line("/sys/fs/cgroup/memory.max")
+    v1 = None
+    if v2 is None:
+        v1 = _read_first_line("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+    text = v2 if v2 is not None else v1
+    if not text or text == "max":
+        return None
+    try:
+        limit = int(text)
+    except ValueError:
+        return None
+    return limit if limit > 0 else None
+
+
+def cgroup_memory_usage_bytes() -> Optional[int]:
+    """Bytes charged to this cgroup, or None when the counter is unreadable."""
+    text = _read_first_line("/sys/fs/cgroup/memory.current")
+    if text is None:
+        text = _read_first_line("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+    try:
+        return int(text) if text else None
+    except ValueError:
+        return None
+
+
 def get_cpu_info() -> Dict[str, Any]:
-    """Detect CPU information."""
+    """Detect CPU information, bounded by affinity and cgroup quota."""
+    usable, budget_source = usable_cpu_count()
     cpu_info = {
         "physical_cores": psutil.cpu_count(logical=False),
-        "logical_cores": psutil.cpu_count(logical=True),
+        "logical_cores": usable,
+        "machine_logical_cores": psutil.cpu_count(logical=True),
+        "cpu_budget_source": budget_source,
         "max_frequency_mhz": None,
         "architecture": platform.machine(),
         "processor": platform.processor(),
@@ -44,29 +155,60 @@ def get_cpu_info() -> Dict[str, Any]:
 
 
 def get_memory_info() -> Dict[str, Any]:
-    """Detect memory information."""
+    """Detect memory information, bounded by the cgroup limit when one applies.
+
+    `psutil.virtual_memory()` reads /proc/meminfo, which is the machine's memory
+    even inside a container that will be OOM-killed well below it. When a cgroup
+    caps this process, that cap is what a memory strategy has to be chosen
+    against; the machine figure is still reported, under `machine_total_gb`.
+    """
     mem = psutil.virtual_memory()
     swap = psutil.swap_memory()
 
-    return {
+    info = {
         "total_gb": round(mem.total / (1024**3), 2),
         "available_gb": round(mem.available / (1024**3), 2),
         "used_gb": round(mem.used / (1024**3), 2),
         "percent_used": mem.percent,
+        "machine_total_gb": round(mem.total / (1024**3), 2),
+        "memory_budget_source": "machine",
         "swap_total_gb": round(swap.total / (1024**3), 2),
         "swap_available_gb": round((swap.total - swap.used) / (1024**3), 2),
     }
 
+    limit = cgroup_memory_limit_bytes()
+    if limit is not None and limit < mem.total:
+        used = cgroup_memory_usage_bytes()
+        if used is None:
+            used = min(mem.used, limit)
+        used = min(used, limit)
+        info.update({
+            "total_gb": round(limit / (1024**3), 2),
+            "available_gb": round((limit - used) / (1024**3), 2),
+            "used_gb": round(used / (1024**3), 2),
+            "percent_used": round(used / limit * 100, 1),
+            "memory_budget_source": "cgroup_limit",
+        })
+
+    return info
+
 
 def get_disk_info(path: str = None) -> Dict[str, Any]:
-    """Detect disk space information for working directory or specified path."""
-    if path is None:
-        path = os.getcwd()
+    """Detect disk space information for working directory or specified path.
 
+    The failure shape carries the same numeric keys as the success shape, set to
+    None. Both consumers -- `generate_recommendations` and `main` -- index
+    `available_gb` and `total_gb` unconditionally, so a payload that omits them
+    turns a handled probe failure into a KeyError that loses the entire
+    preflight, CPU and memory and GPU sections included. `os.getcwd()` sits
+    inside the try for the same reason: it raises FileNotFoundError when the
+    working directory has been removed underneath the process.
+    """
     try:
-        disk = psutil.disk_usage(path)
+        target = os.getcwd() if path is None else path
+        disk = psutil.disk_usage(target)
         return {
-            "path": path,
+            "path": target,
             "total_gb": round(disk.total / (1024**3), 2),
             "available_gb": round(disk.free / (1024**3), 2),
             "used_gb": round(disk.used / (1024**3), 2),
@@ -75,6 +217,10 @@ def get_disk_info(path: str = None) -> Dict[str, Any]:
     except Exception as e:
         return {
             "path": path,
+            "total_gb": None,
+            "available_gb": None,
+            "used_gb": None,
+            "percent_used": None,
             "error": str(e),
         }
 
@@ -306,6 +452,11 @@ def generate_recommendations(resources: Dict[str, Any]) -> Dict[str, Any]:
         recommendations["parallel_processing"]["libraries"] = ["joblib", "multiprocessing"]
     else:
         recommendations["parallel_processing"]["strategy"] = "sequential"
+        # `suggested_workers` is the field a caller sizes a pool from, so this
+        # branch has to answer it too: absent reads as "unknown", and sequential
+        # is not unknown -- it is one worker.
+        recommendations["parallel_processing"]["suggested_workers"] = 1
+        recommendations["parallel_processing"]["libraries"] = []
         recommendations["parallel_processing"]["note"] = "Limited cores, prefer sequential processing"
 
     # Memory recommendations
@@ -347,8 +498,13 @@ def generate_recommendations(resources: Dict[str, Any]) -> Dict[str, Any]:
         recommendations["gpu_acceleration"]["note"] = "No GPU detected, use CPU-based libraries"
 
     # Large data handling recommendations
-    disk_available_gb = resources["disk"]["available_gb"]
-    if disk_available_gb < 10:
+    disk_available_gb = resources["disk"].get("available_gb")
+    if disk_available_gb is None:
+        recommendations["large_data_handling"]["strategy"] = "unknown"
+        recommendations["large_data_handling"]["note"] = (
+            "Disk space could not be measured; size intermediate files conservatively"
+        )
+    elif disk_available_gb < 10:
         recommendations["large_data_handling"]["strategy"] = "disk_constrained"
         recommendations["large_data_handling"]["note"] = "Limited disk space, use streaming or compression"
     elif disk_available_gb < 100:
@@ -394,9 +550,21 @@ def main():
     # Print summary
     print("\nResource Summary:")
     print(f"  OS: {resources['os']['system']} {resources['os']['release']}")
-    print(f"  CPU: {resources['cpu']['logical_cores']} cores ({resources['cpu']['physical_cores']} physical)")
-    print(f"  Memory: {resources['memory']['total_gb']} GB total, {resources['memory']['available_gb']} GB available")
-    print(f"  Disk: {resources['disk']['total_gb']} GB total, {resources['disk']['available_gb']} GB available")
+    cpu = resources['cpu']
+    cpu_limit = "" if cpu['cpu_budget_source'] == "online_cores" else (
+        f", limited by {cpu['cpu_budget_source']} from {cpu['machine_logical_cores']}"
+    )
+    print(f"  CPU: {cpu['logical_cores']} cores ({cpu['physical_cores']} physical){cpu_limit}")
+    memory = resources['memory']
+    mem_limit = "" if memory['memory_budget_source'] == "machine" else (
+        f", limited by {memory['memory_budget_source']} from {memory['machine_total_gb']} GB"
+    )
+    print(f"  Memory: {memory['total_gb']} GB total, {memory['available_gb']} GB available{mem_limit}")
+    disk = resources['disk']
+    if disk.get("error"):
+        print(f"  Disk: unavailable ({disk['error']})")
+    else:
+        print(f"  Disk: {disk['total_gb']} GB total, {disk['available_gb']} GB available")
 
     if resources['gpu']['total_gpus'] > 0:
         print(f"  GPU: {resources['gpu']['total_gpus']} detected ({', '.join(resources['gpu']['available_backends'])})")
