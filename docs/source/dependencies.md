@@ -56,7 +56,6 @@ Status vocabulary used by `precheck`:
 | `kaggle-cli` | Kaggle CLI (>=1.8.0) used by the kaggle-research-compute lane to push kernels, poll status, and download output. Installed by the kaggle Python package; kagglehub (>=0.4.1) validates the API token. Auth is the new single Kaggle API token from KAGGLE_API_TOKEN (or ~/.kaggle/access_token) in the environment, never the legacy KAGGLE_USERNAME + KAGGLE_KEY pair or a kaggle.json. |
 | `lake-cli` | Lake command line executable for optional Lean project checks. |
 | `lean-cli` | Lean command line executable for optional local formal typechecking. |
-| `libreoffice-system-tool` | LibreOffice (soffice) headless for rendering PPTX decks to PDF. |
 | `manim-tex-runtime` | LaTeX engine with dvisvgm and standalone/preview (plus cairo/pango) for Manim MathTex rendering. |
 | `mathlib-cache` | Manually managed mathlib cache or project dependency state for optional Lean checks. |
 | `node-runtime` | Node runtime for MCP servers that use npx. |
@@ -78,7 +77,6 @@ Status vocabulary used by `precheck`:
 | Dependency | Type | Detail |
 |---|---|---|
 | `axle-auth` | `remote-service` | remote-service |
-| `beautifulsoup4-python-package` | `python` | bs4 |
 | `calibre-cli` | `tool` | calibre-cli |
 | `chromium-browser-system-tool` | `tool` | chromium-browser-system-tool |
 | `course-hoanganhduc-python-package` | `python` | course_hoanganhduc; candidate set `course` |
@@ -106,7 +104,6 @@ Status vocabulary used by `precheck`:
 | `lean-explore-local-cache` | `manual-data` | manual-data |
 | `lean-explore-python-package` | `python` | lean_explore; candidate set `agent` |
 | `leanexplore-auth` | `remote-service` | remote-service |
-| `libreoffice-system-tool` | `tool` | libreoffice-system-tool |
 | `manim-python-package` | `python` | manim; candidate set `manim` |
 | `manim-tex-runtime` | `tool` | manim-tex-runtime |
 | `modal-auth` | `remote-service` | remote-service |
@@ -137,7 +134,6 @@ Status vocabulary used by `precheck`:
 | `shapely-python-package` | `python` | shapely |
 | `soundfile-python-package` | `python` | soundfile |
 | `svgelements-python-package` | `python` | svgelements |
-| `telegram-bot-config` | `remote-service` | remote-service |
 | `torch-python-package` | `python` | torch; candidate set `docling` |
 | `torchvision-python-package` | `python` | torchvision; candidate set `docling` |
 | `venue-ranking-provider-access` | `remote-service` | remote-service |

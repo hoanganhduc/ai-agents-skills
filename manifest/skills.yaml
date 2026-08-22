@@ -110,7 +110,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "source-research": {
@@ -581,7 +582,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "venue-ranking-evidence": {
@@ -716,7 +718,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "formal-skeleton-helper": {
@@ -746,7 +749,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "lean-formalization-intake": {
@@ -781,7 +785,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "lean-research-library": {
@@ -885,7 +890,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "axiom-axle-mcp": {
@@ -1174,7 +1180,8 @@
       "verification": [
         "file-exists",
         "metadata-valid",
-        "agent-visible"
+        "agent-visible",
+        "offline-smoke"
       ]
     },
     "agent-group-discuss": {
