@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -236,6 +237,169 @@ class GateTests(unittest.TestCase):
         self.assertNotIn("v4.33.0-rc1", payload["stable_ladder"])
         self.assertEqual(payload["writes_performed"], [])
         self.assertEqual(before, after)
+
+
+
+class ArtifactScaffoldTests(unittest.TestCase):
+    """`artifact new` must scaffold, never copy whatever the agent is standing in.
+
+    `template_root` is an optional config key -- `doctor` lists it under "optional
+    keys" and a stock host reports `library_configured: false`. It used to be read
+    as `Path(str(cfg.get("template_root", "")))`, and `Path("")` is `Path(".")`,
+    whose `is_dir()` is always true. So on every default install the copytree
+    branch ran against the current working directory: `artifact new --dir D` from
+    a paper repo filled D with that repo and still reported `source:
+    "template_root"` with an empty note, i.e. claimed the full CI verification
+    ladder. Nothing exercised the function, so nothing caught it.
+    """
+
+    def _scaffold(self, cfg, *, from_dir, out):
+        """Call the payload with `from_dir` as the process's working directory."""
+
+        previous = os.getcwd()
+        os.chdir(from_dir)
+        try:
+            return lrl.artifact_new_payload(
+                cfg=cfg, paper="demo", directory=out, library_rev=""
+            )
+        finally:
+            os.chdir(previous)
+
+    def _populated_cwd(self, root: Path) -> Path:
+        """A paper repo an agent would plausibly be standing in."""
+
+        project = root / "paper-repo"
+        (project / "sections").mkdir(parents=True)
+        (project / "main.tex").write_text("\\documentclass{article}\n", encoding="utf-8")
+        (project / "sections" / "intro.tex").write_text("intro\n", encoding="utf-8")
+        (project / "private-notes.md").write_text("unpublished\n", encoding="utf-8")
+        return project
+
+    def test_an_unconfigured_template_uses_the_embedded_scaffold(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "artifact"
+            payload = self._scaffold({}, from_dir=self._populated_cwd(root), out=out)
+        self.assertEqual(payload["status"], "scaffolded")
+        self.assertEqual(payload["source"], "embedded-minimal")
+        self.assertIn("lacks the CI verification ladder", payload["note"])
+
+    def test_an_unconfigured_template_does_not_copy_the_working_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "artifact"
+            self._scaffold({}, from_dir=self._populated_cwd(root), out=out)
+            written = {str(p.relative_to(out)) for p in out.rglob("*")}
+        self.assertEqual(
+            written,
+            {
+                ".gitignore",
+                "Artifact",
+                "Artifact/Results.lean",
+                "Artifact.lean",
+                "decls.txt",
+                "lakefile.toml",
+                "lean-toolchain",
+            },
+        )
+        for leaked in ("main.tex", "private-notes.md", "sections/intro.tex"):
+            self.assertNotIn(leaked, written)
+
+    def test_an_empty_template_root_is_treated_as_absent(self) -> None:
+        """Explicitly empty and whitespace-only are the same absence as no key."""
+
+        for value in ("", "   ", None):
+            with self.subTest(template_root=value):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    out = root / "artifact"
+                    payload = self._scaffold(
+                        {"template_root": value},
+                        from_dir=self._populated_cwd(root),
+                        out=out,
+                    )
+                    self.assertEqual(payload["source"], "embedded-minimal")
+                    self.assertTrue((out / "lakefile.toml").is_file())
+
+    def test_a_configured_template_is_still_copied(self) -> None:
+        """The control: a real clone must keep working, and report an empty note."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            template = root / "lean-paper-artifact-template"
+            (template / ".github" / "workflows").mkdir(parents=True)
+            (template / "README.md").write_text("# template\n", encoding="utf-8")
+            (template / ".github" / "workflows" / "verify.yml").write_text(
+                "name: verify\n", encoding="utf-8"
+            )
+            out = root / "artifact"
+            payload = self._scaffold(
+                {"template_root": str(template)},
+                from_dir=self._populated_cwd(root),
+                out=out,
+            )
+            written = {str(p.relative_to(out)) for p in out.rglob("*")}
+        self.assertEqual(payload["source"], "template_root")
+        self.assertEqual(payload["note"], "")
+        self.assertIn("README.md", written)
+        self.assertIn(".github/workflows/verify.yml", written)
+        self.assertNotIn("main.tex", written)
+
+    def test_a_configured_template_drops_git_and_lake(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            template = root / "template"
+            (template / ".git").mkdir(parents=True)
+            (template / ".lake").mkdir()
+            (template / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+            (template / ".lake" / "build").write_text("stale\n", encoding="utf-8")
+            (template / "README.md").write_text("# t\n", encoding="utf-8")
+            out = root / "artifact"
+            self._scaffold(
+                {"template_root": str(template)},
+                from_dir=self._populated_cwd(root),
+                out=out,
+            )
+            written = {str(p.relative_to(out)) for p in out.rglob("*")}
+        self.assertEqual(written, {"README.md"})
+
+    def test_a_configured_template_that_is_missing_falls_back_with_the_note(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "artifact"
+            payload = self._scaffold(
+                {"template_root": str(root / "not-cloned-yet")},
+                from_dir=self._populated_cwd(root),
+                out=out,
+            )
+        self.assertEqual(payload["source"], "embedded-minimal")
+        self.assertIn("clone", payload["note"])
+
+    def test_a_non_empty_target_is_refused_before_anything_is_written(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "artifact"
+            out.mkdir()
+            (out / "keep.txt").write_text("mine\n", encoding="utf-8")
+            payload = self._scaffold({}, from_dir=self._populated_cwd(root), out=out)
+            written = {str(p.relative_to(out)) for p in out.rglob("*")}
+        self.assertEqual(payload["status"], "error")
+        self.assertIn("is not empty", payload["error"])
+        self.assertEqual(written, {"keep.txt"})
+
+    def test_the_repo_creation_command_is_only_ever_a_proposal(self) -> None:
+        """The skill promises propose-only; the payload must not run gh itself."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out = root / "artifact"
+            payload = self._scaffold({}, from_dir=self._populated_cwd(root), out=out)
+        self.assertIn("REQUIRED", payload["user_gate"])
+        self.assertTrue(
+            any(c.startswith("gh repo create ") for c in payload["proposed_commands"]),
+            payload["proposed_commands"],
+        )
+        self.assertEqual(payload["writes_performed"], [str(out)])
 
 
 if __name__ == "__main__":
