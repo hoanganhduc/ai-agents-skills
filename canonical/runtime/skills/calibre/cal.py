@@ -50,8 +50,29 @@ def _err(msg, **extra):
     sys.exit(1)
 
 
+_PROGRESS_ENABLED = False
+
+
+def _set_progress(enabled):
+    """Opt into the progress stream, per `sync --progress` in the skill."""
+    global _PROGRESS_ENABLED
+    _PROGRESS_ENABLED = bool(enabled)
+
+
 def _progress(msg):
-    print(msg, file=sys.stderr, flush=True)
+    """One progress line on stderr, so stdout stays the final JSON result.
+
+    SKILL.md promises JSON lines here: an operator or wrapper tailing stderr
+    during a slow `metadata.db` pull parses them, and a bare string is not
+    parseable. The keys match `_out`, so both streams read the same way.
+    """
+    if not _PROGRESS_ENABLED:
+        return
+    print(
+        json.dumps({"status": "progress", "message": msg}, ensure_ascii=False),
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _format_bytes(value):
@@ -567,6 +588,7 @@ def cmd_list_shelves(args):
 
 
 def cmd_sync(args):
+    _set_progress(getattr(args, "progress", False))
     config = load_config(require=["gdrive_folder_id"])
     ds = DriveSync(config)
     _progress("metadata.db: checking Google Drive")
@@ -870,6 +892,8 @@ def build_parser():
     # sync
     psy = sub.add_parser("sync", help="Pull metadata.db from Drive")
     psy.add_argument("--force", action="store_true")
+    psy.add_argument("--progress", action="store_true",
+                     help="Emit progress JSON lines on stderr during the pull")
 
     # remove
     prm = sub.add_parser("remove", help="Remove a book")
