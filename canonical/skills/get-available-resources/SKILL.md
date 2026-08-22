@@ -35,9 +35,13 @@ runs, OCR, local parsing, or large file rearrangement.
 
 ## Minimum Checks
 
-- CPU count and rough CPU model.
-- Available memory.
-- Free disk space in the working directory.
+- CPU count and rough CPU model. Report the cores this process may use, not the
+  machine's: a CPU affinity mask or a cgroup quota bounds a run below the online
+  core count and shows up in neither `/proc/cpuinfo` nor `psutil.cpu_count`.
+- Available memory, bounded the same way by the cgroup limit when one applies.
+  `/proc/meminfo` reports a machine that a container will be OOM-killed well below.
+- Free disk space in the working directory. A probe that fails reports the failure
+  and the run continues; it does not cost the checks that succeeded.
 - GPU or accelerator availability only when relevant and detectable.
 - Whether the workload should be split, sampled first, or routed elsewhere.
 
