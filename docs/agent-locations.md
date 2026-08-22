@@ -38,7 +38,7 @@ an explicitly reviewed backup-and-replace upgrade with preserved recovery data;
 default installation does not overwrite divergent copies, and the blocked
 publisher cannot replace or clean up existing workspace copies. See
 `targets/openclaw/README.md` and
-`canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
+`canonical/runtime/skills/remote-bridge/publish_openclaw_adapter.py`.
 
 Optional or compatibility skill locations:
 
