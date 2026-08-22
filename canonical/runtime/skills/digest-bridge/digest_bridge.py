@@ -127,7 +127,12 @@ def filter_new(papers: list[dict], state: dict, min_score: int) -> list[dict]:
 
 
 def create_manifest(papers: list[dict]) -> dict | None:
-    """Create a getscipapers manifest from paper identifiers."""
+    """Create a getscipapers manifest from paper identifiers.
+
+    None means the manifest was not built, on every path: helper missing,
+    non-zero exit, timeout, or unparseable stdout. `cmd_request` treats that as
+    fatal, because the manifest is the handoff this command exists to perform.
+    """
     if not GSP_HELPER.exists():
         print(f"ERROR: gsp_openclaw_helper.py not found at {GSP_HELPER}", file=sys.stderr)
         return None
@@ -148,6 +153,11 @@ def create_manifest(papers: list[dict]) -> dict | None:
         )
         if result.returncode == 0:
             return json.loads(result.stdout)
+        print(
+            f"ERROR: manifest creation failed (exit {result.returncode}): "
+            f"{result.stderr.strip()}",
+            file=sys.stderr,
+        )
     except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
         print(f"ERROR: manifest creation failed: {exc}", file=sys.stderr)
     return None
@@ -209,6 +219,19 @@ def cmd_request(args):
         return
 
     manifest = create_manifest(new_papers)
+    if manifest is None:
+        # The state file is the ledger of what has already been handed off, so
+        # banking a paper whose manifest was never built drops it for good: the
+        # next `request` filters it out and reports "No new papers to request".
+        # Nothing is recorded, and the operator can retry once getscipapers works.
+        print(json.dumps({
+            "ok": False,
+            "error": "manifest creation failed; no paper was recorded as requested",
+            "error_code": "manifest_failed",
+            "total_scanned": len(papers),
+            "papers": new_papers,
+        }, indent=2))
+        raise SystemExit(2)
 
     watch_results = []
     if args.watch:
