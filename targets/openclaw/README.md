@@ -62,4 +62,4 @@ passes security review.
 
 **Do not invent skill logic only under `~/.openclaw`.** Edit
 `~/ai-agents-skills`, install/runtime-sync as needed, then publish the adapter.
-See `canonical/runtime/skills/remote-bridge/openclaw-adapter/README.md`.
+See `canonical/runtime/skills/remote-bridge/publish_openclaw_adapter.py`.
