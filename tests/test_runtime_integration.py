@@ -3422,7 +3422,6 @@ class RuntimeIntegrationTests(unittest.TestCase):
             external = temp / "external-secrets.json"
             env = os.environ.copy()
             env["AAS_SECRETS_FILE"] = str(external)
-            env.pop("AAS_ALLOW_EXTERNAL_SECRETS_FILE", None)
 
             completed = subprocess.run(
                 ["bash", str(runner), "skills/demo/run.sh"],

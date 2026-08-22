@@ -130,8 +130,9 @@ For a custom location, pass `--secrets-file PATH` for one command or set
 `SEND_EMAIL_SECRETS_FILE=PATH` in the environment used for send-email. These are
 send-email-specific and do not redirect other runtime-backed skills.
 
-Do not put a send-email-only path in global `AAS_SECRETS_FILE` or permanent
-`AAS_ALLOW_EXTERNAL_SECRETS_FILE` settings. Use `SEND_EMAIL_SECRETS_FILE`,
+Do not put a send-email-only path in global `AAS_SECRETS_FILE`: the launcher
+unsets it, along with every other ambient secrets pointer, before it runs a
+skill, so a global setting has no effect here. Use `SEND_EMAIL_SECRETS_FILE`,
 `--secrets-file`, or a dedicated default file. On POSIX the selected authority
 must be a bounded regular, single-link file owned by the current user with no
 group/world permission bits; it is opened without following links and its
