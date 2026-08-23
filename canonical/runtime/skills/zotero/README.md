@@ -127,9 +127,17 @@ markers whose `used_at + replay_retention_seconds` is strictly before the
 current time; fresh, malformed, or changing markers are retained. If the
 remaining marker count reaches `max_replay_entries`, delivery fails closed
 instead of growing backup state. The bound is 100–100000 entries.
+The ledger scan counts every non-lock directory entry before interpreting its
+name or contents, so unexpected files cannot bypass that bound. Agent-writable
+queue and media-directory scans separately fail closed above 100,000 entries;
+none of these scans materializes an unbounded directory listing.
 
 Delivery requests are bounded JSON objects supplied on producer stdin; channel,
-recipient, caption, and media path are never accepted in producer argv. Media is
+recipient, caption, and media path are never accepted in producer argv.
+Protected JSON decoding rejects duplicate keys, parser resource-limit failures,
+and strings containing lone Unicode surrogates before authentication or
+canonical serialization; malformed jobs and results therefore fail closed
+without escaping the queue's security-error path. Media is
 accepted only from the three descriptor-walked runtime roots
 `data/exports`, `data/research/zotero/staging`, and `data/calibre/staging`.
 Arbitrary workspace paths and host paths are rejected. The host worker binds a
@@ -137,6 +145,11 @@ fixed root-controlled OpenClaw entry plus `/usr/bin/node`, passes a minimal
 environment, and gives the final in-process OpenClaw adapter its delivery record
 through bounded stdin. Agent-controlled `PATH` entries and mutable user launchers
 are not candidates, and delivery metadata never appears in the child cmdline.
+The adapter runs in an isolated process group. A timeout or stdin communication
+failure kills that group and reaps its direct leader before the worker closes
+the inherited descriptors or records the failed result. This is cleanup for the
+trusted fixed launcher, not a process sandbox: a descendant that deliberately
+creates a new session can leave that process group.
 
 **Config** (`skills/zotero/config.json`):
 - `zotero_user_id` — numeric user ID

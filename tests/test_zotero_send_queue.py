@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import stat
@@ -124,6 +125,68 @@ class ZoteroSendQueueTests(unittest.TestCase):
                     "duplicate key",
                 ):
                     self.queue.load_policy(str(authority))
+
+    def test_missing_or_invalid_authority_path_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            cases = (
+                str(root / "missing-authority.json"),
+                str(root / "invalid\x00authority.json"),
+            )
+            for authority in cases:
+                with self.subTest(authority=repr(authority)), self.assertRaisesRegex(
+                    self.queue.QueueSecurityError,
+                    "authority could not be read securely",
+                ):
+                    self.queue.load_policy(authority)
+
+    def test_protected_json_parser_failures_are_security_errors(self) -> None:
+        for failure in (ValueError("integer limit"), RecursionError("nested JSON")):
+            with self.subTest(failure=type(failure).__name__), mock.patch.object(
+                self.queue.json,
+                "loads",
+                side_effect=failure,
+            ), self.assertRaisesRegex(
+                self.queue.QueueSecurityError,
+                "not valid bounded UTF-8 JSON",
+            ):
+                self.queue._decode_protected_json(b"{}", label="test record")
+
+    def test_lone_surrogates_fail_closed_at_every_json_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _workspace, authority, _media = self._layout(root)
+            authority_record = json.loads(authority.read_text(encoding="utf-8"))
+            authority_record["allowed"]["whatsapp"] = ["\ud800"]
+            authority.write_text(json.dumps(authority_record), encoding="utf-8")
+            authority.chmod(0o600)
+            with self.assertRaises(self.queue.QueueSecurityError):
+                self.queue.load_policy(str(authority))
+
+            _workspace, valid_authority, valid_media = self._layout(root / "valid")
+            with self.assertRaisesRegex(
+                self.queue.QueueSecurityError,
+                "caption is not valid UTF-8",
+            ):
+                self.queue.publish_job(
+                    _workspace,
+                    channel="whatsapp",
+                    target="target'quoted",
+                    media=valid_media,
+                    caption="\ud800",
+                    authority=str(valid_authority),
+                )
+
+            request = (
+                b'{"channel":"whatsapp","target":"target","media":"/tmp/x",'
+                b'"caption":"\\ud800"}'
+            )
+            stdin = mock.Mock()
+            stdin.buffer = io.BytesIO(request)
+            with mock.patch.object(self.queue.sys, "stdin", stdin), self.assertRaises(
+                self.queue.QueueSecurityError
+            ):
+                self.queue._read_submit_request_stdin()
 
     def _layout(self, root: Path) -> tuple[Path, Path, Path]:
         workspace = root / "workspace"
@@ -350,6 +413,34 @@ class ZoteroSendQueueTests(unittest.TestCase):
                 self.assertEqual(result["status"], "rejected")
                 sender.assert_not_called()
 
+    def test_malformed_bounded_json_job_is_rejected_without_stopping_worker(self) -> None:
+        cases = {
+            "integer-digit-limit": '{"version":' + "1" * 5_000 + "}",
+            "lone-surrogate": '{"caption":"\\ud800"}',
+        }
+        for label, malformed in cases.items():
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                workspace, authority, _media, published = self._publish(root)
+                job_path = (
+                    workspace
+                    / "data/send-queue"
+                    / f"{published['job_id']}.json"
+                )
+                job_path.write_text(malformed, encoding="utf-8")
+                job_path.chmod(0o600)
+                sender = mock.Mock(return_value=True)
+
+                result = self.queue.process_once(
+                    workspace,
+                    authority=str(authority),
+                    sender=sender,
+                    now=1_700_000_001,
+                )
+
+                self.assertEqual(result["status"], "rejected")
+                sender.assert_not_called()
+
     def test_media_digest_drift_never_reaches_sender(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -368,6 +459,51 @@ class ZoteroSendQueueTests(unittest.TestCase):
             self.assertEqual(result["status"], "rejected")
             sender.assert_not_called()
             self.assertFalse((workspace / "data/send-queue" / f"{published['job_id']}.result").exists())
+
+    def test_missing_media_or_claim_rejects_only_that_job(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace, authority, _media, published = self._publish(root)
+            snapshot = next((workspace / "data/send-queue/media").iterdir())
+            snapshot.unlink()
+            sender = mock.Mock(return_value=True)
+
+            result = self.queue.process_once(
+                workspace,
+                authority=str(authority),
+                sender=sender,
+                now=1_700_000_001,
+            )
+
+            self.assertEqual(result["status"], "rejected")
+            sender.assert_not_called()
+            self.assertIsNone(
+                self.queue.read_result(
+                    workspace,
+                    job_id=str(published["job_id"]),
+                    nonce=str(published["nonce"]),
+                    media_sha256=str(published["media_sha256"]),
+                    authority=str(authority),
+                )
+            )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace, authority, _media, _published = self._publish(root)
+            sender = mock.Mock(return_value=True)
+            with mock.patch.object(
+                self.queue,
+                "_read_named_json",
+                side_effect=FileNotFoundError,
+            ):
+                result = self.queue.process_once(
+                    workspace,
+                    authority=str(authority),
+                    sender=sender,
+                    now=1_700_000_001,
+                )
+            self.assertEqual(result["status"], "rejected")
+            sender.assert_not_called()
 
     def test_replay_marker_enforces_at_most_once(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -415,6 +551,7 @@ class ZoteroSendQueueTests(unittest.TestCase):
             old = "10" * 32 + ".used"
             fresh = "20" * 32 + ".used"
             malformed = "30" * 32 + ".used"
+            unexpected = "unexpected-entry"
             try:
                 self.queue._write_exclusive_json(
                     ledger_fd,
@@ -439,6 +576,7 @@ class ZoteroSendQueueTests(unittest.TestCase):
                     malformed,
                     {"version": 1, "job_id": "bad", "used_at": 0},
                 )
+                os.mkdir(unexpected, mode=0o700, dir_fd=ledger_fd)
                 with self.queue._locked_replay_ledger(ledger_fd):
                     active = self.queue._prune_replay_ledger(
                         ledger_fd, policy, now=1_700_000_301
@@ -450,7 +588,60 @@ class ZoteroSendQueueTests(unittest.TestCase):
             self.assertNotIn(old, names)
             self.assertIn(fresh, names)
             self.assertIn(malformed, names)
-            self.assertEqual(active, 2)
+            self.assertIn(unexpected, names)
+            self.assertEqual(active, 3)
+
+    def test_agent_writable_queue_scans_refuse_excess_directory_fanout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace, authority, _media, _published = self._publish(root)
+            sender = mock.Mock(return_value=True)
+            with mock.patch.object(self.queue, "MAX_QUEUE_DIRECTORY_ENTRIES", 1):
+                with self.assertRaisesRegex(
+                    self.queue.QueueSecurityError,
+                    "send queue exceeds the 1-entry scan limit",
+                ):
+                    self.queue.process_once(
+                        workspace,
+                        authority=str(authority),
+                        sender=sender,
+                        now=1_700_000_001,
+                    )
+            sender.assert_not_called()
+            job_path = (
+                workspace
+                / "data/send-queue"
+                / f"{_published['job_id']}.json"
+            )
+            self.assertTrue(job_path.exists())
+            with (
+                mock.patch.object(self.queue, "MAX_QUEUE_DIRECTORY_ENTRIES", 2),
+                mock.patch.object(
+                    self.queue.os,
+                    "listdir",
+                    side_effect=AssertionError("unbounded listing used"),
+                ),
+            ):
+                exact_cap = self.queue.process_once(
+                    workspace,
+                    authority=str(authority),
+                    sender=sender,
+                    now=1_700_000_001,
+                )
+            self.assertEqual(exact_cap["status"], "ok")
+            sender.assert_called_once()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace, _authority, _media, published = self._publish(root)
+            media_dir = workspace / "data/send-queue/media"
+            (media_dir / "unrelated").write_bytes(b"junk")
+            with mock.patch.object(self.queue, "MAX_QUEUE_DIRECTORY_ENTRIES", 1):
+                with self.assertRaisesRegex(
+                    self.queue.QueueSecurityError,
+                    "send queue media exceeds the 1-entry scan limit",
+                ):
+                    self.queue.cleanup_job(workspace, str(published["job_id"]))
 
     def test_replay_entry_bound_fails_closed_without_pruning_fresh_state(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -461,7 +652,46 @@ class ZoteroSendQueueTests(unittest.TestCase):
                 policy.replay_ledger_dir, private=True
             )
             try:
-                for index in range(policy.max_replay_entries):
+                for index in range(policy.max_replay_entries - 1):
+                    self.queue._write_exclusive_json(
+                        ledger_fd,
+                        f"{index:064x}.used",
+                        {
+                            "version": 1,
+                            "job_id": f"job-1700000000-{index:016x}",
+                            "used_at": 1_700_000_000,
+                        },
+                    )
+                os.mkdir("unexpected-entry", mode=0o700, dir_fd=ledger_fd)
+            finally:
+                os.close(ledger_fd)
+            sender = mock.Mock(return_value=True)
+
+            result = self.queue.process_once(
+                workspace,
+                authority=str(authority),
+                sender=sender,
+                now=1_700_000_001,
+            )
+
+            self.assertEqual(result["status"], "rejected")
+            sender.assert_not_called()
+            self.assertEqual(
+                len(list(policy.replay_ledger_dir.glob("*.used"))),
+                policy.max_replay_entries - 1,
+            )
+            self.assertTrue((policy.replay_ledger_dir / "unexpected-entry").is_dir())
+
+    def test_replay_entry_bound_admits_the_last_available_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workspace, authority, _media, _published = self._publish(root)
+            policy = self.queue.load_policy(str(authority))
+            ledger_fd = self.queue._open_directory_nofollow(
+                policy.replay_ledger_dir, private=True
+            )
+            try:
+                for index in range(policy.max_replay_entries - 1):
                     self.queue._write_exclusive_json(
                         ledger_fd,
                         f"{index:064x}.used",
@@ -482,8 +712,8 @@ class ZoteroSendQueueTests(unittest.TestCase):
                 now=1_700_000_001,
             )
 
-            self.assertEqual(result["status"], "rejected")
-            sender.assert_not_called()
+            self.assertEqual(result["status"], "ok")
+            sender.assert_called_once()
             self.assertEqual(
                 len(list(policy.replay_ledger_dir.glob("*.used"))),
                 policy.max_replay_entries,
@@ -505,26 +735,36 @@ class ZoteroSendQueueTests(unittest.TestCase):
             sender.assert_not_called()
 
     def test_forged_or_symlinked_result_is_rejected(self) -> None:
-        for case in ("forged", "symlink"):
+        mutations = {
+            "forged": {"mac": "00" * 32},
+            "short-mac": {"mac": "0" * 63},
+            "long-mac": {"mac": "0" * 65},
+            "uppercase-mac": {"mac": "A" * 64},
+            "nonhex-mac": {"mac": "g" * 64},
+            "nonascii-mac": {"mac": "é"},
+            "non-string-status": {"status": []},
+            "surrogate-error-code": {"error_code": "\ud800"},
+        }
+        for case in (*mutations, "symlink"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 workspace, authority, _media, published = self._publish(root)
                 queue_dir = workspace / "data/send-queue"
                 result_path = queue_dir / f"{published['job_id']}.result"
-                if case == "forged":
+                if case != "symlink":
+                    record = {
+                        "version": 1,
+                        "job_id": published["job_id"],
+                        "nonce": published["nonce"],
+                        "media_sha256": published["media_sha256"],
+                        "status": "ok",
+                        "error_code": "",
+                        "completed_at": 1_700_000_001,
+                        "mac": "00" * 32,
+                    }
+                    record.update(mutations[case])
                     result_path.write_text(
-                        json.dumps(
-                            {
-                                "version": 1,
-                                "job_id": published["job_id"],
-                                "nonce": published["nonce"],
-                                "media_sha256": published["media_sha256"],
-                                "status": "ok",
-                                "error_code": "",
-                                "completed_at": 1_700_000_001,
-                                "mac": "00" * 32,
-                            }
-                        ),
+                        json.dumps(record),
                         encoding="utf-8",
                     )
                     result_path.chmod(0o600)
@@ -538,6 +778,18 @@ class ZoteroSendQueueTests(unittest.TestCase):
                         job_id=str(published["job_id"]),
                         nonce=str(published["nonce"]),
                         media_sha256=str(published["media_sha256"]),
+                        authority=str(authority),
+                    )
+
+                with self.assertRaisesRegex(
+                    self.queue.QueueSecurityError,
+                    "result expectation is invalid",
+                ):
+                    self.queue.read_result(
+                        workspace,
+                        job_id=str(published["job_id"]),
+                        nonce=str(published["nonce"]),
+                        media_sha256="g" * 64,
                         authority=str(authority),
                     )
 
@@ -576,13 +828,18 @@ class ZoteroSendQueueTests(unittest.TestCase):
             original.unlink()
             replacement.rename(original)
             captured: dict[str, object] = {}
+            process = mock.Mock(pid=4242, returncode=0)
+            process.communicate.return_value = (None, None)
 
-            def fake_run(command, **kwargs):
+            def fake_popen(command, **kwargs):
                 captured["command"] = command
                 captured["env"] = kwargs["env"]
                 captured["pass_fds"] = kwargs["pass_fds"]
-                captured["input"] = kwargs["input"]
-                return mock.Mock(returncode=0)
+                captured["stdin"] = kwargs["stdin"]
+                captured["stdout"] = kwargs["stdout"]
+                captured["stderr"] = kwargs["stderr"]
+                captured["start_new_session"] = kwargs["start_new_session"]
+                return process
 
             hostile = root / "fake-bin"
             hostile.mkdir()
@@ -597,7 +854,7 @@ class ZoteroSendQueueTests(unittest.TestCase):
                     "_open_trusted_node_runtime",
                     return_value=node_descriptor,
                 ),
-                mock.patch.object(self.queue.subprocess, "run", side_effect=fake_run),
+                mock.patch.object(self.queue.subprocess, "Popen", side_effect=fake_popen),
                 mock.patch.dict(
                     os.environ,
                     {
@@ -616,7 +873,7 @@ class ZoteroSendQueueTests(unittest.TestCase):
             self.assertTrue(str(captured["command"][0]).startswith("/proc/self/fd/"))
             self.assertIn(descriptor, captured["pass_fds"])
             self.assertIn(node_descriptor, captured["pass_fds"])
-            request = json.loads(captured["input"])
+            request = json.loads(process.communicate.call_args.kwargs["input"])
             self.assertEqual(
                 request,
                 {
@@ -633,6 +890,64 @@ class ZoteroSendQueueTests(unittest.TestCase):
             self.assertEqual(captured["env"]["NODE_DISABLE_COMPILE_CACHE"], "1")
             self.assertNotIn("XDG_CONFIG_HOME", captured["env"])
             self.assertNotIn("AAS_FILE_DELIVERY_SECRETS_FILE", captured["env"])
+            self.assertIs(captured["stdin"], self.queue.subprocess.PIPE)
+            self.assertTrue(captured["start_new_session"])
+            self.assertEqual(process.communicate.call_args.kwargs["timeout"], 120)
+
+    @unittest.skipIf(os.name == "nt", "POSIX process-group containment")
+    def test_delivery_communication_failures_kill_group_and_reap_leader(self) -> None:
+        failures = (
+            self.queue.subprocess.TimeoutExpired(["node"], 0.01),
+            OSError("delivery pipe failed"),
+        )
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                process = mock.Mock(pid=4242, returncode=None)
+                process.stdin = None
+                process.communicate.side_effect = failure
+                process.wait.return_value = 0
+                with (
+                    mock.patch.object(
+                        self.queue.subprocess,
+                        "Popen",
+                        return_value=process,
+                    ) as popen,
+                    mock.patch.object(self.queue.os, "killpg") as killpg,
+                ):
+                    sent = self.queue._run_delivery_process(
+                        ["/proc/self/fd/10"],
+                        request=b"{}",
+                        child_env={"PATH": "/usr/bin:/bin"},
+                        pass_fds=(10,),
+                        timeout=0.01,
+                    )
+
+                self.assertFalse(sent)
+                self.assertTrue(popen.call_args.kwargs["start_new_session"])
+                killpg.assert_called_once_with(4242, self.queue.signal.SIGKILL)
+                process.wait.assert_called_once_with(timeout=5)
+
+    @unittest.skipIf(os.name == "nt", "POSIX process-group containment")
+    def test_delivery_nonzero_exit_does_not_signal_a_reaped_process_group(self) -> None:
+        process = mock.Mock(pid=4242, returncode=7)
+        process.communicate.return_value = (None, None)
+        with (
+            mock.patch.object(
+                self.queue.subprocess,
+                "Popen",
+                return_value=process,
+            ),
+            mock.patch.object(self.queue.os, "killpg") as killpg,
+        ):
+            sent = self.queue._run_delivery_process(
+                ["/proc/self/fd/10"],
+                request=b"{}",
+                child_env={"PATH": "/usr/bin:/bin"},
+                pass_fds=(10,),
+            )
+
+        self.assertFalse(sent)
+        killpg.assert_not_called()
 
     @unittest.skipUnless(
         _attested_node_available(),

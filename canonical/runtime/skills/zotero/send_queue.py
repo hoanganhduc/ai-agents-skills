@@ -16,6 +16,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import stat
 import subprocess
 import sys
@@ -43,6 +44,7 @@ MAX_CAPTION_BYTES = 8_192
 MAX_TARGET_BYTES = 1_024
 MAX_DELIVERY_OUTPUT_BYTES = 4_096
 MAX_DELIVERY_REQUEST_BYTES = 16_384
+MAX_QUEUE_DIRECTORY_ENTRIES = 100_000
 JOB_RE = re.compile(r"job-[0-9]{10}-[0-9a-f]{16}\Z")
 NONCE_RE = re.compile(r"[0-9a-f]{64}\Z")
 CHANNEL_RE = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
@@ -82,6 +84,38 @@ def _strict_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
             raise QueueSecurityError("protected file-delivery JSON contains a duplicate key")
         result[key] = value
     return result
+
+
+def _decode_protected_json(payload: bytes, *, label: str) -> object:
+    """Decode bounded JSON and reject parser failures or lone surrogates."""
+
+    try:
+        raw = json.loads(
+            payload.decode("utf-8"), object_pairs_hook=_strict_json_object
+        )
+    except QueueSecurityError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise QueueSecurityError(
+            f"{label} is not valid bounded UTF-8 JSON"
+        ) from exc
+
+    pending = [raw]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, str):
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise QueueSecurityError(
+                    f"{label} contains a string that is not valid UTF-8"
+                ) from exc
+        elif isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return raw
 
 
 @dataclass(frozen=True)
@@ -204,6 +238,33 @@ def _read_path(path: Path, *, max_bytes: int, owner_private: bool) -> bytes:
         os.close(fd)
 
 
+def _bounded_directory_names(
+    directory_fd: int,
+    *,
+    max_entries: int,
+    label: str,
+    ignored_names: frozenset[str] = frozenset(),
+) -> Iterator[str]:
+    """Yield names from a bound directory without admitting unbounded fanout."""
+
+    seen = 0
+    try:
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                if entry.name in ignored_names:
+                    continue
+                seen += 1
+                if seen > max_entries:
+                    raise QueueSecurityError(
+                        f"{label} exceeds the {max_entries}-entry scan limit"
+                    )
+                yield entry.name
+    except QueueSecurityError:
+        raise
+    except OSError as exc:
+        raise QueueSecurityError(f"could not securely enumerate {label}") from exc
+
+
 def load_policy(path_value: str | None = None) -> QueuePolicy:
     selected = path_value or os.environ.get(AUTHORITY_ENV)
     if selected is None:
@@ -217,17 +278,19 @@ def load_policy(path_value: str | None = None) -> QueuePolicy:
     if not value or value != value.strip():
         raise QueueSecurityError(f"{AUTHORITY_ENV} must name a protected authority")
     authority_path = _absolute(value, "file-delivery authority")
-    payload = _read_path(
-        authority_path,
-        max_bytes=MAX_AUTHORITY_BYTES,
-        owner_private=True,
-    )
     try:
-        raw = json.loads(
-            payload.decode("utf-8"), object_pairs_hook=_strict_json_object
+        payload = _read_path(
+            authority_path,
+            max_bytes=MAX_AUTHORITY_BYTES,
+            owner_private=True,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise QueueSecurityError("file-delivery authority is not valid UTF-8 JSON") from exc
+    except QueueSecurityError:
+        raise
+    except (OSError, ValueError) as exc:
+        raise QueueSecurityError(
+            "file-delivery authority could not be read securely"
+        ) from exc
+    raw = _decode_protected_json(payload, label="file-delivery authority")
     if not isinstance(raw, dict) or set(raw) != AUTHORITY_KEYS or raw.get("version") != 1:
         raise QueueSecurityError("file-delivery authority schema is unsupported")
     key_hex = raw.get("hmac_key_hex")
@@ -308,18 +371,30 @@ def load_policy(path_value: str | None = None) -> QueuePolicy:
 
 def _canonical_mac(record: dict[str, object], key: bytes) -> str:
     unsigned = {name: value for name, value in record.items() if name != "mac"}
-    payload = json.dumps(
-        unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    try:
+        payload = json.dumps(
+            unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise QueueSecurityError("protected queue record cannot be canonicalized") from exc
     return hmac.new(key, payload, hashlib.sha256).hexdigest()
 
 
 def _validate_request(policy: QueuePolicy, channel: str, target: str, caption: str) -> None:
-    if channel not in policy.allowed or target not in policy.allowed[channel]:
+    if (
+        not isinstance(channel, str)
+        or not isinstance(target, str)
+        or channel not in policy.allowed
+        or target not in policy.allowed[channel]
+    ):
         raise QueueSecurityError("file-delivery channel or target is not allowlisted")
+    try:
+        caption_size = len(caption.encode("utf-8")) if isinstance(caption, str) else -1
+    except UnicodeEncodeError as exc:
+        raise QueueSecurityError("file-delivery caption is not valid UTF-8") from exc
     if (
         not isinstance(caption, str)
-        or len(caption.encode("utf-8")) > MAX_CAPTION_BYTES
+        or caption_size > MAX_CAPTION_BYTES
         or any(char == "\x00" for char in caption)
     ):
         raise QueueSecurityError("file-delivery caption is invalid")
@@ -564,12 +639,7 @@ def _read_named_json(directory_fd: int, name: str, *, max_bytes: int) -> dict[st
         payload = _read_fd(fd, before, max_bytes=max_bytes)
     finally:
         os.close(fd)
-    try:
-        record = json.loads(
-            payload.decode("utf-8"), object_pairs_hook=_strict_json_object
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise QueueSecurityError("queue record is not valid UTF-8 JSON") from exc
+    record = _decode_protected_json(payload, label="queue record")
     if not isinstance(record, dict):
         raise QueueSecurityError("queue record must be an object")
     return record
@@ -615,8 +685,14 @@ def _prune_replay_ledger(
     entries are retained and count against the configured bound.
     """
     active = 0
-    for name in sorted(os.listdir(replay_fd)):
+    for name in _bounded_directory_names(
+        replay_fd,
+        max_entries=policy.max_replay_entries,
+        label="replay ledger",
+        ignored_names=frozenset({".ledger.lock"}),
+    ):
         if not USED_RE.fullmatch(name):
+            active += 1
             continue
         try:
             before_path = os.stat(name, dir_fd=replay_fd, follow_symlinks=False)
@@ -701,8 +777,17 @@ def _open_verified_media(
     media_fd: int, record: dict[str, object], policy: QueuePolicy
 ) -> int:
     name = str(record["media_name"])
-    path_info = os.stat(name, dir_fd=media_fd, follow_symlinks=False)
-    fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=media_fd)
+    try:
+        path_info = os.stat(name, dir_fd=media_fd, follow_symlinks=False)
+        fd = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=media_fd,
+        )
+    except (OSError, ValueError) as exc:
+        raise QueueSecurityError(
+            "media snapshot could not be opened securely"
+        ) from exc
     try:
         before = os.fstat(fd)
         if (
@@ -867,6 +952,72 @@ await import(`file://${entry}`);
 """.strip()
 
 
+def _terminate_delivery_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Kill the isolated delivery group and reap its direct leader."""
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError:
+        try:
+            process.kill()
+        except OSError:
+            pass
+    if process.stdin is not None:
+        try:
+            process.stdin.close()
+        except (OSError, ValueError):
+            pass
+    try:
+        process.wait(timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            process.kill()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+
+def _run_delivery_process(
+    command: list[str],
+    *,
+    request: bytes,
+    child_env: dict[str, str],
+    pass_fds: tuple[int, ...],
+    timeout: float = 120,
+) -> bool:
+    """Run the bound delivery adapter in one failure-contained process group."""
+
+    with open(os.devnull, "wb") as output:
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=output,
+                stderr=output,
+                env=child_env,
+                pass_fds=pass_fds,
+                start_new_session=True,
+            )
+        except OSError:
+            return False
+        try:
+            process.communicate(input=request, timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired):
+            _terminate_delivery_process_group(process)
+            return False
+        except BaseException:
+            _terminate_delivery_process_group(process)
+            raise
+        # communicate() has reaped the leader. Do not signal its numeric PGID
+        # now: after reap, that identity can be recycled by the kernel.
+        return process.returncode == 0
+
+
 def _safe_sender(
     channel: str, target: str, media_path: str, caption: str, pass_fds: tuple[int, ...]
 ) -> bool:
@@ -900,21 +1051,12 @@ def _safe_sender(
             }
             child_env["PATH"] = "/usr/local/bin:/usr/bin:/bin"
             child_env["NODE_DISABLE_COMPILE_CACHE"] = "1"
-            with open(os.devnull, "wb") as output:
-                try:
-                    result = subprocess.run(
-                        command,
-                        input=request,
-                        stdout=output,
-                        stderr=output,
-                        env=child_env,
-                        pass_fds=(*pass_fds, executable_fd, node_fd),
-                        timeout=120,
-                        check=False,
-                    )
-                except (OSError, subprocess.SubprocessError):
-                    return False
-            return result.returncode == 0
+            return _run_delivery_process(
+                command,
+                request=request,
+                child_env=child_env,
+                pass_fds=(*pass_fds, executable_fd, node_fd),
+            )
         finally:
             os.close(node_fd)
     finally:
@@ -976,13 +1118,20 @@ def _process_once_with_replay_ledger(
     current: int,
 ) -> dict[str, object]:
     with _queue_layout(workspace) as layout:
-        names = sorted(
-            name for name in os.listdir(layout["queue"])
-            if name.endswith(".json") and JOB_RE.fullmatch(name[:-5])
-        )
-        if not names:
+        source_name: str | None = None
+        for name in _bounded_directory_names(
+            layout["queue"],
+            max_entries=MAX_QUEUE_DIRECTORY_ENTRIES,
+            label="send queue",
+        ):
+            if (
+                name.endswith(".json")
+                and JOB_RE.fullmatch(name[:-5])
+                and (source_name is None or name < source_name)
+            ):
+                source_name = name
+        if source_name is None:
             return {"status": "idle"}
-        source_name = names[0]
         job_id = source_name[:-5]
         claim_name = f".{job_id}.claim-{os.getpid()}-{secrets.token_hex(4)}"
         try:
@@ -994,7 +1143,14 @@ def _process_once_with_replay_ledger(
             return {"status": "contended"}
         media_name: str | None = None
         try:
-            record = _read_named_json(layout["queue"], claim_name, max_bytes=MAX_JOB_BYTES)
+            try:
+                record = _read_named_json(
+                    layout["queue"], claim_name, max_bytes=MAX_JOB_BYTES
+                )
+            except FileNotFoundError as exc:
+                raise QueueSecurityError(
+                    "claimed queue job disappeared before verification"
+                ) from exc
             _verify_job(record, policy, now=current)
             if record["id"] != job_id:
                 raise QueueSecurityError("queue job filename does not match its identity")
@@ -1069,7 +1225,14 @@ def read_result(
     media_sha256: str,
     authority: str | None = None,
 ) -> dict[str, object] | None:
-    if not JOB_RE.fullmatch(job_id) or not NONCE_RE.fullmatch(nonce):
+    if (
+        not isinstance(job_id, str)
+        or not JOB_RE.fullmatch(job_id)
+        or not isinstance(nonce, str)
+        or not NONCE_RE.fullmatch(nonce)
+        or not isinstance(media_sha256, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", media_sha256)
+    ):
         raise QueueSecurityError("result expectation is invalid")
     policy = load_policy(authority)
     with _queue_layout(workspace) as layout:
@@ -1078,18 +1241,26 @@ def read_result(
             record = _read_named_json(layout["queue"], name, max_bytes=MAX_RESULT_BYTES)
         except FileNotFoundError:
             return None
+        record_digest = record.get("media_sha256")
+        status = record.get("status")
+        error_code = record.get("error_code")
+        mac = record.get("mac")
         if (
             set(record) != RESULT_KEYS
             or record.get("version") != 1
             or record.get("job_id") != job_id
             or record.get("nonce") != nonce
-            or record.get("media_sha256") != media_sha256
-            or record.get("status") not in {"ok", "error"}
-            or not isinstance(record.get("error_code"), str)
+            or record_digest != media_sha256
+            or not isinstance(record_digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", record_digest) is None
+            or not isinstance(status, str)
+            or status not in {"ok", "error"}
+            or not isinstance(error_code, str)
             or isinstance(record.get("completed_at"), bool)
             or not isinstance(record.get("completed_at"), int)
-            or not isinstance(record.get("mac"), str)
-            or not hmac.compare_digest(str(record["mac"]), _canonical_mac(record, policy.key))
+            or not isinstance(mac, str)
+            or re.fullmatch(r"[0-9a-f]{64}", mac) is None
+            or not hmac.compare_digest(mac, _canonical_mac(record, policy.key))
         ):
             raise QueueSecurityError("send queue result authentication failed")
         return record
@@ -1104,7 +1275,11 @@ def cleanup_job(workspace: Path, job_id: str) -> None:
                 os.unlink(name, dir_fd=layout["queue"])
             except FileNotFoundError:
                 pass
-        for name in os.listdir(layout["media"]):
+        for name in _bounded_directory_names(
+            layout["media"],
+            max_entries=MAX_QUEUE_DIRECTORY_ENTRIES,
+            label="send queue media",
+        ):
             if name == job_id or name.startswith(job_id + "."):
                 try:
                     os.unlink(name, dir_fd=layout["media"])
@@ -1114,19 +1289,17 @@ def cleanup_job(workspace: Path, job_id: str) -> None:
 
 def _read_submit_request_stdin() -> dict[str, str]:
     binary = getattr(sys.stdin, "buffer", None)
-    payload = (
-        binary.read(MAX_REQUEST_BYTES + 1)
-        if binary is not None
-        else sys.stdin.read(MAX_REQUEST_BYTES + 1).encode("utf-8")
-    )
+    try:
+        payload = (
+            binary.read(MAX_REQUEST_BYTES + 1)
+            if binary is not None
+            else sys.stdin.read(MAX_REQUEST_BYTES + 1).encode("utf-8")
+        )
+    except UnicodeEncodeError as exc:
+        raise QueueSecurityError("file-delivery stdin is not valid UTF-8") from exc
     if len(payload) > MAX_REQUEST_BYTES:
         raise QueueSecurityError("file-delivery request exceeds the stdin byte limit")
-    try:
-        request = json.loads(
-            payload.decode("utf-8"), object_pairs_hook=_strict_json_object
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise QueueSecurityError("file-delivery stdin is not valid UTF-8 JSON") from exc
+    request = _decode_protected_json(payload, label="file-delivery stdin")
     if (
         not isinstance(request, dict)
         or set(request) != REQUEST_KEYS
