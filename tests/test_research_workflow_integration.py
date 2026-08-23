@@ -391,6 +391,82 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             self.assertEqual(payload["status"], "ok")
             self.assertEqual(payload["checked"]["delivery"], 1)
 
+    def test_invalid_formal_init_does_not_create_partial_workspace(self) -> None:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        invalid_options = (
+            ("--formal",),
+            ("--structured", "--formal"),
+        )
+        for options in invalid_options:
+            with self.subTest(options=options), tempfile.TemporaryDirectory() as tmp:
+                init = subprocess.run(
+                    [
+                        sys.executable,
+                        str(DEEP_RESEARCH_RUNTIME),
+                        "init",
+                        "--dir",
+                        tmp,
+                        *options,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=env,
+                    check=False,
+                )
+                self.assertNotEqual(init.returncode, 0)
+                self.assertFalse((Path(tmp) / "research").exists())
+
+    def test_init_preflights_conflicts_before_writing_any_output(self) -> None:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = Path(tmp) / "research"
+            research_dir.mkdir()
+            (research_dir / "analysis.md").write_text("keep me\n", encoding="utf-8")
+
+            init = subprocess.run(
+                [sys.executable, str(DEEP_RESEARCH_RUNTIME), "init", "--dir", tmp],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                check=False,
+            )
+
+            self.assertNotEqual(init.returncode, 0)
+            self.assertEqual((research_dir / "analysis.md").read_text(encoding="utf-8"), "keep me\n")
+            self.assertFalse((research_dir / "sources.md").exists())
+            self.assertFalse((research_dir / "report.md").exists())
+
+    def test_init_refuses_symlink_outputs_even_with_force(self) -> None:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = Path(tmp) / "research"
+            research_dir.mkdir()
+            outside = Path(tmp) / "outside.md"
+            outside.write_text("keep me\n", encoding="utf-8")
+            try:
+                (research_dir / "sources.md").symlink_to(outside)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+
+            init = subprocess.run(
+                [sys.executable, str(DEEP_RESEARCH_RUNTIME), "init", "--dir", tmp, "--force"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                check=False,
+            )
+
+            self.assertNotEqual(init.returncode, 0)
+            self.assertEqual(outside.read_text(encoding="utf-8"), "keep me\n")
+            self.assertFalse((research_dir / "analysis.md").exists())
+            self.assertFalse((research_dir / "report.md").exists())
+
     def test_deep_research_v2_formal_init_and_validate(self) -> None:
         env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
         with tempfile.TemporaryDirectory() as tmp:
@@ -428,6 +504,43 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             code, payload = self.validate_research_dir(research_dir)
             self.assertEqual(code, 0, payload)
             self.assertEqual(payload["checked"]["schema_version"], 2)
+
+    def test_v2_schema_artifact_is_parsed_and_version_checked(self) -> None:
+        invalid_schemas = (
+            ("{not json\n", "JSON_INVALID"),
+            (json.dumps({"schema_version": "deep-research.run.v99"}), "RESEARCH_SCHEMA_VERSION_INVALID"),
+        )
+        for schema_text, expected_code in invalid_schemas:
+            with self.subTest(expected_code=expected_code), tempfile.TemporaryDirectory() as tmp:
+                research_dir = self.make_structured_dir(tmp, v2=True)
+                (research_dir / "research_schema.json").write_text(schema_text, encoding="utf-8")
+
+                code, payload = self.validate_research_dir(research_dir)
+                self.assertEqual(code, 1)
+                self.assertIn(expected_code, {error["code"] for error in payload["errors"]})
+
+    def test_dangling_v2_or_formal_markers_cannot_downgrade_validation(self) -> None:
+        for marker in ("research_schema.json", "formal"):
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as tmp:
+                research_dir = self.make_structured_dir(tmp)
+                self.write_jsonl(
+                    research_dir / "sources.jsonl",
+                    [{"source_id": "S1", "source": "Verified source", "source_type": "web", "library_status": "[IN_LIBRARY]"}],
+                )
+                self.write_jsonl(
+                    research_dir / "claims.jsonl",
+                    [{"claim_id": "C1", "claim": "Supported claim.", "source_ids": ["S1"], "evidence_ids": [], "status": "supported"}],
+                )
+                (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
+                self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md")
+                try:
+                    (research_dir / marker).symlink_to(research_dir / "missing-marker", target_is_directory=marker == "formal")
+                except (OSError, NotImplementedError) as exc:
+                    self.skipTest(f"symlink creation unavailable: {exc}")
+
+                code, payload = self.validate_research_dir(research_dir)
+                self.assertEqual(code, 1)
+                self.assertIn("MISSING_FILE", {error["code"] for error in payload["errors"]})
 
     def test_deep_research_v1_unresolved_evidence_ids_remain_compatible_until_v2(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -521,7 +634,7 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("AGD_EVIDENCE_TYPE_REQUIRED", {error["code"] for error in payload["errors"]})
 
-    def test_v2_finalizable_delivery_fails_closed_on_stale_model_freshness(self) -> None:
+    def test_v2_finalizable_delivery_rejects_invalid_or_stale_model_freshness(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             research_dir = self.make_structured_dir(tmp, v2=True)
             self.write_jsonl(
@@ -545,15 +658,63 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             )
             self.write_jsonl(research_dir / "evidence.jsonl", [self.report_evidence()])
             self.write_finalizable_v2_support(research_dir)
-            stale = json.loads((research_dir / "model_freshness.json").read_text(encoding="utf-8"))
-            stale["freshness_checked_at"] = "2020-01-01T00:00:00Z"
-            (research_dir / "model_freshness.json").write_text(json.dumps(stale), encoding="utf-8")
             (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
             self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md", guard_output_ids=["G1", "G2"])
 
+            freshness = json.loads((research_dir / "model_freshness.json").read_text(encoding="utf-8"))
+            freshness["model_freshness_max_age_seconds"] = True
+            (research_dir / "model_freshness.json").write_text(json.dumps(freshness), encoding="utf-8")
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("MODEL_FRESHNESS_MAX_AGE_INVALID", {error["code"] for error in payload["errors"]})
+
+            freshness["model_freshness_max_age_seconds"] = 86400
+            freshness["freshness_checked_at"] = "2020-01-01T00:00:00Z"
+            (research_dir / "model_freshness.json").write_text(json.dumps(freshness), encoding="utf-8")
             code, payload = self.validate_research_dir(research_dir)
             self.assertEqual(code, 1)
             self.assertIn("MODEL_FRESHNESS_STALE", {error["code"] for error in payload["errors"]})
+
+    def test_finalizable_delivery_requires_valid_checked_at(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp)
+            self.write_jsonl(
+                research_dir / "sources.jsonl",
+                [{"source_id": "S1", "source": "Verified source", "source_type": "web", "library_status": "[IN_LIBRARY]"}],
+            )
+            self.write_jsonl(
+                research_dir / "claims.jsonl",
+                [{"claim_id": "C1", "claim": "Supported claim.", "source_ids": ["S1"], "evidence_ids": [], "status": "supported"}],
+            )
+            (research_dir / "report.md").write_text("Clean report.\n", encoding="utf-8")
+            self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md")
+            delivery = json.loads((research_dir / "delivery.json").read_text(encoding="utf-8"))
+            delivery["checked_at"] = "2026-05-28"
+            (research_dir / "delivery.json").write_text(json.dumps(delivery), encoding="utf-8")
+
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("TIMESTAMP_INVALID", {error["code"] for error in payload["errors"]})
+
+    def test_validator_reports_invalid_utf8_as_structured_error(self) -> None:
+        env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp)
+            (research_dir / "sources.jsonl").write_bytes(b"\xff\xfe\n")
+            validate = subprocess.run(
+                [sys.executable, str(DEEP_RESEARCH_RUNTIME), "validate", "--dir", str(research_dir)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                check=False,
+            )
+
+            self.assertEqual(validate.returncode, 1)
+            payload = json.loads(validate.stdout)
+            self.assertEqual(payload["status"], "failed")
+            self.assertIn("FILE_ENCODING_INVALID", {error["code"] for error in payload["errors"]})
 
     def test_deep_research_validator_rejects_ready_delivery_with_gaps(self) -> None:
         env = {**os.environ, "AAS_RUNTIME_WORKSPACE": str(RUNTIME_WORKSPACE)}
@@ -680,6 +841,37 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn("FORMAL_PROMOTION_REVIEW_ROW_MISSING", {error["code"] for error in payload["errors"]})
 
+    def test_statement_review_rejects_empty_attestations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            research_dir = self.make_structured_dir(tmp, v2=True, formal=True)
+            empty_fields = (
+                "reviewer",
+                "compared_definitions",
+                "hypothesis_deltas",
+                "quantifier_deltas",
+                "conclusion_deltas",
+                "boundary_cases",
+                "limitations",
+                "encoding_assumptions",
+            )
+            review = {
+                "schema_version": "deep-research.statement-equivalence-review.v1",
+                "statement_equivalence_review_id": "SER1",
+                "formal_target_id": "FT1",
+                "review_status": "reviewed_by_lead",
+                "relation_status": "equivalent_reviewed",
+                "informal_statement_ref": "sources/S1.md#theorem",
+                "lean_statement_ref": "formal/final/proof.lean",
+                **{field: [] for field in empty_fields},
+            }
+            self.write_jsonl(research_dir / "formal" / "statement_equivalence_reviews.jsonl", [review])
+
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            field_errors = [error for error in payload["errors"] if error["code"] == "STATEMENT_REVIEW_FIELD_REQUIRED"]
+            for field in empty_fields:
+                self.assertTrue(any(field in error["message"] for error in field_errors), field)
+
     def test_v2_valid_formal_promotion_with_statement_review_passes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             research_dir = self.make_structured_dir(tmp, v2=True, formal=True)
@@ -791,6 +983,17 @@ class ResearchWorkflowIntegrationDocTests(unittest.TestCase):
             self.write_minimal_delivery(research_dir, decision="ready", report_ref="report.md", guard_output_ids=["G1", "G2"])
             code, payload = self.validate_research_dir(research_dir)
             self.assertEqual(code, 0, payload)
+
+            evidence_rows = [
+                json.loads(line)
+                for line in (research_dir / "evidence.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            next(row for row in evidence_rows if row["evidence_id"] == "E1")["inspection_status"] = "unchecked"
+            self.write_jsonl(research_dir / "evidence.jsonl", evidence_rows)
+            code, payload = self.validate_research_dir(research_dir)
+            self.assertEqual(code, 1)
+            self.assertIn("LOCAL_FORMAL_CHECK_REQUIRED_FOR_PROMOTION", {error["code"] for error in payload["errors"]})
 
     def test_v2_axle_remote_check_cannot_promote_without_local_formal_check(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
