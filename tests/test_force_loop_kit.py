@@ -1927,16 +1927,13 @@ class PinnedFailoverConfigIsPrivateAtCreationTests(unittest.TestCase):
     ``_write_pinned_failover`` copies every key of ``failover.json`` --
     ``research_title`` among them, which names the unpublished topic the loop is
     driving -- and then narrows the result to 0600, so the destination is
-    deliberately owner-private. The temporary it renames into place was created
-    by ``Path.write_text``, which honours the umask, so under the ordinary 022
-    the whole payload sat in a group- and world-readable file first and a reader
-    who opened it inside that window kept a descriptor no later chmod revokes.
+    deliberately owner-private. A prior implementation created the temporary
+    through a pathname before narrowing it, so under the ordinary 022 the whole
+    payload briefly sat in a group- and world-readable file.
 
     Sampling the mode after the call cannot see this -- the narrowing has
     already run -- which is why the window survived review. The probes below
-    therefore sample at creation, wrapping the two primitives that can create
-    the payload (``Path.write_text`` and ``tempfile.mkstemp``) plus the rename
-    that publishes it, so the assertion holds whichever one the writer uses.
+    therefore sample descriptor creation plus the rename that publishes it.
     """
 
     @staticmethod
@@ -1959,11 +1956,12 @@ class PinnedFailoverConfigIsPrivateAtCreationTests(unittest.TestCase):
         cli = _load("force_loop_cli_pin_mode", FORCE_LOOP / "force_loop_cli.py")
         seen: list[tuple[str, str]] = []
 
-        def mode_of(target) -> str:
-            return oct(stat.S_IMODE(os.stat(target).st_mode))
+        def mode_of(target, *, dir_fd=None) -> str:
+            return oct(stat.S_IMODE(os.stat(target, dir_fd=dir_fd).st_mode))
 
         real_write_text = Path.write_text
         real_mkstemp = tempfile.mkstemp
+        real_open = os.open
         real_replace = os.replace
 
         def spy_write_text(self, *args, **kwargs):
@@ -1976,8 +1974,16 @@ class PinnedFailoverConfigIsPrivateAtCreationTests(unittest.TestCase):
             seen.append(("mkstemp", oct(stat.S_IMODE(os.fstat(descriptor).st_mode))))
             return descriptor, name
 
+        def spy_open(*args, **kwargs):
+            descriptor = real_open(*args, **kwargs)
+            if len(args) > 1 and int(args[1]) & os.O_CREAT:
+                seen.append(("open", oct(stat.S_IMODE(os.fstat(descriptor).st_mode))))
+            return descriptor
+
         def spy_replace(src, dst, **kwargs):
-            seen.append(("replace", mode_of(src)))
+            seen.append(
+                ("replace", mode_of(src, dir_fd=kwargs.get("src_dir_fd")))
+            )
             return real_replace(src, dst, **kwargs)
 
         previous = os.umask(0o022)
@@ -1986,8 +1992,9 @@ class PinnedFailoverConfigIsPrivateAtCreationTests(unittest.TestCase):
             # patching them here covers the writer whichever primitive it calls.
             with mock.patch.object(Path, "write_text", spy_write_text), \
                  mock.patch.object(tempfile, "mkstemp", spy_mkstemp), \
+                 mock.patch.object(os, "open", spy_open), \
                  mock.patch.object(os, "replace", spy_replace):
-                destination = cli._write_pinned_failover(loop, "openai")
+                destination = cli._write_pinned_failover(loop, "codex")
         finally:
             os.umask(previous)
         return destination, seen
@@ -2020,10 +2027,176 @@ class PinnedFailoverConfigIsPrivateAtCreationTests(unittest.TestCase):
             self._failover(loop)
             destination, seen = self._pin(loop)
             payload = json.loads(destination.read_text(encoding="utf-8"))
-            self.assertEqual(payload["primary_order"], ["openai"])
+            self.assertEqual(payload["primary_order"], ["codex"])
             self.assertEqual(payload["research_title"], "unpublished topic")
             self.assertIn("replace", [probe for probe, _mode in seen])
             self.assertGreaterEqual(len(seen), 2, f"probes did not fire: {seen}")
+
+
+class ForceLoopCliAuditRegressionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.cli = _load(
+            "force_loop_cli_audit_regressions",
+            FORCE_LOOP / "force_loop_cli.py",
+        )
+
+    def test_bootstrap_missing_init_fields_leaves_no_partial_loop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            rc = self.cli.main(
+                [
+                    "bootstrap",
+                    "--loop",
+                    str(loop),
+                    "--root",
+                    str(root),
+                    "--profile",
+                    "general",
+                    "--policy-file",
+                    str(root / "policy.env"),
+                ]
+            )
+            self.assertEqual(rc, 2)
+            self.assertFalse(loop.exists())
+
+    def test_bootstrap_rejects_negative_budget_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            with self.assertRaises(SystemExit):
+                self.cli.main(
+                    [
+                        "bootstrap",
+                        "--loop",
+                        str(loop),
+                        "--root",
+                        str(root),
+                        "--goal",
+                        "goal",
+                        "--success-criteria",
+                        "criterion",
+                        "--policy-file",
+                        str(root / "policy.env"),
+                        "--max-iterations",
+                        "-1",
+                    ]
+                )
+            self.assertFalse(loop.exists())
+
+    def test_drive_extras_cannot_override_campaign_authority(self) -> None:
+        for values in (
+            ["--dir", "/redirect"],
+            ["--root=/redirect"],
+            ["--provider", "codex"],
+            ["--panel=off"],
+            ["--formal-policy", "off"],
+            ["--no-formal-typecheck"],
+        ):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                self.cli._validate_drive_extra(values)
+
+    def test_start_parser_rejects_provider_and_panel_unknown_to_drive(self) -> None:
+        parser = self.cli.build_parser()
+        for option, value in (("--provider", "openai"), ("--panel", "sometimes")):
+            with self.subTest(option=option), self.assertRaises(SystemExit):
+                parser.parse_args(["start", "--loop", "/tmp/loop", option, value])
+
+    def test_replace_validates_policy_before_stopping_live_processes(self) -> None:
+        args = SimpleNamespace(policy_file=None)
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+            self.cli, "cmd_stop"
+        ) as stop:
+            with self.assertRaises(SystemExit):
+                self.cli.cmd_replace(args)
+        stop.assert_not_called()
+
+    def test_replace_preflights_backend_and_policy_contents_before_stop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            loop.mkdir()
+            policy = root / "policy.env"
+            policy.write_text("UNSUPPORTED=value\n", encoding="utf-8")
+            policy.chmod(0o600)
+            base = [
+                "replace",
+                "--loop",
+                str(loop),
+                "--root",
+                str(root),
+                "--policy-file",
+                str(policy),
+                "--skip-defaults-check",
+                "--drive-only",
+            ]
+            with mock.patch.object(self.cli, "cmd_stop") as stop:
+                with self.assertRaises(SystemExit):
+                    self.cli.cmd_replace(self.cli.build_parser().parse_args(base))
+            stop.assert_not_called()
+
+            policy.write_text("AAS_AUTOLOOP_NOTIFY=auto\n", encoding="utf-8")
+            policy.chmod(0o600)
+            with mock.patch.object(self.cli, "cmd_stop") as stop:
+                rc = self.cli.cmd_replace(
+                    self.cli.build_parser().parse_args(base + ["--backend", "bogus"])
+                )
+            self.assertEqual(rc, 2)
+            stop.assert_not_called()
+
+    def test_systemd_unit_identity_includes_the_absolute_loop(self) -> None:
+        first = self.cli._systemd_unit_name(Path("/srv/project-a/loop"))
+        second = self.cli._systemd_unit_name(Path("/srv/project-b/loop"))
+        self.assertNotEqual(first, second)
+        self.assertEqual(first, self.cli._systemd_unit_name(Path("/srv/project-a/loop")))
+        self.assertLessEqual(len(first), 100)
+        self.assertRegex(first, r"\A[A-Za-z0-9_.-]+\Z")
+
+    def test_drain_without_recovery_propagates_failed_goal_focus_status(self) -> None:
+        args = SimpleNamespace(
+            loop="/tmp/loop",
+            cancel_dispatch_id=None,
+            recover_dispatch=False,
+            recover_quarantine=False,
+            release_fingerprint=None,
+            cancel_dead_pids=False,
+        )
+        failed = SimpleNamespace(
+            returncode=1,
+            stdout='{"status":"failed"}\n',
+            stderr="",
+        )
+        with mock.patch.object(
+            self.cli.subprocess, "run", return_value=failed
+        ), mock.patch.object(self.cli, "status_snapshot", return_value={}):
+            self.assertEqual(self.cli.cmd_drain(args), 1)
+
+    def test_notify_detection_rejects_unknown_channels(self) -> None:
+        completed = SimpleNamespace(
+            returncode=0,
+            stdout='["zulip", "carrier-pigeon"]\n',
+            stderr="",
+        )
+        with mock.patch.object(self.cli.subprocess, "run", return_value=completed):
+            self.assertIsNone(self.cli._detect_notify_channels())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX descriptor-bound write")
+    def test_pinned_failover_refuses_a_symlinked_driver_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            loop = root / "loop"
+            loop.mkdir()
+            (loop / "failover.json").write_text(
+                json.dumps({"primary_order": ["codex"]}) + "\n",
+                encoding="utf-8",
+            )
+            outside = root / "outside"
+            outside.mkdir()
+            (loop / "driver").symlink_to(outside, target_is_directory=True)
+            with self.assertRaises((OSError, ValueError, SystemExit)):
+                self.cli._write_pinned_failover(loop, "codex")
+            self.assertFalse((outside / "failover.pinned.json").exists())
 
 
 if __name__ == "__main__":
