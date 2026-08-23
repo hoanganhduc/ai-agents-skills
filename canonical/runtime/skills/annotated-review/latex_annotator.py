@@ -651,12 +651,13 @@ def precompile_preview(source_dir: str) -> Tuple[Optional[str], Optional[str]]:
 
     if not (shutil.which("pdflatex") or shutil.which("lualatex") or shutil.which("xelatex")):
         return None, "LaTeX engine not found"
-    if not shutil.which("latexmk"):
+    latexmk = shutil.which("latexmk")
+    if not latexmk:
         return None, "latexmk not found"
 
     try:
         result = subprocess.run(
-            ["latexmk", "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
+            [latexmk, "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
             cwd=preview_dir,
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         )

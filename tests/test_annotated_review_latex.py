@@ -320,6 +320,7 @@ class AutoFixRetryPdfSurvivesALogWriteFailureTests(unittest.TestCase):
         calls = {"n": 0}
 
         def fake_run(cmd, **kwargs):
+            self.assertEqual(cmd[0], "/usr/bin/latexmk")
             calls["n"] += 1
             if calls["n"] == 2 and retry_emits_pdf:
                 (tmp / "paper.pdf").write_bytes(b"%PDF-1.5 fixture\n")
