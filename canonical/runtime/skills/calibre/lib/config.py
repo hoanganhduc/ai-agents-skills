@@ -67,6 +67,12 @@ def _read_private_secret_bytes(path):
     """Read a private JSON projection through a stable no-follow descriptor."""
 
     if os.name == "nt":  # pragma: no cover - flat secrets are projected by run_skill.ps1
+        try:
+            os.lstat(os.path.abspath(path))
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise ValueError("Calibre secrets projection could not be read securely") from exc
         raise ValueError("native Windows secret files require the managed projection runner")
     absolute = Path(os.path.abspath(path))
     parent_descriptor = None
