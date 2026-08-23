@@ -22,6 +22,9 @@ FORMAL_TARGET_ID_RE = re.compile(r"^FT[1-9][0-9]*$")
 STATEMENT_REVIEW_ID_RE = re.compile(r"^SER[1-9][0-9]*$")
 URI_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+RFC3339_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 SOURCE_TYPES = {
     "paper",
@@ -368,17 +371,20 @@ def doctor() -> int:
 
 
 def init(args: argparse.Namespace) -> int:
+    if args.formal and not args.structured:
+        raise SystemExit("--formal requires --structured")
+    if args.formal and args.schema_version != "2":
+        raise SystemExit("--formal requires --schema-version 2")
     target_dir = Path(args.dir) / args.subdir
-    target_dir.mkdir(parents=True, exist_ok=True)
+    file_targets, directory_targets = init_output_plan(target_dir, args)
+    preflight_init_outputs(file_targets, directory_targets, force=args.force)
+    for directory in directory_targets:
+        directory.mkdir(parents=True, exist_ok=True)
     written = [
         copy_file(template_paths()["sources"], target_dir / "sources.md", force=args.force),
         copy_file(template_paths()["analysis"], target_dir / "analysis.md", force=args.force),
         copy_file(template_paths()["report"], target_dir / "report.md", force=args.force),
     ]
-    if args.formal and not args.structured:
-        raise SystemExit("--formal requires --structured")
-    if args.formal and args.schema_version != "2":
-        raise SystemExit("--formal requires --schema-version 2")
     if args.structured:
         written.extend(write_structured_files(
             target_dir,
@@ -391,9 +397,68 @@ def init(args: argparse.Namespace) -> int:
     return 0
 
 
+def init_output_plan(target_dir: Path, args: argparse.Namespace) -> tuple[list[Path], list[Path]]:
+    files = [target_dir / name for name in ("sources.md", "analysis.md", "report.md")]
+    directories = [target_dir]
+    if args.structured:
+        files.extend(target_dir / name for name in ("sources.jsonl", "claims.jsonl", "guards.jsonl", "delivery.json"))
+        directories.append(target_dir / "delegation")
+    if args.schema_version == "2" and args.structured:
+        files.extend(target_dir / name for name in ("research_schema.json", "evidence.jsonl", "model_freshness.json"))
+    if args.formal:
+        formal_dir = target_dir / "formal"
+        files.extend(
+            formal_dir / name
+            for name in (
+                "formal_targets.jsonl",
+                "statement_equivalence_reviews.jsonl",
+                "placeholder_scan.json",
+                "trust_base_scan.json",
+                "verification.json",
+                "README.md",
+            )
+        )
+        directories.extend(
+            formal_dir / name
+            for name in (
+                "",
+                "input",
+                "output",
+                "final",
+                "artifacts",
+                "artifacts/remote",
+                "artifacts/remote/axle",
+                "artifacts/search",
+                "artifacts/search/leanexplore",
+            )
+        )
+    return files, directories
+
+
+def preflight_init_outputs(file_targets: list[Path], directory_targets: list[Path], *, force: bool) -> None:
+    for source in template_paths().values():
+        if not source.is_file():
+            raise SystemExit(f"missing template: {source}")
+    for directory in directory_targets:
+        if directory.is_symlink():
+            raise SystemExit(f"refusing symbolic-link output directory: {directory}")
+        if directory.exists() and not directory.is_dir():
+            raise SystemExit(f"output directory path is not a directory: {directory}")
+    for target in file_targets:
+        if target.is_symlink():
+            raise SystemExit(f"refusing symbolic-link output file: {target}")
+        if target.exists():
+            if not target.is_file():
+                raise SystemExit(f"output file path is not a regular file: {target}")
+            if not force:
+                raise SystemExit(f"refusing to overwrite existing file without --force: {target}")
+
+
 def copy_file(source: Path, target: Path, *, force: bool) -> Path:
     if not source.is_file():
         raise SystemExit(f"missing template: {source}")
+    if target.is_symlink():
+        raise SystemExit(f"refusing symbolic-link output file: {target}")
     if target.exists() and not force:
         raise SystemExit(f"refusing to overwrite existing file without --force: {target}")
     shutil.copyfile(source, target)
@@ -475,6 +540,8 @@ def write_structured_files(target_dir: Path, *, force: bool, schema_version: str
 
 
 def write_text(path: Path, text: str, *, force: bool) -> Path:
+    if path.is_symlink():
+        raise SystemExit(f"refusing symbolic-link output file: {path}")
     if path.exists() and not force:
         raise SystemExit(f"refusing to overwrite existing file without --force: {path}")
     path.write_text(text, encoding="utf-8")
@@ -489,8 +556,18 @@ def validate_directory(root: Path, schema_version: str | None = None) -> dict[st
     guards = read_jsonl(root / "guards.jsonl", "guards", errors)
     delivery = read_json(root / "delivery.json", "delivery", errors)
 
+    schema_path = root / "research_schema.json"
+    schema_present = path_present_nofollow(schema_path)
     v2_mode = schema_version == "2" or detects_v2_mode(root)
     formal_mode = detects_formal_mode(root)
+    if schema_present:
+        schema = read_json(schema_path, "research schema", errors)
+        if isinstance(schema, dict):
+            unknown = set(schema) - {"schema_version"}
+            if unknown:
+                add_error(errors, "UNKNOWN_FIELD", schema_path, f"unknown research schema fields: {sorted(unknown)}")
+            if schema.get("schema_version") != SCHEMA_VERSION:
+                add_error(errors, "RESEARCH_SCHEMA_VERSION_INVALID", schema_path, "unsupported research schema_version")
 
     source_map = validate_sources(sources, root / "sources.jsonl", errors)
     claim_map = validate_claims(claims, root / "claims.jsonl", set(source_map), errors)
@@ -570,8 +647,11 @@ def read_jsonl(path: Path, artifact: str, errors: list[dict[str, Any]]) -> list[
     if not path.is_file():
         add_error(errors, "MISSING_FILE", path, f"missing {artifact} file")
         return []
+    text = read_utf8_text(path, artifact, errors)
+    if text is None:
+        return []
     rows: list[dict[str, Any]] = []
-    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for line_no, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
         try:
@@ -591,8 +671,11 @@ def read_json(path: Path, artifact: str, errors: list[dict[str, Any]]) -> Any:
     if not path.is_file():
         add_error(errors, "MISSING_FILE", path, f"missing {artifact} file")
         return None
+    text = read_utf8_text(path, artifact, errors)
+    if text is None:
+        return None
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(text)
     except json.JSONDecodeError as exc:
         add_error(errors, "JSON_INVALID", path, str(exc))
         return None
@@ -602,21 +685,50 @@ def read_json(path: Path, artifact: str, errors: list[dict[str, Any]]) -> Any:
     return value
 
 
+def read_utf8_text(path: Path, artifact: str, errors: list[dict[str, Any]]) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        add_error(errors, "FILE_ENCODING_INVALID", path, f"{artifact} must be valid UTF-8: {exc}")
+    except OSError as exc:
+        add_error(errors, "FILE_READ_FAILED", path, f"could not read {artifact}: {exc}")
+    return None
+
+
 def detects_v2_mode(root: Path) -> bool:
-    if (root / "research_schema.json").is_file():
+    if path_present_nofollow(root / "research_schema.json"):
         return True
     evidence = root / "evidence.jsonl"
-    if evidence.is_file() and evidence.read_text(encoding="utf-8").strip():
+    if file_has_content(evidence):
         return True
     formal_targets = root / "formal" / "formal_targets.jsonl"
-    if formal_targets.is_file() and formal_targets.read_text(encoding="utf-8").strip():
+    if file_has_content(formal_targets):
         return True
     return detects_formal_mode(root)
 
 
+def file_has_content(path: Path) -> bool:
+    if not path_present_nofollow(path):
+        return False
+    try:
+        return path.stat().st_size > 0
+    except OSError:
+        return True
+
+
+def path_present_nofollow(path: Path) -> bool:
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def detects_formal_mode(root: Path) -> bool:
     formal = root / "formal"
-    if not formal.exists():
+    if not path_present_nofollow(formal):
         return False
     if not formal.is_dir():
         return True
@@ -1030,8 +1142,9 @@ def validate_statement_reviews(
             add_error(errors, "STATEMENT_RELATION_STATUS_INVALID", path, f"line {line}: invalid relation_status")
         validate_artifact_ref(row.get("informal_statement_ref"), root, path, errors, line, "informal_statement_ref")
         validate_artifact_ref(row.get("lean_statement_ref"), root, path, errors, line, "lean_statement_ref")
+        if not is_nonempty_string(row.get("reviewer")):
+            add_error(errors, "STATEMENT_REVIEW_FIELD_REQUIRED", path, f"line {line}: statement review requires reviewer")
         for field in (
-            "reviewer",
             "compared_definitions",
             "hypothesis_deltas",
             "quantifier_deltas",
@@ -1040,7 +1153,7 @@ def validate_statement_reviews(
             "limitations",
             "encoding_assumptions",
         ):
-            if not is_nonempty_string(row.get(field)) and not isinstance(row.get(field), list):
+            if not is_nonempty_string(row.get(field)) and not is_nonempty_string_list(row.get(field)):
                 add_error(errors, "STATEMENT_REVIEW_FIELD_REQUIRED", path, f"line {line}: statement review requires {field}")
     return ids
 
@@ -1189,7 +1302,10 @@ def has_local_formal_check_evidence(target: dict[str, Any], evidence_map: dict[s
             continue
         if evidence.get("evidence_type") != "formal_check":
             continue
-        if evidence.get("verification_source") in {"local_lean", "local_project_command"}:
+        if (
+            evidence.get("verification_source") in {"local_lean", "local_project_command"}
+            and evidence.get("inspection_status") == "checked"
+        ):
             return True
     return False
 
@@ -1218,6 +1334,8 @@ def validate_delivery(
     decision = delivery.get("decision")
     if decision not in DELIVERY_DECISIONS:
         add_error(errors, "DELIVERY_DECISION_INVALID", path, f"unsupported decision {decision!r}")
+    if decision in FINALIZABLE_DELIVERY_DECISIONS:
+        validate_timestamp(delivery.get("checked_at"), path, errors, None, "checked_at")
     delivery_guard_ids = require_string_list(delivery.get("guard_output_ids"), errors, path, None, "guard_output_ids")
     blockers = require_list(delivery.get("blockers"), errors, path, None, "blockers")
     gaps = require_string_list(delivery.get("gaps"), errors, path, None, "gaps")
@@ -1270,11 +1388,12 @@ def validate_finalizable_delivery_claims(
     elif not report_path.is_file():
         add_error(errors, "READY_REPORT_MISSING", path, f"ready delivery report_ref does not exist: {report_ref}")
     else:
-        report_text = report_path.read_text(encoding="utf-8")
-        if "TODO" in report_text:
-            add_error(errors, "READY_REPORT_TODO", path, f"{decision} delivery report contains unresolved TODO")
-        if "[UNVERIFIED]" in report_text:
-            add_error(errors, "READY_REPORT_UNVERIFIED", path, f"{decision} delivery report contains unresolved [UNVERIFIED]")
+        report_text = read_utf8_text(report_path, "delivery report", errors)
+        if report_text is not None:
+            if "TODO" in report_text:
+                add_error(errors, "READY_REPORT_TODO", path, f"{decision} delivery report contains unresolved TODO")
+            if "[UNVERIFIED]" in report_text:
+                add_error(errors, "READY_REPORT_UNVERIFIED", path, f"{decision} delivery report contains unresolved [UNVERIFIED]")
 
     if not any(claim.get("status") == "supported" for claim in claims.values()):
         add_error(errors, "FINALIZABLE_REQUIRES_SUPPORTED_CLAIM", path, f"{decision} delivery requires at least one supported claim")
@@ -1393,7 +1512,7 @@ def validate_model_freshness(root: Path, path: Path, errors: list[dict[str, Any]
     if data.get("provider_cli_status") not in PROVIDER_CLI_STATUSES:
         add_error(errors, "MODEL_FRESHNESS_PROVIDER_STATUS_INVALID", freshness_path, "provider_cli_status must be available or not_applicable")
     max_age = data.get("model_freshness_max_age_seconds")
-    if not isinstance(max_age, int) or max_age <= 0:
+    if isinstance(max_age, bool) or not isinstance(max_age, int) or max_age <= 0:
         add_error(errors, "MODEL_FRESHNESS_MAX_AGE_INVALID", freshness_path, "model_freshness_max_age_seconds must be a positive integer")
         max_age = 86400
     checked_at = parse_rfc3339(data.get("freshness_checked_at"))
@@ -1480,13 +1599,14 @@ def validate_timestamp(
 
 
 def parse_rfc3339(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not RFC3339_RE.fullmatch(value):
         return None
     text = value[:-1] + "+00:00" if value.endswith("Z") else value
     try:
-        return datetime.fromisoformat(text)
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def validate_artifact_ref(
@@ -1569,6 +1689,10 @@ def require_list(value: Any, errors: list[dict[str, Any]], path: Path, line: int
 
 def is_nonempty_string(value: Any) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def is_nonempty_string_list(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(is_nonempty_string(item) for item in value)
 
 
 def add_error(errors: list[dict[str, Any]], code: str, path: Path, message: str) -> None:
