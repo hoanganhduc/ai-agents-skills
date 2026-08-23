@@ -469,6 +469,16 @@ def _read_object(path: Path, *, required: bool) -> dict[str, Any]:
     return _read_object_snapshot(path, required=required)[0]
 
 
+def _path_present_nofollow(path: Path) -> bool:
+    """Return leaf presence without turning a dangling symlink into absence."""
+
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def _migration_claim_snapshot(
     run_dir: Path,
 ) -> tuple[dict[str, Any], tuple[int, int]]:
@@ -783,10 +793,18 @@ def load_goal_focus(run_dir: str | Path) -> dict[str, Any]:
     }
 
 
+def goal_focus_state_present(run_dir: str | Path) -> bool:
+    root = Path(run_dir)
+    return any(
+        _path_present_nofollow(root / name)
+        for name in (GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE, CURRENT_PLAN_FILE)
+    )
+
+
 def goal_focus_mode(run_dir: str | Path) -> str:
     root = Path(run_dir)
     path = root / CURRENT_PLAN_FILE
-    if not path.exists():
+    if not _path_present_nofollow(path):
         partial = [
             name
             for name in (
@@ -797,7 +815,7 @@ def goal_focus_mode(run_dir: str | Path) -> str:
                 CANDIDATE_QUARANTINE_FILE,
                 ITERATION_DISPATCH_FILE,
             )
-            if (root / name).exists()
+            if _path_present_nofollow(root / name)
         ]
         if partial:
             raise ValueError(
@@ -953,7 +971,7 @@ def _is_machine_gated_next_action(text: object) -> bool:
 def _file_compute_allowlist(run_dir: Path) -> set[str]:
     """Non-empty structured allowlist from compute_policy.json, else empty."""
     policy_path = run_dir / "compute_policy.json"
-    if not policy_path.exists():
+    if not _path_present_nofollow(policy_path):
         return set()
     document = _read_object(policy_path, required=True)
     external = document.get("policy") if isinstance(document.get("policy"), dict) else document
@@ -1004,7 +1022,7 @@ def _pinned_compute_policy(run_dir: Path, old_plan: Mapping[str, Any]) -> tuple[
             forbidden.update(_compute_services(old_policy.get("forbidden_services")))
 
     policy_path = run_dir / "compute_policy.json"
-    if policy_path.exists():
+    if _path_present_nofollow(policy_path):
         document = _read_object(policy_path, required=True)
         external = document.get("policy") if isinstance(document.get("policy"), dict) else document
         external_allowed = _policy_allowed(external) if isinstance(external, Mapping) else set()
@@ -1464,7 +1482,7 @@ def validate_goal_focus(
     warnings: list[str] = []
     checked: list[str] = []
     present = {
-        name: (root / name).exists()
+        name: _path_present_nofollow(root / name)
         for name in (GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE, CURRENT_PLAN_FILE)
     }
     if not any(present.values()):
@@ -1579,7 +1597,7 @@ def validate_goal_focus(
     if mode == "enforce" and plan.get("state") == "active":
         expected_path = render_current_path(plan)
         state_path = root / "loop_state.json"
-        if state_path.exists():
+        if _path_present_nofollow(state_path):
             try:
                 state = _read_object(state_path, required=True)
                 if _clean_text(state.get("next_preferred_path")) != expected_path:
@@ -1590,7 +1608,7 @@ def validate_goal_focus(
             except (OSError, ValueError) as exc:
                 errors.append(f"cannot validate loop_state Goal-Focus projection: {exc}")
         recovery_path = root / "recovery.md"
-        if recovery_path.exists():
+        if _path_present_nofollow(recovery_path):
             try:
                 text = _read_regular_text(recovery_path)
                 if _MANAGED_START not in text or expected_path not in text:
@@ -1784,14 +1802,11 @@ def select_direction(
 
 
 def _finalized_rows(run_dir: Path) -> list[dict[str, Any]]:
-    try:
-        return [
-            row
-            for row in _read_iteration_rows(run_dir)
-            if row.get("bank_status", "accepted") in {"accepted", "rejected"}
-        ]
-    except ValueError:
-        return []
+    return [
+        row
+        for row in _read_iteration_rows(run_dir)
+        if row.get("bank_status", "accepted") in {"accepted", "rejected"}
+    ]
 
 
 def evaluate_replan_triggers(
@@ -2207,10 +2222,7 @@ def pre_dispatch_gate(
         if recovered:
             warnings.append(f"recovered {len(recovered)} interrupted Goal-Focus transaction(s)")
     plan = load_current_plan(root, required=False)
-    v2_present = any(
-        (root / name).exists()
-        for name in (GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE, CURRENT_PLAN_FILE)
-    )
+    v2_present = goal_focus_state_present(root)
     # Validate canonical authority before allowing reconciliation to mutate a
     # derived view.  Only projection-drift errors are safe to repair here.
     validation = validate_goal_focus(root, require_enabled=v2_present)
@@ -2342,7 +2354,11 @@ def initialize_goal_focus(
     root = Path(run_dir)
     if mode not in ENFORCEMENT_MODES:
         raise ValueError(f"mode must be one of {sorted(ENFORCEMENT_MODES)}")
-    existing = [name for name in (GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE, CURRENT_PLAN_FILE) if (root / name).exists()]
+    existing = [
+        name
+        for name in (GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE, CURRENT_PLAN_FILE)
+        if _path_present_nofollow(root / name)
+    ]
     if existing:
         raise ValueError("Goal-Focus is already initialized: " + ", ".join(existing))
     contract = default_goal_contract(goal, success_criteria)
@@ -3476,7 +3492,7 @@ def plan_migration(
     v2_present = [
         name
         for name in (GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE, CURRENT_PLAN_FILE)
-        if (root / name).exists()
+        if _path_present_nofollow(root / name)
     ]
     if v2_present:
         validation = validate_goal_focus(root, require_enabled=True)
@@ -3521,10 +3537,7 @@ def migrate_v1(
     root = Path(run_dir)
     if apply:
         _validate_migration_apply_guard(root, migration_claim)
-    v2_present = any(
-        (root / name).exists()
-        for name in (GOAL_CONTRACT_FILE, APPROACH_REGISTRY_FILE, CURRENT_PLAN_FILE)
-    )
+    v2_present = goal_focus_state_present(root)
     source_snapshot = None if v2_present else _migration_source_snapshot(root)
     report = plan_migration(
         root,
@@ -5600,7 +5613,7 @@ def validate_host_finalized_goal_success(
     if len(matching_decisions) != 1:
         reject("terminal plan lacks one exact accepted result-finalize decision")
     if any(
-        (root / name).exists()
+        _path_present_nofollow(root / name)
         for name in (
             PENDING_CANDIDATE_FILE,
             ITERATION_DISPATCH_FILE,
@@ -5674,31 +5687,28 @@ def _negative_space_entry_for_finalize(
         if _clean_text(x)
     ]
     review_fp = _object_fingerprint(dict(review)) if isinstance(review, Mapping) else ""
-    try:
-        return ns.entry_for_blocked_approach(
-            approach_id=approach_id,
-            campaign_id=campaign_id or None,
-            mechanism_text=mechanism,
-            failure_summary=failure,
-            reopen_condition=reopen,
-            evidence_ids=evidence_ids or None,
-            evidence_absent_reason=(
-                None
-                if evidence_ids
-                else _clean_text(explicit.get("evidence_absent_reason"))
-                or "rejected_candidate_without_staged_evidence_ids"
-            ),
-            iteration_id=str(record.get("iteration") or ""),
-            candidate_fingerprint=_clean_text(
-                record.get("source_candidate_fingerprint")
-                or candidate.get("candidate_id")
-            ),
-            result_review_fingerprint=review_fp or None,
-            registry_revision=_positive_int(registry.get("registry_revision")),
-            kind=_clean_text(explicit.get("kind")) or "blocked_route",
-        )
-    except ValueError:
-        return None
+    return ns.entry_for_blocked_approach(
+        approach_id=approach_id,
+        campaign_id=campaign_id or None,
+        mechanism_text=mechanism,
+        failure_summary=failure,
+        reopen_condition=reopen,
+        evidence_ids=evidence_ids or None,
+        evidence_absent_reason=(
+            None
+            if evidence_ids
+            else _clean_text(explicit.get("evidence_absent_reason"))
+            or "rejected_candidate_without_staged_evidence_ids"
+        ),
+        iteration_id=str(record.get("iteration") or ""),
+        candidate_fingerprint=_clean_text(
+            record.get("source_candidate_fingerprint")
+            or candidate.get("candidate_id")
+        ),
+        result_review_fingerprint=review_fp or None,
+        registry_revision=_positive_int(registry.get("registry_revision")),
+        kind=_clean_text(explicit.get("kind")) or "blocked_route",
+    )
 
 
 def _default_formal_reverifier(
@@ -6167,17 +6177,7 @@ def finalize_candidate(
 
     jsonl_appends: dict[str, list[Any]] = {DIRECTION_DECISIONS_FILE: [mode_event]}
     text_files: dict[str, str] = {}
-    # Rotate before the ledger reaches the size every reader refuses, in the
-    # same transaction that banks the record: the shard and the fresh live file
-    # either both land or neither does, so no record can fall between them.
     live_text = jsonl_text(live_rows)
-    if len(live_text.encode("utf-8")) >= ITERATION_LEDGER_ROTATE_BYTES:
-        shard_rel = iteration_shard_name(next_iteration_shard_index(root))
-        expected_absent.append(shard_rel)
-        text_files[shard_rel] = live_text
-        text_files[ITERATION_LEDGER_FILE] = jsonl_text([record])
-    else:
-        jsonl_appends[ITERATION_LEDGER_FILE] = [record]
     ns_entry = _negative_space_entry_for_finalize(
         candidate=candidate,
         record=record,
@@ -6188,7 +6188,7 @@ def finalize_candidate(
     if ns_entry is not None:
         ns_rel = ns.NEGATIVE_SPACE_REL.as_posix()
         ns_path = root / ns.NEGATIVE_SPACE_REL
-        if ns_path.exists():
+        if _path_present_nofollow(ns_path):
             try:
                 expected_hashes[ns_rel] = hashlib.sha256(
                     _read_regular_bytes(ns_path, max_bytes=16_000_000)
@@ -6200,6 +6200,17 @@ def finalize_candidate(
             expected_absent.append(ns_rel)
         jsonl_appends[ns_rel] = [ns_entry]
         record["negative_space_entry_id"] = ns_entry.get("entry_id")
+
+    # Serialize only after every cross-ledger link is on the record. Rotate in
+    # the same transaction that banks it: the shard and the fresh live file
+    # either both land or neither does, so no record can fall between them.
+    if len(live_text.encode("utf-8")) >= ITERATION_LEDGER_ROTATE_BYTES:
+        shard_rel = iteration_shard_name(next_iteration_shard_index(root))
+        expected_absent.append(shard_rel)
+        text_files[shard_rel] = live_text
+        text_files[ITERATION_LEDGER_FILE] = jsonl_text([record])
+    else:
+        jsonl_appends[ITERATION_LEDGER_FILE] = [record]
 
     tx = commit_transaction(
         root,

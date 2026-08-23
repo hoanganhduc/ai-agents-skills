@@ -1225,14 +1225,7 @@ def goal_focus_is_enabled(run_dir: Path) -> bool:
 
 
 def goal_focus_state_present(run_dir: Path) -> bool:
-    return any(
-        (Path(run_dir) / name).exists()
-        for name in (
-            goal_focus_v2.GOAL_CONTRACT_FILE,
-            goal_focus_v2.APPROACH_REGISTRY_FILE,
-            goal_focus_v2.CURRENT_PLAN_FILE,
-        )
-    )
+    return goal_focus_v2.goal_focus_state_present(run_dir)
 
 
 def _preflight_init_leaf(path: Path) -> None:
