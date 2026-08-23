@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -45,7 +46,6 @@ SAGE_WORKSPACE = (
     if IS_WINDOWS
     else Path("/tmp") / "tikz-draw-sage-runtime" / PLATFORM_NAME
 )
-SAFE_GRAPH_EXPR = re.compile(r"^(graphs\.[A-Za-z_][A-Za-z0-9_]*\([^\"'=;`]*\)|Graph\([A-Za-z0-9_{}\[\](),:.\s-]*\))$")
 PLAIN_GRAPH_CONSTRUCTOR = re.compile(r"^(?:(?:graphs\.)?[A-Za-z_][A-Za-z0-9_]*|Graph)$")
 
 GRAPH_MODE_VALUES = ("auto", "local", "sage")
@@ -122,6 +122,52 @@ def route_error(status: str, message: str) -> SystemExit:
     return SystemExit(f"{status}: {message}")
 
 
+def is_literal_graph_argument(node: ast.AST) -> bool:
+    """Whether an argument node is a literal rather than something that runs."""
+    if isinstance(node, ast.Constant):
+        return node.value is None or isinstance(node.value, (int, float, bool, str))
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(is_literal_graph_argument(item) for item in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(key is not None for key in node.keys) and all(
+            is_literal_graph_argument(item)
+            for item in list(node.keys) + list(node.values)
+        )
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        return is_literal_graph_argument(node.operand)
+    return False
+
+
+def is_safe_graph_expression(expression: str) -> bool:
+    """Whether expression is a graph constructor call over literal arguments.
+
+    run_sage_graph_query hands this string to eval. eval fills in the real
+    builtins for any globals mapping that leaves out __builtins__, so naming
+    only graphs and Graph there constrains nothing by itself -- reaching
+    __import__ takes one nested call. Every argument therefore has to be a
+    literal, which is also all a Sage constructor is ever given here.
+    """
+    try:
+        tree = ast.parse(expression.strip(), mode="eval")
+    except (SyntaxError, ValueError):
+        return False
+    call = tree.body
+    if not isinstance(call, ast.Call) or call.keywords:
+        return False
+    func = call.func
+    if isinstance(func, ast.Name):
+        if func.id != "Graph":
+            return False
+    elif isinstance(func, ast.Attribute):
+        if not isinstance(func.value, ast.Name) or func.value.id != "graphs":
+            return False
+        if not func.attr.isidentifier():
+            return False
+    else:
+        return False
+    return all(is_literal_graph_argument(arg) for arg in call.args)
+
+
 def serialize_graph_param(value: Any) -> str:
     if value is None:
         return "None"
@@ -157,7 +203,7 @@ def normalize_graph_constructor(constructor: str, graph_params: Any) -> str:
             "graph_params must be a list when using structured graph_constructor input",
         )
 
-    if SAFE_GRAPH_EXPR.fullmatch(cleaned):
+    if is_safe_graph_expression(cleaned):
         if graph_params:
             raise route_error(
                 "SAGE_REQUEST_UNSUPPORTED",
@@ -184,7 +230,7 @@ def normalize_graph_constructor(constructor: str, graph_params: Any) -> str:
 
     rendered_params = ", ".join(serialize_graph_param(value) for value in list(graph_params or []))
     normalized = f"{base}({rendered_params})"
-    if not SAFE_GRAPH_EXPR.fullmatch(normalized):
+    if not is_safe_graph_expression(normalized):
         raise route_error(
             "SAGE_REQUEST_UNSUPPORTED",
             "normalized graph constructor fell outside the constrained Sage constructor surface",
@@ -347,7 +393,7 @@ def run_sage_graph_query(query: dict[str, Any]) -> dict[str, Any]:
         "import sage\n"
         f"constructor = {json.dumps(query['constructor'])}\n"
         f"layout_name = {json.dumps(query['layout'])}\n"
-        "G = eval(constructor, {'graphs': graphs, 'Graph': Graph}, {})\n"
+        "G = eval(constructor, {'graphs': graphs, 'Graph': Graph, '__builtins__': {}}, {})\n"
         f"{layout_code}"
         "vertices = [str(v) for v in G.vertices(sort=True)]\n"
         "edge_list = [[str(u), str(v)] for (u, v, _) in G.edges(sort=True)]\n"
