@@ -601,5 +601,76 @@ class WorkspaceObjectsArePrivateAtCreationTests(unittest.TestCase):
         self.assertEqual(self._mode(stale), 0o600)
 
 
+class WorkspaceIsPrivateWhicheverVerbCreatesItTests(unittest.TestCase):
+    """The run workspace is 0700 no matter which verb brings it into being.
+
+    ``ensure_workspace`` states the intent -- the directory holding an
+    unpublished draft is owner-private -- but only ``init`` and ``plan`` call
+    it. Every other verb reaches the workspace through ``write_json`` or
+    ``write_jsonl``, whose ``path.parent.mkdir`` honoured the umask, so a
+    workspace first touched by ``providers``, ``venues``, ``score``,
+    ``validate``, ``purge``, ``expand`` or ``recent`` was created 0755 and
+    stayed there until an ``init`` or ``plan`` happened to run in it.
+    """
+
+    def setUp(self) -> None:
+        self.module = load_module("svs_workspace_parent_mode", SCRIPT)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        previous = os.umask(0o022)
+        self.addCleanup(os.umask, previous)
+
+    @staticmethod
+    def _mode(path: Path) -> int:
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_write_json_creates_the_workspace_private(self) -> None:
+        workspace = self.root / "fresh-json"
+        self.assertFalse(workspace.exists())
+
+        self.module.write_json(workspace / "provider_status.json", {"providers": []})
+
+        self.assertEqual(self._mode(workspace), 0o700)
+        self.assertEqual(self._mode(workspace / "provider_status.json"), 0o600)
+
+    def test_write_jsonl_creates_the_workspace_private(self) -> None:
+        workspace = self.root / "fresh-jsonl"
+        self.assertFalse(workspace.exists())
+
+        self.module.write_jsonl(workspace / "venues.jsonl", [{"venue_id": "V1"}])
+
+        self.assertEqual(self._mode(workspace), 0o700)
+        self.assertEqual(self._mode(workspace / "venues.jsonl"), 0o600)
+
+    def test_a_verb_that_never_calls_ensure_workspace_still_creates_it_private(self) -> None:
+        # End to end, through the CLI: providers --check is a preflight verb,
+        # so running it against a directory that does not exist yet is an
+        # ordinary thing to do, and it does not go through ensure_workspace.
+        workspace = self.root / "preflight"
+
+        run_selector("providers", "--dir", str(workspace))
+
+        self.assertEqual(self._mode(workspace), 0o700)
+
+    def test_an_existing_workspace_keeps_the_mode_it_already_has(self) -> None:
+        # The complement: mkdir's mode applies at creation only, so a directory
+        # the operator chose to share is not silently re-narrowed by a write.
+        # Narrowing an existing directory stays ensure_workspace's job.
+        workspace = self.root / "existing"
+        workspace.mkdir(mode=0o750)
+
+        self.module.write_json(workspace / "run_status.json", {"stage": "score"})
+
+        self.assertEqual(self._mode(workspace), 0o750)
+
+    def test_the_umask_is_really_022_for_these_cases(self) -> None:
+        # Anchor: with a 077 umask every directory would be 0700 anyway and the
+        # tests above would pass against the unfixed source.
+        probe = self.root / "umask-probe"
+        probe.mkdir()
+        self.assertEqual(self._mode(probe), 0o755)
+
+
 if __name__ == "__main__":
     unittest.main()
