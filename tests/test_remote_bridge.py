@@ -2251,5 +2251,62 @@ class RemoteBridgeReplyCommitIsAtomic(unittest.TestCase):
             self.assertEqual(leftovers, [])
 
 
+class RemoteBridgeMailboxIsPrivateAtCreation(unittest.TestCase):
+    """The mailbox is the control plane: it may never exist world-readable."""
+
+    def _mod(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("aas_remote_bridge_private", RB)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    @unittest.skipUnless(os.name == "posix", "directory modes are POSIX")
+    def test_no_directory_is_group_or_world_accessible_at_creation(self) -> None:
+        """Narrowing after mkdir leaves a window another account can walk in.
+
+        Sampling the mode after ``ensure()`` returns cannot see it: the chmod
+        has already run. The mode is read the instant each directory exists.
+        """
+        from unittest import mock
+
+        mod = self._mod()
+        seen: list[tuple[str, int]] = []
+        real_mkdir = Path.mkdir
+
+        def spy(self, *args, **kwargs):
+            real_mkdir(self, *args, **kwargs)
+            seen.append((self.name, self.stat().st_mode & 0o777))
+
+        old_umask = os.umask(0o022)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                with mock.patch.object(Path, "mkdir", spy):
+                    mailbox = mod.Mailbox(Path(tmp) / "state")
+                    mailbox.ensure()
+        finally:
+            os.umask(old_umask)
+
+        self.assertTrue(seen, "ensure() created no directory to check")
+        exposed = [name for name, mode in seen if mode & 0o077]
+        self.assertEqual(exposed, [], f"created group/world-accessible: {seen}")
+
+    @unittest.skipUnless(os.name == "posix", "directory modes are POSIX")
+    def test_a_mailbox_that_cannot_be_made_private_is_not_reported_ready(self) -> None:
+        from unittest import mock
+
+        mod = self._mod()
+        with tempfile.TemporaryDirectory() as tmp:
+            mailbox = mod.Mailbox(Path(tmp) / "state")
+            with mock.patch.object(
+                mod.os, "chmod", side_effect=OSError(13, "Permission denied")
+            ):
+                with self.assertRaises(OSError):
+                    mailbox.ensure()
+
+
 if __name__ == "__main__":
     unittest.main()
