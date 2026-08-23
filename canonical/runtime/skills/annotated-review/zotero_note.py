@@ -26,6 +26,31 @@ if _ZOTERO_SKILL_DIR not in sys.path:
     sys.path.insert(0, _ZOTERO_SKILL_DIR)
 
 
+def _zotero_lib():
+    """Return the Zotero helpers this module borrows from the zotero skill.
+
+    A review does not need Zotero, so annotated-review installs on its own and
+    the helpers are only required once a note is actually written. Reaching
+    them means the zotero skill has to be installed beside this one, and
+    saying so beats a bare ImportError from three call sites.
+    """
+
+    try:
+        from lib.config import load_config
+        from lib.zotero_client import ZoteroClient
+    except ImportError as exc:
+        missing = getattr(exc, "name", "") or ""
+        if missing != "lib" and not missing.startswith("lib."):
+            # The skill is there but something it needs is not, say pyzotero.
+            # Blaming the skill would send the reader after the wrong thing.
+            raise
+        raise RuntimeError(
+            "Zotero support needs the zotero skill installed alongside "
+            f"annotated-review; looked for it in {_ZOTERO_SKILL_DIR}"
+        ) from exc
+    return load_config, ZoteroClient
+
+
 def _he(s: str) -> str:
     """HTML-escape a string."""
     return (
@@ -330,8 +355,7 @@ def create_zotero_note(
     zotero_config_path: str,
 ) -> dict:
     """Create a child note attached to parent_key in Zotero."""
-    from lib.config import load_config
-    from lib.zotero_client import ZoteroClient
+    load_config, ZoteroClient = _zotero_lib()
 
     config = load_config(config_path=zotero_config_path, require=["ZOTERO_API_KEY"])
     zot_client = ZoteroClient(config)
@@ -350,8 +374,7 @@ def create_zotero_note(
 
 def get_existing_review_notes(parent_key: str, zotero_config_path: str) -> list:
     """Return all child notes with the 'annotated-review' tag."""
-    from lib.config import load_config
-    from lib.zotero_client import ZoteroClient
+    load_config, ZoteroClient = _zotero_lib()
 
     config = load_config(config_path=zotero_config_path, require=["ZOTERO_API_KEY"])
     zot_client = ZoteroClient(config)
@@ -367,8 +390,7 @@ def get_existing_review_notes(parent_key: str, zotero_config_path: str) -> list:
 
 def tag_parent_item(parent_key: str, zotero_config_path: str) -> None:
     """Add 'reviewed' tag to the parent item."""
-    from lib.config import load_config
-    from lib.zotero_client import ZoteroClient
+    load_config, ZoteroClient = _zotero_lib()
 
     config = load_config(config_path=zotero_config_path, require=["ZOTERO_API_KEY"])
     zot_client = ZoteroClient(config)

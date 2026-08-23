@@ -114,9 +114,15 @@ def load_zot_module():
     sys.modules["lib.zotero_client"] = fake_zotero_client
     previous = sys.dont_write_bytecode
     sys.dont_write_bytecode = True
+    # zot.py inserts its own skill directory into sys.path at import time and
+    # never removes it. Left behind, that entry lets any later test satisfy a
+    # bare `from lib.config import ...` out of the canonical tree, which
+    # silently defeats suites whose premise is that the skill is absent.
+    previous_path = list(sys.path)
     try:
         spec.loader.exec_module(module)
     finally:
+        sys.path[:] = previous_path
         sys.dont_write_bytecode = previous
         _restore_modules(previous_modules)
     return module
