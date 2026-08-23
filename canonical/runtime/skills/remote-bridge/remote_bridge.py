@@ -505,19 +505,25 @@ class Mailbox:
         self.outbox_dir = self.bridge_dir / "outbox"
 
     def ensure(self) -> None:
-        self.jobs_dir.mkdir(parents=True, exist_ok=True)
-        self.bridge_dir.mkdir(parents=True, exist_ok=True)
-        self.outbox_dir.mkdir(parents=True, exist_ok=True)
+        # Create each directory private rather than narrowing it afterwards.
+        # mkdir honours the umask, so under the usual 022 the mailbox, its job
+        # records and its outbox all existed at 0755 first, and another local
+        # account could open the control plane through that window. 0o700 has
+        # no group or other bits for the umask to clear, so the directory is
+        # private from the instant it exists. The parents come first in this
+        # tuple, so each level is created explicitly rather than inheriting a
+        # wide mode from a parents=True walk. The chmod still runs, to narrow a
+        # directory an earlier version left open, and its failure is no longer
+        # swallowed: a mailbox that cannot be made private must not be reported
+        # as ready.
         for private_dir in (
             self.root,
             self.jobs_dir,
             self.bridge_dir,
             self.outbox_dir,
         ):
-            try:
-                os.chmod(private_dir, 0o700)
-            except OSError:
-                pass
+            private_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            os.chmod(private_dir, 0o700)
 
     def job_dir(self, job_id: str) -> Path:
         validate_id(job_id, "job_id")
