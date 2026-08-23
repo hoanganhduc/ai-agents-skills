@@ -43,10 +43,16 @@ def main():
         if result.returncode != 0:
             print(f"Failed to list watches: {result.stderr}", file=sys.stderr)
             return
-        watches = json.loads(result.stdout)
+        payload = json.loads(result.stdout)
     except Exception as e:
         print(f"Error listing watches: {e}", file=sys.stderr)
         return
+
+    # list-watches answers with the watch store itself, {"items": [...]}, not a
+    # bare list of records. Iterating the envelope walked its keys, so every
+    # watch arrived here as the string "items" and the loop below died on
+    # watch.get before it read a single status.
+    watches = payload.get("items", []) if isinstance(payload, dict) else payload
 
     if not watches:
         print("No active watches.", file=sys.stderr)
