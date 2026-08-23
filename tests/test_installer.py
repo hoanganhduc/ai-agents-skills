@@ -3832,6 +3832,15 @@ class DocsAndLauncherTests(unittest.TestCase):
         self.assertIn(install, compat_job)
         self.assertLess(compat_job.index(install), compat_job.index("run: make test"))
 
+    def test_stress_lifecycle_matrix_has_an_independent_timeout_budget(self) -> None:
+        text = (REPO_ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+        linux_job = text.split("  linux:\n", 1)[1].split("\n  linux-lifecycle:\n", 1)[0]
+        lifecycle_job = text.split("  linux-lifecycle:\n", 1)[1].split("\n  linux-capture:\n", 1)[0]
+        lifecycle_step = 'make lifecycle-test ARGS="--matrix stress --platform-shape all"'
+        self.assertNotIn(lifecycle_step, linux_job)
+        self.assertIn("timeout-minutes: 30", lifecycle_job)
+        self.assertIn(lifecycle_step, lifecycle_job)
+
     def test_cli_delegate_agent_research_blocks_without_resolved_model(self) -> None:
         with fake_root() as tmp:
             root = Path(tmp)
