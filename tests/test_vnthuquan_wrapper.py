@@ -237,5 +237,69 @@ class HelpReportsAMissingPackageLikeEveryOtherPathTests(unittest.TestCase):
                 self.assertIn("vnthuquan assistant wrapper", out)
 
 
+class BareInvocationHonoursJsonModeTests(unittest.TestCase):
+    """`--json` must always leave parseable JSON on stdout.
+
+    A bare invocation is a usage error, not a help request, so it reports the
+    same way an unknown command does. Help itself stays text in both modes:
+    `native_help` prints the package's own help through, so text-for-help is
+    the wrapper's convention rather than an oversight.
+    """
+
+    def _run(self, argv):
+        """Run `main(argv)`; return (exit code, stdout, parsed payload or None)."""
+        import contextlib, io
+        import json as _json
+
+        with tempfile.TemporaryDirectory() as raw:
+            vtq = load_wrapper(Path(raw))
+            out_buf = io.StringIO()
+            with contextlib.redirect_stdout(out_buf):
+                code = vtq.main(argv)
+            out = out_buf.getvalue()
+        try:
+            payload = _json.loads(out)
+        except ValueError:
+            payload = None
+        return code, out, payload
+
+    def test_an_unknown_command_really_does_answer_in_json(self) -> None:
+        # Non-vacuity anchor: this is the contract the bare path must match,
+        # so the test below is meaningless if this one ever stops holding.
+        code, _out, payload = self._run(["__no_such_verb__", "--json"])
+        self.assertIsNotNone(payload)
+        self.assertEqual((code, payload["ok"], payload["error_code"]), (2, False, "usage"))
+
+    def test_a_bare_invocation_in_json_mode_is_parseable(self) -> None:
+        code, out, payload = self._run(["--json"])
+        self.assertIsNotNone(payload, f"stdout was not JSON: {out!r}")
+        self.assertIs(payload["ok"], False)
+        self.assertEqual(payload["error_code"], "usage")
+        self.assertEqual(payload["exit_code"], 2)
+        self.assertEqual(code, 2)
+
+    def test_the_bare_path_and_the_unknown_command_path_agree(self) -> None:
+        bare_code, _o, bare = self._run(["--json"])
+        unknown_code, _o2, unknown = self._run(["__no_such_verb__", "--json"])
+        self.assertEqual(bare_code, unknown_code)
+        self.assertEqual(
+            (bare["ok"], bare["error_code"], bare["exit_code"]),
+            (unknown["ok"], unknown["error_code"], unknown["exit_code"]),
+        )
+
+    def test_text_mode_still_prints_the_banner(self) -> None:
+        code, out, payload = self._run([])
+        self.assertEqual(code, 0)
+        self.assertIsNone(payload)
+        self.assertIn("vnthuquan assistant wrapper", out)
+
+    def test_explicit_help_is_still_text_in_both_modes(self) -> None:
+        for argv in (["--help"], ["-h"], ["help"], ["--help", "--json"]):
+            with self.subTest(argv=argv):
+                code, out, _payload = self._run(argv)
+                self.assertEqual(code, 0)
+                self.assertIn("vnthuquan assistant wrapper", out)
+
+
 if __name__ == "__main__":
     unittest.main()
