@@ -18,9 +18,12 @@ escaping defect completely.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -212,3 +215,54 @@ class AnnotationsOnIncludedFilesReachThePdfTests(unittest.TestCase):
             self._paper(read_only_section=False, stray=True), self.REVIEW)
         self.assertIn("Counterexample at n=4",
                       (Path(out) / "sec1.tex").read_text(encoding="utf-8"))
+
+
+class PrecompileStdoutStaysParseableTests(unittest.TestCase):
+    """Success was the one precompile outcome a caller could not parse.
+
+    The error branch prints the envelope alone, so json.loads() works on it.
+    The success branch printed the envelope and then the bare path, so
+    json.loads() raised "Extra data: line 2" on exactly the runs that worked.
+    A stubbed toolchain keeps this end-to-end without a LaTeX install.
+    """
+
+    def _toolchain(self, base, *, succeed):
+        bin_dir = base / "bin"
+        bin_dir.mkdir()
+        for name in ("pdflatex", "lualatex", "xelatex"):
+            (bin_dir / name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        body = ('#!/bin/sh\nfor a in "$@"; do :; done\n'
+                'printf %%PDF-1.4 > "${a%.tex}.pdf"\nexit 0\n' if succeed
+                else '#!/bin/sh\necho "! LaTeX Error: stub failure" \nexit 1\n')
+        (bin_dir / "latexmk").write_text(body, encoding="utf-8")
+        for f in bin_dir.iterdir():
+            os.chmod(f, 0o755)
+        return bin_dir
+
+    def _run(self, succeed):
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
+        src = base / "paper"
+        src.mkdir()
+        (src / "main.tex").write_text(
+            "\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n",
+            encoding="utf-8")
+        bin_dir = self._toolchain(base, succeed=succeed)
+        env = {**os.environ,
+               "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+               "PYTHONDONTWRITEBYTECODE": "1"}
+        return subprocess.run(
+            [sys.executable, str(SKILL_DIR / "review.py"),
+             "--precompile-only", "--source", str(src)],
+            capture_output=True, text=True, encoding="utf-8", env=env, timeout=300)
+
+    def test_a_successful_precompile_prints_one_json_object(self):
+        proc = self._run(succeed=True)
+        payload = json.loads(proc.stdout)      # raised "Extra data: line 2"
+        self.assertEqual(payload["status"], "ok")
+        self.assertTrue(payload["pdf"].endswith(".pdf"), payload)
+
+    def test_a_failed_precompile_still_prints_one_json_object(self):
+        proc = self._run(succeed=False)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["status"], "error")
