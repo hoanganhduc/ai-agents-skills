@@ -176,7 +176,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except json.JSONDecodeError as exc:
+        # Work-dir JSON is edited by hand between phases -- the transcript
+        # approval gate exists for exactly that -- so a malformed file is an
+        # input error, and cmd_render already shows what one looks like here.
+        _emit({"error": "invalid_input", "message": f"invalid JSON: {exc}"})
+        return 2
+    except ValueError as exc:
+        # The model's validation messages are written for a person to read
+        # ("resolution must look like WIDTHxHEIGHT, e.g. 1920x1080"); they were
+        # arriving at the bottom of a traceback.
+        _emit({"error": "invalid_input", "message": str(exc)})
+        return 2
 
 
 if __name__ == "__main__":

@@ -474,7 +474,7 @@ def cmd_launch(args: argparse.Namespace) -> int:
         ),
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    (run_dir / "status.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_run_status(run_dir / "status.json", record)
     emit(
         {
             **base_payload("blocked"),
@@ -490,13 +490,36 @@ def cmd_launch(args: argparse.Namespace) -> int:
     return 5
 
 
+def _write_run_status(path: Path, record: dict[str, Any]) -> None:
+    """Replace status.json by rename, so no reader ever sees a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged = path.with_name(path.name + ".tmp")
+    staged.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(staged, path)
+
+
+def _read_run_status(path: Path, command: str) -> dict[str, Any] | None:
+    """Run state, or None after emitting this command's error envelope."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        # The missing-run case is already routed; a run whose state file is torn
+        # or hand-edited crashed instead -- including under kill, the command
+        # that exists to clear a run that went wrong.
+        emit({**base_payload("error"), "command": command, "ok": False,
+              "error_code": "unreadable_run_state", "error": str(exc)})
+        return None
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     work = Path(args.work_dir).expanduser()
     path = work / "gauss_runs" / args.run_id / "status.json"
     if not path.is_file():
         emit({**base_payload("error"), "command": "status", "ok": False, "error_code": "unknown_run"})
         return 2
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _read_run_status(path, "status")
+    if data is None:
+        return 2
     emit({**base_payload(), "command": "status", "ok": True, "run": data, "gauss_launched": False})
     return 0
 
@@ -508,7 +531,9 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     if not status_path.is_file():
         emit({**base_payload("error"), "command": "harvest", "ok": False, "error_code": "unknown_run"})
         return 2
-    data = json.loads(status_path.read_text(encoding="utf-8"))
+    data = _read_run_status(status_path, "harvest")
+    if data is None:
+        return 2
     evidence = {
         "evidence_type": "opengauss_run",
         "run_id": args.run_id,
@@ -544,10 +569,12 @@ def cmd_kill(args: argparse.Namespace) -> int:
     if not path.is_file():
         emit({**base_payload("error"), "command": "kill", "ok": False, "error_code": "unknown_run"})
         return 2
-    data = json.loads(path.read_text(encoding="utf-8"))
+    data = _read_run_status(path, "kill")
+    if data is None:
+        return 2
     data["status"] = "killed"
     data["killed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_run_status(path, data)
     emit({**base_payload(), "command": "kill", "ok": True, "run_id": args.run_id, "gauss_launched": False})
     return 0
 

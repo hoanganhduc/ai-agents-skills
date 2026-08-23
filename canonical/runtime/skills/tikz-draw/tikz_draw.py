@@ -372,7 +372,13 @@ def write_text(path: Path, content: str) -> None:
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(read_text(path))
+    try:
+        return json.loads(read_text(path))
+    except json.JSONDecodeError as exc:
+        # Specs, designs, contracts and briefs are written by hand between
+        # commands, so a malformed one is ordinary. ensure_keys below reports a
+        # bad payload as a plain message; a bad file did it as a traceback.
+        raise SystemExit(f"{path} is not valid JSON: {exc}") from exc
 
 
 def dump_json(path: Path, payload: dict[str, Any]) -> None:

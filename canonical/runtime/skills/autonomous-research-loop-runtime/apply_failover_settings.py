@@ -33,6 +33,15 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
+def _read_json_or_report(path: Path, label: str) -> dict[str, Any] | None:
+    """Parsed object, or None after reporting through this CLI's envelope."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(json.dumps({"ok": False, "error": f"{label} is not readable JSON: {path}: {exc}"}, indent=2))
+        return None
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--dir", required=True)
@@ -51,11 +60,19 @@ def main(argv: list[str] | None = None) -> int:
     # only one -- that discards this.
     existing: dict[str, Any] = {}
     if out.is_file() and not args.force:
-        existing = json.loads(out.read_text(encoding="utf-8"))
+        parsed = _read_json_or_report(out, "failover.json")
+        if parsed is None:
+            return 1
+        existing = parsed
     data: dict[str, Any] = {"schema_version": "failover.v1"}
     if args.from_json:
         src = Path(args.from_json).expanduser().resolve()
-        data.update(json.loads(src.read_text(encoding="utf-8")))
+        # The seed is hand-authored -- the docstring points at
+        # failover.example.json -- so a typo in it is an ordinary input error.
+        seed = _read_json_or_report(src, "--from-json seed")
+        if seed is None:
+            return 1
+        data.update(seed)
     # Settings already on disk outrank the seed. The seed used to take an
     # exclusive branch that skipped the read above, so --from-json on a live
     # loop replaced the whole file and still reported ok: tuned values went back
