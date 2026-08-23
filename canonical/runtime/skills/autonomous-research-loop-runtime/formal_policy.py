@@ -519,8 +519,17 @@ def write_track_pin(
     formal_track: bool,
     source: str,
     iteration: int | None = None,
-) -> None:
-    """Record the track the host is dispatching this iteration on. Never raises."""
+) -> str | None:
+    """Record the track the host is dispatching on; report why it could not.
+
+    Returns None once the pin is on disk and the error text otherwise. The pin
+    is the only host-authored half of the append-time formal reading, and the
+    process that reads it is the agent's own ``append-iteration`` call, so a
+    pin that never reached disk cannot be compensated for in memory. Swallowing
+    the failure told the caller nothing, and the caller went on to dispatch an
+    agent it could no longer hold to the terminal-state requirement its Lean
+    work incurs. Never raises.
+    """
     try:
         d = Path(run_dir) / "formal"
         d.mkdir(parents=True, exist_ok=True)
@@ -532,8 +541,9 @@ def write_track_pin(
             "pinned_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
         _atomic_write_text(d / "track.pin.json", json.dumps(pin, indent=2) + "\n")
-    except OSError:
-        pass
+    except OSError as exc:
+        return str(exc)
+    return None
 
 
 def read_track_pin(run_dir: Path | str) -> dict[str, Any]:

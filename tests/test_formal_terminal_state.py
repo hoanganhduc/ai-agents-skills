@@ -1598,6 +1598,108 @@ class TerminalStateWriteFailureIsNotADecidedVerdict(unittest.TestCase):
                 fp._write_terminal_state(run_dir, {"terminal_state": "decided"})
             )
 
+class FormalTrackPinFailureStopsTheDispatchTests(unittest.TestCase):
+    """A track pin the host cannot write must stop the dispatch it protects.
+
+    The append-time formal gate runs inside the agent's own ``append-iteration``
+    process and reads the track from ``formal/track.pin.json``, so the pin is
+    the only channel the host has for holding an agent to the terminal-state
+    requirement its own Lean work incurs. ``write_track_pin`` used to swallow
+    the OSError and return None whether or not the file landed, and the drive
+    dispatched regardless: the agent then shed the requirement by rewriting
+    ``next_preferred_path``, which is exactly what the pin exists to prevent.
+    Nothing in process memory can substitute, because the reader is a different
+    process, so refusing to dispatch is the only enforcement left.
+    """
+
+    @staticmethod
+    def _block_formal_dir(run_dir: Path) -> None:
+        # A file where the directory belongs stands in for every unwritable run
+        # tree -- read-only mount, full disk, wrong owner -- and needs no
+        # privileges to set up.
+        formal_dir = run_dir / "formal"
+        if formal_dir.is_dir():
+            shutil.rmtree(formal_dir)
+        formal_dir.write_text("occupied by a file\n", encoding="utf-8")
+
+    @staticmethod
+    def _iteration_command(run_dir: Path) -> str:
+        return " ".join(
+            [
+                f'"{sys.executable}"',
+                "-B",
+                f'"{RUNTIME_PY}"',
+                "append-iteration",
+                "--dir",
+                f'"{run_dir}"',
+                "--mode bounded-research",
+                '--objective "track pin fixture"',
+                "--decision continue",
+                '--output "fixture iteration banked"',
+                "--source-id S1",
+                "--guard-ref G1",
+                '--remaining-gap "none"',
+            ]
+        )
+
+    def _drive(self, tmp: Path, run_dir: Path) -> dict[str, Any]:
+        args = rt.selftest_drive_args(
+            run_dir, tmp / "registry", self._iteration_command(run_dir)
+        )
+        args.no_progress = True
+        # drive start exports the resolved formal policy into os.environ, where
+        # load_formal_policy ranks it above the loop's own policy file for every
+        # later test in this process.
+        with mock.patch.dict(os.environ, {}, clear=False):
+            return rt.drive_command(args)
+
+    @staticmethod
+    def _banked(run_dir: Path) -> int:
+        body = (run_dir / "iterations.jsonl").read_text(encoding="utf-8")
+        return len([line for line in body.splitlines() if line.strip()])
+
+    def test_write_track_pin_reports_the_write_it_could_not_do(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            self.assertIsNone(
+                fp.write_track_pin(run_dir, formal_track=True, source="drive_dispatch")
+            )
+
+            self._block_formal_dir(run_dir)
+            error = fp.write_track_pin(
+                run_dir, formal_track=True, source="drive_dispatch"
+            )
+            self.assertIsInstance(error, str)
+            self.assertTrue(error)
+
+    def test_a_formal_dispatch_stops_when_the_track_cannot_be_pinned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            _set_formal_track(run_dir)
+            self._block_formal_dir(run_dir)
+
+            result = self._drive(Path(tmp), run_dir)
+
+            self.assertEqual(result.get("reason"), "formal_track_unpinnable", result)
+            self.assertEqual(self._banked(run_dir), 0, result)
+
+    def test_a_run_off_the_formal_track_still_dispatches(self) -> None:
+        # The complement: the same unwritable tree must not stop a run that
+        # never committed to the formal track, or one broken directory would
+        # halt every drive on the host.
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            _init_loop(run_dir, formal=True)
+            self.assertFalse(fp.formal_track_status(run_dir).derived)
+            self._block_formal_dir(run_dir)
+
+            result = self._drive(Path(tmp), run_dir)
+
+            self.assertNotEqual(result.get("reason"), "formal_track_unpinnable", result)
+            self.assertGreaterEqual(self._banked(run_dir), 1, result)
+
 
 if __name__ == "__main__":
     unittest.main()
