@@ -66,10 +66,13 @@ Shared options:
 
 - `--offline`: force fixture/cache-only behavior.
 - `--fixture-dir <path>`: use committed or test fixtures.
-- `--cache-dir <path>`: override cache location.
 - `--max-requests <n>` and `--timeout <seconds>`: bound live calls.
-- `--force`, `--refresh-cache`, and `--no-cache`: explicit overwrite/cache
-  semantics.
+- `--cache-dir <path>`, `--force`, `--refresh-cache`, and `--no-cache`:
+  accepted for compatibility but refused. This runtime keeps no provider cache,
+  so the three cache flags name a store that does not exist, and `--force`
+  reads as an override of a delivery gate that is evidence-based and not
+  forceable. Each exits 2 with that reason rather than parsing cleanly and
+  controlling nothing.
 - `--retain-draft-text`: allow raw draft text in artifacts.
 - `--allow-downloads`, `--allow-zotero-mutation`, and
   `--allow-unpaywall-email`: accepted for compatibility but refused. No

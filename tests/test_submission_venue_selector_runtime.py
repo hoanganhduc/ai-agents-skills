@@ -329,6 +329,47 @@ class SubmissionVenueSelectorRuntimeTests(unittest.TestCase):
             ok = run_selector("providers", "--dir", str(run_dir))
             self.assertTrue(last_json(ok.stdout)["providers"])
 
+    def test_cache_and_force_flags_are_refused(self) -> None:
+        """Four more flags that parsed cleanly and controlled nothing.
+
+        `--cache-dir`, `--refresh-cache` and `--no-cache` describe a provider
+        cache this runtime does not have: `.cache` appears once in the module,
+        in `command_purge`, which deletes a directory nothing creates. Passing
+        `--refresh-cache` and `--no-cache` together used to succeed, even though
+        the two ask for opposite things. `--force` was the worst of the four --
+        it reads as an override of the evidence gate `validate` enforces, and a
+        caller who reached for it had no way to learn it was discarded.
+        """
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "venue-run"
+            for flag, extra in (
+                ("--cache-dir", [str(Path(tmp) / "cache")]),
+                ("--refresh-cache", []),
+                ("--no-cache", []),
+                ("--force", []),
+            ):
+                with self.subTest(flag=flag):
+                    completed = run_selector(
+                        "providers", "--dir", str(run_dir), flag, *extra, check=False
+                    )
+                    self.assertEqual(completed.returncode, 2, completed.stdout)
+                    self.assertIn(flag, completed.stderr)
+                    self.assertIn("not supported by this skill", completed.stderr)
+
+            # Contradictory pair: refusing the first is enough to stop the run.
+            both = run_selector(
+                "providers", "--dir", str(run_dir), "--refresh-cache", "--no-cache",
+                check=False,
+            )
+            self.assertEqual(both.returncode, 2, both.stdout)
+
+            # The control: the same command without the flags still works, and
+            # the run it produces holds no cache for those flags to have meant.
+            ok = run_selector("providers", "--dir", str(run_dir))
+            self.assertTrue(last_json(ok.stdout)["providers"])
+            self.assertEqual([p.name for p in run_dir.rglob(".cache")], [])
+
     def test_validate_fails_incomplete_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "venue-run"
