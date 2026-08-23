@@ -250,6 +250,116 @@ class PdfPrintContractTests(unittest.TestCase):
             self.assertEqual(list(out.parent.glob(f".{out.name}.*.tmp")), [])
 
 
+class GuardedCdpLifecycleTests(unittest.TestCase):
+    def test_browser_launch_failure_still_cleans_the_profile_and_returns_status(self) -> None:
+        from u2s import cdp
+
+        with tempfile.TemporaryDirectory() as tmp:
+            profile = Path(tmp) / "profile"
+            profile.mkdir()
+            request = cdp.CdpCaptureRequest(
+                browser_path="missing-browser",
+                url="https://example.test/",
+                out_path=str(Path(tmp) / "capture.png"),
+            )
+            with (
+                mock.patch("tempfile.mkdtemp", return_value=str(profile)),
+                mock.patch("subprocess.Popen", side_effect=OSError("launch failed")),
+            ):
+                result = cdp.run_cdp_capture(request)
+
+            self.assertEqual(result["status"], "CDP_FAILED")
+            self.assertFalse(profile.exists())
+
+    def test_late_fetch_block_preserves_previous_destination(self) -> None:
+        from u2s import cdp, procctl
+
+        class FakeWebSocket:
+            def close(self) -> None:
+                pass
+
+        class FakeSession:
+            def __init__(self) -> None:
+                self.history_calls = 0
+
+            def call(self, method: str, params: dict | None = None, *, deadline: float):
+                if method == "Page.getNavigationHistory":
+                    self.history_calls += 1
+                    if self.history_calls == 2:
+                        raise cdp._FetchBlocked(
+                            cdp.BLOCKED_METADATA_ENDPOINT,
+                            "late metadata request",
+                        )
+                    return {
+                        "entries": [{"url": "https://example.test/"}],
+                        "currentIndex": 0,
+                    }
+                return {}
+
+            def enable_fetch_interception(self, **_kwargs) -> None:
+                pass
+
+            def navigate_with_fetch(self, _url: str, *, deadline: float) -> str:
+                return "loader-1"
+
+            def pump_until(self, _until: float, *, deadline: float) -> None:
+                pass
+
+        def write_new_artifact(_session, request, _deadline, _consent_removed):
+            Path(request.out_path).write_bytes(b"new artifact")
+            return {"out_path": request.out_path, "bytes": 12}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile = root / "profile"
+            profile.mkdir()
+            destination = root / "capture.png"
+            destination.write_bytes(b"previous artifact")
+            request = cdp.CdpCaptureRequest(
+                browser_path="browser",
+                url="https://example.test/",
+                out_path=str(destination),
+                consent=False,
+                wait_ms=0,
+            )
+            strategy = mock.Mock()
+            with (
+                mock.patch("tempfile.mkdtemp", return_value=str(profile)),
+                mock.patch("subprocess.Popen", return_value=mock.Mock()),
+                mock.patch.object(procctl, "select_kill_strategy", return_value=strategy),
+                mock.patch.object(procctl, "popen_kwargs", return_value={}),
+                mock.patch.object(cdp, "_read_devtools_port", return_value=9222),
+                mock.patch.object(cdp, "_discover_page_target", return_value=("/devtools/page/1", "1")),
+                mock.patch.object(cdp, "_WebSocket", return_value=FakeWebSocket()),
+                mock.patch.object(cdp, "_CdpSession", return_value=FakeSession()),
+            ):
+                result = cdp._run_guarded_cdp(
+                    request,
+                    write_new_artifact,
+                    operation_name="test",
+                )
+
+            self.assertEqual(result["status"], cdp.BLOCKED_METADATA_ENDPOINT)
+            self.assertEqual(destination.read_bytes(), b"previous artifact")
+            self.assertEqual(list(root.glob(".capture.png.*.stage")), [])
+            strategy.kill.assert_called_once()
+
+    def test_negative_wait_or_timeout_is_rejected_before_launch(self) -> None:
+        from u2s import cdp
+
+        invalid = (
+            cdp.CdpCaptureRequest("browser", "https://example.test/", "out.png", wait_ms=-1),
+            cdp.CdpCaptureRequest("browser", "https://example.test/", "out.png", timeout_ms=0),
+        )
+        for request in invalid:
+            with self.subTest(request=request):
+                with mock.patch(
+                    "subprocess.Popen", side_effect=AssertionError("must not launch")
+                ):
+                    result = cdp.run_cdp_capture(request)
+                self.assertEqual(result["status"], cdp.BLOCKED_INPUT)
+
+
 class PdfVerificationTests(unittest.TestCase):
     def test_valid_page_tree_is_structural_only_with_digest(self) -> None:
         from u2s import pdf
@@ -597,6 +707,41 @@ class WebSocketFrameBoundaryTests(unittest.TestCase):
             self.assertRaisesRegex(cdp.CdpError, "deadline expired"),
         ):
             websocket._recv_exact(2, deadline=1.0)
+
+    def test_malformed_cdp_json_is_a_recoverable_protocol_failure(self) -> None:
+        import time
+
+        from u2s import cdp
+
+        class MalformedWebSocket:
+            def send_text(self, _text: str) -> None:
+                pass
+
+            def recv_text(self, *, deadline: float | None = None) -> str:
+                return "not-json"
+
+        session = cdp._CdpSession(MalformedWebSocket())
+        with self.assertRaisesRegex(cdp.CdpError, "valid JSON object"):
+            session.call("Page.enable", deadline=time.monotonic() + 1.0)
+
+    def test_settle_pump_does_not_swallow_a_broken_protocol_channel(self) -> None:
+        import time
+
+        from u2s import cdp
+
+        class BrokenWebSocket:
+            def set_timeout(self, _timeout: float) -> None:
+                pass
+
+            def recv_text(self, *, deadline: float | None = None) -> str:
+                raise cdp.CdpError("connection closed mid-frame")
+
+        session = cdp._CdpSession(BrokenWebSocket())
+        with self.assertRaisesRegex(cdp.CdpError, "connection closed"):
+            session.pump_until(
+                time.monotonic() + 0.1,
+                deadline=time.monotonic() + 1.0,
+            )
 
 
 class PdfOfflineSelftestIsolationTests(unittest.TestCase):

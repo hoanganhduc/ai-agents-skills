@@ -201,7 +201,7 @@ def _atomic_write_pdf(out_path: str, pdf_bytes: bytes, *, max_bytes: int) -> Non
     import tempfile
     from pathlib import Path
 
-    if max_bytes <= 0 or max_bytes > MAX_PDF_BYTES:
+    if type(max_bytes) is not int or max_bytes <= 0 or max_bytes > MAX_PDF_BYTES:
         raise _OutputBlocked(BLOCKED_INPUT, f"PDF byte limit must be in 1..{MAX_PDF_BYTES}")
     if not pdf_bytes.startswith(b"%PDF-"):
         raise _OutputBlocked("UNVERIFIED", "Page.printToPDF returned bytes without a PDF signature")
@@ -322,9 +322,15 @@ def fetch_decision(
 
     from . import security
 
-    parsed = urlsplit(url)
+    if not isinstance(url, str):
+        return "fail"
+    try:
+        parsed = urlsplit(url)
+        parsed.port  # force deferred authority/port validation
+    except ValueError:
+        return "fail"
     scheme = parsed.scheme.lower()
-    request_hostname = parsed.hostname or ""
+    request_hostname = _canonical_hostname(parsed.hostname or "")
     if same_origin_only:
         try:
             request_origin = _canonical_origin(url)
@@ -349,10 +355,12 @@ def fetch_decision(
         return "fail"
     if not request_hostname:
         return "fail"
+    if request_hostname in security.METADATA_HOSTS or not resolved_ips:
+        return "fail"
     for literal in resolved_ips:
         try:
             security.revalidate_resolved_address(literal, allow_private=allow_private)
-        except security.TargetBlocked:
+        except ValueError:
             return "fail"
     return "continue"
 
@@ -649,6 +657,17 @@ class _CdpSession:
         self._initial_hostname = initial_hostname
         self._redirect_counts = {}
 
+    def _receive_message(self, *, deadline: float) -> dict:
+        import json as _json
+
+        try:
+            message = _json.loads(self._ws.recv_text(deadline=deadline))
+        except (TypeError, ValueError) as exc:
+            raise CdpError("CDP websocket message is not a valid JSON object") from exc
+        if not isinstance(message, dict):
+            raise CdpError("CDP websocket message is not a valid JSON object")
+        return message
+
     def _dispatch(self, message: dict) -> None:
         """Handle one received CDP message: resolve a paused Fetch or buffer an event.
 
@@ -656,8 +675,10 @@ class _CdpSession:
         capture with a hard ``BLOCKED_*`` status.
         """
         method = message.get("method")
+        params = message.get("params", {})
+        if not isinstance(params, dict):
+            raise CdpError(f"CDP event {method!r} has non-object params")
         if self._intercept and method == "Network.requestWillBeSent":
-            params = message.get("params", {})
             request_id = params.get("requestId")
             if isinstance(request_id, str) and isinstance(
                 params.get("redirectResponse"), dict
@@ -674,13 +695,14 @@ class _CdpSession:
             "Network.loadingFinished",
             "Network.loadingFailed",
         }:
-            request_id = message.get("params", {}).get("requestId")
+            request_id = params.get("requestId")
             if isinstance(request_id, str):
                 self._redirect_counts.pop(request_id, None)
             return
         if self._intercept and method == "Fetch.requestPaused":
-            params = message.get("params", {})
             request_id = params.get("requestId")
+            if not isinstance(request_id, str) or not request_id:
+                raise CdpError("Fetch.requestPaused has no valid requestId")
             try:
                 _resolve_paused_request(
                     params,
@@ -711,15 +733,17 @@ class _CdpSession:
         while True:
             if _time.monotonic() > deadline:
                 raise CdpError(f"{BLOCKED_TIMEOUT}: timed out awaiting {method}")
-            message = _json.loads(self._ws.recv_text(deadline=deadline))
+            message = self._receive_message(deadline=deadline)
             if message.get("id") == msg_id:
                 if "error" in message:
                     raise CdpError(f"CDP {method} error: {message['error']}")
-                return message.get("result", {})
+                result = message.get("result", {})
+                if not isinstance(result, dict):
+                    raise CdpError(f"CDP {method} returned a non-object result")
+                return result
             self._dispatch(message)
 
     def wait_event(self, method: str, *, deadline: float) -> dict | None:
-        import json as _json
         import time as _time
 
         for event in self.events:
@@ -727,9 +751,11 @@ class _CdpSession:
                 return event
         while _time.monotonic() <= deadline:
             try:
-                message = _json.loads(self._ws.recv_text(deadline=deadline))
-            except CdpError:
-                return None
+                message = self._receive_message(deadline=deadline)
+            except CdpError as exc:
+                if BLOCKED_TIMEOUT in str(exc):
+                    return None
+                raise
             self._dispatch(message)
             if message.get("method") == method:
                 return message
@@ -767,7 +793,6 @@ class _CdpSession:
         ``Page.lifecycleEvent(name=load)`` is accepted. Matching events that
         arrive before the command response remain available in ``events``.
         """
-        import json as _json
         import time as _time
 
         self.drain_events()
@@ -797,7 +822,7 @@ class _CdpSession:
                 raise CdpError(
                     f"{BLOCKED_TIMEOUT}: timed out awaiting loader-scoped navigation load"
                 )
-            message = _json.loads(self._ws.recv_text(deadline=deadline))
+            message = self._receive_message(deadline=deadline)
             self._dispatch(message)
             if is_matching_load(message):
                 return loader_id
@@ -813,7 +838,6 @@ class _CdpSession:
         keeps it responsive and tolerates an idle socket (no events during
         settle); the original timeout is restored before returning.
         """
-        import json as _json
         import time as _time
 
         cap = min(until, deadline)
@@ -825,12 +849,14 @@ class _CdpSession:
                     return
                 self._ws.set_timeout(min(0.2, remaining))
                 try:
-                    text = self._ws.recv_text(deadline=cap)
-                except CdpError:
-                    return
+                    message = self._receive_message(deadline=cap)
+                except CdpError as exc:
+                    if BLOCKED_TIMEOUT in str(exc):
+                        return
+                    raise
                 except OSError:
                     continue  # idle read timeout: no message this slice, keep pumping
-                self._dispatch(_json.loads(text))
+                self._dispatch(message)
         finally:
             self._ws.set_timeout(previous)
 
@@ -969,10 +995,17 @@ def _resolve_paused_request(
 
     from . import security
 
-    url = params.get("request", {}).get("url", "")
-    parsed = urlsplit(url)
+    request = params.get("request")
+    if not isinstance(request, dict) or not isinstance(request.get("url"), str):
+        raise _FetchBlocked(BLOCKED_INPUT, "paused request has no valid URL")
+    url = request["url"]
+    try:
+        parsed = urlsplit(url)
+        parsed.port  # force deferred authority/port validation
+    except ValueError as exc:
+        raise _FetchBlocked(BLOCKED_INPUT, f"invalid request URL: {exc}") from exc
     scheme = parsed.scheme.lower()
-    host = parsed.hostname or ""
+    host = _canonical_hostname(parsed.hostname or "")
     if same_origin_only:
         try:
             request_origin = _canonical_origin(url)
@@ -1001,15 +1034,21 @@ def _resolve_paused_request(
         raise _FetchBlocked(BLOCKED_SCHEME, f"scheme {scheme or '(none)'!r} blocked: {url!r}")
     if not host:
         raise _FetchBlocked(BLOCKED_INPUT, f"request has no host: {url!r}")
+    if host in security.METADATA_HOSTS:
+        raise _FetchBlocked(BLOCKED_METADATA_ENDPOINT, f"metadata host {host!r}")
     try:
         resolved = security.resolve_host(host)
     except security.TargetBlocked as exc:
         raise _FetchBlocked(exc.reason, exc.detail) from exc
+    if not resolved:
+        raise _FetchBlocked(BLOCKED_INPUT, f"no addresses for host {host!r}")
     for literal in resolved:
         try:
             security.revalidate_resolved_address(literal.strip("[]"), allow_private=allow_private)
         except security.TargetBlocked as exc:
             raise _FetchBlocked(exc.reason, exc.detail) from exc
+        except ValueError as exc:
+            raise _FetchBlocked(BLOCKED_INPUT, f"invalid resolved address for {host!r}") from exc
 
 
 _DOM_EXTENT_EXPRESSION = f"""(() => {{
@@ -1343,7 +1382,13 @@ def _run_guarded_cdp(request, operation, *, operation_name: str) -> dict:
     height = request.height
     scale = request.device_scale
     if (
-        type(width) is not int
+        not isinstance(request.browser_path, str)
+        or not request.browser_path
+        or not isinstance(request.url, str)
+        or not request.url
+        or not isinstance(request.out_path, str)
+        or not request.out_path
+        or type(width) is not int
         or type(height) is not int
         or not isinstance(scale, (int, float))
         or isinstance(scale, bool)
@@ -1359,6 +1404,16 @@ def _run_guarded_cdp(request, operation, *, operation_name: str) -> dict:
             "status": BLOCKED_INPUT,
             "reason": "initial viewport exceeds the shared dimension or pixel cap",
         }
+    if (
+        type(request.wait_ms) is not int
+        or request.wait_ms < 0
+        or type(request.timeout_ms) is not int
+        or request.timeout_ms <= 0
+    ):
+        return {
+            "status": BLOCKED_INPUT,
+            "reason": "wait must be a non-negative integer and timeout must be a positive integer",
+        }
     deadline = time.monotonic() + max(1.0, request.timeout_ms / 1000.0)
     profile_dir = Path(tempfile.mkdtemp(prefix="url2png_"))
     spec = CdpLaunchSpec(
@@ -1373,14 +1428,16 @@ def _run_guarded_cdp(request, operation, *, operation_name: str) -> dict:
     argv = build_cdp_launch_argv(spec)
     os_name = os.name
     strategy = procctl.select_kill_strategy(os_name)
-    proc = subprocess.Popen(  # noqa: S603 - argv built from validated inputs
-        argv,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        **procctl.popen_kwargs(os_name),
-    )
+    proc = None
     ws: _WebSocket | None = None
+    staged_output: str | None = None
     try:
+        proc = subprocess.Popen(  # noqa: S603 - argv built from validated inputs
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **procctl.popen_kwargs(os_name),
+        )
         if time.monotonic() > deadline:
             return {"status": BLOCKED_TIMEOUT, "reason": "timeout before launch settled"}
         port = _read_devtools_port(profile_dir, deadline=deadline)
@@ -1480,7 +1537,20 @@ def _run_guarded_cdp(request, operation, *, operation_name: str) -> dict:
             return ""
 
         initial_url = observed_navigation_url()
-        outcome = operation(session, request, deadline, consent_removed)
+        destination = Path(request.out_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        stage_fd, staged_output = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            suffix=".stage",
+            dir=str(destination.parent),
+        )
+        os.close(stage_fd)
+        from dataclasses import replace as _replace
+
+        staged_request = _replace(request, out_path=staged_output)
+        outcome = operation(session, staged_request, deadline, consent_removed)
+        if not isinstance(outcome, dict):
+            raise CdpError(f"cdp {operation_name} returned no result object")
         # Printing can run page scripts (including ``beforeprint`` handlers),
         # while a capture may race a late navigation.  Attest the URL only
         # after the artifact operation so callers can enforce their source
@@ -1495,6 +1565,9 @@ def _run_guarded_cdp(request, operation, *, operation_name: str) -> dict:
         outcome["origin_policy"] = (
             ORIGIN_POLICY_SCHEME_HOST_PORT if request.same_origin_only else "none"
         )
+        outcome["out_path"] = request.out_path
+        os.replace(staged_output, destination)
+        staged_output = None
         return outcome
     except _FetchBlocked as exc:
         # An SSRF violation intercepted by the Fetch loop: the request was failed
@@ -1519,7 +1592,13 @@ def _run_guarded_cdp(request, operation, *, operation_name: str) -> dict:
     finally:
         if ws is not None:
             ws.close()
-        strategy.kill(proc)
+        if proc is not None:
+            strategy.kill(proc)
+        if staged_output is not None:
+            try:
+                os.unlink(staged_output)
+            except OSError:
+                pass
         procctl.cleanup_profile_dir(profile_dir)
 
 
@@ -1532,7 +1611,7 @@ def run_cdp_print_pdf(request: CdpPrintPdfRequest) -> dict:
     """Print a PDF through guarded CDP navigation and shared cleanup."""
     if request.media not in {"print", "screen"}:
         return {"status": BLOCKED_INPUT, "reason": "media must be 'print' or 'screen'"}
-    if request.max_bytes <= 0 or request.max_bytes > MAX_PDF_BYTES:
+    if type(request.max_bytes) is not int or request.max_bytes <= 0 or request.max_bytes > MAX_PDF_BYTES:
         return {
             "status": BLOCKED_INPUT,
             "reason": f"PDF byte limit must be in 1..{MAX_PDF_BYTES}",
