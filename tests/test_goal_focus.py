@@ -927,6 +927,27 @@ class StateTransactionSecurityTests(unittest.TestCase):
 
 
 class GoalFocusContractsTests(_AttestedGoalFocusTestCase):
+    @unittest.skipUnless(os.name == "posix", "dangling symlink fixture requires POSIX")
+    def test_dangling_authority_leaf_never_disables_goal_focus(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / gf.CURRENT_PLAN_FILE).symlink_to(root / "missing-plan.json")
+
+            self.assertTrue(rt.goal_focus_state_present(root))
+            with self.assertRaises((OSError, ValueError)):
+                gf.goal_focus_mode(root)
+            validation = gf.validate_goal_focus(root)
+            self.assertEqual(validation["status"], "error", validation)
+
+    @unittest.skipUnless(os.name == "posix", "dangling symlink fixture requires POSIX")
+    def test_dangling_compute_policy_is_not_treated_as_no_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "compute_policy.json").symlink_to(root / "missing-policy.json")
+
+            with self.assertRaises((OSError, ValueError)):
+                gf._file_compute_allowlist(root)
+
     def test_authority_revisions_require_exact_integer_types(self) -> None:
         with self.assertRaises(ValueError):
             gf.default_current_plan(goal_revision="1")
@@ -1448,6 +1469,44 @@ class GoalFocusEnforcementModeTests(_AttestedGoalFocusTestCase):
 
 
 class GoalFocusSelectionTests(_AttestedGoalFocusTestCase):
+    def test_direction_commit_refuses_an_unreadable_iteration_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            registry = _install_approaches(
+                root,
+                {
+                    "A1": {
+                        "campaign_id": "C1",
+                        "status": "eligible",
+                        "objective": "Discharge the terminal obligation",
+                        "target_obligation_ids": ["GOAL-SC-1"],
+                        "next_action": "Prove the bounded bridge lemma.",
+                        "scope_lock": "full_goal",
+                        "estimates": {
+                            "goal_resolution": "high",
+                            "information_gain": "medium",
+                            "execution_cost": "low",
+                            "verification_cost": "low",
+                        },
+                    }
+                },
+            )
+            selection = gf.select_direction(registry)
+            review = _strategy_review(root, selection)
+            plan_path = root / gf.CURRENT_PLAN_FILE
+            before = plan_path.read_bytes()
+            (root / gf.ITERATION_LEDGER_FILE).write_text(
+                "{torn-json\n", encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ValueError, "invalid JSON"):
+                gf.commit_selected_direction(
+                    root, selection, review, "test_corrupt_history"
+                )
+
+            self.assertEqual(plan_path.read_bytes(), before)
+
     def test_estimates_reject_malformed_nonfinite_or_inverted_values(self) -> None:
         malformed = (
             {"goal_resolution": "certainly-high"},
@@ -3459,6 +3518,91 @@ class GoalFocusCandidateTests(_AttestedGoalFocusTestCase):
                 if line.strip()
             ]
             self.assertEqual([row["iteration"] for row in live], [3])
+
+    def test_rotated_rejection_keeps_its_negative_space_link_on_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            plan = _activate(root)
+            first = _stage_enforced_candidate(
+                root,
+                plan,
+                {"output": "first banked result", "evidence_ids": ["first.json"]},
+            )
+            gf.finalize_candidate(
+                root, accepted=True, review=_bound_review(first)
+            )
+            rejected = _stage_enforced_candidate(
+                root,
+                plan,
+                {
+                    "output": "the approach is refuted",
+                    "block_approach": True,
+                    "failure_summary": "bounded counterexample",
+                    "evidence_ids": ["counterexample.json"],
+                },
+            )
+
+            with mock.patch.object(gf, "ITERATION_LEDGER_ROTATE_BYTES", 1):
+                result = gf.finalize_candidate(
+                    root,
+                    accepted=False,
+                    review=_bound_review(
+                        rejected, status="failed", reason="bounded counterexample"
+                    ),
+                )
+
+            link = result["record"].get("negative_space_entry_id")
+            self.assertTrue(link, result)
+            self.assertEqual(
+                gf._read_iteration_rows(root)[-1].get("negative_space_entry_id"),
+                link,
+            )
+            negative_rows = gf.ns.load_negative_space(root)
+            self.assertEqual([row.get("entry_id") for row in negative_rows], [link])
+
+    def test_invalid_blocked_route_memory_cannot_be_silently_dropped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _initialize(root)
+            plan = _activate(root)
+            rejected = _stage_enforced_candidate(
+                root,
+                plan,
+                {
+                    "output": "the approach is refuted",
+                    "block_approach": True,
+                    "negative_space": {
+                        "kind": "invented-kind",
+                        "mechanism_text": "bounded counterexample",
+                        "failure_summary": "the route cannot prove the goal",
+                        "reopen_condition": "a genuinely different mechanism",
+                    },
+                    "evidence_ids": ["counterexample.json"],
+                },
+            )
+            before = _snapshot_files(
+                root,
+                ["budget.json", "iterations.jsonl", gf.PENDING_CANDIDATE_FILE],
+            )
+
+            with self.assertRaisesRegex(ValueError, "invalid negative_space kind"):
+                gf.finalize_candidate(
+                    root,
+                    accepted=False,
+                    review=_bound_review(
+                        rejected, status="failed", reason="bounded counterexample"
+                    ),
+                )
+
+            self.assertEqual(
+                _snapshot_files(
+                    root,
+                    ["budget.json", "iterations.jsonl", gf.PENDING_CANDIDATE_FILE],
+                ),
+                before,
+            )
+            self.assertFalse(gf.ns.negative_space_path(root).exists())
 
     def test_host_dispatch_is_pinned_and_consumed_atomically_by_stage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
