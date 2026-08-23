@@ -147,12 +147,18 @@ def compile_latex(
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
             )
             log2 = result2.stdout + result2.stderr
-            with open(log_path, "a", encoding="utf-8") as f:
-                f.write("\n--- AUTO-FIX RETRY ---\n" + log2)
-            if os.path.exists(pdf_path):
-                return pdf_path, None, [f"Auto-fix applied: {fixed}"]
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write("\n--- AUTO-FIX RETRY ---\n" + log2)
+            except OSError:
+                # The log records the retry; it does not decide it. A full disk
+                # here used to discard a pdf the retry had actually produced and
+                # report the original compile error instead.
+                pass
         except Exception:
             pass
+        if os.path.exists(pdf_path):
+            return pdf_path, None, [f"Auto-fix applied: {fixed}"]
 
     return None, error, []
 
