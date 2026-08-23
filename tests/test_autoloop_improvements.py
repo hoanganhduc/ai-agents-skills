@@ -943,6 +943,59 @@ class RetractIterationTests(unittest.TestCase):
             self.assertEqual([entry["action"] for entry in audit], ["retract", "rollback"])
             self.assertIn("forced test failure", audit[1]["error"])
 
+    def test_a_rollback_that_could_not_restore_says_so(self) -> None:
+        """A restore failure must not be recorded as a clean rollback.
+
+        The rollback above is byte-exact because every write_bytes succeeded.
+        When one cannot -- a full disk, a read-only mount, a file another
+        process holds -- the loop directory is left half-retracted, and the
+        audit line is the only record the next command and the operator have.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            loop, reg = base / "loop", base / "reg"
+            _init(loop)
+            self.assertEqual(_append(loop, "continue").returncode, 0)
+            args = argparse.Namespace(
+                dir=str(loop), reason="forced failure", registry_dir=str(reg)
+            )
+            real_write_bytes = Path.write_bytes
+
+            def fail_on_budget(self: Path, data: bytes) -> int:
+                if self.name == "budget.json":
+                    raise OSError(28, "No space left on device")
+                return real_write_bytes(self, data)
+
+            clean = {
+                key: value
+                for key, value in os.environ.items()
+                if key != "AAS_AUTOLOOP_HOST_MEDIATED_SUBMISSION"
+            }
+            with mock.patch.dict(os.environ, clean, clear=True), mock.patch.object(
+                rt,
+                "validate_loop_dir",
+                return_value={"status": "failed", "errors": ["forced test failure"]},
+            ), mock.patch.object(Path, "write_bytes", fail_on_budget):
+                with self.assertRaisesRegex(
+                    ValueError, "loop did not validate after retraction"
+                ):
+                    rt.retract_iteration_command(args)
+            audit = [
+                json.loads(line)
+                for line in (loop / "retractions.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(
+                [entry["action"] for entry in audit],
+                ["retract", "rollback-incomplete"],
+            )
+            self.assertTrue(
+                any("budget.json" in item for item in audit[1]["restore_errors"]),
+                audit[1],
+            )
+
 
 class IntegrityUnitTests(unittest.TestCase):
     def test_ledger_watch_accepts_pure_appends(self) -> None:
