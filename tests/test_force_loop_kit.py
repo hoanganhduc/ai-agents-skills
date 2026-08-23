@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1919,6 +1920,110 @@ class OperatorPinPlumbingTests(unittest.TestCase):
             body = policy.read_text(encoding="utf-8")
             self.assertIn("AAS_FORCE_LOOP_COMPUTE_LANES=kaggle,modal", body)
             self.assertIn("AAS_AUTOLOOP_GOAL_PRIORITY=on", body)
+
+class PinnedFailoverConfigIsPrivateAtCreationTests(unittest.TestCase):
+    """The pinned failover config is private from the instant it exists.
+
+    ``_write_pinned_failover`` copies every key of ``failover.json`` --
+    ``research_title`` among them, which names the unpublished topic the loop is
+    driving -- and then narrows the result to 0600, so the destination is
+    deliberately owner-private. The temporary it renames into place was created
+    by ``Path.write_text``, which honours the umask, so under the ordinary 022
+    the whole payload sat in a group- and world-readable file first and a reader
+    who opened it inside that window kept a descriptor no later chmod revokes.
+
+    Sampling the mode after the call cannot see this -- the narrowing has
+    already run -- which is why the window survived review. The probes below
+    therefore sample at creation, wrapping the two primitives that can create
+    the payload (``Path.write_text`` and ``tempfile.mkstemp``) plus the rename
+    that publishes it, so the assertion holds whichever one the writer uses.
+    """
+
+    @staticmethod
+    def _failover(loop: Path) -> None:
+        loop.mkdir(parents=True, exist_ok=True)
+        (loop / "failover.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "failover.v1",
+                    "research_title": "unpublished topic",
+                    "primary_order": ["claude", "codex"],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def _pin(self, loop: Path):
+        """Return (destination, [(probe, mode) sampled the moment it exists])."""
+        cli = _load("force_loop_cli_pin_mode", FORCE_LOOP / "force_loop_cli.py")
+        seen: list[tuple[str, str]] = []
+
+        def mode_of(target) -> str:
+            return oct(stat.S_IMODE(os.stat(target).st_mode))
+
+        real_write_text = Path.write_text
+        real_mkstemp = tempfile.mkstemp
+        real_replace = os.replace
+
+        def spy_write_text(self, *args, **kwargs):
+            result = real_write_text(self, *args, **kwargs)
+            seen.append(("write_text", mode_of(self)))
+            return result
+
+        def spy_mkstemp(*args, **kwargs):
+            descriptor, name = real_mkstemp(*args, **kwargs)
+            seen.append(("mkstemp", oct(stat.S_IMODE(os.fstat(descriptor).st_mode))))
+            return descriptor, name
+
+        def spy_replace(src, dst, **kwargs):
+            seen.append(("replace", mode_of(src)))
+            return real_replace(src, dst, **kwargs)
+
+        previous = os.umask(0o022)
+        try:
+            # The module attributes are the real ``os``/``tempfile`` modules, so
+            # patching them here covers the writer whichever primitive it calls.
+            with mock.patch.object(Path, "write_text", spy_write_text), \
+                 mock.patch.object(tempfile, "mkstemp", spy_mkstemp), \
+                 mock.patch.object(os, "replace", spy_replace):
+                destination = cli._write_pinned_failover(loop, "openai")
+        finally:
+            os.umask(previous)
+        return destination, seen
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes")
+    def test_the_payload_is_never_group_or_world_readable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            self._failover(loop)
+            _destination, seen = self._pin(loop)
+        exposed = [probe for probe, mode in seen if int(mode, 8) & 0o077]
+        self.assertEqual(exposed, [], f"payload readable by others: {seen}")
+
+    @unittest.skipUnless(os.name == "posix", "POSIX file modes")
+    def test_the_destination_is_owner_private(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            self._failover(loop)
+            destination, _seen = self._pin(loop)
+            self.assertEqual(
+                stat.S_IMODE(destination.stat().st_mode),
+                0o600,
+                "the pinned config must end owner-private",
+            )
+
+    def test_the_probes_reach_the_real_writer(self) -> None:
+        """Anchor: probes that never fired would pass the mode test vacuously."""
+        with tempfile.TemporaryDirectory() as tmp:
+            loop = Path(tmp) / "loop"
+            self._failover(loop)
+            destination, seen = self._pin(loop)
+            payload = json.loads(destination.read_text(encoding="utf-8"))
+            self.assertEqual(payload["primary_order"], ["openai"])
+            self.assertEqual(payload["research_title"], "unpublished topic")
+            self.assertIn("replace", [probe for probe, _mode in seen])
+            self.assertGreaterEqual(len(seen), 2, f"probes did not fire: {seen}")
 
 
 if __name__ == "__main__":

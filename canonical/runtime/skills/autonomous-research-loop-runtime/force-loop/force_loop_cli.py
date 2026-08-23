@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import types
 from pathlib import Path
 from typing import Any
@@ -789,10 +790,26 @@ def _write_pinned_failover(loop: Path, provider: str) -> Path:
     data["max_quota_waits_per_primary"] = int(data.get("max_quota_waits_per_primary", 3) or 3)
     destination = loop / "driver" / "failover.pinned.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    os.chmod(temporary, 0o600)
-    os.replace(temporary, destination)
+    # Create the file private instead of narrowing it afterwards. write_text
+    # honours the umask, so the pinned config -- a verbatim copy of
+    # failover.json, research_title included -- sat in a group- and
+    # world-readable temporary until the chmod landed, and a reader who opened
+    # it inside that window keeps a descriptor no later chmod can revoke.
+    # mkstemp creates at 0600 and os.replace carries that mode onto the
+    # destination, which is the mode the discarded chmod was asking for.
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=destination.name + ".", dir=str(destination.parent)
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+        os.replace(temporary, destination)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
     return destination
 
 
