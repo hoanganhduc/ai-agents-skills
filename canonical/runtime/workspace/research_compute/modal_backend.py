@@ -84,9 +84,7 @@ def submit_remote_job(*, job: dict[str, Any], plan: dict[str, Any], config: Any)
 
     import modal
 
-    env = os.environ.copy()
     if config.modal_profile:
-        env["MODAL_PROFILE"] = config.modal_profile
         os.environ["MODAL_PROFILE"] = config.modal_profile
     os.environ["MODAL_ENVIRONMENT"] = config.modal_environment
 
