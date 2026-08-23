@@ -658,5 +658,65 @@ def run_cli_json(argv: list[str]) -> dict[str, object]:
     return payload
 
 
+class OpenClawCreatedParentsArePrivateAtCreationTests(unittest.TestCase):
+    """A parent directory the target apply creates is 0700 from the start.
+
+    apply_one_action records which parents are missing, creates the whole chain
+    with one ``path.parent.mkdir(parents=True)``, and only then walks the
+    recorded list narrowing each to 0700. mkdir honours the umask, so under the
+    ordinary 022 every one of those directories existed group- and
+    world-readable first, and a reader who entered one inside that window keeps
+    a descriptor no later chmod can revoke. The existing suite cannot see this:
+    ``openclaw_root`` forces umask 0o077, under which mkdir already yields
+    0700, so the window closes before any assertion can reach it.
+    """
+
+    def test_a_created_parent_is_never_group_or_world_readable(self) -> None:
+        with openclaw_root() as root:
+            previous = os.umask(0o022)
+            try:
+                seen: list[tuple[str, str]] = []
+                real_mkdir = Path.mkdir
+
+                def spy(self, mode=0o777, parents=False, exist_ok=False):
+                    real_mkdir(self, mode=mode, parents=parents, exist_ok=exist_ok)
+                    skills = root / ".openclaw" / "skills"
+                    for made in sorted(skills.rglob("*")):
+                        if made.is_dir():
+                            seen.append(
+                                (
+                                    str(made.relative_to(skills)),
+                                    oct(stat.S_IMODE(made.stat().st_mode)),
+                                )
+                            )
+
+                content = skill_content("model-router")
+                manifest = build_manifest(
+                    root, "model-router", content, action_class="canary-skill-file"
+                )
+                approved = approve_target_manifest(
+                    manifest, reviewer="unit-test", reviewed_at=CAPTURED_AT
+                )
+                with patch.object(Path, "mkdir", spy):
+                    apply_target_manifest(
+                        approved,
+                        root,
+                        dry_run=False,
+                        confirm_phrase=OPENCLAW_REAL_WRITE_CONFIRMATION_PHRASE,
+                        post_apply_check=False,
+                    )
+            finally:
+                os.umask(previous)
+
+            # Anchor: an assertion over an empty list would pass vacuously.
+            self.assertIn("model-router", [name for name, _ in seen], seen)
+
+            exposed = [name for name, mode in seen if int(mode, 8) & 0o077]
+            self.assertEqual(exposed, [], f"created parents seen at: {seen}")
+
+            created = root / ".openclaw" / "skills" / "model-router"
+            self.assertEqual(stat.S_IMODE(created.stat().st_mode), 0o700)
+
+
 if __name__ == "__main__":
     unittest.main()

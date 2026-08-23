@@ -421,8 +421,18 @@ def apply_one_action(
     content = action["content"]
     if sha256_text(content) != action["expected_hash"]:
         raise ValueError("OpenClaw target action content hash changed before write")
+    if os.name == "posix":
+        # 0o700 at creation, not after: the mkdir below honours the umask, so
+        # under the ordinary 022 every directory in this chain existed
+        # group- and world-readable until the chmod loop reached it, and a
+        # reader who entered one inside that window keeps a descriptor no
+        # later chmod can revoke. missing_parent_dirs walks upward, so create
+        # in reverse to make the outermost directory first.
+        for relative_parent in reversed(created_parents):
+            (openclaw_home(root) / relative_parent).mkdir(mode=0o700, exist_ok=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
+        # Still narrows a directory an earlier run left open.
         for relative_parent in created_parents:
             (openclaw_home(root) / relative_parent).chmod(0o700)
     write_text_atomic(path, content)
