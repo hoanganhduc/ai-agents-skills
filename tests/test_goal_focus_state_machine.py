@@ -888,28 +888,100 @@ class WindowsSharingRetryTests(unittest.TestCase):
                 with self.assertRaises(PermissionError):
                     st._atomic_write_bytes(Path(tmp) / "payload.bin", b"payload")
 
-    def test_the_windows_branch_still_refuses_a_denied_lock_open_at_once(self) -> None:
-        """Tolerating a sharing violation must not soften the lock's own answer.
-
-        The lock is where a writer is granted or refused, so a refusal there is
-        a decision rather than a race, and the existing contract is one attempt.
-        This drives the Windows branch on any host, because otherwise only a
-        Windows run can tell that the branch started retrying.
-        """
+    def test_a_transient_windows_denial_while_opening_the_lock_is_retried(self) -> None:
+        """Opening the lock has the same ambiguous denial as later file steps."""
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "loop"
             attempts: list[str] = []
             real_open = os.open
 
-            def refuse(path: object, *args: object, **kwargs: object) -> int:
+            def deny_once(path: object, *args: object, **kwargs: object) -> int:
+                if str(path).endswith(st.LOCK_FILENAME):
+                    attempts.append(str(path))
+                    if len(attempts) == 1:
+                        raise PermissionError("transient loop lock sharing denial")
+                return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+            with mock.patch.object(st, "_is_windows", lambda: True), mock.patch.object(
+                st.os, "open", deny_once
+            ):
+                with st.LoopLock(root, timeout_seconds=5):
+                    pass
+            self.assertEqual(len(attempts), 2)
+
+    def test_a_transient_windows_raw_bootstrap_denial_closes_and_retries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            writes: list[int] = []
+            closes: list[int] = []
+            real_write = os.write
+            real_close = os.close
+
+            def deny_write_once(file_fd: int, payload: bytes) -> int:
+                writes.append(file_fd)
+                if len(writes) == 1:
+                    raise PermissionError("transient raw bootstrap sharing denial")
+                return real_write(file_fd, payload)
+
+            def close_then_complain_once(file_fd: int) -> None:
+                closes.append(file_fd)
+                real_close(file_fd)
+                if len(closes) == 1:
+                    raise OSError("cleanup error must not mask bootstrap denial")
+
+            with mock.patch.object(st, "_is_windows", lambda: True), mock.patch.object(
+                st.os, "write", side_effect=deny_write_once
+            ), mock.patch.object(
+                st.os, "close", side_effect=close_then_complain_once
+            ):
+                with st.LoopLock(root, timeout_seconds=5):
+                    pass
+            self.assertEqual(len(writes), 2)
+            self.assertEqual(len(closes), 1)
+            self.assertEqual(closes[0], writes[0])
+
+    def test_a_persistent_windows_lock_open_denial_stops_at_the_deadline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            attempts: list[str] = []
+            clock = [0.0]
+            real_open = os.open
+
+            def deny(path: object, *args: object, **kwargs: object) -> int:
+                if str(path).endswith(st.LOCK_FILENAME):
+                    attempts.append(str(path))
+                    raise PermissionError("persistent loop lock denial")
+                return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+
+            def advance(seconds: float) -> None:
+                clock[0] += seconds
+
+            with mock.patch.object(st, "_is_windows", lambda: True), mock.patch.object(
+                st.os, "open", deny
+            ), mock.patch.object(
+                st.time, "monotonic", side_effect=lambda: clock[0]
+            ), mock.patch.object(st.time, "sleep", side_effect=advance):
+                with self.assertRaises(st.LockTimeout) as raised:
+                    with st.LoopLock(root, timeout_seconds=0.05):
+                        pass
+            self.assertIsInstance(raised.exception.__cause__, PermissionError)
+            self.assertEqual(len(attempts), 3)
+
+    def test_posix_lock_open_denial_is_not_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "loop"
+            attempts: list[str] = []
+            real_open = os.open
+
+            def deny(path: object, *args: object, **kwargs: object) -> int:
                 if str(path).endswith(st.LOCK_FILENAME):
                     attempts.append(str(path))
                     raise PermissionError("loop lock open refused")
                 return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
 
-            with mock.patch.object(st, "_is_windows", lambda: True), mock.patch.object(
-                st.os, "open", refuse
+            with mock.patch.object(st, "_is_windows", lambda: False), mock.patch.object(
+                st.os, "open", deny
             ):
                 with self.assertRaises(PermissionError):
                     with st.LoopLock(root, timeout_seconds=5):
