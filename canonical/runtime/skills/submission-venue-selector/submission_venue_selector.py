@@ -365,6 +365,28 @@ UNIMPLEMENTED_CAPABILITY_FLAGS = (
         "--allow-unpaywall-email",
         "unpaywall is not an implemented live provider in this runtime",
     ),
+    (
+        "cache_dir",
+        "--cache-dir",
+        "this runtime stores no provider responses; the cache_key in a source "
+        "record is a recorded digest, not a cache entry",
+    ),
+    (
+        "refresh_cache",
+        "--refresh-cache",
+        "there is no provider cache to refresh in this runtime",
+    ),
+    (
+        "no_cache",
+        "--no-cache",
+        "there is no provider cache to bypass in this runtime",
+    ),
+    (
+        "force",
+        "--force",
+        "the delivery gate is evidence-based and not forceable; validate "
+        "reports not-ready until comparator evidence exists",
+    ),
 )
 
 
@@ -377,6 +399,14 @@ def ensure_unimplemented_gates_refused(args: argparse.Namespace) -> None:
     three, and nothing read the flags, so passing one parsed cleanly and granted
     nothing -- leaving a caller unable to tell "enabled, and there was nothing to
     do" apart from "never enabled at all". Refusing names the boundary instead.
+
+    The cache flags reached the same dead end for the same reason. This runtime
+    keeps no provider cache at all -- `purge` deletes a `.cache` directory
+    nothing creates -- so `--cache-dir`, `--refresh-cache` and `--no-cache`
+    controlled nothing, and the last two are contradictory yet both succeeded.
+    `--force` is worse than inert: it reads as an override of the evidence gate
+    that `validate` enforces, and a caller who passed it had no way to learn it
+    was discarded.
     """
 
     for dest, flag, routing in UNIMPLEMENTED_CAPABILITY_FLAGS:
