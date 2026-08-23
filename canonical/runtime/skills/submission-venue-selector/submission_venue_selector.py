@@ -84,13 +84,25 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _open_private(path: Path):
+    """Open for writing with the file created 0600 rather than narrowed after.
+
+    ``write_text`` and ``Path.open`` honour the umask, so under the usual 022
+    every state file here -- an unpublished draft among them -- existed at 0644
+    before the chmod ran. O_CREAT with 0o600 has no group or other bits for the
+    umask to clear, so the file is private from the instant it exists.
+    """
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    return os.fdopen(descriptor, "w", encoding="utf-8")
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    with _open_private(path) as handle:
+        handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    # Still narrows a file an earlier version left readable, and no longer
+    # silently: a workspace file that cannot be made private is not written.
+    path.chmod(0o600)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -107,13 +119,10 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
+    with _open_private(path) as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
-    try:
-        path.chmod(0o600)
-    except OSError:
-        pass
+    path.chmod(0o600)
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -178,11 +187,12 @@ def ensure_workspace(path: Path, unsafe_ok: bool = False) -> None:
                     f"workspace {path} is inside managed source or agent skill directory; "
                     "choose another path or pass --unsafe-workspace-ok"
                 )
-    path.mkdir(parents=True, exist_ok=True)
-    try:
-        path.chmod(0o700)
-    except OSError:
-        pass
+    # 0o700 at creation, not after: mkdir honours the umask, so the workspace
+    # holding the draft used to exist at 0755 first, and every 0644 file later
+    # written into it was reachable through that window. The chmod stays for a
+    # workspace an earlier run left open, and no longer swallows its failure.
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.chmod(0o700)
 
 
 def update_status(run_dir: Path, stage: str, stage_status: str, **extra: Any) -> dict[str, Any]:
