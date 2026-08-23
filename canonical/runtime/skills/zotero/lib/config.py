@@ -234,8 +234,20 @@ def load_config(require=None, config_path=None):
         }))
         sys.exit(1)
 
-    with open(config_path, encoding="utf-8") as f:
-        config = json.load(f)
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            config = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        # A config that is present but unreadable is the same class of failure as
+        # the missing one handled above, and every zot command arrives through
+        # here. A traceback leaves a caller reading stdout with nothing to parse.
+        print(json.dumps({
+            "status": "error",
+            "action": "config",
+            "message": f"Config file could not be read: {config_path}: {exc}",
+            "code": "CONFIG_UNREADABLE",
+        }))
+        sys.exit(1)
 
     # This legacy field used to appear in the non-secret config example. Never
     # use a credential from a normally 0644 config file; the uppercase secret

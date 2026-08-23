@@ -56,15 +56,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default=None)
     args = parser.parse_args()
-    payload = load_payload(args.input)
-    claim = payload.get("claim", "")
-    expected = payload.get("expected", {})
-
     try:
+        # Reading the file belongs inside this guard: a hand-written input is as
+        # likely to be malformed JSON as it is to describe a graph wrongly, and
+        # the workflow tells the caller to read the result from stdout, which a
+        # traceback leaves empty.
+        payload = load_payload(args.input)
         graph = build_graph(payload)
     except Exception as e:
         print(json.dumps({"ok": False, "error": f"invalid graph input: {e}"}, indent=2))
         return
+    claim = payload.get("claim", "")
+    expected = payload.get("expected", {})
 
     undirected = graph.to_undirected() if getattr(graph, "is_directed", lambda: False)() else graph
     planarity = None

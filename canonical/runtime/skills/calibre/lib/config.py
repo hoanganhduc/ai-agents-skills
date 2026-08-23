@@ -150,8 +150,18 @@ def load_config(require=None):
     # Load config.json from skill dir
     cfg_path = os.path.join(SKILL_DIR, "config.json")
     if os.path.exists(cfg_path):
-        with open(cfg_path, encoding="utf-8") as f:
-            config.update(json.load(f))
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                config.update(json.load(f))
+        except (json.JSONDecodeError, OSError) as exc:
+            # Every cal command reports through the envelope the require branch
+            # below uses; a config file that exists but cannot be parsed reached
+            # the caller as a traceback instead.
+            print(json.dumps({
+                "status": "error",
+                "message": f"Config file could not be read: {cfg_path}: {exc}",
+            }))
+            sys.exit(1)
 
     # Load only the dedicated narrow Calibre projection. Broad runtime secret
     # files are intentionally not authorities for this skill.
