@@ -110,13 +110,14 @@ def compile_latex(
     ):
         return None, "engine not found", []
 
-    if not shutil.which("latexmk"):
+    latexmk = shutil.which("latexmk")
+    if not latexmk:
         return None, "latexmk not found", []
 
     log_path = os.path.join(annotated_dir, "compile.log")
     try:
         result = subprocess.run(
-            ["latexmk", "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
+            [latexmk, "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
             cwd=annotated_dir,
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
         )
@@ -142,7 +143,7 @@ def compile_latex(
     if fixed:
         try:
             result2 = subprocess.run(
-                ["latexmk", "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
+                [latexmk, "-pdf", "-interaction=nonstopmode", "-f", root_tex_name],
                 cwd=annotated_dir,
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
             )
