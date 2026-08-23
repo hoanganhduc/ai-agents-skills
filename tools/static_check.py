@@ -28,6 +28,7 @@ def main() -> int:
     errors.extend(check_python_parse(files))
     errors.extend(check_subprocess_text_encoding(files))
     errors.extend(check_duplicate_keyword_spread(files))
+    errors.extend(check_unclosed_file_handles(files))
     errors.extend(check_shell_syntax(files))
     errors.extend(check_powershell_syntax(files))
     errors.extend(check_windows_path_hazards(files))
@@ -198,6 +199,60 @@ def check_duplicate_keyword_spread(files: list[Path]) -> list[str]:
                     )
     return errors
 
+
+def check_unclosed_file_handles(files: list[Path]) -> list[str]:
+    """``open(p).read()`` leaves the handle for the garbage collector to find.
+
+    CPython usually closes it on the next collection, which is why the pattern
+    survives review: the value is correct and the file is readable again.  It
+    fails where it is least visible.  In a loop over a manuscript's ``\\input``
+    files, or a library's ebooks, the descriptors accumulate faster than the
+    collector runs and the command dies on ``OSError: [Errno 24] Too many open
+    files`` partway through -- a failure with no relation to the file it names.
+    On a write handle the data is worse than late: the buffer flushes whenever
+    the object is finalised, so an interpreter that exits first leaves a
+    truncated file behind.  ``with`` costs one line and is exact.
+
+    A handle bound to a name is a different thing -- a lock or a log kept open
+    on purpose and closed elsewhere -- so only the immediately-discarded form
+    is reported here.
+    """
+
+    errors: list[str] = []
+    for path in files:
+        if path.suffix != ".py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except Exception:
+            continue  # check_python_parse owns reporting unparseable files.
+        managed: set[tuple[int, int]] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.With, ast.AsyncWith)):
+                continue
+            for item in node.items:
+                for inner in ast.walk(item.context_expr):
+                    if isinstance(inner, ast.Call):
+                        managed.add((inner.lineno, inner.col_offset))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            method = node.func
+            if not isinstance(method, ast.Attribute):
+                continue
+            opened = method.value
+            if not isinstance(opened, ast.Call):
+                continue
+            if not isinstance(opened.func, ast.Name) or opened.func.id != "open":
+                continue
+            if (opened.lineno, opened.col_offset) in managed:
+                continue
+            errors.append(
+                f"unclosed-file:{path}:{node.lineno}:"
+                f"open(...).{method.attr}() discards the handle; "
+                "use a with statement"
+            )
+    return errors
 
 def check_shell_syntax(files: list[Path]) -> list[str]:
     bash = shutil.which("bash")
