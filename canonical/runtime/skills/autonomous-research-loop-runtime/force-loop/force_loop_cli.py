@@ -7,6 +7,7 @@ Cross-platform default path for scripted unattended ARL drive.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -178,6 +179,52 @@ SYSTEMD_SAFE_PATH = re.compile(r"/[A-Za-z0-9_./-]+\Z")
 # DRIVE_EXTRA_ARGS crosses into the supervisor as one space-joined string that
 # bash re-splits and expands, so only word-splitting-stable characters pass.
 UNSAFE_DRIVE_EXTRA = re.compile(r"[^A-Za-z0-9_@%+=:,./-]")
+SUPPORTED_PROVIDERS = (
+    "antigravity",
+    "claude",
+    "codex",
+    "copilot",
+    "deepseek",
+    "grok",
+    "kimi",
+    "opencode",
+)
+CONTROLLED_DRIVE_OPTIONS = frozenset(
+    {
+        "--cmd",
+        "--dir",
+        "--formal-policy",
+        "--formal-typecheck",
+        "--no-formal-typecheck",
+        "--panel",
+        "--provider",
+        "--root",
+    }
+)
+
+
+def _nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be non-negative")
+    return parsed
+
+
+def _validate_drive_extra(values: list[str]) -> None:
+    """Refuse extras that can override the force-loop authority binding."""
+
+    rejected = sorted(
+        {
+            value.split("=", 1)[0]
+            for value in values
+            if value.split("=", 1)[0] in CONTROLLED_DRIVE_OPTIONS
+        }
+    )
+    if rejected:
+        raise ValueError(
+            "drive extras cannot override force-loop controls: "
+            + ", ".join(rejected)
+        )
 
 
 def _python() -> str:
@@ -260,8 +307,6 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else loop.parent
     policy_file = _policy_file_from_args(args)
-    loop.mkdir(parents=True, exist_ok=True)
-
     need_init = not (loop / "loop_state.json").is_file()
     if need_init:
         if not (args.goal and args.success_criteria):
@@ -275,6 +320,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
                 )
             )
             return 2
+        loop.mkdir(parents=True, exist_ok=True)
         init_args = [
             "init",
             "--dir",
@@ -775,45 +821,204 @@ def _systemd_client_environment(env: dict[str, str]) -> dict[str, str]:
     }
 
 
-def _write_pinned_failover(loop: Path, provider: str) -> Path:
+def _write_pinned_failover(
+    loop: Path,
+    provider: str,
+    *,
+    publish: bool = True,
+) -> Path:
     """Persist a single-primary failover config so rotation cannot override --provider."""
-    source = loop / "failover.json"
-    try:
-        data = json.loads(source.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise SystemExit(f"failover config is unreadable: {exc}") from exc
-    if not isinstance(data, dict):
-        raise SystemExit("failover config must be a JSON object")
-    data = dict(data)
-    data["primary_order"] = [provider]
-    data.pop("primary_fallback", None)
-    data["max_quota_waits_per_primary"] = int(data.get("max_quota_waits_per_primary", 3) or 3)
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError(f"unsupported force-loop provider: {provider!r}")
+
     destination = loop / "driver" / "failover.pinned.json"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Create the file private instead of narrowing it afterwards. write_text
-    # honours the umask, so the pinned config -- a verbatim copy of
-    # failover.json, research_title included -- sat in a group- and
-    # world-readable temporary until the chmod landed, and a reader who opened
-    # it inside that window keeps a descriptor no later chmod can revoke.
-    # mkstemp creates at 0600 and os.replace carries that mode onto the
-    # destination, which is the mode the discarded chmod was asking for.
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=destination.name + ".", dir=str(destination.parent)
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, indent=2) + "\n")
-        os.replace(temporary, destination)
-    except Exception:
+    if os.name != "posix":  # pragma: no cover - Windows uses direct drive
+        source = loop / "failover.json"
+        if source.is_symlink() or destination.parent.is_symlink():
+            raise ValueError("failover paths must not be symlinked")
         try:
-            os.unlink(temporary)
-        except OSError:
+            data = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(f"failover config is unreadable: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("failover config must be a JSON object")
+        data = _pinned_failover_payload(data, provider)
+        if not publish:
+            return destination
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=destination.name + ".", dir=str(destination.parent)
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, indent=2) + "\n")
+            os.replace(temporary, destination)
+        except Exception:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+            raise
+        return destination
+
+    loop_fd: int | None = None
+    source_fd: int | None = None
+    driver_fd: int | None = None
+    temporary_fd: int | None = None
+    temporary_name = ""
+    try:
+        loop_fd = _open_directory_nofollow(loop)
+        source_fd = os.open(
+            "failover.json",
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=loop_fd,
+        )
+        before = os.fstat(source_fd)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or int(before.st_uid) not in {0, os.geteuid()}
+            or (int(before.st_uid) != 0 and int(before.st_nlink) != 1)
+            or int(before.st_size) > 1_000_000
+        ):
+            raise ValueError("failover config is not an owner-controlled regular file")
+        chunks: list[bytes] = []
+        remaining = 1_000_001
+        while remaining:
+            chunk = os.read(source_fd, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(source_fd)
+        stable = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink")
+        if sum(map(len, chunks)) > 1_000_000 or any(
+            getattr(before, field) != getattr(after, field) for field in stable
+        ):
+            raise ValueError("failover config changed while reading")
+        try:
+            data = json.loads(b"".join(chunks).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"failover config is unreadable: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("failover config must be a JSON object")
+        payload = (
+            json.dumps(_pinned_failover_payload(data, provider), indent=2) + "\n"
+        ).encode("utf-8")
+        if not publish:
+            return destination
+
+        try:
+            os.mkdir("driver", mode=0o700, dir_fd=loop_fd)
+        except FileExistsError:
             pass
-        raise
-    return destination
+        directory_flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        driver_fd = os.open("driver", directory_flags, dir_fd=loop_fd)
+        driver_info = os.fstat(driver_fd)
+        if int(driver_info.st_uid) == int(os.geteuid()):
+            os.fchmod(driver_fd, 0o700)
+            driver_info = os.fstat(driver_fd)
+        if (
+            not stat.S_ISDIR(driver_info.st_mode)
+            or int(driver_info.st_uid) not in {0, os.geteuid()}
+            or stat.S_IMODE(driver_info.st_mode) & 0o022
+        ):
+            raise ValueError("driver directory is not owner-controlled")
+        create_flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        for _attempt in range(10):
+            temporary_name = (
+                f"failover.pinned.json.{random_secrets.token_hex(8)}.tmp"
+            )
+            try:
+                temporary_fd = os.open(
+                    temporary_name,
+                    create_flags,
+                    0o600,
+                    dir_fd=driver_fd,
+                )
+                break
+            except FileExistsError:
+                continue
+        if temporary_fd is None:
+            raise ValueError("could not allocate pinned failover temporary")
+        os.fchmod(temporary_fd, 0o600)
+        view = memoryview(payload)
+        while view:
+            written = os.write(temporary_fd, view)
+            if written <= 0:
+                raise OSError("short pinned failover write")
+            view = view[written:]
+        os.fsync(temporary_fd)
+        temporary_info = os.fstat(temporary_fd)
+        if (
+            not stat.S_ISREG(temporary_info.st_mode)
+            or int(temporary_info.st_uid) != os.geteuid()
+            or int(temporary_info.st_nlink) != 1
+            or stat.S_IMODE(temporary_info.st_mode) & 0o077
+            or int(temporary_info.st_size) != len(payload)
+        ):
+            raise ValueError("pinned failover temporary failed private-file checks")
+        os.close(temporary_fd)
+        temporary_fd = None
+        os.replace(
+            temporary_name,
+            destination.name,
+            src_dir_fd=driver_fd,
+            dst_dir_fd=driver_fd,
+        )
+        temporary_name = ""
+        return destination
+    except OSError as exc:
+        raise ValueError(f"could not securely write pinned failover config: {exc}") from exc
+    finally:
+        if temporary_fd is not None:
+            os.close(temporary_fd)
+        if temporary_name and driver_fd is not None:
+            try:
+                os.unlink(temporary_name, dir_fd=driver_fd)
+            except OSError:
+                pass
+        if driver_fd is not None:
+            os.close(driver_fd)
+        if source_fd is not None:
+            os.close(source_fd)
+        if loop_fd is not None:
+            os.close(loop_fd)
+
+
+def _pinned_failover_payload(data: dict[str, Any], provider: str) -> dict[str, Any]:
+    result = dict(data)
+    result["primary_order"] = [provider]
+    result.pop("primary_fallback", None)
+    raw_waits = result.get("max_quota_waits_per_primary", 3)
+    if isinstance(raw_waits, bool):
+        raise ValueError("max_quota_waits_per_primary must be a non-negative integer")
+    try:
+        max_waits = int(raw_waits or 3)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "max_quota_waits_per_primary must be a non-negative integer"
+        ) from exc
+    if max_waits < 0:
+        raise ValueError("max_quota_waits_per_primary must be a non-negative integer")
+    result["max_quota_waits_per_primary"] = max_waits
+    return result
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    preflight_only = bool(getattr(args, "_preflight_only", False))
     loop = Path(args.loop).expanduser().resolve()
     root = Path(args.root).expanduser().resolve() if args.root else loop.parent
     policy_file = _policy_file_from_args(args)
@@ -823,8 +1028,12 @@ def cmd_start(args: argparse.Namespace) -> int:
 
     # A second driver on one loop tree races every state transaction; refuse
     # unless the operator has confirmed the survivors are stale.
-    running = status_snapshot(loop)
-    if (running.get("pidfile_alive") or running.get("matched_pids")) and not args.force:
+    running = {} if preflight_only else status_snapshot(loop)
+    if (
+        not preflight_only
+        and (running.get("pidfile_alive") or running.get("matched_pids"))
+        and not args.force
+    ):
         print(
             json.dumps(
                 {
@@ -873,6 +1082,12 @@ def cmd_start(args: argparse.Namespace) -> int:
         if (candidate / "workspace").is_dir() or (candidate / "run_skill.sh").is_file():
             env["AAS_RUNTIME_ROOT"] = str(candidate)
 
+    try:
+        _validate_drive_extra(list(args.drive_extra or []))
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        return 2
+
     extra: list[str] = []
     if args.panel:
         extra.extend(["--panel", args.panel])
@@ -901,7 +1116,17 @@ def cmd_start(args: argparse.Namespace) -> int:
         if args.provider:
             # The supervisor owns provider selection; a --provider on the drive
             # argv would silently outrank every rotation it performs.
-            env["FAILOVER_JSON"] = str(_write_pinned_failover(loop, args.provider))
+            try:
+                env["FAILOVER_JSON"] = str(
+                    _write_pinned_failover(
+                        loop,
+                        args.provider,
+                        publish=not preflight_only,
+                    )
+                )
+            except ValueError as exc:
+                print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+                return 2
         if extra:
             # Supervisor reads DRIVE_EXTRA_ARGS as shell-ish; pass via env space-joined
             # only safe flags we control (no secrets).
@@ -929,18 +1154,19 @@ def cmd_start(args: argparse.Namespace) -> int:
             extra_args=extra,
         )
 
-    print(
-        json.dumps(
-            {
-                "ok": True,
-                "backend": backend,
-                "failover_supervisor": use_supervisor,
-                "argv_preview": argv[:6] + (["…"] if len(argv) > 6 else []),
-                "loop": str(loop),
-            },
-            indent=2,
+    if not preflight_only:
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "backend": backend,
+                    "failover_supervisor": use_supervisor,
+                    "argv_preview": argv[:6] + (["…"] if len(argv) > 6 else []),
+                    "loop": str(loop),
+                },
+                indent=2,
+            )
         )
-    )
 
     if backend == "systemd_user" and (
         args.provider
@@ -957,6 +1183,8 @@ def cmd_start(args: argparse.Namespace) -> int:
         return 2
     try:
         _load_selected_credentials(env, provider=args.provider)
+        if preflight_only:
+            return 0
         if backend == "foreground":
             rc = run_foreground(
                 binding.argv, loop_dir=loop, env=env, pass_fds=binding.pass_fds
@@ -995,8 +1223,7 @@ def _start_systemd_user(
     root: Path,
     env: dict[str, str],
 ) -> int:
-    unit_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", loop.name).strip(".-") or "loop"
-    unit = f"aas-force-loop-{unit_slug}"[:100]
+    unit = _systemd_unit_name(loop)
     systemd_run_binary = shutil.which("systemd-run", path="/usr/bin:/bin")
     rm_binary = shutil.which("rm", path="/usr/bin:/bin")
     if (
@@ -1095,6 +1322,19 @@ def _start_systemd_user(
     return int(proc.returncode)
 
 
+def _systemd_unit_name(loop: Path) -> str:
+    """Return a readable unit name that remains unique across project roots."""
+
+    unit_slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", loop.name).strip(".-") or "loop"
+    identity = hashlib.sha256(
+        os.fsencode(os.path.abspath(loop))
+    ).hexdigest()[:12]
+    prefix = "aas-force-loop-"
+    suffix = f"-{identity}"
+    available = 100 - len(prefix) - len(suffix)
+    return f"{prefix}{unit_slug[:available]}{suffix}"
+
+
 def cmd_stop(args: argparse.Namespace) -> int:
     loop = Path(args.loop).expanduser().resolve()
     stopped = stop_loop_processes(loop)
@@ -1116,6 +1356,15 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
 
 def cmd_replace(args: argparse.Namespace) -> int:
+    # Replacement is destructive. Reject an absent/relative policy authority
+    # before stopping the existing driver so a malformed invocation cannot
+    # turn a healthy campaign into downtime.
+    _policy_file_from_args(args)
+    preflight = argparse.Namespace(**vars(args))
+    preflight._preflight_only = True
+    preflight_rc = cmd_start(preflight)
+    if preflight_rc != 0:
+        return preflight_rc
     stop_rc = cmd_stop(args)
     if stop_rc != 0:
         return stop_rc
@@ -1218,11 +1467,22 @@ def cmd_drain(args: argparse.Namespace) -> int:
 
     # `drain` is a recovery command: a failed recover-* leaves the loop stuck,
     # so its exit status must follow the recovery calls, not the wrapper.
-    recovery_ok = all(
-        int(action.get("rc", 0)) == 0
+    recovery_actions = [
+        action
         for action in actions
         if str((action.get("argv") or [""])[0]).startswith("recover-")
-    )
+    ]
+    if recovery_actions:
+        recovery_ok = all(int(action.get("rc", 1)) == 0 for action in recovery_actions)
+    else:
+        status_actions = [
+            action
+            for action in actions
+            if str((action.get("argv") or [""])[0]) == "status"
+        ]
+        recovery_ok = bool(status_actions) and all(
+            int(action.get("rc", 1)) == 0 for action in status_actions
+        )
     print(
         json.dumps(
             {"ok": recovery_ok, "actions": actions, "process": snap},
@@ -1295,7 +1555,13 @@ def _detect_notify_channels() -> list[str] | None:
         return None
     if not isinstance(channels, list):
         return None
-    return [str(channel) for channel in channels]
+    normalized = [str(channel).strip().lower() for channel in channels]
+    if (
+        len(normalized) != len(set(normalized))
+        or any(channel not in STRICT_NOTIFY_CHANNELS for channel in normalized)
+    ):
+        return None
+    return normalized
 
 
 def _smoke_checks(
@@ -1439,13 +1705,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     b.add_argument(
         "--max-iterations",
-        type=int,
+        type=_nonnegative_int,
         default=None,
         help="init iteration budget; formal profile defaults to 40 (runtime default 5)",
     )
     b.add_argument(
         "--max-wall-time-seconds",
-        type=int,
+        type=_nonnegative_int,
         default=None,
         help="init wall-time budget; formal profile defaults to 259200 (runtime default 3600)",
     )
@@ -1464,8 +1730,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_loop(s)
     s.add_argument("--backend", default=None, help="foreground|posix_detach|systemd_user|auto")
     s.add_argument("--detach", action="store_true", help="use posix_detach when backend=auto")
-    s.add_argument("--provider", default=None)
-    s.add_argument("--panel", default=None, help="on|off|auto")
+    s.add_argument("--provider", default=None, choices=SUPPORTED_PROVIDERS)
+    s.add_argument("--panel", default=None, choices=["on", "off", "auto"])
     s.add_argument("--drive-only", action="store_true", help="skip bash supervisor even on POSIX")
     s.add_argument(
         "--formal-typecheck",
@@ -1490,8 +1756,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_loop(r)
     r.add_argument("--backend", default=None)
     r.add_argument("--detach", action="store_true")
-    r.add_argument("--provider", default=None)
-    r.add_argument("--panel", default=None)
+    r.add_argument("--provider", default=None, choices=SUPPORTED_PROVIDERS)
+    r.add_argument("--panel", default=None, choices=["on", "off", "auto"])
     r.add_argument("--drive-only", action="store_true")
     r.add_argument(
         "--formal-typecheck",
