@@ -3076,6 +3076,10 @@ def _apply_formal_drive_start(
         # its own Lean work incurred. Pin the derived reading rather than the
         # combined one: refreshing beats latching, so a run that legitimately
         # leaves the formal track stops carrying the requirement.
+        # The return value is deliberately not acted on here: the
+        # per-iteration pin below writes to the same directory, so a pin that
+        # cannot be written fails there too, and that is where the dispatch is
+        # refused. Reporting the same unwritable path twice adds nothing.
         write_track_pin(
             run_dir,
             formal_track=formal_track_status(run_dir).derived,
@@ -11241,15 +11245,47 @@ def drive_command(args: argparse.Namespace) -> dict[str, Any]:
             # and pin it for the append-time formal gate. Refreshed here rather
             # than latched: a pivot off the formal track was itself committed
             # through review, so the next dispatch is entitled to drop the pin.
+            dispatch_formal_track = formal_track_status(run_dir).derived
             try:
-                write_track_pin(
+                track_pin_error = write_track_pin(
                     run_dir,
-                    formal_track=formal_track_status(run_dir).derived,
+                    formal_track=dispatch_formal_track,
                     source="drive_dispatch",
                     iteration=iterations_run + 1,
                 )
-            except Exception:  # noqa: BLE001 - the pin only ever adds a check
-                pass
+            except Exception as exc:  # noqa: BLE001 - treated as a failed pin
+                track_pin_error = str(exc)
+            if track_pin_error and dispatch_formal_track:
+                # Refusing to dispatch is the only enforcement left. The gate
+                # that keeps a formal-track success claim behind a host-written
+                # terminal state runs inside the agent's own append-iteration
+                # process, and it reads the track from this file; with the file
+                # missing, the agent sheds the requirement by rewriting the
+                # committed path. A pin that cannot be written is therefore not
+                # a cosmetic loss, and the failure used to be swallowed here.
+                finalize_remote_inbox_claim(
+                    remote_job or "",
+                    claim_ids,
+                    claimer=claimer,
+                    fences=claim_fences,
+                    success=False,
+                )
+                os.environ.pop("AAS_DRIVE_INBOX_BLOCK", None)
+                reason = "formal_track_unpinnable"
+                sys.stderr.write(
+                    "autoloop-driver: cannot pin the formal track for iteration "
+                    f"{iterations_run + 1} ({track_pin_error}); the append-time "
+                    "formal gate reads that pin from disk, so dispatching now "
+                    "would let the agent drop its own terminal-state requirement "
+                    "by rewriting the committed path\n"
+                )
+                _progress(
+                    "formal_track_unpinnable",
+                    source="drive",
+                    drive_cycle=iterations_run + 1,
+                    error=str(track_pin_error)[:200],
+                )
+                break
             dispatch_intent: dict[str, Any] = {}
             if goal_focus_mode == "enforce":
                 identity_overrides = (
