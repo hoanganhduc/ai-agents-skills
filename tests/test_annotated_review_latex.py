@@ -27,6 +27,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.test_never_matching_predicates import RUNTIME_SKILLS, load_module
 
@@ -266,3 +267,106 @@ class PrecompileStdoutStaysParseableTests(unittest.TestCase):
         proc = self._run(succeed=False)
         payload = json.loads(proc.stdout)
         self.assertEqual(payload["status"], "error")
+
+class AutoFixRetryPdfSurvivesALogWriteFailureTests(unittest.TestCase):
+    """A pdf the auto-fix retry produced is returned even if the log append fails.
+
+    ``compile_latex`` appended the retry transcript to ``compile.log`` and then
+    checked for the pdf, both inside one ``try``. An append that raises --
+    ENOSPC, a read-only mount, a quota -- therefore jumped straight over the
+    existence check to ``except Exception: pass``, and the function reported the
+    original LaTeX error while the repaired pdf sat next to the .tex file. The
+    log records the retry; it does not decide it.
+
+    latexmk is absent on ordinary CI images, so ``shutil.which`` and
+    ``subprocess.run`` are stubbed here; everything else is the real
+    ``compile_latex``, and the stub only makes the retry succeed, which is the
+    case the defect threw away.
+    """
+
+    ENOSPC = 28
+
+    def _fixture(self, tmp: Path) -> None:
+        (tmp / "paper.tex").write_text(
+            "\\documentclass{article}\\begin{document}x\\end{document}\n",
+            encoding="utf-8",
+        )
+
+    def _compile(self, tmp: Path, *, retry_emits_pdf: bool, opener):
+        review = _load("review")
+        calls = {"n": 0}
+
+        def fake_run(cmd, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2 and retry_emits_pdf:
+                (tmp / "paper.pdf").write_bytes(b"%PDF-1.5 fixture\n")
+            return subprocess.CompletedProcess(cmd, 0, "log text\n", "")
+
+        with mock.patch("subprocess.run", fake_run), mock.patch.object(
+            review.shutil, "which", lambda name: f"/usr/bin/{name}"
+        ), mock.patch.object(
+            review, "extract_compile_error", lambda path: "! Undefined control sequence."
+        ), mock.patch.object(
+            review, "attempt_autofix", lambda *args: "removed a bad macro"
+        ), mock.patch.object(
+            review, "extract_latex_warnings", lambda text: []
+        ), mock.patch.object(review, "open", opener, create=True):
+            return review.compile_latex(str(tmp), "paper.tex"), calls["n"]
+
+    def _failing_append(self, tmp: Path):
+        real_open = open
+
+        def opener(path, mode="r", *args, **kwargs):
+            if "a" in mode and str(path) == str(tmp / "compile.log"):
+                raise OSError(self.ENOSPC, "No space left on device")
+            return real_open(path, mode, *args, **kwargs)
+
+        return opener
+
+    def test_a_full_disk_on_the_log_does_not_discard_the_retry_pdf(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._fixture(tmp)
+
+            (pdf, error, warnings), runs = self._compile(
+                tmp, retry_emits_pdf=True, opener=self._failing_append(tmp)
+            )
+
+            self.assertEqual(runs, 2)
+            self.assertTrue((tmp / "paper.pdf").is_file())
+            self.assertEqual(pdf, os.path.join(str(tmp), "paper.pdf"))
+            self.assertIsNone(error)
+            self.assertEqual(warnings, ["Auto-fix applied: removed a bad macro"])
+
+    def test_the_retry_pdf_is_returned_when_the_log_append_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._fixture(tmp)
+
+            (pdf, error, _warnings), runs = self._compile(
+                tmp, retry_emits_pdf=True, opener=open
+            )
+
+            self.assertEqual(runs, 2)
+            self.assertEqual(pdf, os.path.join(str(tmp), "paper.pdf"))
+            self.assertIsNone(error)
+            self.assertIn(
+                "AUTO-FIX RETRY",
+                (tmp / "compile.log").read_text(encoding="utf-8"),
+            )
+
+    def test_a_retry_that_produces_no_pdf_still_reports_the_error(self) -> None:
+        # Anchors the two above: the fixture reports a pdf because the retry
+        # made one, not because the check was loosened.
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            self._fixture(tmp)
+
+            (pdf, error, warnings), runs = self._compile(
+                tmp, retry_emits_pdf=False, opener=self._failing_append(tmp)
+            )
+
+            self.assertEqual(runs, 2)
+            self.assertIsNone(pdf)
+            self.assertEqual(error, "! Undefined control sequence.")
+            self.assertEqual(warnings, [])
