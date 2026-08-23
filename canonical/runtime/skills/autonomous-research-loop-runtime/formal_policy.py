@@ -1317,14 +1317,22 @@ def _append_recovery_note(run_dir: Path, note: str) -> None:
         pass
 
 
-def _write_terminal_state(run_dir: Path, state: dict[str, Any]) -> None:
+def _write_terminal_state(run_dir: Path, state: dict[str, Any]) -> str | None:
+    """Persist the verdict; return an error description, or None on success.
+
+    The write used to swallow OSError. Because the caller reports the verdict
+    either way, ``formal-terminal-state`` answered ``status: ok`` and named a
+    ``state_file`` that had never been created -- and the gates downstream of
+    it require that file to exist before a loop may terminate.
+    """
     try:
         d = Path(run_dir) / "formal"
         d.mkdir(parents=True, exist_ok=True)
         path = d / "terminal_state.json"
         _atomic_write_text(path, json.dumps(state, indent=2) + "\n")
-    except OSError:
-        pass
+    except OSError as exc:
+        return str(exc)
+    return None
 
 
 def read_formal_terminal_state(run_dir: Path | str) -> tuple[dict[str, Any] | None, str]:
@@ -1498,8 +1506,15 @@ def evaluate_formal_terminal_state(
     run_path = Path(run_dir)
 
     def _persist(state: dict[str, Any]) -> None:
-        if write:
-            _write_terminal_state(run_path, state)
+        if not write:
+            return
+        error = _write_terminal_state(run_path, state)
+        if error:
+            # A verdict that could not be recorded is not a decided verdict.
+            # Downgrading it here keeps the CLI's status honest and stops a
+            # loop terminating on evidence that only ever existed in memory.
+            state["terminal_state"] = "indeterminate"
+            state["detail"] = f"terminal state could not be written: {error}"
 
     verdict: dict[str, Any] = {
         "schema_version": TERMINAL_STATE_SCHEMA,

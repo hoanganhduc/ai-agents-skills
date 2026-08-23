@@ -1543,5 +1543,61 @@ class RealLeanEndToEndTests(unittest.TestCase):
             self.assertEqual(kinds, {"typecheck"})
 
 
+class TerminalStateWriteFailureIsNotADecidedVerdict(unittest.TestCase):
+    """A verdict the host could not record certifies nothing.
+
+    ``formal/terminal_state.json`` is what the downstream gates read; the
+    write used to swallow OSError, so an unwritable stamp still answered with
+    the verdict the loop was allowed to terminate on.
+    """
+
+    def _project(self, tmp: Path) -> Path:
+        return _make_project(tmp, "theorem t : True := trivial\n")
+
+    def test_an_unwritable_stamp_downgrades_sorry_free_to_indeterminate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            run_dir.mkdir()
+            # A regular file where the stamp directory belongs: mkdir fails,
+            # so the verdict cannot be recorded anywhere.
+            (run_dir / "formal").write_text("not a directory\n", encoding="utf-8")
+            proj = self._project(Path(tmp))
+            verdict = fp.evaluate_formal_terminal_state(
+                run_dir,
+                root=Path(tmp),
+                policy=_policy(project=str(proj)),
+                runner=_runner_for(CLEAN_SCAN, TYPECHECK_OK, AUDIT_CLEAN),
+                reason="unit",
+            )
+            self.assertEqual(verdict["terminal_state"], "indeterminate")
+            self.assertIn("terminal state could not be written", verdict["detail"])
+            self.assertFalse((run_dir / "formal" / "terminal_state.json").exists())
+
+    def test_the_same_fixture_certifies_when_the_stamp_can_be_written(self) -> None:
+        """Anchors the test above: without the blocked write it is sorry-free."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            run_dir.mkdir()
+            proj = self._project(Path(tmp))
+            verdict = fp.evaluate_formal_terminal_state(
+                run_dir,
+                root=Path(tmp),
+                policy=_policy(project=str(proj)),
+                runner=_runner_for(CLEAN_SCAN, TYPECHECK_OK, AUDIT_CLEAN),
+                reason="unit",
+            )
+            self.assertEqual(verdict["terminal_state"], "sorry_free_artifact")
+            self.assertTrue((run_dir / "formal" / "terminal_state.json").is_file())
+
+    def test_a_write_failure_is_reported_rather_than_swallowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "loop"
+            run_dir.mkdir()
+            (run_dir / "formal").write_text("not a directory\n", encoding="utf-8")
+            self.assertIsNotNone(
+                fp._write_terminal_state(run_dir, {"terminal_state": "decided"})
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
