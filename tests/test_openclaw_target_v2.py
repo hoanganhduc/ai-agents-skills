@@ -658,6 +658,7 @@ def run_cli_json(argv: list[str]) -> dict[str, object]:
     return payload
 
 
+@unittest.skipUnless(os.name == "posix", "creation modes and umask are POSIX")
 class OpenClawCreatedParentsArePrivateAtCreationTests(unittest.TestCase):
     """A parent directory the target apply creates is 0700 from the start.
 
