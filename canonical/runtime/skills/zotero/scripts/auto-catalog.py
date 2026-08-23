@@ -56,16 +56,28 @@ def main():
                            "message": "No new papers to catalog"}))
         return
 
-    # Get existing collections for topic matching
+    # Get existing collections for topic matching. A failure here is not fatal --
+    # every paper still lands in "Auto-cataloged" -- but it silently disables the
+    # topic matching this script exists to do, so it is reported rather than
+    # swallowed. Without that, a broken library looks exactly like an empty one.
+    coll_names = []
+    collection_error = None
     try:
         coll_result = subprocess.run(
             [sys.executable, ZOT_PY, "--json", "list-collections", "--json"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
-        collections = json.loads(coll_result.stdout).get("collections", [])
-        coll_names = _flatten_collection_names(collections)
-    except Exception:
-        coll_names = []
+        if coll_result.returncode != 0:
+            collection_error = (coll_result.stderr or coll_result.stdout).strip() \
+                or f"zot list-collections exited {coll_result.returncode}"
+        else:
+            collections = json.loads(coll_result.stdout).get("collections", [])
+            coll_names = _flatten_collection_names(collections)
+    except Exception as e:
+        collection_error = str(e)
+    if collection_error:
+        print(f"Collection lookup failed, topic matching disabled: {collection_error}",
+              file=sys.stderr)
 
     # Add each paper (parallel with rate limiting for Zotero API)
     added = []
@@ -131,6 +143,13 @@ def main():
         "papers": added,
         "message": _build_summary(added, skipped),
     }
+    if collection_error:
+        output.update({
+            "status": "partial",
+            "code": "collection_lookup_failed",
+            "collection_error": collection_error,
+            "message": output["message"] + ". Topic matching skipped: collections unavailable",
+        })
     print(json.dumps(output, ensure_ascii=False))
 
 
