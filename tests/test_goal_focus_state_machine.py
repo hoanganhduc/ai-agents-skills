@@ -714,16 +714,13 @@ class LoopLockVanishedPathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "loop"
             attempts: list[str] = []
-            real_open = os.open
 
-            def refuse(path: object, *args: object, **kwargs: object) -> int:
-                if str(path).endswith(st.LOCK_FILENAME):
-                    attempts.append(str(path))
-                    raise PermissionError("loop lock open refused")
-                return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+            def refuse(_lock, path: Path):
+                attempts.append(str(path))
+                raise NotADirectoryError("loop lock parent is not a directory")
 
-            with mock.patch.object(st.os, "open", refuse):
-                with self.assertRaises(PermissionError):
+            with mock.patch.object(st.LoopLock, "_open_lock_handle", refuse):
+                with self.assertRaises(NotADirectoryError):
                     with st.LoopLock(root, timeout_seconds=5):
                         pass
             self.assertEqual(len(attempts), 1)
@@ -972,16 +969,13 @@ class WindowsSharingRetryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "loop"
             attempts: list[str] = []
-            real_open = os.open
 
-            def deny(path: object, *args: object, **kwargs: object) -> int:
-                if str(path).endswith(st.LOCK_FILENAME):
-                    attempts.append(str(path))
-                    raise PermissionError("loop lock open refused")
-                return real_open(path, *args, **kwargs)  # type: ignore[arg-type]
+            def deny(_lock, path: Path):
+                attempts.append(str(path))
+                raise PermissionError("loop lock open refused")
 
             with mock.patch.object(st, "_is_windows", lambda: False), mock.patch.object(
-                st.os, "open", deny
+                st.LoopLock, "_open_lock_handle", deny
             ):
                 with self.assertRaises(PermissionError):
                     with st.LoopLock(root, timeout_seconds=5):
