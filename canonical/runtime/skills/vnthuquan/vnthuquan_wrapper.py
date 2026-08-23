@@ -269,15 +269,21 @@ def package_version() -> str | None:
         cmd, _, _ = resolve_vnthuquan()
     except WrapperError:
         return None
-    proc = subprocess.run(
-        [*cmd, "--version"],
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        check=False,
-        env=subprocess_env(),
-    )
+    try:
+        proc = subprocess.run(
+            [*cmd, "--version"],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            check=False,
+            env=subprocess_env(),
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        # Reported as "version unknown", the same as any other failure to ask.
+        # Unbounded, this hung `vnthuquan --version` and the doctor payload.
+        return None
     if proc.returncode != 0:
         return None
     return proc.stdout.strip().replace("vnthuquan ", "", 1)

@@ -38,7 +38,10 @@ def main() -> int:
     out["docling_cli_path"] = cli
     if cli:
         try:
-            subprocess.run([cli, "--help"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Bounded like every other probe here: a hung CLI must not wedge a
+            # command whose whole job is to report what is wrong.
+            subprocess.run([cli, "--help"], check=False, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=10)
             out["docling_cli"] = True
         except Exception as exc:
             out["docling_cli_error"] = str(exc)
