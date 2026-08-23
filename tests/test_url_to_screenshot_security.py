@@ -632,6 +632,97 @@ class SharedAddressSpaceTests(unittest.TestCase):
             )
         self.assertEqual(ctx.exception.reason, security.BLOCKED_METADATA_ENDPOINT)
 
+class MalformedPortIsARefusalNotACrashTests(unittest.TestCase):
+    """A URL whose port cannot be read must be refused, not raise a bare error.
+
+    ``urlsplit`` accepts any authority and validates the port only when it is
+    read, so ``parts.port`` raises ``ValueError`` on ``:99999`` or ``:notaport``.
+    ``validate_target_url`` read it unguarded, so the one gate documented as
+    fail-closed and as raising ``TargetBlocked`` exited through a different
+    exception type entirely: ``cmd_capture`` and ``cmd_print_pdf`` catch
+    ``TargetBlocked``, so the process died with a traceback and no JSON on
+    stdout instead of emitting the ``BLOCKED_INPUT`` refusal every other
+    rejected input produces.
+
+    ``redact_url`` shares the read and therefore the failure, which matters more
+    than the crash: it carries an ``except ValueError`` fallback of its own,
+    stating that it is meant never to raise, and ``u2s.cdp.observed_navigation_url``
+    hands it a URL taken from the browser's navigation history rather than from
+    the command line.
+
+    The sibling module already guards exactly this read --
+    ``u2s.cdp._canonical_origin`` wraps ``parsed.port`` and its caller turns the
+    result into ``_FetchBlocked(BLOCKED_INPUT, ...)`` -- so the shape of the fix
+    is the repository's own.
+    """
+
+    MALFORMED = (
+        "http://example.com:99999/p",       # out of range
+        "https://example.com:70000/p",      # out of range
+        "http://example.com:notaport/p",    # not an integer
+        "http://example.com:-1/p",          # negative
+    )
+
+    def test_a_malformed_port_is_blocked_input(self) -> None:
+        from u2s import security
+
+        for url in self.MALFORMED:
+            with self.subTest(url=url):
+                with self.assertRaises(security.TargetBlocked) as ctx:
+                    security.validate_target_url(url)
+                self.assertEqual(ctx.exception.reason, security.BLOCKED_INPUT)
+
+    def test_a_malformed_port_is_blocked_under_every_relaxation(self) -> None:
+        # Neither opt-in flag relaxes an input the gate cannot parse.
+        from u2s import security
+
+        for url in self.MALFORMED:
+            with self.subTest(url=url):
+                with self.assertRaises(security.TargetBlocked):
+                    security.validate_target_url(
+                        url, allow_private=True, allow_file_urls=True
+                    )
+
+    def test_the_redactor_does_not_raise_on_the_url_it_is_given(self) -> None:
+        from u2s import security
+
+        for url in self.MALFORMED:
+            with self.subTest(url=url):
+                redacted = security.redact_url(url + "?token=SECRET#frag")
+                self.assertIsInstance(redacted, str)
+                self.assertNotIn("SECRET", redacted)
+                self.assertNotIn("frag", redacted)
+
+    def test_the_cli_emits_a_refusal_instead_of_a_traceback(self) -> None:
+        """End to end: the documented contract is JSON on stdout and exit 2."""
+        import json
+        import subprocess
+
+        runtime = U2S_ROOT / "url_to_screenshot_runtime.py"
+        completed = subprocess.run(
+            [sys.executable, "-B", str(runtime), "capture",
+             "--url", "http://127.0.0.1:99999/p?token=SECRET", "--out", "/dev/null"],
+            capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=120,
+        )
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "BLOCKED_INPUT")
+        self.assertNotIn("SECRET", completed.stdout)
+
+    def test_a_well_formed_port_still_survives_the_gate(self) -> None:
+        """Anchor: the guard must not turn every explicit port into a refusal."""
+        from u2s import security
+
+        with mock.patch("socket.getaddrinfo", return_value=_addrinfo("93.184.216.34")):
+            result = security.validate_target_url("https://example.com:8443/p")
+        self.assertEqual(result.port, 8443)
+        self.assertEqual(
+            security.redact_url("https://user:pw@192.0.2.1:8443/p?token=SECRET"),
+            "https://192.0.2.1:8443/p",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
