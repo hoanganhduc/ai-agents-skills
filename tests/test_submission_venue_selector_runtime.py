@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import stat
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from installer.ai_agents_skills.manifest import REPO_ROOT, load_manifests
 from installer.ai_agents_skills.render import render_instruction_block, render_reference_skill_md
 from installer.ai_agents_skills.runtime_smoke import runtime_command_target
+from tests.test_never_matching_predicates import load_module
 
 
 RUNTIME_DIR = REPO_ROOT / "canonical" / "runtime" / "skills" / "submission-venue-selector"
@@ -528,6 +532,73 @@ class ScoreRawAndNormalizedTests(unittest.TestCase):
                     by_id["presentation_discourse_alignment"]["ordinal_score"]
                 )
                 self.assertIsInstance(by_id["comparator_pattern_fit"]["raw_score"], int)
+
+class WorkspaceObjectsArePrivateAtCreationTests(unittest.TestCase):
+    """Every workspace object is private from the instant it exists.
+
+    The workspace holds an unpublished manuscript draft, the claims extracted
+    from it, and the venue evidence gathered for it. ``ensure_workspace``,
+    ``write_json`` and ``write_jsonl`` created each object under the caller's
+    umask and narrowed it a statement later, so under the ordinary 022 the
+    workspace existed at 0755 and every file at 0644 first, and a reader who
+    opened one inside that window kept a descriptor the chmod cannot revoke.
+    Both chmods also swallowed their own failure, so a filesystem that refuses
+    them left the draft world-readable and reported nothing.
+    """
+
+    def setUp(self) -> None:
+        self.module = load_module(
+            "submission_venue_selector", SCRIPT, extra_syspath=RUNTIME_DIR
+        )
+        # 022 is what the defect needs to show; under 077 every mode below is
+        # already private and the test would pass against the old code.
+        previous_umask = os.umask(0o022)
+        self.addCleanup(os.umask, previous_umask)
+        workspace_root = tempfile.TemporaryDirectory()
+        self.addCleanup(workspace_root.cleanup)
+        self.root = Path(workspace_root.name)
+
+    @staticmethod
+    def _mode(path: Path) -> int:
+        return stat.S_IMODE(path.stat().st_mode)
+
+    def test_objects_are_created_private_rather_than_narrowed_afterwards(self) -> None:
+        workspace = self.root / "venue-run"
+        # With chmod turned into a no-op, the mode left on disk is the mode the
+        # object was created with, which is the property under test.
+        with mock.patch.object(Path, "chmod"):
+            self.module.ensure_workspace(workspace)
+            self.module.write_json(workspace / "draft.json", {"title": "unpublished"})
+            self.module.write_jsonl(workspace / "papers.jsonl", [{"doi": "10.1/x"}])
+
+        self.assertEqual(self._mode(workspace), 0o700)
+        self.assertEqual(self._mode(workspace / "draft.json"), 0o600)
+        self.assertEqual(self._mode(workspace / "papers.jsonl"), 0o600)
+
+    def test_a_refused_chmod_is_reported_rather_than_swallowed(self) -> None:
+        workspace = self.root / "denied"
+        with mock.patch.object(
+            Path, "chmod", side_effect=PermissionError(13, "Permission denied")
+        ):
+            with self.assertRaises(PermissionError):
+                self.module.ensure_workspace(workspace)
+            with self.assertRaises(PermissionError):
+                self.module.write_json(workspace / "draft.json", {"title": "x"})
+            with self.assertRaises(PermissionError):
+                self.module.write_jsonl(workspace / "papers.jsonl", [{"doi": "10.1/x"}])
+
+    def test_a_file_an_earlier_run_left_readable_is_still_narrowed(self) -> None:
+        # O_CREAT carries no mode for a file that already exists, so the chmod
+        # is what rescues a file an earlier version of this module left open.
+        workspace = self.root / "legacy"
+        self.module.ensure_workspace(workspace)
+        stale = workspace / "draft.json"
+        stale.write_text("{}\n", encoding="utf-8")
+        stale.chmod(0o644)
+
+        self.module.write_json(stale, {"title": "unpublished"})
+
+        self.assertEqual(self._mode(stale), 0o600)
 
 
 if __name__ == "__main__":
