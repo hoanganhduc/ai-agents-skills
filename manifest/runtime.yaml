@@ -3294,6 +3294,9 @@
     },
     "hetzner-research-compute": {
       "runtime_dir": "hetzner-research-compute",
+      "runtime_requires": [
+        "modal-research-compute"
+      ],
       "smoke_coverage": {
         "status": "manual-native",
         "reason": "Hetzner lifecycle verbs require an HCLOUD_TOKEN and provision paid servers; they are not safe for generic offline smoke. The offline dry-run and guard paths are covered by tests/test_hetzner_research_compute.py."
@@ -3412,6 +3415,9 @@
     },
     "kaggle-research-compute": {
       "runtime_dir": "kaggle-research-compute",
+      "runtime_requires": [
+        "modal-research-compute"
+      ],
       "smoke_coverage": {
         "status": "manual-native",
         "reason": "Kaggle lifecycle verbs require the new Kaggle API token (KAGGLE_API_TOKEN or ~/.kaggle/access_token) and push real kernels; per Kaggle ToS no live call is made in the build. The offline dry-run, resume-loop, fan-out, and guard paths are covered by tests/test_kaggle_research_compute.py (all kaggle CLI calls and the kagglehub-validate hook mocked)."
