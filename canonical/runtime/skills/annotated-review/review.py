@@ -52,7 +52,8 @@ def extract_latex_warnings(log_text: str) -> List[str]:
 def extract_compile_error(log_path: str) -> str:
     """Extract first fatal error block from compile.log."""
     try:
-        lines = open(log_path, encoding="utf-8", errors="replace").readlines()
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
     except OSError:
         return "unknown compile error (log not found)"
 
@@ -72,7 +73,8 @@ def attempt_autofix(annotated_dir: str, root_tex_name: str, error: str) -> Optio
     """Return fix description if a fix was applied, else None."""
     root_path = os.path.join(annotated_dir, root_tex_name)
     try:
-        content = open(root_path, encoding="utf-8", errors="replace").read()
+        with open(root_path, encoding="utf-8", errors="replace") as f:
+            content = f.read()
     except OSError:
         return None
 

@@ -34,7 +34,8 @@ def find_root_tex(source_dir: str) -> Optional[str]:
             if fname.endswith(".tex"):
                 fpath = os.path.join(dirpath, fname)
                 try:
-                    content = open(fpath, encoding="utf-8", errors="replace").read()
+                    with open(fpath, encoding="utf-8", errors="replace") as f:
+                        content = f.read()
                     if "\\documentclass" in content:
                         return fpath
                 except OSError:
@@ -557,7 +558,8 @@ def annotate_tree(source_dir: str, review_data: dict) -> str:
         return annotated_dir
 
     # Process root tex: preamble + document start
-    root_content = open(root_tex, encoding="utf-8", errors="replace").read()
+    with open(root_tex, encoding="utf-8", errors="replace") as f:
+        root_content = f.read()
     root_content = inject_preamble(root_content)
     root_content, has_conflict = handle_todo_conflict(root_content)
     root_content = wrap_display_math(root_content)
@@ -579,7 +581,8 @@ def annotate_tree(source_dir: str, review_data: dict) -> str:
     for tex_path in find_all_tex(annotated_dir):
         if tex_path == root_tex:
             continue
-        original = open(tex_path, encoding="utf-8", errors="replace").read()
+        with open(tex_path, encoding="utf-8", errors="replace") as f:
+            original = f.read()
         content = wrap_display_math(original)
         content = annotate_file(
             content, annotations, ver_results_map, trust_refs_map, additional_issues,
@@ -620,7 +623,8 @@ def precompile_preview(source_dir: str) -> Tuple[Optional[str], Optional[str]]:
         return None, "No root .tex file found in source directory"
 
     # Read and inject minimal preamble (lineno only, no todonotes)
-    content = open(root_tex, encoding="utf-8", errors="replace").read()
+    with open(root_tex, encoding="utf-8", errors="replace") as f:
+        content = f.read()
 
     # Inject \usepackage{lineno} after \documentclass
     if "\\usepackage{lineno}" not in content:
