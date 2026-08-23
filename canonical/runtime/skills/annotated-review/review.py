@@ -303,7 +303,11 @@ def main() -> None:
         pdf_path, error = precompile_preview(args.source)
         if pdf_path:
             _output({"status": "ok", "action": "precompile", "pdf": pdf_path})
-            print(pdf_path)  # also print bare path for easy shell capture
+            # The path is already in the envelope above. Printing it again on
+            # stdout made the success case the only one a caller could not parse
+            # -- json.loads() raised "Extra data: line 2" -- while the error
+            # case, which prints the envelope alone, parsed fine.
+            print(pdf_path, file=sys.stderr)
         else:
             _output({"status": "error", "action": "precompile", "error": error})
             sys.exit(1)
