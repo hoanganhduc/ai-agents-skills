@@ -68,7 +68,13 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 For a user-managed Lake workspace, use the explicit Lake environment runner.
 The helper requires a project root containing `lakefile.lean` or
 `lakefile.toml`, records the project context, and still runs the scanner before
-typechecking:
+typechecking. Verification hashes the scanned source and the Lake configuration
+(`lakefile.*`, `lean-toolchain`, and `lake-manifest.json`) before and after the
+command; a changed input or project context refuses the result:
+
+A directory input selects `lake-build`. After Lake returns success, the helper
+also requires every local source module to have a non-stale compiled artifact;
+a narrow or no-op default build therefore cannot certify the whole project.
 
 ```bash
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
@@ -100,14 +106,27 @@ knowingly depends on a further axiom; `sorryAx` is refused ahead of the
 allowlist and can never be sanctioned. A declaration the built environment
 does not have is reported as `unresolved` rather than passing silently.
 
-`native_decide` reports `Lean.ofReduceBool` and `Lean.trustCompiler`, which
-mark a complete proof that rests on the compiler and the native runtime rather
-than on the kernel alone. A project may knowingly accept that, so both stay
-allowlistable, but allowlisting them can never make the proof read as
+Native reduction adds a compiler-trust axiom. Older toolchains may report fixed
+names such as `Lean.ofReduceBool`, `Lean.ofReduceNat`, or
+`Lean.trustCompiler`; Lean 4.33's `decide` family emits declaration-local names
+such as `t._native.decide.ax_1_1`. A project may knowingly accept one, so these
+names stay allowlistable, but allowlisting them can never make the proof read as
 kernel-checked: the declaration is reported as `sanctioned_compiler_trust`
-rather than `sanctioned`, the axioms are listed in `compiler_trust_axioms`, and
-the payload gains a matching limitation. The autonomous research loop passes no
-allowlist, so a `native_decide` proof is refused there.
+rather than `sanctioned`,
+the axioms are listed in `compiler_trust_axioms`, and the payload gains a
+matching limitation. The autonomous research loop passes no allowlist, so a
+native-reduction proof is refused there.
+
+The source scanner also refuses the equivalent `decide +native` and
+`decide (native := true)` forms, plus direct uses of `trustCompiler`,
+`reduceBool`, `reduceNat`, `ofReduceBool`, and `ofReduceNat`. These spellings are
+grounded in Lean 4.33's `DecideConfig` and compiler-trust declarations; they are
+trust-base expansions even when the token `native_decide` does not occur.
+The scanner conservatively treats braces inside any quoted string as possible
+interpolation escapes because Lean's parser aliases are extensible. Terms in
+those braces remain active during scanning, while other literal string text
+stays inert; an ordinary string containing brace-delimited code-like text may
+therefore be refused as a false positive.
 
 Declaration discovery is a line walk, not a Lean parser. It covers `theorem`
 and `lemma` under `namespace`, `section` (including `noncomputable section`),
@@ -143,8 +162,12 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
 
 `kernel-check` replays the compiled environment through `lean4checker`, which
 re-checks proof terms against the kernel instead of trusting the build cache.
-It requires `lean4checker` on `PATH`, in `AAS_LEAN4CHECKER`, or built into the
-project's `.lake/build/bin`.
+It requires `lean4checker` on `PATH` or explicitly selected with
+`AAS_LEAN4CHECKER`. The gate never auto-selects the project's
+`.lake/build/bin/lean4checker`: an artifact under review must not silently
+supply its own certifying checker. An explicitly selected checker inside the
+project root remains allowed, but the payload marks it as project-controlled
+rather than independent.
 
 ```bash
 bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
@@ -164,6 +187,28 @@ no compiled modules at all reports `project_not_built`. Pass `--import` /
 `--module` (and `--declaration`) to name targets yourself and bypass the
 derivation.
 
+For local modules, both verbs hash the exact source bytes, `.olean` bytes, and
+Lake configuration before and after invoking the checker. They refuse
+symlinked evidence, unreadable or silently skipped subdirectories, mutation
+visible in the post-command snapshot, and a source whose modification time is
+newer than its compiled module. Individual source/config reads are capped at
+64 MiB and an individual compiled module at 512 MiB; a source or build-output
+tree walk is capped at 100,000 entries. The two snapshots cannot detect a
+change-and-restore between reads, and the source-to-`.olean` freshness
+check is an mtime preflight rather than a reproducible-build proof. Explicit
+dependency modules outside the project root are resolved by Lake and are not
+content-hashed by this helper.
+
+Each child command has a 16 MiB combined stdout/stderr budget. Kernel replay
+shares that budget across all requested modules. Exceeding it fails closed as
+`command_failed`; an axiom report truncated by the cap is never parsed as
+evidence.
+
+Lean, Lake, `lean4checker`, their launchers, the process environment, and Lake's
+dependency resolution are trusted execution inputs. The payload reports tool
+paths, but this helper does not content-attest those executables or the external
+dependency closure.
+
 For both verbs `--strict` means an audit that never ran is a failure. Without
 it, a missing toolchain reports `tool_unavailable` and exits 0, which callers
 must treat as "no evidence", never as a clean trust base.
@@ -179,13 +224,20 @@ The helper never installs Lean, Lake, mathlib, npm packages, Python packages, cr
 Before any typecheck, the scanner blocks active:
 
 - `#eval`
+- early-exit and expected-failure wrappers (`#exit`, `#check_failure`, and
+  `#guard_msgs`)
 - `IO.Process`
 - `run_cmd`
+- `run_tac`
+- inline or registered custom elaborators (`elab`, `elab_rules`, `by_elab`,
+  and elaborator attributes), because Lean elaboration monads can lift host IO
 - `unsafe`
-- `initialize`
+- `initialize` / `builtin_initialize`
 - `@[extern]`
 - foreign/FFI import patterns
 - non-allowlisted imports unless explicitly passed with `--allow-import`
+- compiler-trusting native reduction (`native_decide`, `decide +native`, and
+  `decide (native := true)`)
 - Lake/package files unless explicitly reviewed outside this helper
 
 Final or claim-supporting artifacts also block on active `sorry`, `admit`, unsanctioned `axiom`, unknown trust base, or unreviewed generated proof text. Stubs may contain placeholders only when explicitly marked `artifact_stage = stub`.

@@ -17,6 +17,7 @@ executes it additionally assumes an exec-permitted temp directory
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import subprocess
@@ -101,7 +102,12 @@ class TrustBasePatternTests(unittest.TestCase):
         cases = (
             ("theorem t : 2 + 2 = 4 := by native_decide\n", "native_decide"),
             ("theorem t : b = true := ofReduceBool b rfl\n", "ofReduceBool"),
+            ("theorem t : n = 0 := ofReduceNat n rfl\n", "ofReduceNat"),
+            ("theorem t : True := Lean.trustCompiler\n", "trustCompiler"),
+            ("#check Lean.reduceBool\n", "reduceBool"),
+            ("#check Lean.reduceNat\n", "reduceNat"),
             ("axiom convenient : False\n", "axiom"),
+            ("@[deprecated] private axiom modified : False\n", "axiom"),
             ("unsafe def f : Nat := 0\n", "unsafe"),
         )
         for text, name in cases:
@@ -112,14 +118,47 @@ class TrustBasePatternTests(unittest.TestCase):
             )
             self.assertIn(name, _details(payload, "trust_base_blocker"), payload)
 
+    def test_every_native_decide_spelling_expands_the_trust_base(self) -> None:
+        cases = (
+            "theorem t : True := by native_decide\n",
+            "theorem t : True := by decide +native\n",
+            "theorem t : True := by\n  decide\n    +native\n",
+            "theorem t : True := by decide (native := true)\n",
+        )
+        for text in cases:
+            with self.subTest(text=text):
+                payload = _scan_text(text)
+                self.assertFalse(payload["ok"], payload)
+                self.assertEqual(
+                    payload["trust_base_status"],
+                    "unsanctioned_axiom_or_unsafe",
+                    payload,
+                )
+
 
 class SafetyPatternTests(unittest.TestCase):
     def test_each_effectful_construct_fails_safety(self) -> None:
         cases = (
             ("#eval 1 + 1\n", "#eval"),
+            ("#exit\ntheorem unchecked : True := True.intro\n", "#exit"),
+            ("#check_failure (True.intro : False)\n", "#check_failure"),
+            ("#guard_msgs in #check (True.intro : False)\n", "#guard_msgs"),
             ("def r := IO.Process.output {}\n", "IO.Process"),
             ("run_cmd doSomething\n", "run_cmd"),
+            ("theorem t : True := by run_tac doSomething\n", "run_tac"),
+            ('elab "#effect" : command => do IO.println "effect"\n', "elab"),
+            ("elab_rules : term | _ => do pure default\n", "elab_rules"),
+            ("def x : Nat := by_elab do pure default\n", "by_elab"),
+            (
+                "@[\ncommand_elab custom\n] def effectful := fun _ => do pure ()\n",
+                "elaborator_attribute",
+            ),
+            (
+                "attribute [local term_elab custom] effectful\n",
+                "elaborator_attribute",
+            ),
             ("initialize registry : Unit ← pure ()\n", "initialize"),
+            ("builtin_initialize registry : Unit ← pure ()\n", "initialize"),
             ('@[extern "c_fn"] def f : Nat := 0\n', "@[extern]"),
             # Both alternatives of the "foreign" pattern. Bare "@extern" at
             # the start of a line is the documented past regression: a shared
@@ -152,6 +191,46 @@ class CommentStrippingTests(unittest.TestCase):
         self.assertEqual(payload["trust_base_status"], "accepted_trust_base")
         self.assertEqual(payload["safety_status"], "passed")
 
+    def test_comment_delimiters_inside_strings_cannot_hide_active_code(self) -> None:
+        payload = _scan_text(
+            'def openMarker : String := "/-"\n'
+            "unsafe def escaped : Nat := 0\n"
+            'def closeMarker : String := "-/"\n'
+        )
+        self.assertFalse(payload["ok"], payload)
+        self.assertIn("unsafe", _details(payload, "trust_base_blocker"))
+
+    def test_character_literals_cannot_turn_active_code_into_string_text(self) -> None:
+        payload = _scan_text(
+            "def leftQuote : Char := '\"'\n"
+            "unsafe def hidden : Nat := 0\n"
+            "def rightQuote : Char := '\"'\n"
+        )
+        self.assertFalse(payload["ok"], payload)
+        self.assertIn("unsafe", _details(payload, "trust_base_blocker"))
+
+    def test_nested_block_comments_stay_inert(self) -> None:
+        payload = _scan_text(
+            "/- outer /- nested -/ unsafe def fake : Nat := 0 -/\n"
+            "theorem real : True := trivial\n"
+        )
+        self.assertTrue(payload["ok"], payload)
+
+    def test_terms_inside_interpolated_strings_remain_active(self) -> None:
+        cases = (
+            ('def message := s!"value {by run_tac exact True.intro}"\n', "run_tac"),
+            ('def message := m!"value {by native_decide}"\n', "native_decide"),
+        )
+        for source, expected in cases:
+            with self.subTest(expected=expected):
+                payload = _scan_text(source)
+            self.assertFalse(payload["ok"], payload)
+            kinds = {item["detail"] for item in payload["findings"]}
+            self.assertIn(expected, kinds, payload)
+
+        inert = _scan_text('def message := "literal run_tac native_decide"\n')
+        self.assertTrue(inert["ok"], inert)
+
 
 class ImportAllowlistTests(unittest.TestCase):
     def test_default_allowlist_admits_mathlib_std_init_only(self) -> None:
@@ -178,9 +257,35 @@ class ImportAllowlistTests(unittest.TestCase):
         )
         self.assertIn("Mathlib", _details(flagged, "non_allowlisted_import"))
 
+    def test_every_module_on_one_import_line_is_checked(self) -> None:
+        flagged = _scan_text(
+            "import Mathlib Unreviewed.Module\ntheorem t : True := trivial\n"
+        )
+        self.assertFalse(flagged["ok"], flagged)
+        self.assertIn(
+            "Unreviewed.Module",
+            _details(flagged, "non_allowlisted_import"),
+        )
+
+    def test_module_system_meta_imports_cannot_bypass_the_allowlist(self) -> None:
+        for directive in (
+            "meta import Unreviewed.Module",
+            "public meta import Unreviewed.Module",
+            "import all Unreviewed.Module",
+        ):
+            with self.subTest(directive=directive):
+                payload = _scan_text(
+                    f"module\n{directive}\ntheorem t : True := trivial\n"
+                )
+                self.assertFalse(payload["ok"], payload)
+                self.assertIn(
+                    "Unreviewed.Module",
+                    _details(payload, "non_allowlisted_import"),
+                )
+
 
 class ProjectScanTests(unittest.TestCase):
-    def test_project_scan_reports_per_file_coverage_and_excludes_build_dirs(self) -> None:
+    def test_project_scan_reports_per_file_coverage_and_excludes_metadata_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "Good.lean").write_text(
@@ -190,7 +295,7 @@ class ProjectScanTests(unittest.TestCase):
             (root / "Sub" / "Bad.lean").write_text(
                 "theorem bad : True := sorry\n", encoding="utf-8"
             )
-            for excluded in (".lake", "build"):
+            for excluded in (".lake", ".git"):
                 (root / excluded).mkdir()
                 (root / excluded / "Skip.lean").write_text(
                     "theorem cheat : 2 + 2 = 4 := by native_decide\n",
@@ -207,13 +312,30 @@ class ProjectScanTests(unittest.TestCase):
             {row["file"] for row in coverage["files"]}, {"Good.lean", bad_rel}
         )
         for row in coverage["files"]:
-            self.assertEqual(len(row["sha256"]), 16, row)
+            self.assertEqual(len(row["sha256"]), 64, row)
         self.assertEqual({f["file"] for f in payload["findings"]}, {bad_rel})
         self.assertEqual(
             {f["kind"] for f in payload["findings"]}, {"active_placeholder"}
         )
         # The excluded dirs' native_decide must not leak into the verdict.
         self.assertEqual(payload["trust_base_status"], "accepted_trust_base")
+
+    def test_a_directory_named_build_is_scanned_as_project_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "build" / "Hidden.lean"
+            source.parent.mkdir()
+            source.write_text(
+                "axiom hidden : False\n",
+                encoding="utf-8",
+            )
+            payload = gate.scan_project(root, "final_candidate", set())
+        self.assertFalse(payload["ok"], payload)
+        self.assertEqual(
+            {row["file"] for row in payload["coverage"]["files"]},
+            {str(Path("build") / "Hidden.lean")},
+        )
+        self.assertIn("axiom", _details(payload, "trust_base_blocker"))
 
     def test_empty_project_is_an_explicit_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -240,6 +362,98 @@ class ProjectScanTests(unittest.TestCase):
         self.assertEqual(payload["coverage"]["files_scanned"], 0)
         self.assertEqual(payload["coverage"]["files"], [])
 
+    def test_tree_entry_cap_refuses_unbounded_non_source_fanout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "noise-a.txt").write_text("a", encoding="utf-8")
+            (root / "noise-b.txt").write_text("b", encoding="utf-8")
+            with mock.patch.object(gate, "TREE_MAX_ENTRIES", 1):
+                payload = gate.scan_project(root, "final_candidate", set())
+        self.assertFalse(payload["ok"], payload)
+        self.assertEqual(
+            [finding["kind"] for finding in payload["findings"]],
+            ["too_many_tree_entries"],
+        )
+
+    def test_coverage_hash_is_of_the_bytes_the_scanner_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "Candidate.lean"
+            clean = b"theorem clean : True := trivial\n"
+            target.write_bytes(clean)
+            original_scan = gate.scan_path
+
+            def scan_then_replace(path, stage, allowed):
+                result = original_scan(path, stage, allowed)
+                path.write_text("unsafe def changed : Nat := 0\n", encoding="utf-8")
+                return result
+
+            with mock.patch.object(gate, "scan_path", side_effect=scan_then_replace):
+                payload = gate.scan_project(root, "final_candidate", set())
+        self.assertEqual(
+            payload["coverage"]["files"][0]["sha256"],
+            hashlib.sha256(clean).hexdigest(),
+        )
+
+    def test_unreadable_project_file_is_not_counted_as_scanned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Invalid.lean").write_bytes(b"\xff\xfe")
+            payload = gate.scan_project(root, "final_candidate", set())
+        self.assertFalse(payload["ok"], payload)
+        self.assertEqual(payload["coverage"]["files_total"], 1)
+        self.assertEqual(payload["coverage"]["files_scanned"], 0)
+        self.assertEqual(payload["coverage"]["files"][0]["sha256"], "")
+
+    def test_source_byte_limit_refuses_unbounded_reads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "Huge.lean"
+            target.write_bytes(b"x" * 9)
+            with mock.patch.object(gate, "SOURCE_MAX_BYTES", 8):
+                payload = gate.scan_path(target, "final_candidate", set())
+        self.assertFalse(payload["ok"], payload)
+        self.assertEqual(payload["findings"][0]["kind"], "input_too_large")
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_project_scan_refuses_symlinked_lean_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / "outside.txt"
+            outside.write_text("theorem external : True := trivial\n", encoding="utf-8")
+            linked = root / "Linked.lean"
+            linked.symlink_to(outside)
+            payload = gate.scan_project(root, "final_candidate", set())
+        self.assertFalse(payload["ok"], payload)
+        self.assertIn("symlink_input", {item["kind"] for item in payload["findings"]})
+        self.assertEqual(payload["coverage"]["files_scanned"], 0)
+
+    def test_project_scan_never_silently_skips_an_unreadable_subtree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Visible.lean").write_text(
+                "theorem visible : True := trivial\n", encoding="utf-8"
+            )
+            blocked = root / "blocked"
+            blocked.mkdir()
+            (blocked / "Hidden.lean").write_text(
+                "unsafe def hidden : Nat := 0\n", encoding="utf-8"
+            )
+            original_scandir = os.scandir
+
+            def refuse(path):
+                if Path(path) == blocked:
+                    raise PermissionError("blocked fixture")
+                return original_scandir(path)
+
+            with mock.patch.object(gate.os, "scandir", side_effect=refuse):
+                payload = gate.scan_project(root, "final_candidate", set())
+        self.assertFalse(payload["ok"], payload)
+        self.assertEqual(payload["coverage"]["files_scanned"], 0)
+        self.assertIn(
+            "project_traversal_error",
+            {item["kind"] for item in payload["findings"]},
+        )
+
 
 def _fake_lean(root: Path, *, exit_code: int) -> Path:
     impl = root / "fake_lean_impl.py"
@@ -261,6 +475,33 @@ def _fake_lean(root: Path, *, exit_code: int) -> Path:
     )
     wrapper.chmod(0o755)
     return wrapper
+
+
+class BoundedCommandTests(unittest.TestCase):
+    def test_timeout_terminates_and_reaps_the_child(self) -> None:
+        command = [
+            sys.executable,
+            "-c",
+            "import os, time; print(os.getpid(), flush=True); time.sleep(30)",
+        ]
+        with self.assertRaises(subprocess.TimeoutExpired) as raised:
+            gate.run_bounded_command(
+                command,
+                timeout=0.1,
+                max_output_bytes=1024,
+            )
+        pid = int((raised.exception.output or b"").strip())
+        if Path("/proc").is_dir():
+            self.assertFalse(Path("/proc", str(pid)).exists())
+
+    def test_relative_tool_candidate_is_bound_to_an_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as tmp:
+            tool = Path(tmp) / "tool"
+            tool.write_text("tool", encoding="utf-8")
+            candidate = os.path.relpath(tool, Path.cwd())
+            resolved = gate.resolve_candidate(candidate)
+        self.assertTrue(Path(resolved).is_absolute(), resolved)
+        self.assertEqual(Path(resolved), tool.resolve())
 
 
 class CliExitMappingTests(unittest.TestCase):
@@ -341,6 +582,164 @@ class CliExitMappingTests(unittest.TestCase):
                 json.loads(bad.stdout)["lean_check_status"], "typecheck_failed"
             )
 
+    def test_lake_build_requires_post_build_source_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            source = root / "Proj" / "Basic.lean"
+            source.parent.mkdir(parents=True)
+            (root / "lakefile.toml").write_text('name = "project"\n', encoding="utf-8")
+            source.write_text("theorem t : True := True.intro\n", encoding="utf-8")
+            tools = base / "tools"
+            tools.mkdir()
+            lake = _fake_lean(tools, exit_code=0)
+            with mock.patch.dict(os.environ, {"AAS_LAKE": str(lake)}):
+                missing = gate.typecheck_lake_build(timeout=10, project_root=root)
+                artifact = (
+                    root
+                    / ".lake"
+                    / "build"
+                    / "lib"
+                    / "lean"
+                    / "Proj"
+                    / "Basic.olean"
+                )
+                artifact.parent.mkdir(parents=True)
+                artifact.write_bytes(b"compiled")
+                complete = gate.typecheck_lake_build(timeout=10, project_root=root)
+        self.assertEqual(missing["lean_check_status"], "command_failed", missing)
+        self.assertEqual(missing["typecheck_modules_unbuilt"], ["Proj.Basic"])
+        self.assertEqual(complete["lean_check_status"], "typechecked", complete)
+        self.assertEqual(complete["typecheck_coverage_status"], "complete")
+
+    def test_verification_refuses_input_changed_by_the_typecheck(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "Candidate.lean"
+            target.write_text("theorem clean : True := trivial\n", encoding="utf-8")
+
+            def mutate(*_args, **_kwargs):
+                target.write_text("unsafe def changed : Nat := 0\n", encoding="utf-8")
+                return {
+                    "lean_check_status": "typechecked",
+                    "runner": "direct-lean",
+                    "typecheck_command": "lean <input>",
+                    "typecheck_cwd": "",
+                    "typecheck_stdout": "",
+                    "typecheck_stderr": "",
+                }
+
+            with mock.patch.object(gate, "typecheck", side_effect=mutate), mock.patch.object(
+                gate, "emit"
+            ) as emit:
+                rc = gate.main(["verify", "--input", str(target), "--strict"])
+            payload = emit.call_args.args[0]
+        self.assertEqual(rc, 1)
+        self.assertFalse(payload["ok"], payload)
+        self.assertIn(
+            "input_changed_during_verification",
+            {item["kind"] for item in payload["findings"]},
+        )
+
+    def test_verification_binds_the_lake_configuration_around_typecheck(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "lakefile.toml").write_text('name = "proof"\n', encoding="utf-8")
+            target = root / "Candidate.lean"
+            target.write_text("theorem clean : True := trivial\n", encoding="utf-8")
+
+            def mutate(*_args, **_kwargs):
+                (root / "lean-toolchain").write_text(
+                    "leanprover/lean4:v4.33.1\n", encoding="utf-8"
+                )
+                return {
+                    "lean_check_status": "typechecked",
+                    "runner": "lake-env-lean",
+                    "typecheck_command": "lake env lean <input>",
+                    "typecheck_cwd": str(root),
+                    "typecheck_stdout": "",
+                    "typecheck_stderr": "",
+                }
+
+            with mock.patch.object(gate, "typecheck", side_effect=mutate), mock.patch.object(
+                gate, "emit"
+            ) as emit:
+                rc = gate.main(
+                    [
+                        "verify",
+                        "--input",
+                        str(target),
+                        "--strict",
+                        "--runner",
+                        "lake-env-lean",
+                        "--project-root",
+                        str(root),
+                    ]
+                )
+            payload = emit.call_args.args[0]
+        self.assertEqual(rc, 1)
+        self.assertFalse(payload["ok"], payload)
+        self.assertIn(
+            "project_context_changed_during_verification",
+            {item["kind"] for item in payload["findings"]},
+        )
+
+    def test_timeouts_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "Candidate.lean"
+            target.write_text("theorem clean : True := trivial\n", encoding="utf-8")
+            for command in (
+                ["verify", "--input", str(target), "--timeout", "0"],
+                ["axiom-audit", "--input", str(tmp), "--timeout", "-1"],
+                ["kernel-check", "--input", str(tmp), "--timeout", "0"],
+            ):
+                with self.subTest(command=command), self.assertRaises(SystemExit):
+                    gate.main(command)
+
+    def test_lake_build_cannot_certify_a_file_or_a_different_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first"
+            second = root / "second"
+            first.mkdir()
+            second.mkdir()
+            (first / "lakefile.toml").write_text('name = "first"\n', encoding="utf-8")
+            (second / "lakefile.toml").write_text('name = "second"\n', encoding="utf-8")
+            target = first / "Candidate.lean"
+            target.write_text("theorem clean : True := trivial\n", encoding="utf-8")
+            cases = (
+                [
+                    "verify",
+                    "--input",
+                    str(target),
+                    "--strict",
+                    "--runner",
+                    "lake-build",
+                    "--project-root",
+                    str(first),
+                ],
+                [
+                    "verify",
+                    "--input",
+                    str(first),
+                    "--strict",
+                    "--project-root",
+                    str(second),
+                ],
+            )
+            for command in cases:
+                with self.subTest(command=command), mock.patch.object(
+                    gate, "typecheck"
+                ) as typecheck, mock.patch.object(gate, "emit") as emit:
+                    rc = gate.main(command)
+                payload = emit.call_args.args[0]
+                self.assertEqual(rc, 1)
+                self.assertFalse(payload["ok"], payload)
+                self.assertIn(
+                    "runner_input_mismatch",
+                    {item["kind"] for item in payload["findings"]},
+                )
+                typecheck.assert_not_called()
+
 
 def _fake_tool(root: Path, name: str, body: str) -> Path:
     """A stub executable named ``name`` whose behaviour is the given Python body."""
@@ -418,6 +817,36 @@ class AxiomAuditTests(unittest.TestCase):
             (["Foo.Bar.beta", "Foo.Bar.gamma", "top"], ["Foo.Bar.alpha"], []),
         )
 
+    def test_unicode_names_remain_valid_harness_identifiers(self) -> None:
+        source = (
+            "namespace Θεωρία\n"
+            "theorem αλήθεια : True := trivial\n"
+            "end Θεωρία\n"
+        )
+        self.assertEqual(
+            gate.scan_declarations(source),
+            (["Θεωρία.αλήθεια"], [], []),
+        )
+        self.assertTrue(
+            gate.valid_lean_name("Θεωρία.αλήθεια", allow_root_prefix=True)
+        )
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_declaration_walk_refuses_a_symlinked_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / "outside.txt"
+            outside.write_text("theorem escaped : True := trivial\n", encoding="utf-8")
+            linked = root / "Linked.lean"
+            linked.symlink_to(outside)
+            result = gate.project_declaration_scan(root)
+        self.assertEqual(result.names, [])
+        self.assertEqual(result.private, [])
+        self.assertTrue(
+            any("symlink_input" in detail for detail in result.unparsed),
+            result,
+        )
+
     def test_a_mutual_block_does_not_close_the_enclosing_namespace(self) -> None:
         """`end` closing a `mutual` must not pop the namespace above it.
 
@@ -438,6 +867,21 @@ class AxiomAuditTests(unittest.TestCase):
             gate.declaration_names(source),
             ["Foo.alpha", "Foo.beta", "Foo.gamma"],
         )
+
+    def test_multiple_declarations_on_one_line_are_refused_as_partial_coverage(self) -> None:
+        scan = gate.scan_declarations(
+            "theorem first : True := True.intro theorem second : True := True.intro\n"
+        )
+        self.assertEqual(scan.names, ["first"])
+        self.assertEqual(len(scan.unparsed), 1)
+        self.assertIn("theorem second", scan.unparsed[0])
+
+    def test_compound_scope_lines_are_refused_before_they_can_corrupt_names(self) -> None:
+        scan = gate.scan_declarations(
+            "namespace Imported end\ntheorem actual : True := True.intro\n"
+        )
+        self.assertEqual(scan.names, ["actual"])
+        self.assertEqual(scan.unparsed, ["namespace Imported end"])
 
     def test_a_noncomputable_section_does_not_close_the_enclosing_namespace(self) -> None:
         """The modifier form of a section opener still has to push a scope.
@@ -658,6 +1102,13 @@ class AuditCliTests(unittest.TestCase):
         (olean / "Basic.olean").write_bytes(b"")
         return root
 
+    @staticmethod
+    def _mark_basic_built(root: Path) -> None:
+        source = root / "Proj" / "Basic.lean"
+        artifact = root / ".lake" / "build" / "lib" / "lean" / "Proj" / "Basic.olean"
+        source_mtime = source.stat().st_mtime_ns
+        os.utime(artifact, ns=(source_mtime + 1, source_mtime + 1))
+
     def _run_gate(
         self, *args: str, env_extra: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess[str]:
@@ -753,17 +1204,20 @@ class AuditCliTests(unittest.TestCase):
             lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
             env_extra = {
                 "AAS_LAKE": str(lake),
-                "FAKE_AXIOMS": "propext, Lean.ofReduceBool, Lean.trustCompiler",
+                "FAKE_AXIOMS": (
+                    "propext, Lean.ofReduceBool, Lean.ofReduceNat, Lean.trustCompiler"
+                ),
             }
             blocked = self._run_gate("axiom-audit", "--input", str(root), env_extra=env_extra)
             self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
             self.assertEqual(
                 json.loads(blocked.stdout)["unsanctioned_axioms"],
-                ["Lean.ofReduceBool", "Lean.trustCompiler"],
+                ["Lean.ofReduceBool", "Lean.ofReduceNat", "Lean.trustCompiler"],
             )
             allowed = self._run_gate(
                 "axiom-audit", "--input", str(root), "--strict",
                 "--allow-axiom", "Lean.ofReduceBool",
+                "--allow-axiom", "Lean.ofReduceNat",
                 "--allow-axiom", "Lean.trustCompiler",
                 env_extra=env_extra,
             )
@@ -772,7 +1226,7 @@ class AuditCliTests(unittest.TestCase):
             self.assertEqual(payload["unsanctioned_axioms"], [])
             self.assertEqual(
                 payload["compiler_trust_axioms"],
-                ["Lean.ofReduceBool", "Lean.trustCompiler"],
+                ["Lean.ofReduceBool", "Lean.ofReduceNat", "Lean.trustCompiler"],
             )
             self.assertEqual(
                 sorted({row["status"] for row in payload["declarations"]}),
@@ -781,6 +1235,37 @@ class AuditCliTests(unittest.TestCase):
             self.assertTrue(
                 any("native evaluation" in line for line in payload["limitations"]),
                 payload["limitations"],
+            )
+
+    def test_modern_declaration_local_native_axioms_remain_compiler_trust(self) -> None:
+        native_axiom = "good._native.decide.ax_1_1"
+        self.assertTrue(gate.is_compiler_trust_axiom(native_axiom))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            env_extra = {"AAS_LAKE": str(lake), "FAKE_AXIOMS": native_axiom}
+            blocked = self._run_gate(
+                "axiom-audit", "--input", str(root), env_extra=env_extra
+            )
+            self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
+            blocked_payload = json.loads(blocked.stdout)
+            self.assertEqual(blocked_payload["compiler_trust_axioms"], [native_axiom])
+
+            allowed = self._run_gate(
+                "axiom-audit",
+                "--input",
+                str(root),
+                "--strict",
+                "--allow-axiom",
+                native_axiom,
+                env_extra=env_extra,
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+            payload = json.loads(allowed.stdout)
+            self.assertEqual(payload["compiler_trust_axioms"], [native_axiom])
+            self.assertEqual(
+                {row["status"] for row in payload["declarations"]},
+                {"sanctioned_compiler_trust"},
             )
 
     def test_a_private_theorem_is_reported_as_skipped_not_unresolved(self) -> None:
@@ -796,6 +1281,7 @@ class AuditCliTests(unittest.TestCase):
                 "private theorem helper : True := trivial\n",
                 encoding="utf-8",
             )
+            self._mark_basic_built(root)
             lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
             result = self._run_gate(
                 "axiom-audit", "--input", str(root), "--strict",
@@ -827,6 +1313,7 @@ class AuditCliTests(unittest.TestCase):
                 "    wrapped_name : True := trivial\n",
                 encoding="utf-8",
             )
+            self._mark_basic_built(root)
             lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
             result = self._run_gate(
                 "axiom-audit", "--input", str(root), "--strict",
@@ -961,6 +1448,55 @@ class AuditCliTests(unittest.TestCase):
             )
             self.assertEqual(strict.returncode, 1, strict.stdout + strict.stderr)
 
+    def test_project_local_lean4checker_is_never_selected_implicitly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            self._mark_basic_built(root)
+            checker_dir = root / ".lake" / "build" / "bin"
+            checker_dir.mkdir(parents=True)
+            checker = _fake_tool(
+                checker_dir, "lean4checker", "import sys\nsys.exit(0)\n"
+            )
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_ENV)
+            with mock.patch.dict(os.environ, {"AAS_LAKE": str(lake)}), mock.patch.object(
+                gate.shutil, "which", return_value=None
+            ):
+                os.environ.pop("AAS_LEAN4CHECKER", None)
+                payload = gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    modules=[],
+                    strict=True,
+                )
+            self.assertTrue(payload["ok"], payload)
+            self.assertEqual(payload["kernel_check_status"], "tool_unavailable")
+            self.assertEqual(
+                payload["tool_status"]["lean4checker"],
+                {"status": "tool_unavailable", "path": "", "source": "not-found"},
+            )
+
+            with mock.patch.dict(
+                os.environ,
+                {"AAS_LAKE": str(lake), "AAS_LEAN4CHECKER": str(checker)},
+            ):
+                selected = gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    modules=[],
+                    strict=True,
+                )
+            self.assertTrue(selected["ok"], selected)
+            self.assertEqual(selected["kernel_check_status"], "kernel_checked")
+            self.assertTrue(
+                selected["tool_status"]["lean4checker"]["inside_project_root"]
+            )
+            self.assertTrue(
+                any("project-controlled" in note for note in selected["limitations"]),
+                selected,
+            )
+
     def test_kernel_check_reports_each_module_replay(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._project(tmp)
@@ -987,6 +1523,382 @@ class AuditCliTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(bad.stdout)["kernel_check_status"], "kernel_check_failed"
             )
+
+    def test_harness_identifiers_are_validated_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            cases = (
+                {
+                    "declarations": ["good\n#eval 1 + 1"],
+                    "imports": ["Proj.Basic"],
+                    "finding": "invalid_declaration",
+                },
+                {
+                    "declarations": ["good"],
+                    "imports": ["Proj.Basic\n#eval 1 + 1"],
+                    "finding": "invalid_import",
+                },
+            )
+            for case in cases:
+                with self.subTest(case=case), mock.patch.object(
+                    gate, "run_bounded_command"
+                ) as run:
+                    payload = gate.axiom_audit_payload(
+                        root,
+                        project_root=root,
+                        timeout=10,
+                        declarations=case["declarations"],
+                        imports=case["imports"],
+                        allowed_axioms=set(),
+                        strict=True,
+                    )
+                self.assertFalse(payload["ok"], payload)
+                self.assertIn(
+                    case["finding"],
+                    {item["kind"] for item in payload["findings"]},
+                )
+                run.assert_not_called()
+
+    def test_kernel_module_options_are_validated_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            with mock.patch.object(gate, "run_bounded_command") as run:
+                payload = gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    modules=["--help"],
+                    strict=True,
+                )
+            self.assertFalse(payload["ok"], payload)
+            self.assertIn(
+                "invalid_module",
+                {item["kind"] for item in payload["findings"]},
+            )
+            run.assert_not_called()
+
+    def test_axiom_harness_module_count_is_bounded_before_io(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            imports = [f"Module{i}" for i in range(gate.AXIOM_AUDIT_MAX_MODULES + 1)]
+            with mock.patch.object(gate, "project_evidence_snapshot") as snapshot, mock.patch.object(
+                gate, "run_bounded_command"
+            ) as run:
+                payload = gate.axiom_audit_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    declarations=["good"],
+                    imports=imports,
+                    allowed_axioms=set(),
+                    strict=True,
+                )
+            self.assertFalse(payload["ok"], payload)
+            self.assertIn(
+                "too_many_modules",
+                {item["kind"] for item in payload["findings"]},
+            )
+            snapshot.assert_not_called()
+            run.assert_not_called()
+
+    def test_compiled_evidence_byte_limit_fails_before_checker_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            artifact = root / ".lake" / "build" / "lib" / "lean" / "Proj" / "Basic.olean"
+            artifact.write_bytes(b"too large")
+            with mock.patch.object(gate, "COMPILED_MODULE_MAX_BYTES", 4), mock.patch.object(
+                gate, "run_bounded_command"
+            ) as run:
+                payload = gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    modules=[],
+                    strict=True,
+                )
+            self.assertFalse(payload["ok"], payload)
+            self.assertIn(
+                "evidence_unreadable",
+                {item["kind"] for item in payload["findings"]},
+            )
+            run.assert_not_called()
+
+    def test_evidence_snapshot_hashes_without_materializing_artifact_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            with mock.patch.object(gate, "stable_regular_file_bytes") as materialize:
+                snapshot = gate.project_evidence_snapshot(root, ["Proj.Basic"])
+        materialize.assert_not_called()
+        self.assertEqual(snapshot["errors"], [])
+        self.assertEqual(len(snapshot["modules"][0]["compiled_sha256"]), 64)
+
+    def test_explicit_local_compiled_module_requires_its_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            (root / "Proj" / "Basic.lean").unlink()
+            cases = (
+                lambda: gate.axiom_audit_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    declarations=["good"],
+                    imports=["Proj.Basic"],
+                    allowed_axioms=set(),
+                    strict=True,
+                ),
+                lambda: gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    modules=["Proj.Basic"],
+                    strict=True,
+                ),
+            )
+            for invoke in cases:
+                with self.subTest(invoke=invoke), mock.patch.object(
+                    gate, "run_bounded_command"
+                ) as run:
+                    payload = invoke()
+                self.assertFalse(payload["ok"], payload)
+                self.assertIn(
+                    "evidence_unreadable",
+                    {item["kind"] for item in payload["findings"]},
+                )
+                run.assert_not_called()
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unavailable")
+    def test_compiled_evidence_refuses_a_symlinked_lake_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            root.mkdir()
+            (root / "lakefile.lean").write_text("package P\n", encoding="utf-8")
+            outside = base / "outside-lake"
+            artifact = outside / "build" / "lib" / "lean" / "Proj" / "Basic.olean"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"compiled outside the project")
+            try:
+                (root / ".lake").symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"cannot create directory symlink: {exc}")
+
+            with self.assertRaises(gate.StableReadError) as raised:
+                gate.built_module_artifacts(root)
+
+        self.assertEqual(raised.exception.kind, "symlink_directory")
+
+    def test_evidence_verbs_reject_a_different_reported_input_project(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            other = Path(tmp) / "other"
+            other.mkdir()
+            cases = (
+                lambda: gate.axiom_audit_payload(
+                    other,
+                    project_root=root,
+                    timeout=10,
+                    declarations=[],
+                    imports=[],
+                    allowed_axioms=set(),
+                    strict=True,
+                ),
+                lambda: gate.kernel_check_payload(
+                    other,
+                    project_root=root,
+                    timeout=10,
+                    modules=[],
+                    strict=True,
+                ),
+            )
+            for invoke in cases:
+                with mock.patch.object(gate, "run_bounded_command") as run:
+                    payload = invoke()
+                self.assertFalse(payload["ok"], payload)
+                self.assertIn(
+                    "input_project_mismatch",
+                    {item["kind"] for item in payload["findings"]},
+                )
+                run.assert_not_called()
+
+    def test_unreadable_built_source_is_a_coverage_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            (root / "Unreadable.lean").write_bytes(b"\xff\xfe")
+            (root / ".lake" / "build" / "lib" / "lean" / "Unreadable.olean").write_bytes(b"")
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            result = self._run_gate(
+                "axiom-audit",
+                "--input",
+                str(root),
+                "--strict",
+                env_extra={"AAS_LAKE": str(lake)},
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"], payload)
+            self.assertIn(
+                "source_unreadable",
+                {item["kind"] for item in payload["findings"]},
+            )
+
+    def test_nonzero_audit_command_cannot_pass_with_partial_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            noisy_failure = _fake_tool(
+                Path(tmp),
+                "lake",
+                _FAKE_LAKE_AXIOMS + "\nsys.exit(1)\n",
+            )
+            result = self._run_gate(
+                "axiom-audit",
+                "--input",
+                str(root),
+                "--strict",
+                env_extra={"AAS_LAKE": str(noisy_failure)},
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertFalse(payload["ok"], payload)
+            self.assertEqual(payload["axiom_audit_status"], "command_failed")
+
+    def test_audit_output_limit_cannot_pass_with_a_partial_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            noisy = _fake_tool(
+                Path(tmp),
+                "lake",
+                "import sys\n"
+                "print(\"'good' depends on axioms: [propext]\")\n"
+                "sys.stdout.write('x' * 4096)\n",
+            )
+            with mock.patch.dict(os.environ, {"AAS_LAKE": str(noisy)}), mock.patch.object(
+                gate,
+                "COMMAND_OUTPUT_MAX_BYTES",
+                512,
+            ):
+                payload = gate.axiom_audit_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    declarations=["good"],
+                    imports=["Proj.Basic"],
+                    allowed_axioms=set(),
+                    strict=True,
+                )
+
+        self.assertFalse(payload["ok"], payload)
+        self.assertEqual(payload["axiom_audit_status"], "command_failed")
+        self.assertEqual(payload["declarations"], [])
+        self.assertIn(
+            "audit_output_limit",
+            {item["kind"] for item in payload["findings"]},
+        )
+
+    def test_source_newer_than_compiled_module_refuses_both_evidence_verbs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            source = root / "Proj" / "Basic.lean"
+            artifact = root / ".lake" / "build" / "lib" / "lean" / "Proj" / "Basic.olean"
+            artifact_mtime = artifact.stat().st_mtime_ns
+            os.utime(source, ns=(artifact_mtime + 1_000_000, artifact_mtime + 1_000_000))
+            lake = _fake_tool(Path(tmp), "lake", _FAKE_LAKE_AXIOMS)
+            checker = _fake_tool(
+                Path(tmp), "lean4checker", "import sys\nsys.exit(0)\n"
+            )
+            env_extra = {
+                "AAS_LAKE": str(lake),
+                "AAS_LEAN4CHECKER": str(checker),
+            }
+            for verb in ("axiom-audit", "kernel-check"):
+                with self.subTest(verb=verb):
+                    result = self._run_gate(
+                        verb,
+                        "--input",
+                        str(root),
+                        "--strict",
+                        env_extra=env_extra,
+                    )
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    payload = json.loads(result.stdout)
+                    self.assertIn(
+                        "stale_compiled_module",
+                        {item["kind"] for item in payload["findings"]},
+                    )
+
+    def test_explicit_local_modules_cannot_bypass_the_stale_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._project(tmp)
+            source = root / "Proj" / "Basic.lean"
+            artifact = root / ".lake" / "build" / "lib" / "lean" / "Proj" / "Basic.olean"
+            artifact_mtime = artifact.stat().st_mtime_ns
+            os.utime(source, ns=(artifact_mtime + 1_000_000, artifact_mtime + 1_000_000))
+            cases = (
+                lambda: gate.axiom_audit_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    declarations=["good"],
+                    imports=["Proj.Basic"],
+                    allowed_axioms=set(),
+                    strict=True,
+                ),
+                lambda: gate.kernel_check_payload(
+                    root,
+                    project_root=root,
+                    timeout=10,
+                    modules=["Proj.Basic"],
+                    strict=True,
+                ),
+            )
+            for invoke in cases:
+                with self.subTest(invoke=invoke), mock.patch.object(
+                    gate, "run_bounded_command"
+                ) as run:
+                    payload = invoke()
+                self.assertFalse(payload["ok"], payload)
+                self.assertIn(
+                    "stale_compiled_module",
+                    {item["kind"] for item in payload["findings"]},
+                )
+                run.assert_not_called()
+
+    def test_evidence_verbs_bind_compiled_bytes_around_the_command(self) -> None:
+        mutation_body = (
+            "from pathlib import Path\n"
+            "artifact = Path('.lake/build/lib/lean/Proj/Basic.olean')\n"
+            "artifact.write_bytes(b'changed during evidence command')\n"
+            "print(\"'good' depends on axioms: [propext, Classical.choice, Quot.sound]\")\n"
+            "print(\"'bad' depends on axioms: [propext, Classical.choice, Quot.sound]\")\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            tool_dir = Path(tmp) / "tools"
+            tool_dir.mkdir()
+            lake = _fake_tool(tool_dir, "lake", mutation_body)
+            checker = _fake_tool(
+                tool_dir, "lean4checker", "import sys\nsys.exit(0)\n"
+            )
+            for verb, finding in (
+                ("axiom-audit", "evidence_changed_during_audit"),
+                ("kernel-check", "evidence_changed_during_kernel_check"),
+            ):
+                with self.subTest(verb=verb):
+                    root = self._project(str(Path(tmp) / verb))
+                    result = self._run_gate(
+                        verb,
+                        "--input",
+                        str(root),
+                        "--strict",
+                        env_extra={
+                            "AAS_LAKE": str(lake),
+                            "AAS_LEAN4CHECKER": str(checker),
+                        },
+                    )
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    payload = json.loads(result.stdout)
+                    self.assertIn(
+                        finding,
+                        {item["kind"] for item in payload["findings"]},
+                    )
 
 
 if __name__ == "__main__":

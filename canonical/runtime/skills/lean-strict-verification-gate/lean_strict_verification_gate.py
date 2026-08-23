@@ -6,10 +6,14 @@ import hashlib
 import json
 import os
 import re
+import signal
 import shutil
+import stat
 import subprocess
 import tempfile
+import threading
 import time
+import unicodedata
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -22,21 +26,48 @@ PLACEHOLDER_PATTERNS = {
     "sorryAx": re.compile(r"\bsorryAx\b"),
 }
 TRUST_BASE_PATTERNS = {
-    # A command prefix may share the declaration's line, so `set_option x y in
-    # axiom evil : False` never reaches the start of one — the anchor has to
-    # allow an `... in` run ahead of the keyword.
-    "axiom": re.compile(r"(?:^\s*|\sin\s+)axiom\s+", re.M),
+    # Attributes, visibility, and other declaration modifiers may precede the
+    # keyword, as may a same-line `... in` command prefix. `axiom` is reserved;
+    # exclude only a qualified-name segment such as `Foo.axiom`.
+    "axiom": re.compile(r"(?<![.\w])axiom\s+"),
     "unsafe": re.compile(r"\bunsafe\b"),
     # Proof-by-native-evaluation trusts the compiler and native code, not just
     # the kernel — a trust-base expansion the gate must surface.
     "native_decide": re.compile(r"\bnative_decide\b"),
+    # Lean 4.33's DecideConfig documents these as spellings of the same
+    # compiler-trusting tactic. Keep the option grammar narrow so a later local
+    # named `native` is not mistaken for a decide option.
+    "decide_native": re.compile(
+        r"\bdecide\b(?:\s*[+-]\s*[A-Za-z_]\w*)*\s*\+\s*native\b"
+        r"|\bdecide\b\s*\([^)]{0,512}\bnative\s*:=\s*true\b[^)]{0,512}\)",
+        re.S,
+    ),
     "ofReduceBool": re.compile(r"\bofReduceBool\b"),
+    "ofReduceNat": re.compile(r"\bofReduceNat\b"),
+    "trustCompiler": re.compile(r"\btrustCompiler\b"),
+    "reduceBool": re.compile(r"\breduceBool\b"),
+    "reduceNat": re.compile(r"\breduceNat\b"),
 }
 SAFETY_PATTERNS = {
     "#eval": re.compile(r"(^|[^\w])#eval\b"),
+    "#exit": re.compile(r"(^|[^\w])#exit\b"),
+    "#check_failure": re.compile(r"(^|[^\w])#check_failure\b"),
+    "#guard_msgs": re.compile(r"(^|[^\w])#guard_msgs\b"),
     "IO.Process": re.compile(r"\bIO\.Process\b"),
     "run_cmd": re.compile(r"\brun_cmd\b"),
-    "initialize": re.compile(r"\binitialize\b"),
+    # The builtin elaborator executes the body through unsafe TacticM eval.
+    "run_tac": re.compile(r"\brun_tac\b"),
+    # CommandElabM and TermElabM lift IO directly. Inline elaborators and
+    # user-registered elaborator attributes therefore execute host effects
+    # during an otherwise ordinary typecheck.
+    "elab": re.compile(r"(?<![.\w])elab\b"),
+    "elab_rules": re.compile(r"\belab_rules\b"),
+    "by_elab": re.compile(r"\bby_elab\b"),
+    "elaborator_attribute": re.compile(
+        r"(?:@\s*\[|\battribute\s*\[)[^\]]{0,512}"
+        r"\b(?:builtin_)?(?:command_elab|term_elab|tactic)\b"
+    ),
+    "initialize": re.compile(r"\b(?:builtin_)?initialize\b"),
     "@[extern]": re.compile(r"@\s*\[\s*extern\b"),
     # The leading \b must stay inside the alternatives: a shared one would
     # demand a word character before "@", so "@extern" at the start of a line
@@ -45,8 +76,19 @@ SAFETY_PATTERNS = {
 }
 FORMAL_ARTIFACT_STAGES = {"intake", "stub", "candidate_solution", "final_candidate", "archived"}
 RUNNERS = {"direct-lean", "lake-env-lean", "lake-build"}
-PROJECT_EXCLUDED_DIRS = {".lake", ".git", "lake-packages", "build"}
+PROJECT_EXCLUDED_DIRS = {".lake", ".git", "lake-packages"}
 PROJECT_MAX_FILES = 2000
+TREE_MAX_ENTRIES = 100_000
+SOURCE_MAX_BYTES = 64 * 1024 * 1024
+PROJECT_CONTEXT_MAX_BYTES = 64 * 1024 * 1024
+COMPILED_MODULE_MAX_BYTES = 512 * 1024 * 1024
+COMMAND_OUTPUT_MAX_BYTES = 16 * 1024 * 1024
+PROJECT_CONTEXT_FILES = (
+    "lakefile.lean",
+    "lakefile.toml",
+    "lean-toolchain",
+    "lake-manifest.json",
+)
 TOOL_ENV = {
     "lean": "AAS_LEAN",
     "lake": "AAS_LAKE",
@@ -58,12 +100,20 @@ SANCTIONED_AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
 # sorryAx is what `sorry` elaborates to: an --allow-axiom flag must never be
 # able to sanction it, so it is refused ahead of the operator allowlist.
 NEVER_SANCTIONED_AXIOMS = {"sorryAx"}
-# What `native_decide` reports. Unlike sorryAx these mark a complete proof, so a
-# project may knowingly accept them, but the proof then rests on the compiler
-# and the native runtime rather than on the kernel alone. Allowlisting them is
-# therefore permitted and always reported, never silent.
-COMPILER_TRUST_AXIOMS = {"Lean.ofReduceBool", "Lean.trustCompiler"}
+# Fixed names reported by older native-reduction paths. Lean 4.33's decide
+# tactic instead emits declaration-local `_native.*.ax_*` names, matched below.
+# Unlike sorryAx these mark a complete proof, so a project may knowingly accept
+# them, but the result always remains compiler trust rather than kernel-only.
+COMPILER_TRUST_AXIOMS = {
+    "Lean.ofReduceBool",
+    "Lean.ofReduceNat",
+    "Lean.trustCompiler",
+}
+COMPILER_TRUST_AXIOM_PATTERNS = (
+    re.compile(r"(?:^|\.)_native\.(?:decide|native_decide)\.ax_[A-Za-z0-9_]+$"),
+)
 AXIOM_AUDIT_MAX_DECLARATIONS = 500
+AXIOM_AUDIT_MAX_MODULES = 500
 # Unparsed lines are named in the report, but a pathological file must not be
 # able to grow the payload without bound; the count past the cap is summarized.
 AXIOM_AUDIT_MAX_UNPARSED = 20
@@ -71,6 +121,58 @@ KERNEL_CHECK_MAX_MODULES = 50
 # A lakefile is a build script, not a library module: importing it into the
 # audit harness would be a build-time error, never a proof dependency.
 NON_MODULE_STEMS = {"lakefile"}
+SOURCE_UNREADABLE_PREFIX = "__AAS_SOURCE_UNREADABLE__:"
+
+
+class BoundedCommandResult(NamedTuple):
+    returncode: int
+    stdout: str
+    stderr: str
+    output_bytes: int
+
+
+class CommandOutputLimitExceeded(Exception):
+    """A child produced more output than the gate can safely retain."""
+
+    def __init__(self, limit: int, stdout: str, stderr: str):
+        super().__init__(f"combined stdout/stderr exceeded {limit} bytes")
+        self.limit = limit
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def positive_timeout(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def valid_lean_name(value: str, *, allow_root_prefix: bool = False) -> bool:
+    """Conservative Unicode Lean identifier validation for generated argv/source."""
+
+    if not value or len(value) > 512:
+        return False
+    parts = value.split(".")
+    if allow_root_prefix and parts and parts[0] == "_root_":
+        parts = parts[1:]
+    if not parts or any(not part for part in parts):
+        return False
+
+    def initial(character: str) -> bool:
+        return character == "_" or unicodedata.category(character).startswith("L")
+
+    def continuation(character: str) -> bool:
+        category = unicodedata.category(character)
+        return initial(character) or category.startswith(("M", "N")) or character in "'!?"
+
+    return all(initial(part[0]) and all(continuation(char) for char in part[1:]) for part in parts)
+
+
+def is_compiler_trust_axiom(name: str) -> bool:
+    return name in COMPILER_TRUST_AXIOMS or any(
+        pattern.search(name) for pattern in COMPILER_TRUST_AXIOM_PATTERNS
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--typecheck", action="store_true")
     verify.add_argument(
         "--timeout",
-        type=int,
+        type=positive_timeout,
         default=600,
         help="typecheck wall limit in seconds (default 600; mathlib-importing builds need minutes, not 20s)",
     )
@@ -129,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
             "even once allowed"
         ),
     )
-    audit.add_argument("--timeout", type=int, default=600)
+    audit.add_argument("--timeout", type=positive_timeout, default=600)
     audit.add_argument(
         "--strict",
         action="store_true",
@@ -148,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="module to replay; repeatable (default: derived from the project)",
     )
-    kernel.add_argument("--timeout", type=int, default=600)
+    kernel.add_argument("--timeout", type=positive_timeout, default=600)
     kernel.add_argument(
         "--strict",
         action="store_true",
@@ -171,18 +273,115 @@ def main(argv: list[str] | None = None) -> int:
         payload["lean_check_status"] = "not_run"
         payload["strict"] = strict
         if payload["ok"] and want_typecheck:
+            payload.setdefault("limitations", []).extend(
+                [
+                    "pre/post hashes detect endpoint differences, not a change-and-restore between snapshots",
+                    "Lean, Lake, their launchers, environment, and dependency resolution are trusted inputs, not content-attested",
+                ]
+            )
             runner = args.runner
             project_root = Path(args.project_root) if args.project_root else None
             if input_path.is_dir():
                 # A whole project can only be typechecked by building it.
                 runner = "lake-build"
-                project_root = project_root or input_path
-            payload.update(typecheck(
-                input_path,
-                timeout=args.timeout,
-                runner=runner,
-                project_root=project_root,
-            ))
+                if project_root is None:
+                    project_root = input_path
+                elif project_root.expanduser().resolve() != input_path.expanduser().resolve():
+                    payload["ok"] = False
+                    payload["safety_status"] = "failed"
+                    payload["lean_check_status"] = "command_failed"
+                    payload.setdefault("findings", []).append(
+                        {
+                            "kind": "runner_input_mismatch",
+                            "detail": "directory input and --project-root must identify the same project",
+                        }
+                    )
+            elif runner == "lake-build":
+                payload["ok"] = False
+                payload["safety_status"] = "failed"
+                payload["lean_check_status"] = "command_failed"
+                payload.setdefault("findings", []).append(
+                    {
+                        "kind": "runner_input_mismatch",
+                        "detail": "lake-build can certify only a directory input; use lake-env-lean for one file",
+                    }
+                )
+            context_before: dict[str, Any] | None = None
+            if payload["ok"] and runner in {"lake-build", "lake-env-lean"} and project_root is not None:
+                supplied_root = project_root.expanduser()
+                if supplied_root.is_symlink():
+                    payload["ok"] = False
+                    payload["safety_status"] = "failed"
+                    payload["lean_check_status"] = "command_failed"
+                    payload.setdefault("findings", []).append(
+                        {
+                            "kind": "unstable_project_context",
+                            "detail": "--project-root must not be a symlink",
+                        }
+                    )
+                else:
+                    context_before = project_context_snapshot(supplied_root)
+                    payload["verification_project_context"] = context_before["files"]
+                    payload["verification_project_context_fingerprint"] = context_before[
+                        "fingerprint"
+                    ]
+                    if context_before["errors"]:
+                        payload["ok"] = False
+                        payload["safety_status"] = "failed"
+                        payload["lean_check_status"] = "command_failed"
+                        payload.setdefault("findings", []).extend(
+                            {
+                                "kind": "unstable_project_context",
+                                "detail": detail,
+                            }
+                            for detail in context_before["errors"]
+                        )
+            if payload["ok"]:
+                before_fingerprint = scan_fingerprint(payload)
+                payload.update(typecheck(
+                    input_path,
+                    timeout=args.timeout,
+                    runner=runner,
+                    project_root=project_root,
+                ))
+                after_scan = scan_input(
+                    input_path,
+                    args.artifact_stage,
+                    set(args.allow_import or []),
+                )
+                after_fingerprint = scan_fingerprint(after_scan)
+                payload["verification_input_fingerprint"] = before_fingerprint
+                payload["post_verification_input_fingerprint"] = after_fingerprint
+                if before_fingerprint != after_fingerprint:
+                    payload["ok"] = False
+                    payload["safety_status"] = "failed"
+                    payload.setdefault("findings", []).append(
+                        {
+                            "kind": "input_changed_during_verification",
+                            "detail": "the scanned input changed before typecheck evidence was finalized",
+                        }
+                    )
+                if context_before is not None and project_root is not None:
+                    context_after = project_context_snapshot(project_root.expanduser())
+                    payload["post_verification_project_context"] = context_after["files"]
+                    payload["post_verification_project_context_fingerprint"] = context_after[
+                        "fingerprint"
+                    ]
+                    if (
+                        context_after["errors"]
+                        or context_before["fingerprint"] != context_after["fingerprint"]
+                    ):
+                        payload["ok"] = False
+                        payload["safety_status"] = "failed"
+                        payload.setdefault("findings", []).append(
+                            {
+                                "kind": "project_context_changed_during_verification",
+                                "detail": (
+                                    "Lake configuration or toolchain selection changed before "
+                                    "typecheck evidence was finalized"
+                                ),
+                            }
+                        )
         emit(payload)
         if strict:
             return 0 if payload["ok"] and payload.get("lean_check_status") == "typechecked" else 1
@@ -233,7 +432,7 @@ def doctor_payload(*, project_root: Path, probe: bool) -> dict[str, Any]:
             "elan": tool_status("elan"),
             # Reported so an operator can see that kernel-check has no checker
             # to run, rather than discovering it as a tool_unavailable verdict.
-            "lean4checker": lean4checker_status(project_root),
+            "lean4checker": lean4checker_status(),
             "npm": tool_status("npm"),
             "npx": tool_status("npx"),
             "pip": tool_status("pip"),
@@ -260,7 +459,7 @@ def tool_status(name: str) -> dict[str, Any]:
                 "source": "env",
                 "env_var": env_var,
             }
-    path = shutil.which(name)
+    path = resolve_candidate(name)
     if path:
         return {"status": "available", "path": path, "source": "path"}
     elan_candidate = Path.home() / ".elan" / "bin" / executable_name(name)
@@ -276,9 +475,16 @@ def executable_name(name: str) -> str:
 def resolve_candidate(candidate: str) -> str:
     expanded = str(Path(candidate).expanduser())
     if any(sep in candidate for sep in ("/", "\\")):
-        path = Path(expanded)
-        return str(path) if path.is_file() else ""
-    return shutil.which(candidate) or ""
+        found = expanded
+    else:
+        found = shutil.which(candidate) or ""
+    if not found:
+        return ""
+    try:
+        path = Path(found).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return ""
+    return str(path) if path.is_file() else ""
 
 
 def project_status(root: Path) -> dict[str, Any]:
@@ -322,17 +528,19 @@ def probe_command(executable: str, args: list[str]) -> dict[str, str]:
     if not executable:
         return {"status": "tool_unavailable", "stdout": "", "stderr": ""}
     try:
-        completed = subprocess.run(
+        completed = run_bounded_command(
             [executable, *args],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=5,
-            check=False,
+            max_output_bytes=COMMAND_OUTPUT_MAX_BYTES,
         )
     except subprocess.TimeoutExpired:
         return {"status": "command_failed", "stdout": "", "stderr": "timeout after 5 seconds"}
+    except CommandOutputLimitExceeded as exc:
+        return {
+            "status": "command_failed",
+            "stdout": exc.stdout[-2000:],
+            "stderr": (exc.stderr + "\n" + str(exc))[-2000:],
+        }
     except OSError as exc:
         return {"status": "command_failed", "stdout": "", "stderr": str(exc)}
     return {
@@ -344,22 +552,283 @@ def probe_command(executable: str, args: list[str]) -> dict[str, str]:
 
 def scan_input(path: Path, artifact_stage: str, allowed_imports: set[str]) -> dict[str, Any]:
     """Dispatch: a directory is scanned recursively as a project, a file as before."""
-    if path.is_dir():
+    if not path.is_symlink() and path.is_dir():
         return scan_project(path, artifact_stage, allowed_imports)
     return scan_path(path, artifact_stage, allowed_imports)
 
 
+class StableReadError(Exception):
+    """A file could not be read as one stable, non-symlinked regular object."""
+
+    def __init__(self, kind: str, detail: str):
+        super().__init__(detail)
+        self.kind = kind
+        self.detail = detail
+
+
+def _stable_regular_file_read(
+    path: Path,
+    *,
+    max_bytes: int | None,
+    collect_bytes: bool,
+) -> bytes | str:
+    """Read or hash one file while binding path and descriptor identities."""
+
+    limit = SOURCE_MAX_BYTES if max_bytes is None else max_bytes
+    if limit <= 0:
+        raise ValueError("max_bytes must be positive")
+
+    try:
+        path_info = os.lstat(path)
+    except FileNotFoundError as exc:
+        raise StableReadError("missing_file", "input file does not exist") from exc
+    except OSError as exc:
+        raise StableReadError("read_error", str(exc)) from exc
+    if stat.S_ISLNK(path_info.st_mode):
+        raise StableReadError(
+            "symlink_input",
+            "input must be a stable regular file, not a symlink",
+        )
+    if not stat.S_ISREG(path_info.st_mode):
+        raise StableReadError("non_regular_input", "input is not a regular file")
+
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_BINARY", 0),
+        )
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or (int(path_info.st_dev), int(path_info.st_ino))
+            != (int(before.st_dev), int(before.st_ino))
+        ):
+            raise StableReadError(
+                "input_changed_during_scan",
+                "input path changed before it could be read",
+            )
+        if int(before.st_size) < 0 or int(before.st_size) > limit:
+            raise StableReadError(
+                "input_too_large",
+                f"input exceeds the {limit}-byte read limit",
+            )
+        chunks: list[bytes] = []
+        hasher = hashlib.sha256()
+        remaining = limit + 1
+        while remaining:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            if collect_bytes:
+                chunks.append(chunk)
+            else:
+                hasher.update(chunk)
+            remaining -= len(chunk)
+        if remaining == 0:
+            raise StableReadError(
+                "input_too_large",
+                f"input exceeds the {limit}-byte read limit",
+            )
+        after = os.fstat(descriptor)
+        stable = (
+            "st_dev",
+            "st_ino",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+            "st_nlink",
+        )
+        if any(getattr(before, field) != getattr(after, field) for field in stable):
+            raise StableReadError(
+                "input_changed_during_scan",
+                "input changed while it was being read",
+            )
+        return b"".join(chunks) if collect_bytes else hasher.hexdigest()
+    except StableReadError:
+        raise
+    except OSError as exc:
+        raise StableReadError("read_error", str(exc)) from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def stable_regular_file_bytes(path: Path, *, max_bytes: int | None = None) -> bytes:
+    """Read exact bytes while binding the path and descriptor identities."""
+
+    content = _stable_regular_file_read(
+        path,
+        max_bytes=max_bytes,
+        collect_bytes=True,
+    )
+    assert isinstance(content, bytes)
+    return content
+
+
+def stable_regular_file_sha256(path: Path, *, max_bytes: int) -> str:
+    """Hash exact bytes without materializing a potentially large artifact."""
+
+    digest = _stable_regular_file_read(
+        path,
+        max_bytes=max_bytes,
+        collect_bytes=False,
+    )
+    assert isinstance(digest, str)
+    return digest
+
+
+def scan_fingerprint(payload: dict[str, Any]) -> str:
+    """Stable digest of the exact source bytes represented by a scan payload."""
+
+    if payload.get("mode") == "project":
+        rows = (payload.get("coverage") or {}).get("files") or []
+        material = [
+            [str(row.get("file") or ""), str(row.get("sha256") or "")]
+            for row in rows
+            if isinstance(row, dict)
+        ]
+    else:
+        material = [[str(payload.get("input") or ""), str(payload.get("content_sha256") or "")]]
+    return hashlib.sha256(
+        json.dumps(material, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def stable_tree_files(
+    root: Path,
+    *,
+    suffix: str,
+    excluded_dirs: set[str],
+    missing_ok: bool = False,
+    reject_symlink_files: bool = False,
+) -> list[Path]:
+    """Walk a tree without silently skipping unreadable or symlinked subtrees."""
+
+    try:
+        root_info = os.lstat(root)
+    except FileNotFoundError as exc:
+        if missing_ok:
+            return []
+        raise StableReadError("missing_project", "project root does not exist") from exc
+    except OSError as exc:
+        raise StableReadError("project_traversal_error", str(exc)) from exc
+    if stat.S_ISLNK(root_info.st_mode):
+        raise StableReadError("symlink_project", "project tree root must not be a symlink")
+    if not stat.S_ISDIR(root_info.st_mode):
+        raise StableReadError("non_directory_project", "project tree root is not a directory")
+
+    files: list[Path] = []
+    pending = [root]
+    entries_seen = 0
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as entries:
+                children = []
+                for entry in entries:
+                    entries_seen += 1
+                    if entries_seen > TREE_MAX_ENTRIES:
+                        raise StableReadError(
+                            "too_many_tree_entries",
+                            f"tree walk exceeds the {TREE_MAX_ENTRIES}-entry cap",
+                        )
+                    children.append(entry)
+        except OSError as exc:
+            relative = directory.relative_to(root).as_posix() or "."
+            raise StableReadError(
+                "project_traversal_error",
+                f"could not enumerate {relative}: {type(exc).__name__}",
+            ) from exc
+        for entry in children:
+            path = Path(entry.path)
+            if entry.name in excluded_dirs:
+                continue
+            try:
+                entry_info = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                relative = path.relative_to(root).as_posix()
+                raise StableReadError(
+                    "project_traversal_error",
+                    f"could not inspect {relative}: {type(exc).__name__}",
+                ) from exc
+            if stat.S_ISLNK(entry_info.st_mode):
+                relative = path.relative_to(root).as_posix()
+                if entry.name.endswith(suffix):
+                    if reject_symlink_files:
+                        raise StableReadError(
+                            "symlink_input",
+                            f"project tree contains symlinked evidence file {relative}",
+                        )
+                    files.append(path)
+                    continue
+                try:
+                    points_to_directory = entry.is_dir(follow_symlinks=True)
+                except OSError as exc:
+                    raise StableReadError(
+                        "project_traversal_error",
+                        f"could not resolve symlink {relative}: {type(exc).__name__}",
+                    ) from exc
+                if points_to_directory:
+                    raise StableReadError(
+                        "symlink_directory",
+                        f"project tree contains symlinked directory {relative}",
+                    )
+                continue
+            if stat.S_ISDIR(entry_info.st_mode):
+                pending.append(path)
+            elif stat.S_ISREG(entry_info.st_mode) and entry.name.endswith(suffix):
+                files.append(path)
+    # Sort on project-relative POSIX text, not Path. Path ordering is case-folded
+    # on Windows and byte-ordered elsewhere.
+    return sorted(files, key=lambda path: path.relative_to(root).as_posix())
+
+
+def stable_directory_chain(
+    root: Path,
+    parts: tuple[str, ...],
+    *,
+    missing_ok: bool = False,
+) -> Path | None:
+    """Resolve only ordinary directory components below an already-bound root."""
+
+    current = root
+    for part in parts:
+        current /= part
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError as exc:
+            if missing_ok:
+                return None
+            raise StableReadError(
+                "missing_directory",
+                f"required directory {current.relative_to(root).as_posix()} does not exist",
+            ) from exc
+        except OSError as exc:
+            raise StableReadError("project_traversal_error", str(exc)) from exc
+        relative = current.relative_to(root).as_posix()
+        if stat.S_ISLNK(info.st_mode):
+            raise StableReadError(
+                "symlink_directory",
+                f"project evidence directory {relative} must not be a symlink",
+            )
+        if not stat.S_ISDIR(info.st_mode):
+            raise StableReadError(
+                "non_directory_build_output",
+                f"project evidence path {relative} is not a directory",
+            )
+    return current
+
+
 def project_lean_files(root: Path) -> list[Path]:
-    # Sort on the project-relative POSIX text, not on Path. Path ordering is
-    # case-folded on Windows and byte-ordered elsewhere, so `Proj/` and `loop/`
-    # come back in opposite orders on the two platforms and every downstream
-    # list — declarations, manifest rows, audit findings — reorders with them.
-    files = []
-    for candidate in sorted(root.rglob("*.lean"), key=lambda p: p.relative_to(root).as_posix()):
-        if any(part in PROJECT_EXCLUDED_DIRS for part in candidate.relative_to(root).parts):
-            continue
-        files.append(candidate)
-    return files
+    return stable_tree_files(
+        root,
+        suffix=".lean",
+        excluded_dirs=PROJECT_EXCLUDED_DIRS,
+    )
 
 
 def scan_project(root: Path, artifact_stage: str, allowed_imports: set[str]) -> dict[str, Any]:
@@ -368,7 +837,22 @@ def scan_project(root: Path, artifact_stage: str, allowed_imports: set[str]) -> 
     Coverage is explicit so a re-scan can be diffed against staged evidence:
     each row records the relative path and content hash actually scanned.
     """
-    files = project_lean_files(root)
+    try:
+        files = project_lean_files(root)
+    except StableReadError as exc:
+        return {
+            "schema_version": "lean-strict-verification-gate.v1",
+            "ok": False,
+            "input": str(root),
+            "mode": "project",
+            "artifact_stage": artifact_stage,
+            "lean_check_status": "not_run",
+            "placeholder_status": "not_scanned",
+            "trust_base_status": "not_scanned",
+            "safety_status": "failed",
+            "findings": [{"kind": exc.kind, "detail": exc.detail}],
+            "coverage": {"files_total": 0, "files_scanned": 0, "files": []},
+        }
     if len(files) > PROJECT_MAX_FILES:
         return {
             "schema_version": "lean-strict-verification-gate.v1",
@@ -388,15 +872,15 @@ def scan_project(root: Path, artifact_stage: str, allowed_imports: set[str]) -> 
         }
     findings: list[dict[str, str]] = []
     coverage: list[dict[str, str]] = []
+    files_scanned = 0
     placeholder_any = False
     trust_any = False
     for lean_file in files:
         rel = str(lean_file.relative_to(root))
         file_payload = scan_path(lean_file, artifact_stage, allowed_imports)
-        try:
-            digest = hashlib.sha256(lean_file.read_bytes()).hexdigest()[:16]
-        except OSError:
-            digest = ""
+        digest = str(file_payload.get("content_sha256") or "")
+        if digest:
+            files_scanned += 1
         coverage.append({"file": rel, "sha256": digest, "ok": file_payload["ok"]})
         for finding in file_payload["findings"]:
             findings.append({**finding, "file": rel})
@@ -421,9 +905,16 @@ def scan_project(root: Path, artifact_stage: str, allowed_imports: set[str]) -> 
             else "no_active_placeholders"
         ),
         "trust_base_status": "unsanctioned_axiom_or_unsafe" if trust_any else "accepted_trust_base",
-        "safety_status": "failed" if any(item["kind"] in {"unsafe_construct", "non_allowlisted_import"} for item in findings) else "passed",
+        "safety_status": (
+            "failed"
+            if any(
+                item["kind"] not in {"active_placeholder", "trust_base_blocker"}
+                for item in findings
+            )
+            else "passed"
+        ),
         "findings": findings,
-        "coverage": {"files_total": len(files), "files_scanned": len(files), "files": coverage},
+        "coverage": {"files_total": len(files), "files_scanned": files_scanned, "files": coverage},
         "limitations": [
             "scanner is a preflight guard, not a complete Lean parser",
             "statement equivalence is not checked by this helper",
@@ -432,31 +923,26 @@ def scan_project(root: Path, artifact_stage: str, allowed_imports: set[str]) -> 
 
 
 def scan_path(path: Path, artifact_stage: str, allowed_imports: set[str]) -> dict[str, Any]:
-    if not path.is_file():
-        return {
-            "schema_version": "lean-strict-verification-gate.v1",
-            "ok": False,
-            "input": str(path),
-            "artifact_stage": artifact_stage,
-            "lean_check_status": "not_run",
-            "placeholder_status": "not_scanned",
-            "trust_base_status": "not_scanned",
-            "safety_status": "failed",
-            "findings": [{"kind": "missing_file", "detail": "input file does not exist"}],
-        }
     try:
-        text = path.read_text(encoding="utf-8")
+        source_bytes = stable_regular_file_bytes(path)
+        text = source_bytes.decode("utf-8")
+    except StableReadError as exc:
+        return unreadable_payload(path, artifact_stage, exc.kind, exc.detail)
     except UnicodeDecodeError:
         return unreadable_payload(path, artifact_stage, "invalid_utf8", "input file is not valid UTF-8")
-    except OSError as exc:
-        return unreadable_payload(path, artifact_stage, "read_error", str(exc))
-    stripped = strip_comments_and_strings(text)
+    stripped, lexical_errors = _strip_comments_and_strings(text)
     findings: list[dict[str, str]] = []
+    findings.extend(
+        {"kind": "lexical_scan_incomplete", "detail": detail}
+        for detail in lexical_errors
+    )
     for name, pattern in SAFETY_PATTERNS.items():
         if pattern.search(stripped):
             findings.append({"kind": "unsafe_construct", "detail": name})
     for imp in imported_modules(stripped):
-        if allowed_imports and imp not in allowed_imports:
+        if not valid_lean_name(imp):
+            findings.append({"kind": "invalid_import", "detail": imp or "<missing>"})
+        elif allowed_imports and imp not in allowed_imports:
             findings.append({"kind": "non_allowlisted_import", "detail": imp})
         elif not allowed_imports and imp not in {"Init", "Std", "Mathlib"} and not imp.startswith(("Mathlib.", "Std.")):
             findings.append({"kind": "non_allowlisted_import", "detail": imp})
@@ -469,6 +955,7 @@ def scan_path(path: Path, artifact_stage: str, allowed_imports: set[str]) -> dic
         "schema_version": "lean-strict-verification-gate.v1",
         "ok": not findings,
         "input": str(path),
+        "content_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "artifact_stage": artifact_stage,
         "lean_check_status": "not_run",
         "placeholder_status": (
@@ -479,7 +966,14 @@ def scan_path(path: Path, artifact_stage: str, allowed_imports: set[str]) -> dic
             else "no_active_placeholders"
         ),
         "trust_base_status": "unsanctioned_axiom_or_unsafe" if trust_hits else "accepted_trust_base",
-        "safety_status": "failed" if any(item["kind"] in {"unsafe_construct", "non_allowlisted_import"} for item in findings) else "passed",
+        "safety_status": (
+            "failed"
+            if any(
+                item["kind"] not in {"active_placeholder", "trust_base_blocker"}
+                for item in findings
+            )
+            else "passed"
+        ),
         "findings": findings,
         "limitations": [
             "scanner is a preflight guard, not a complete Lean parser",
@@ -488,22 +982,158 @@ def scan_path(path: Path, artifact_stage: str, allowed_imports: set[str]) -> dic
     }
 
 
+def _lean_char_literal_length(text: str, index: int) -> int:
+    """Length of a valid Lean character literal at ``index``, or zero."""
+
+    if index >= len(text) or text[index] != "'" or index + 2 >= len(text):
+        return 0
+    position = index + 1
+    character = text[position]
+    if character == "\\":
+        position += 1
+        if position >= len(text):
+            return 0
+        escape = text[position]
+        if escape in "\\\"'rnt":
+            position += 1
+        elif escape == "x":
+            digits = text[position + 1 : position + 3]
+            if len(digits) != 2 or any(
+                digit not in "0123456789abcdefABCDEF" for digit in digits
+            ):
+                return 0
+            position += 3
+        elif escape == "u":
+            digits = text[position + 1 : position + 5]
+            if len(digits) != 4 or any(
+                digit not in "0123456789abcdefABCDEF" for digit in digits
+            ):
+                return 0
+            position += 5
+        else:
+            return 0
+    elif character in "'\r\n":
+        return 0
+    else:
+        position += 1
+    if position >= len(text) or text[position] != "'":
+        return 0
+    return position - index + 1
+
+
+def _strip_comments_and_strings(text: str) -> tuple[str, list[str]]:
+    """Lex source without letting inert text hide active Lean terms."""
+
+    out: list[str] = []
+    errors: list[str] = []
+    index = 0
+    block_depth = 0
+    # Every unescaped `{...}` inside a string is treated as a possible
+    # `interpolatedStr(term)` escape. Lean's parser aliases are extensible, so
+    # prefix matching only `s!`/`m!`/`f!` would leave custom and keyword-driven
+    # interpolated strings unscanned. A code frame stores its open-brace depth;
+    # zero is ordinary top-level code.
+    modes: list[tuple[str, int]] = [("code", 0)]
+    while index < len(text):
+        char = text[index]
+        pair = text[index : index + 2]
+        if block_depth:
+            if pair == "/-":
+                block_depth += 1
+                out.extend((" ", " "))
+                index += 2
+                continue
+            if pair == "-/":
+                block_depth -= 1
+                out.extend((" ", " "))
+                index += 2
+                continue
+            out.append("\n" if char == "\n" else " ")
+            index += 1
+            continue
+        mode, brace_depth = modes[-1]
+        if mode == "string":
+            out.append("\n" if char == "\n" else " ")
+            if char == "\\":
+                index += 1
+                if index < len(text):
+                    out.append("\n" if text[index] == "\n" else " ")
+            elif char == '"':
+                modes.pop()
+            elif char == "{":
+                modes.append(("code", 1))
+            index += 1
+            continue
+        if pair == "--":
+            out.extend((" ", " "))
+            index += 2
+            while index < len(text) and text[index] != "\n":
+                out.append(" ")
+                index += 1
+            continue
+        if pair == "/-":
+            block_depth = 1
+            out.extend((" ", " "))
+            index += 2
+            continue
+        char_literal_length = _lean_char_literal_length(text, index)
+        if char_literal_length:
+            out.extend(
+                "\n" if item == "\n" else " "
+                for item in text[index : index + char_literal_length]
+            )
+            index += char_literal_length
+            continue
+        if char == '"':
+            modes.append(("string", 0))
+            out.append(" ")
+            index += 1
+            continue
+        if brace_depth and char == "{":
+            modes[-1] = ("code", brace_depth + 1)
+            out.append(char)
+            index += 1
+            continue
+        if brace_depth and char == "}":
+            if brace_depth == 1:
+                modes.pop()
+                out.append(" ")
+            else:
+                modes[-1] = ("code", brace_depth - 1)
+                out.append(char)
+            index += 1
+            continue
+        out.append(char)
+        index += 1
+    if block_depth:
+        errors.append("unterminated block comment")
+    if any(mode == "string" for mode, _depth in modes[1:]):
+        errors.append("unterminated string literal")
+    if any(mode == "code" and depth for mode, depth in modes[1:]):
+        errors.append("unterminated string interpolation")
+    return "".join(out), errors
+
+
 def strip_comments_and_strings(text: str) -> str:
-    text = re.sub(r"/-.*?-/", "", text, flags=re.S)
-    stripped_lines = []
-    for line in text.splitlines():
-        line = line.split("--", 1)[0]
-        line = re.sub(r'"(?:\\.|[^"\\])*"', '""', line)
-        stripped_lines.append(line)
-    return "\n".join(stripped_lines)
+    return _strip_comments_and_strings(text)[0]
 
 
 def imported_modules(text: str) -> list[str]:
     modules = []
     for line in text.splitlines():
-        match = re.match(r"\s*import\s+([A-Za-z0-9_.'-]+)\s*$", line)
+        # Lean 4.33's module header accepts `[public] [meta] import [all] Mod`.
+        # Retain `private` as a fail-closed legacy spelling, but do not let the
+        # supported `public meta import` form bypass the allowlist.
+        match = re.match(
+            r"\s*(?:(?:public|private)\s+)?(?:meta\s+)?import\b(?P<body>.*)$",
+            line,
+        )
         if match:
-            modules.append(match.group(1))
+            body = match.group("body").strip()
+            tokens = body.split()
+            if tokens[:1] == ["all"]:
+                tokens = tokens[1:]
+            modules.extend(tokens if tokens else [""])
     return modules
 
 
@@ -553,7 +1183,7 @@ def typecheck_lake_build(*, timeout: int, project_root: Path | None) -> dict[str
             "typecheck_stdout": "",
             "typecheck_stderr": "",
         }
-    return run_typecheck(
+    payload = run_typecheck(
         [lake["path"], "build"],
         timeout=timeout,
         command_label="lake build",
@@ -562,6 +1192,33 @@ def typecheck_lake_build(*, timeout: int, project_root: Path | None) -> dict[str
         tool_status_payload={"lake": lake},
         project_status_payload=status,
     )
+    if payload["lean_check_status"] != "typechecked":
+        return payload
+    try:
+        built_modules, unbuilt_modules = built_project_modules(root)
+        stale_modules = stale_project_modules(root, built_modules)
+    except StableReadError as exc:
+        payload["lean_check_status"] = "command_failed"
+        payload["typecheck_coverage_status"] = "failed"
+        payload["typecheck_stderr"] = f"post-build coverage could not be read: {exc.detail}"
+        return payload
+    payload["typecheck_modules_built"] = built_modules
+    payload["typecheck_modules_unbuilt"] = unbuilt_modules
+    payload["typecheck_modules_stale"] = stale_modules
+    if not built_modules or unbuilt_modules or stale_modules:
+        details = []
+        if not built_modules:
+            details.append("no local source module produced a compiled artifact")
+        if unbuilt_modules:
+            details.append("unbuilt local modules: " + ", ".join(unbuilt_modules))
+        if stale_modules:
+            details.append("stale local modules: " + ", ".join(stale_modules))
+        payload["lean_check_status"] = "command_failed"
+        payload["typecheck_coverage_status"] = "failed"
+        payload["typecheck_stderr"] = "; ".join(details)
+    else:
+        payload["typecheck_coverage_status"] = "complete"
+    return payload
 
 
 def typecheck_direct(path: Path, *, timeout: int) -> dict[str, Any]:
@@ -629,6 +1286,178 @@ def command_failed(runner: str, command: str, cwd: str, stderr: str) -> dict[str
     }
 
 
+def _output_tail(value: str | bytes | None, limit: int) -> str:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return str(value or "")[-limit:]
+
+
+def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+    """Best-effort hard termination for the isolated child process group."""
+
+    if os.name == "nt":
+        try:
+            killer = subprocess.Popen(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            killer.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                killer.kill()
+                killer.wait(timeout=1)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        except OSError:
+            pass
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            try:
+                process.kill()
+            except OSError:
+                pass
+    if process.poll() is None:
+        try:
+            process.kill()
+        except OSError:
+            pass
+
+
+def run_bounded_command(
+    command: list[str],
+    *,
+    timeout: float,
+    cwd: Path | None = None,
+    max_output_bytes: int = COMMAND_OUTPUT_MAX_BYTES,
+) -> BoundedCommandResult:
+    """Run one isolated child while hard-capping combined stdout and stderr."""
+
+    if timeout <= 0:
+        raise ValueError("timeout must be positive")
+    if max_output_bytes <= 0:
+        raise ValueError("max_output_bytes must be positive")
+    group_options: dict[str, Any]
+    if os.name == "nt":
+        group_options = {
+            "creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        }
+    else:
+        group_options = {"start_new_session": True}
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=str(cwd) if cwd else None,
+        **group_options,
+    )
+    if process.stdout is None or process.stderr is None:
+        _terminate_process_tree(process)
+        raise OSError("could not create child output pipes")
+
+    buffers = {"stdout": bytearray(), "stderr": bytearray()}
+    total = [0]
+    lock = threading.Lock()
+    output_limit_hit = threading.Event()
+    reader_errors: list[str] = []
+
+    def drain(stream: Any, name: str) -> None:
+        try:
+            while True:
+                read = getattr(stream, "read1", stream.read)
+                chunk = read(65_536)
+                if not chunk:
+                    return
+                should_terminate = False
+                with lock:
+                    room = max(0, max_output_bytes - total[0])
+                    if room:
+                        buffers[name].extend(chunk[:room])
+                    total[0] += len(chunk)
+                    if total[0] > max_output_bytes and not output_limit_hit.is_set():
+                        output_limit_hit.set()
+                        should_terminate = True
+                if should_terminate:
+                    _terminate_process_tree(process)
+        except (OSError, ValueError) as exc:
+            with lock:
+                reader_errors.append(f"{name}: {type(exc).__name__}")
+            _terminate_process_tree(process)
+
+    threads = [
+        threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
+        threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+
+    timed_out = False
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _terminate_process_tree(process)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    for thread in threads:
+        thread.join(timeout=5)
+    if any(thread.is_alive() for thread in threads):
+        _terminate_process_tree(process)
+        for stream in (process.stdout, process.stderr):
+            try:
+                stream.close()
+            except OSError:
+                pass
+        for thread in threads:
+            thread.join(timeout=1)
+    if any(thread.is_alive() for thread in threads):
+        raise OSError("child output pipes did not close after termination")
+    for stream in (process.stdout, process.stderr):
+        try:
+            stream.close()
+        except OSError:
+            pass
+    if process.poll() is None:
+        _terminate_process_tree(process)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired as exc:
+            raise OSError("child could not be reaped after termination") from exc
+
+    stdout_bytes = bytes(buffers["stdout"])
+    stderr_bytes = bytes(buffers["stderr"])
+    stdout = stdout_bytes.decode("utf-8", errors="replace")
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+    if output_limit_hit.is_set():
+        raise CommandOutputLimitExceeded(
+            max_output_bytes,
+            stdout[-4000:],
+            stderr[-4000:],
+        )
+    if timed_out:
+        raise subprocess.TimeoutExpired(
+            command,
+            timeout,
+            output=stdout_bytes,
+            stderr=stderr_bytes,
+        )
+    if reader_errors:
+        raise OSError("could not capture child output: " + ", ".join(reader_errors))
+    return BoundedCommandResult(
+        int(process.returncode or 0),
+        stdout,
+        stderr,
+        total[0],
+    )
+
+
 def run_typecheck(
     command: list[str],
     *,
@@ -640,19 +1469,24 @@ def run_typecheck(
     project_status_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
-        completed = subprocess.run(
+        completed = run_bounded_command(
             command,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=timeout,
-            check=False,
-            cwd=str(cwd) if cwd else None,
+            cwd=cwd,
+            max_output_bytes=COMMAND_OUTPUT_MAX_BYTES,
         )
     except subprocess.TimeoutExpired as exc:
         payload = command_failed(runner, command_label, str(cwd) if cwd else "", f"timeout after {timeout} seconds")
-        payload["typecheck_stdout"] = (exc.stdout or "")[-2000:]
+        payload["typecheck_stdout"] = _output_tail(exc.stdout, 2000)
+        payload["tool_status"] = tool_status_payload
+        if project_status_payload:
+            payload["project_status"] = project_status_payload
+        return payload
+    except CommandOutputLimitExceeded as exc:
+        payload = command_failed(runner, command_label, str(cwd) if cwd else "", str(exc))
+        payload["typecheck_stdout"] = exc.stdout[-2000:]
+        payload["typecheck_stderr"] = (exc.stderr + "\n" + str(exc))[-2000:]
+        payload["output_limit_exceeded"] = True
         payload["tool_status"] = tool_status_payload
         if project_status_payload:
             payload["project_status"] = project_status_payload
@@ -697,13 +1531,16 @@ _DECLARATION_RE = re.compile(
 # it. `theorem`/`lemma` are reserved, so the only way the keyword appears
 # elsewhere is inside a longer identifier or after a dot — both excluded here.
 _DECLARATION_KEYWORD_RE = re.compile(r"(?<![.\w])(?:theorem|lemma)\b")
-_NAMESPACE_RE = re.compile(r"^\s*namespace\s+(?P<name>[A-Za-z_][A-Za-z0-9_.'!?]*)")
+_NAMESPACE_RE = re.compile(r"^\s*namespace\s+(?P<name>[^\s:({\[]+)")
 # Every block `end` closes must push a scope, or the walk pops a namespace it
 # never entered and every later name loses its prefix. `noncomputable section`
 # is the common one: matching bare `section` alone left its `end` to pop the
 # enclosing namespace, so every declaration after it was audited under a name
 # that is either unresolvable or, worse, some other declaration's.
-_ANONYMOUS_SCOPE_RE = re.compile(r"^\s*" + _MODIFIERS + r"(?:section|mutual)\b")
+_ANONYMOUS_SCOPE_RE = re.compile(
+    r"^\s*" + _MODIFIERS + r"(?P<kind>section|mutual)\b"
+)
+_END_RE = re.compile(r"^\s*end\b")
 
 
 class DeclarationScan(NamedTuple):
@@ -741,22 +1578,49 @@ def scan_declarations(text: str) -> DeclarationScan:
     for line in strip_comments_and_strings(text).splitlines():
         namespace = _NAMESPACE_RE.match(line)
         if namespace:
-            scopes.append(namespace.group("name"))
+            namespace_name = namespace.group("name")
+            if valid_lean_name(namespace_name) and not line[namespace.end() :].strip():
+                scopes.append(namespace_name)
+            else:
+                unparsed.append(line.strip())
             continue
-        if _ANONYMOUS_SCOPE_RE.match(line):
-            scopes.append("")
+        anonymous_scope = _ANONYMOUS_SCOPE_RE.match(line)
+        if anonymous_scope:
+            remainder = line[anonymous_scope.end() :].strip()
+            parsed_scope = False
+            if anonymous_scope.group("kind") == "section":
+                section_names = remainder.split()
+                parsed_scope = len(section_names) <= 1 and (
+                    not section_names or valid_lean_name(section_names[0])
+                )
+            else:
+                parsed_scope = not remainder
+            if not parsed_scope:
+                unparsed.append(line.strip())
+            else:
+                scopes.append("")
             continue
-        if re.match(r"\s*end\b", line):
-            if scopes:
+        end = _END_RE.match(line)
+        if end:
+            end_names = line[end.end() :].strip().split()
+            parsed_end = len(end_names) <= 1 and (
+                not end_names or valid_lean_name(end_names[0])
+            )
+            if not parsed_end:
+                unparsed.append(line.strip())
+            elif scopes:
                 scopes.pop()
             continue
         declaration = _DECLARATION_RE.match(line)
+        declaration_keywords = list(_DECLARATION_KEYWORD_RE.finditer(line))
         if declaration:
             prefix = ".".join(scope for scope in scopes if scope)
             name = declaration.group("name")
             qualified = f"{prefix}.{name}" if prefix else name
             (private if declaration.group("private") else names).append(qualified)
-        elif _DECLARATION_KEYWORD_RE.search(line):
+            if len(declaration_keywords) != 1:
+                unparsed.append(line.strip())
+        elif declaration_keywords:
             unparsed.append(line.strip())
     return DeclarationScan(names, private, unparsed)
 
@@ -782,16 +1646,162 @@ def project_modules(root: Path) -> list[str]:
     return [module for module, _ in project_module_sources(root)]
 
 
+def built_module_artifacts(root: Path) -> dict[str, Path]:
+    """Module -> stable regular olean path under Lake's build output."""
+
+    legacy_lib_dir = stable_directory_chain(
+        root,
+        (".lake", "build", "lib"),
+        missing_ok=True,
+    )
+    if legacy_lib_dir is None:
+        return {}
+    lean_dir = legacy_lib_dir / "lean"
+    try:
+        lean_info = os.lstat(lean_dir)
+    except FileNotFoundError:
+        lib_dir = legacy_lib_dir
+    except OSError as exc:
+        raise StableReadError("project_traversal_error", str(exc)) from exc
+    else:
+        if stat.S_ISLNK(lean_info.st_mode):
+            raise StableReadError(
+                "symlink_directory",
+                ".lake/build/lib/lean must not be a symlinked directory",
+            )
+        if not stat.S_ISDIR(lean_info.st_mode):
+            raise StableReadError(
+                "non_directory_build_output",
+                ".lake/build/lib/lean is not a directory",
+            )
+        lib_dir = lean_dir
+    oleans = stable_tree_files(
+        lib_dir,
+        suffix=".olean",
+        excluded_dirs=set(),
+        missing_ok=True,
+        reject_symlink_files=True,
+    )
+    return {
+        ".".join(olean.relative_to(lib_dir).with_suffix("").parts): olean
+        for olean in oleans
+    }
+
+
 def built_module_names(root: Path) -> set[str]:
     """Modules Lake has actually compiled, read off its olean output tree."""
-    lean_dir = root / ".lake" / "build" / "lib" / "lean"
-    lib_dir = lean_dir if lean_dir.is_dir() else root / ".lake" / "build" / "lib"
-    if not lib_dir.is_dir():
-        return set()
+
+    return set(built_module_artifacts(root))
+
+
+def project_context_snapshot(root: Path) -> dict[str, Any]:
+    """Hash the Lake configuration that selects the build and toolchain."""
+
+    rows: list[dict[str, str]] = []
+    errors: list[str] = []
+    for name in PROJECT_CONTEXT_FILES:
+        path = root / name
+        try:
+            digest = stable_regular_file_sha256(
+                path,
+                max_bytes=PROJECT_CONTEXT_MAX_BYTES,
+            )
+        except StableReadError as exc:
+            if exc.kind == "missing_file":
+                rows.append({"file": name, "status": "missing", "sha256": ""})
+            else:
+                rows.append({"file": name, "status": exc.kind, "sha256": ""})
+                errors.append(f"{name}: {exc.detail}")
+        else:
+            rows.append(
+                {
+                    "file": name,
+                    "status": "hashed",
+                    "sha256": digest,
+                }
+            )
+    fingerprint = hashlib.sha256(
+        json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return {"fingerprint": fingerprint, "files": rows, "errors": errors}
+
+
+def project_evidence_snapshot(root: Path, modules: list[str]) -> dict[str, Any]:
+    """Bind local source, compiled modules, and Lake configuration by content."""
+
+    context = project_context_snapshot(root)
+    rows: list[dict[str, str]] = []
+    errors = list(context["errors"])
+    try:
+        sources = dict(project_module_sources(root))
+    except StableReadError as exc:
+        sources = {}
+        errors.append(exc.detail)
+    try:
+        artifacts = built_module_artifacts(root)
+    except StableReadError as exc:
+        artifacts = {}
+        errors.append(exc.detail)
+    for module in modules:
+        source = sources.get(module)
+        artifact = artifacts.get(module)
+        row = {
+            "module": module,
+            "source": "",
+            "source_sha256": "",
+            "compiled": "",
+            "compiled_sha256": "",
+            "scope": "local" if source is not None or artifact is not None else "external_or_dependency",
+        }
+        for kind, path in (("source", source), ("compiled", artifact)):
+            if path is None:
+                continue
+            row[kind] = str(path.relative_to(root))
+            try:
+                digest = stable_regular_file_sha256(
+                    path,
+                    max_bytes=(
+                        SOURCE_MAX_BYTES if kind == "source" else COMPILED_MODULE_MAX_BYTES
+                    ),
+                )
+            except StableReadError as exc:
+                errors.append(f"{module} {kind}: {exc.detail}")
+            else:
+                row[f"{kind}_sha256"] = digest
+        if source is not None and artifact is None:
+            errors.append(f"{module}: local source has no stable local compiled module")
+        if artifact is not None and source is None:
+            errors.append(f"{module}: local compiled module has no stable local source")
+        rows.append(row)
+    material = {"project_context": context["files"], "modules": rows}
+    fingerprint = hashlib.sha256(
+        json.dumps(material, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     return {
-        ".".join(olean.relative_to(lib_dir).with_suffix("").parts)
-        for olean in lib_dir.rglob("*.olean")
+        "fingerprint": fingerprint,
+        "project_context": context["files"],
+        "modules": rows,
+        "errors": errors,
     }
+
+
+def stale_project_modules(root: Path, modules: list[str]) -> list[str]:
+    """Obvious source-newer-than-olean mismatches that cannot support a claim."""
+
+    sources = dict(project_module_sources(root))
+    artifacts = built_module_artifacts(root)
+    stale: list[str] = []
+    for module in modules:
+        source = sources.get(module)
+        artifact = artifacts.get(module)
+        if source is None or artifact is None:
+            continue
+        try:
+            if source.stat().st_mtime_ns > artifact.stat().st_mtime_ns:
+                stale.append(module)
+        except OSError:
+            stale.append(module)
+    return stale
 
 
 def built_project_modules(root: Path) -> tuple[list[str], list[str]]:
@@ -828,9 +1838,23 @@ def project_declaration_scan(root: Path, modules: list[str] | None = None) -> De
         if allowed is not None and module not in allowed:
             continue
         try:
-            text = lean_file.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+            text = stable_regular_file_bytes(lean_file).decode("utf-8")
+        except StableReadError as exc:
+            unparsed.append(
+                f"{SOURCE_UNREADABLE_PREFIX}{module}: source could not be read ({exc.kind})"
+            )
             continue
+        except UnicodeDecodeError:
+            unparsed.append(
+                f"{SOURCE_UNREADABLE_PREFIX}{module}: source is not valid UTF-8"
+            )
+            continue
+        _stripped, lexical_errors = _strip_comments_and_strings(text)
+        if lexical_errors:
+            unparsed.extend(
+                f"{SOURCE_UNREADABLE_PREFIX}{module}: {detail}"
+                for detail in lexical_errors
+            )
         found = scan_declarations(text)
         names.extend(found.names)
         private.extend(found.private)
@@ -873,7 +1897,8 @@ def axiom_audit_payload(
     allowed_axioms: set[str],
     strict: bool,
 ) -> dict[str, Any]:
-    root = project_root.expanduser().resolve()
+    supplied_project = project_root.expanduser()
+    root = supplied_project.resolve()
     sanctioned = (SANCTIONED_AXIOMS | allowed_axioms) - NEVER_SANCTIONED_AXIOMS
     payload: dict[str, Any] = {
         "schema_version": "lean-strict-verification-gate.v1",
@@ -896,6 +1921,10 @@ def axiom_audit_payload(
             "the audit needs an already-built project: it imports compiled modules",
             "sources Lake did not build are skipped, so their declarations go unaudited",
             "#print axioms reports the trust base, not statement equivalence",
+            "source-newer-than-olean is an mtime preflight, not proof that compiled content came from source",
+            "explicit dependency modules outside the project root are resolved by Lake but not content-hashed",
+            "pre/post hashes detect endpoint differences, not a change-and-restore between snapshots",
+            "Lean, Lake, their launchers, environment, and dependency resolution are trusted inputs, not content-attested",
         ],
     }
 
@@ -905,6 +1934,18 @@ def axiom_audit_payload(
         payload["findings"].append({"kind": kind, "detail": detail})
         return payload
 
+    supplied_input = input_path.expanduser()
+    if (
+        supplied_project.is_symlink()
+        or supplied_input.is_symlink()
+        or not supplied_input.is_dir()
+        or supplied_input.resolve() != root
+    ):
+        return fail(
+            "input_project_mismatch",
+            "--input and --project-root must identify the same stable project directory",
+            "command_failed",
+        )
     if not root.is_dir():
         return fail("missing_project", "project root does not exist", "command_failed")
     status = project_status(root)
@@ -921,8 +1962,20 @@ def axiom_audit_payload(
     if imports:
         modules, unbuilt = imports, []
     else:
-        modules, unbuilt = built_project_modules(root)
+        try:
+            modules, unbuilt = built_project_modules(root)
+        except StableReadError as exc:
+            return fail("evidence_unreadable", exc.detail, "command_failed")
         payload["modules_skipped_unbuilt"] = unbuilt
+    invalid_modules = [module for module in modules if not valid_lean_name(module)]
+    if invalid_modules:
+        return fail(
+            "invalid_import",
+            f"invalid module name: {invalid_modules[0]!r}",
+            "command_failed",
+        )
+    if len(modules) != len(set(modules)):
+        return fail("invalid_import", "duplicate import module", "command_failed")
     if not modules:
         return fail(
             "project_not_built" if unbuilt else "no_modules",
@@ -934,27 +1987,101 @@ def axiom_audit_payload(
             ),
             "command_failed",
         )
+    if len(modules) > AXIOM_AUDIT_MAX_MODULES:
+        return fail(
+            "too_many_modules",
+            f"{len(modules)} modules exceed the {AXIOM_AUDIT_MAX_MODULES} cap; pass --import",
+            "command_failed",
+        )
+    evidence_before = project_evidence_snapshot(root, modules)
+    payload["evidence_input_fingerprint"] = evidence_before["fingerprint"]
+    payload["evidence_manifest"] = {
+        "project_context": evidence_before["project_context"],
+        "modules": evidence_before["modules"],
+    }
+    if evidence_before["errors"]:
+        return fail(
+            "evidence_unreadable",
+            evidence_before["errors"][0],
+            "command_failed",
+        )
+    try:
+        stale_modules = stale_project_modules(root, modules)
+    except StableReadError as exc:
+        return fail("evidence_unreadable", exc.detail, "command_failed")
+    payload["modules_stale"] = stale_modules
+    if stale_modules:
+        return fail(
+            "stale_compiled_module",
+            "source is newer than compiled evidence: " + ", ".join(stale_modules),
+            "command_failed",
+        )
 
     if declarations:
         targets, private_targets, unparsed_lines = declarations, [], []
     else:
-        targets, private_targets, unparsed_lines = project_declaration_scan(root, modules)
+        try:
+            targets, private_targets, unparsed_lines = project_declaration_scan(root, modules)
+        except StableReadError as exc:
+            return fail("evidence_unreadable", exc.detail, "command_failed")
     payload["declarations_requested"] = len(targets)
+    invalid_targets = [
+        declaration
+        for declaration in targets
+        if not valid_lean_name(declaration, allow_root_prefix=True)
+    ]
+    if invalid_targets:
+        return fail(
+            "invalid_declaration",
+            f"invalid declaration name: {invalid_targets[0]!r}",
+            "command_failed",
+        )
+    if len(targets) != len(set(targets)):
+        return fail(
+            "invalid_declaration",
+            "duplicate declaration target",
+            "command_failed",
+        )
     if unparsed_lines:
         # A line the walk could not read a name off is a coverage hole, not a
         # warning: it may have hidden a theorem, and an audit that reports a
         # clean trust base over a partial scan is worse than no audit. Refuse
         # and name the lines so the operator can pass --declaration instead.
-        shown = unparsed_lines[:AXIOM_AUDIT_MAX_UNPARSED]
-        payload["declarations_unparsed"] = shown
+        source_errors = [
+            line.removeprefix(SOURCE_UNREADABLE_PREFIX)
+            for line in unparsed_lines
+            if line.startswith(SOURCE_UNREADABLE_PREFIX)
+        ]
+        declaration_errors = [
+            line
+            for line in unparsed_lines
+            if not line.startswith(SOURCE_UNREADABLE_PREFIX)
+        ]
+        shown = declaration_errors[:AXIOM_AUDIT_MAX_UNPARSED]
+        if shown:
+            payload["declarations_unparsed"] = shown
         payload["findings"].extend(
             {"kind": "declaration_unparsed", "detail": line} for line in shown
         )
-        if len(unparsed_lines) > len(shown):
+        if len(declaration_errors) > len(shown):
             payload["findings"].append(
                 {
                     "kind": "declaration_unparsed",
-                    "detail": f"{len(unparsed_lines) - len(shown)} further unparsed declaration lines",
+                    "detail": f"{len(declaration_errors) - len(shown)} further unparsed declaration lines",
+                }
+            )
+        payload["findings"].extend(
+            {"kind": "source_unreadable", "detail": detail}
+            for detail in source_errors[:AXIOM_AUDIT_MAX_UNPARSED]
+        )
+        if len(source_errors) > AXIOM_AUDIT_MAX_UNPARSED:
+            payload["findings"].append(
+                {
+                    "kind": "source_unreadable",
+                    "detail": (
+                        f"{len(source_errors) - AXIOM_AUDIT_MAX_UNPARSED} "
+                        "further unreadable source files"
+                    ),
                 }
             )
         payload["ok"] = False
@@ -998,21 +2125,32 @@ def axiom_audit_payload(
         )
         command = [lake["path"], "env", "lean", str(harness)]
         try:
-            completed = subprocess.run(
+            completed = run_bounded_command(
                 command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 timeout=timeout,
-                check=False,
-                cwd=str(root),
+                cwd=root,
+                max_output_bytes=COMMAND_OUTPUT_MAX_BYTES,
             )
         except subprocess.TimeoutExpired:
             return fail("audit_timeout", f"timeout after {timeout} seconds", "command_failed")
+        except CommandOutputLimitExceeded as exc:
+            payload["audit_stdout"] = exc.stdout
+            payload["audit_stderr"] = (exc.stderr + "\n" + str(exc))[-4000:]
+            return fail("audit_output_limit", str(exc), "command_failed")
         except OSError as exc:
             return fail("audit_failed", str(exc), "command_failed")
 
+    evidence_after = project_evidence_snapshot(root, modules)
+    payload["post_audit_evidence_fingerprint"] = evidence_after["fingerprint"]
+    if (
+        evidence_after["errors"]
+        or evidence_before["fingerprint"] != evidence_after["fingerprint"]
+    ):
+        return fail(
+            "evidence_changed_during_audit",
+            "source, compiled modules, or Lake configuration changed during axiom audit",
+            "command_failed",
+        )
     payload["audit_stdout"] = completed.stdout[-4000:]
     payload["audit_stderr"] = completed.stderr[-4000:]
     observed = parse_axiom_report(completed.stdout)
@@ -1037,19 +2175,17 @@ def axiom_audit_payload(
         offending = [axiom for axiom in axioms if axiom not in sanctioned]
         # A compiler-trust axiom the operator allowlisted passes, but it is
         # never allowed to read as an ordinary kernel-checked proof.
-        allowed_compiler_trust = [
-            axiom for axiom in axioms if axiom in COMPILER_TRUST_AXIOMS and axiom in sanctioned
-        ]
+        compiler_dependencies = [axiom for axiom in axioms if is_compiler_trust_axiom(axiom)]
         if offending:
             status = "unsanctioned_axiom"
-        elif allowed_compiler_trust:
+        elif compiler_dependencies:
             status = "sanctioned_compiler_trust"
         else:
             status = "sanctioned"
         payload["declarations"].append(
             {"declaration": name, "axioms": axioms, "status": status}
         )
-        for axiom in allowed_compiler_trust:
+        for axiom in compiler_dependencies:
             compiler_trust.add(axiom)
             payload["findings"].append(
                 {"kind": "compiler_trust_axiom", "detail": axiom, "declaration": name}
@@ -1065,22 +2201,35 @@ def axiom_audit_payload(
     payload["compiler_trust_axioms"] = sorted(compiler_trust)
     if compiler_trust:
         payload["limitations"].append(
-            "an allowlisted compiler-trust axiom means the proof rests on native "
+            "a compiler-trust axiom means the proof rests on native "
             "evaluation and the compiler, not on the kernel alone"
+        )
+    if completed.returncode != 0:
+        return fail(
+            "audit_command_failed",
+            f"lake env lean exited {completed.returncode}",
+            "command_failed",
         )
     payload["axiom_audit_status"] = "audited"
     return payload
 
 
-def lean4checker_status(project_root: Path) -> dict[str, Any]:
-    """lean4checker from the env/PATH, else the project's own build output."""
-    status = tool_status("lean4checker")
-    if status["status"] == "available":
-        return status
-    local = project_root / ".lake" / "build" / "bin" / executable_name("lean4checker")
-    if local.is_file():
-        return {"status": "available", "path": str(local), "source": "project-build"}
-    return status
+def lean4checker_status() -> dict[str, Any]:
+    """Resolve an operator-selected checker without trusting project build output."""
+    env_var = TOOL_ENV["lean4checker"]
+    env_value = os.environ.get(env_var, "").strip()
+    if env_value:
+        resolved = resolve_candidate(env_value)
+        return {
+            "status": "available" if resolved else "tool_unavailable",
+            "path": resolved or env_value,
+            "source": "env",
+            "env_var": env_var,
+        }
+    path = resolve_candidate("lean4checker")
+    if path:
+        return {"status": "available", "path": path, "source": "path"}
+    return {"status": "tool_unavailable", "path": "", "source": "not-found"}
 
 
 def kernel_check_payload(
@@ -1091,7 +2240,8 @@ def kernel_check_payload(
     modules: list[str],
     strict: bool,
 ) -> dict[str, Any]:
-    root = project_root.expanduser().resolve()
+    supplied_project = project_root.expanduser()
+    root = supplied_project.resolve()
     payload: dict[str, Any] = {
         "schema_version": "lean-strict-verification-gate.v1",
         "ok": True,
@@ -1110,6 +2260,10 @@ def kernel_check_payload(
             "modules are replayed as compiled, so the audit inherits the build's own toolchain",
             "sources Lake did not build are skipped, so they are never replayed",
             "--timeout is the total budget for every module, not a per-module allowance",
+            "source-newer-than-olean is an mtime preflight, not proof that compiled content came from source",
+            "explicit dependency modules outside the project root are resolved by Lake but not content-hashed",
+            "pre/post hashes detect endpoint differences, not a change-and-restore between snapshots",
+            "Lean, Lake, lean4checker, their launchers, environment, and dependency resolution are trusted inputs, not content-attested",
         ],
     }
 
@@ -1119,6 +2273,18 @@ def kernel_check_payload(
         payload["findings"].append({"kind": kind, "detail": detail})
         return payload
 
+    supplied_input = input_path.expanduser()
+    if (
+        supplied_project.is_symlink()
+        or supplied_input.is_symlink()
+        or not supplied_input.is_dir()
+        or supplied_input.resolve() != root
+    ):
+        return fail(
+            "input_project_mismatch",
+            "--input and --project-root must identify the same stable project directory",
+            "command_failed",
+        )
     if not root.is_dir():
         return fail("missing_project", "project root does not exist", "command_failed")
     status = project_status(root)
@@ -1133,8 +2299,20 @@ def kernel_check_payload(
     if modules:
         targets, unbuilt = modules, []
     else:
-        targets, unbuilt = built_project_modules(root)
+        try:
+            targets, unbuilt = built_project_modules(root)
+        except StableReadError as exc:
+            return fail("evidence_unreadable", exc.detail, "command_failed")
         payload["modules_skipped_unbuilt"] = unbuilt
+    invalid_targets = [module for module in targets if not valid_lean_name(module)]
+    if invalid_targets:
+        return fail(
+            "invalid_module",
+            f"invalid module name: {invalid_targets[0]!r}",
+            "command_failed",
+        )
+    if len(targets) != len(set(targets)):
+        return fail("invalid_module", "duplicate module target", "command_failed")
     if not targets:
         return fail(
             "project_not_built" if unbuilt else "no_modules",
@@ -1152,9 +2330,39 @@ def kernel_check_payload(
             f"{len(targets)} modules exceed the {KERNEL_CHECK_MAX_MODULES} cap; pass --module",
             "command_failed",
         )
+    evidence_before = project_evidence_snapshot(root, targets)
+    payload["evidence_input_fingerprint"] = evidence_before["fingerprint"]
+    payload["evidence_manifest"] = {
+        "project_context": evidence_before["project_context"],
+        "modules": evidence_before["modules"],
+    }
+    if evidence_before["errors"]:
+        return fail(
+            "evidence_unreadable",
+            evidence_before["errors"][0],
+            "command_failed",
+        )
+    try:
+        stale_modules = stale_project_modules(root, targets)
+    except StableReadError as exc:
+        return fail("evidence_unreadable", exc.detail, "command_failed")
+    payload["modules_stale"] = stale_modules
+    if stale_modules:
+        return fail(
+            "stale_compiled_module",
+            "source is newer than compiled evidence: " + ", ".join(stale_modules),
+            "command_failed",
+        )
 
     lake = tool_status("lake")
-    checker = lean4checker_status(root)
+    checker = lean4checker_status()
+    if checker["status"] == "available":
+        checker_path = Path(checker["path"])
+        checker["inside_project_root"] = checker_path == root or root in checker_path.parents
+        if checker["inside_project_root"]:
+            payload["limitations"].append(
+                "the explicitly selected lean4checker is inside the project root and is therefore project-controlled, not an independent verifier"
+            )
     payload["tool_status"] = {"lake": lake, "lean4checker": checker}
     if lake["status"] != "available" or checker["status"] != "available":
         payload["kernel_check_status"] = "tool_unavailable"
@@ -1165,11 +2373,20 @@ def kernel_check_payload(
 
     stdout_chunks: list[str] = []
     stderr_chunks: list[str] = []
+    output_remaining = COMMAND_OUTPUT_MAX_BYTES
     # One budget for the whole verb: a per-module allowance would let 50
     # modules run 50x past the timeout the caller bounded the process with,
     # and the caller would see a killed gate instead of a replay verdict.
     deadline = time.monotonic() + timeout
     for module in targets:
+        if output_remaining <= 0:
+            payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
+            payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
+            return fail(
+                "kernel_check_output_limit",
+                f"combined stdout/stderr exhausted the {COMMAND_OUTPUT_MAX_BYTES}-byte budget before {module}",
+                "command_failed",
+            )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
@@ -1181,26 +2398,35 @@ def kernel_check_payload(
             )
         command = [lake["path"], "env", checker["path"], module]
         try:
-            completed = subprocess.run(
+            completed = run_bounded_command(
                 command,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 timeout=remaining,
-                check=False,
-                cwd=str(root),
+                cwd=root,
+                max_output_bytes=output_remaining,
             )
         except subprocess.TimeoutExpired:
             payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
             payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
             return fail("kernel_check_timeout", f"{module}: timeout after {timeout} seconds", "command_failed")
+        except CommandOutputLimitExceeded as exc:
+            stdout_chunks.append(exc.stdout)
+            stderr_chunks.append(exc.stderr)
+            payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
+            payload["kernel_check_stderr"] = (
+                "\n".join(stderr_chunks) + "\n" + str(exc)
+            )[-4000:]
+            return fail(
+                "kernel_check_output_limit",
+                f"{module}: {exc}",
+                "command_failed",
+            )
         except OSError as exc:
             payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
             payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
             return fail("kernel_check_failed", f"{module}: {exc}", "command_failed")
-        stdout_chunks.append(completed.stdout)
-        stderr_chunks.append(completed.stderr)
+        output_remaining -= completed.output_bytes
+        stdout_chunks.append(completed.stdout[-4000:])
+        stderr_chunks.append(completed.stderr[-4000:])
         replayed = completed.returncode == 0
         payload["modules"].append(
             {"module": module, "status": "kernel_checked" if replayed else "kernel_check_failed"}
@@ -1211,6 +2437,17 @@ def kernel_check_payload(
 
     payload["kernel_check_stdout"] = "\n".join(stdout_chunks)[-4000:]
     payload["kernel_check_stderr"] = "\n".join(stderr_chunks)[-4000:]
+    evidence_after = project_evidence_snapshot(root, targets)
+    payload["post_kernel_evidence_fingerprint"] = evidence_after["fingerprint"]
+    if (
+        evidence_after["errors"]
+        or evidence_before["fingerprint"] != evidence_after["fingerprint"]
+    ):
+        return fail(
+            "evidence_changed_during_kernel_check",
+            "source, compiled modules, or Lake configuration changed during kernel replay",
+            "command_failed",
+        )
     payload["kernel_check_status"] = "kernel_checked" if payload["ok"] else "kernel_check_failed"
     return payload
 
