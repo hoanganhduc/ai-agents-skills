@@ -69,7 +69,10 @@ class DigestStubWriteFailuresAreReported(unittest.TestCase):
         self.assertEqual(len(list(self.papers.glob("digest_*.md"))), 3)
 
     @unittest.skipUnless(os.name == "posix", "directory modes are POSIX")
-    @unittest.skipIf(os.getuid() == 0, "root ignores directory write permission")
+    @unittest.skipIf(
+        getattr(os, "getuid", lambda: -1)() == 0,
+        "root ignores directory write permission",
+    )
     def test_an_unwritable_papers_directory_names_every_dropped_item(self) -> None:
         mod = _mod()
         os.chmod(self.papers, 0o500)
@@ -83,7 +86,10 @@ class DigestStubWriteFailuresAreReported(unittest.TestCase):
         self.assertEqual(len(list(self.papers.glob("digest_*.md"))), 0)
 
     @unittest.skipUnless(os.name == "posix", "directory modes are POSIX")
-    @unittest.skipIf(os.getuid() == 0, "root ignores directory write permission")
+    @unittest.skipIf(
+        getattr(os, "getuid", lambda: -1)() == 0,
+        "root ignores directory write permission",
+    )
     def test_an_unwritable_ledger_is_reported_so_the_next_run_is_not_a_surprise(self) -> None:
         mod = _mod()
         library = self.workspace / "data" / "library"

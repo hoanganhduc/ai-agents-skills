@@ -1688,17 +1688,26 @@ class FormalTrackPinFailureStopsTheDispatchTests(unittest.TestCase):
     def test_a_run_off_the_formal_track_still_dispatches(self) -> None:
         # The complement: the same unwritable tree must not stop a run that
         # never committed to the formal track, or one broken directory would
-        # halt every drive on the host.
+        # halt every drive on the host.  Mock the platform containment boundary:
+        # macOS deliberately cannot run a real primary because it has no Linux
+        # PID namespace, and that unrelated refusal must not decide this pin
+        # gate test.
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "loop"
             _init_loop(run_dir, formal=True)
             self.assertFalse(fp.formal_track_status(run_dir).derived)
             self._block_formal_dir(run_dir)
 
-            result = self._drive(Path(tmp), run_dir)
+            with mock.patch.object(
+                rt,
+                "run_primary_subprocess",
+                return_value=(1, False, None),
+            ) as primary:
+                result = self._drive(Path(tmp), run_dir)
 
             self.assertNotEqual(result.get("reason"), "formal_track_unpinnable", result)
-            self.assertGreaterEqual(self._banked(run_dir), 1, result)
+            primary.assert_called_once()
+            self.assertEqual(self._banked(run_dir), 0, result)
 
 
 if __name__ == "__main__":

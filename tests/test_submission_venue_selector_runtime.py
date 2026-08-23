@@ -533,6 +533,7 @@ class ScoreRawAndNormalizedTests(unittest.TestCase):
                 )
                 self.assertIsInstance(by_id["comparator_pattern_fit"]["raw_score"], int)
 
+@unittest.skipUnless(os.name == "posix", "creation modes and umask are POSIX")
 class WorkspaceObjectsArePrivateAtCreationTests(unittest.TestCase):
     """Every workspace object is private from the instant it exists.
 
@@ -601,6 +602,7 @@ class WorkspaceObjectsArePrivateAtCreationTests(unittest.TestCase):
         self.assertEqual(self._mode(stale), 0o600)
 
 
+@unittest.skipUnless(os.name == "posix", "creation modes and umask are POSIX")
 class WorkspaceIsPrivateWhicheverVerbCreatesItTests(unittest.TestCase):
     """The run workspace is 0700 no matter which verb brings it into being.
 

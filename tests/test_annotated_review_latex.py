@@ -230,6 +230,29 @@ class PrecompileStdoutStaysParseableTests(unittest.TestCase):
     def _toolchain(self, base, *, succeed):
         bin_dir = base / "bin"
         bin_dir.mkdir()
+        if os.name == "nt":
+            for name in ("pdflatex", "lualatex", "xelatex"):
+                (bin_dir / f"{name}.cmd").write_text(
+                    "@echo off\r\nexit /b 0\r\n", encoding="utf-8"
+                )
+            implementation = base / "latexmk_stub.py"
+            implementation.write_text(
+                (
+                    "from pathlib import Path\n"
+                    "import sys\n"
+                    "Path(sys.argv[-1]).with_suffix('.pdf').write_bytes(b'%PDF-1.4')\n"
+                )
+                if succeed
+                else "import sys\nprint('! LaTeX Error: stub failure')\nsys.exit(1)\n",
+                encoding="utf-8",
+            )
+            (bin_dir / "latexmk.cmd").write_text(
+                "@echo off\r\nchcp 65001 >nul\r\n"
+                f'"{sys.executable}" "{implementation}" %*\r\n'
+                "exit /b %ERRORLEVEL%\r\n",
+                encoding="utf-8",
+            )
+            return bin_dir
         for name in ("pdflatex", "lualatex", "xelatex"):
             (bin_dir / name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         body = ('#!/bin/sh\nfor a in "$@"; do :; done\n'
@@ -250,7 +273,7 @@ class PrecompileStdoutStaysParseableTests(unittest.TestCase):
             encoding="utf-8")
         bin_dir = self._toolchain(base, succeed=succeed)
         env = {**os.environ,
-               "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}",
+               "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
                "PYTHONDONTWRITEBYTECODE": "1"}
         return subprocess.run(
             [sys.executable, str(SKILL_DIR / "review.py"),
