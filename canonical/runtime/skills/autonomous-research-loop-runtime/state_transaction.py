@@ -650,31 +650,33 @@ class LoopLock:
                 before = None
             if before is not None and stat.S_ISLNK(before.st_mode):
                 raise TransactionError(f"loop lock is a symlink: {path}")
-            # Deliberately not wrapped in _tolerate_windows_sharing.  Every
-            # other wrapped call is a step inside a commit the caller has
-            # already been granted; a denial there is the platform's, not a
-            # decision about this process.  Opening the lock is where that
-            # decision is made, and the acquire loop above already waits for a
-            # lock another writer holds.  Retrying a refusal here would only
-            # stall an unauthorised writer for the whole lock timeout before
-            # telling it the same thing.
             lock_fd = os.open(
                 path,
                 os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0),
                 0o600,
             )
-            after = os.fstat(lock_fd)
-            if before is not None and (
-                int(getattr(before, "st_dev", 0)),
-                int(getattr(before, "st_ino", 0)),
-            ) != (
-                int(getattr(after, "st_dev", 0)),
-                int(getattr(after, "st_ino", 0)),
-            ):
-                os.close(lock_fd)
-                raise TransactionError(f"loop lock changed while opening: {path}")
-            _validate_lock_file(lock_fd, path)
-            return os.fdopen(lock_fd, "a+b")
+            try:
+                after = os.fstat(lock_fd)
+                if before is not None and (
+                    int(getattr(before, "st_dev", 0)),
+                    int(getattr(before, "st_ino", 0)),
+                ) != (
+                    int(getattr(after, "st_dev", 0)),
+                    int(getattr(after, "st_ino", 0)),
+                ):
+                    raise TransactionError(f"loop lock changed while opening: {path}")
+                _validate_lock_file(lock_fd, path)
+                self._prepare_lock_fd(lock_fd)
+                handle = os.fdopen(lock_fd, "a+b")
+            except BaseException:
+                try:
+                    os.close(lock_fd)
+                except OSError:
+                    # Cleanup must not replace the sharing violation or
+                    # validation error that made this attempt fail.
+                    pass
+                raise
+            return handle
         directory_fd = _open_directory_nofollow(self.run_dir, create=True)
         try:
             lock_fd = os.open(
@@ -685,12 +687,29 @@ class LoopLock:
             )
             try:
                 _validate_lock_file(lock_fd, path)
+                self._prepare_lock_fd(lock_fd)
             except BaseException:
                 os.close(lock_fd)
                 raise
             return os.fdopen(lock_fd, "a+b")
         finally:
             os.close(directory_fd)
+
+    @staticmethod
+    def _prepare_lock_fd(file_fd: int) -> None:
+        """Ensure the Windows byte-range lock has one byte to address.
+
+        This happens before the advisory lock can be taken. On Windows, a
+        second opener or a scanner can therefore surface the same transient
+        sharing denial here as at ``os.open``. Seeding on the raw descriptor
+        avoids a buffered ``flush`` followed by a second failing flush during
+        cleanup, which could mask the original error and leak the handle.
+        """
+
+        if os.lseek(file_fd, 0, os.SEEK_END) == 0:
+            written = os.write(file_fd, b"0")
+            if written != 1:
+                raise OSError("could not initialize loop lock byte")
 
     def __enter__(self) -> "LoopLock":
         path = self.run_dir / LOCK_FILENAME
@@ -710,28 +729,43 @@ class LoopLock:
                 if time.monotonic() >= deadline:
                     raise LockTimeout(f"timed out opening loop lock: {path}") from exc
                 time.sleep(0.025)
-        self._handle.seek(0, os.SEEK_END)
-        if self._handle.tell() == 0:
-            self._handle.write(b"0")
-            self._handle.flush()
-        while True:
-            try:
-                if os.name == "nt":  # pragma: no cover - exercised on Windows CI
-                    import msvcrt
-
-                    self._handle.seek(0)
-                    msvcrt.locking(self._handle.fileno(), msvcrt.LK_NBLCK, 1)
-                else:
-                    import fcntl
-
-                    fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return self
-            except (BlockingIOError, OSError):
+            except PermissionError as exc:
+                if not _is_windows():
+                    raise
+                # Windows uses ERROR_ACCESS_DENIED both for an ACL decision
+                # and for transient sharing contention. Waiting cannot grant
+                # authority: a persistent denial still reaches this deadline
+                # and fails closed, while a concurrent legitimate writer gets
+                # the same bounded serialization contract as msvcrt.locking.
                 if time.monotonic() >= deadline:
-                    self._handle.close()
-                    self._handle = None
-                    raise LockTimeout(f"timed out acquiring loop lock: {path}")
+                    raise LockTimeout(
+                        f"timed out opening or initializing loop lock: {path}"
+                    ) from exc
                 time.sleep(0.025)
+        try:
+            while True:
+                try:
+                    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+                        import msvcrt
+
+                        self._handle.seek(0)
+                        msvcrt.locking(self._handle.fileno(), msvcrt.LK_NBLCK, 1)
+                    else:
+                        import fcntl
+
+                        fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return self
+                except (BlockingIOError, OSError):
+                    if time.monotonic() >= deadline:
+                        raise LockTimeout(f"timed out acquiring loop lock: {path}")
+                    time.sleep(0.025)
+        except BaseException:
+            if self._handle is not None:
+                try:
+                    self._handle.close()
+                finally:
+                    self._handle = None
+            raise
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self._handle is None:
