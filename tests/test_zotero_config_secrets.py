@@ -66,6 +66,20 @@ class ZoteroSecretConfigTests(unittest.TestCase):
         )
         return path
 
+    def test_windows_direct_loader_allows_an_absent_optional_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "missing.json"
+            with mock.patch.object(self.config.os, "name", "nt"):
+                self.assertIsNone(self.config._read_private_secret_bytes(missing))
+
+    def test_windows_direct_loader_rejects_an_existing_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            selected = Path(tmp) / "selected.json"
+            selected.write_text("{}\n", encoding="utf-8")
+            with mock.patch.object(self.config.os, "name", "nt"):
+                with self.assertRaisesRegex(ValueError, "managed projection runner"):
+                    self.config._read_private_secret_bytes(selected)
+
     @unittest.skipIf(os.name == "nt", "native Windows secret files require the managed projection runner")
     def test_environment_secret_overrides_and_removes_legacy_config_field(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
