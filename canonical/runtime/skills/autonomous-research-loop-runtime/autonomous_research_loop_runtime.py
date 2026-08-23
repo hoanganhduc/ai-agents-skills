@@ -2909,24 +2909,30 @@ def retract_iteration_command(args: argparse.Namespace) -> dict[str, Any]:
                 + "; ".join(validation_errors)
             )
     except Exception as exc:
+        restore_errors: list[str] = []
         for name, payload in snapshots.items():
             try:
                 if payload is None:
                     paths[name].unlink(missing_ok=True)
                 else:
                     paths[name].write_bytes(payload)
-            except OSError:
-                pass
-        append_jsonl(
-            retractions_path,
-            {
-                "schema_version": SCHEMA_VERSION,
-                "action": "rollback",
-                "rolled_back_at": utc_now(),
-                "iteration": number,
-                "error": str(exc),
-            },
-        )
+            except OSError as restore_exc:
+                # A rollback that cannot put a file back leaves the loop dir
+                # half-retracted -- budget.json reading zero spent iterations
+                # while iterations.jsonl still holds the iteration. This audit
+                # line is the only record the operator and the next command get,
+                # so it must not describe that state as a clean rollback.
+                restore_errors.append(f"{paths[name].name}: {restore_exc}")
+        record: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "action": "rollback" if not restore_errors else "rollback-incomplete",
+            "rolled_back_at": utc_now(),
+            "iteration": number,
+            "error": str(exc),
+        }
+        if restore_errors:
+            record["restore_errors"] = restore_errors
+        append_jsonl(retractions_path, record)
         raise
     return {
         "status": "ok",
