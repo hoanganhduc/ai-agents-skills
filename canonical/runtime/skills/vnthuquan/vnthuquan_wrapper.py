@@ -1509,6 +1509,11 @@ def main(argv: list[str]) -> int:
         else:
             cleaned.append(arg)
     if not cleaned or cleaned[0] in {"-h", "--help", "help"}:
+        if json_out and not cleaned:
+            # A bare invocation is a usage error, not a help request. Report it
+            # the way the unknown-command path below does, so a caller in JSON
+            # mode always finds a parseable envelope on stdout.
+            return finish(normalize_error("", "no command given", "usage", 2), json_out)
         print(help_text())
         return 0
     if cleaned[0] == "--version":
