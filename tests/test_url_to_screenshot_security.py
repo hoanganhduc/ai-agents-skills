@@ -301,6 +301,26 @@ class FetchInterceptionDecisionTests(unittest.TestCase):
             "fail",
         )
 
+    def test_metadata_hostname_fails_even_if_resolution_looks_public(self) -> None:
+        from u2s import cdp, security
+
+        self.assertEqual(
+            cdp.fetch_decision(
+                "http://metadata.google.internal./latest",
+                ["93.184.216.34"],
+                allow_private=True,
+            ),
+            "fail",
+        )
+        with mock.patch.object(security, "resolve_host", return_value=["93.184.216.34"]):
+            with self.assertRaises(cdp._FetchBlocked) as caught:
+                cdp._resolve_paused_request(
+                    {"request": {"url": "http://metadata.google.internal./latest"}},
+                    allow_private=True,
+                    allow_file_urls=False,
+                )
+        self.assertEqual(caught.exception.status, cdp.BLOCKED_METADATA_ENDPOINT)
+
     def test_private_ip_fails(self) -> None:
         from u2s import cdp
 
@@ -324,6 +344,29 @@ class FetchInterceptionDecisionTests(unittest.TestCase):
         from u2s import cdp
 
         self.assertEqual(cdp.fetch_decision("http://host/x", ["93.184.216.34"]), "continue")
+
+    def test_missing_resolution_and_malformed_authority_fail_closed(self) -> None:
+        from u2s import cdp
+
+        self.assertEqual(cdp.fetch_decision("http://host/x", []), "fail")
+        malformed = (
+            "http://example.test:99999/path",
+            "http://example.test:notaport/path",
+            "http://[broken/path",
+        )
+        for url in malformed:
+            with self.subTest(url=url):
+                self.assertEqual(
+                    cdp.fetch_decision(url, ["93.184.216.34"]),
+                    "fail",
+                )
+                with self.assertRaises(cdp._FetchBlocked) as caught:
+                    cdp._resolve_paused_request(
+                        {"request": {"url": url}},
+                        allow_private=False,
+                        allow_file_urls=False,
+                    )
+                self.assertEqual(caught.exception.status, cdp.BLOCKED_INPUT)
 
     def test_any_resolved_ip_private_fails(self) -> None:
         from u2s import cdp
