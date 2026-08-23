@@ -579,17 +579,23 @@ def annotate_tree(source_dir: str, review_data: dict) -> str:
     for tex_path in find_all_tex(annotated_dir):
         if tex_path == root_tex:
             continue
-        try:
-            content = open(tex_path, encoding="utf-8", errors="replace").read()
-            content = wrap_display_math(content)
-            content = annotate_file(
-                content, annotations, ver_results_map, trust_refs_map, additional_issues,
-                todo_macro=todo_macro, file_path=tex_path, source_dir=annotated_dir,
-            )
-            with open(tex_path, "w", encoding="utf-8") as f:
-                f.write(content)
-        except OSError:
-            pass
+        original = open(tex_path, encoding="utf-8", errors="replace").read()
+        content = wrap_display_math(original)
+        content = annotate_file(
+            content, annotations, ver_results_map, trust_refs_map, additional_issues,
+            todo_macro=todo_macro, file_path=tex_path, source_dir=annotated_dir,
+        )
+        if content == original:
+            # Nothing was injected here, so leave the copy exactly as it was
+            # written: a stray unwritable .tex under the tree carries no review
+            # content and should not fail the run.
+            continue
+        # The root file's write above is unguarded for the same reason. A review
+        # whose annotations silently failed to land is worse than one that stops:
+        # the PDF still compiles, still carries the metadata box, and reads as a
+        # complete review with a reviewer's comment missing from it.
+        with open(tex_path, "w", encoding="utf-8") as f:
+            f.write(content)
 
     return annotated_dir
 
