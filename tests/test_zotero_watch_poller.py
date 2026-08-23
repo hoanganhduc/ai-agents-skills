@@ -1,4 +1,7 @@
-"""Regressions for the zotero watch poller's reading of ``list-watches``.
+"""Regressions for the zotero watch poller.
+
+Both defects below are silent, and both leave the four-hourly cron entry
+doing nothing. The first is in how the poller read ``list-watches``.
 
 ``gsp_openclaw_helper list-watches`` answers with the watch store itself --
 ``read_json(store, {"items": []})`` -- so stdout is ``{"items": [...]}``. The
@@ -21,6 +24,14 @@ even a store with nothing in it reached the crash.
 Each test drives the real script through a fake workspace, because the defect
 lives in what the script does with the helper's output rather than in any value
 it returns.
+
+``watch-keys.json`` carried a second, independent defect. ``load_watch_keys``
+parsed it with no guard, and ``save_watch_keys`` wrote it with a plain
+``open(..., "w")``, which truncates before ``json.dump`` writes a byte. An
+interrupt in that window left an empty file, and nothing rewrites the map
+before it is read, so every later run raised out of the poller and no watch was
+ever attached again. The write is now staged beside the target and renamed, and
+the read reports an unusable map rather than dying on it.
 """
 
 from __future__ import annotations
@@ -32,6 +43,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
+
+from test_never_matching_predicates import load_module
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 POLLER = REPO_ROOT / "canonical" / "runtime" / "skills" / "zotero" / "scripts" / "watch-poller.py"
@@ -61,7 +75,9 @@ print(json.dumps({"status": "ok", "message": "attached " + sys.argv[2]}))
 """
 
 
-class WatchPollerTests(unittest.TestCase):
+class _PollerFixture:
+    """The fake workspace both defects are exercised in."""
+
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
@@ -93,6 +109,9 @@ class WatchPollerTests(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             env=env, timeout=60, check=False,
         )
+
+class WatchPollerTests(_PollerFixture, unittest.TestCase):
+    """Reading the ``list-watches`` envelope."""
 
     def test_an_empty_store_is_reported_not_crashed(self) -> None:
         self._write_keys({})
@@ -149,6 +168,59 @@ class WatchPollerTests(unittest.TestCase):
         payload = json.loads(emitted)
         self.assertIsInstance(payload, dict)
         self.assertEqual([w["id"] for w in payload["items"]], [FOUND_WATCH["id"]])
+
+
+class WatchKeyStoreTests(_PollerFixture, unittest.TestCase):
+    """Reading and writing ``watch-keys.json``."""
+
+    def _load_poller(self):
+        """Import the script against this test's workspace.
+
+        WATCH_KEYS_FILE is bound at import time from the environment, so the
+        variable has to be in place before the module is executed.
+        """
+        with mock.patch.dict(os.environ, {"AAS_RUNTIME_WORKSPACE": str(self.workspace)}):
+            module = load_module("watch_poller_under_test", POLLER)
+        self.assertEqual(module.WATCH_KEYS_FILE, str(self.keys_path))
+        return module
+
+    def test_a_truncated_key_map_does_not_stop_the_poll(self) -> None:
+        self.keys_path.write_text("", encoding="utf-8")
+        result = self._run([FOUND_WATCH])
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Ignoring unreadable", result.stderr)
+        self.assertEqual(json.loads(result.stdout)["status"], "ok")
+
+    def test_a_partial_key_map_does_not_stop_the_poll(self) -> None:
+        self.keys_path.write_text('{"watch-1700000000-abcdef12": "ZKEY', encoding="utf-8")
+        result = self._run([FOUND_WATCH])
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Ignoring unreadable", result.stderr)
+        self.assertEqual(json.loads(result.stdout)["status"], "ok")
+
+    def test_a_failed_write_leaves_the_previous_map_intact(self) -> None:
+        """The property the rename buys: no window where the map is truncated."""
+        module = self._load_poller()
+        self._write_keys({FOUND_WATCH["id"]: "ZKEY1234"})
+        before = self.keys_path.read_text(encoding="utf-8")
+        with mock.patch.object(module.json, "dump", side_effect=RuntimeError("interrupted")):
+            with self.assertRaises(RuntimeError):
+                module.save_watch_keys({EXPIRED_WATCH["id"]: "ZKEY5678"})
+        self.assertEqual(self.keys_path.read_text(encoding="utf-8"), before)
+        self.assertEqual(json.loads(before), {FOUND_WATCH["id"]: "ZKEY1234"})
+
+    def test_a_successful_write_replaces_the_map_and_leaves_no_residue(self) -> None:
+        module = self._load_poller()
+        self._write_keys({FOUND_WATCH["id"]: "ZKEY1234"})
+        module.save_watch_keys({EXPIRED_WATCH["id"]: "ZKEY5678"})
+        self.assertEqual(
+            json.loads(self.keys_path.read_text(encoding="utf-8")),
+            {EXPIRED_WATCH["id"]: "ZKEY5678"},
+        )
+        leftovers = sorted(p.name for p in self.keys_path.parent.iterdir())
+        self.assertEqual(leftovers, ["watch-keys.json"])
 
 
 if __name__ == "__main__":
