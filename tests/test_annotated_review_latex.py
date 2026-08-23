@@ -18,6 +18,10 @@ escaping defect completely.
 
 from __future__ import annotations
 
+import os
+import shutil
+import stat
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -149,3 +153,62 @@ class ReviewerTodoEscapesExactlyOnceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnnotationsOnIncludedFilesReachThePdfTests(unittest.TestCase):
+    r"""A comment the annotator could not write must not pass as a done review.
+
+    The root .tex write is unguarded, so it stops the run. Every other file --
+    the \input sections a real manuscript is made of -- went through a write
+    wrapped in ``except OSError: pass``. The annotated tree still carried the
+    preamble and the metadata box, so the PDF compiled and read as a complete
+    review with a reviewer's comment missing from it.
+    """
+
+    REVIEW = {
+        "meta": {"title": "A Note on Tight Bounds", "reviewer": "R1"},
+        "annotations": [{
+            "file": "sec1.tex", "quote": "The bound is tight for all",
+            "severity": "major", "type": "correctness",
+            "title": "Counterexample at n=4",
+            "body": "The bound fails for n=4; see the construction below.",
+            "line_start": 3, "line_end": 3,
+        }],
+    }
+
+    def _paper(self, *, read_only_section, stray=False):
+        base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
+        src = base / "paper"
+        src.mkdir()
+        (src / "main.tex").write_text(
+            "\\documentclass{article}\n\\begin{document}\n"
+            "\\input{sec1}\n\\end{document}\n", encoding="utf-8")
+        (src / "sec1.tex").write_text(
+            "\\section{Bounds}\n\nThe bound is tight for all $n \\ge 3$.\n\nMore.\n",
+            encoding="utf-8")
+        if stray:
+            (src / "notes.tex").write_text(
+                "\\section{Notes}\n\nPlain text only.\n", encoding="utf-8")
+            os.chmod(src / "notes.tex", stat.S_IRUSR | stat.S_IRGRP)
+        if read_only_section:
+            os.chmod(src / "sec1.tex", stat.S_IRUSR | stat.S_IRGRP)
+        return str(src)
+
+    def test_a_writable_section_gets_its_annotation(self):
+        out = _load("latex_annotator").annotate_tree(
+            self._paper(read_only_section=False), self.REVIEW)
+        self.assertIn("Counterexample at n=4",
+                      (Path(out) / "sec1.tex").read_text(encoding="utf-8"))
+
+    def test_a_section_that_cannot_be_written_stops_the_run(self):
+        with self.assertRaises(OSError):
+            _load("latex_annotator").annotate_tree(
+                self._paper(read_only_section=True), self.REVIEW)
+
+    def test_an_unwritable_file_with_nothing_to_inject_is_left_alone(self):
+        """The fix must not fail a review over a stray read-only .tex."""
+        out = _load("latex_annotator").annotate_tree(
+            self._paper(read_only_section=False, stray=True), self.REVIEW)
+        self.assertIn("Counterexample at n=4",
+                      (Path(out) / "sec1.tex").read_text(encoding="utf-8"))
