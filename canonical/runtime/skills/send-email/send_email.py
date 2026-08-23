@@ -444,8 +444,22 @@ def _load_address_book() -> dict:
 def _save_address_book(contacts: dict) -> Path:
     path = _address_book_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"contacts": contacts}, ensure_ascii=False, indent=2),
-                    encoding="utf-8")
+    payload = json.dumps({"contacts": contacts}, ensure_ascii=False, indent=2)
+    # Create the file private instead of narrowing it afterwards. write_text
+    # honours the umask, so every address sat in a group- and world-readable
+    # file until the chmod landed. mkstemp creates at 0600 and os.replace
+    # carries that mode onto the address book.
+    descriptor, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
     try:
         os.chmod(path, 0o600)
     except OSError:
