@@ -4,6 +4,7 @@ import os
 import json
 import shutil
 import subprocess
+import sys
 
 
 def run_doctor(config):
@@ -138,8 +139,12 @@ def _check_getscipapers():
         return {"name": "getscipapers", "ok": True, "message": "Found in PATH"}
     # Check if importable as python module
     try:
+        # Ask the interpreter that is running this skill, not whichever python3
+        # PATH happens to resolve. A venv install is invisible to the latter,
+        # and Windows has no python3 at all, so the probe reported "not found"
+        # while the module was importable the whole time.
         result = subprocess.run(
-            ["python3", "-m", "getscipapers", "--help"],
+            [sys.executable, "-m", "getscipapers", "--help"],
             capture_output=True, timeout=10,
         )
         if result.returncode == 0:
