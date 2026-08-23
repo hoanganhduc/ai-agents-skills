@@ -22,15 +22,27 @@ WATCH_KEYS_FILE = os.path.join(WORKSPACE, "data", "research", "zotero", "watch-k
 
 def load_watch_keys():
     if os.path.exists(WATCH_KEYS_FILE):
-        with open(WATCH_KEYS_FILE, encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(WATCH_KEYS_FILE, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            # A truncated map used to kill every later run of this poller, and
+            # nothing rewrites the file before it is read, so the cron job
+            # stayed dead. Losing the mapping costs one attach per watch; a
+            # crash loop costs every attach from here on.
+            print(f"Ignoring unreadable {WATCH_KEYS_FILE}: {e}", file=sys.stderr)
     return {}
 
 
 def save_watch_keys(data):
     os.makedirs(os.path.dirname(WATCH_KEYS_FILE), exist_ok=True)
-    with open(WATCH_KEYS_FILE, "w", encoding="utf-8") as f:
+    # open(..., "w") truncates before json.dump writes a byte, so an interrupt
+    # in that window leaves an empty file behind. Build the replacement beside
+    # it and rename, which is atomic on both platforms this skill installs to.
+    staged = WATCH_KEYS_FILE + ".tmp"
+    with open(staged, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    os.replace(staged, WATCH_KEYS_FILE)
 
 
 def main():
