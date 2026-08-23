@@ -678,7 +678,9 @@ def cmd_run(args):
 
     items.sort(key=lambda item: (item["score"], item["timestamp"]), reverse=True)
 
-    _write_digest_stubs(items)
+    unwritten = _write_digest_stubs(items)
+    for problem in unwritten:
+        print(f"WARNING: digest stub not written -- {problem}", file=sys.stderr)
 
     by_tag = {}
     for item in items:
@@ -1118,7 +1120,14 @@ def build_parser():
 
 
 def _write_digest_stubs(items):
-    """Write minimal memory stubs for digest items not yet in memory/papers/."""
+    """Write minimal memory stubs for digest items not yet in memory/papers/.
+
+    Returns the ids that could not be written. Both writes below used to
+    swallow every exception, so an unwritable papers directory produced a
+    digest that was silently short of items, and an unwritable ledger made the
+    next run redo the work it had just reported as done.
+    """
+    unwritten = []
     workspace = os.environ.get("AAS_RUNTIME_WORKSPACE") or os.environ.get("OPENCLAW_WORKSPACE") or os.path.join(os.path.expanduser("~"), ".codex", "runtime", "workspace")
     papers_dir = Path(workspace) / "memory" / "papers"
     ingested_file = Path(workspace) / "data" / "library" / "ingested.json"
@@ -1177,16 +1186,18 @@ def _write_digest_stubs(items):
         try:
             out_file.write_text(content, encoding="utf-8")
             new_records.append({"source": "digest", "id": item_id, "processed_at": now})
-        except Exception:
-            pass
+        except OSError as exc:
+            unwritten.append(f"{item_id}: {exc}")
 
     if new_records:
         try:
             existing = json.loads(ingested_file.read_text(encoding="utf-8")) if ingested_file.exists() else []
             ingested_file.parent.mkdir(parents=True, exist_ok=True)
             ingested_file.write_text(json.dumps(existing + new_records, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+        except (OSError, ValueError) as exc:
+            unwritten.append(f"ingested ledger: {exc}")
+
+    return unwritten
 
 
 def main():
