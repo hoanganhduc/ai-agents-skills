@@ -254,7 +254,17 @@ def validate_target_url(
     host = _normalize_host(parts.hostname or "")
     if not host:
         raise TargetBlocked(BLOCKED_INPUT, "URL has no host")
-    port = parts.port or (443 if scheme == "https" else 80)
+    try:
+        port = parts.port or (443 if scheme == "https" else 80)
+    except ValueError as exc:
+        # ``urlsplit`` accepts any authority and validates the port only when it
+        # is read, so ``:99999`` and ``:notaport`` surface here rather than at
+        # parse time. Without this the one gate documented as fail-closed exits
+        # through a plain ``ValueError``: every caller catches ``TargetBlocked``,
+        # so the process dies with a traceback and no JSON instead of emitting
+        # the refusal every other rejected input produces. ``u2s.cdp`` already
+        # guards the same read in ``_canonical_origin``.
+        raise TargetBlocked(BLOCKED_INPUT, f"invalid URL port: {exc}") from exc
 
     # Layer 3 (host-name form): unconditional metadata denylist.
     if host in METADATA_HOSTS or _is_metadata_ip(host):
@@ -303,10 +313,16 @@ def redact_url(url: str) -> str:
     """
     try:
         parts = urlsplit(url)
+        host = parts.hostname or ""
+        # Read the port inside the guard: ``urlsplit`` defers port validation to
+        # this attribute, so a malformed port raises here and not above. This
+        # redactor is handed browser-supplied URLs by
+        # ``u2s.cdp.observed_navigation_url``, and the fallback below is the
+        # function's own statement that it must not raise on any of them.
+        port = parts.port
     except ValueError:
         return "(unparseable-url)"
-    host = parts.hostname or ""
     netloc = host
-    if parts.port:
-        netloc = f"{host}:{parts.port}"
+    if port:
+        netloc = f"{host}:{port}"
     return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
