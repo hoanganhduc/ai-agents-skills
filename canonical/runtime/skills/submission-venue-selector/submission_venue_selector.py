@@ -97,7 +97,12 @@ def _open_private(path: Path):
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # 0o700 here for the same reason ensure_workspace uses it: only init and
+    # plan call ensure_workspace, so a workspace first touched by any other
+    # verb -- providers, venues, score, validate, purge, expand, recent -- was
+    # created by this line and stayed at the umask default until an init or
+    # plan happened to run in it.
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with _open_private(path) as handle:
         handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     # Still narrows a file an earlier version left readable, and no longer
@@ -118,7 +123,7 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with _open_private(path) as handle:
         for row in rows:
             handle.write(json.dumps(row, sort_keys=True) + "\n")
