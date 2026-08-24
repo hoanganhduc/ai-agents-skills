@@ -83,6 +83,29 @@ class RuntimeDependencyResolutionTests(unittest.TestCase):
         self.assertTrue(actions)
         self.assertEqual({action["skill"] for action in actions}, {"graph-verifier"})
 
+    def test_digest_bridge_installs_getscipapers_runtime_dependency(self) -> None:
+        manifests = load_manifests()
+
+        self.assertEqual(
+            resolve_runtime_skills(["digest-bridge"], manifests["runtime"]),
+            ["digest-bridge", "getscipapers-requester"],
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            actions = build_runtime_actions(
+                root=Path(tmp),
+                manifests=manifests,
+                selected_skills=["digest-bridge"],
+                agents=[SimpleNamespace(name="codex")],
+                platform="linux",
+            )
+
+        self.assertTrue(actions)
+        self.assertEqual(
+            {action["skill"] for action in actions},
+            {"digest-bridge", "getscipapers-requester", "runtime-runner"},
+        )
+
     def test_unknown_reachable_runtime_dependency_is_rejected(self) -> None:
         manifest = {
             "runtime_profiles": {

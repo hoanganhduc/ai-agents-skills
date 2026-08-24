@@ -33,19 +33,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $summaryPath = Join-Path $digestDirectory "last-summary.md"
-$lines = [System.Collections.Generic.List[string]]::new()
-$lines.Add("# RSS Digest Summary - $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')")
-foreach ($digest in Get-ChildItem -LiteralPath $digestDirectory -Filter "rss-*.md" -File | Sort-Object Name) {
-    $tag = $digest.BaseName.Substring(4)
-    if ($tag -eq "all") {
-        continue
-    }
-    $lines.Add("")
-    $lines.Add("## $tag")
-    Get-Content -LiteralPath $digest.FullName |
-        Where-Object { $_ -match '^## [0-9]' } |
-        Select-Object -First 5 |
-        ForEach-Object { $lines.Add("- $_") }
+& $pythonRunner summarize-sidecars --no-history
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
 }
-[System.IO.File]::WriteAllLines($summaryPath, $lines, [System.Text.UTF8Encoding]::new($false))
 [Console]::Out.WriteLine("WROTE_SUMMARY:$summaryPath")

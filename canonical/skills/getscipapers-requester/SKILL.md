@@ -146,3 +146,99 @@ page has been rendered to TIFF/PNG.
 4. For many papers, create a manifest first.
 5. For large batches, prefer dry-run style validation first.
 6. If retrieval fails, report the failure precisely instead of hand-waving.
+
+Watch state is a bounded, fail-closed local transaction. `create-watch`,
+`list-watches`, and `update-watch` share one cross-platform lock and use unique
+atomic replacements for `watches.json`. A corrupt, oversized, symlinked, or
+wrong-shaped watch store is reported without being reset or overwritten; repair
+or restore that state before retrying the handoff. Watch IDs include the full
+structured canonical watch key, require exact identity before reuse, and are
+made unique inside the locked transaction. Matching delimiter-era keys are
+migrated in place; collision-shaped nonmatching records are never reused.
+An exact-identity `found` record is already successful and is reused without
+reopening monitoring; `failed` or `expired` identities remain eligible for a
+new watch on retry.
+Stores with missing or duplicate IDs are rejected. Every stored record must
+also satisfy the complete baseline watch schema, including identity fields,
+service list, known status, timestamps, bounded counters, and sent-file hashes;
+optional deadline and note history fields are type- and range-checked too.
+Stored DOI, ISBN, or search identity must already be in its exact canonical
+grammar; `watch_key` must equal either the structured identity hash or its exact
+legacy predecessor. `updated_at` cannot precede `created_at`, and deadlines,
+last-check times, and note timestamps must remain within the record's declared
+lifetime. Store JSON rejects duplicate object members and non-standard
+constants such as `NaN`, and never serializes them, including in otherwise
+forward-compatible unknown fields. Creation, update, last-check, and note-event
+timestamps more than five minutes ahead of the current clock are rejected;
+accepted within-skew future records remain mutable by advancing event
+timestamps monotonically rather than moving them backward. The
+byte budget admits the bridge's full 3,000-item producer maximum even with
+bounded 500-code-point non-ASCII labels; individual label, identifier,
+initial/last/history note, and service fields remain bounded, and history
+records require valid timestamp/note shapes. Persisted string fields reject
+line breaks and Unicode control/format/surrogate characters, so helper-created
+state remains consumable by the bridge's matching schema.
+
+Generated manifest JSON and DOI-list files use unique same-directory atomic
+stages. Pre-existing staging or destination symlinks are replaced as path
+entries and are never followed to an external target. Final manifest basenames
+use the full SHA-256 digest of kind plus source, so a short-prefix collision
+cannot overwrite another retained manifest generation.
+
+`make-manifest` bounded-reads inline, stdin, or regular non-symlink input and
+admits at most 3,000 lines/items under a 2 MiB source ceiling, matching the
+bridge producer maximum when every DOI reaches the 500-character ASCII grammar
+limit. Unicode case-insensitive lookalikes are rejected rather than folded into
+another DOI. It caps
+metadata-resolution lines and output bytes separately, so bulk free text cannot
+fan out into unbounded requests or artifacts. Overlong inline text is validated
+as text rather than being mistaken for a filesystem path.
+
+Only `extract` and `make-manifest` interpret their top-level source argument as
+stdin or a file. `resolve` queries and individual lines inside an already-read
+manifest source are always literal text; a title that resembles a readable
+local path is never reopened or sent as that file's contents.
+
+Durability-bearing `make-manifest` and watch verbs parse an explicitly selected
+config strictly and require their configured manifest or state directory. They
+never switch those outputs to the temporary fallback root; an invalid config or
+unavailable configured directory is a nonzero handoff failure. The launcher
+exports a workspace-default config when the POSIX `-f` probe sees a regular
+file target; that probe may follow a live symlink, while a broken symlink is not
+exported. Every durability-bearing verb then performs strict directory-entry
+admission and rejects live/broken config symlinks and non-regular entries before
+durable state changes. Non-durable verbs retain the legacy permissive config
+reader and may use fallback settings; they do not establish manifest/watch
+durability. Relative paths inside an accepted strict config resolve against
+that config file's directory so producers and pollers do not depend on their
+current working directory. Strict config JSON rejects duplicate members and
+non-finite constants even in unknown fields; `telegram_max_bytes` must be an
+integer from 1 through 2 GiB. Invalid environment overrides use the bounded
+default only on non-durable configuration paths.
+Every required configured storage directory is then admitted by directory
+entry after create/existence, including the `state_dir` that lexically anchors
+a manifest directory. Configured and fallback live/broken symlinks, Windows
+reparse points such as junctions, and non-directory occupants are never
+followed for manifest or watch writes.
+
+Crossref, Google Books, and OpenLibrary metadata requests stay on their exact
+documented HTTPS origins, refuse redirects, close every response, and stream
+under a fixed byte cap. Declared response framing is enforced, so a truncated
+body cannot be accepted merely because its prefix is valid JSON. Real requests
+run in isolated workers that the parent
+terminates and reaps under a whole-response wall-clock deadline. The deadline
+is independent of the socket idle timeout, so a slow-drip response cannot keep
+a resolver alive indefinitely; process creation itself may remain
+platform-dependent. Search queries and returned candidate counts are
+bounded, and malformed response shapes degrade without unbounded iteration.
+Metadata JSON rejects non-standard non-finite constants; candidate DOIs use an
+ASCII-only grammar, and ISBNs permit only ASCII digits/`X` separated by single
+hyphens or spaces before checksum validation. Remote score, year, and type
+scalars are bounded before ranking or manifest publication. Remote title,
+author, venue, publisher, and type text is HTML-unescaped, NFKC-normalized,
+tag-stripped, control/format/surrogate-cleaned, whitespace-collapsed, and
+bounded before candidate output. Selected and ranked summaries are sanitized
+again through their known-field schema at manifest publication, so a mocked or
+future resolver cannot persist extra or structurally unsafe metadata. Exact DOI fields,
+bare DOI lines, and DOI URLs retain every grammar-valid suffix character;
+free-text extraction alone applies surrounding-prose punctuation heuristics.

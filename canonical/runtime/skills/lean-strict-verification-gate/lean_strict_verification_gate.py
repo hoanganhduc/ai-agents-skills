@@ -367,10 +367,14 @@ def main(argv: list[str] | None = None) -> int:
                     payload["post_verification_project_context_fingerprint"] = context_after[
                         "fingerprint"
                     ]
-                    if (
-                        context_after["errors"]
-                        or context_before["fingerprint"] != context_after["fingerprint"]
-                    ):
+                    context_stable, context_transition = (
+                        accepted_project_context_transition(
+                            context_before,
+                            context_after,
+                            runner=runner,
+                        )
+                    )
+                    if context_after["errors"] or not context_stable:
                         payload["ok"] = False
                         payload["safety_status"] = "failed"
                         payload.setdefault("findings", []).append(
@@ -382,6 +386,8 @@ def main(argv: list[str] | None = None) -> int:
                                 ),
                             }
                         )
+                    elif context_transition:
+                        payload["project_context_transition"] = context_transition
         emit(payload)
         if strict:
             return 0 if payload["ok"] and payload.get("lean_check_status") == "typechecked" else 1
@@ -1724,6 +1730,49 @@ def project_context_snapshot(root: Path) -> dict[str, Any]:
         json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     return {"fingerprint": fingerprint, "files": rows, "errors": errors}
+
+
+def accepted_project_context_transition(
+    before: dict[str, Any],
+    after: dict[str, Any],
+    *,
+    runner: str,
+) -> tuple[bool, str]:
+    """Accept only Lake's first-build creation of a previously absent manifest."""
+
+    if before.get("fingerprint") == after.get("fingerprint"):
+        return True, ""
+    if runner != "lake-build" or before.get("errors") or after.get("errors"):
+        return False, ""
+    before_rows = {
+        row.get("file"): row
+        for row in before.get("files", [])
+        if isinstance(row, dict)
+    }
+    after_rows = {
+        row.get("file"): row
+        for row in after.get("files", [])
+        if isinstance(row, dict)
+    }
+    if set(before_rows) != set(PROJECT_CONTEXT_FILES) or set(after_rows) != set(
+        PROJECT_CONTEXT_FILES
+    ):
+        return False, ""
+    for name in PROJECT_CONTEXT_FILES:
+        if name == "lake-manifest.json":
+            continue
+        if before_rows[name] != after_rows[name]:
+            return False, ""
+    manifest_before = before_rows["lake-manifest.json"]
+    manifest_after = after_rows["lake-manifest.json"]
+    if (
+        manifest_before.get("status") == "missing"
+        and not manifest_before.get("sha256")
+        and manifest_after.get("status") == "hashed"
+        and bool(manifest_after.get("sha256"))
+    ):
+        return True, "lake_manifest_created_by_lake_build"
+    return False, ""
 
 
 def project_evidence_snapshot(root: Path, modules: list[str]) -> dict[str, Any]:
