@@ -340,6 +340,8 @@ class DigestStubWriteFailuresAreReported(unittest.TestCase):
 
     def test_short_content_length_feed_fails_in_real_worker_without_seen_advance(self) -> None:
         mod = _mod()
+        parse = mock.Mock(side_effect=AssertionError("framing failure must precede parsing"))
+        mod.ensure_feedparser = lambda: SimpleNamespace(parse=parse)
         body = (
             b'<?xml version="1.0"?><rss version="2.0"><channel>'
             b"<title>Feed</title><item><title>Paper</title>"
@@ -370,6 +372,7 @@ class DigestStubWriteFailuresAreReported(unittest.TestCase):
         self.assertEqual(state["seen_order"], ["preserve"])
         self.assertEqual(health[0]["status"], "error")
         self.assertIn("Content-Length", health[0]["last_error"])
+        parse.assert_not_called()
 
     def test_early_http_errors_release_unread_worker_reservations(self) -> None:
         mod = _mod()
@@ -1820,7 +1823,25 @@ class DigestStubWriteFailuresAreReported(unittest.TestCase):
             b"<item><title>X</title>"
             b"<link>https://arxiv.org/abs/2401.00001</link></item>"
         )
-        parsed = mod.ensure_feedparser().parse(fragment)
+        class Parsed(dict):
+            def __init__(self):
+                entries = [{
+                    "title": "X",
+                    "link": "https://arxiv.org/abs/2401.00001",
+                }]
+                super().__init__(
+                    bozo=False,
+                    version="",
+                    entries=entries,
+                    feed={},
+                )
+                self.bozo = False
+                self.version = ""
+                self.entries = entries
+                self.feed = {}
+
+        parsed = Parsed()
+        mod.ensure_feedparser = lambda: SimpleNamespace(parse=lambda _raw: parsed)
         self.assertFalse(parsed.version)
         self.assertEqual(len(parsed.entries), 1)
         mod.fetch_feed_bytes = lambda *_args, **_kwargs: fragment
@@ -2739,6 +2760,7 @@ class DigestStubWriteFailuresAreReported(unittest.TestCase):
         outside.mkdir()
         sentinel = outside / "sentinel.md"
         sentinel.write_text("keep\n", encoding="utf-8")
+        original = {path.name: path.read_bytes() for path in outside.iterdir()}
         self.papers.rmdir()
         self.papers.symlink_to(outside, target_is_directory=True)
         try:
@@ -2748,7 +2770,7 @@ class DigestStubWriteFailuresAreReported(unittest.TestCase):
             self.assertTrue(unwritten[0].startswith("papers directory:"), unwritten)
             self.assertEqual(
                 {path.name: path.read_bytes() for path in outside.iterdir()},
-                {"sentinel.md": b"keep\n"},
+                original,
             )
             self.assertFalse(
                 (

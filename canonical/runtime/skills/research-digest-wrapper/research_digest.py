@@ -286,6 +286,21 @@ def ensure_http_deps():
     return FEEDPARSER, REQUESTS
 
 
+def ensure_requests():
+    """Load the HTTP client without coupling raw requests to feed parsing."""
+    global REQUESTS
+    if REQUESTS is not None:
+        return REQUESTS
+    try:
+        import requests as _rq
+    except ImportError as exc:
+        raise DigestSourceError(
+            "requests runtime dependency is unavailable"
+        ) from exc
+    REQUESTS = _rq
+    return REQUESTS
+
+
 def http_timeout_tuple():
     return (HTTP_CONNECT_TIMEOUT, HTTP_READ_TIMEOUT)
 
@@ -362,7 +377,7 @@ def _http_request_once_in_process(
     max_bytes: int,
     label: str,
 ) -> bytes:
-    _, requests = ensure_http_deps()
+    requests = ensure_requests()
     kwargs = {
         "params": params,
         "timeout": timeout if timeout is not None else http_timeout_tuple(),

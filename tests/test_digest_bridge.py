@@ -860,6 +860,26 @@ class ManifestFailureKeepsThePapersTests(unittest.TestCase):
             )
             self.assertEqual(len(self._state(workspace)["requested"]), 2)
 
+    def test_helper_wire_protocol_forces_utf8_in_a_non_utf8_parent_locale(self) -> None:
+        module = _module()
+        with mock.patch.dict(
+            os.environ,
+            {"PYTHONIOENCODING": "cp1252:strict"},
+        ):
+            result = module._run_helper_bounded(
+                [
+                    sys.executable,
+                    "-B",
+                    "-c",
+                    "import json; print(json.dumps({'label': 'café'}, ensure_ascii=False))",
+                ],
+                max_output_bytes=1024,
+                timeout=10,
+                label="UTF-8 helper response",
+            )
+
+        self.assertEqual(json.loads(result.stdout), {"label": "café"})
+
     def test_unrelated_real_helper_watch_is_bridge_schema_compatible(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             skills, workspace = self._workspace(Path(raw), None)
@@ -992,11 +1012,13 @@ class ManifestFailureKeepsThePapersTests(unittest.TestCase):
                 config = root / "config.json"
                 fallback = root / "fallback"
                 if label == "unavailable-state":
+                    blocked_parent = root / "not-a-directory"
+                    blocked_parent.write_text("block directory creation\n", encoding="utf-8")
                     config.write_text(
                         json.dumps(
                             {
                                 "download_dir": str(root / "downloads"),
-                                "state_dir": "/proc/aas-digest-nope",
+                                "state_dir": str(blocked_parent / "state"),
                                 "manifest_dir": str(root / "manifests"),
                             }
                         ),

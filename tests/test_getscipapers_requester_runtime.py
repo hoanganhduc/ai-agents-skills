@@ -22,6 +22,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GSP_ROOT = REPO_ROOT / "canonical" / "runtime" / "skills" / "getscipapers-requester"
 
 
+def _helper_entrypoint() -> list[str]:
+    if os.name == "nt":
+        return [sys.executable, "-B", str(GSP_ROOT / "gsp_openclaw_helper.py")]
+    return ["bash", str(GSP_ROOT / "run_gsp_helper.sh")]
+
+
 def _load_module(name: str, filename: str):
     path = GSP_ROOT / filename
     spec = importlib.util.spec_from_file_location(name, path)
@@ -766,6 +772,20 @@ class GetSciPapersManifestBoundsTests(unittest.TestCase):
                 helper.build_manifest("paper", "x" * 3_000, settings)
             self.assertFalse(settings.manifest_dir.exists())
 
+    def test_windows_invalid_name_errors_still_admit_inline_sources(self) -> None:
+        helper = _load_module(
+            "gsp_helper_manifest_windows_inline_test",
+            "gsp_openclaw_helper.py",
+        )
+        invalid_name = OSError("invalid Windows filename")
+        invalid_name.winerror = 123
+        with tempfile.TemporaryDirectory() as raw:
+            settings = self._settings(helper, Path(raw))
+            with mock.patch.object(helper.os, "lstat", side_effect=invalid_name):
+                with self.assertRaisesRegex(ValueError, "source line 1 exceeds"):
+                    helper.build_manifest("paper", "x" * 3_000, settings)
+            self.assertFalse(settings.manifest_dir.exists())
+
     def test_manifest_rejects_symlink_sources(self) -> None:
         helper = _load_module("gsp_helper_manifest_symlink_source_test", "gsp_openclaw_helper.py")
         with tempfile.TemporaryDirectory() as raw:
@@ -1039,8 +1059,7 @@ class GetSciPapersWatchStoreTests(unittest.TestCase):
                 {"sentinel.txt": b"keep\n"},
             )
 
-    def test_configless_wrapper_uses_default_storage_but_explicit_missing_config_fails(self) -> None:
-        wrapper = GSP_ROOT / "run_gsp_helper.sh"
+    def test_configless_entrypoint_uses_default_storage_but_explicit_missing_config_fails(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             env = {
@@ -1053,8 +1072,7 @@ class GetSciPapersWatchStoreTests(unittest.TestCase):
                 "PYTHONDONTWRITEBYTECODE": "1",
             })
             command = [
-                "bash",
-                str(wrapper),
+                *_helper_entrypoint(),
                 "make-manifest",
                 "paper",
                 "10.1234/configless",
@@ -1093,7 +1111,6 @@ class GetSciPapersWatchStoreTests(unittest.TestCase):
             self.assertIn("explicit getscipapers config is missing", failed.stderr)
 
     def test_default_config_symlinks_fail_before_watch_mutation(self) -> None:
-        wrapper = GSP_ROOT / "run_gsp_helper.sh"
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             state_dir = root / "data" / "research" / "getscipapers_bot" / "state"
@@ -1109,8 +1126,7 @@ class GetSciPapersWatchStoreTests(unittest.TestCase):
                 "PYTHONDONTWRITEBYTECODE": "1",
             })
             command = [
-                "bash",
-                str(wrapper),
+                *_helper_entrypoint(),
                 "create-watch",
                 "--kind",
                 "paper",
@@ -1133,27 +1149,28 @@ class GetSciPapersWatchStoreTests(unittest.TestCase):
                         target.write_bytes(content)
                     config.symlink_to(target)
                     original_target = os.readlink(config)
+                    try:
+                        result = subprocess.run(
+                            command,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            env=env,
+                            timeout=10,
+                        )
 
-                    result = subprocess.run(
-                        command,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        env=env,
-                        timeout=10,
-                    )
-
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("config is unsafe or oversized", result.stderr)
-                    self.assertTrue(config.is_symlink())
-                    self.assertEqual(os.readlink(config), original_target)
-                    self.assertFalse((state_dir / "watches.json").exists())
-                    if content is None:
-                        self.assertFalse(target.exists())
-                    else:
-                        self.assertEqual(target.read_bytes(), content)
-                    config.unlink()
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("config is unsafe or oversized", result.stderr)
+                        self.assertTrue(config.is_symlink())
+                        self.assertEqual(os.readlink(config), original_target)
+                        self.assertFalse((state_dir / "watches.json").exists())
+                        if content is None:
+                            self.assertFalse(target.exists())
+                        else:
+                            self.assertEqual(target.read_bytes(), content)
+                    finally:
+                        config.unlink(missing_ok=True)
 
     def test_strict_config_rejects_nonfinite_constants_before_durable_writes(self) -> None:
         helper_script = GSP_ROOT / "gsp_openclaw_helper.py"
