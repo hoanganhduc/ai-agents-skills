@@ -826,7 +826,10 @@ def read_text_source(value: str) -> str:
     except ValueError:
         initial = None
     except OSError as exc:
-        if exc.errno == errno.ENAMETOOLONG:
+        if (
+            exc.errno == errno.ENAMETOOLONG
+            or getattr(exc, "winerror", None) in {123, 206}
+        ):
             initial = None
         else:
             raise ValueError(f"source path cannot be inspected: {exc}") from exc

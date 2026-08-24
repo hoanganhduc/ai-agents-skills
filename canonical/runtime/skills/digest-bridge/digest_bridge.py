@@ -801,6 +801,10 @@ def _run_helper_bounded(
             stdin=input_stream if input_stream is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env={
+                **os.environ,
+                "PYTHONIOENCODING": "utf-8:strict",
+            },
         )
     except BaseException:
         if input_stream is not None:

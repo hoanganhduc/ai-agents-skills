@@ -1365,7 +1365,10 @@ class ResearchDigestTests(unittest.TestCase):
             with self.subTest(method=method):
                 response = FakeResponse(b"{}", status=302)
                 requests = FakeRequests([response])
-                self.module.ensure_http_deps = lambda: (object(), requests)
+                self.module.ensure_http_deps = mock.Mock(
+                    side_effect=AssertionError("raw HTTP must not require feedparser")
+                )
+                self.module.ensure_requests = lambda: requests
                 with self.assertRaises(self.module.DigestSourceError):
                     self.module._http_request_once_in_process(
                         method.upper(),
@@ -1390,7 +1393,7 @@ class ResearchDigestTests(unittest.TestCase):
         for response in cases:
             with self.subTest(response=response):
                 requests = FakeRequests([response])
-                self.module.ensure_http_deps = lambda: (object(), requests)
+                self.module.ensure_requests = lambda: requests
                 with mock.patch.object(self.module, "MAX_S2_RESPONSE_BYTES", 5), self.assertRaises(
                     self.module.DigestSourceError
                 ):
