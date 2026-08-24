@@ -683,6 +683,54 @@ class CliExitMappingTests(unittest.TestCase):
             {item["kind"] for item in payload["findings"]},
         )
 
+    def test_lake_build_may_create_only_a_previously_absent_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "lakefile.toml").write_text('name = "proof"\n', encoding="utf-8")
+            (root / "Candidate.lean").write_text(
+                "theorem clean : True := trivial\n", encoding="utf-8"
+            )
+
+            def create_manifest(*_args, **_kwargs):
+                (root / "lake-manifest.json").write_text("{}\n", encoding="utf-8")
+                return {
+                    "lean_check_status": "typechecked",
+                    "runner": "lake-build",
+                    "typecheck_command": "lake build",
+                    "typecheck_cwd": str(root),
+                    "typecheck_stdout": "",
+                    "typecheck_stderr": "",
+                }
+
+            with mock.patch.object(
+                gate, "typecheck", side_effect=create_manifest
+            ), mock.patch.object(gate, "emit") as emit:
+                rc = gate.main(["verify", "--input", str(root), "--strict"])
+            payload = emit.call_args.args[0]
+            self.assertEqual(rc, 0, payload)
+            self.assertTrue(payload["ok"], payload)
+            self.assertEqual(
+                payload["project_context_transition"],
+                "lake_manifest_created_by_lake_build",
+            )
+
+            def mutate_manifest(*_args, **_kwargs):
+                (root / "lake-manifest.json").write_text(
+                    '{"changed":true}\n', encoding="utf-8"
+                )
+                return create_manifest()
+
+            (root / "lake-manifest.json").write_text(
+                '{"locked":true}\n', encoding="utf-8"
+            )
+            with mock.patch.object(
+                gate, "typecheck", side_effect=mutate_manifest
+            ), mock.patch.object(gate, "emit") as emit:
+                rc = gate.main(["verify", "--input", str(root), "--strict"])
+            payload = emit.call_args.args[0]
+            self.assertEqual(rc, 1)
+            self.assertFalse(payload["ok"], payload)
+
     def test_timeouts_must_be_positive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "Candidate.lean"

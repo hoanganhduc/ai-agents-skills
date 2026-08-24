@@ -1965,6 +1965,9 @@
     },
     "digest-bridge": {
       "runtime_dir": "digest-bridge",
+      "runtime_requires": [
+        "getscipapers-requester"
+      ],
       "smoke_coverage": {
         "status": "static-only",
         "reason": "Digest bridge helpers are covered by static/runtime inventory checks; no generic input digest is shipped for smoke."

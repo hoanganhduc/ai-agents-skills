@@ -3,7 +3,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 WORKSPACE="${AAS_RUNTIME_WORKSPACE:-${OPENCLAW_WORKSPACE:-$(cd "$SCRIPT_DIR/../.." && pwd -P)}}"
 export OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-$WORKSPACE}"
-export GETSCIPAPERS_SKILL_CONFIG="${GETSCIPAPERS_SKILL_CONFIG:-$WORKSPACE/data/research/getscipapers_bot/state/config.json}"
+default_config="$WORKSPACE/data/research/getscipapers_bot/state/config.json"
+if [ -z "${GETSCIPAPERS_SKILL_CONFIG+x}" ] && [ -f "$default_config" ]; then
+  export GETSCIPAPERS_SKILL_CONFIG="$default_config"
+fi
 if [ -z "${GETSCIPAPERS_BIN:-}" ]; then
   gsp_venv_bin="${GETSCIPAPERS_VENV:-${HOME:-}/.getscipapers_venv}/bin/getscipapers"
   if [ -x "$gsp_venv_bin" ]; then
