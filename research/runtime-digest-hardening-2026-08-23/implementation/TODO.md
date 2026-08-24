@@ -204,4 +204,8 @@
 - [x] Update skill contracts and trust/style ownership.
 - [x] Run focused and repository-wide verification.
 - [x] Complete fresh-context review.
-- [ ] Commit, push, monitor CI, and record remaining audit scope.
+- [x] Commit and push `744e6a5` plus the cross-platform follow-up `2cb61d3`;
+      monitor docs run `32682643769` and installer run `32682643760` to success.
+- [x] Record remaining audit scope: live upstream-network behavior, abrupt
+      termination/power loss, same-UID adversarial races, and corpus cross-file
+      crash atomicity remain outside the verified transaction boundary.
