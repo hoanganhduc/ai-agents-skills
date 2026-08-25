@@ -113,6 +113,7 @@ MAX_REASON_CHARS = 240
 MAX_SUMMARY_CHARS = 2000
 MAX_REMOTE_FUTURE_DATE_DAYS = 1
 MAX_LOCAL_JSON_BYTES = 64 * 1024 * 1024
+MAX_JSON_INT_DIGITS = 1000
 MAX_ARXIV_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_ARXIV_XML_ELEMENTS = 5_000
 MAX_ARXIV_XML_ATTRIBUTES = 5_000
@@ -243,6 +244,12 @@ def reject_duplicate_json_keys(pairs):
             raise ValueError(f"duplicate JSON object member: {key}")
         value[key] = item
     return value
+
+
+def reject_oversized_json_int(raw: str) -> int:
+    if len(raw.lstrip("-")) > MAX_JSON_INT_DIGITS:
+        raise ValueError("JSON integer is too large")
+    return int(raw)
 
 
 def is_link_like_stat(info) -> bool:
@@ -555,6 +562,7 @@ def _decode_source_json(payload: bytes, *, label: str):
             payload.decode("utf-8"),
             object_pairs_hook=reject_duplicate_json_keys,
             parse_constant=reject_json_constant,
+            parse_int=reject_oversized_json_int,
         )
     except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
         raise DigestSourceError(f"{label} returned invalid JSON") from exc
@@ -709,6 +717,7 @@ def load_json(path: Path, default, *, max_bytes: int = MAX_LOCAL_JSON_BYTES):
             payload.decode("utf-8"),
             object_pairs_hook=reject_duplicate_json_keys,
             parse_constant=reject_json_constant,
+            parse_int=reject_oversized_json_int,
         )
     except (
         FileNotFoundError,

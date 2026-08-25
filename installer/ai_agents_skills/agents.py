@@ -403,6 +403,15 @@ def agent_home_statuses(root: Path, requested: Iterable[str] | None = None) -> l
 
 def agent_home_status(root: Path, target: AgentTarget) -> dict[str, Any]:
     if not target.home.exists() and not target.home.is_symlink():
+        if target.name == "chatgpt-local-coder":
+            return {
+                "agent": target.name,
+                "eligible": False,
+                "reason": (
+                    "dedicated ~/.chatgpt-local-coder installer home not detected; "
+                    "ChatGPT Local Coder connector availability is separate and is not probed here"
+                ),
+            }
         return {"agent": target.name, "eligible": False, "reason": "agent home not detected"}
     if target.home.is_symlink():
         return {"agent": target.name, "eligible": False, "reason": "agent home is a symlink"}

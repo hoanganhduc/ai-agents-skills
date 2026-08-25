@@ -75,6 +75,46 @@ def has_unmanaged_table(text: str, managed_id: str, table: str) -> bool:
     return False
 
 
+def unmanaged_table_has_bool_values(
+    text: str,
+    managed_id: str,
+    table: str,
+    expected: dict[str, bool],
+) -> bool:
+    """Whether a user-authored table already carries the expected booleans."""
+
+    span = managed_block_span(text, managed_id)
+    region = text if span is None else text[: span[0]] + text[span[1] :]
+    target = f"[{table}]".replace(" ", "")
+    in_table = False
+    found = False
+    values: dict[str, bool] = {}
+    for raw in region.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("["):
+            if line.startswith("[["):
+                if in_table:
+                    break
+                continue
+            compact = line.replace(" ", "")
+            if compact == target:
+                in_table = True
+                found = True
+                continue
+            if in_table:
+                break
+            continue
+        if not in_table or "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        value = raw_value.strip().casefold()
+        if value in {"true", "false"}:
+            values[key.strip()] = value == "true"
+    return found and all(values.get(key) is value for key, value in expected.items())
+
+
 def render_managed_block(managed_id: str, body: str) -> str:
     start_marker, end_marker = block_markers(managed_id)
     return f"{start_marker}\n{body.strip(chr(10))}\n{end_marker}"

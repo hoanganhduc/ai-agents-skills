@@ -2885,8 +2885,8 @@ The primary manifests are JSON-compatible YAML files loaded and validated by
 not the primary installer manifest format.
 
 The installer resolves those manifests into per-agent target artifacts and
-records ownership in `.ai-agents-skills/state.json` under the selected root.
-Existing unmanaged files are skipped by default.
+records ownership in the selected root's installer state file. Existing
+unmanaged files are skipped by default.
 
 Install flow:
 
@@ -3475,7 +3475,7 @@ after explicit apply.
 The audit reports:
 
 - detected and skipped agents
-- managed state counts from `.ai-agents-skills/state.json`
+- managed state counts from the selected root's installer state file
 - instruction-file managed marker counts
 - canonical skills present, missing, managed, unmanaged, and legacy aliases
 - extra local skills outside this repo's canonical catalog in the primary

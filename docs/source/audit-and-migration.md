@@ -29,7 +29,7 @@ after explicit apply.
 The audit reports:
 
 - detected and skipped agents
-- managed state counts from `.ai-agents-skills/state.json`
+- managed state counts from the selected root's installer state file
 - instruction-file managed marker counts
 - canonical skills present, missing, managed, unmanaged, and legacy aliases
 - extra local skills outside this repo's canonical catalog in the primary

@@ -24,6 +24,7 @@ from installer.ai_agents_skills.agents import KNOWN_AGENT_NAMES, detect_agents, 
 from installer.ai_agents_skills.cli import (
     INSTALL_CONFIRMATION_ENV,
     INSTALL_CONFIRMATION_PHRASE,
+    audit_status,
     build_parser,
     main,
     require_complete_install_plan,
@@ -61,6 +62,36 @@ NATIVE_WINDOWS_MUTATION_SKIP = unittest.skipIf(
     os.name == "nt",
     "native Windows apply/uninstall/rollback are dry-run-only until handle-bound mutation lands",
 )
+
+
+class AuditStatusTests(unittest.TestCase):
+    def test_plan_mutation_or_skips_report_drift(self) -> None:
+        precheck = {"status": "ok"}
+        state = {"artifacts": [{"managed": True}]}
+        for operation in (
+            "create",
+            "upsert",
+            "update",
+            "merge",
+            "adopt",
+            "backup-replace",
+            "migrate-install",
+            "skip",
+            "skip-conflict",
+        ):
+            with self.subTest(operation=operation):
+                plan = {"actions": [{"operation": operation}]}
+                self.assertEqual(audit_status(plan, precheck, state), "drift-detected")
+
+    def test_clean_plan_reports_ok(self) -> None:
+        self.assertEqual(
+            audit_status(
+                {"actions": [{"operation": "noop"}]},
+                {"status": "ok"},
+                {"artifacts": [{"managed": True}]},
+            ),
+            "ok",
+        )
 
 
 @contextlib.contextmanager
@@ -5973,6 +6004,36 @@ class AntigravityTargetTests(unittest.TestCase):
             self.assertIn("ai-agents-skills:zotero", (root / ".gemini" / "GEMINI.md").read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
 
+    def test_antigravity_existing_settings_json_is_preserved(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "antigravity")
+            settings = root / ".gemini" / "antigravity-cli" / "settings.json"
+            settings.write_text('{"theme":"dark"}\n', encoding="utf-8")
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["antigravity"]),
+                runtime_profile="none",
+                requested_agents=["antigravity"],
+            )
+            action = next(
+                item for item in plan["actions"]
+                if item.get("artifact_type") == "settings-file"
+            )
+
+            self.assertEqual(action["operation"], "noop")
+            self.assertEqual(action["classification"], "managed")
+            self.assertIn("preserved", action["reason"])
+
     @NATIVE_WINDOWS_MUTATION_SKIP
     def test_antigravity_installs_plugin_artifacts_and_entrypoints(self) -> None:
         from installer.ai_agents_skills.agents import detect_agents
@@ -6191,6 +6252,48 @@ class GrokTargetTests(unittest.TestCase):
             if tomllib is not None:  # parse-validate the merged TOML on Python 3.11+
                 tomllib.loads(config_path.read_text(encoding="utf-8"))
             self.assertEqual(verify(root)["status"], "ok")
+
+    def test_grok_compatible_user_authored_compat_table_is_accepted(self) -> None:
+        from installer.ai_agents_skills.agents import detect_agents
+
+        manifests = load_manifests()
+        with fake_root() as tmp:
+            root = Path(tmp)
+            create_agent_homes(root, "grok")
+            config_path = root / ".grok" / "config.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[compat.claude]",
+                        "skills = false",
+                        "agents = false",
+                        "rules = false",
+                        "hooks = false",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            args = Args()
+            args.skills = "zotero"
+            selected = resolve_skills(args, manifests)
+
+            plan = build_plan(
+                root,
+                manifests,
+                selected,
+                detect_agents(root, ["grok"]),
+                runtime_profile="none",
+                requested_agents=["grok"],
+            )
+            compat_action = next(
+                action for action in plan["actions"]
+                if action["artifact_type"] == "settings-compat-merge"
+            )
+
+            self.assertEqual(compat_action["operation"], "noop")
+            self.assertEqual(compat_action["classification"], "managed")
+            self.assertEqual(compat_action["compat_table_policy"], "user-authored-compatible")
 
     @NATIVE_WINDOWS_MUTATION_SKIP
     def test_grok_installs_personas_entrypoints_and_rules(self) -> None:
@@ -6797,6 +6900,27 @@ class VerifyManagedMarkerTests(unittest.TestCase):
             )
             names = [c["name"] for c in res["checks"]]
             self.assertIn("managed-marker", names, res)
+            self.assertEqual(res["status"], "failed", res)
+
+    def test_verify_refuses_state_paths_outside_selected_root(self) -> None:
+        from installer.ai_agents_skills.verify import verify_artifact
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            root.mkdir()
+            outside = Path(tmp) / "outside.md"
+            outside.write_text("<!-- Managed by ai-agents-skills. -->\n", encoding="utf-8")
+            res = verify_artifact(
+                {
+                    "artifact": str(outside),
+                    "artifact_type": "template",
+                    "agent": "codex",
+                    "skill": "repo-management",
+                },
+                root=root,
+            )
+            checks = {check["name"]: check["ok"] for check in res["checks"]}
+            self.assertFalse(checks["artifact-contained"], res)
             self.assertEqual(res["status"], "failed", res)
 
 

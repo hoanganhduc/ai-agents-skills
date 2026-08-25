@@ -645,6 +645,9 @@ def base_result(run_id: str, action: dict[str, Any]) -> dict[str, Any]:
         "reason",
         "declared_exclusion",
         "exclusion_code",
+        "managed_id",
+        "managed_body",
+        "compat_table_policy",
     ):
         if key in action:
             result[key] = action[key]

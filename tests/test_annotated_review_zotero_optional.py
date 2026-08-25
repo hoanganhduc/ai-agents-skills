@@ -22,6 +22,7 @@ installed. Only a missing ``lib`` is the sibling skill's absence.
 
 from __future__ import annotations
 
+import importlib.abc
 import shutil
 import sys
 import tempfile
@@ -39,6 +40,14 @@ ZOTERO_DIR = RUNTIME_SKILLS / "zotero"
 # Modules the import under test pulls in, or that shadow it. Left in
 # sys.modules they leak a `lib` package into every later test in the run.
 _VOLATILE = ("lib", "lib.config", "lib.zotero_client", "pyzotero")
+
+
+class _BlockPyzotero(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        del path, target
+        if fullname == "pyzotero" or fullname.startswith("pyzotero."):
+            raise ModuleNotFoundError("No module named 'pyzotero'", name="pyzotero")
+        return None
 
 
 @contextmanager
@@ -69,9 +78,14 @@ def _isolated(stub_pyzotero: bool):
                 setattr(module, attr, value)
             sys.modules[name] = module
         sys.modules["pyzotero"].zotero = sys.modules["pyzotero.zotero"]
+    blocker = None if stub_pyzotero else _BlockPyzotero()
+    if blocker is not None:
+        sys.meta_path.insert(0, blocker)
     try:
         yield
     finally:
+        if blocker is not None and blocker in sys.meta_path:
+            sys.meta_path.remove(blocker)
         sys.path[:] = saved_path
         for name in list(sys.modules):
             if name in _VOLATILE or name.startswith("pyzotero."):

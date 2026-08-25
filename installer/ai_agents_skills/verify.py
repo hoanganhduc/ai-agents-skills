@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .capabilities import skill_path_is_agent_visible
+from .capabilities import normalized_path_within, resolved_path_within, skill_path_is_agent_visible
 from .render import MANAGED_MARKER, block_id
 from .runtime import runtime_mode_ok, runtime_newline_ok
 from .sanitize import has_sensitive_material
@@ -125,6 +125,17 @@ def verify_artifact(artifact: dict[str, Any], root: Path | None = None) -> dict[
 def _verify_artifact(artifact: dict[str, Any], root: Path | None = None) -> dict[str, Any]:
     path = Path(artifact["artifact"])
     checks: list[dict[str, Any]] = []
+    path_checks = artifact_path_checks(path, artifact, root)
+    checks.extend(path_checks)
+    if any(check["ok"] is False for check in path_checks):
+        return {
+            "agent": artifact.get("agent"),
+            "skill": artifact.get("skill"),
+            "artifact": artifact.get("artifact"),
+            "artifact_type": artifact.get("artifact_type"),
+            "status": "failed",
+            "checks": checks,
+        }
     checks.append({"name": "file-exists", "ok": path.exists() or path.is_symlink()})
     expected_signature = artifact.get("installed_signature")
     if expected_signature is not None:
@@ -334,18 +345,45 @@ def verify_compat_merge_artifact(path: Path, artifact: dict[str, Any], checks: l
     Same as the hook entry above: the block can carry the user's own paths, so it
     is checked for shape, not scanned for home paths.
     """
-    from .toml_merge import managed_block_span
+    from .toml_merge import managed_block_span, unmanaged_table_has_bool_values
 
     text = path.read_text(encoding="utf-8", errors="replace")
     span = managed_block_span(text, str(artifact.get("managed_id")))
-    checks.append({"name": "managed-block-present", "ok": span is not None})
-    block = text[span[0]:span[1]] if span is not None else None
+    compatible_user_table = False
     expected_body = artifact.get("managed_body")
-    if expected_body is not None:
+    if span is None and artifact.get("compat_table_policy") == "user-authored-compatible":
+        compatible_user_table = unmanaged_table_has_bool_values(
+            text,
+            str(artifact.get("managed_id")),
+            "compat.claude",
+            {"skills": False, "agents": False, "rules": False, "hooks": False},
+        )
+        checks.append({"name": "compatible-user-table", "ok": compatible_user_table})
+    checks.append({"name": "managed-block-present", "ok": span is not None or compatible_user_table})
+    block = text[span[0]:span[1]] if span is not None else None
+    if expected_body is not None and span is not None:
         checks.append({
             "name": "managed-block-match",
             "ok": block is not None and expected_body.strip() in block,
         })
+
+
+def artifact_path_checks(
+    path: Path,
+    artifact: dict[str, Any],
+    root: Path | None,
+) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    if root is not None:
+        checks.append({"name": "artifact-contained", "ok": normalized_path_within(root, path)})
+        checks.append({"name": "artifact-parent-contained", "ok": resolved_path_within(root, path.parent)})
+    if path.is_symlink() and artifact.get("install_mode") != "symlink":
+        checks.append({
+            "name": "artifact-not-symlink",
+            "ok": False,
+            "detail": "non-symlink artifact record points at a symlink",
+        })
+    return checks
 
 
 def extract_managed_block(text: str, identifier: str) -> str | None:

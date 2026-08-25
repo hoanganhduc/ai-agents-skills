@@ -2974,6 +2974,42 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(replacement["classification"], "conflict")
             self.assertEqual(replacement["operation"], "backup-replace")
 
+    def test_runtime_existing_managed_drift_is_planned_as_update(self) -> None:
+        manifests = load_manifests()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            create_agent_home(root, "codex")
+            existing = root / ".codex" / "runtime" / "workspace" / "skills" / "graph-verifier" / "graph_verifier.py"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("# previous managed runtime helper\n", encoding="utf-8")
+            save_state(root, {
+                "schema_version": 2,
+                "artifacts": [
+                    {
+                        "artifact": str(existing),
+                        "artifact_type": "runtime-file",
+                        "managed": True,
+                    }
+                ],
+                "runs": [],
+                "uninstall_records": [],
+            })
+
+            plan = build_plan(
+                root,
+                manifests,
+                ["graph-verifier"],
+                detect_agents(root, ["codex"]),
+                platform="linux",
+            )
+            graph_runtime = [
+                item for item in plan["actions"]
+                if item.get("target_relpath") == "workspace/skills/graph-verifier/graph_verifier.py"
+            ][0]
+
+            self.assertEqual(graph_runtime["classification"], "managed")
+            self.assertEqual(graph_runtime["operation"], "update")
+
     def test_runtime_inventory_reports_symlinked_directories(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

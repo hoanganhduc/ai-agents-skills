@@ -225,9 +225,11 @@ def build_runtime_actions(
     target_root = (runtime_root or default_runtime_root(root, agents, platform)).expanduser()
     actions: list[dict[str, Any]] = []
     seen_targets: dict[str, str] = {}
+    managed_state = managed_runtime_state_by_target(state or {})
     for entry in runtime_manifest.get("runners", []):
         if not runtime_entry_applies(entry, platform_name):
             continue
+        target = target_root / entry["target"]
         actions.append(
             runtime_file_action(
                 runtime_root=target_root,
@@ -236,6 +238,7 @@ def build_runtime_actions(
                 artifact_name=Path(entry["target"]).name,
                 backup_replace=backup_replace,
                 seen_targets=seen_targets,
+                previous_state_artifact=managed_state.get(path_key(target)),
             )
         )
     for skill in runtime_skills:
@@ -243,6 +246,7 @@ def build_runtime_actions(
         for entry in spec.get("files", []):
             if not runtime_entry_applies(entry, platform_name):
                 continue
+            target = target_root / entry["target"]
             actions.append(
                 runtime_file_action(
                     runtime_root=target_root,
@@ -251,6 +255,7 @@ def build_runtime_actions(
                     artifact_name=entry["target"],
                     backup_replace=backup_replace,
                     seen_targets=seen_targets,
+                    previous_state_artifact=managed_state.get(path_key(target)),
                 )
             )
     actions.extend(obsolete)
@@ -347,6 +352,23 @@ def obsolete_runtime_file_actions(
     return actions
 
 
+def path_key(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def managed_runtime_state_by_target(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    for item in state.get("artifacts", []):
+        if not isinstance(item, dict):
+            continue
+        if item.get("artifact_type") != "runtime-file" or item.get("managed") is not True:
+            continue
+        artifact = item.get("artifact")
+        if isinstance(artifact, str) and artifact:
+            records[path_key(Path(artifact))] = item
+    return records
+
+
 def normalize_runtime_relpath(value: str) -> str:
     return os.path.normcase(value.replace("/", os.sep).replace("\\", os.sep))
 
@@ -364,6 +386,7 @@ def runtime_file_action(
     artifact_name: str,
     backup_replace: bool,
     seen_targets: dict[str, str],
+    previous_state_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     source = RUNTIME_SOURCE_ROOT / entry["source"]
     target = runtime_root / entry["target"]
@@ -396,6 +419,10 @@ def runtime_file_action(
     elif current_hash == expected_hash:
         classification = "managed"
         operation = "noop"
+    elif previous_state_artifact is not None:
+        classification = "managed"
+        operation = "update"
+        reason = "managed runtime file differs from current runtime source"
     elif backup_replace:
         classification = "conflict"
         operation = "backup-replace"
@@ -583,7 +610,7 @@ def apply_runtime_file_action(root: Path, run_id: str, action: dict[str, Any], b
         result["installed_signature"] = artifact_signature(target)
         copy_runtime_metadata(action, result)
         return result
-    if action.get("operation") != "create" and action.get("operation") != "backup-replace":
+    if action.get("operation") not in {"create", "backup-replace", "update"}:
         raise ValueError(f"unsupported runtime file operation: {action.get('operation')}")
     try:
         with open_attested_source(source, action.get("canonical_source_sha256")) as attested:
