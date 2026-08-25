@@ -46,21 +46,91 @@ def load_manifests() -> dict[str, Any]:
     skills = load_json_yaml(MANIFEST_DIR / "skills.yaml")
     profiles = load_json_yaml(MANIFEST_DIR / "profiles.yaml")
     dependencies = load_json_yaml(MANIFEST_DIR / "dependencies.yaml")
+    external_dependencies = load_json_yaml(MANIFEST_DIR / "external-dependencies.yaml")
     artifacts = load_json_yaml(MANIFEST_DIR / "artifacts.yaml")
     system_dependencies = load_json_yaml(MANIFEST_DIR / "system-dependencies.yaml")
     runtime = load_json_yaml(MANIFEST_DIR / "runtime.yaml")
     delegation = load_json_yaml(MANIFEST_DIR / "delegation.yaml")
-    validate_manifests(skills, profiles, dependencies, artifacts, system_dependencies, runtime, delegation)
+    validate_manifests(
+        skills,
+        profiles,
+        dependencies,
+        artifacts,
+        system_dependencies,
+        runtime,
+        delegation,
+        external_dependencies=external_dependencies,
+    )
     validate_target_surfaces()
     return {
         "skills": skills,
         "profiles": profiles,
         "dependencies": dependencies,
+        "external_dependencies": external_dependencies,
         "artifacts": artifacts,
         "system_dependencies": system_dependencies,
         "runtime": runtime,
         "delegation": delegation,
     }
+
+
+EXTERNAL_BUNDLE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+EXTERNAL_SOURCE_DIRECTORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+EXTERNAL_REPOSITORY_RE = re.compile(
+    r"^https://github\.com/hoanganhduc/[A-Za-z0-9_.-]+\.git$"
+)
+EXTERNAL_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
+EXTERNAL_VENV_POINTER_RE = re.compile(r"^\.[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+EXTERNAL_DISTRIBUTION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+EXTERNAL_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+def validate_external_dependencies(external_dependencies: dict[str, Any]) -> None:
+    if external_dependencies.get("schema_version") != 1:
+        raise ManifestError("external-dependencies.yaml must declare schema_version 1")
+    bundles = external_dependencies.get("bundles")
+    if not isinstance(bundles, dict) or not bundles:
+        raise ManifestError("external-dependencies.yaml must contain a non-empty bundles object")
+    for name, spec in bundles.items():
+        if not isinstance(name, str) or EXTERNAL_BUNDLE_RE.fullmatch(name) is None:
+            raise ManifestError(f"external dependency bundle has an invalid name: {name!r}")
+        if not isinstance(spec, dict):
+            raise ManifestError(f"external dependency bundle {name} must be an object")
+        repository = spec.get("repository")
+        if not isinstance(repository, str) or EXTERNAL_REPOSITORY_RE.fullmatch(repository) is None:
+            raise ManifestError(f"external dependency bundle {name} must use an allowlisted GitHub HTTPS repository")
+        revision = spec.get("revision")
+        if not isinstance(revision, str) or EXTERNAL_REVISION_RE.fullmatch(revision) is None:
+            raise ManifestError(f"external dependency bundle {name} must declare a full lowercase Git revision")
+        source_directory = spec.get("source_directory")
+        if not isinstance(source_directory, str) or EXTERNAL_SOURCE_DIRECTORY_RE.fullmatch(source_directory) is None:
+            raise ManifestError(f"external dependency bundle {name} has an unsafe source_directory")
+        venv_pointer = spec.get("venv_pointer")
+        if not isinstance(venv_pointer, str) or EXTERNAL_VENV_POINTER_RE.fullmatch(venv_pointer) is None:
+            raise ManifestError(f"external dependency bundle {name} has an unsafe venv_pointer")
+        distribution = spec.get("distribution")
+        if not isinstance(distribution, str) or EXTERNAL_DISTRIBUTION_RE.fullmatch(distribution) is None:
+            raise ManifestError(f"external dependency bundle {name} has an invalid distribution name")
+        version = spec.get("version")
+        if not isinstance(version, str) or re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+            raise ManifestError(f"external dependency bundle {name} must declare a semver package version")
+        for field in ("modules", "help_modules", "requirements"):
+            values = spec.get(field)
+            if not isinstance(values, list) or not values or not all(isinstance(value, str) and value for value in values):
+                raise ManifestError(f"external dependency bundle {name} field {field} must be a non-empty string list")
+        if any(EXTERNAL_MODULE_RE.fullmatch(value) is None for value in spec["modules"]):
+            raise ManifestError(f"external dependency bundle {name} has an invalid Python module")
+        if any(EXTERNAL_MODULE_RE.fullmatch(value) is None for value in spec["help_modules"]):
+            raise ManifestError(f"external dependency bundle {name} has an invalid help module")
+        for requirement in spec["requirements"]:
+            if (
+                "\n" in requirement
+                or "\r" in requirement
+                or requirement.startswith("-")
+                or "://" in requirement
+                or "@" in requirement
+            ):
+                raise ManifestError(f"external dependency bundle {name} has an unsafe requirement")
 
 
 def validate_manifests(
@@ -71,6 +141,7 @@ def validate_manifests(
     system_dependencies: dict[str, Any],
     runtime: dict[str, Any],
     delegation: dict[str, Any],
+    external_dependencies: dict[str, Any] | None = None,
 ) -> None:
     if "skills" not in skills or not isinstance(skills["skills"], dict):
         raise ManifestError("skills.yaml must contain a skills object")
@@ -78,6 +149,9 @@ def validate_manifests(
         raise ManifestError("profiles.yaml must contain a profiles object")
     if "tools" not in dependencies or not isinstance(dependencies["tools"], dict):
         raise ManifestError("dependencies.yaml must contain a tools object")
+    if external_dependencies is None:
+        external_dependencies = load_json_yaml(MANIFEST_DIR / "external-dependencies.yaml")
+    validate_external_dependencies(external_dependencies)
     packages = dependencies.get("packages", {})
     if not isinstance(packages, dict):
         raise ManifestError("dependencies.yaml packages must be an object")

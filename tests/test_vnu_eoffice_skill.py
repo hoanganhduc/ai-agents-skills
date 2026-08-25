@@ -20,6 +20,12 @@ class VnuEofficeSkillTests(unittest.TestCase):
         body = (ROOT / "canonical" / "skills" / "vnu-eoffice" / "SKILL.md").read_text(encoding="utf-8")
         self.assertNotIn('"python3"', body.split("---", 2)[1])
 
+    def test_posix_commands_prefer_the_managed_dedicated_venv(self) -> None:
+        body = (ROOT / "canonical" / "skills" / "vnu-eoffice" / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn('vnu_python="$HOME/.vnu-eoffice_venv/bin/python"', body)
+        self.assertIn('"$vnu_python" -m vnu_eoffice <command> [options]', body)
+        self.assertIn("do not silently\n  install or switch environments", body)
+
     def test_required_python_packages_share_vnu_candidate_set(self) -> None:
         skills = json.loads((ROOT / "manifest" / "skills.yaml").read_text(encoding="utf-8"))["skills"]
         dependencies = json.loads(

@@ -204,6 +204,9 @@ behavior but lighter platform-specific guidance.
   `research-core`, `full-research`, `complete-restore`, and `course-management`.
 - [docs/course-management.md](docs/course-management.md): Classroom50, Canvas,
   Google Classroom, and local roster DB agent skills (manual page).
+- [docs/external-dependencies.md](docs/external-dependencies.md): opt-in,
+  pinned host-local provisioning for the Course Management Toolkit and VNU
+  eOffice application packages (manual page).
 - [docs/dependencies.md](docs/dependencies.md): logical tools, current Linux/Windows extra
   software, Python packages, Node packages, and manual integrations.
 - [docs/workflow-overview.md](docs/workflow-overview.md): how agents, skills, runtimes, and research

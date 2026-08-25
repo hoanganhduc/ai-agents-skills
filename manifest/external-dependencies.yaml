@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "bundles": {
+    "course-management": {
+      "repository": "https://github.com/hoanganhduc/course_management_toolkit.git",
+      "revision": "b3f8f647d4329d212958641f9ab18ecb154a21a8",
+      "source_directory": "course_management_toolkit",
+      "venv_pointer": ".course_venv",
+      "distribution": "course-hoanganhduc",
+      "version": "0.1.4",
+      "modules": ["course_hoanganhduc"],
+      "help_modules": [
+        "course_hoanganhduc.c50_agent",
+        "course_hoanganhduc.canvas_agent",
+        "course_hoanganhduc.gclass_agent",
+        "course_hoanganhduc.db_agent"
+      ],
+      "requirements": [
+        "canvasapi",
+        "google-api-python-client",
+        "google-auth",
+        "google-auth-oauthlib",
+        "numpy",
+        "opencv-python",
+        "openpyxl",
+        "paddleocr",
+        "pandas",
+        "pdf2image",
+        "pillow",
+        "PyPDF2",
+        "pytesseract",
+        "requests",
+        "scikit-learn",
+        "tqdm"
+      ]
+    },
+    "vnu-eoffice": {
+      "repository": "https://github.com/hoanganhduc/vnu-eoffice.git",
+      "revision": "66d3ab694654bc5b11ca5c8253afeec1f0f00fae",
+      "source_directory": "vnu-eoffice",
+      "venv_pointer": ".vnu-eoffice_venv",
+      "distribution": "vnu-eoffice",
+      "version": "0.1.0",
+      "modules": ["vnu_eoffice", "requests", "bs4"],
+      "help_modules": ["vnu_eoffice"],
+      "requirements": ["requests>=2.25", "beautifulsoup4>=4.9"]
+    }
+  }
+}

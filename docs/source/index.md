@@ -45,6 +45,9 @@ Latest update: {sub-ref}`today`
 - Course teaching workflows (Canvas, Google Classroom, Classroom50, local
   roster DB): use [Course Management Skills](course-management.md) and the
   `course-management` install profile.
+- Provisioning the host-local course-management or VNU eOffice application
+  packages: read [External Dependency Provisioning](external-dependencies.md)
+  before any apply.
 
 ## Safety Model
 
@@ -65,9 +68,9 @@ and manifest data. Generated docs are `README.md`, each page emitted by
 `generated_doc_texts()` under `docs/`, and mirrored copies under `docs/source/`.
 Edit the generator or manifests, run `make docs`, then use `make docs-site`
 when you need to preview the Sphinx site. This `index.md` page, `overview.md`,
-`submission-venue-selector-plan.md`, and `course-management.md` are maintained
-manually as docs-site pages (keep `docs/course-management.md` in sync with
-`docs/source/course-management.md`).
+`submission-venue-selector-plan.md`, `course-management.md`, and
+`external-dependencies.md` are maintained manually as docs-site pages (keep
+their `docs/` copies in sync with `docs/source/`).
 
 ```{toctree}
 :maxdepth: 2
@@ -78,6 +81,7 @@ workflow-overview
 multi-agent-examples
 submission-venue-selector-plan
 course-management
+external-dependencies
 installation
 skills
 artifacts
