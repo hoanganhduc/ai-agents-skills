@@ -1567,7 +1567,21 @@ def audit_status(plan: dict[str, Any], precheck_result: dict[str, Any], state: d
     if precheck_result["status"] in {"missing-required", "degraded"}:
         return "attention-required"
     counts = plan_counts(plan)
-    if counts["operations"].get("create") or counts["operations"].get("upsert"):
+    operations = counts["operations"]
+    if any(
+        operations.get(operation)
+        for operation in (
+            "create",
+            "upsert",
+            "update",
+            "merge",
+            "adopt",
+            "backup-replace",
+            "migrate-install",
+            "skip",
+            "skip-conflict",
+        )
+    ):
         return "drift-detected"
     return "ok"
 

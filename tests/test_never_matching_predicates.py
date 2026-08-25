@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -76,6 +77,28 @@ def _bash_executes() -> bool:
     except OSError:
         return False
     return probe.returncode == 7
+
+
+def _bash_path(path: Path) -> str:
+    if os.name != "nt":
+        return str(path)
+    try:
+        converted = subprocess.run(
+            ["wslpath", "-a", str(path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except OSError:
+        converted = None
+    if converted is not None and converted.returncode == 0:
+        return converted.stdout.strip()
+    drive = path.drive.rstrip(":").lower()
+    parts = path.as_posix().split(":", 1)[1].lstrip("/")
+    return f"/mnt/{drive}/{parts}"
 
 
 class DoclingWordFloorTest(unittest.TestCase):
@@ -389,7 +412,7 @@ class SafetyRuleFlagOrderTest(unittest.TestCase):
         for command, expected in [(c, 2) for c in self.BLOCKED] + [(c, 0) for c in self.ALLOWED]:
             with self.subTest(command=command):
                 proc = subprocess.run(
-                    ["bash", str(SAFETY_SCRIPT), command],
+                    ["bash", _bash_path(SAFETY_SCRIPT), command],
                     capture_output=True,
                     text=True,
                     encoding="utf-8",

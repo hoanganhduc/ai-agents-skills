@@ -45,25 +45,23 @@ roles.
 
 | Model | Reasoning | Speed | Best for | Reasoning effort |
 |-------|-----------|-------|----------|------------------|
-| latest available frontier model | R4 | medium | lead verifier, judge, referee, proof-heavy roles | `low` to `xhigh` |
-| `gpt-5.4` | R4 fallback | medium | fallback lead verifier, judge, referee, proof-heavy roles | `low` to `xhigh` |
-| `gpt-5.2` | R3 | medium | long-running synthesis, planning, stable fallback lead roles | `low` to `xhigh` |
-| `gpt-5.3-codex` | R3 | medium | structured analysis, algorithmic reasoning, implementation-aware review | `low` to `xhigh` |
-| `gpt-5.4-mini` | R2 | fast | support reviewer, edge-case pass, clarity and bounded analysis | `low` to `xhigh` |
-| `gpt-5.3-codex-spark` | R1 | very fast | scouting, lightweight summarization, cheap exploratory passes | `low` to `xhigh` |
+| `gpt-5.6-sol` | R4 | medium | lead verifier, judge, referee, proof-heavy roles | `low` to `ultra` |
+| `gpt-5.6-terra` | R3 | medium | long-running synthesis, planning, stable fallback lead roles | `low` to `ultra` |
+| `gpt-5.6-luna` | R2 | fast | support reviewer, edge-case pass, clarity and bounded analysis | `low` to `max` |
+| `gpt-5.5` | R4 fallback | medium | fallback lead verifier, judge, referee, proof-heavy roles | `low` to `xhigh` |
+| `gpt-5.4` | R3 fallback | medium | structured analysis, algorithmic reasoning, implementation-aware review | `low` to `xhigh` |
 
-Runtime examples observed in recent Codex sessions include `gpt-5.5` as a
-frontier model above `gpt-5.4`. If `gpt-5.5` or a later frontier model is
-available, prefer it for R4 roles unless a task-specific constraint justifies a
-different model.
+Use the runtime-exposed model catalog as authoritative when it differs from
+this file; these tiers name the current Codex catalog shape used by this
+installer target.
 
 ## Hard override for research tasks
 
 For research, proof, manuscript-correctness, or other high-stakes mathematical review tasks:
 
 - every role, including scouts, support reviewers, managers, and child workers
-  -> latest available frontier model with the highest available reasoning level
-  (currently `xhigh` in Codex runtimes that expose it)
+  -> `gpt-5.6-sol` with the highest available reasoning level
+  (currently `ultra` in Codex runtimes that expose it)
 
 Use cheaper profiles only if the user explicitly asks for them.
 
@@ -73,33 +71,33 @@ Use cheaper profiles only if the user explicitly asks for them.
 
 | Tier | Model | Reasoning effort | Est. time per role |
 |------|-------|------------------|--------------------|
-| `STRONG_REASONER` | latest available frontier model | `xhigh` | 3-5 min |
-| `BALANCED_MODEL` | latest available frontier model | `high` | 3-5 min |
-| `FAST_MODEL` | latest available frontier model | `medium` | 2-4 min |
+| `STRONG_REASONER` | `gpt-5.6-sol` | `ultra` | 3-5 min |
+| `BALANCED_MODEL` | `gpt-5.6-sol` | `high` | 3-5 min |
+| `FAST_MODEL` | `gpt-5.6-terra` | `medium` | 2-4 min |
 
 ### premium
 
 | Tier | Model | Reasoning effort | Est. time per role |
 |------|-------|------------------|--------------------|
-| `STRONG_REASONER` | latest available frontier model | `high` | 2-4 min |
-| `BALANCED_MODEL` | `gpt-5.2` | `high` | 2-3 min |
-| `FAST_MODEL` | `gpt-5.4-mini` | `medium` | 1-2 min |
+| `STRONG_REASONER` | `gpt-5.6-sol` | `high` | 2-4 min |
+| `BALANCED_MODEL` | `gpt-5.6-terra` | `high` | 2-3 min |
+| `FAST_MODEL` | `gpt-5.6-luna` | `medium` | 1-2 min |
 
 ### balanced
 
 | Tier | Model | Reasoning effort | Est. time per role |
 |------|-------|------------------|--------------------|
-| `STRONG_REASONER` | `gpt-5.2` | `high` | 2-3 min |
-| `BALANCED_MODEL` | `gpt-5.4-mini` | `medium` | 1-2 min |
-| `FAST_MODEL` | `gpt-5.3-codex-spark` | `low` | 30-90s |
+| `STRONG_REASONER` | `gpt-5.6-terra` | `high` | 2-3 min |
+| `BALANCED_MODEL` | `gpt-5.6-luna` | `medium` | 1-2 min |
+| `FAST_MODEL` | `gpt-5.6-luna` | `low` | 30-90s |
 
 ### budget
 
 | Tier | Model | Reasoning effort | Est. time per role |
 |------|-------|------------------|--------------------|
-| `STRONG_REASONER` | `gpt-5.4-mini` | `medium` | 1-2 min |
-| `BALANCED_MODEL` | `gpt-5.3-codex-spark` | `low` | 30-90s |
-| `FAST_MODEL` | `gpt-5.3-codex-spark` | `low` | 15-60s |
+| `STRONG_REASONER` | `gpt-5.6-luna` | `medium` | 1-2 min |
+| `BALANCED_MODEL` | `gpt-5.6-luna` | `low` | 30-90s |
+| `FAST_MODEL` | `gpt-5.6-luna` | `low` | 15-60s |
 
 ## Task-to-profile heuristic
 

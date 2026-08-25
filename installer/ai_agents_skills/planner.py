@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -164,6 +165,7 @@ def build_plan(
                     skill_actions=skill_actions,
                     adopt=adopt,
                     backup_replace=backup_replace,
+                    state=state,
                 )
             )
     actions.extend(antigravity_native_scaffold_actions(agents, actions, adopt, backup_replace))
@@ -302,6 +304,10 @@ def antigravity_native_scaffold_actions(
     ]
     scaffold_actions = []
     for path, artifact_type, artifact_id, artifact_name, data in scaffold_specs:
+        if artifact_type == "settings-file":
+            action = antigravity_settings_file_action(agent, path, artifact_id, artifact_name, data)
+            scaffold_actions.append(action)
+            continue
         action = classify_file_action(
             agent=agent.name,
             skill="repo-management",
@@ -315,6 +321,67 @@ def antigravity_native_scaffold_actions(
         action["artifact_name"] = artifact_name
         scaffold_actions.append(action)
     return scaffold_actions
+
+
+def antigravity_settings_file_action(
+    agent: AgentTarget,
+    path: Path,
+    artifact_id: str,
+    artifact_name: str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    content = json.dumps(data, indent=2, sort_keys=True) + "\n"
+    action: dict[str, Any] = {
+        "kind": "file",
+        "agent": agent.name,
+        "skill": "repo-management",
+        "path": str(path),
+        "content": content,
+        "expected_hash": sha256_text(content),
+        "current_hash": sha256_file(path) if path.exists() else None,
+        "classification": "missing",
+        "operation": "create",
+        "artifact_type": "settings-file",
+        "install_mode": "copy",
+        "mode_reason": None,
+        "capability_evidence": None,
+        "current_signature": artifact_signature(path),
+        "artifact_id": artifact_id,
+        "artifact_name": artifact_name,
+    }
+    if not path.exists() and not path.is_symlink():
+        return action
+    if path.is_symlink():
+        action["classification"] = "conflict"
+        action["operation"] = "skip"
+        action["reason"] = "Antigravity settings file is a symlink"
+        return action
+    if path.is_dir():
+        action["classification"] = "conflict"
+        action["operation"] = "skip"
+        action["reason"] = "Antigravity settings file is a directory"
+        return action
+    if not path.is_file():
+        action["classification"] = "conflict"
+        action["operation"] = "skip"
+        action["reason"] = "Antigravity settings path is not a regular file"
+        return action
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        action["classification"] = "conflict"
+        action["operation"] = "skip"
+        action["reason"] = "existing Antigravity settings file is not valid JSON"
+        return action
+    if not isinstance(parsed, dict):
+        action["classification"] = "conflict"
+        action["operation"] = "skip"
+        action["reason"] = "existing Antigravity settings file is not a JSON object"
+        return action
+    action["classification"] = "managed"
+    action["operation"] = "noop"
+    action["reason"] = "existing Antigravity settings JSON preserved"
+    return action
 
 
 def antigravity_legacy_plugin_actions(
@@ -435,6 +502,7 @@ def grok_native_config_actions(
         load_toml_text,
         managed_block_issue,
         merge_managed_block,
+        unmanaged_table_has_bool_values,
     )
 
     grok_agents = [agent for agent in agents if agent.name == "grok"]
@@ -470,6 +538,18 @@ def grok_native_config_actions(
             config_actions.append(action)
             continue
         if has_unmanaged_table(existing_text, GROK_COMPAT_MANAGED_ID, "compat.claude"):
+            expected = {"skills": False, "agents": False, "rules": False, "hooks": False}
+            if unmanaged_table_has_bool_values(
+                existing_text,
+                GROK_COMPAT_MANAGED_ID,
+                "compat.claude",
+                expected,
+            ):
+                action["operation"] = "noop"
+                action["compat_table_policy"] = "user-authored-compatible"
+                action["managed_body"] = GROK_COMPAT_CLAUDE_BODY
+                config_actions.append(action)
+                continue
             # A user-authored [compat.claude] table already exists (the documented
             # harness-compat mechanism). Appending the managed block would declare
             # the table twice, which Grok's strict TOML parser rejects and would
@@ -728,6 +808,7 @@ def artifact_action(
     skill_actions: dict[tuple[str, str], dict[str, Any]],
     adopt: bool,
     backup_replace: bool,
+    state: dict[str, Any],
 ) -> dict[str, Any]:
     if artifact_type == "management-notice":
         classification = classify_block(agent.instructions_file, "repo-management")
@@ -763,6 +844,7 @@ def artifact_action(
     ]
     path = artifact_target_path(agent, artifact_type, name, spec)
     if agent.name == "antigravity" and artifact_type == "entrypoint-alias" and name in skill_specs:
+        artifact_id = f"{artifact_type}:{name}"
         action = blocked_file_action(
             agent=agent.name,
             skill=name,
@@ -772,9 +854,10 @@ def artifact_action(
             declared_exclusion=True,
             exclusion_code="antigravity-managed-skill-alias-collision",
         )
-        action["artifact_id"] = f"{artifact_type}:{name}"
+        action["artifact_id"] = artifact_id
         action["artifact_name"] = name
         return action
+    artifact_id = f"{artifact_type}:{name}"
     content = render_artifact_content(artifact_type, name, spec, agent.name)
     action = classify_file_action(
         agent=agent.name,
@@ -784,8 +867,15 @@ def artifact_action(
         artifact_type=artifact_type,
         adopt=adopt,
         backup_replace=backup_replace,
+        previous_state_artifact=managed_state_artifact_for(
+            state,
+            agent=agent.name,
+            path=path,
+            artifact_type=artifact_type,
+            artifact_id=artifact_id,
+        ),
     )
-    action["artifact_id"] = f"{artifact_type}:{name}"
+    action["artifact_id"] = artifact_id
     action["artifact_name"] = name
     block_openclaw_conflict_mode(root, agent.name, action)
     if missing:
@@ -1038,6 +1128,7 @@ def classify_file_action(
     fallback_content: str | None = None,
     mode_reason: str | None = None,
     capability_evidence: dict[str, Any] | None = None,
+    previous_state_artifact: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     can_symlink = install_mode == "symlink" and source_path is not None
     expected_hash = sha256_file(source_path) if can_symlink else sha256_text(content)
@@ -1084,6 +1175,9 @@ def classify_file_action(
             elif MANAGED_MARKER in current:
                 classification = "managed"
                 operation = "update"
+            elif previous_state_artifact is not None:
+                classification = "managed"
+                operation = "update"
             elif adopt:
                 classification = "unmanaged"
                 operation = "adopt"
@@ -1123,6 +1217,31 @@ def classify_file_action(
     if reason is not None:
         result["reason"] = reason
     return result
+
+
+def managed_state_artifact_for(
+    state: dict[str, Any],
+    *,
+    agent: str,
+    path: Path,
+    artifact_type: str | None = None,
+    artifact_id: str | None = None,
+) -> dict[str, Any] | None:
+    target_key = os.path.normcase(os.path.abspath(path))
+    for item in state.get("artifacts", []):
+        if not isinstance(item, dict) or item.get("managed") is not True:
+            continue
+        if item.get("agent") != agent:
+            continue
+        artifact = item.get("artifact")
+        if not isinstance(artifact, str) or os.path.normcase(os.path.abspath(artifact)) != target_key:
+            continue
+        if artifact_type is not None and item.get("artifact_type") != artifact_type:
+            continue
+        if artifact_id is not None and item.get("artifact_id") != artifact_id:
+            continue
+        return item
+    return None
 
 
 def find_legacy_skill(

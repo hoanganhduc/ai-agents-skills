@@ -56,6 +56,7 @@ _MAX_HTTP_WORKER_ERROR_BYTES = 2_000
 _FEED_WORKER_COUNT_BYTES = 8
 MAX_CONFIG_BYTES = 4 * 1024 * 1024
 MAX_STATE_BYTES = 4 * 1024 * 1024
+MAX_JSON_INT_DIGITS = 1000
 MAX_FEEDS = 1_000
 MAX_FEED_KIND_CHARS = 80
 MAX_FEED_NOTES_CHARS = 2_000
@@ -127,6 +128,12 @@ def reject_duplicate_json_keys(pairs):
             raise ValueError(f"duplicate JSON object member: {key}")
         value[key] = item
     return value
+
+
+def reject_oversized_json_int(raw: str) -> int:
+    if len(raw.lstrip("-")) > MAX_JSON_INT_DIGITS:
+        raise ValueError("JSON integer is too large")
+    return int(raw)
 
 
 def is_link_like_stat(info) -> bool:
@@ -1445,6 +1452,7 @@ def load_state(path: Path):
             text,
             parse_constant=reject_json_constant,
             object_pairs_hook=reject_duplicate_json_keys,
+            parse_int=reject_oversized_json_int,
         )
         return canonicalize_state(data, strict_counts=True)
     except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
