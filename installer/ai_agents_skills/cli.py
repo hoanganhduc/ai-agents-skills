@@ -24,6 +24,11 @@ from .delegation_dispatch import dispatch_external_agents
 from .delegation_packets import validate_packet_file
 from .discovery import candidates_for_platform, current_platform, discover_python_package, discover_tool
 from .docs import check_docs_current, generate_docs
+from .external_dependencies import (
+    apply_external_dependency_plan,
+    build_external_dependency_plan,
+    verify_external_provision_confirmation,
+)
 from .lifecycle import rollback as rollback_artifacts
 from .lifecycle import uninstall as uninstall_artifacts
 from .lifecycle_matrix import run_lifecycle_matrix
@@ -449,6 +454,15 @@ def build_parser() -> argparse.ArgumentParser:
     antigravity_fixup_parser.add_argument("--workspace", help="single workspace directory to trust")
     antigravity_fixup_parser.add_argument("--workspaces", help="comma-separated workspace directories to trust")
     antigravity_fixup_parser.add_argument("--apply", action="store_true")
+
+    provision_external = sub.add_parser("provision-external")
+    provision_external.add_argument("--bundles", help="comma-separated allowlisted external dependency bundles")
+    provision_external.add_argument("--apply", action="store_true", help="perform the confirmed host-local provision")
+    provision_external.add_argument("--real-system", action="store_true")
+    provision_external.add_argument(
+        "--plan-digest",
+        help="exact digest emitted by the preceding dry run; required with --apply",
+    )
 
     precheck = sub.add_parser("precheck")
     add_selection_args(precheck)
@@ -886,6 +900,27 @@ def run(args: argparse.Namespace) -> int:
                 workspace=args.workspace,
                 workspaces=args.workspaces,
                 apply=args.apply,
+            ),
+            args,
+        )
+    if args.command == "provision-external":
+        plan = build_external_dependency_plan(
+            args.root,
+            manifests,
+            platform=current_platform(args.platform),
+            requested_bundles=split_csv(args.bundles) if args.bundles else None,
+        )
+        if not args.apply:
+            return output({"status": "dry-run", **plan}, args)
+        ensure_apply_allowed(args)
+        if not args.plan_digest:
+            raise ValueError("--plan-digest is required with provision-external --apply")
+        verify_external_provision_confirmation(args.plan_digest)
+        return output(
+            apply_external_dependency_plan(
+                plan,
+                manifests,
+                expected_plan_digest=args.plan_digest,
             ),
             args,
         )
@@ -2075,6 +2110,7 @@ def command_help() -> dict[str, Any]:
     commands = [
         "doctor",
         "antigravity-fixup",
+        "provision-external",
         "precheck",
         "audit-system",
         "library-profile-audit",

@@ -29,7 +29,23 @@ Core rules:
 - Use `items` before resolving an ambiguous follow-up request when the current item numbers are not visible in the conversation.
 
 Execution surface:
-- Prefer the installed package CLI: `python3 -m vnu_eoffice <command>` or `vnu-eoffice <command>`.
+- On POSIX, prefer the managed dedicated environment when it exists:
+
+```bash
+vnu_python="$HOME/.vnu-eoffice_venv/bin/python"
+if [ ! -x "$vnu_python" ]; then
+  vnu_python="$(command -v python3 || true)"
+fi
+if [ -z "$vnu_python" ]; then
+  printf '%s\n' 'TECHNICAL_FAIL: vnu-eoffice Python interpreter is missing' >&2
+  exit 1
+fi
+"$vnu_python" -m vnu_eoffice <command> [options]
+```
+
+- If the dedicated environment is absent, an already importable checkout or
+  installed `vnu-eoffice` CLI remains an allowed fallback; do not silently
+  install or switch environments.
 - On native Windows, if the dedicated local venv exists, prefer `& "$env:USERPROFILE\.vnu-eoffice_venv\Scripts\vnu-eoffice.exe" <command>` or `& "$env:USERPROFILE\.vnu-eoffice_venv\Scripts\python.exe" -m vnu_eoffice <command>` in PowerShell.
 - On native Windows consoles, set `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` before commands that may print Vietnamese text.
 - This skill requires an importable `vnu_eoffice` package/checkout or `vnu-eoffice` executable. If neither is available, report the missing dependency instead of claiming eOffice access.
@@ -40,14 +56,14 @@ Execution surface:
   this skill's environment or secret store.
 
 Common commands:
-- `python3 -m vnu_eoffice test-login`
-- `python3 -m vnu_eoffice monitor --no-notify --limit 60 --pages 2`
-- `python3 -m vnu_eoffice list --limit 10 --pages 2 --modules den,di`
-- `python3 -m vnu_eoffice search "<keywords>" --limit 10 --pages 2 --modules den,di`
-- `python3 -m vnu_eoffice search "<keywords>" --limit 5 --pages 2 --has-attach`
-- `python3 -m vnu_eoffice items`
-- `python3 -m vnu_eoffice download --item 5`
-- `python3 -m vnu_eoffice download --id den:12345`
+- `"$vnu_python" -m vnu_eoffice test-login`
+- `"$vnu_python" -m vnu_eoffice monitor --no-notify --limit 60 --pages 2`
+- `"$vnu_python" -m vnu_eoffice list --limit 10 --pages 2 --modules den,di`
+- `"$vnu_python" -m vnu_eoffice search "<keywords>" --limit 10 --pages 2 --modules den,di`
+- `"$vnu_python" -m vnu_eoffice search "<keywords>" --limit 5 --pages 2 --has-attach`
+- `"$vnu_python" -m vnu_eoffice items`
+- `"$vnu_python" -m vnu_eoffice download --item 5`
+- `"$vnu_python" -m vnu_eoffice download --id den:12345`
 
 Natural-language routing:
 - "start updates now" or "check updates now": run `monitor --no-notify`, then reply with a titled summary.

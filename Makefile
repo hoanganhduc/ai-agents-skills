@@ -1,4 +1,4 @@
-.PHONY: help doctor precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check openclaw-target-probe openclaw-target-dry-run-manifest openclaw-target-approve-manifest openclaw-target-apply-manifest openclaw-target-uninstall-manifest plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke installed-runtime-smoke runtime-inventory delegate-agent validate-delegation-packet list-skills list-artifacts describe describe-artifact docs docs-check generate-docs docs-site static-check sanitize-check release-check test
+.PHONY: help doctor provision-external precheck audit-system library-profile-audit openclaw-inventory openclaw-dry-run-manifest openclaw-approve-manifest openclaw-apply-manifest openclaw-uninstall-manifest openclaw-record-evidence openclaw-validate-evidence openclaw-persistence-check openclaw-target-probe openclaw-target-dry-run-manifest openclaw-target-approve-manifest openclaw-target-apply-manifest openclaw-target-uninstall-manifest plan install verify smoke rollback uninstall fake-root-lifecycle lifecycle-test runtime-smoke installed-runtime-smoke runtime-inventory delegate-agent validate-delegation-packet list-skills list-artifacts describe describe-artifact docs docs-check generate-docs docs-site static-check sanitize-check release-check test
 
 export PYTHONDONTWRITEBYTECODE := 1
 
@@ -9,6 +9,9 @@ help:
 
 doctor:
 	./installer/bootstrap.sh doctor $(ARGS)
+
+provision-external:
+	./installer/bootstrap.sh provision-external $(ARGS)
 
 precheck:
 	./installer/bootstrap.sh precheck $(ARGS)
