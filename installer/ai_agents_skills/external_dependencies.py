@@ -874,6 +874,8 @@ def _tool_path(name: str) -> str:
     located = shutil.which(name, path=os.defpath)
     if not located:
         raise ValueError(f"required executable is unavailable: {name}")
+    if os.name == "nt" and PurePosixPath(located).is_absolute():
+        return str(PurePosixPath(located))
     return str(Path(located).resolve())
 
 
