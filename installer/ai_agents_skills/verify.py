@@ -128,6 +128,11 @@ def _verify_artifact(artifact: dict[str, Any], root: Path | None = None) -> dict
     path_checks = artifact_path_checks(path, artifact, root)
     checks.extend(path_checks)
     if any(check["ok"] is False for check in path_checks):
+        if artifact.get("artifact_type") in {"instruction-block", "management-notice"}:
+            checks.append({
+                "name": "instruction-regular-file",
+                "ok": path.exists() and path.is_file() and not path.is_symlink(),
+            })
         return {
             "agent": artifact.get("agent"),
             "skill": artifact.get("skill"),
