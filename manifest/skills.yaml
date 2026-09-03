@@ -169,7 +169,7 @@
       ]
     },
     "classroom50": {
-      "description": "Route Classroom50 (foundation50) instructor workflows through the course_hoanganhduc agent entrypoint: preflight, list classrooms/roster/assignments, roster sync into local DB, and C50 CSV export. Raw gh teacher is limited to a non-mutating help probe.",
+      "description": "Route Classroom50 workflows through the restricted agent entrypoint. Explicitly confirmed assignment add/update may run only through a pre-reviewed, checksum-pinned, exact-scope script; all other raw teacher/student CLI use and destructive operations remain forbidden.",
       "profiles": [
         "course-management"
       ],
@@ -194,7 +194,8 @@
       "optional_capabilities": [
         "classroom50-roster-sync",
         "classroom50-list",
-        "classroom50-export"
+        "classroom50-export",
+        "classroom50-confirmed-assignment-write"
       ],
       "verification": [
         "file-exists",
