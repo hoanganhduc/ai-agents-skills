@@ -59,6 +59,10 @@ class Classroom50SkillTests(unittest.TestCase):
 
         for v in ("file-exists", "metadata-valid", "agent-visible"):
             self.assertIn(v, entry["verification"])
+        self.assertIn(
+            "classroom50-confirmed-assignment-write",
+            entry["optional_capabilities"],
+        )
 
     def test_package_dependency(self):
         deps = json.loads((ROOT / "manifest/dependencies.yaml").read_text(encoding="utf-8"))
@@ -215,6 +219,45 @@ class Classroom50SkillTests(unittest.TestCase):
         self.assertIn('"$course_python" -m course_hoanganhduc.c50_agent', body)
         self.assertNotIn("python3 -m course_hoanganhduc.c50_agent", body)
         self.assertIn("TECHNICAL_FAIL: dedicated course interpreter is missing", body)
+
+    def test_skill_has_exact_script_assignment_write_gate(self):
+        body = (ROOT / "canonical/skills/classroom50/SKILL.md").read_text(
+            encoding="utf-8"
+        )
+        section = body.split(
+            "## Explicitly confirmed assignment-write exception", 1
+        )[1].split("## Safe doctor and readiness", 1)[0]
+        normalized = " ".join(section.split())
+        required = (
+            "directly authorizes the agent to run that exact script",
+            "script’s absolute path, SHA-256, exact organization",
+            "exact classroom, exact assignment slugs",
+            "BASH_ENV=/dev/null",
+            "publisher checksum",
+            "create-versus-replace intent",
+            "exclusive-writer window",
+            "single-parent change affecting only the reviewed classroom’s",
+            "Do not automatically rerun",
+        )
+        for phrase in required:
+            self.assertIn(phrase, normalized)
+
+        exclusions = (
+            "assignment removal",
+            "roster or membership mutation",
+            "invitations",
+            "classroom creation or teardown",
+            "submission/score collection",
+            "downloads",
+            "repository deletion or permission changes",
+            "production-course writes",
+            "any `gh student` operation",
+        )
+        for phrase in exclusions:
+            self.assertIn(phrase, normalized)
+
+        self.assertIn("A direct imperative such as “run it” is sufficient", normalized)
+        self.assertIn("do not require confirmation for each assignment", normalized)
 
     def test_skill_has_native_windows_doctor_and_commands(self):
         body = (ROOT / "canonical/skills/classroom50/SKILL.md").read_text(encoding="utf-8")

@@ -42,7 +42,7 @@ those credentials itself.
 
 | Skill | Entrypoint | Typical use |
 |-------|------------|-------------|
-| `classroom50` | `~/.course_venv/bin/python -m course_hoanganhduc.c50_agent` | foundation50 Classroom50 roster list/sync/export |
+| `classroom50` | `~/.course_venv/bin/python -m course_hoanganhduc.c50_agent` | Classroom50 list/sync/export plus tightly gated assignment registration |
 | `course-canvas` | `~/.course_venv/bin/python -m course_hoanganhduc.canvas_agent` | Canvas list/sync/search (read-oriented) |
 | `course-google-classroom` | `~/.course_venv/bin/python -m course_hoanganhduc.gclass_agent` | Google Classroom list/sync |
 | `course-db` | `~/.course_venv/bin/python -m course_hoanganhduc.db_agent` | Local students.db search and export |
@@ -82,8 +82,16 @@ test -x "$course_python" || { printf '%s\n' 'dedicated course interpreter missin
 ```
 
 Agent modules set `COURSE_AGENT_MODE=1` automatically. The Classroom50 skill
-may invoke exactly `gh teacher --help` as a non-mutating readiness check; all
-other raw `gh teacher` and every raw `gh student` invocation remain forbidden.
+uses that restricted entrypoint for ordinary operations. Its only remote-write
+exception is one exact, already-reviewed assignment-add script that the user
+directly authorizes the agent to execute. That script must bind its path and
+SHA-256, organization, classroom, slugs, authenticated identity, pinned
+`gh-teacher` binary and publisher checksum, template revisions, test payloads,
+pre-state, exclusive-writer window, and post-write commit/inventory checks. A
+direct “run it” for the unambiguously identified script is sufficient; the
+agent must not ask again for each assignment. Arbitrary raw `gh teacher`, all
+raw `gh student`, automatic retry after an indeterminate write, and every other
+remote mutation remain forbidden.
 
 ## Allowlists (agent mode)
 
@@ -101,7 +109,7 @@ Empty allowlist with a required id fails closed.
 
 | Surface | Refused (use interactive `course` CLI as a human) |
 |---------|---------------------------------------------------|
-| Classroom50 | submission download |
+| Classroom50 | assignment removal, roster/membership mutation, invitation, classroom creation/teardown, submission or score collection/download, repository deletion/permission changes, production-course writes, student commands |
 | Canvas | unenroll, grade, invite, announce, messages, pages, bulk download |
 | Google Classroom | unenroll, grade, submission download |
 | Local DB | interactive modify, restore-db, import-apply, delete |
