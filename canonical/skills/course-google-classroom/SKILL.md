@@ -1,6 +1,6 @@
 ---
 name: course-google-classroom
-description: "Route Google Classroom operations through the course_hoanganhduc gclass agent: preflight, list courses/students, and roster sync. Refuses unenroll, grade, and submission download."
+description: "Route Google Classroom operations through the course_hoanganhduc gclass agent: preflight, list courses/students, and roster sync. Refuses invite, unenroll, grade, and submission download."
 user-invocable: true
 disable-model-invocation: false
 ---
@@ -46,7 +46,7 @@ if (-not $env:GOOGLE_CLASSROOM_TOKEN) {
 & "$env:USERPROFILE\.course_venv\Scripts\python.exe" -m course_hoanganhduc.gclass_agent <command> [options]
 ```
 
-- Do **not** run `course --unenroll-google-classroom`, `--grade-google-classroom`, or `--download-google-classroom-submissions` from this skill.
+- Do **not** run `course --invite-google-classroom`, `--unenroll-google-classroom`, `--grade-google-classroom`, or `--download-google-classroom-submissions` from this skill.
 - When a course id is required in agent mode, set:
 
 ```bash
@@ -65,14 +65,14 @@ export GCLASS_COURSE_ALLOWLIST=<course-id>[,other-ids]
 "$course_python" -m course_hoanganhduc.gclass_agent sync --course-id ID [--db students.db]
 ```
 
-Refused: `unenroll`, `grade`, `download`.
+Refused: `invite`, `unenroll`, `grade`, `download`.
 
 ## Natural-language routing
 
 - "list my Google Classroom courses" → `list-courses`
 - "list students in course X" → `list-students --course-id X`
 - "sync Google Classroom roster" → `sync --course-id X`
-- "grade / unenroll / download GC submissions" → refuse; human interactive `course` CLI only
+- "invite / grade / unenroll / download GC submissions" → refuse; human interactive `course` CLI only
 
 ## Target notes
 
