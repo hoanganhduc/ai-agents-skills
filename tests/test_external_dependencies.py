@@ -81,7 +81,7 @@ class ExternalDependencyManifestTests(unittest.TestCase):
         self.assertEqual(set(bundles), {"course-management", "vnu-eoffice"})
         self.assertEqual(
             bundles["course-management"]["revision"],
-            "b3f8f647d4329d212958641f9ab18ecb154a21a8",
+            "5e6e7b827d9ba80b4625884be9b4219a327a278b",
         )
         self.assertEqual(
             bundles["vnu-eoffice"]["revision"],
