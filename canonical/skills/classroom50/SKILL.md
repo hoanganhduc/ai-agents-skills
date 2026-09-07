@@ -105,24 +105,83 @@ Before execution, verify all of the following and fail closed if any check fails
    the reviewed classroom. A new assignment must be absent before creation. An
    existing assignment may be replaced only when replacement was explicitly
    authorized and the script verifies its complete expected pre-state.
-7. Maintain an exclusive-writer window for the target classroom configuration
-   throughout the run. The upstream optimistic-rebase writer cannot prevent a
-   concurrent same-slug web or CLI update from being overwritten.
+7. Maintain an exclusive-writer window for the target classroom configuration,
+   the involved private-template permissions, and the target teams throughout
+   the run. The upstream writer cannot atomically exclude a concurrent
+   same-slug update or a concurrent permission change.
 8. Pin and verify every template revision and teacher-side tests payload used by
    the assignment. Reject unexpected or duplicate assignment slugs.
 9. For every write, record the configuration head before and after and verify a
    single-parent change affecting only the reviewed classroom’s
    `assignments.json`. Verify the final exact assignment inventory and settings.
-   Production classrooms may be read for before/after drift checks but must
-   never be write targets.
+   Production classrooms may be read for before/after drift checks but must not
+   be write targets unless every condition of a dated, exact-scope production
+   exception below is satisfied.
 10. Stop on the first failed or indeterminate write. Do not automatically rerun
     the script. Reconcile through the restricted read-only entrypoint first; a
     further execution requires renewed direct authorization.
 
 This exception never covers assignment removal, roster or membership mutation,
 invitations, classroom creation or teardown, submission/score collection,
-downloads, repository deletion or permission changes, production-course writes,
-or any `gh student` operation.
+downloads, repository deletion, general permission changes, general
+production-course writes, or any `gh student` operation. A dated production
+exception below may authorize only the exact assignment additions and automatic
+private-template grants it enumerates; it does not broaden any other operation.
+
+### Dated VNU-HUS production registration exception — 2026-09-03
+
+The user approved preparation of one exact, single-attempt production runner for
+HK1 2026–2027. Remote execution still requires the user to see and directly
+authorize the final script’s absolute path, SHA-256, and exact scope. All generic
+assignment-write safeguards above continue to apply.
+
+For this runner, ordinary Classroom50 reads must use a protected, hash-pinned
+archive of the restricted `course_hoanganhduc.c50_agent` entrypoint. Run that
+archive with isolated Python (`-I -S`) and route its closed read-only command map
+through a protected wrapper to the same checksum-pinned `gh-teacher` v1.40.0
+binary. Do not execute adapter or validation code from a mutable checkout.
+
+The only production classrooms permitted by this exception are:
+
+- `vnu-hus-mat1206e-winter-2026`, bound to student team ID `18900350`,
+  teacher team ID `18900351`, HTA team ID `18900353`, and TA team ID
+  `18900354`;
+- `vnu-hus-mat3508-winter-2026`, bound to student team ID `18900341`,
+  teacher team ID `18900342`, HTA team ID `18900343`, and TA team ID
+  `18900344`.
+
+The intent is create-only. Each target must begin without every listed slug, and
+the runner may add exactly one instance of each slug to each classroom:
+
+- `w00-individual-onboarding`;
+- `w00-group-collaboration`;
+- `ch01-introduction`;
+- `ch02-propositional-logic`;
+- `ch03-first-order-logic`;
+- `ch04-limitations-of-logic`;
+- `ch05-prolog`;
+- `ch06-search`.
+
+The only permitted side-effect outside the two target `assignments.json` files
+is the upstream CLI’s automatic `pull` grant for each of the six exact private
+repositories `VNU-HUS/introai-ch01-template` through
+`VNU-HUS/introai-ch06-template`. For each repository, the permitted new grantees
+are only the student, HTA, and TA teams identified above for both classrooms:
+exactly thirty-six new team grants in total. The Week 0 templates are public and
+must cause no grant. Teacher teams, Pilot teams, direct collaborators, all other
+teams, and all other repositories must remain unchanged.
+
+This exception excludes replacement, removal, retry, rollback, roster changes,
+student acceptance or testing, Codespaces, submission or score operations,
+course settings, template content changes, cleanup, Pilot writes, Chapter 7,
+MiniProject, and every classroom or slug not listed above. The runner must stop
+on its first failed or indeterminate operation and report the exact partial
+state, including actual assignment inventories and normalized permission
+snapshots for all six private templates. Its one-attempt authority is consumed
+after the authorized absolute-path and clean-launch checks succeed and the
+exclusive attempt marker is created, before any further local validation or
+remote call. Success or an early stop both consume that authority; any
+continuation requires a newly reviewed script and renewed direct authorization.
 
 ## Safe doctor and readiness
 

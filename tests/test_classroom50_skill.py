@@ -249,7 +249,7 @@ class Classroom50SkillTests(unittest.TestCase):
             "classroom creation or teardown",
             "submission/score collection",
             "downloads",
-            "repository deletion or permission changes",
+            "repository deletion, general permission changes",
             "production-course writes",
             "any `gh student` operation",
         )
