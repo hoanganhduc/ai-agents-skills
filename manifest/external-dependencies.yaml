@@ -3,11 +3,11 @@
   "bundles": {
     "course-management": {
       "repository": "https://github.com/hoanganhduc/course_management_toolkit.git",
-      "revision": "b3f8f647d4329d212958641f9ab18ecb154a21a8",
+      "revision": "5e6e7b827d9ba80b4625884be9b4219a327a278b",
       "source_directory": "course_management_toolkit",
       "venv_pointer": ".course_venv",
       "distribution": "course-hoanganhduc",
-      "version": "0.1.4",
+      "version": "0.4.0",
       "modules": ["course_hoanganhduc"],
       "help_modules": [
         "course_hoanganhduc.c50_agent",
