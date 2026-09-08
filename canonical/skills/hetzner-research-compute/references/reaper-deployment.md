@@ -1,294 +1,111 @@
-# Hetzner reaper -- detached deployment (gated, deploy-time)
+# Hetzner reaper — deployment under the agent account
 
-The reaper is the durable billing-stopper for the Hetzner lane. A powered-off Hetzner
-server still bills; only DELETE stops billing. The in-session `oneshot` finalizer and
-cloud-init shutdown backstop are important, but neither replaces a detached reaper.
+The detached reaper stops billing when in-session cleanup cannot run. A powered-off
+Hetzner server still bills; only deletion stops billing. This repository ships the
+commands and recipes; it does not install or enable a scheduler.
 
-This repository ships documentation and inert runtime commands only. It does not install,
-enable, or attest a system service. A human administrator must perform this deployment.
+## Lease and credential boundary
 
-## Security boundary
+After each successful scheduled pass, `attest` publishes a short-lived lease bound to
+project identity, install scope, scheduler identity, and the reaper configuration digest.
+The lease expires in at most 15 minutes and must be owner-private 0600 beneath an
+owner-controlled parent chain. The default is
+`~/.local/state/ai-agents-skills/hetzner-reaper-lease.json`.
 
-Live provisioning requires a short-lived lease produced after a successful detached reaper
-pass. The lease replaces the old static environment attestation, which an agent could copy.
-It is bound to the configured project identity, install scope, scheduler identity, and
-reaper-relevant configuration digest, and expires in at most 15 minutes.
+The lease proves a scheduler under the same account ran recently and is bound to this
+config; it is not evidence outside the agent's authority. The previous root design is
+retired because the launcher no longer runs from a root generation.
 
-The deployment must satisfy all of these conditions:
+The protected `AAS_COMPUTE_SECRETS_FILE` pointer supplies the reaper's compute authority.
+The wrapper projects only the permitted Hetzner values. Tokens never belong in argv,
+unit files, leases, or an `hcloud context` file.
 
-- The runtime and every parent directory used by the privileged `attest` command are
-  root-owned and not group/world writable. Never execute an agent-writable script as root.
-- `[hetzner].reaper_lease_file` is absolute and its complete parent chain is root-owned and
-  not group/world writable. `/etc/ai-agents-skills/hetzner-reaper-lease.json` is recommended.
-- The lease is root-owned mode `0644`: it contains no credential and must be readable by the
-  non-root provisioner, but the agent must not be able to write or replace it.
-- The actual reaper pass runs as the ordinary agent account so audit and reservation files
-  do not become root-owned. Only the post-success `attest` step runs as root.
-- The root attester runs only after a successful reaper pass. A failed pass must not renew
-  the lease.
-- Native Windows remains recovery-only in this release because no equivalent Task Scheduler
-  deployment and DACL-bound lease publisher has been natively attested.
+## User crontab (default)
 
-Configure a stable, non-secret identity unique to the dedicated Hetzner project and the
-exact scheduler identity. The values below must also appear in the root-owned runtime config:
+Configure the lease and scheduler identity in the broker's research-compute config:
 
 ```toml
 [hetzner]
 project_identity = "replace-with-stable-dedicated-project-identity"
-reaper_lease_file = "/etc/ai-agents-skills/hetzner-reaper-lease.json"
-reaper_scheduler_id = "hetzner-reaper.timer"
+reaper_lease_file = "~/.local/state/ai-agents-skills/hetzner-reaper-lease.json"
+reaper_scheduler_id = "cron:user:<your login>"
 reaper_lease_max_age_seconds = 900
 ```
 
-Create the protected lease directory before enabling the service:
+Replace `<your login>` with the account name returned by `id -un`; it must match
+exactly the scheduler ID passed below. Add this single line to that user's crontab:
 
-```bash
-sudo install -d -o root -g root -m 755 /etc/ai-agents-skills
+```cron
+*/10 * * * * L="$HOME/.local/share/ai-agents-skills/runtime/run_skill.sh"; W="$HOME/.openclaw/workspace"; S="$HOME/.local/state/ai-agents-skills"; (umask 077; mkdir -p "$S"); AAS_AUTOLOOP_COMPUTE_WORKSPACE="$W" AAS_COMPUTE_SECRETS_FILE="$HOME/.config/ai-agents-skills/compute.env" "$L" skills/hetzner-research-compute/run_hetzner_reaper.sh reap >>"$S/hetzner-reaper.log" 2>&1 && AAS_AUTOLOOP_COMPUTE_WORKSPACE="$W" "$L" skills/hetzner-research-compute/run_hetzner_reaper.sh attest --scheduler-kind cron --scheduler-id "cron:user:$(id -un)" >>"$S/hetzner-reaper.log" 2>&1
 ```
 
-## Token handling
+`&&` is deliberate: only a successful `reap` may renew the lease. The launcher is
+executed directly so its privileged-mode Bash shebang applies. Runtime variables
+are scoped to each invocation. The subshell's `umask 077` creates private state
+directories; existing parent directories must already be owner-controlled.
 
-The reaper process receives only the protected `AAS_COMPUTE_SECRETS_FILE` pointer. The
-managed wrapper reads that absolute private file through the strict loader, permits only the
-compute schema, and projects only `HCLOUD_TOKEN` and optional `HCLOUD_SSH_KEYS` into the
-Hetzner process. The token is never placed on argv, in the unit, in the lease, or in an
-`hcloud context` file.
+## systemd --user (alternative)
 
-The example below assumes:
-
-- root-owned launcher resolver: `/usr/local/sbin/aas-credential-launcher`
-  (installed below; a root-owned `/opt/ai-agents-skills/runtime` tree cannot be
-  used here -- see *Why the scheduler cannot name a runtime path*)
-- ordinary account: `REPLACE_AGENT_USER`
-- home: `REPLACE_AGENT_HOME` (for example, `/srv/aas-agent`)
-- private compute authority:
-  `REPLACE_AGENT_HOME/.config/ai-agents-skills/compute.env`
-- writable broker state:
-  `REPLACE_AGENT_HOME/.local/share/ai-agents-skills/memories/research-compute`
-
-Replace every placeholder and confirm the runtime/config parent chain is root-controlled
-before enabling the unit.
-
-## Why the scheduler cannot name a runtime path
-
-`run_hetzner_reaper.sh` is a credential-bearing command, so `run_skill.sh` arms its
-credential contract from the command path alone and then refuses to run unless it is itself
-executing from a root-owned component generation:
-
-```text
-/usr/local/libexec/coding-system/components/ai-agents-skills/<40-hex>/canonical/runtime
-```
-
-The gate tests the launcher's own location, walks the entire parent chain for root
-ownership, rejects symlinks, and has no override. A root-owned `/opt/ai-agents-skills/runtime`
-tree therefore fails exactly as the per-user `~/.local/share/ai-agents-skills/runtime` copy
-does -- `credential-bearing launch requires a root-owned exact AAS component generation`,
-exit 127, for every verb including `reap --dry-run`.
-
-Naming one `<40-hex>` in the unit holds only until that generation is pruned, and the
-directory name is a git commit id, so it sorts in no useful order. Install this resolver
-instead and let the scheduler call it. It is a per-host operator file; the installer does
-not place it.
-
-```bash
-#!/usr/bin/bash
-# Resolve the ai-agents-skills component generation that run_skill.sh's credential
-# gate accepts, then exec its launcher with the arguments given.
-#
-# The gate requires the launcher to sit under
-#   /usr/local/libexec/coding-system/components/ai-agents-skills/<40-hex>/canonical/runtime
-# on a root-owned, symlink-free chain, and it is not overridable. No other layout
-# satisfies it -- neither the per-user ~/.local copy nor a root-owned /opt tree.
-# Pinning one <40-hex> in a unit file holds only until that generation is pruned,
-# so resolve on every invocation instead.
-#
-# The directory name is a git commit id and carries no ordering. The store also
-# normalises every file mtime to the epoch, which leaves the generation
-# directory's own mtime as the one recency signal, so selection is by publish
-# time: an older generation can carry a stale driver and fail in the lane rather
-# than at the gate.
-set -u
-
-store=/usr/local/libexec/coding-system/components/ai-agents-skills
-launcher=""
-newest=0
-
-for gen in "$store"/*/; do
-    gen="${gen%/}"
-    [ -f "$gen/manifest/credential-runtime.json" ] || continue
-    [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] || continue
-    stamp="$(stat -c %Y "$gen" 2>/dev/null || stat -f %m "$gen" 2>/dev/null)" || continue
-    [ "${stamp:-0}" -gt "$newest" ] || continue
-    newest="$stamp"
-    launcher="$gen/canonical/runtime/runners/run_skill.sh"
-done
-
-if [ -z "$launcher" ]; then
-    printf 'aas-credential-launcher: no component generation under %s carries manifest/credential-runtime.json\n' \
-        "$store" >&2
-    exit 78
-fi
-
-# Operator check: report the resolved generation without launching anything.
-if [ "${1-}" = "--print-launcher" ]; then
-    printf '%s\n' "$launcher"
-    exit 0
-fi
-
-exec /usr/bin/bash "$launcher" "$@"
-```
-
-Any manifest-bearing generation passes the gate, which is why the resolver ranks by publish
-time rather than stopping at the first match: an older generation launches cleanly and then
-fails in the driver, where the cause is far harder to see.
-
-Install it root-owned and confirm which generation it resolves before enabling any
-scheduler:
-
-```bash
-sudo install -o root -g root -m 0755 aas-credential-launcher /usr/local/sbin/
-/usr/local/sbin/aas-credential-launcher --print-launcher
-```
-
-## Recommended systemd deployment
-
-Save as `/etc/systemd/system/hetzner-reaper.service`:
+Set `reaper_scheduler_id = "hetzner-reaper.timer"` in the same config. Save these
+complete user unit files:
 
 ```ini
+# ~/.config/systemd/user/hetzner-reaper.service
 [Unit]
-Description=ai-agents-skills Hetzner reaper
-After=network-online.target
-Wants=network-online.target
+Description=Hetzner research-compute reaper (user-level)
 
 [Service]
 Type=oneshot
-Environment=PYTHONDONTWRITEBYTECODE=1
-WorkingDirectory=/tmp
-ExecStart=/usr/sbin/runuser --user REPLACE_AGENT_USER -- /usr/bin/env HOME=REPLACE_AGENT_HOME USER=REPLACE_AGENT_USER LOGNAME=REPLACE_AGENT_USER AAS_COMPUTE_SECRETS_FILE=REPLACE_AGENT_HOME/.config/ai-agents-skills/compute.env /usr/local/sbin/aas-credential-launcher skills/hetzner-research-compute/run_hetzner_reaper.sh reap
-ExecStartPost=/usr/local/sbin/aas-credential-launcher skills/hetzner-research-compute/run_hetzner_reaper.sh attest --scheduler-kind systemd --scheduler-id hetzner-reaper.timer
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=REPLACE_AGENT_HOME/.local/share/ai-agents-skills/memories/research-compute /etc/ai-agents-skills
+WorkingDirectory=%h/.openclaw/workspace
+Environment=AAS_AUTOLOOP_COMPUTE_WORKSPACE=%h/.openclaw/workspace
+Environment=AAS_COMPUTE_SECRETS_FILE=%h/.config/ai-agents-skills/compute.env
+UMask=0077
+ExecStart=%h/.local/share/ai-agents-skills/runtime/run_skill.sh skills/hetzner-research-compute/run_hetzner_reaper.sh reap
+ExecStartPost=%h/.local/share/ai-agents-skills/runtime/run_skill.sh skills/hetzner-research-compute/run_hetzner_reaper.sh attest --scheduler-kind systemd-user --scheduler-id hetzner-reaper.timer
 ```
 
-Save as `/etc/systemd/system/hetzner-reaper.timer`:
-
 ```ini
+# ~/.config/systemd/user/hetzner-reaper.timer
 [Unit]
-Description=Run the ai-agents-skills Hetzner reaper every 2 minutes
+Description=Run the Hetzner research-compute reaper every 10 minutes
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=2min
-AccuracySec=15s
-Persistent=true
-Unit=hetzner-reaper.service
+OnUnitActiveSec=10min
 
 [Install]
 WantedBy=timers.target
 ```
 
-First validate the ordinary-account credential path and deletion plan without mutating
-servers:
+Then enable the timer:
 
 ```bash
-sudo -u REPLACE_AGENT_USER \
-  env HOME=REPLACE_AGENT_HOME \
-  AAS_COMPUTE_SECRETS_FILE=REPLACE_AGENT_HOME/.config/ai-agents-skills/compute.env \
-  /usr/local/sbin/aas-credential-launcher \
-  skills/hetzner-research-compute/run_hetzner_reaper.sh reap --dry-run
+systemctl --user daemon-reload && systemctl --user enable --now hetzner-reaper.timer
 ```
 
-Then enable the timer and wait for one successful scheduled pass:
+Without lingering, a user's timers run only while that user has a session.
+`loginctl enable-linger` may require an administrator, so the crontab recipe is the
+default. Both recipes assume the same broker workspace and private compute authority;
+adjust those paths together if the installation uses another workspace.
+
+## Verify the scheduled pass
+
+After installing one of the two schedulers, run the driver doctor and verify that
+`reaper_lease.present` and `reaper_lease.fresh` are true:
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now hetzner-reaper.timer
-systemctl list-timers hetzner-reaper.timer
-journalctl -u hetzner-reaper.service -n 50 --no-pager
+AAS_AUTOLOOP_COMPUTE_WORKSPACE="$HOME/.openclaw/workspace" \
+  "$HOME/.local/share/ai-agents-skills/runtime/run_skill.sh" \
+  skills/hetzner-research-compute/run_hetzner_research_compute.sh doctor
 ```
 
-Verify the scheduler succeeded and the lease is root-owned, `0644`, recent, and located
-under the protected chain. Do not create the lease manually; the driver validates its
-structured contents and bindings, not merely its existence.
-
-## Root cron alternative
-
-Where systemd is unavailable, configure these values instead:
-
-```toml
-[hetzner]
-reaper_scheduler_id = "cron:/etc/cron.d/hetzner-reaper"
-```
-
-Save the following as `/etc/cron.d/hetzner-reaper` after replacing the account paths. The
-`&&` is deliberate: the root attester runs only after the ordinary-account reap succeeds.
-
-```cron
-SHELL=/bin/sh
-*/2 * * * * root /usr/sbin/runuser --user REPLACE_AGENT_USER -- /usr/bin/env HOME=REPLACE_AGENT_HOME USER=REPLACE_AGENT_USER LOGNAME=REPLACE_AGENT_USER AAS_COMPUTE_SECRETS_FILE=REPLACE_AGENT_HOME/.config/ai-agents-skills/compute.env /usr/local/sbin/aas-credential-launcher skills/hetzner-research-compute/run_hetzner_reaper.sh reap >> /var/log/hetzner-reaper.log 2>&1 && /usr/local/sbin/aas-credential-launcher skills/hetzner-research-compute/run_hetzner_reaper.sh attest --scheduler-kind cron --scheduler-id cron:/etc/cron.d/hetzner-reaper >> /var/log/hetzner-reaper.log 2>&1
-```
+Doctor is read-only and exits zero even if the lease is absent or stale; inspect the
+lease fields and error message. Any old independently installed root scheduler must
+be handled by the user; this recipe does not disable it.
 
 ## Native Windows status (recovery only)
 
-The managed PowerShell target supports planning, manual dry-run reaping, and scoped
-recovery/teardown. Live `up` and `oneshot` fail closed on native Windows because a durable
-Task Scheduler reaper and protected lease publisher have not been natively attested. Use
-WSL/Linux for paid provisioning; do not bypass the driver gate.
-
-```powershell
-$runtime = if ($env:AAS_RUNTIME_ROOT) { $env:AAS_RUNTIME_ROOT } else { "$env:LOCALAPPDATA\ai-agents-skills\runtime" }
-$env:AAS_COMPUTE_SECRETS_FILE = "$env:USERPROFILE\.config\ai-agents-skills\compute.env"
-& "$runtime\run_skill.ps1" `
-  "skills/hetzner-research-compute/run_hetzner_reaper.ps1" `
-  reap --dry-run
-```
-
-## Emergency project-wide deletion
-
-Broad deletion is constrained to servers carrying both the AAS management label and the
-configured `project-scope` label. It requires a fresh protected lease and an exact phrase
-bound to the current target count and digest. First obtain the read-only inventory:
-
-```bash
-# Credential-bearing lanes must launch from a root-owned AAS component
-# generation; the per-user runtime copy is refused by the credential gate.
-# The generation directory is named for a git commit, so its name carries no
-# ordering -- pick the newest publish, which the store records as its mtime.
-launcher="${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh"
-newest=0
-for gen in /usr/local/libexec/coding-system/components/ai-agents-skills/*/; do
-  gen="${gen%/}"
-  [ -f "$gen/manifest/credential-runtime.json" ] || continue
-  [ -x "$gen/canonical/runtime/runners/run_skill.sh" ] || continue
-  stamp="$(stat -c %Y "$gen" 2>/dev/null || stat -f %m "$gen" 2>/dev/null)" || continue
-  [ "${stamp:-0}" -gt "$newest" ] || continue
-  newest="$stamp"
-  launcher="$gen/canonical/runtime/runners/run_skill.sh"
-done
-AAS_COMPUTE_SECRETS_FILE="$HOME/.config/ai-agents-skills/compute.env" \
-  bash "$launcher" \
-  skills/hetzner-research-compute/run_hetzner_reaper.sh \
-  kill --dry-run
-```
-
-Review every target, then copy the exact `required_confirmation` string from that output:
-
-```bash
-AAS_COMPUTE_SECRETS_FILE="$HOME/.config/ai-agents-skills/compute.env" \
-  bash "$launcher" \
-  skills/hetzner-research-compute/run_hetzner_reaper.sh \
-  kill --confirm-project-wide 'DELETE-AAS-HETZNER project=... count=... digest=...'
-```
-
-If the target set changes between the two commands, the live command rejects the old phrase.
-
-## Audit trail
-
-Every provision, destroy, reap, and kill attempts a redacted JSONL record in
-`hetzner-audit.jsonl` under the broker state root. Audit or reservation-reconciliation
-failure is reported without skipping later billable servers. The detached reaper spans
-install scopes for TTL, powered-off, and stale-heartbeat cleanup, but only the exact current
-install scope can use or reconcile the local reservation ledger.
+The managed `run_hetzner_reaper.ps1` target supports manual dry-run reaping and
+scoped recovery/teardown. Live `up` and `oneshot` fail closed on native Windows
+until a durable Task Scheduler reaper and protected lease publisher are attested.
+Use WSL/Linux for paid provisioning.
