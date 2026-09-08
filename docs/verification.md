@@ -170,7 +170,7 @@ Codex root and execute the installed native runtime runner for the current host.
 On Windows it exercises `run_skill.ps1`. CMD runtime entrypoints are not
 published because CMD cannot preserve arbitrary argument vectors safely. On
 Linux and macOS it exercises `run_skill.sh`. The default runtime smoke currently covers
-`autonomous-research-loop-runtime`, `axiom-axle-mcp`, `deep-research-workflow`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-research-library`, `lean-strict-verification-gate`, `manim-math-animation`, `opengauss`, `remote-bridge`, `self-improving-agent`, `send-email`, `slides-to-video`, `submission-venue-selector`, `url-to-screenshot-runtime`, `venue-ranking-evidence`, forcing copy-mode runtime installation in a temporary
+`autonomous-research-loop-runtime`, `axiom-axle-mcp`, `calibre`, `deep-research-workflow`, `docling`, `formal-skeleton-helper`, `get-available-resources`, `graph-verifier`, `hetzner-research-compute`, `kaggle-research-compute`, `lean-explore-mcp`, `lean-formalization-intake`, `lean-research-library`, `lean-strict-verification-gate`, `manim-math-animation`, `modal-research-compute`, `opengauss`, `remote-bridge`, `research-digest-wrapper`, `self-improving-agent`, `send-email`, `slides-to-video`, `submission-venue-selector`, `url-to-screenshot-runtime`, `venue-ranking-evidence`, `vnthuquan`, forcing copy-mode runtime installation in a temporary
 root. It requires Python plus any dependencies needed by the selected smoke
 contracts, including `psutil` and `networkx` for the default CI path. Passing
 `--skills` may only select skills that are supported by this runtime-smoke
@@ -178,30 +178,30 @@ harness.
 
 Runtime smoke coverage classes are explicit for every runtime-backed skill:
 
-| Skill | Coverage | Smoke Contract | Reason |
+| Skill | Coverage | Declared Contract | Reason |
 |---|---|---|---|
 | `annotated-review` | `manual-native` | no | Annotation workflows require user-provided documents and optional local tooling; no safe generic offline smoke is declared. |
 | `autonomous-research-loop-runtime` | `offline-smoke` | yes | Smoke validates local loop ledger initialization, append, validation, and status without network, package installs, provider CLIs, config writes, or subagent spawning. The headless driver checks additionally require a host that can contain a primary process, and report themselves as skipped where it cannot. |
 | `axiom-axle-mcp` | `offline-smoke` | yes | Smoke validates inert AXLE setup guidance without installing packages or starting services. |
-| `calibre` | `manual-native` | no | Calibre workflows depend on the user's local ebook library and profile selection. |
+| `calibre` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |
 | `deep-research-workflow` | `offline-smoke` | yes | Selftest smoke is offline and validates the workflow guard contracts. |
 | `digest-bridge` | `static-only` | no | Digest bridge helpers are covered by static/runtime inventory checks; no generic input digest is shipped for smoke. |
-| `docling` | `doctor-only` | no | Docling conversion and OCR need local parser dependencies and documents; use the doctor path for environment checks. |
+| `docling` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |
 | `formal-skeleton-helper` | `offline-smoke` | yes | Smoke writes a minimal local skeleton and validates JSON output without network or secrets. |
 | `get-available-resources` | `offline-smoke` | yes | Smoke records local resource metadata to a temporary file without network or secrets. |
 | `getscipapers-requester` | `manual-native` | no | External paper retrieval is intentionally manual/network-gated and has no generic offline smoke. |
 | `graph-verifier` | `offline-smoke` | yes | Smoke validates a small local graph fixture and JSON result without network. |
-| `hetzner-research-compute` | `manual-native` | no | Hetzner lifecycle verbs require an HCLOUD_TOKEN and provision paid servers; they are not safe for generic offline smoke. The offline dry-run and guard paths are covered by tests/test_hetzner_research_compute.py. |
-| `kaggle-research-compute` | `manual-native` | no | Kaggle lifecycle verbs require the new Kaggle API token (KAGGLE_API_TOKEN or ~/.kaggle/access_token) and push real kernels; per Kaggle ToS no live call is made in the build. The offline dry-run, resume-loop, fan-out, and guard paths are covered by tests/test_kaggle_research_compute.py (all kaggle CLI calls and the kagglehub-validate hook mocked). |
+| `hetzner-research-compute` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |
+| `kaggle-research-compute` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |
 | `lean-explore-mcp` | `offline-smoke` | yes | Smoke validates inert LeanExplore MCP setup guidance without installing packages, starting services, or calling live APIs. |
 | `lean-formalization-intake` | `offline-smoke` | yes | Doctor smoke records local Lean availability without installing dependencies. |
 | `lean-research-library` | `offline-smoke` | yes | Doctor smoke reports tool/config state offline; every network verb is marked and excluded from smoke. |
 | `lean-strict-verification-gate` | `offline-smoke` | yes | Doctor smoke records local Lean availability and scanner status without installing dependencies. |
 | `manim-math-animation` | `offline-smoke` | yes | Selftest validates scene-spec round-trips, the generated Manim source (Write/MathTex/TransformMatchingTex/emphasis), and the manim/ffmpeg argv builders with no network, package install, Manim, LaTeX, or ffmpeg. |
-| `modal-research-compute` | `manual-native` | no | Modal workflows require explicit external compute credentials and are not safe for generic offline smoke. |
+| `modal-research-compute` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |
 | `opengauss` | `offline-smoke` | yes | Smoke validates inert OpenGauss readiness guidance without installing OpenGauss, starting gauss, or calling backends. Full install/session is manual-native. |
 | `remote-bridge` | `offline-smoke` | yes | Selftest exercises mailbox arm/CAS/approval single-use, inbox claim/consume, /aas parser boundaries, and in-memory config redaction without network, path synchronization, or real-secret discovery; installed legacy sync/publisher names are inert revocation stubs. |
-| `research-digest-wrapper` | `manual-native` | no | Digest runs depend on configured topics and external feeds; no generic offline smoke is declared. |
+| `research-digest-wrapper` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |
 | `rss-news-digest` | `manual-native` | no | RSS digesting depends on configured feeds and network access. |
 | `sagemath` | `manual-native` | no | SageMath availability is host-dependent and too heavy for default offline CI smoke. |
 | `self-improving-agent` | `offline-smoke` | yes | Smoke validates local learning-plan generation without network, package installs, or config writes. |
@@ -211,8 +211,8 @@ Runtime smoke coverage classes are explicit for every runtime-backed skill:
 | `tikz-draw` | `manual-native` | no | TikZ workflows depend on TeX toolchains and user-provided figure specs. |
 | `url-to-screenshot-runtime` | `offline-smoke` | yes | Selftest validates the deterministic core (browser-detection candidate order for linux/macos/windows synthetic layouts, SSRF URL-admission gate, CDP command JSON with no --remote-allow-origins flag and a --host-resolver-rules MAP pin, consent-selector list, viewport/full-page arg builders, in-memory blank-output detector, the verify gate on synth golden+blank, and per-OS process-kill strategy selection) with no network, browser launch, or package install. |
 | `venue-ranking-evidence` | `offline-smoke` | yes | Smoke validates local source descriptors and deterministic evidence contracts without network access, browser launch, credentials, or package installation. |
-| `vnthuquan` | `manual-native` | no | Vietnam Thu Quan discovery/download flows are network and library-profile gated. |
-| `zotero` | `manual-native` | no | Zotero workflows depend on the user's local library, profile, and optional cloud credentials. |
+| `vnthuquan` | `offline-smoke` | yes | Declared offline contract runs with synthetic HOME; functional and live checks are separate. |
+| `zotero` | `venv-smoke` | yes | Declared functional contracts require the admitted skill Python venv. |
 
 ```bash
 make runtime-smoke
