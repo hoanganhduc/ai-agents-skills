@@ -895,6 +895,7 @@ class KaggleDriverTests(unittest.TestCase):
         # read; presence is driven purely by KAGGLE_API_TOKEN (set by _creds()).
         self.cfg_dir = self.tmp / "kaggle-cfg"; self.cfg_dir.mkdir()
         self._prev_runner = kaggle_driver.COMMAND_RUNNER
+        kaggle_driver.COMMAND_RUNNER = _FakeRunner()
         self._prev_validate = kaggle_backend.KAGGLEHUB_VALIDATE
         # Mock the kagglehub-validate hook: valid token -> authenticated username "tester". No
         # live call; the driver resolves the kernel/dataset owner from this.
@@ -1149,6 +1150,43 @@ class KaggleDriverTests(unittest.TestCase):
         self.assertFalse(out["api_token_present"])
         self.assertFalse(out["account"]["usable"])
         self.assertEqual(out["account"]["reason"], "no_kaggle_api_token")
+
+    @unittest.skipUnless(os.name == "posix", "fake Kaggle CLI uses a POSIX shell")
+    def test_bootstrap_executes_kaggle_cli_version(self) -> None:
+        cli_dir = self.tmp / "bin"
+        cli_dir.mkdir(mode=0o700)
+        cli = cli_dir / "kaggle"
+        cli.write_text('#!/bin/sh\n[ "$1" = --version ] || exit 9\nprintf "kaggle-version-marker\\n"\n',
+                       encoding="utf-8")
+        cli.chmod(0o700)
+        kaggle_driver.COMMAND_RUNNER = kaggle_driver._default_command_runner
+        with mock.patch.dict(os.environ, {"PATH": str(cli_dir)}):
+            out = kaggle_driver.bootstrap(self.config)
+        self.assertEqual(out["kaggle_cli_version"], {
+            "ok": True, "exit_code": 0, "output": "kaggle-version-marker",
+        })
+        self.assertFalse(out["api_token_present"])
+
+    def test_bootstrap_reports_kaggle_cli_absent(self) -> None:
+        empty_path = self.tmp / "empty-bin"
+        empty_path.mkdir(mode=0o700)
+        with mock.patch.dict(os.environ, {"PATH": str(empty_path)}):
+            out = kaggle_driver.bootstrap(self.config)
+        self.assertEqual(out["kaggle_cli_version"], {
+            "ok": False, "exit_code": None, "output": "kaggle CLI not found",
+        })
+
+    def test_bootstrap_reports_unsuccessful_kaggle_cli_version(self) -> None:
+        with mock.patch.object(kaggle_driver.shutil, "which", return_value="kaggle"), \
+             mock.patch.object(kaggle_driver, "COMMAND_RUNNER", return_value={
+                 "returncode": 3, "stdout": "", "stderr": "version unavailable",
+             }) as runner:
+            out = kaggle_driver.bootstrap(self.config)
+        self.assertEqual(out["kaggle_cli_version"], {
+            "ok": False, "exit_code": 3, "output": "version unavailable",
+        })
+        self.assertEqual(runner.call_args.args[0], ["kaggle", "--version"])
+        self.assertEqual(runner.call_args.kwargs["timeout"], 30.0)
 
 
 if __name__ == "__main__":
