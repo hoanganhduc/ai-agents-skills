@@ -891,7 +891,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
         smoke_skills = {"send-email"}
         previous_umask = os.umask(0o002)
         try:
-            with tempfile.TemporaryDirectory() as tmp:
+            with tempfile.TemporaryDirectory() as tmp, patch(
+                "installer.ai_agents_skills.runtime_smoke.skill_venv_row",
+                return_value={"status": "absent", "path": "/test-only/absent-venv"},
+            ):
                 root = Path(tmp)
                 create_agent_home(root, "codex")
                 plan = build_plan(
@@ -919,6 +922,12 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 installed_text = installed_runner.read_text(encoding="utf-8")
                 self.assertIn("trusted_credential_launcher", installed_text)
                 self.assertNotIn("credential_runtime_enforcement", installed_text)
+                self.assertEqual(result["credential_launch"]["status"], "ok", result)
+                self.assertEqual([(row["kind"], row["status"]) for row in result["credential_launch"]["results"]],
+                                 [("positive", "ok"), ("negative", "ok")])
+                self.assertEqual(result["credential_launch"]["results"][1]["returncode"], 127)
+                self.assertEqual(result["skill_venv"]["status"], "absent")
+                self.assertEqual(result["functional"]["status"], "ok", result)
         finally:
             os.umask(previous_umask)
 
@@ -1459,6 +1468,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 dry_run=False,
             )
             with (
+                patch("installer.ai_agents_skills.runtime_smoke.run_functional_smoke_cases",
+                      return_value={"status": "skipped", "results": []}),
                 patch(
                     "installer.ai_agents_skills.runtime_smoke.runner_invocations",
                     return_value=[{"name": runner_name, "argv": ["fake-runner"]}],
@@ -1835,7 +1846,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(result["results"][0]["failure_kind"], "launch-error")
 
     @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
-    def test_installed_runtime_smoke_runs_all_offline_contracts_and_reports_declared_exclusions(self) -> None:
+    @patch("installer.ai_agents_skills.runtime_smoke.skill_venv_row", return_value={"status": "absent", "path": "/test-only/absent-venv"})
+    def test_installed_runtime_smoke_runs_all_offline_contracts_and_reports_declared_exclusions(self, _venv) -> None:
         manifests = load_manifests()
         platform = current_platform(None)
         offline_skills = set(runtime_smoke_skill_names(manifests))
@@ -1889,7 +1901,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(result["schema_version"], 1)
             self.assertEqual(result["unknown_coverage_count"], 0)
             self.assertEqual(
-                {call.kwargs["skill"] for call in smoke_case.call_args_list},
+                {call.kwargs["skill"] for call in smoke_case.call_args_list if call.kwargs.get("case_name") is None},
                 offline_skills,
             )
             self.assertEqual(
@@ -1899,7 +1911,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(result["declared_exclusion_count"], len(excluded_skills))
             self.assertEqual(
                 {item["coverage"] for item in result["declared_exclusions"]},
-                declared_exclusion_statuses,
+                {manifests["runtime"]["skills"][skill]["smoke_coverage"]["status"] for skill in excluded_skills},
             )
 
             unknown_manifests = copy.deepcopy(manifests)
@@ -2993,7 +3005,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(entries["workspace/linked"]["reason"], "symlink")
 
     @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
-    def test_post_install_smoke_asks_only_about_runtimes_the_install_planned(self) -> None:
+    @patch("installer.ai_agents_skills.runtime_smoke.skill_venv_row", return_value={"status": "absent", "path": "/test-only/absent-venv"})
+    def test_post_install_smoke_asks_only_about_runtimes_the_install_planned(self, _venv) -> None:
         manifests = load_manifests()
 
         # The host platform, not a fixed one: the installed runtime smoke only
@@ -4372,8 +4385,11 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
     def test_runtime_smoke_rejects_runtime_skill_without_smoke_contract(self) -> None:
         manifests = load_manifests()
+        without_contracts = copy.deepcopy(manifests)
+        for kind in ("smoke", "functional_smoke", "live_check"):
+            without_contracts["runtime"]["skills"]["zotero"].pop(kind, None)
         with self.assertRaisesRegex(ValueError, "zotero"):
-            selected_runtime_skills(manifests, {"zotero"})
+            selected_runtime_skills(without_contracts, {"zotero"})
 
     @unittest.skipIf(os.name == "nt", "native Windows installer mutation is dry-run-only until handle-bound mutation lands")
     def test_runtime_smoke_fails_closed_when_no_native_runner_is_available(self) -> None:
@@ -4397,10 +4413,10 @@ class RuntimeIntegrationTests(unittest.TestCase):
         rows = {row["skill"]: row for row in runtime_smoke_coverage_rows(manifests)}
 
         self.assertEqual(rows["graph-verifier"]["status"], "offline-smoke")
-        self.assertEqual(rows["zotero"]["status"], "manual-native")
-        self.assertEqual(rows["docling"]["status"], "doctor-only")
+        self.assertEqual(rows["zotero"]["status"], "venv-smoke")
+        self.assertEqual(rows["docling"]["status"], "offline-smoke")
         self.assertNotIn("zotero", selected_runtime_skills(manifests, None))
-        self.assertIn("local library", rows["zotero"]["reason"])
+        self.assertTrue(rows["zotero"]["has_smoke_contract"])
         self.assertTrue(all(row["reason"] for row in rows.values()))
 
     def test_runtime_smoke_contracts_are_offline_and_workspace_relative(self) -> None:

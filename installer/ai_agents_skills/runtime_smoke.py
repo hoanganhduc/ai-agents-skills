@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -11,6 +12,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any
 
+from . import skill_python
 from .agents import detect_agents
 from .apply import apply_plan
 from .capabilities import normalized_path_within, resolved_path_within
@@ -51,34 +53,13 @@ def installed_runtime_smoke_report(**fields: Any) -> dict[str, Any]:
     report = {
         "schema": INSTALLED_RUNTIME_SMOKE_SCHEMA,
         "schema_version": INSTALLED_RUNTIME_SMOKE_SCHEMA_VERSION,
+        "credential_launch": {"status": "skipped", "results": [], "reason": "runtime execution not reached"},
+        "skill_venv": {"status": "skipped", "reason": "runtime execution not reached"},
+        "functional": {"status": "skipped", "results": []},
+        "live": {"status": "skipped", "results": [], "reason": "live checks require --live"},
     }
     report.update(fields)
     return report
-
-
-def relax_ephemeral_credential_enforcement(runtime_root: Path) -> None:
-    """Relax the credential-runtime generation gate in an ephemeral copy.
-
-    run_skill.sh documents that ``credential_runtime_enforcement=1`` is
-    intentionally patchable only in ephemeral copies.  Both smoke harnesses
-    execute exactly such a copy -- the temporary install, and the installed
-    harness's hash-verified scratch tree -- and neither can satisfy the
-    root-owned exact-generation check, so the smoke canaries would otherwise
-    turn every credential-bearing case into a gate refusal.  The installed
-    runtime itself is never patched: the caller passes the scratch root.
-    """
-    runner = runtime_root / "run_skill.sh"
-    if not runner.is_file():
-        return
-    text = runner.read_text(encoding="utf-8")
-    patched = text.replace(
-        "credential_runtime_enforcement=1",
-        "credential_runtime_enforcement=0",
-        1,
-    )
-    if patched != text:
-        runner.write_text(patched, encoding="utf-8")
-        runner.chmod(0o755)
 
 
 def run_runtime_smoke(
@@ -86,10 +67,11 @@ def run_runtime_smoke(
     *,
     skills: set[str] | None = None,
     platform: str | None = None,
-    timeout: int = 60,
+    timeout: int | None = None,
 ) -> dict[str, Any]:
     host_platform = current_platform(platform)
     selected_skills = selected_runtime_skills(manifests, skills)
+    venv = skill_venv_row(Path.home())
     with tempfile.TemporaryDirectory(prefix="aas-runtime-smoke-") as tmp:
         root = Path(tmp)
         (root / ".codex").mkdir(parents=True)
@@ -107,10 +89,9 @@ def run_runtime_smoke(
         install_result = apply_plan(root, plan, dry_run=False)
         verify_result = verify(root)
         runtime_root = root / ".codex" / "runtime"
-        relax_ephemeral_credential_enforcement(runtime_root)
         workspace = runtime_root / "workspace"
         runners = runner_invocations(runtime_root, host_platform)
-        if not runners:
+        if not runners and any(skill in runtime_smoke_skill_names(manifests) for skill in selected_skills):
             return {
                 "status": "failed",
                 "platform": host_platform,
@@ -119,6 +100,9 @@ def run_runtime_smoke(
                 "install_action_count": len(install_result.get("actions", [])),
                 "verify_status": verify_result["status"],
                 "checked": 0,
+                "credential_launch": {"status": "skipped", "results": [], "reason": "no native runtime runner"},
+                "skill_venv": venv,
+                "functional": {"status": "skipped", "results": [], "reason": "functional cases require installed-runtime-smoke"},
                 "results": [
                     {
                         "status": "failed",
@@ -130,12 +114,14 @@ def run_runtime_smoke(
                         "failure_kind": "runner-unavailable",
                         "reason": "no native runtime runner is available on this host",
                     }
-                    for skill in selected_skills
+                    for skill in selected_skills if skill in runtime_smoke_skill_names(manifests)
                 ],
             }
         results = []
         for runner in runners:
             for skill in selected_skills:
+                if skill not in runtime_smoke_skill_names(manifests):
+                    continue
                 results.append(run_smoke_case(
                     manifests,
                     skill=skill,
@@ -144,7 +130,9 @@ def run_runtime_smoke(
                     platform=host_platform,
                     timeout=timeout,
                 ))
-        status = "ok" if verify_result["status"] == "ok" and all(item["status"] == "ok" for item in results) else "failed"
+        credential_launch = credential_launch_canary(runtime_root, host_platform, results, manifests=manifests)
+        status = "ok" if (verify_result["status"] == "ok" and all(item["status"] == "ok" for item in results)
+                          and credential_launch["status"] != "failed") else "failed"
         return {
             "status": status,
             "platform": host_platform,
@@ -154,6 +142,9 @@ def run_runtime_smoke(
             "verify_status": verify_result["status"],
             "checked": len(results),
             "results": results,
+            "credential_launch": credential_launch,
+            "skill_venv": venv,
+            "functional": {"status": "skipped", "results": [], "reason": "functional cases require installed-runtime-smoke"},
         }
 
 
@@ -164,8 +155,10 @@ def run_installed_runtime_smoke(
     skills: set[str] | None = None,
     agents: set[str] | None = None,
     platform: str | None = None,
-    timeout: int = 60,
+    timeout: int | None = None,
     require_complete_coverage: bool = False,
+    require_functional: bool = False,
+    live: bool = False,
 ) -> dict[str, Any]:
     target_platform = current_platform(platform)
     host_platform = current_platform(None)
@@ -585,6 +578,10 @@ def run_installed_runtime_smoke(
         )
 
     results: list[dict[str, Any]] = []
+    functional_rows: list[dict[str, Any]] = []
+    live_rows: list[dict[str, Any]] = []
+    credential_sections: list[dict[str, Any]] = []
+    venv = skill_venv_row(root)
     for runtime_root_text, artifacts in sorted(expected_by_root.items()):
         runtime_root = Path(runtime_root_text)
         selected_for_root = sorted(root_result_skills.get(runtime_root_text, set()))
@@ -608,14 +605,6 @@ def run_installed_runtime_smoke(
             # Execute only the descriptor-read, hash-verified scratch copy.  In
             # particular, never invoke a runner from the mutable installed
             # runtime root after its integrity check.
-            #
-            # The scratch tree is a per-user temporary directory, so it can never
-            # be a root-owned component generation.  Left enforcing, the gate
-            # refuses every credential-bearing skill with exit 127 before its
-            # offline contract runs, which reports as a skill failure and leaves
-            # those contracts permanently unexercised.  Relax the scratch copy,
-            # exactly as the temporary harness relaxes its own.
-            relax_ephemeral_credential_enforcement(scratch_workspace.parent)
             runners = runner_invocations(scratch_workspace.parent, target_platform)
             for skill in selected_for_root:
                 if not has_runtime_smoke_contract(manifests, skill):
@@ -637,6 +626,8 @@ def run_installed_runtime_smoke(
                             else f"runtime skill has unknown smoke coverage: {coverage}"
                         ),
                     })
+                    continue
+                if skill not in runtime_smoke_skill_names(manifests):
                     continue
                 if not runners:
                     results.append({
@@ -661,9 +652,27 @@ def run_installed_runtime_smoke(
                         mode="installed",
                         runtime_root=runtime_root,
                     ))
+            root_results = [row for row in results if row.get("runtime_root") == str(runtime_root)]
+            canary = credential_launch_canary(scratch_workspace.parent, target_platform, root_results,
+                                              manifests=manifests)
+            for row in canary["results"]:
+                row["runtime_root"] = str(runtime_root)
+            credential_sections.append(canary)
+            functional_rows.extend(run_functional_smoke_cases(
+                manifests, skills=selected_for_root, runtime_root=runtime_root, workspace=scratch_workspace,
+                platform=target_platform, venv=venv, timeout=timeout)["results"])
+        if live:
+            live_rows.extend(run_live_checks(manifests, skills=selected_for_root, runtime_root=runtime_root,
+                                             platform=target_platform, timeout=timeout)["results"])
     reported_skills = {
-        str(item.get("skill")) for item in results if isinstance(item.get("skill"), str)
+        str(item.get("skill")) for item in [*results, *functional_rows, *live_rows]
+        if isinstance(item.get("skill"), str)
     }
+    if not live:
+        reported_skills.update(skill for skill in result_skill_set
+                               if skill in live_check_skill_names(manifests)
+                               and skill not in runtime_smoke_skill_names(manifests)
+                               and skill not in functional_smoke_skill_names(manifests))
     for skill in sorted(result_skill_set - reported_skills):
         results.append({
             "status": "failed",
@@ -681,7 +690,21 @@ def run_installed_runtime_smoke(
         for item in results
         if item.get("failure_kind") == "unknown-coverage"
     ]
-    status = aggregate_runtime_status(results)
+    functional = _case_section(functional_rows)
+    live_section = _case_section(live_rows)
+    if not live:
+        live_section["reason"] = "live checks require --live"
+    credential_launch = _case_section([row for section in credential_sections for row in section["results"]])
+    if not credential_launch["results"]:
+        credential_launch = {"status": "not-applicable" if target_platform == "windows" else "skipped",
+                             "results": [], "reason": "no selected credential-bearing offline smoke"}
+    status = aggregate_runtime_status([*results, *functional_rows, *live_rows])
+    if status == "skipped" and reported_skills:
+        status = "ok"
+    if (credential_launch["status"] == "failed"
+            or (require_complete_coverage and any(section["status"] == "skipped" for section in credential_sections))
+            or (require_functional and any(row["status"] != "ok" for row in functional_rows))):
+        status = "failed"
     if unknown_coverage_failures:
         status = "failed"
     declared_exclusions = [
@@ -721,6 +744,10 @@ def run_installed_runtime_smoke(
         runtime_state_mismatched_records=[],
         runtime_boundary_violation_count=0,
         runtime_boundary_violations=[],
+        credential_launch=credential_launch,
+        skill_venv=venv,
+        functional=functional,
+        live=live_section,
         declared_exclusion_count=len(declared_exclusions),
         declared_exclusions=declared_exclusions,
         results=results,
@@ -1044,12 +1071,138 @@ def compare_runtime_state_records(
     }
 
 
+def skill_venv_row(runtime_root: Path) -> dict[str, Any]:
+    """Resolve the operator's venv before constructing any synthetic HOME."""
+    prefix = os.environ.get("AAS_SKILL_VENV") or str(Path.home() / ".agents_skills_venv")
+    if not os.path.lexists(prefix):
+        return {"status": "absent", "path": prefix}
+    try:
+        base = skill_python.attested_base_python(preflight_ensurepip=False)
+        admitted, reason = skill_python.admit_skill_venv(prefix, attested_python=base)
+    except (OSError, ValueError, skill_python.SkillPythonError) as exc:
+        return {"status": "refused", "path": prefix, "reason": str(exc)}
+    return {"status": "admitted" if admitted else "refused", "path": prefix,
+            **({} if admitted else {"reason": reason})}
+
+
+def _case_section(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    statuses = {row["status"] for row in rows}
+    status = "failed" if "failed" in statuses else "ok" if "ok" in statuses else "skipped"
+    return {"status": status, "results": rows}
+
+
+def credential_launch_canary(
+    runtime_root: Path, platform: str, results: list[dict[str, Any]], *,
+    manifests: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if platform == "windows":
+        return {"status": "not-applicable", "results": [], "reason": "POSIX launcher mode check"}
+    if manifests is None:
+        from .manifest import load_manifests
+        manifests = load_manifests()
+    credential_manifest = json.loads((RUNTIME_SOURCE_ROOT.parents[1] / "manifest" / "credential-runtime.json").read_text())
+    commands = {command for consumer in credential_manifest["consumers"] for command in consumer["commands"]}
+    candidate = next((row for row in results if row.get("command_target") in commands), None)
+    if candidate is None:
+        return {"status": "skipped", "results": [], "reason": "no selected credential-bearing offline smoke"}
+    positive = {"kind": "positive", "skill": candidate["skill"], "status": candidate["status"]}
+    negative = {"kind": "negative", "skill": candidate["skill"], "status": "failed"}
+    launcher = runtime_root / "run_skill.sh"
+    original_mode = stat.S_IMODE(launcher.stat().st_mode)
+    workspace = runtime_root / "workspace"
+    try:
+        launcher.chmod(original_mode | stat.S_IWGRP)
+        completed = run_smoke_process(
+            [str(launcher), candidate["command_target"]],
+            args=candidate["args"], timeout=candidate["timeout_seconds"],
+            env=smoke_env(manifests, candidate["skill"], workspace),
+        )
+        negative.update(returncode=completed.returncode,
+                        status="ok" if completed.returncode == 127 and "owner-controlled launcher" in completed.stderr else "failed",
+                        stderr_tail=completed.stderr[-2000:])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        negative["reason"] = type(exc).__name__
+    finally:
+        launcher.chmod(original_mode)
+    return _case_section([positive, negative])
+
+
+def run_functional_smoke_cases(
+    manifests: dict[str, Any], *, skills: list[str], runtime_root: Path, workspace: Path,
+    platform: str, venv: dict[str, Any], timeout: int | None = None,
+) -> dict[str, Any]:
+    rows = []
+    runners = runner_invocations(workspace.parent, platform)
+    for skill in skills:
+        cases = manifests["runtime"]["skills"][skill].get("functional_smoke", {})
+        for name, contract in cases.items():
+            row = {"skill": skill, "case": name, "runtime_root": str(runtime_root)}
+            modules = contract["requires_python_modules"]
+            if venv["status"] == "refused":
+                rows.append({**row, "status": "failed", "reason": venv.get("reason", "skill venv refused")})
+                continue
+            missing = []
+            prefix = venv["path"] if modules and venv["status"] == "admitted" else None
+            if modules and prefix is None:
+                missing = list(modules)
+            elif modules:
+                env = smoke_env(manifests, skill, workspace, contract=contract, skill_venv=prefix, inject_canaries=False)
+                for module in modules:
+                    try:
+                        probe = run_smoke_process(
+                            [str(Path(prefix) / "bin" / "python"), "-I", "-c", "import importlib,sys; importlib.import_module(sys.argv[1])", module],
+                            args=[], env=env,
+                            timeout=smoke_timeout(manifests, skill, timeout, contract=contract),
+                        )
+                        if probe.returncode:
+                            missing.append(module)
+                    except (OSError, subprocess.TimeoutExpired):
+                        missing.append(module)
+            if missing:
+                rows.append({**row, "status": "skipped", "missing_modules": missing,
+                             "reason": "required Python modules unavailable"})
+                continue
+            if not runners:
+                rows.append({**row, "status": "failed", "reason": "no native runtime runner"})
+            for runner in runners:
+                rows.append(run_smoke_case(manifests, skill=skill, runner=runner, workspace=workspace,
+                            platform=platform, timeout=timeout, mode="installed", runtime_root=runtime_root,
+                            contract=contract, case_name=name, skill_venv=prefix, inject_canaries=False))
+    return _case_section(rows)
+
+
+def run_live_checks(
+    manifests: dict[str, Any], *, skills: list[str], runtime_root: Path,
+    platform: str, timeout: int | None = None,
+) -> dict[str, Any]:
+    rows = []
+    for skill in skills:
+        for name, contract in manifests["runtime"]["skills"][skill].get("live_check", {}).items():
+            requires = contract["requires"]
+            missing = [name for name in requires.get("pointer_env", []) if not os.environ.get(name)]
+            missing += [path for path in requires.get("config_files", []) if not Path(path).expanduser().is_file()]
+            if missing:
+                rows.append({"status": "skipped", "skill": skill, "case": name,
+                             "runtime_root": str(runtime_root), "missing_requirements": missing})
+                continue
+            runners = runner_invocations(runtime_root, platform)
+            if not runners:
+                rows.append({"status": "failed", "skill": skill, "case": name, "reason": "no native runtime runner"})
+            for runner in runners:
+                rows.append(run_smoke_case(manifests, skill=skill, runner=runner,
+                            workspace=runtime_root / "workspace", platform=platform, timeout=timeout,
+                            mode="installed", runtime_root=runtime_root, contract=contract,
+                            case_name=name, inject_canaries=False, live=True))
+    return _case_section(rows)
+
+
 def selected_runtime_skills(manifests: dict[str, Any], skills: set[str] | None) -> list[str]:
-    smoke_supported = set(runtime_smoke_skill_names(manifests)) or set(RUNTIME_SMOKE_SKILLS)
-    selected = set(smoke_supported) if skills is None else set(skills)
-    unknown = sorted(selected - smoke_supported)
+    supported = {skill for skill in manifests.get("runtime", {}).get("skills", {})
+                 if has_runtime_smoke_contract(manifests, skill)}
+    selected = set(runtime_smoke_skill_names(manifests)) if skills is None else set(skills)
+    unknown = sorted(selected - supported)
     if unknown:
-        raise ValueError("skills do not have offline runtime smoke coverage: " + ", ".join(unknown))
+        raise ValueError("skills do not have runtime smoke coverage: " + ", ".join(unknown))
     return sorted(selected)
 
 
@@ -1065,8 +1218,19 @@ def runtime_smoke_skill_names(manifests: dict[str, Any]) -> list[str]:
     )
 
 
+def functional_smoke_skill_names(manifests: dict[str, Any]) -> list[str]:
+    return sorted(skill for skill, spec in manifests.get("runtime", {}).get("skills", {}).items()
+                  if isinstance(spec, dict) and bool(spec.get("functional_smoke")))
+
+
+def live_check_skill_names(manifests: dict[str, Any]) -> list[str]:
+    return sorted(skill for skill, spec in manifests.get("runtime", {}).get("skills", {}).items()
+                  if isinstance(spec, dict) and bool(spec.get("live_check")))
+
+
 def has_runtime_smoke_contract(manifests: dict[str, Any], skill: str) -> bool:
-    return skill in runtime_smoke_skill_names(manifests)
+    return skill in (runtime_smoke_skill_names(manifests) + functional_smoke_skill_names(manifests)
+                     + live_check_skill_names(manifests))
 
 
 def runtime_smoke_coverage_status(manifests: dict[str, Any], skill: str) -> str:
@@ -1126,94 +1290,69 @@ def run_smoke_case(
     runner: dict[str, Any],
     workspace: Path,
     platform: str,
-    timeout: int,
+    timeout: int | None,
     mode: str = "temporary",
     runtime_root: Path | None = None,
+    contract: dict[str, Any] | None = None,
+    case_name: str | None = None,
+    skill_venv: str | None = None,
+    inject_canaries: bool = True,
+    live: bool = False,
 ) -> dict[str, Any]:
-    command_target = runtime_command_target(manifests, skill, platform, runner["name"])
-    args = smoke_args(manifests, skill, workspace)
-    effective_timeout = smoke_timeout(manifests, skill, timeout)
+    contract = contract if contract is not None else manifests["runtime"]["skills"][skill]["smoke"]
+    command_target = _contract_command_target(contract, platform, runner["name"])
+    if command_target is None:
+        return {"status": "failed", "skill": skill, "case": case_name, "reason": "no native command in contract"}
+    args = smoke_args(manifests, skill, workspace, contract=contract, skill_venv=skill_venv)
+    effective_timeout = smoke_timeout(manifests, skill, timeout, contract=contract)
     command = [*runner["argv"], command_target]
-    env = smoke_env(manifests, skill, workspace)
     checks_override: list[dict[str, Any]] | None = None
+    result: dict[str, Any] = {
+        "status": "failed", "mode": mode, "runner": runner["name"], "skill": skill,
+        "command_target": command_target, "args": args, "timeout_seconds": effective_timeout,
+        **({"runtime_root": str(runtime_root)} if runtime_root is not None else {}),
+        **({"case": case_name} if case_name is not None else {}),
+    }
+
+    def leakage(stdout: str, stderr: str) -> list[dict[str, Any]]:
+        return canary_checks(manifests, skill, stdout, stderr) if inject_canaries and not live else []
+
     try:
-        if skill == "deep-research-workflow" and args == ["selftest"]:
+        if live:
+            env = dict(os.environ)
+            env.update({name: _expand_smoke_value(value, _smoke_replacements(workspace, skill_venv))
+                        for name, value in contract.get("env", {}).items()})
+        else:
+            materialize_smoke_fixtures(contract, workspace, skill_venv=skill_venv)
+            env = smoke_env(manifests, skill, workspace, contract=contract,
+                            skill_venv=skill_venv, inject_canaries=inject_canaries)
+        if skill == "deep-research-workflow" and args == ["selftest"] and case_name is None and not live:
             completed, checks_override = run_deep_research_workflow_smoke(
-                command,
-                workspace=workspace,
-                timeout=effective_timeout,
-                env=env,
-                args=args,
+                command, workspace=workspace, timeout=effective_timeout, env=env,
+                args=args, manifests=manifests, requested_timeout=timeout,
             )
         else:
             completed = run_smoke_process(command, args=args, timeout=effective_timeout, env=env)
     except subprocess.TimeoutExpired as exc:
-        stdout = smoke_output_text(exc.stdout)
-        stderr = smoke_output_text(exc.stderr)
-        return {
-            "status": "failed",
-            "mode": mode,
-            "runner": runner["name"],
-            "skill": skill,
-            "command_target": command_target,
-            "args": args,
-            "timeout_seconds": effective_timeout,
-            "returncode": None,
-            "checks": [
-                {"name": "completed-before-timeout", "ok": False},
-                *canary_checks(manifests, skill, stdout, stderr),
-            ],
-            "stdout_tail": stdout[-2000:],
-            "stderr_tail": stderr[-2000:],
-            **({"runtime_root": str(runtime_root)} if runtime_root is not None else {}),
-        }
-    except OSError as exc:
-        return {
-            "status": "failed",
-            "mode": mode,
-            "runner": runner["name"],
-            "skill": skill,
-            "command_target": command_target,
-            "args": args,
-            "timeout_seconds": effective_timeout,
-            "returncode": None,
-            "failure_kind": "launch-error",
-            "checks": [
-                {"name": "process-launched", "ok": False, "reason": type(exc).__name__},
-                *canary_checks(manifests, skill, "", ""),
-            ],
-            "stdout_tail": "",
-            "stderr_tail": f"runtime smoke launch failed: {type(exc).__name__}",
-            **({"runtime_root": str(runtime_root)} if runtime_root is not None else {}),
-        }
-    try:
-        checks = validate_smoke_output(skill, completed, args) if checks_override is None else checks_override
-    except Exception as exc:
-        checks = [
-            {"name": "exit-zero", "ok": completed.returncode == 0},
-            {"name": "output-validation", "ok": False, "reason": str(exc)},
-        ]
-    # Appended out here rather than inside validate_smoke_output, which returns
-    # early on a non-zero exit and is bypassed entirely when parsing raises or a
-    # checks_override is supplied. Those are the paths a leak most likely takes,
-    # so the canary scan has to outlive all of them.
-    checks = [*checks, *canary_checks(manifests, skill, completed.stdout, completed.stderr)]
-    status = "ok" if completed.returncode == 0 and all(check["ok"] for check in checks) else "failed"
-    result = {
-        "status": status,
-        "mode": mode,
-        "runner": runner["name"],
-        "skill": skill,
-        "command_target": command_target,
-        "args": args,
-        "timeout_seconds": effective_timeout,
-        "returncode": completed.returncode,
-        "checks": checks,
-        "stdout_tail": completed.stdout[-2000:],
-        "stderr_tail": completed.stderr[-2000:],
-    }
-    if runtime_root is not None:
-        result["runtime_root"] = str(runtime_root)
+        stdout, stderr = smoke_output_text(exc.stdout), smoke_output_text(exc.stderr)
+        return {**result, "returncode": None, "checks": [
+            {"name": "completed-before-timeout", "ok": False}, *leakage(stdout, stderr),
+        ], "stdout_tail": stdout[-2000:], "stderr_tail": stderr[-2000:]}
+    except (OSError, ValueError) as exc:
+        return {**result, "returncode": None, "failure_kind": "launch-error", "checks": [
+            {"name": "process-launched", "ok": False, "reason": type(exc).__name__}, *leakage("", ""),
+        ], "stdout_tail": "", "stderr_tail": f"runtime smoke launch failed: {type(exc).__name__}"}
+    if checks_override is None:
+        failures = judge_expect(contract["expect"], completed, workspace / "runtime-smoke") if "expect" in contract else ["missing-expect"]
+        checks = [{"name": "output-validation", "ok": not failures, "failures": failures}]
+    else:
+        checks = checks_override
+    checks = [*checks, *leakage(completed.stdout, completed.stderr)]
+    result.update({
+        "status": "ok" if all(check["ok"] for check in checks) else "failed",
+        "returncode": completed.returncode, "checks": checks,
+        "stdout_tail": completed.stdout[-2000:], "stderr_tail": completed.stderr[-2000:],
+    })
     return result
 
 
@@ -1237,50 +1376,36 @@ def run_smoke_process(
 
 
 def run_deep_research_workflow_smoke(
-    command: list[str],
-    *,
-    workspace: Path,
-    timeout: int,
-    env: dict[str, str],
-    args: list[str],
+    command: list[str], *, workspace: Path, timeout: int,
+    env: dict[str, str], args: list[str], manifests: dict[str, Any],
+    requested_timeout: int | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[dict[str, Any]] | None]:
     first = run_smoke_process(command, args=args, timeout=timeout, env=env)
     if first.returncode == 0 or not is_deep_research_selftest_unsupported(first):
         return first, None
-
-    smoke_dir = workspace / "runtime-smoke"
-    out_dir = smoke_dir / "deep"
-    init_args = ["init", "--dir", str(smoke_dir), "--subdir", "deep", "--structured", "--schema-version", "2"]
-    init_result = run_smoke_process(command, args=init_args, timeout=timeout, env=env)
-
+    contracts = manifests["runtime"]["skills"]["deep-research-workflow"].get("functional_smoke", {})
     checks: list[dict[str, Any]] = [
         {"name": "deep-research-selftest-unsupported", "ok": True},
-        {"name": "deep-research-smoke-init", "ok": init_result.returncode == 0},
+        *canary_checks(manifests, "deep-research-workflow", first.stdout, first.stderr),
     ]
-    if init_result.returncode != 0:
-        return init_result, checks
-
-    validate_args = [
-        "validate",
-        "--dir",
-        str(out_dir),
-        "--schema-version",
-        "2",
-    ]
-    validate_result = run_smoke_process(command, args=validate_args, timeout=timeout, env=env)
-    try:
-        validate_checks = validate_smoke_output(
-            "deep-research-workflow",
-            validate_result,
-            validate_args,
+    completed = first
+    for name in ("init", "validate"):
+        contract = contracts.get(name)
+        if not isinstance(contract, dict) or "expect" not in contract:
+            return completed, [*checks, {"name": "output-validation", "ok": False, "failures": [f"missing-deep-fallback:{name}"]}]
+        materialize_smoke_fixtures(contract, workspace)
+        arguments = smoke_args(manifests, "deep-research-workflow", workspace, contract=contract)
+        completed = run_smoke_process(
+            command, args=arguments,
+            timeout=smoke_timeout(manifests, "deep-research-workflow", requested_timeout, contract=contract),
+            env=smoke_env(manifests, "deep-research-workflow", workspace, contract=contract),
         )
-    except Exception as exc:
-        validate_checks = [
-            {"name": "exit-zero", "ok": validate_result.returncode == 0},
-            {"name": "output-validation", "ok": False, "reason": str(exc)},
-        ]
-    checks.extend(validate_checks)
-    return validate_result, checks
+        failures = judge_expect(contract["expect"], completed, workspace / "runtime-smoke")
+        checks.append({"name": "output-validation", "case": name, "ok": not failures, "failures": failures})
+        checks.extend(canary_checks(manifests, "deep-research-workflow", completed.stdout, completed.stderr))
+        if completed.returncode != 0:
+            break
+    return completed, checks
 
 
 def is_deep_research_selftest_unsupported(result: subprocess.CompletedProcess[str]) -> bool:
@@ -1325,7 +1450,13 @@ def runtime_contract_command_target(
     smoke = spec.get("smoke") if isinstance(spec, dict) else None
     if not isinstance(smoke, dict):
         return None
-    command = smoke.get("command")
+    return _contract_command_target(smoke, platform, runner_name)
+
+
+def _contract_command_target(
+    contract: dict[str, Any], platform: str, runner_name: str | None,
+) -> str | None:
+    command = contract.get("command")
     if isinstance(command, dict):
         keys: tuple[str, ...]
         if platform == "windows" and runner_name == "run_skill.ps1":
@@ -1351,68 +1482,99 @@ def normalize_runtime_command_target(target: str) -> str:
     return path.as_posix()
 
 
-def smoke_args(manifests: dict[str, Any], skill: str, workspace: Path) -> list[str]:
-    smoke_dir = workspace / "runtime-smoke"
-    smoke_dir.mkdir(parents=True, exist_ok=True)
-    spec = manifests.get("runtime", {}).get("skills", {}).get(skill, {})
-    smoke = spec.get("smoke") if isinstance(spec, dict) else None
-    if isinstance(smoke, dict) and isinstance(smoke.get("args"), list):
-        replacements = {
-            "{workspace}": str(workspace),
-            "{smoke_dir}": str(smoke_dir),
-        }
-        args = []
-        for item in smoke["args"]:
-            text = str(item)
-            for placeholder, value in replacements.items():
-                text = text.replace(placeholder, value)
-            args.append(text)
-        return args
-    if skill == "formal-skeleton-helper":
-        return ["--output-dir", str(smoke_dir / "formal")]
-    if skill == "get-available-resources":
-        return ["--output", str(smoke_dir / "resources.json")]
-    if skill == "deep-research-workflow":
-        return ["init", "--dir", str(smoke_dir), "--subdir", "deep", "--structured"]
-    if skill == "axiom-axle-mcp":
-        return ["smoke"]
-    if skill == "lean-explore-mcp":
-        return ["smoke"]
-    if skill in {"lean-formalization-intake", "lean-research-library", "lean-strict-verification-gate"}:
-        return ["doctor"]
-    return []
+def _smoke_replacements(workspace: Path, skill_venv: str | None = None) -> dict[str, str]:
+    return {"{workspace}": str(workspace), "{smoke_dir}": str(workspace / "runtime-smoke"),
+            "{skill_venv}": skill_venv or ""}
 
 
-def smoke_timeout(manifests: dict[str, Any], skill: str, requested_timeout: int) -> int:
-    smoke = manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
-    contract_timeout = smoke.get("timeout_seconds") if isinstance(smoke, dict) else None
+def _expand_smoke_value(value: str, replacements: dict[str, str]) -> str:
+    for placeholder, replacement in replacements.items():
+        value = value.replace(placeholder, replacement)
+    return value
+
+
+def smoke_args(
+    manifests: dict[str, Any], skill: str, workspace: Path, *,
+    contract: dict[str, Any] | None = None, skill_venv: str | None = None,
+) -> list[str]:
+    contract = contract if contract is not None else manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
+    return [_expand_smoke_value(item, _smoke_replacements(workspace, skill_venv)) for item in contract.get("args", [])]
+
+
+def smoke_timeout(
+    manifests: dict[str, Any], skill: str, requested_timeout: int | None, *,
+    contract: dict[str, Any] | None = None,
+) -> int:
+    contract = contract if contract is not None else manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
+    contract_timeout = contract.get("timeout_seconds")
+    if requested_timeout is None:
+        return contract_timeout if isinstance(contract_timeout, int) and contract_timeout > 0 else 60
     if isinstance(contract_timeout, int) and contract_timeout > 0:
         return min(requested_timeout, contract_timeout)
     return requested_timeout
 
 
-def smoke_env(manifests: dict[str, Any], skill: str, workspace: Path) -> dict[str, str]:
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if not env_name_looks_secret(key)
+def _private_smoke_directory(path: Path, smoke_dir: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    current = path
+    while current == smoke_dir or smoke_dir in current.parents:
+        current.chmod(0o700)
+        if current == smoke_dir:
+            break
+        current = current.parent
+
+
+def materialize_smoke_fixtures(
+    contract: dict[str, Any], workspace: Path, *, skill_venv: str | None = None,
+) -> None:
+    smoke_dir = workspace / "runtime-smoke"
+    _private_smoke_directory(smoke_dir, smoke_dir)
+    replacements = _smoke_replacements(workspace, skill_venv)
+    for fixture in contract.get("fixtures", []):
+        destination = _smoke_path(smoke_dir, fixture["to"])
+        _private_smoke_directory(destination.parent, smoke_dir)
+        if "content" in fixture:
+            payload = _expand_smoke_value(fixture["content"], replacements).encode("utf-8")
+        else:
+            source = _smoke_path(RUNTIME_SOURCE_ROOT, fixture["copy_from"])
+            payload = source.read_bytes()
+        destination.write_bytes(payload)
+        destination.chmod(0o600)
+
+
+def smoke_env(
+    manifests: dict[str, Any], skill: str, workspace: Path, *,
+    contract: dict[str, Any] | None = None, skill_venv: str | None = None,
+    inject_canaries: bool = True,
+) -> dict[str, str]:
+    discarded = {
+        "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
+        "AAS_RUNTIME_PYTHON", "AAS_SKILL_VENV", "AAS_RUNTIME_PYTHON_PREFIX", "DOCLING_PYTHON",
+        "PYTHONPATH", "VIRTUAL_ENV", "AAS_RUNTIME_ROOT", "AAS_RUNTIME_WORKSPACE",
+        "AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE", "OPENCLAW_WORKSPACE",
     }
+    env = {key: value for key, value in os.environ.items() if key not in discarded and not env_name_looks_secret(key)}
+    smoke_dir = workspace / "runtime-smoke"
+    home = smoke_dir / "home"
+    _private_smoke_directory(home, smoke_dir)
+    env["HOME"] = str(home)
+    if os.name == "posix":
+        env["PATH"] = "/usr/bin:/bin"
     env["AAS_ALLOW_EXTERNAL_RUNTIME_WORKSPACE"] = "1"
     env["AAS_RUNTIME_WORKSPACE"] = str(workspace)
-    env["PYTHONUTF8"] = env.get("PYTHONUTF8", "1")
-    env["PYTHONIOENCODING"] = env.get("PYTHONIOENCODING", "utf-8")
-    # The smoke runs a dispatcher out of the canonical tree, and importing it
-    # writes ``__pycache__`` directories the runtime inventory check then denies
-    # as sources it never enrolled. Keep the child from emitting bytecode so a
-    # smoke run leaves the tree exactly as it found it.
-    env["PYTHONDONTWRITEBYTECODE"] = env.get("PYTHONDONTWRITEBYTECODE", "1")
-    smoke = manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
-    env_canaries = smoke.get("env_canaries", {}) if isinstance(smoke, dict) else {}
-    if isinstance(env_canaries, dict):
-        for key, value in env_canaries.items():
-            if isinstance(key, str) and isinstance(value, str):
-                env[key] = value
-    plant_secret_file_canaries(manifests, skill, workspace, env)
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    contract = contract if contract is not None else manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
+    for key, value in contract.get("env", {}).items():
+        env[key] = _expand_smoke_value(value, _smoke_replacements(workspace, skill_venv))
+    if skill_venv:
+        env["AAS_SKILL_VENV"] = skill_venv
+    if inject_canaries:
+        smoke = manifests.get("runtime", {}).get("skills", {}).get(skill, {}).get("smoke", {})
+        for key, value in smoke.get("env_canaries", {}).items():
+            env[key] = value
+        plant_secret_file_canaries(manifests, skill, workspace, env)
     return env
 
 
@@ -1510,249 +1672,172 @@ def canary_checks(
     ]
 
 
-def validate_smoke_output(
-    skill: str,
-    completed: subprocess.CompletedProcess[str],
-    args: list[str],
-) -> list[dict[str, Any]]:
-    checks = [{"name": "exit-zero", "ok": completed.returncode == 0}]
-    if completed.returncode != 0:
-        return checks
-    if skill == "graph-verifier":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
-        checks.append({"name": "matches-expected", "ok": payload.get("matches_expected") is True})
-    elif skill == "formal-skeleton-helper":
-        payload = parse_json_stdout(completed.stdout)
-        output_path = Path(payload.get("path", ""))
-        checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
-        checks.append({"name": "output-file-exists", "ok": output_path.is_file()})
-    elif skill == "get-available-resources":
-        output_path = Path(args[args.index("--output") + 1]) if "--output" in args else Path(".codex_resources.json")
-        checks.append({"name": "output-file-exists", "ok": output_path.is_file()})
-        payload = json.loads(output_path.read_text(encoding="utf-8")) if output_path.is_file() else {}
-        checks.append({"name": "resource-json-has-os", "ok": "os" in payload})
-        checks.append({"name": "resource-json-has-cpu", "ok": "cpu" in payload})
-    elif skill == "deep-research-workflow":
-        if args == ["selftest"]:
-            payload = parse_json_stdout(completed.stdout)
-            names = {item.get("name") for item in payload.get("scenarios", []) if isinstance(item, dict)}
-            required = {
-                "v2_ready_success",
-                "v2_ready_failure",
-                "v2_ready_with_caveats_success",
-                "v2_ready_with_caveats_failure",
-                "agd_evidence_success",
-                "agd_evidence_failure",
-                "weak_computation_failure",
-                "formal_promotion_success",
-                "formal_promotion_failure",
-                "artifact_ref_path_safety",
-            }
-            checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-            checks.append({"name": "schema-version", "ok": payload.get("schema_version") == "deep-research.selftest.v1"})
-            checks.append({"name": "positive-count", "ok": payload.get("positive_count") == 4})
-            checks.append({"name": "negative-count", "ok": payload.get("negative_count") == 6})
-            checks.append({"name": "scenario-names", "ok": names == required})
-            checks.append({"name": "scenario-results", "ok": all(item.get("passed") for item in payload.get("scenarios", []) if isinstance(item, dict))})
+_MISSING = object()
+_JSON_PATH_PART = re.compile(r"([^.[\]]+)|\[(\d+|\*)\]")
+
+
+def _json_values(payload: Any, path: str) -> list[Any]:
+    if path == "":
+        return [payload]
+    values = [payload]
+    position = 0
+    for match in _JSON_PATH_PART.finditer(path):
+        separator = path[position:match.start()]
+        if separator not in ("", ".") or (position == 0 and separator):
+            raise ValueError(f"invalid JSON path: {path}")
+        key, index = match.groups()
+        following = []
+        for value in values:
+            if key is not None:
+                following.append(value.get(key, _MISSING) if isinstance(value, dict) else _MISSING)
+            elif index == "*":
+                following.extend(value if isinstance(value, list) else [_MISSING])
+            else:
+                number = int(index)
+                following.append(value[number] if isinstance(value, list) and number < len(value) else _MISSING)
+        values = following
+        position = match.end()
+    if position != len(path) or not position:
+        raise ValueError(f"invalid JSON path: {path}")
+    return values
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_json_equal(left[key], right[key]) for key in left)
+    return left == right
+
+
+def _json_assertions(assertions: list[dict[str, Any]], payload: Any, *, label: str) -> list[str]:
+    failures = []
+    types = {
+        "null": lambda value: value is None,
+        "boolean": lambda value: isinstance(value, bool),
+        "object": lambda value: isinstance(value, dict),
+        "array": lambda value: isinstance(value, list),
+        "number": lambda value: isinstance(value, (int, float)) and not isinstance(value, bool),
+        "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+        "string": lambda value: isinstance(value, str),
+    }
+    for assertion in assertions:
+        path = assertion["path"]
+        operator = next(key for key in assertion if key != "path")
+        expected = assertion[operator]
+        values = _json_values(payload, path)
+        if operator == "absent":
+            passed = not values or all(value is _MISSING for value in values)
+        elif operator == "set_equals":
+            passed = (
+                all(value is not _MISSING for value in values)
+                and all(any(_json_equal(value, item) for item in expected) for value in values)
+                and all(any(_json_equal(value, item) for value in values) for item in expected)
+            )
+        elif not values or any(value is _MISSING for value in values):
+            passed = False
+        elif operator == "exists":
+            passed = True
+        elif operator == "equals_path":
+            other = _json_values(payload, expected)
+            passed = len(values) == len(other) and all(
+                value is not _MISSING and _json_equal(value, actual) for actual, value in zip(values, other)
+            )
         else:
-            dir_index = args.index("--dir")
-            out_dir = Path(args[dir_index + 1])
-            if "--subdir" in args:
-                out_dir = out_dir / args[args.index("--subdir") + 1]
-            for name in (
-                "sources.md",
-                "analysis.md",
-                "report.md",
-                "sources.jsonl",
-                "claims.jsonl",
-                "guards.jsonl",
-                "delivery.json",
-            ):
-                checks.append({"name": f"{name}-exists", "ok": (out_dir / name).is_file()})
-            checks.append({"name": "delegation-dir-exists", "ok": (out_dir / "delegation").is_dir()})
-            if "validate" in args:
-                payload = parse_json_stdout(completed.stdout)
-                checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-    elif skill in {"lean-formalization-intake", "lean-strict-verification-gate"}:
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
-        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
-        checks.append({
-            "name": "lean-status-recorded",
-            "ok": payload.get("tool_status", {}).get("lean", {}).get("status") in {"available", "tool_unavailable"},
-        })
-    elif skill == "lean-research-library":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
-        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({
-            "name": "lean-status-recorded",
-            "ok": payload.get("tool_status", {}).get("lean", {}).get("status") in {"available", "tool_unavailable"},
-        })
-        # an unconfigured library is a reported state with guidance, never a smoke failure
-        checks.append({"name": "library-state-recorded", "ok": isinstance(payload.get("library_configured"), bool)})
-    elif skill == "axiom-axle-mcp":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
-        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
-        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
-        checks.append({"name": "placeholder-present", "ok": payload.get("snippet_contains_placeholder") is True})
-        checks.append({"name": "package-pinned", "ok": payload.get("snippet_package_pinned") is True})
-    elif skill == "opengauss":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok" and payload.get("ok") is True})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
-        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
-        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
-        checks.append({"name": "gauss-not-launched", "ok": payload.get("gauss_launched") is False})
-        checks.append({"name": "placeholder-present", "ok": payload.get("snippet_contains_placeholder") is True})
-        checks.append({"name": "install-pointer-present", "ok": payload.get("snippet_has_install_pointer") is True})
-        checks.append({"name": "windows-live-policy", "ok": payload.get("native_windows_refused") is True})
-        policy = payload.get("evidence_policy") if isinstance(payload.get("evidence_policy"), dict) else {}
-        checks.append({
-            "name": "evidence-policy-present",
-            "ok": "opengauss_run" in policy and "formal_check" in policy,
-        })
-    elif skill == "lean-explore-mcp":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
-        checks.append({"name": "installs-not-attempted", "ok": payload.get("installs_attempted") is False})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
-        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
-        checks.append({"name": "downloads-not-attempted", "ok": payload.get("downloads_attempted") is False})
-        checks.append({"name": "api-placeholder-present", "ok": payload.get("api_snippet_contains_placeholder") is True})
-        checks.append({"name": "local-snippet-omits-api-key", "ok": payload.get("local_snippet_omits_api_key") is True})
-    elif skill == "self-improving-agent":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "no-auto-install", "ok": payload.get("no_auto_install") is True})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
-        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
-        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
-        checks.append({"name": "integration-plan-fields", "ok": bool(payload.get("integration_plan_fields"))})
-        checks.append({"name": "windows-error-patterns", "ok": payload.get("windows_error_patterns") is True})
-        checks.append({"name": "windows-safety-patterns", "ok": payload.get("windows_safety_patterns") is True})
-    elif skill == "submission-venue-selector":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
-        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
-        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
-        checks.append({"name": "real-secrets-not-read", "ok": payload.get("real_secrets_read") is False})
-        checks.append({"name": "downloads-not-attempted", "ok": payload.get("downloads_attempted") is False})
-        checks.append({"name": "mutations-not-attempted", "ok": payload.get("mutations_attempted") is False})
-        checks.append({"name": "schema-list-present", "ok": "delivery.json" in payload.get("schemas", [])})
-    elif skill == "autonomous-research-loop-runtime":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
-        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
-        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
-        checks.append({"name": "provider-cli-not-attempted", "ok": payload.get("provider_cli_attempted") is False})
-        checks.append({"name": "subagents-not-spawned", "ok": payload.get("subagents_spawned") is False})
-        checks.append({"name": "run-dir-created", "ok": payload.get("run_dir_created") is True})
-        checks.append({"name": "validation-ok", "ok": payload.get("validation_status") == "ok"})
-    elif skill == "url-to-screenshot-runtime":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
-        checks.append({"name": "status-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "no-failures", "ok": payload.get("failures") == []})
-        u2s_passed = payload.get("passed")
-        u2s_total = payload.get("total")
-        checks.append({
-            "name": "all-passed",
-            "ok": isinstance(u2s_passed, int) and isinstance(u2s_total, int) and u2s_passed == u2s_total,
-        })
-        # A selftest that asserts nothing also reports nothing failing, so an
-        # empty run has to count as a failure rather than a clean sheet.
-        checks.append({"name": "checks-not-empty", "ok": isinstance(u2s_total, int) and u2s_total > 0})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
-        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
-        checks.append({"name": "browser-not-launched", "ok": payload.get("browser_launched") is False})
-    elif skill == "venue-ranking-evidence":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("status") == "ok"})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
-        checks.append({"name": "real-secrets-not-read", "ok": payload.get("real_secrets_read") is False})
-        checks.append({
-            "name": "source-registry-validated",
-            "ok": isinstance(payload.get("validated_sources"), int) and payload.get("validated_sources", 0) > 0,
-        })
-        checks.append({"name": "ambiguity-preserved", "ok": payload.get("ambiguous_fixture_matches") == 2})
-    elif skill == "remote-bridge":
-        payload = parse_json_stdout(completed.stdout)
-        checks.append({"name": "json-ok", "ok": payload.get("ok") is True and payload.get("status") == "ok"})
-        checks.append({"name": "offline-smoke", "ok": payload.get("smoke_mode") == "offline"})
-        checks.append({"name": "network-not-required", "ok": payload.get("network_required") is False})
-        checks.append({"name": "live-api-not-attempted", "ok": payload.get("live_api_attempted") is False})
-        checks.append({"name": "package-install-not-attempted", "ok": payload.get("package_install_attempted") is False})
-        checks.append({"name": "server-not-started", "ok": payload.get("server_started") is False})
-        checks.append({"name": "config-not-written", "ok": payload.get("config_written") is False})
-        checks.append({"name": "real-secrets-not-read", "ok": payload.get("real_secrets_read") is False})
-        required_checks = {
-            "arm_conflict",
-            "digest",
-            "cas",
-            "single_use_approval",
-            "inbox_once",
-            "parse",
-            "redaction",
-        }
-        reported = set(payload.get("checks") or [])
-        checks.append({"name": "selftest-checks", "ok": required_checks.issubset(reported)})
-    elif skill in {"manim-math-animation", "slides-to-video"}:
-        payload = parse_json_stdout(completed.stdout)
-        clip_passed = payload.get("passed")
-        clip_total = payload.get("total")
-        checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
-        checks.append({"name": "no-failures", "ok": payload.get("failures") == []})
-        checks.append({
-            "name": "all-passed",
-            "ok": isinstance(clip_passed, int) and isinstance(clip_total, int) and clip_passed == clip_total,
-        })
-        # A selftest that asserts nothing also reports nothing failing, so an
-        # empty run has to count as a failure rather than a clean sheet.
-        checks.append({"name": "checks-not-empty", "ok": isinstance(clip_total, int) and clip_total > 0})
-    elif skill == "send-email":
-        payload = parse_json_stdout(completed.stdout)
-        mail_passed = payload.get("passed")
-        checks.append({"name": "json-ok", "ok": payload.get("ok") is True})
-        checks.append({"name": "selftest-command", "ok": payload.get("command") == "selftest"})
-        checks.append({"name": "no-failed-checks", "ok": payload.get("failed") == 0})
-        checks.append({"name": "checks-not-empty", "ok": isinstance(mail_passed, int) and mail_passed > 0})
-    return checks
+            def matches(value: Any) -> bool:
+                if operator == "equals":
+                    return _json_equal(value, expected)
+                if operator == "regex":
+                    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+                    return re.search(expected, text, re.MULTILINE) is not None
+                if operator == "min_len":
+                    return isinstance(value, (list, str, dict)) and len(value) >= expected
+                if operator == "contains":
+                    if isinstance(value, list):
+                        return any(_json_equal(item, expected) for item in value)
+                    return isinstance(value, dict) and isinstance(expected, str) and expected in value
+                if operator == "type":
+                    return types[expected](value)
+                if operator == "minimum":
+                    return types["number"](value) and value >= expected
+                raise ValueError(f"unknown JSON assertion operator: {operator}")
+            passed = all(matches(value) for value in values)
+        if not passed:
+            failures.append(f"{label}:{path}:{operator}")
+    return failures
+
+
+def _smoke_path(smoke_dir: Path, raw: str) -> Path:
+    relative = raw.removeprefix("{smoke_dir}/")
+    path = PurePosixPath(relative)
+    if not relative or path.is_absolute() or ".." in path.parts or "\\" in relative:
+        raise ValueError(f"unsafe smoke path: {raw}")
+    target = smoke_dir.joinpath(*path.parts)
+    if not resolved_path_within(smoke_dir, target):
+        raise ValueError(f"smoke path escapes its directory: {raw}")
+    return target
+
+
+def judge_expect(
+    expect: dict[str, Any], completed: subprocess.CompletedProcess[str], smoke_dir: Path,
+) -> list[str]:
+    """Return contract assertion failures in order, without changing the filesystem."""
+    failures: list[str] = []
+    try:
+        if "exit_code" in expect or "alternatives" not in expect:
+            codes = expect.get("exit_code", [0])
+            codes = [codes] if isinstance(codes, int) else codes
+            if completed.returncode not in codes:
+                failures.append("exit_code")
+        for key, expected in expect.items():
+            if key == "exit_code":
+                continue
+            if key in {"stdout_regex", "stderr_regex", "stdout_not_regex", "stderr_not_regex"}:
+                stream = completed.stdout if key.startswith("stdout") else completed.stderr
+                for pattern in [expected] if isinstance(expected, str) else expected:
+                    matched = re.search(pattern, stream, re.MULTILINE) is not None
+                    if matched == ("_not_" in key):
+                        failures.append(f"{key}:{pattern}")
+            elif key == "stdout_json":
+                try:
+                    payload = json.loads(completed.stdout)
+                except (TypeError, json.JSONDecodeError):
+                    failures.append("stdout_json:invalid-json")
+                else:
+                    failures.extend(_json_assertions(expected, payload, label="stdout_json"))
+            elif key == "files":
+                for item in expected:
+                    raw = item if isinstance(item, str) else item["path"]
+                    try:
+                        path = _smoke_path(smoke_dir, raw)
+                        if not path.exists():
+                            failures.append(f"files:{raw}:missing")
+                        elif isinstance(item, dict):
+                            if "type" in item:
+                                matches = path.is_file() if item["type"] == "file" else path.is_dir()
+                                if not matches:
+                                    failures.append(f"files:{raw}:type")
+                            elif "regex" in item:
+                                if re.search(item["regex"], path.read_text(encoding="utf-8"), re.MULTILINE) is None:
+                                    failures.append(f"files:{raw}:regex")
+                            elif "json" in item:
+                                payload = json.loads(path.read_text(encoding="utf-8"))
+                                failures.extend(_json_assertions(item["json"], payload, label=f"files:{raw}"))
+                    except (OSError, UnicodeError, ValueError):
+                        failures.append(f"files:{raw}:unsafe-or-unreadable")
+            elif key == "alternatives":
+                branch_failures = [judge_expect(branch, completed, smoke_dir) for branch in expected]
+                if not any(not branch for branch in branch_failures):
+                    failures.append("alternatives:no-match")
+                    for index, branch in enumerate(branch_failures):
+                        failures.extend(f"alternatives[{index}]:{failure}" for failure in branch)
+            else:
+                failures.append(f"unknown-expect-operator:{key}")
+    except (KeyError, TypeError, ValueError, re.error) as exc:
+        failures.append(f"invalid-expect:{type(exc).__name__}")
+    return failures
 
 
 def make_trusted_scratch_directory(path: Path, ceiling: Path) -> None:

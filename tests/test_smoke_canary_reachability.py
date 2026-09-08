@@ -15,22 +15,11 @@ sys.path.insert(0, str(ROOT))
 from installer.ai_agents_skills import runtime_smoke  # noqa: E402
 from installer.ai_agents_skills.manifest import load_manifests  # noqa: E402
 
-# Skills whose credential path cannot be exercised from a temporary smoke runtime,
-# so no canary can be delivered to the process at all:
-#
-#   autonomous-research-loop-runtime -- any pointer sets ``arl_credential_broker=1``
-#     and the broker's ``_load_module_file`` still requires a root-owned
-#     dependency ("untrusted broker dependency: load_secret_env.py"), which an
-#     owner-controlled scratch copy can never be.
-#   lean-explore-mcp -- a populated secrets file makes the wrapper take its
-#     credential-bearing branch, whose ``root_owned_metadata`` gate refuses a
-#     helper the invoking user owns.
-#
-# These are recorded rather than silently tolerated, and the second test below
-# retires an entry automatically the moment its canary does become reachable.
+# ARL deliberately keeps its orchestrator credential-blind. The broker owns the
+# keys and projects them only to admitted provider/compute children; the stub
+# here represents the orchestrator, so direct delivery would violate that rule.
 UNREACHABLE_BY_DESIGN = {
-    "autonomous-research-loop-runtime": "the ARL credential broker still requires a root-owned dependency",
-    "lean-explore-mcp": "the wrapper's credential branch still requires a root-owned helper",
+    "autonomous-research-loop-runtime": "the ARL orchestrator is credential-blind behind its broker",
 }
 
 
@@ -68,6 +57,15 @@ def reachable_canaries(
         runtime = work / "runtime"
         command = runtime / "workspace" / relative
         command.parent.mkdir(parents=True)
+        if skill == "autonomous-research-loop-runtime":
+            shutil.copytree(ROOT / "canonical" / "runtime" / "skills" / skill,
+                            command.parent, dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            for target in command.parent.rglob("*"):
+                target.chmod(0o755 if target.is_dir() or target.suffix == ".sh" else 0o644)
+            shutil.copyfile(ROOT / "canonical" / "runtime" / "runners" / "arl_credential_broker.py",
+                            runtime / "arl_credential_broker.py")
+            (runtime / "arl_credential_broker.py").chmod(0o644)
         body = "#!/usr/bin/env bash\n"
         if pointer_env:
             # A pointer-style skill is handed the file, not the keys, so the value
@@ -91,6 +89,7 @@ def reachable_canaries(
             ROOT / "canonical" / "runtime" / "runners" / "load_secret_env.py",
             runtime / "load_secret_env.py",
         )
+        (runtime / "load_secret_env.py").chmod(0o644)
         current = command.parent
         while True:
             current.chmod(0o755)
@@ -110,7 +109,6 @@ def reachable_canaries(
 
         env = runtime_smoke.smoke_env(manifests, skill, runtime / "workspace")
         env["PATH"] = f"{interpreter_bin}:/usr/bin:/bin"
-        env["HOME"] = str(work)
         completed = subprocess.run(
             ["bash", str(runner), relative], env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=120
         )
@@ -197,8 +195,10 @@ class SmokeCanaryReachabilityTests(unittest.TestCase):
         for skill, reason in sorted(UNREACHABLE_BY_DESIGN.items()):
             with self.subTest(skill=skill):
                 self.assertIn(skill, self.skills, f"{skill} is exempted but declares no canary")
+                delivered, completed = reachable_canaries(self.manifests, skill)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
                 self.assertFalse(
-                    any(reachable_canaries(self.manifests, skill)[0].values()),
+                    any(delivered.values()),
                     f"{skill} is now delivering its canary ({reason} no longer holds); "
                     "remove it from UNREACHABLE_BY_DESIGN",
                 )

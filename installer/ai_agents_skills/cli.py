@@ -238,17 +238,22 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_smoke_parser = sub.add_parser("runtime-smoke")
     runtime_smoke_parser.add_argument("--skill")
     runtime_smoke_parser.add_argument("--skills")
-    runtime_smoke_parser.add_argument("--timeout", type=int, default=60)
+    runtime_smoke_parser.add_argument("--timeout", type=int, default=None)
 
     installed_runtime_smoke_parser = sub.add_parser("installed-runtime-smoke")
     installed_runtime_smoke_parser.add_argument("--skill")
     installed_runtime_smoke_parser.add_argument("--skills")
-    installed_runtime_smoke_parser.add_argument("--timeout", type=int, default=60)
+    installed_runtime_smoke_parser.add_argument("--timeout", type=int, default=None)
     installed_runtime_smoke_parser.add_argument(
         "--require-complete-coverage",
         action="store_true",
         help="fail unless every runtime skill declared by this revision has managed runtime files",
     )
+
+    installed_runtime_smoke_parser.add_argument("--require-functional", action="store_true",
+                                               help="fail on skipped or failed functional cases")
+    installed_runtime_smoke_parser.add_argument("--live", action="store_true",
+                                               help="run declared read-only live checks with the operator environment")
 
     delegate_agent = sub.add_parser("delegate-agent")
     delegate_agent.add_argument("--provider", default="auto", help="provider name or auto")
@@ -2007,6 +2012,8 @@ def installed_runtime_smoke(args: argparse.Namespace, manifests: dict[str, Any])
         platform=args.platform,
         timeout=args.timeout,
         require_complete_coverage=args.require_complete_coverage,
+        require_functional=args.require_functional,
+        live=args.live,
     )
     output(result, args)
     return 0 if result["status"] == "ok" else 1
