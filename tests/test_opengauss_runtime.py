@@ -6,14 +6,15 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.runtime_smoke import (
+    judge_expect,
     runtime_command_target,
     selected_runtime_skills,
-    validate_smoke_output,
 )
 
 REPO = Path(__file__).resolve().parents[1]
@@ -97,8 +98,11 @@ class OpenGaussRuntimeTests(unittest.TestCase):
     def test_validate_smoke_branch(self) -> None:
         res = _run("smoke", env={"ANTHROPIC_API_KEY": "OPENGAUSS-SMOKE-CANARY"})
         self.assertEqual(res.returncode, 0)
-        checks = validate_smoke_output("opengauss", res, ["smoke"])
-        self.assertTrue(all(c["ok"] for c in checks), checks)
+        expect = load_manifests()["runtime"]["skills"]["opengauss"]["smoke"]["expect"]
+        with tempfile.TemporaryDirectory() as tmp:
+            smoke_dir = Path(tmp)
+            smoke_dir.chmod(0o700)
+            self.assertEqual(judge_expect(expect, res, smoke_dir), [])
 
     def test_live_prove_smoke_refuses_without_opt_in(self) -> None:
         env = os.environ.copy()
