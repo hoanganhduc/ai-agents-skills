@@ -264,9 +264,6 @@ if ($credentialContract) {
     )) {
         [void]$credentialMetadataNames.Add($name)
     }
-    if ($normalizedLower -eq "skills\lean-explore-mcp\run_lean_explore_mcp.ps1") {
-        [void]$credentialMetadataNames.Add("AAS_LEANEXPLORE_SITE_PACKAGES")
-    }
     if ($normalizedLower -eq "skills\docling\run_docling.ps1") {
         foreach ($name in @(
             "AAS_DOCLING_PRESET", "DOCLING_PRESET", "DOCLING_DEVICE",

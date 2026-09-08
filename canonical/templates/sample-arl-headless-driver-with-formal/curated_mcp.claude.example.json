@@ -21,10 +21,9 @@
     },
     "lean-explore": {
       "type": "stdio",
-      "command": "<ABSOLUTE_PATH_TO>/run_lean_explore_mcp.sh",
-      "args": ["serve", "--backend", "api"],
+      "command": "<ABSOLUTE_RUNTIME_ROOT>/run_skill.sh",
+      "args": ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "api"],
       "env": {
-        "AAS_LEANEXPLORE_SITE_PACKAGES": "<ABSOLUTE_LEANEXPLORE_1_2_1_SITE_PACKAGES>",
         "LEANEXPLORE_API_KEY": "<LEANEXPLORE_API_KEY>"
       }
     }

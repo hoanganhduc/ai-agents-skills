@@ -159,7 +159,6 @@ case "$command_rel" in
     credential_contract=1
     [ -n "$skill_pointer" ] && export AAS_SKILL_SECRETS_FILE="$skill_pointer"
     select_flat_projection AAS_SKILL_SECRETS_FILE env LEANEXPLORE_API_KEY
-    projection_retain_env+=(AAS_LEANEXPLORE_SITE_PACKAGES)
     ;;
   skills/docling/run_docling.sh)
     credential_contract=1

@@ -49,7 +49,27 @@ bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill
   skills/lean-explore-mcp/run_lean_explore_mcp.sh smoke
 ```
 
-The emitted local stdio snippet uses the absolute managed `run_lean_explore_mcp.sh` wrapper with args `["serve", "--backend", "api"]` or `["serve", "--backend", "local"]`. Set `AAS_LEANEXPLORE_SITE_PACKAGES` to an absolute, owner-protected site-packages directory containing exactly `lean-explore==1.2.1`. API mode also uses the placeholder `LEANEXPLORE_API_KEY`; local mode assumes a user-managed LeanExplore cache such as `~/.lean_explore/cache/`.
+## Provisioning (no root)
+
+Provision the shared skill Python venv from the repository:
+
+```bash
+make provision-skill-python ARGS="--skills lean-explore-mcp --apply --real-system"
+```
+
+Start the adapter through the launcher, which admits the venv before serving:
+
+```bash
+bash "${AAS_RUNTIME_ROOT:-$HOME/.local/share/ai-agents-skills/runtime}/run_skill.sh" \
+  skills/lean-explore-mcp/run_lean_explore_mcp.sh serve --backend api
+```
+
+The emitted local stdio snippet uses the absolute managed `run_skill.sh` launcher
+with args `["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "api"]`
+or the corresponding local backend. API mode uses the `LEANEXPLORE_API_KEY`
+placeholder; local mode assumes a user-managed LeanExplore cache such as
+`~/.lean_explore/cache/`. Serving requires exactly `lean-explore==1.2.1` in the
+admitted venv.
 
 Never add `--api-key` or `--api-key=<value>` to the MCP command: process
 arguments are observable outside the child. The managed POSIX wrapper captures
