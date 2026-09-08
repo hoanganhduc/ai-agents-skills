@@ -3670,6 +3670,13 @@
               "equals": false
             }
           ]
+        },
+        "secret_file_canaries": {
+          "pointer_env": "AAS_SKILL_SECRETS_FILE",
+          "format": "env",
+          "values": {
+            "LEANEXPLORE_API_KEY": "LEANEXPLORE-SMOKE-CANARY"
+          }
         }
       },
       "functional_smoke": {
