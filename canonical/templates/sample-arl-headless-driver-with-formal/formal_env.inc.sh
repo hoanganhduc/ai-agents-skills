@@ -20,10 +20,11 @@
 # build_primary_child_env (PRIMARY_BASE_ENV_ALLOWLIST, AAS_RUNTIME_*, and the
 # attestation-gated provider/compute credential lists); LEANEXPLORE_API_KEY is
 # on none of them, so pre-exporting it before launch is stripped and LeanExplore
-# stays unconfigured. The only sanctioned channel is the per-server "env" block
-# of a curated MCP config — see production_formalization_env.inc.sh and
-# curated_mcp.claude.example.json in this pack for the lane rules and the
-# operator-owned 0600 placement that channel requires.
+# stays unconfigured. Set AAS_SKILL_SECRETS_FILE in the curated MCP config's
+# per-server "env" block to an absolute owner-controlled, non-symlink 0600 env
+# file containing LEANEXPLORE_API_KEY. Keep the file outside every loop tree.
+# See production_formalization_env.inc.sh and curated_mcp.claude.example.json
+# for the lane rules and operator-owned 0600 config placement.
 
 # Default sample policy is "on" (prompt binding + F1–F7 positions when path is
 # formal-track). Override before sourcing, or export after.

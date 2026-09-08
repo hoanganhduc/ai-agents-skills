@@ -22,10 +22,11 @@
 # {dir}-relative, because the loop tree is agent-writable and the config names
 # the tool servers the unattended agent may talk to.
 #
-# SERVER API KEYS (e.g. LEANEXPLORE_API_KEY): the ONLY sanctioned delivery
-# channel is the per-server "env" block inside the curated MCP config file
-# (see curated_mcp.claude.example.json). Extending an env -i keep-list can
-# NEVER deliver such a key: the primary child environment is strictly
+# LEANEXPLORE_API_KEY: set AAS_SKILL_SECRETS_FILE in the curated MCP config's
+# per-server "env" block to an absolute owner-controlled, non-symlink 0600 env
+# file containing the key, outside every loop tree (see the curated example).
+# Extending an env -i keep-list cannot deliver the key: the primary child
+# environment is strictly
 # allowlist-built by build_primary_child_env from PRIMARY_BASE_ENV_ALLOWLIST,
 # AAS_RUNTIME_*, and attestation-gated provider/compute credential lists, and
 # LEANEXPLORE_API_KEY is on none of them (in the non-attested lane even

@@ -2154,12 +2154,14 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
                     self.assertTrue(command_payload["command"].endswith("/run_skill.sh"))
                     self.assertEqual(command_payload["args"][:2], ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve"])
-                    self.assertEqual(command_payload["env"]["LEANEXPLORE_API_KEY"], "<set from your secret store>")
+                    self.assertEqual(command_payload["env"], {
+                        "AAS_SKILL_SECRETS_FILE": "<ABSOLUTE_OWNER_CONTROLLED_LEANEXPLORE_ENV_FILE>",
+                    })
                     self.assertNotIn("AAS_LEANEXPLORE_SITE_PACKAGES", command_payload["env"])
                 if command == ("config-snippet", "--backend", "local"):
                     command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
                     self.assertEqual(command_payload["args"], ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "local"])
-                    self.assertNotIn("LEANEXPLORE_API_KEY", command_payload["env"])
+                    self.assertEqual(command_payload["env"], {})
 
             self.assertFalse(marker.exists())
 
@@ -2488,10 +2490,20 @@ class RuntimeIntegrationTests(unittest.TestCase):
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
             "AAS_SKILL_VENV": str(venv),
-            "AAS_SKILL_SECRETS_FILE": str(secrets),
         }
+        snippet = subprocess.run(
+            [str(launcher), COMMAND, "config-snippet", "--backend", "api"],
+            env=env, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(snippet.returncode, 0, snippet.stderr)
+        command = json.loads(snippet.stdout)["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
+        self.assertEqual(command["env"], {
+            "AAS_SKILL_SECRETS_FILE": "<ABSOLUTE_OWNER_CONTROLLED_LEANEXPLORE_ENV_FILE>",
+        })
+        env.update(command["env"])
+        env["AAS_SKILL_SECRETS_FILE"] = str(secrets)
         process = subprocess.Popen(
-            ["/bin/bash", str(launcher), COMMAND, "serve", "--backend", "api"],
+            [command["command"], *command["args"]],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

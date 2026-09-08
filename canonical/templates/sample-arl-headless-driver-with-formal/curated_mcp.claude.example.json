@@ -6,10 +6,11 @@
     "(see production_formalization_env.inc.sh). Never place a filled copy",
     "inside a loop directory: the loop tree is agent-writable and this file",
     "decides which live tool servers the unattended agent may reach.",
-    "Server API keys (e.g. LEANEXPLORE_API_KEY) are delivered ONLY through the",
-    "per-server env block below — the spawned primary's environment is strictly",
-    "allowlist-built (build_primary_child_env) and an env -i keep-list can",
-    "never carry such a key to the agent or its MCP servers.",
+    "The LeanExplore per-server env block carries AAS_SKILL_SECRETS_FILE: an",
+    "absolute path to an owner-controlled, non-symlink 0600 env file containing",
+    "LEANEXPLORE_API_KEY=<key>. Keep that file outside every loop tree.",
+    "The primary environment is allowlist-built (build_primary_child_env);",
+    "an env -i keep-list cannot deliver the key to the managed MCP launcher.",
     "Do NOT replace the placeholders in the repo copy of this example.",
     "Delete this _readme key if your MCP client rejects unknown top-level keys."
   ],
@@ -24,7 +25,7 @@
       "command": "<ABSOLUTE_RUNTIME_ROOT>/run_skill.sh",
       "args": ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "api"],
       "env": {
-        "LEANEXPLORE_API_KEY": "<LEANEXPLORE_API_KEY>"
+        "AAS_SKILL_SECRETS_FILE": "<ABSOLUTE_OWNER_CONTROLLED_LEANEXPLORE_ENV_FILE>"
       }
     }
   }
