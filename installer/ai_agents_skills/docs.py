@@ -1244,12 +1244,15 @@ Related pages: [Installation](installation.md), [Audit And Migration](audit-and-
 
 
 def runtime_smoke_coverage_table(manifests: dict[str, Any]) -> str:
-    rows = ["| Skill | Coverage | Smoke Contract | Reason |", "|---|---|---|---|"]
+    rows = ["| Skill | Coverage | Declared Contract | Reason |", "|---|---|---|---|"]
     for skill, spec in sorted(manifests.get("runtime", {}).get("skills", {}).items()):
         coverage = spec.get("smoke_coverage", {}) if isinstance(spec, dict) else {}
         status = coverage.get("status", "unsupported")
         reason = coverage.get("reason", "")
-        has_contract = "yes" if isinstance(spec, dict) and isinstance(spec.get("smoke"), dict) else "no"
+        has_contract = "yes" if isinstance(spec, dict) and any(
+            isinstance(spec.get(kind), dict) and spec[kind]
+            for kind in ("smoke", "functional_smoke", "live_check")
+        ) else "no"
         rows.append(f"| `{skill}` | `{status}` | {has_contract} | {md_cell(reason)} |")
     return "\n".join(rows)
 
