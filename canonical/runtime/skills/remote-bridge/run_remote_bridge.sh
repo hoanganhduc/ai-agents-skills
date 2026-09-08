@@ -53,18 +53,8 @@ if [ -z "$PYTHON" ] || ! trusted_regular_file "$PYTHON" || [ ! -x "$PYTHON" ]; t
   exit 127
 fi
 if [ -n "$configured_python" ] && [ ! "$configured_python" -ef "$PYTHON" ] 2>/dev/null; then
-  managed_selector=""
-  case "$configured_home" in
-    /*) managed_selector="$configured_home/.local/share/coding-system/python-closure/shared/bin/python" ;;
-  esac
-  if [ -z "$managed_selector" ] || [ "$configured_python" != "$managed_selector" ]; then
-    printf 'AAS_RUNTIME_PYTHON is not an approved absolute runtime selector\n' >&2
-    exit 127
-  fi
-  # CSR currently publishes this selector before a qualified closure exists.
-  # remote_bridge.py is stdlib-only, so retain integration compatibility while
-  # executing the already-attested system Python.  The caller-selected closure
-  # path is never opened or executed.
+  printf 'AAS_RUNTIME_PYTHON is not an approved absolute runtime selector\n' >&2
+  exit 127
 fi
 
 # bash 4.1+ allocates the descriptor number itself; macOS /bin/bash 3.2

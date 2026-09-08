@@ -851,7 +851,25 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             self.assertIsNone(child["KAGGLE_CONFIG_DIR"])
             self.assertIsNone(child["AAS_COMPUTE_SECRETS_FILE"])
 
-    def test_stdlib_wrappers_treat_exact_managed_selector_as_advisory_only(self) -> None:
+    @staticmethod
+    def _stdlib_test_venv(root: Path) -> Path:
+        previous_umask = os.umask(0o077)
+        try:
+            venv = root / "skill-venv"
+            subprocess.run(
+                ["/usr/bin/python3", "-I", "-m", "venv", "--without-pip", str(venv)],
+                check=True,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                env={"HOME": str(root), "PATH": "/usr/bin:/bin"},
+                timeout=30,
+            )
+            return venv
+        finally:
+            os.umask(previous_umask)
+
+    def test_stdlib_wrappers_ignore_the_admitted_venv_prefix(self) -> None:
         cases = (
             ("remote-bridge", "run_remote_bridge.sh", "remote_bridge.py"),
             ("send-email", "run_send_email.sh", "send_email.py"),
@@ -859,6 +877,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
         for skill, wrapper_name, entrypoint in cases:
             with self.subTest(skill=skill), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
+                root.chmod(0o700)
                 wrapper = self._stage_entrypoint(
                     root,
                     skill=skill,
@@ -867,22 +886,17 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 )
                 program = wrapper.parent / entrypoint
                 program.write_text(
-                    "import json, os\n"
-                    "print(json.dumps({'runtime': os.environ.get('AAS_RUNTIME_PYTHON')}))\n",
+                    "import json, os, sys\n"
+                    "print(json.dumps({'runtime': os.environ.get('AAS_RUNTIME_PYTHON'), "
+                    "'prefix': sys.prefix, 'base_prefix': sys.base_prefix, "
+                    "'admitted_prefix': os.environ.get('AAS_RUNTIME_PYTHON_PREFIX')}))\n",
                     encoding="utf-8",
                 )
                 program.chmod(0o644)
-                selected = (
-                    root
-                    / ".local/share/coding-system/python-closure/shared/bin/python"
-                )
-                selected.parent.mkdir(parents=True)
-                marker = root / "caller-closure-ran"
-                selected.write_text(
-                    f"#!/bin/sh\ntouch {marker}\nexit 99\n",
-                    encoding="utf-8",
-                )
-                selected.chmod(0o755)
+                venv = self._stdlib_test_venv(root)
+                runner = wrapper.parents[3] / "run_skill.sh"
+                self._copy_test_runner(runner)
+                runner.chmod(0o755)
                 hostile_modules = root / "hostile-modules"
                 hostile_modules.mkdir()
                 startup_marker = root / "ambient-python-hook-ran"
@@ -893,7 +907,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 env = self._env(root)
                 env.update(
                     {
-                        "AAS_RUNTIME_PYTHON": str(selected),
+                        "AAS_SKILL_VENV": str(venv),
                         "PYTHONPATH": str(hostile_modules),
                         "PYTHONSTARTUP": str(hostile_modules / "sitecustomize.py"),
                         "PYTHONINSPECT": "1",
@@ -901,7 +915,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 )
 
                 completed = subprocess.run(
-                    ["bash", str(wrapper), "selftest"],
+                    ["bash", str(runner), f"skills/{skill}/{wrapper_name}", "selftest"],
                     check=False,
                     text=True,
                     encoding="utf-8",
@@ -912,9 +926,11 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 )
 
                 self.assertEqual(completed.returncode, 0, completed.stderr)
-                self.assertFalse(marker.exists())
                 self.assertFalse(startup_marker.exists())
-                runtime = json.loads(completed.stdout)["runtime"]
+                child = json.loads(completed.stdout)
+                self.assertEqual(child["prefix"], child["base_prefix"])
+                self.assertEqual(child["admitted_prefix"], str(venv))
+                runtime = child["runtime"]
                 self.assertRegex(runtime, r"^/(?:proc/self|dev)/fd/[0-9]+$")
 
     def test_stdlib_wrappers_reject_arbitrary_runtime_selector_without_execution(self) -> None:
@@ -922,8 +938,10 @@ class PosixSecretEntrypointTests(unittest.TestCase):
             ("remote-bridge", "run_remote_bridge.sh", "remote_bridge.py"),
             ("send-email", "run_send_email.sh", "send_email.py"),
         )
-        for skill, wrapper_name, entrypoint in cases:
-            with self.subTest(skill=skill), tempfile.TemporaryDirectory() as tmp:
+        for skill, wrapper_name, entrypoint, selector in (
+            (*case, selector) for case in cases for selector in ("arbitrary", "closure")
+        ):
+            with self.subTest(skill=skill, selector=selector), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 wrapper = self._stage_entrypoint(
                     root,
@@ -932,7 +950,12 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                     python_entrypoint=entrypoint,
                 )
                 marker = root / "arbitrary-selector-ran"
-                selected = root / "arbitrary-python"
+                selected = (
+                    root / ".local/share/coding-system/python-closure/shared/bin/python"
+                    if selector == "closure"
+                    else root / "arbitrary-python"
+                )
+                selected.parent.mkdir(parents=True, exist_ok=True)
                 selected.write_text(
                     f"#!/bin/sh\ntouch {marker}\nexit 99\n",
                     encoding="utf-8",
@@ -950,8 +973,106 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                     env=env,
                     timeout=30,
                 )
-                self.assertEqual(completed.returncode, 127)
+                self.assertEqual(completed.returncode, 127, completed.stderr)
+                self.assertIn(
+                    "AAS_RUNTIME_PYTHON is not an approved absolute runtime selector",
+                    completed.stderr,
+                )
                 self.assertFalse(marker.exists())
+
+    def test_stdlib_wrappers_refuse_hostile_default_home_venvs(self) -> None:
+        cases = (
+            ("remote-bridge", "run_remote_bridge.sh", "remote_bridge.py"),
+            ("send-email", "run_send_email.sh", "send_email.py"),
+        )
+        for skill, wrapper_name, entrypoint, fixture in (
+            (*case, fixture) for case in cases for fixture in ("group-writable", "symlink")
+        ):
+            with self.subTest(skill=skill, fixture=fixture), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                root.chmod(0o700)
+                wrapper = self._stage_entrypoint(
+                    root,
+                    skill=skill,
+                    wrapper=wrapper_name,
+                    python_entrypoint=entrypoint,
+                )
+                runner = wrapper.parents[3] / "run_skill.sh"
+                self._copy_test_runner(runner)
+                runner.chmod(0o755)
+                home = root / "home"
+                home.mkdir(mode=0o700)
+                prefix = home / ".agents_skills_venv"
+                if fixture == "symlink":
+                    prefix.symlink_to(self._stdlib_test_venv(root), target_is_directory=True)
+                else:
+                    prefix.mkdir()
+                    prefix.chmod(0o770)
+                env = self._env(home)
+                self.assertNotIn("AAS_SKILL_VENV", env)
+                completed = subprocess.run(
+                    ["bash", str(runner), f"skills/{skill}/{wrapper_name}", "selftest"],
+                    check=False,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    capture_output=True,
+                    env=env,
+                    timeout=30,
+                )
+                self.assertEqual(completed.returncode, 127, completed.stderr)
+                self.assertIn("inadmissible skill Python venv", completed.stderr)
+                if fixture == "symlink":
+                    self.assertIn("skill Python venv is not a directory", completed.stderr)
+                self.assertEqual(completed.stdout, "")
+
+    def test_delivery_entries_reject_arguments_and_bad_stdin(self) -> None:
+        cases = (
+            (
+                "send_file.sh", ("--help",), "",
+                "send_file.sh accepts one bounded JSON request on stdin, never delivery metadata in argv",
+            ),
+            ("send_telegram.sh", ("--help",), "", "send_telegram.sh accepts JSON stdin only"),
+            ("send_file.sh", (), "not json", "file-delivery stdin is not valid bounded UTF-8 JSON"),
+            ("send_telegram.sh", (), "not json", "file-delivery stdin is not valid bounded UTF-8 JSON"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root.chmod(0o700)
+            previous_umask = os.umask(0o077)
+            try:
+                runtime = root / "runtime"
+                skill_dir = runtime / "workspace" / "skills" / "zotero"
+                skill_dir.mkdir(parents=True)
+                for name in ("send_file.sh", "send_telegram.sh", "send_queue.py"):
+                    destination = skill_dir / name
+                    shutil.copy2(RUNTIME_SOURCE / "skills" / "zotero" / name, destination)
+                    destination.chmod(0o755 if name.endswith(".sh") else 0o644)
+                runner = runtime / "run_skill.sh"
+                self._copy_test_runner(runner)
+                runner.chmod(0o755)
+                loader = runtime / "load_secret_env.py"
+                shutil.copy2(RUNTIME_SOURCE / "runners" / "load_secret_env.py", loader)
+                loader.chmod(0o644)
+            finally:
+                os.umask(previous_umask)
+            for name, arguments, stdin, message in cases:
+                with self.subTest(wrapper=name, arguments=arguments):
+                    completed = subprocess.run(
+                        ["bash", str(runner), f"skills/zotero/{name}", *arguments],
+                        input=stdin,
+                        check=False,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        capture_output=True,
+                        env=self._env(root),
+                        timeout=30,
+                    )
+                    self.assertEqual(completed.returncode, 2, completed.stderr)
+                    payload = json.loads(completed.stdout)
+                    self.assertEqual(payload["status"], "error")
+                    self.assertEqual(payload["message"], message)
 
     def test_outer_runner_refuses_every_non_attested_runtime_selector(self) -> None:
         """The managed-selector advisory is gone: the outer runner refuses an
