@@ -3524,6 +3524,28 @@ class RuntimeGoalFocusIntegrationTests(unittest.TestCase):
         self.assertIn("memory_max_bytes", resource_metadata["limits"])
         containment.assert_called_once()
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux bubblewrap gate")
+    def test_bwrap_gate_accepts_user_owned_binary(self) -> None:
+        arl, _gf = self._runtime_modules()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            root.chmod(0o700)
+            binary = root / "bwrap"
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
+            real_path = Path
+            def selected_path(value):
+                return binary if str(value) in {"/usr/bin/bwrap", "/bin/bwrap"} else real_path(value)
+            with mock.patch.object(arl, "Path", side_effect=selected_path):
+                for mode, message in ((0o755, "Goal-Focus enforce primary execution"), (0o775, "trusted bubblewrap binary")):
+                    binary.chmod(mode)
+                    with self.subTest(mode=mode), self.assertRaisesRegex(OSError, message):
+                        arl.run_primary_subprocess(
+                            ["/bin/true"], use_shell=False, child_env={"HOME": str(root)},
+                            cwd=root, timeout_s=1, output=io.StringIO(), provider="claude",
+                            enforce_mode=True, trusted_local=False,
+                        )
+
     def test_trusted_local_invalid_primary_limits_deny_before_spawn(self) -> None:
         arl, _gf = self._runtime_modules()
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(

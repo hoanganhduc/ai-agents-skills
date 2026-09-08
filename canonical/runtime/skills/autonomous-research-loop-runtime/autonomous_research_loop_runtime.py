@@ -39,6 +39,7 @@ except ImportError:  # pragma: no cover - package-style import during tests
 
 # Sibling modules: hybrid panel + optional goal_priority.v1.
 try:
+    import provider_resources
     from panel_parent import (  # type: ignore  # noqa: I001 — same-dir runtime import
         PanelIsolationError,
         ProviderResourceError,
@@ -116,6 +117,7 @@ try:
         write_track_pin,
     )
 except ImportError:  # pragma: no cover - package-style import during tests
+    from . import provider_resources
     from .panel_parent import (  # type: ignore
         PanelIsolationError,
         ProviderResourceError,
@@ -3427,22 +3429,12 @@ def run_primary_subprocess(
             raise OSError(
                 "primary descendant containment requires Linux PID namespaces"
             )
-        bwrap = next(
-            (
-                candidate
-                for candidate in (Path("/usr/bin/bwrap"), Path("/bin/bwrap"))
-                if candidate.is_file()
-                and os.access(candidate, os.X_OK)
-                and not stat.S_ISLNK(os.lstat(candidate).st_mode)
-                and os.lstat(candidate).st_uid == 0
-                and not os.lstat(candidate).st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-            ),
-            None,
-        )
-        if bwrap is None:
-            raise OSError(
-                "primary descendant containment requires a trusted bubblewrap binary"
+        try:
+            bwrap = provider_resources._trusted_host_binary(
+                (Path("/usr/bin/bwrap"), Path("/bin/bwrap")), "bubblewrap"
             )
+        except ProviderResourceError as exc:
+            raise OSError(str(exc)) from exc
         inner_args = (
             ["/bin/sh", "-c", str(run_args)]
             if use_shell

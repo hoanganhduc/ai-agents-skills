@@ -19,6 +19,7 @@ umask decides what ``mkdir`` and ``open`` would otherwise leave behind.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import tempfile
@@ -230,6 +231,17 @@ class RuntimePythonBlockValidationTests(unittest.TestCase):
 
 
 class RuntimePythonBlockManifestTests(unittest.TestCase):
+    def test_credential_runtime_manifest_lists_every_armed_command(self) -> None:
+        source = (RUNTIME_SOURCE_ROOT / "runners/run_skill.sh").read_text(encoding="utf-8")
+        armed = set()
+        for match in re.finditer(r"^  (skills/[^\n]+)\)\n(.*?)(?=^    ;;)", source, re.MULTILINE | re.DOTALL):
+            if "credential_contract=1" in match.group(2):
+                armed.update(match.group(1).split("|"))
+        manifest = json.loads((REPO_ROOT / "manifest/credential-runtime.json").read_text(encoding="utf-8"))
+        declared = {command for consumer in manifest["consumers"] for command in consumer["commands"]}
+        self.assertEqual(len(armed), 25)
+        self.assertEqual(armed, declared)
+
     def test_every_declared_skill_has_the_planned_modules_and_provision(self) -> None:
         manifests = load_manifests()
         skills = python_block_skills(manifests)

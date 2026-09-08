@@ -141,10 +141,11 @@ without escaping the queue's security-error path. Media is
 accepted only from the three descriptor-walked runtime roots
 `data/exports`, `data/research/zotero/staging`, and `data/calibre/staging`.
 Arbitrary workspace paths and host paths are rejected. The host worker binds a
-fixed root-controlled OpenClaw entry plus `/usr/bin/node`, passes a minimal
+fixed owner-controlled OpenClaw entry and Node runtime, passes a minimal
 environment, and gives the final in-process OpenClaw adapter its delivery record
-through bounded stdin. Agent-controlled `PATH` entries and mutable user launchers
-are not candidates, and delivery metadata never appears in the child cmdline.
+through bounded stdin. Fixed entries under `~/.local` and `~/.npm-global` are checked
+before system entries; nvm-managed Node and caller `PATH` entries are not searched.
+Delivery metadata never appears in the child cmdline.
 The adapter runs in an isolated process group. A timeout or stdin communication
 failure kills that group and reaps its direct leader before the worker closes
 the inherited descriptors or records the failed result. This is cleanup for the
