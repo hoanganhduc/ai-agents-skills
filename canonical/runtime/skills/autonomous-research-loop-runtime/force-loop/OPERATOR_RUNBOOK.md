@@ -66,7 +66,7 @@
   has no effect, and an explicit `--backend posix_detach` is refused with
   "posix_detach is not available on Windows; use foreground". Supervisor shell
   scripts are POSIX-only, so Windows runs `drive` via Python.
-- The exact-generation credential broker is POSIX-only: it speaks over
+- The credential broker is POSIX-only: it speaks over
   `socket.AF_UNIX`, which CPython does not expose on Windows. `broker_active()`
   stays false, so panel and compute launches take the direct execution path and
   read credentials through `load_secret_env.ps1`.
