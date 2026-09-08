@@ -27,9 +27,9 @@ from installer.ai_agents_skills.apply import apply_plan
 from installer.ai_agents_skills.manifest import load_manifests
 from installer.ai_agents_skills.planner import build_plan
 from installer.ai_agents_skills.runtime_smoke import (
+    judge_expect,
     runtime_command_target,
     selected_runtime_skills,
-    validate_smoke_output,
 )
 from installer.ai_agents_skills.verify import verify
 
@@ -1158,12 +1158,11 @@ class AutonomousResearchLoopTests(unittest.TestCase):
             check=True,
             env=_subprocess_env(),
         )
-        checks = validate_smoke_output(
-            "autonomous-research-loop-runtime",
-            completed,
-            ["selftest"],
-        )
-        self.assertTrue(all(check["ok"] for check in checks), checks)
+        expect = manifests["runtime"]["skills"]["autonomous-research-loop-runtime"]["smoke"]["expect"]
+        with tempfile.TemporaryDirectory() as tmp:
+            smoke_dir = Path(tmp)
+            smoke_dir.chmod(0o700)
+            self.assertEqual(judge_expect(expect, completed, smoke_dir), [])
 
 
 class AutonomousLoopEnforcementTests(unittest.TestCase):

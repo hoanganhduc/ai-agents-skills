@@ -475,6 +475,9 @@ class SmokeCanaryTest(unittest.TestCase):
         self.smoke = runtime_smoke
         self.manifest = json.loads((ROOT / "manifest" / "runtime.yaml").read_text(encoding="utf-8"))
         self.manifests = {"runtime": self.manifest}
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.workspace = Path(self.temporary.name)
 
     def declared(self, skill: str) -> dict:
         """Both canary vehicles, since a check is produced for either.
@@ -505,7 +508,7 @@ class SmokeCanaryTest(unittest.TestCase):
                 self.manifests,
                 skill=skill,
                 runner={"name": "run_skill.sh", "argv": ["/nonexistent/run_skill.sh"]},
-                workspace=Path(tempfile.gettempdir()),
+                workspace=self.workspace,
                 platform="linux",
                 timeout=5,
             )
@@ -566,7 +569,7 @@ class SmokeCanaryTest(unittest.TestCase):
                 self.manifests,
                 skill=skill,
                 runner={"name": "run_skill.sh", "argv": ["/nonexistent/run_skill.sh"]},
-                workspace=Path(tempfile.gettempdir()),
+                workspace=self.workspace,
                 platform="linux",
                 timeout=1,
             )
@@ -587,7 +590,7 @@ class SmokeSelftestBranchTest(unittest.TestCase):
     GOOD = {
         "manim-math-animation": {"ok": True, "passed": 7, "total": 7, "failures": []},
         "slides-to-video": {"ok": True, "passed": 9, "total": 9, "failures": []},
-        "send-email": {"ok": True, "command": "selftest", "passed": 15, "failed": 0},
+        "send-email": {"ok": True, "command": "selftest", "passed": 17, "failed": 0},
     }
     BAD = {
         "manim-math-animation": [
@@ -606,29 +609,35 @@ class SmokeSelftestBranchTest(unittest.TestCase):
 
     def setUp(self) -> None:
         from installer.ai_agents_skills import runtime_smoke
+        from installer.ai_agents_skills.manifest import load_manifests
 
         self.smoke = runtime_smoke
+        self.manifests = load_manifests()
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.smoke_dir = Path(self.temporary.name)
 
-    def validate(self, skill: str, payload: dict) -> list[dict]:
+    def validate(self, skill: str, payload: dict) -> list[str]:
         completed = subprocess.CompletedProcess(
             args=["selftest"], returncode=0, stdout=json.dumps(payload), stderr=""
         )
-        return self.smoke.validate_smoke_output(skill, completed, ["selftest"])
+        expect = self.manifests["runtime"]["skills"][skill]["smoke"]["expect"]
+        return self.smoke.judge_expect(expect, completed, self.smoke_dir)
 
     def test_a_healthy_report_passes(self) -> None:
         for skill, payload in self.GOOD.items():
             with self.subTest(skill=skill):
-                checks = self.validate(skill, payload)
-                self.assertGreater(len(checks), 1, f"{skill} is still checked for nothing but exit 0")
-                self.assertTrue(all(check["ok"] for check in checks))
+                expect = self.manifests["runtime"]["skills"][skill]["smoke"]["expect"]
+                self.assertGreater(len(expect["stdout_json"]), 1, f"{skill} is still checked for nothing but exit 0")
+                self.assertEqual(self.validate(skill, payload), [])
 
     def test_a_failing_or_empty_report_is_rejected(self) -> None:
         for skill, payloads in self.BAD.items():
             for index, payload in enumerate(payloads):
                 with self.subTest(skill=skill, payload=index):
-                    checks = self.validate(skill, payload)
-                    self.assertFalse(
-                        all(check["ok"] for check in checks),
+                    failures = self.validate(skill, payload)
+                    self.assertTrue(
+                        failures,
                         f"{skill} accepted a selftest report it should have rejected",
                     )
 
