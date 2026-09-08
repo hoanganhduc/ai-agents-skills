@@ -126,7 +126,8 @@ def _default_command_runner(argv: list[str], *, env: dict[str, str], timeout: fl
 COMMAND_RUNNER: Callable[..., dict[str, Any]] = _default_command_runner
 
 
-def _run(argv: list[str], *, timeout: float = 120.0, needs_creds: bool = True) -> dict[str, Any]:
+def _run(argv: list[str], *, timeout: float = 120.0, needs_creds: bool = True,
+         check: bool = True) -> dict[str, Any]:
     """Run an external command through COMMAND_RUNNER. The API token travels only via the
     environment (KAGGLE_API_TOKEN in os.environ, or the kaggle CLI reads ~/.kaggle/access_token);
     argv never carries it, so argv is safe to surface. Output is redacted before it is returned."""
@@ -136,7 +137,7 @@ def _run(argv: list[str], *, timeout: float = 120.0, needs_creds: bool = True) -
     result = COMMAND_RUNNER(list(argv), env=env, timeout=timeout)
     result["stdout"] = _redact(result.get("stdout", ""))
     result["stderr"] = _redact(result.get("stderr", ""))
-    if int(result.get("returncode", 1)) != 0:
+    if check and int(result.get("returncode", 1)) != 0:
         raise KaggleDriverError(
             f"command failed ({' '.join(argv)}): {result['stderr'].strip() or result['stdout'].strip()}"
         )
@@ -392,6 +393,17 @@ def bootstrap(config: Any | None) -> dict[str, Any]:
         "kagglehub_available": importlib.util.find_spec("kagglehub") is not None,
         "api_token_present": token_present(),
     }
+    if result["kaggle_cli_available"]:
+        version = run_kaggle(["--version"], timeout=30.0, needs_creds=False, check=False)
+        exit_code = int(version.get("returncode", 1))
+        result["kaggle_cli_version"] = {
+            "ok": exit_code == 0, "exit_code": exit_code,
+            "output": (version.get("stdout", "") + version.get("stderr", "")).strip(),
+        }
+    else:
+        result["kaggle_cli_version"] = {
+            "ok": False, "exit_code": None, "output": "kaggle CLI not found",
+        }
     if result["api_token_present"]:
         who = _whoami(config)
         result["account"] = {"usable": bool(who.get("usable")), "username": who.get("username"),
