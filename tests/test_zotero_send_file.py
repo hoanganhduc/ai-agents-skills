@@ -70,6 +70,14 @@ class ZoteroSendFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             workspace, authority = self._layout(root)
+            staged = root / "producer"
+            staged.mkdir(mode=0o700)
+            wrapper = staged / "send_file.sh"
+            queue = staged / "send_queue.py"
+            shutil.copy2(SEND_FILE, wrapper)
+            shutil.copy2(SEND_QUEUE, queue)
+            wrapper.chmod(0o755)
+            queue.chmod(0o644)
             fake_bin = root / "fake-bin"
             fake_bin.mkdir()
             marker = root / "hostile-tool-ran"
@@ -94,7 +102,7 @@ class ZoteroSendFileTests(unittest.TestCase):
             )
 
             completed = subprocess.run(
-                ["/bin/bash", str(SEND_FILE)],
+                ["/bin/bash", str(wrapper)],
                 env=env,
                 input=json.dumps(
                     {
@@ -112,7 +120,7 @@ class ZoteroSendFileTests(unittest.TestCase):
                 timeout=15,
             )
 
-            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.returncode, 2, completed.stderr)
             self.assertIn("outside the authorized export roots", completed.stdout)
             self.assertFalse(marker.exists())
 
