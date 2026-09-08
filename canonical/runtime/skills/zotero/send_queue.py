@@ -833,8 +833,11 @@ Sender = Callable[[str, str, str, str, tuple[int, ...]], bool]
 
 
 def _open_trusted_delivery_cli() -> int:
-    """Open one fixed root-controlled OpenClaw entry module and bind its inode."""
+    """Open one fixed owner-controlled OpenClaw entry module and bind its inode."""
     for candidate in (
+        Path.home() / ".local/lib/node_modules/openclaw/openclaw.mjs",
+        Path.home() / ".npm-global/lib/node_modules/openclaw/openclaw.mjs",
+        Path.home() / ".local/bin/openclaw",
         Path("/usr/local/lib/node_modules/openclaw/openclaw.mjs"),
         Path("/usr/lib/node_modules/openclaw/openclaw.mjs"),
         Path("/usr/local/bin/openclaw"),
@@ -856,8 +859,9 @@ def _open_trusted_delivery_cli() -> int:
                 break
             if (
                 not stat.S_ISDIR(info.st_mode)
-                or int(info.st_uid) != 0
-                or stat.S_IMODE(info.st_mode) & 0o022
+                or int(info.st_uid) not in {0, os.getuid()}
+                or (stat.S_IMODE(info.st_mode) & 0o022
+                    and not (int(info.st_uid) == 0 and info.st_mode & stat.S_ISVTX))
             ):
                 trusted_chain = False
                 break
@@ -878,7 +882,7 @@ def _open_trusted_delivery_cli() -> int:
         bound = os.fstat(descriptor)
         if (
             not stat.S_ISREG(bound.st_mode)
-            or int(bound.st_uid) != 0
+            or int(bound.st_uid) not in {0, os.getuid()}
             or stat.S_IMODE(bound.st_mode) & 0o022
             or int(bound.st_nlink) != 1
             or (int(path_info.st_dev), int(path_info.st_ino))
@@ -890,43 +894,75 @@ def _open_trusted_delivery_cli() -> int:
         os.set_inheritable(descriptor, True)
         return descriptor
     raise QueueSecurityError(
-        "a fixed root-controlled OpenClaw delivery entry is unavailable"
+        "a fixed owner-controlled OpenClaw delivery entry is unavailable"
     )
 
 
 def _open_trusted_node_runtime() -> int:
-    """Bind the fixed root-controlled Node runtime used by the stdin adapter."""
-    candidate = Path("/usr/bin/node")
-    try:
-        path_info = candidate.stat(follow_symlinks=False)
-        descriptor = os.open(
-            candidate,
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_CLOEXEC", 0),
-        )
-    except OSError as exc:
-        raise QueueSecurityError("the fixed Node delivery runtime is unavailable") from exc
-    try:
-        bound = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(path_info.st_mode)
-            or not stat.S_ISREG(bound.st_mode)
-            or int(path_info.st_uid) != 0
-            or int(bound.st_uid) != 0
-            or stat.S_IMODE(path_info.st_mode) & 0o022
-            or stat.S_IMODE(bound.st_mode) & 0o022
-            or int(bound.st_nlink) != 1
-            or (int(path_info.st_dev), int(path_info.st_ino))
-            != (int(bound.st_dev), int(bound.st_ino))
-            or not (stat.S_IMODE(bound.st_mode) & 0o111)
-        ):
-            raise QueueSecurityError("the fixed Node delivery runtime is untrusted")
-        os.set_inheritable(descriptor, True)
-        return descriptor
-    except Exception:
-        os.close(descriptor)
-        raise
+    """Bind a fixed owner-controlled Node runtime used by the stdin adapter."""
+    reason = "unavailable"
+    for candidate in (Path.home() / ".local/bin/node", Path("/usr/bin/node")):
+        try:
+            path_info = candidate.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if not stat.S_ISREG(path_info.st_mode):
+            reason = "untrusted"
+            continue
+        current = candidate.parent
+        trusted_chain = True
+        while True:
+            try:
+                info = current.stat(follow_symlinks=False)
+            except OSError:
+                trusted_chain = False
+                break
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or int(info.st_uid) not in {0, os.getuid()}
+                or (stat.S_IMODE(info.st_mode) & 0o022
+                    and not (int(info.st_uid) == 0 and info.st_mode & stat.S_ISVTX))
+            ):
+                trusted_chain = False
+                break
+            if current.parent == current:
+                break
+            current = current.parent
+        if not trusted_chain:
+            reason = "untrusted"
+            continue
+        try:
+            descriptor = os.open(
+                candidate,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0),
+            )
+        except OSError:
+            continue
+        try:
+            bound = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(path_info.st_mode)
+                or not stat.S_ISREG(bound.st_mode)
+                or int(path_info.st_uid) not in {0, os.getuid()}
+                or int(bound.st_uid) not in {0, os.getuid()}
+                or stat.S_IMODE(path_info.st_mode) & 0o022
+                or stat.S_IMODE(bound.st_mode) & 0o022
+                or int(bound.st_nlink) != 1
+                or (int(path_info.st_dev), int(path_info.st_ino))
+                != (int(bound.st_dev), int(bound.st_ino))
+                or not (stat.S_IMODE(bound.st_mode) & 0o111)
+            ):
+                reason = "untrusted"
+                os.close(descriptor)
+                continue
+            os.set_inheritable(descriptor, True)
+            return descriptor
+        except Exception:
+            os.close(descriptor)
+            raise
+    raise QueueSecurityError(f"the fixed Node delivery runtime is {reason}")
 
 
 # The OS-visible Node argv is fixed. The authenticated delivery record crosses
