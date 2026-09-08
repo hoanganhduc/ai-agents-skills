@@ -104,6 +104,8 @@ class CredentialLauncherGateTests(_OwnerControlledFixtures):
             ["bash", "-c", script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             check=False,
         )
@@ -228,6 +230,8 @@ class CredentialLauncherCallSiteTests(_OwnerControlledFixtures):
             [str(launcher), COMMAND_REL],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=env,
             cwd=str(self.root),
             timeout=60,
