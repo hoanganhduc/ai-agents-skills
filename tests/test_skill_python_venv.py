@@ -39,6 +39,7 @@ from installer.ai_agents_skills.skill_python import (
     skill_python_targets,
     verify_skill_python,
 )
+from tests import os_child_env
 
 
 SYSTEM_PYTHON = "/usr/bin/python3"
@@ -713,6 +714,160 @@ class AdmissionTests(SkillPythonCase):
             result = verify_skill_python(venv, None, attested_python=self.attested, run=FakeRunner(), home=self.home)
             self.assertEqual(result["status"], "failed")
             self.assertEqual(result["mode_violations"], [str(module)])
+
+    # The launcher decides admission in bash (run_skill.sh skill_python_prefix)
+    # and the provisioner, the verifier and the smoke harness decide it in
+    # Python (admit_skill_venv).  Both must reach the same verdict with the same
+    # reason on every fixture, otherwise a venv the harness reports as admitted
+    # is refused at launch (or the reverse).
+    def bash_admit(self, script: Path, prefix: str | os.PathLike[str]) -> tuple[bool, str]:
+        env = {
+            **os_child_env(),
+            "HOME": str(self.home),
+            "PATH": "/usr/bin:/bin",
+            "AAS_SKILL_VENV": str(prefix),
+        }
+        completed = subprocess.run(
+            ["bash", str(script), str(self.attested)],
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return True, completed.stdout.strip()
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        return False, completed.stderr.strip()
+
+    def admission_fixtures(self) -> list[tuple[str, Path | str]]:
+        """The ``test_admit_rules`` builders, minus the mock-only foreign-uid case."""
+        fixtures: list[tuple[str, Path | str]] = []
+        fixtures.append(("good", self.fresh_venv("p-good")))
+        fixtures.append(("relative", "venv"))
+        venv = self.fresh_venv("p-gw-root")
+        venv.chmod(0o770)
+        fixtures.append(("g+w root", venv))
+        venv = self.fresh_venv("p-gw-parent")
+        venv.parent.chmod(0o770)
+        fixtures.append(("g+w parent", venv))
+        venv = self.fresh_venv("p-link")
+        link = venv.parent / "link"
+        link.symlink_to(venv)
+        fixtures.append(("symlinked prefix", link))
+        fixtures.append(("missing", self.root / "p-absent"))
+        venv = self.fresh_venv("p-trailing")
+        fixtures.append(("trailing slash", f"{venv}/"))
+        venv = self.fresh_venv("p-dotted")
+        fixtures.append(("dotted", f"{venv.parent}/./{venv.name}"))
+        venv = self.fresh_venv("p-copied")
+        (venv / "bin" / "python").unlink()
+        shutil.copy2(self.attested, venv / "bin" / "python")
+        fixtures.append(("copied bin/python", venv))
+        venv = self.fresh_venv("p-sh")
+        (venv / "bin" / "python").unlink()
+        (venv / "bin" / "python").symlink_to("/bin/sh")
+        fixtures.append(("bin/python to /bin/sh", venv))
+        venv = self.fresh_venv("p-nocfg")
+        (venv / "pyvenv.cfg").unlink()
+        fixtures.append(("missing cfg", venv))
+        venv = self.fresh_venv("p-fifo")
+        (venv / "pyvenv.cfg").unlink()
+        os.mkfifo(venv / "pyvenv.cfg", 0o600)
+        fixtures.append(("FIFO cfg", venv))
+        venv = self.fresh_venv("p-linkcfg")
+        (venv / "pyvenv.cfg").rename(venv / "pyvenv.real")
+        (venv / "pyvenv.cfg").symlink_to(venv / "pyvenv.real")
+        fixtures.append(("symlinked cfg", venv))
+        venv = self.fresh_venv("p-gwcfg")
+        (venv / "pyvenv.cfg").chmod(0o664)
+        fixtures.append(("g+w cfg", venv))
+        venv = self.fresh_venv("p-linklib")
+        (venv / "lib").rename(venv / "lib.real")
+        (venv / "lib").symlink_to(venv / "lib.real")
+        fixtures.append(("symlinked lib", venv))
+        venv = self.fresh_venv("p-home")
+        set_cfg(venv, "home", "/opt/x")
+        fixtures.append(("home mismatch", venv))
+        venv = self.fresh_venv("p-system")
+        set_cfg(venv, "include-system-site-packages", "true")
+        fixtures.append(("system site-packages", venv))
+        venv = self.fresh_venv("p-vfmt")
+        set_cfg(venv, "version", "3.12")
+        fixtures.append(("version format", venv))
+        if skill_python.VERSIONED_BINARY_RE.fullmatch(self.attested.name):
+            venv = self.fresh_venv("p-vmismatch")
+            set_cfg(venv, "version", "2.7.18")
+            fixtures.append(("version mismatch", venv))
+        venv = self.fresh_venv("p-duphome")
+        write_cfg(venv, cfg_lines(venv) + [f"home = {self.attested.parent}"])
+        fixtures.append(("duplicate home", venv))
+        venv = self.fresh_venv("p-gwpth")
+        site = next(venv.glob("lib/python*/site-packages"))
+        pth = site / "extra.pth"
+        pth.write_text("fakepkg\n", encoding="utf-8")
+        pth.chmod(0o664)
+        fixtures.append(("g+w .pth", venv))
+        venv = self.fresh_venv("p-sitecustom")
+        site = next(venv.glob("lib/python*/site-packages"))
+        (site / "sitecustomize.py").symlink_to("/dev/null")
+        fixtures.append(("symlinked sitecustomize", venv))
+        venv = self.fresh_venv("p-regpy3")
+        (venv / "bin" / "python").unlink()
+        (venv / "bin" / "python").symlink_to(self.attested)
+        (venv / "bin" / "python3").unlink()
+        (venv / "bin" / "python3").write_text("#!/bin/sh\n", encoding="utf-8")
+        fixtures.append(("regular bin/python3", venv))
+        venv = self.fresh_venv("p-versh")
+        versioned = venv / "bin" / f"python{cfg_version_xy(venv)}"
+        if versioned.is_symlink():
+            versioned.unlink()
+        versioned.symlink_to("/bin/sh")
+        fixtures.append(("versioned symlink to /bin/sh", venv))
+        venv = self.fresh_venv("p-gwpkg")
+        site = next(venv.glob("lib/python*/site-packages"))
+        (site / "fakepkg").mkdir()
+        module = site / "fakepkg" / "__init__.py"
+        module.write_text("VERSION = '1.0'\n", encoding="utf-8")
+        module.chmod(0o664)
+        fixtures.append(("g+w package accepted", venv))
+        return fixtures
+
+    def test_bash_and_python_admission_agree(self) -> None:
+        if shutil.which("bash") is None:
+            self.skipTest("bash is absent")
+        launcher = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_skill.sh"
+        source = launcher.read_text(encoding="utf-8")
+
+        def bash_function(name: str) -> str:
+            start = source.index(f"{name}() {{")
+            end = source.index("\n}\n", start) + len("\n}\n")
+            return source[start:end]
+
+        script = self.root / "admit.sh"
+        script.write_text(
+            "set -uo pipefail\n"
+            + bash_function("trusted_metadata")
+            + bash_function("root_sticky_directory")
+            + bash_function("skill_python_prefix")
+            + 'skill_python_prefix "$1"\n',
+            encoding="utf-8",
+        )
+        script.chmod(0o700)
+        fixtures = self.admission_fixtures()
+        self.assertGreaterEqual(len(fixtures), 24)
+        verdicts: dict[str, tuple[bool, str]] = {}
+        for label, prefix in fixtures:
+            with self.subTest(label):
+                python_verdict = self.admit(prefix)
+                bash_verdict = self.bash_admit(script, prefix)
+                self.assertEqual(bash_verdict, python_verdict)
+                verdicts[label] = python_verdict
+        self.assertEqual(verdicts["good"][0], True)
+        self.assertEqual(verdicts["g+w package accepted"][0], True)
+        self.assertEqual(sum(1 for ok, _ in verdicts.values() if ok), 2)
 
 
 if __name__ == "__main__":

@@ -373,6 +373,103 @@ system_python_path() {
   printf '%s\n' "$canonical"
 }
 
+# Skill Python venv admission.  The attested system binary selected above is the
+# only interpreter executed; an admitted venv supplies argv[0] so CPython reads
+# <venv>/pyvenv.cfg and adds <venv>/lib/pythonX.Y/site-packages.  Admission:
+# absolute canonical path (equal to pwd -P); no component a symlink; venv root,
+# bin, lib, lib/pythonX.Y, site-packages and pyvenv.cfg owner-controlled
+# (trusted_metadata); every ancestor to / owner-controlled or a root-owned sticky
+# directory; pyvenv.cfg home = the attested binary's directory, version matches
+# the attested binary, include-system-site-packages = false; startup files
+# (*.pth, sitecustomize.py, usercustomize.py) owner-controlled when present;
+# bin/python a symlink whose real target is the attested binary; bin/python3 and
+# bin/pythonX.Y, when present, symlinks to the same target.  Admission checks
+# the startup files only; `verify-skill-python` walks the whole tree.
+# rc 0 = admitted (prints real path), rc 2 = no venv configured, rc 1 = refused
+# (reason on stderr).  A configured venv that is refused is a launch failure.
+skill_python_prefix() {
+  local attested="$1" attested_real prefix real parent target version key value
+  local cfg_home="" cfg_version="" cfg_system="" f n_home=0 n_version=0 n_system=0
+  local version_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+  attested_real="$(/usr/bin/readlink -f -- "$attested")" || return 1
+  prefix="${AAS_SKILL_VENV:-}"
+  if [ -z "$prefix" ]; then
+    case "${HOME:-}" in /*) prefix="$HOME/.agents_skills_venv" ;; *) return 2 ;; esac
+    [ -e "$prefix" ] || [ -L "$prefix" ] || return 2
+  fi
+  case "$prefix" in /*) ;; *) printf 'skill Python venv path must be absolute\n' >&2; return 1 ;; esac
+  case "$prefix" in
+    */|*/./*|*/../*|*/.|*/..|*//*) printf 'skill Python venv path is not canonical: %s\n' "$prefix" >&2; return 1 ;;
+  esac
+  if [ -L "$prefix" ] || [ ! -d "$prefix" ]; then printf 'skill Python venv is not a directory: %s\n' "$prefix" >&2; return 1; fi
+  real="$(cd -- "$prefix" && pwd -P)" || return 1
+  [ "$real" = "$prefix" ] || { printf 'skill Python venv path is not canonical: %s\n' "$prefix" >&2; return 1; }
+  parent="$real"
+  while :; do
+    if ! trusted_metadata "$parent" directory; then
+      if [ "$parent" = "$real" ] || ! root_sticky_directory "$parent"; then
+        printf 'skill Python venv is not owner-controlled: %s\n' "$parent" >&2; return 1
+      fi
+    fi
+    [ "$parent" != / ] || break
+    parent="${parent%/*}"; [ -n "$parent" ] || parent=/
+  done
+  if [ -L "$real/pyvenv.cfg" ] || [ ! -f "$real/pyvenv.cfg" ]; then
+    printf 'skill Python venv has no regular pyvenv.cfg: %s\n' "$real" >&2; return 1
+  fi
+  trusted_metadata "$real/pyvenv.cfg" file || { printf 'skill Python venv is not owner-controlled: %s/pyvenv.cfg\n' "$real" >&2; return 1; }
+  while IFS='=' read -r key value; do
+    key="${key//[[:space:]]/}"; value="${value//[[:space:]]/}"
+    case "$key" in
+      home) cfg_home="$value"; n_home=$((n_home + 1)) ;;
+      version) cfg_version="$value"; n_version=$((n_version + 1)) ;;
+      include-system-site-packages) cfg_system="$value"; n_system=$((n_system + 1)) ;;
+    esac
+  done < <(/usr/bin/head -c 4096 -- "$real/pyvenv.cfg")
+  { [ "$n_home" -eq 1 ] && [ "$n_version" -eq 1 ] && [ "$n_system" -eq 1 ]; } \
+    || { printf 'skill Python venv pyvenv.cfg must carry home, version and include-system-site-packages exactly once\n' >&2; return 1; }
+  [ "$cfg_home" = "${attested_real%/*}" ] || { printf 'skill Python venv was not built from the attested Python\n' >&2; return 1; }
+  [ "$cfg_system" = false ] || { printf 'skill Python venv must not include system site-packages\n' >&2; return 1; }
+  [[ "$cfg_version" =~ $version_re ]] || { printf 'skill Python venv pyvenv.cfg version must be X.Y.Z\n' >&2; return 1; }
+  version="${cfg_version%.*}"
+  case "${attested_real##*/}" in
+    python[0-9].[0-9]*) [ "${attested_real##*/python}" = "$version" ] || { printf 'skill Python venv version does not match the attested Python\n' >&2; return 1; } ;;
+  esac
+  for target in "$real/bin" "$real/lib" "$real/lib/python$version" "$real/lib/python$version/site-packages"; do
+    [ ! -L "$target" ] || { printf 'skill Python venv component is a symlink: %s\n' "$target" >&2; return 1; }
+    trusted_metadata "$target" directory || { printf 'skill Python venv is not owner-controlled: %s\n' "$target" >&2; return 1; }
+  done
+  for f in "$real/lib/python$version/site-packages"/*.pth \
+           "$real/lib/python$version/site-packages/sitecustomize.py" \
+           "$real/lib/python$version/site-packages/usercustomize.py"; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    [ ! -L "$f" ] || { printf 'skill Python venv startup file is a symlink: %s\n' "$f" >&2; return 1; }
+    trusted_metadata "$f" file || { printf 'skill Python venv startup file is not owner-controlled: %s\n' "$f" >&2; return 1; }
+  done
+  [ -L "$real/bin/python" ] || { printf 'skill Python venv bin/python is not a symlink\n' >&2; return 1; }
+  target="$(/usr/bin/readlink -f -- "$real/bin/python")" || return 1
+  [ "$target" = "$attested_real" ] || { printf 'skill Python venv bin/python is not the attested system Python\n' >&2; return 1; }
+  # python3 and pythonX.Y are on the venv's PATH once the loader prepends bin/;
+  # a regular file under either name would be executed in place of the attested binary.
+  for f in "$real/bin/python3" "$real/bin/python$version"; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    [ -L "$f" ] || { printf 'skill Python venv %s is not a symlink\n' "${f#"$real/"}" >&2; return 1; }
+    target="$(/usr/bin/readlink -f -- "$f")" || return 1
+    [ "$target" = "$attested_real" ] || { printf 'skill Python venv %s is not the attested system Python\n' "${f#"$real/"}" >&2; return 1; }
+  done
+  printf '%s\n' "$real"
+}
+
+# /tmp-style ancestor: root-owned and sticky, so other users cannot rename or
+# unlink entries they do not own.  Same stat forms as trusted_metadata.
+root_sticky_directory() {
+  local meta owner mode
+  [ -d "$1" ] && [ ! -L "$1" ] || return 1
+  meta="$(/usr/bin/stat -Lc '%u:%a' -- "$1" 2>/dev/null || /usr/bin/stat -Lf '%u:%Lp' -- "$1" 2>/dev/null)" || return 1
+  owner="${meta%%:*}"; mode="${meta#*:}"
+  [ "$owner" = 0 ] && [ $(( 8#$mode & 8#1000 )) -ne 0 ]
+}
+
 # bash 4.1+ allocates the descriptor number itself via ``exec {var}<``.
 # Older substrates (macOS /bin/bash 3.2) parse ``{var}`` as a literal command
 # word, so a deterministic script-global counter supplies high descriptor
@@ -480,6 +577,13 @@ if [ "$credential_contract" -eq 1 ]; then
   fi
   python_command="$(exec_path_for_bound "$python_command" "$selected_python")"
   export AAS_RUNTIME_PYTHON="$python_command"
+  skill_prefix=""; prefix_rc=0
+  skill_prefix="$(skill_python_prefix "$selected_python")" || prefix_rc=$?
+  case "$prefix_rc" in
+    0) export AAS_RUNTIME_PYTHON_PREFIX="$skill_prefix" ;;
+    2) unset AAS_RUNTIME_PYTHON_PREFIX ;;
+    *) printf 'credential-bearing launch refuses an inadmissible skill Python venv\n' >&2; exit 127 ;;
+  esac
   export PATH=/usr/bin:/bin
   unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS PYTHONBREAKPOINT
   unset VIRTUAL_ENV __PYVENV_LAUNCHER__ NODE_OPTIONS NODE_PATH

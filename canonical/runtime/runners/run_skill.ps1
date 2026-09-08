@@ -259,6 +259,7 @@ if ($credentialContract) {
         # checks both against the interpreter on disk and drops them before exec.
         "AAS_WINDOWS_PYTHON_SHA256", "AAS_WINDOWS_PYTHON_SIGNER_THUMBPRINT",
         "AAS_RUNTIME_WORKSPACE", "OPENCLAW_WORKSPACE",
+        "AAS_RUNTIME_PYTHON_PREFIX", "AAS_SKILL_VENV",
         "PYTHONDONTWRITEBYTECODE", "PYTHONUTF8", "PYTHONIOENCODING"
     )) {
         [void]$credentialMetadataNames.Add($name)
