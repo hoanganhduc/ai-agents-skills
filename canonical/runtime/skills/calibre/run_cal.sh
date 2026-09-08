@@ -85,5 +85,23 @@ export OPENCLAW_WORKSPACE="$runtime_workspace"
 export AAS_RUNTIME_PYTHON="$PYTHON"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
 
+# Skill Python venv: the launcher admitted AAS_RUNTIME_PYTHON_PREFIX (run_skill.sh
+# skill_python_prefix).  Re-check the two facts this wrapper relies on, then run
+# the attested binary under the venv's argv[0] so CPython reads <prefix>/pyvenv.cfg.
+# The interpreter executed is still "$PYTHON"; the venv supplies argv[0], PATH and
+# site-packages.
+python_argv0="$PYTHON"
+if [ -n "${AAS_RUNTIME_PYTHON_PREFIX:-}" ]; then
+  prefix="$AAS_RUNTIME_PYTHON_PREFIX"
+  case "$prefix" in /*) ;; *) prefix="" ;; esac
+  if [ -z "$prefix" ] || [ -L "$prefix/pyvenv.cfg" ] || [ ! -f "$prefix/pyvenv.cfg" ] \
+     || [ ! -L "$prefix/bin/python" ] || ! [ "$prefix/bin/python" -ef "$PYTHON" ]; then
+    printf 'AAS_RUNTIME_PYTHON_PREFIX does not name a venv of the selected Python\n' >&2
+    exit 127
+  fi
+  python_argv0="$prefix/bin/python"
+  export PATH="$prefix/bin:$PATH"
+fi
+
 secure_loader='import os,stat,sys; p=os.path.abspath(sys.argv[1]); q=os.stat(p,follow_symlinks=False); f=os.open(p,os.O_RDONLY|getattr(os,"O_NOFOLLOW",0)|getattr(os,"O_NONBLOCK",0)|getattr(os,"O_CLOEXEC",0)); b=os.fstat(f); ok=stat.S_ISREG(b.st_mode) and b.st_nlink==1 and b.st_uid in {0,os.geteuid()} and not (stat.S_IMODE(b.st_mode)&0o022) and (q.st_dev,q.st_ino)==(b.st_dev,b.st_ino) and b.st_size<=16777216; ok or (_ for _ in ()).throw(RuntimeError("runtime helper is unavailable or untrusted")); d=b""; rem=b.st_size; exec("while rem:\n c=os.read(f,min(65536,rem))\n c or (_ for _ in ()).throw(RuntimeError(\"runtime helper was truncated\"))\n d+=c; rem-=len(c)"); a=os.fstat(f); (b.st_dev,b.st_ino,b.st_size,b.st_mtime_ns,b.st_ctime_ns,b.st_nlink)==(a.st_dev,a.st_ino,a.st_size,a.st_mtime_ns,a.st_ctime_ns,a.st_nlink) or (_ for _ in ()).throw(RuntimeError("runtime helper changed while reading")); c=compile(d,p,"exec"); sys.argv=[p,*sys.argv[2:]]; g={"__name__":"__main__","__file__":p,"__package__":None,"__cached__":None}; exec(c,g,g)'
-exec "$PYTHON" -I -c "$secure_loader" "$SKILL_DIR/cal.py" "$@"
+exec -a "$python_argv0" "$PYTHON" -I -c "$secure_loader" "$SKILL_DIR/cal.py" "$@"

@@ -36,6 +36,24 @@ PYTHON="$(select_python)" || {
   echo "no usable Python runtime found. Set DOCLING_PYTHON or install Python 3." >&2
   exit 127
 }
+# Skill Python venv: the launcher admitted AAS_RUNTIME_PYTHON_PREFIX (run_skill.sh
+# skill_python_prefix).  Re-check the two facts this wrapper relies on, then run
+# the attested binary under the venv's argv[0] so CPython reads <prefix>/pyvenv.cfg.
+# The interpreter executed is still "$PYTHON"; the venv supplies argv[0], PATH and
+# site-packages.
+python_argv0="$PYTHON"
+if [ -n "${AAS_RUNTIME_PYTHON_PREFIX:-}" ]; then
+  prefix="$AAS_RUNTIME_PYTHON_PREFIX"
+  case "$prefix" in /*) ;; *) prefix="" ;; esac
+  if [ -z "$prefix" ] || [ -L "$prefix/pyvenv.cfg" ] || [ ! -f "$prefix/pyvenv.cfg" ] \
+     || [ ! -L "$prefix/bin/python" ] || ! [ "$prefix/bin/python" -ef "$PYTHON" ]; then
+    printf 'AAS_RUNTIME_PYTHON_PREFIX does not name a venv of the selected Python\n' >&2
+    exit 127
+  fi
+  python_argv0="$prefix/bin/python"
+  export PATH="$prefix/bin:$PATH"
+fi
+
 cmd="${1:-}"
 if [[ -z "$cmd" ]]; then
   echo "usage: run_docling.sh <doctor|convert|extract|chunk|quality|ocrspace-smoke> [args...]" >&2
@@ -43,11 +61,15 @@ if [[ -z "$cmd" ]]; then
 fi
 shift || true
 case "$cmd" in
-  doctor) exec "$PYTHON" "$ROOT/doctor.py" "$@" ;;
-  convert) exec "$PYTHON" "$ROOT/docling_convert.py" "$@" ;;
-  extract) exec "$PYTHON" "$ROOT/docling_extract.py" "$@" ;;
-  chunk) exec "$PYTHON" "$ROOT/docling_chunk.py" "$@" ;;
-  quality) exec "$PYTHON" "$ROOT/docling_quality.py" "$@" ;;
-  ocrspace-smoke) exec "$PYTHON" "$ROOT/docling_ocrspace_smoke.py" "$@" ;;
+  doctor) exec -a "$python_argv0" "$PYTHON" "$ROOT/doctor.py" "$@" ;;
+  convert) exec -a "$python_argv0" "$PYTHON" "$ROOT/docling_convert.py" "$@" ;;
+  extract) exec -a "$python_argv0" "$PYTHON" "$ROOT/docling_extract.py" "$@" ;;
+  chunk) exec -a "$python_argv0" "$PYTHON" "$ROOT/docling_chunk.py" "$@" ;;
+  quality) exec -a "$python_argv0" "$PYTHON" "$ROOT/docling_quality.py" "$@" ;;
+  ocrspace-smoke) exec -a "$python_argv0" "$PYTHON" "$ROOT/docling_ocrspace_smoke.py" "$@" ;;
+  --help|-h|help)
+    echo "usage: run_docling.sh <doctor|convert|extract|chunk|quality|ocrspace-smoke> [args...]"
+    exit 0
+    ;;
   *) echo "unknown subcommand: $cmd" >&2; exit 1 ;;
 esac
