@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Credential-blind client for the root-owned ARL credential broker."""
+"""Credential-blind client for the ARL credential broker."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ _BROKER_PROXY = os.environ.get(BROKER_PROXY_ENV, "")
 
 
 class BrokerError(OSError):
-    """The exact-generation credential broker rejected or lost a request."""
+    """The credential broker rejected or lost a request."""
 
 
 def broker_active() -> bool:
