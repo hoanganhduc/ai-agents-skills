@@ -400,7 +400,10 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 body = wrapper.read_text(encoding="utf-8")
                 self.assertIn("/usr/bin/python3", body)
                 self.assertIn("PYTHON_FD", body)
-                self.assertIn('exec "$PYTHON" -I -c "$secure_loader"', body)
+                if skill in {"zotero", "calibre"}:
+                    self.assertIn('exec -a "$python_argv0" "$PYTHON" -I -c "$secure_loader"', body)
+                else:
+                    self.assertIn('exec "$PYTHON" -I -c "$secure_loader"', body)
                 self.assertNotIn("command -v python", body)
 
     def test_direct_zotero_calibre_and_vnthuquan_wrappers_reject_hostile_python_and_linked_helper(self) -> None:

@@ -17,6 +17,12 @@ runtime_home="${HOME:-}"
 runtime_lang="${LANG:-}"
 runtime_lc_all="${LC_ALL:-}"
 runtime_tz="${TZ:-}"
+SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+runtime_command_fd="${AAS_RUNTIME_COMMAND_FD:-}"
+if [[ "$runtime_command_fd" =~ ^[0-9]+$ ]] && \
+   { [ "$SCRIPT_PATH" = "/proc/self/fd/$runtime_command_fd" ] || [ "$SCRIPT_PATH" = "/dev/fd/$runtime_command_fd" ]; }; then
+  SCRIPT_PATH="${AAS_RUNTIME_COMMAND_PATH:-$SCRIPT_PATH}"
+fi
 
 # Generic, provider, skill, and channel credentials must never reach the
 # producer. The only retained authority is the exact queue capability pointer.
@@ -46,12 +52,6 @@ if [ -n "$queue_authority" ]; then
 fi
 
 export PATH=/usr/bin:/bin
-SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
-runtime_command_fd="${AAS_RUNTIME_COMMAND_FD:-}"
-if [[ "$runtime_command_fd" =~ ^[0-9]+$ ]] && \
-   { [ "$SCRIPT_PATH" = "/proc/self/fd/$runtime_command_fd" ] || [ "$SCRIPT_PATH" = "/dev/fd/$runtime_command_fd" ]; }; then
-  SCRIPT_PATH="${AAS_RUNTIME_COMMAND_PATH:-$SCRIPT_PATH}"
-fi
 unset AAS_RUNTIME_COMMAND_FD AAS_RUNTIME_COMMAND_PATH
 if [ -n "$delivery_dir_hint" ]; then
   case "$delivery_dir_hint" in /*) SCRIPT_PARENT="$delivery_dir_hint" ;; *) SCRIPT_PARENT=__invalid__ ;; esac
