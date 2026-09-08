@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Exact-generation credential broker for autonomous-research-loop.
+"""Credential broker for autonomous-research-loop.
 
-Only this root-owned process parses provider/compute authorities.  The ARL
+Only this credential broker parses provider/compute authorities.  The ARL
 orchestrator receives an opaque local capability and remains credential-blind;
 each provider or compute subprocess receives only its selected projection.
 """
@@ -140,7 +140,7 @@ CHILD_BASE_KEYS = frozenset(
         "OPENCLAW_WORKSPACE", "AAS_RUNTIME_PYTHON", "AAS_RUNTIME_COMMAND_FD",
         "AAS_RUNTIME_COMMAND_PATH", "PYTHONDONTWRITEBYTECODE", "PYTHONUTF8",
         "PYTHONIOENCODING", "AAS_REMOTE_STRICT_NOTIFY_CHANNEL",
-        "AAS_ALLOW_RAW_NOTIFY_CMD",
+        "AAS_ALLOW_RAW_NOTIFY_CMD", "AAS_RUNTIME_PYTHON_PREFIX", "AAS_SKILL_VENV",
     }
 )
 
@@ -152,16 +152,50 @@ def _runtime_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _skills_root(runtime_root: Path) -> Path:
+    """Installed runtimes carry workspace/skills; a source checkout carries skills."""
+    installed = runtime_root / "workspace" / "skills"
+    return installed if installed.is_dir() else runtime_root / "skills"
+
+
+def _attested_interpreter() -> Path:
+    """Real path of the attested interpreter.  AAS_RUNTIME_PYTHON is the launcher's
+    bound descriptor (/proc/self/fd/N); it is valid in this process but not in a
+    subprocess.run child, which closes every inherited descriptor (close_fds=True,
+    no pass_fds) before execve.  The child therefore execs the validated real path."""
+    candidate = os.environ.get("AAS_RUNTIME_PYTHON") or "/usr/bin/python3"
+    real = Path(os.path.realpath(candidate))
+    if not re.fullmatch(r"/usr/bin/python3(\.[0-9]+)?", str(real)) or not os.path.samefile(candidate, "/usr/bin/python3"):
+        raise ValueError("compute driver interpreter is not the attested system Python")
+    return real
+
+
+def _skill_python_argv0(interpreter: Path) -> tuple[str, str]:
+    """(argv0, child PATH).  Same two facts the wrappers re-check; the launcher did full admission."""
+    prefix = os.environ.get("AAS_RUNTIME_PYTHON_PREFIX")
+    if not prefix:
+        return str(interpreter), "/usr/bin:/bin"
+    root = Path(prefix); cfg = root / "pyvenv.cfg"; py = root / "bin" / "python"
+    if (not root.is_absolute() or cfg.is_symlink() or not cfg.is_file()
+            or not py.is_symlink() or not os.path.samefile(py, interpreter)):
+        raise ValueError("skill Python venv is not admissible")
+    return str(py), f"{root}/bin:/usr/bin:/bin"
+
+
+def _owner_controlled_regular(info: os.stat_result) -> bool:
+    return (
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid in {0, os.getuid()}
+        and not info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        and (info.st_nlink == 1 or info.st_uid == 0)
+    )
+
+
 def _load_module_file(path: Path, name: str) -> Any:
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
         before = os.fstat(fd)
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or before.st_uid != 0
-            or before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-            or before.st_nlink != 1
-        ):
+        if not _owner_controlled_regular(before):
             raise RuntimeError(f"untrusted broker dependency: {path.name}")
         chunks: list[bytes] = []
         while True:
@@ -335,7 +369,7 @@ class CredentialState:
         self.private_root = private_root
         self.capabilities: dict[str, tuple[frozenset[str], Path]] = {}
         self.lock = threading.Lock()
-        self.skill_dir = runtime_root / "skills" / "autonomous-research-loop-runtime"
+        self.skill_dir = _skills_root(runtime_root) / "autonomous-research-loop-runtime"
         sys.path.insert(0, str(self.skill_dir))
         import autonomous_research_loop_runtime as runtime  # type: ignore
         import panel_parent  # type: ignore
@@ -566,14 +600,21 @@ class CredentialState:
         cwd = Path(str(request.get("cwd") or ""))
         if not cwd.is_absolute() or not cwd.is_dir() or not _within(cwd.resolve(), allowed_root):
             raise ValueError("compute working directory is outside the authorized project")
-        driver = self.runtime_root / "skills" / f"{lane}-research-compute" / f"{lane}_research_compute.py"
+        driver = _skills_root(self.runtime_root) / f"{lane}-research-compute" / f"{lane}_research_compute.py"
         if not driver.is_file() or driver.is_symlink():
             raise ValueError("exact compute driver is unavailable")
         info = driver.stat()
-        if info.st_uid != 0 or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH) or info.st_nlink != 1:
+        if not _owner_controlled_regular(info):
             raise ValueError("exact compute driver is untrusted")
+        interpreter = _attested_interpreter()
+        argv0, child_path = _skill_python_argv0(interpreter)
         env = _safe_environment(os.environ)
-        env["PATH"] = "/usr/bin:/bin"
+        env["PATH"] = child_path
+        prefix = os.environ.get("AAS_RUNTIME_PYTHON_PREFIX")
+        if prefix:
+            env["AAS_RUNTIME_PYTHON_PREFIX"] = prefix
+        else:
+            env.pop("AAS_RUNTIME_PYTHON_PREFIX", None)
         env["CODEX_CALLER_CWD"] = str(cwd)
         compute_home = self.private_root / f"compute-home-{lane}-{secrets.token_hex(12)}"
         compute_home.mkdir(mode=0o700)
@@ -585,7 +626,8 @@ class CredentialState:
             if lane_values.get(key):
                 env[key] = lane_values[key]
         completed = subprocess.run(
-            ["/usr/bin/python3", str(driver), *arguments],
+            [argv0, str(driver), *arguments],
+            executable=str(interpreter),
             cwd=str(cwd), env=env, text=True, encoding="utf-8", errors="replace", capture_output=True,
             timeout=86_400, check=False,
         )

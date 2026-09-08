@@ -6,12 +6,16 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from types import ModuleType
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -90,37 +94,24 @@ class PrepareConfigProjectionTests(unittest.TestCase):
             self.assertFalse(target.exists())
 
 
-def _real_secret_loader():
-    """Load load_secret_env.py directly; the broker's ownership gate requires a
-    root-owned file (the published generation), which the mutable repo cannot
-    satisfy, and that gate is orthogonal to the schema behavior under test."""
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location(
-        "aas_exact_secret_loader_test", RUNNERS_DIR / "load_secret_env.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 class StartupSecretSchemaTests(unittest.TestCase):
     def test_nonconforming_compute_file_fails_closed_without_traceback(self) -> None:
-        from unittest import mock
-
         with tempfile.TemporaryDirectory() as temporary:
-            secret_file = Path(temporary) / "compute.env"
+            root = Path(temporary)
+            root.chmod(0o700)
+            loader = root / "load_secret_env.py"
+            shutil.copyfile(RUNNERS_DIR / loader.name, loader)
+            loader.chmod(0o644)
+            secret_file = root / "compute.env"
             secret_file.write_text("TOTALLY_BOGUS_KEY=x\n", encoding="utf-8")
             secret_file.chmod(0o600)
             captured = io.StringIO()
             with (
-                mock.patch.object(
-                    broker, "_load_module_file", return_value=_real_secret_loader()
-                ),
+                mock.patch.object(broker, "_runtime_root", return_value=root),
                 mock.patch.dict(
                     os.environ,
-                    {broker.COMPUTE_POINTER: str(secret_file)},
-                    clear=False,
+                    {"HOME": str(root), broker.COMPUTE_POINTER: str(secret_file)},
+                    clear=True,
                 ),
                 contextlib.redirect_stderr(captured),
             ):
@@ -132,6 +123,157 @@ class StartupSecretSchemaTests(unittest.TestCase):
 
     def test_compute_schema_covers_every_advertised_lane(self) -> None:
         self.assertTrue(broker.COMPUTE_PROJECTION_KEYS <= broker.COMPUTE_KEYS)
+
+
+class OwnerControlledBrokerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        previous_umask = os.umask(0o077)
+        self.addCleanup(os.umask, previous_umask)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.root.chmod(0o700)
+        self.env = {"HOME": str(self.root), "PATH": "/usr/bin:/bin"}
+
+    def _module(self) -> Path:
+        path = self.root / "dependency.py"
+        path.write_text("value = 42\n", encoding="utf-8")
+        path.chmod(0o644)
+        return path
+
+    def _state(self, *, installed: bool = False) -> tuple[broker.CredentialState, Path]:
+        skills = self.root / "workspace" / "skills" if installed else self.root / "skills"
+        driver = skills / "kaggle-research-compute" / "kaggle_research_compute.py"
+        driver.parent.mkdir(parents=True)
+        driver.write_text(
+            "import json, os, sys\n"
+            "print(json.dumps({'prefix': sys.prefix, 'executable': sys.executable, "
+            "'real': os.readlink('/proc/self/exe'), 'path': os.environ['PATH'], "
+            "'driver': __file__, 'retained': os.environ.get('AAS_SKILL_VENV')}))\n",
+            encoding="utf-8",
+        )
+        driver.chmod(0o644)
+        state = broker.CredentialState.__new__(broker.CredentialState)
+        state.runtime_root = self.root
+        state.private_root = self.root
+        state.capabilities = {"capability": (frozenset({"kaggle"}), self.root)}
+        state.lock = threading.Lock()
+        state.compute = {}
+        state.providers = {}
+        return state, driver
+
+    def _run(self, state: broker.CredentialState) -> dict:
+        return state.compute_run(
+            {"lane": "kaggle", "arguments": [], "cwd": str(self.root)}, "capability"
+        )
+
+    def test_owner_controlled_module_is_loaded(self) -> None:
+        module = broker._load_module_file(self._module(), "owner_dependency")
+        self.assertEqual(module.value, 42)
+
+    def test_group_writable_module_is_refused(self) -> None:
+        path = self._module()
+        self.assertEqual(broker._load_module_file(path, "owner_dependency").value, 42)
+        path.chmod(0o664)
+        with self.assertRaisesRegex(RuntimeError, "^untrusted broker dependency: dependency.py$"):
+            broker._load_module_file(path, "owner_dependency")
+
+    @unittest.skipIf(os.getuid() == 0, "root-owned hard links are intentionally allowed")
+    def test_hard_linked_module_is_refused(self) -> None:
+        path = self._module()
+        self.assertEqual(broker._load_module_file(path, "owner_dependency").value, 42)
+        os.link(path, self.root / "alias.py")
+        with self.assertRaisesRegex(RuntimeError, "^untrusted broker dependency: dependency.py$"):
+            broker._load_module_file(path, "owner_dependency")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux interpreter probe required")
+    def test_group_writable_compute_driver_is_refused(self) -> None:
+        state, driver = self._state()
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            result = self._run(state)
+        self.assertEqual(result["returncode"], 0, result["stderr"])
+        driver.chmod(0o664)
+        with self.assertRaisesRegex(ValueError, "^exact compute driver is untrusted$"):
+            self._run(state)
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and Path("/usr/bin/python3").is_file(), "Linux system Python required")
+    def test_compute_run_executes_the_attested_interpreter_under_the_venv_argv0(self) -> None:
+        state, _ = self._state()
+        venv = self.root / "venv"
+        created = subprocess.run(
+            ["/usr/bin/python3", "-I", "-m", "venv", "--without-pip", str(venv)],
+            env=self.env, capture_output=True, text=True, encoding="utf-8", timeout=60,
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        fd = os.open("/usr/bin/python3", os.O_RDONLY)
+        self.addCleanup(os.close, fd)
+        env = dict(self.env, AAS_RUNTIME_PYTHON=f"/proc/self/fd/{fd}",
+                   AAS_RUNTIME_PYTHON_PREFIX=str(venv), AAS_SKILL_VENV=str(venv))
+        with mock.patch.dict(os.environ, env, clear=True):
+            result = self._run(state)
+        self.assertEqual(result["returncode"], 0, result["stderr"])
+        report = json.loads(result["stdout"])
+        self.assertEqual(report["prefix"], str(venv))
+        self.assertEqual(report["executable"], str(venv / "bin" / "python"))
+        self.assertEqual(report["path"], f"{venv}/bin:/usr/bin:/bin")
+        self.assertEqual(report["retained"], str(venv))
+        self.assertRegex(report["real"], r"^/usr/bin/python3(\.[0-9]+)?$")
+        self.assertNotIn("/proc/self/fd/", report["real"])
+        invalid = dict(env, AAS_RUNTIME_PYTHON_PREFIX=str(self.root))
+        with mock.patch.dict(os.environ, invalid, clear=True):
+            with self.assertRaisesRegex(ValueError, "^skill Python venv is not admissible$"):
+                self._run(state)
+        invalid = dict(env, AAS_RUNTIME_PYTHON="/bin/sh")
+        with mock.patch.dict(os.environ, invalid, clear=True):
+            with self.assertRaisesRegex(ValueError, "not the attested system Python"):
+                self._run(state)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux interpreter probe required")
+    def test_skills_root_prefers_installed_layout(self) -> None:
+        for installed in (False, True):
+            with self.subTest(installed=installed):
+                state, driver = self._state(installed=installed)
+                skills = driver.parent.parent
+                self.assertEqual(broker._skills_root(self.root), skills)
+                fake_modules = {name: ModuleType(name) for name in ("autonomous_research_loop_runtime", "panel_parent")}
+                with mock.patch.dict(sys.modules, fake_modules), mock.patch.object(sys, "path", list(sys.path)):
+                    initialized = broker.CredentialState(self.root, {}, {}, {}, "token", "socket", self.root)
+                self.assertEqual(initialized.skill_dir, skills / "autonomous-research-loop-runtime")
+                with mock.patch.dict(os.environ, self.env, clear=True):
+                    result = self._run(state)
+                self.assertEqual(result["returncode"], 0, result["stderr"])
+                self.assertEqual(json.loads(result["stdout"])["driver"], str(driver))
+
+    def test_safe_environment_retains_the_admitted_venv_metadata(self) -> None:
+        source = dict(self.env, AAS_RUNTIME_PYTHON_PREFIX="/venv", AAS_SKILL_VENV="/venv", PYTHONPATH="/hostile")
+        child = broker._safe_environment(source)
+        self.assertEqual(child["AAS_RUNTIME_PYTHON_PREFIX"], "/venv")
+        self.assertEqual(child["AAS_SKILL_VENV"], "/venv")
+        self.assertNotIn("PYTHONPATH", child)
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and Path("/usr/bin/python3").is_file(), "Linux launcher required")
+    def test_entry_launch_from_installed_layout_through_the_launcher(self) -> None:
+        runtime = self.root / "runtime"
+        runtime.mkdir()
+        for name in ("run_skill.sh", "load_secret_env.py", "arl_credential_broker.py"):
+            target = runtime / name
+            shutil.copyfile(RUNNERS_DIR / name, target)
+            target.chmod(0o755 if name.endswith(".sh") else 0o644)
+        relative = Path("skills/autonomous-research-loop-runtime")
+        shutil.copytree(REPO_ROOT / "canonical" / "runtime" / relative, runtime / "workspace" / relative,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        for path in (runtime / "workspace").rglob("*"):
+            path.chmod(0o755 if path.is_dir() or path.suffix == ".sh" else 0o644)
+        pointer = self.root / "compute.env"
+        pointer.write_text("", encoding="utf-8")
+        pointer.chmod(0o600)
+        result = subprocess.run(
+            [str(runtime / "run_skill.sh"), str(relative / "run_autonomous_research_loop.sh"), "selftest"],
+            env=dict(self.env, AAS_COMPUTE_SECRETS_FILE=str(pointer)),
+            capture_output=True, text=True, encoding="utf-8", timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["smoke_mode"], "offline")
 
 
 # Runs in a subprocess with both TOML parsers blocked, standing in for the

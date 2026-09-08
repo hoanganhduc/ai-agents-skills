@@ -36,11 +36,10 @@ python3 "$PACK/apply_failover_settings.py" \
 
 export LOOP_DIR=/path/to/loop
 export PROJECT_ROOT=/path/to/project
-export AAS_RUNTIME_ROOT="$RUNTIME"
 # In an ordinary interactive shell, run LAUNCH_supervisor.sh directly. Under a
 # managed executor that reaps descendants, start a persistent user service
 # through a loop-owned wrapper that loads credentials internally:
-systemd-run \
+AAS_RUNTIME_ROOT="$RUNTIME" systemd-run \
   --user \
   --quiet \
   --collect \
