@@ -1641,6 +1641,19 @@
         "status": "manual-native",
         "reason": "Calibre workflows depend on the user's local ebook library and profile selection."
       },
+      "python": {
+        "requirements": [
+          "skills/calibre/requirements.txt"
+        ],
+        "modules": [
+          "PyPDF2",
+          "requests",
+          "ebooklib",
+          "googleapiclient",
+          "google.oauth2"
+        ],
+        "provision": "default"
+      },
       "files": [
         {
           "source": "skills/calibre/cal.py",
@@ -2006,6 +2019,16 @@
         "status": "doctor-only",
         "reason": "Docling conversion and OCR need local parser dependencies and documents; use the doctor path for environment checks."
       },
+      "python": {
+        "requirements": [
+          "skills/docling/requirements.txt"
+        ],
+        "modules": [
+          "docling",
+          "pypdfium2"
+        ],
+        "provision": "opt-in"
+      },
       "files": [
         {
           "source": "skills/docling/docling_chunk.py",
@@ -2367,10 +2390,32 @@
         "status": "offline-smoke",
         "reason": "Smoke validates inert LeanExplore MCP setup guidance without installing packages, starting services, or calling live APIs."
       },
+      "python": {
+        "requirements": [
+          "skills/lean-explore-mcp/requirements.txt"
+        ],
+        "modules": [
+          "lean_explore"
+        ],
+        "provision": "opt-in"
+      },
       "files": [
         {
           "source": "skills/lean-explore-mcp/lean_explore_mcp.py",
           "target": "workspace/skills/lean-explore-mcp/lean_explore_mcp.py",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
+          "source": "skills/lean-explore-mcp/requirements.txt",
+          "target": "workspace/skills/lean-explore-mcp/requirements.txt",
           "platforms": [
             "linux",
             "macos",
@@ -3049,6 +3094,15 @@
         "status": "manual-native",
         "reason": "Modal workflows require explicit external compute credentials and are not safe for generic offline smoke."
       },
+      "python": {
+        "requirements": [
+          "workspace/research_compute/requirements-modal.txt"
+        ],
+        "modules": [
+          "modal"
+        ],
+        "provision": "default"
+      },
       "files": [
         {
           "source": "skills/modal-research-compute/modal_research_compute.py",
@@ -3281,6 +3335,19 @@
           "mode": "0644"
         },
         {
+          "source": "workspace/research_compute/requirements-modal.txt",
+          "target": "workspace/research_compute/requirements-modal.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
+        {
           "source": "workspace/config/research-compute.example.toml",
           "target": "workspace/config/research-compute.example.toml",
           "platforms": [
@@ -3303,6 +3370,13 @@
       "smoke_coverage": {
         "status": "manual-native",
         "reason": "Hetzner lifecycle verbs require an HCLOUD_TOKEN and provision paid servers; they are not safe for generic offline smoke. The offline dry-run and guard paths are covered by tests/test_hetzner_research_compute.py."
+      },
+      "python": {
+        "requirements": [
+          "skills/hetzner-research-compute/requirements.txt"
+        ],
+        "modules": [],
+        "provision": "default"
       },
       "files": [
         {
@@ -3413,6 +3487,19 @@
           "type": "text",
           "newline": "lf",
           "mode": "0644"
+        },
+        {
+          "source": "skills/hetzner-research-compute/requirements.txt",
+          "target": "workspace/skills/hetzner-research-compute/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
         }
       ]
     },
@@ -3424,6 +3511,15 @@
       "smoke_coverage": {
         "status": "manual-native",
         "reason": "Kaggle lifecycle verbs require the new Kaggle API token (KAGGLE_API_TOKEN or ~/.kaggle/access_token) and push real kernels; per Kaggle ToS no live call is made in the build. The offline dry-run, resume-loop, fan-out, and guard paths are covered by tests/test_kaggle_research_compute.py (all kaggle CLI calls and the kagglehub-validate hook mocked)."
+      },
+      "python": {
+        "requirements": [
+          "workspace/research_compute/requirements-kaggle.txt"
+        ],
+        "modules": [
+          "kagglehub"
+        ],
+        "provision": "default"
       },
       "files": [
         {
@@ -3473,6 +3569,19 @@
           "type": "text",
           "newline": "crlf",
           "mode": "0644"
+        },
+        {
+          "source": "workspace/research_compute/requirements-kaggle.txt",
+          "target": "workspace/research_compute/requirements-kaggle.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
         }
       ]
     },
@@ -3482,7 +3591,30 @@
         "status": "manual-native",
         "reason": "Digest runs depend on configured topics and external feeds; no generic offline smoke is declared."
       },
+      "python": {
+        "requirements": [
+          "skills/research-digest-wrapper/requirements.txt"
+        ],
+        "modules": [
+          "feedparser",
+          "requests"
+        ],
+        "provision": "default"
+      },
       "files": [
+        {
+          "source": "skills/research-digest-wrapper/requirements.txt",
+          "target": "workspace/skills/research-digest-wrapper/requirements.txt",
+          "platforms": [
+            "linux",
+            "macos",
+            "windows",
+            "wsl"
+          ],
+          "type": "text",
+          "newline": "lf",
+          "mode": "0644"
+        },
         {
           "source": "skills/research-digest-wrapper/research_digest.py",
           "target": "workspace/skills/research-digest-wrapper/research_digest.py",
@@ -4096,6 +4228,20 @@
       "smoke_coverage": {
         "status": "manual-native",
         "reason": "Zotero workflows depend on the user's local library, profile, and optional cloud credentials."
+      },
+      "python": {
+        "requirements": [
+          "skills/zotero/requirements.txt"
+        ],
+        "modules": [
+          "pyzotero",
+          "requests",
+          "PyPDF2",
+          "pdfplumber",
+          "googleapiclient",
+          "google.oauth2"
+        ],
+        "provision": "default"
       },
       "files": [
         {

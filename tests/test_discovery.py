@@ -56,6 +56,42 @@ class DiscoveryTests(unittest.TestCase):
             candidates_for_platform(site_candidates, "windows"),
         )
 
+    def test_shared_venv_position_in_every_linux_candidate_set(self) -> None:
+        """The shared venv leads every general set and follows the dedicated venv elsewhere.
+
+        The provisioner fills ``~/.agents_skills_venv``; discovery only finds it
+        if the manifest keeps it at these positions, so a reorder or removal in
+        ``dependencies.yaml`` fails here rather than at the next install.
+        """
+        manifests = load_manifests()
+        deps = manifests["dependencies"]
+        python_sets = deps["python_candidate_sets"]
+        site_sets = deps["python_site_candidate_sets"]
+        expected_index = {
+            "default": 0,
+            "agent": 0,
+            "docling": 1,
+            "manim": 1,
+            "vnu-eoffice": 1,
+            "course": None,
+        }
+        self.assertEqual(sorted(python_sets), sorted(expected_index))
+        self.assertEqual(sorted(site_sets), sorted(expected_index))
+        venv = "~/.agents_skills_venv/bin/python"
+        site = "~/.agents_skills_venv/lib/python*/site-packages"
+        for name, index in expected_index.items():
+            with self.subTest(candidate_set=name):
+                candidates = candidates_for_platform(python_sets[name], "linux")
+                site_candidates = candidates_for_platform(site_sets[name], "linux")
+                if index is None:
+                    self.assertNotIn(venv, candidates)
+                    self.assertNotIn(site, site_candidates)
+                    continue
+                self.assertIn(venv, candidates)
+                self.assertEqual(candidates.index(venv), index, candidates)
+                self.assertIn(site, site_candidates)
+                self.assertEqual(site_candidates.index(site), index, site_candidates)
+
     def test_package_python_candidates_isolate_course_and_eoffice_venvs(self) -> None:
         manifests = load_manifests()
         deps = manifests["dependencies"]
