@@ -21,6 +21,23 @@ ADOPTING_COMMANDS = (
         ("--help",),
         "research_digest.py",
     ),
+    ("skills/lean-explore-mcp/run_lean_explore_mcp.sh", ("smoke",), "lean_explore_mcp.py"),
+    (
+        "skills/modal-research-compute/run_modal_research_compute.sh",
+        ("--help",),
+        "modal_research_compute.py",
+    ),
+    (
+        "skills/kaggle-research-compute/run_kaggle_research_compute.sh",
+        ("--help",),
+        "kaggle_research_compute.py",
+    ),
+    (
+        "skills/hetzner-research-compute/run_hetzner_research_compute.sh",
+        ("--help",),
+        "hetzner_research_compute.py",
+    ),
+    ("skills/hetzner-research-compute/run_hetzner_reaper.sh", ("--help",), "hetzner_reaper.py"),
 )
 NON_ADOPTING_COMMANDS = (
     ("skills/axiom-axle-mcp/run_axiom_axle_mcp.sh", ("smoke",), "smoke"),
