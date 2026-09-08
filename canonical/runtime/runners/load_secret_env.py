@@ -35,6 +35,11 @@ MINIMAL_CHILD_ENV_KEYS = frozenset(
         "AAS_RUNTIME_COMMAND_PATH",
         "AAS_RUNTIME_REQUIRE_TRUSTED",
         "AAS_RUNTIME_PYTHON_ISOLATED",
+        # Skill Python venv admitted by run_skill.sh (skill_python_prefix) and the
+        # operator override it was resolved from.  Retained so the wrappers and
+        # the broker can re-check them; neither drives this loader's PATH.
+        "AAS_RUNTIME_PYTHON_PREFIX",
+        "AAS_SKILL_VENV",
         "PYTHONDONTWRITEBYTECODE",
         "PYTHONUTF8",
         "PYTHONIOENCODING",
@@ -304,8 +309,39 @@ def build_parser() -> argparse.ArgumentParser:
             "selected"
         ),
     )
+    parser.add_argument(
+        "--exec-argv0",
+        default=None,
+        metavar="PATH",
+        help=(
+            "run the child under this absolute argv[0] (an admitted skill Python "
+            "venv's bin/python) and prepend that venv's bin to the child PATH; the "
+            "executed file is still the command"
+        ),
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser
+
+
+def _prefix_admissible(prefix: str, argv0: str, command0: str) -> bool:
+    """Re-check the two facts the venv argv[0] hand-off relies on.
+
+    The launcher ran full admission (``run_skill.sh`` ``skill_python_prefix``);
+    this loader only confirms that ``argv0`` sits in a venv (a regular,
+    non-symlink ``pyvenv.cfg`` and a symlinked ``bin/python``) and that the
+    symlink resolves to the very interpreter the wrapper is executing.
+    """
+    if not os.path.isabs(prefix):
+        return False
+    cfg = os.path.join(prefix, "pyvenv.cfg")
+    if os.path.islink(cfg) or not os.path.isfile(cfg):
+        return False
+    if not os.path.islink(os.path.join(prefix, "bin", "python")):
+        return False
+    try:
+        return os.path.samefile(argv0, command0)
+    except OSError:
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -325,6 +361,19 @@ def main(argv: list[str] | None = None) -> int:
     if any(not KEY_RE.fullmatch(key) for key in retain_env):
         print("secret env retained metadata keys are invalid", file=sys.stderr)
         return 2
+    exec_argv0 = str(args.exec_argv0) if args.exec_argv0 is not None else ""
+    venv_prefix = ""
+    if args.exec_argv0 is not None:
+        if not os.path.isabs(exec_argv0):
+            print("secret env --exec-argv0 must be an absolute path", file=sys.stderr)
+            return 2
+        venv_prefix = os.path.dirname(os.path.dirname(exec_argv0))
+        if not _prefix_admissible(venv_prefix, exec_argv0, command[0]):
+            print(
+                "AAS_RUNTIME_PYTHON_PREFIX does not name a venv of the selected Python",
+                file=sys.stderr,
+            )
+            return 127
     try:
         protected_identities: list[str] = []
         loaded = (
@@ -347,7 +396,11 @@ def main(argv: list[str] | None = None) -> int:
         for key in retained_names
         if os.environ.get(key)
     }
-    child_env["PATH"] = FIXED_CHILD_PATH
+    # The caller's PATH is never consulted.  Only an admitted venv argv[0]
+    # prepends that venv's bin, so the child finds the venv's console scripts.
+    child_env["PATH"] = (
+        f"{venv_prefix}/bin:{FIXED_CHILD_PATH}" if venv_prefix else FIXED_CHILD_PATH
+    )
     subset_mode = bool(args.export_subset or export_keys)
     selected_keys = export_keys if subset_mode else allowed_keys
     for key in allowed_keys:
@@ -371,8 +424,13 @@ def main(argv: list[str] | None = None) -> int:
     child_env.update(
         {key: value for key, value in loaded.items() if key in selected_keys}
     )
+    argv = list(command)
+    if venv_prefix:
+        # The executed file is still command[0]; only argv[0] changes, so CPython
+        # reads <venv>/pyvenv.cfg and adds the venv's site-packages.
+        argv[0] = exec_argv0
     try:
-        os.execvpe(command[0], command, child_env)
+        os.execvpe(command[0], argv, child_env)
     except OSError as exc:
         print(f"secret env child launch failed: {exc}", file=sys.stderr)
         return 127

@@ -47,6 +47,19 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             current = current.parent
         return runner, command
 
+    def _env(self, root: Path) -> dict[str, str]:
+        """The inherited environment with a private HOME.
+
+        A credential launch admits ``$HOME/.agents_skills_venv`` when it exists
+        (run_skill.sh ``skill_python_prefix``) and refuses one that is not
+        owner-controlled, so the real HOME must never reach these launches.
+        """
+        home = root / "home"
+        home.mkdir(mode=0o700, exist_ok=True)
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        return env
+
     def test_explicit_python_is_exported_and_precedes_workspace_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -60,7 +73,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             python_bin.mkdir()
             explicit_python = python_bin / "python3"
             explicit_python.symlink_to(Path(sys.executable).resolve())
-            env = os.environ.copy()
+            env = self._env(root)
             env["AAS_RUNTIME_PYTHON"] = str(explicit_python)
 
             completed = subprocess.run(
@@ -104,7 +117,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             fake_dirname.chmod(0o755)
-            env = os.environ.copy()
+            env = self._env(root)
             env.update(
                 {
                     "PATH": f"{hostile}:/usr/bin:/bin",
@@ -133,7 +146,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             root = Path(tmp)
             marker = root / "child-ran"
             runner, _ = self._runtime(root, f"touch {marker}\n")
-            env = os.environ.copy()
+            env = self._env(root)
             env["AAS_RUNTIME_PYTHON"] = "relative/python3"
 
             completed = subprocess.run(
@@ -159,7 +172,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             root = Path(tmp)
             marker = root / "child-ran"
             runner, _ = self._runtime(root, f"touch {marker}\n")
-            env = os.environ.copy()
+            env = self._env(root)
             env["AAS_RUNTIME_PYTHON"] = str(echo)
 
             completed = subprocess.run(
@@ -189,7 +202,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
                 "printf '%s\\n' \"$PYTHONDONTWRITEBYTECODE\"\n"
                 f"PYTHONPATH={str(module_dir)!r} python3 -c 'import imported; print(imported.VALUE)'\n",
             )
-            env = os.environ.copy()
+            env = self._env(root)
             env["PYTHONDONTWRITEBYTECODE"] = "0"
 
             completed = subprocess.run(
@@ -225,7 +238,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             secrets.chmod(0o600)
-            env = os.environ.copy()
+            env = self._env(root)
             env.update(
                 {
                     "AAS_SKILL_SECRETS_FILE": str(secrets),
@@ -277,14 +290,14 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             release = root / "loader-release"
             loader = root / "runtime" / "load_secret_env.py"
             loader_text = loader.read_text(encoding="utf-8")
-            needle = "    try:\n        os.execvpe(command[0], command, child_env)\n"
+            needle = "    try:\n        os.execvpe(command[0], argv, child_env)\n"
             synchronization = (
                 f"    Path({str(ready)!r}).write_text('ready', encoding='utf-8')\n"
                 "    import time\n"
                 f"    while not Path({str(release)!r}).exists():\n"
                 "        time.sleep(0.01)\n"
                 "    try:\n"
-                "        os.execvpe(command[0], command, child_env)\n"
+                "        os.execvpe(command[0], argv, child_env)\n"
             )
             self.assertIn(needle, loader_text)
             loader.write_text(loader_text.replace(needle, synchronization), encoding="utf-8")
@@ -297,7 +310,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             replacement.chmod(0o755)
-            env = os.environ.copy()
+            env = self._env(root)
             env["AAS_SKILL_SECRETS_FILE"] = str(secret)
 
             process = subprocess.Popen(
@@ -346,7 +359,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             (hostile / "research_digest.py").write_text(
                 "print('hostile-helper')\n", encoding="utf-8"
             )
-            env = os.environ.copy()
+            env = self._env(root)
             env.update(
                 {
                     "AAS_RUNTIME_COMMAND_PATH": str(hostile_wrapper),
@@ -389,7 +402,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             hostile_python.chmod(0o755)
-            env = os.environ.copy()
+            env = self._env(root)
             env.update(
                 {
                     "AAS_RUNTIME_PYTHON": os.path.realpath("/usr/bin/python3"),
@@ -431,7 +444,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
                 secrets = root / "skill-secrets.env"
                 secrets.write_text(body, encoding="utf-8")
                 secrets.chmod(0o600)
-                env = os.environ.copy()
+                env = self._env(root)
                 env["AAS_SKILL_SECRETS_FILE"] = str(secrets)
 
                 completed = subprocess.run(
@@ -467,7 +480,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
 
             for candidate in candidates:
                 with self.subTest(candidate=candidate):
-                    env = os.environ.copy()
+                    env = self._env(root)
                     env["AAS_SKILL_SECRETS_FILE"] = candidate
                     completed = subprocess.run(
                         ["bash", str(runner), "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh"],
@@ -511,7 +524,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             os.mkfifo(fifo, 0o600)
             for candidate in (secrets, hardlink, oversized, fifo):
                 with self.subTest(candidate=candidate):
-                    env = os.environ.copy()
+                    env = self._env(root)
                     env["AAS_SKILL_SECRETS_FILE"] = str(candidate)
                     completed = subprocess.run(
                         ["bash", str(runner), "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh"],
@@ -537,7 +550,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             secrets = root / "skill-secrets.env"
             secrets.write_text("AXLE_API_KEY=must-not-leak\n", encoding="utf-8")
             secrets.chmod(0o600)
-            env = os.environ.copy()
+            env = self._env(root)
             env["AAS_SKILL_SECRETS_FILE"] = str(secrets)
 
             completed = subprocess.run(
@@ -575,7 +588,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             startup = root / "hostile-startup.sh"
             startup_marker = root / "hostile-startup-ran"
             startup.write_text(f"touch {startup_marker}\n", encoding="utf-8")
-            env = os.environ.copy()
+            env = self._env(root)
             env.update(
                 {
                     "AAS_SKILL_SECRETS_FILE": str(secrets),
@@ -614,7 +627,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             secrets = root / "skill-secrets.env"
             secrets.write_text("S2_API_KEY=must-not-load\n", encoding="utf-8")
             secrets.chmod(0o600)
-            env = os.environ.copy()
+            env = self._env(root)
             env.update(
                 {
                     "AAS_SKILL_SECRETS_FILE": str(secrets),
@@ -651,7 +664,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
             secrets = root / "skill-secrets.env"
             secrets.write_text("AXLE_API_KEY=safe-value\n", encoding="utf-8")
             secrets.chmod(0o600)
-            env = os.environ.copy()
+            env = self._env(root)
             env["AAS_SKILL_SECRETS_FILE"] = str(secrets)
 
             completed = subprocess.run(
@@ -689,7 +702,7 @@ class PosixRuntimeRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             secrets.chmod(0o600)
-            env = os.environ.copy()
+            env = self._env(root)
             env.update(
                 {
                     "AAS_CALIBRE_SECRETS_FILE": str(secrets),
