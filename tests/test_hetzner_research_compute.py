@@ -2266,6 +2266,9 @@ class HetznerDriverTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
+        self.tmp.chmod(0o700)
+        previous_umask = os.umask(0o077)
+        self.addCleanup(os.umask, previous_umask)
         self.config = _config(self.tmp)
         self.state = self.tmp / "state"
         self.state.mkdir(mode=0o700)
@@ -2698,13 +2701,13 @@ class HetznerDriverTests(unittest.TestCase):
             "expires_at": datetime.fromtimestamp(now + 300, tz=timezone.utc).isoformat(),
         }
         lease_path.write_text(json.dumps(payload), encoding="utf-8")
-        lease_path.chmod(0o644)
+        lease_path.chmod(0o600)
         real_fstat = os.fstat
 
-        def root_owned_fstat(descriptor):
+        def owner_owned_fstat(descriptor):
             info = real_fstat(descriptor)
             return mock.Mock(
-                st_uid=0,
+                st_uid=os.getuid(),
                 st_mode=info.st_mode,
                 st_nlink=info.st_nlink,
                 st_dev=info.st_dev,
@@ -2716,12 +2719,11 @@ class HetznerDriverTests(unittest.TestCase):
             )
 
         with (
-            mock.patch.object(hetzner_driver.os, "geteuid", return_value=1000),
             mock.patch.object(
                 hetzner_driver,
-                "_require_root_protected_parent_chain",
+                "_require_owner_protected_parent_chain",
             ),
-            mock.patch.object(hetzner_driver.os, "fstat", side_effect=root_owned_fstat),
+            mock.patch.object(hetzner_driver.os, "fstat", side_effect=owner_owned_fstat),
         ):
             evidence = hetzner_driver._verify_durable_reaper_lease(self.config)
         self.assertEqual(evidence["project_identity"], TEST_PROJECT_IDENTITY)
@@ -2731,19 +2733,149 @@ class HetznerDriverTests(unittest.TestCase):
 
         payload["scheduler"]["id"] = "wrong-scheduler"
         lease_path.write_text(json.dumps(payload), encoding="utf-8")
-        lease_path.chmod(0o644)
+        lease_path.chmod(0o600)
         with (
-            mock.patch.object(hetzner_driver.os, "geteuid", return_value=1000),
             mock.patch.object(
                 hetzner_driver,
-                "_require_root_protected_parent_chain",
+                "_require_owner_protected_parent_chain",
             ),
-            mock.patch.object(hetzner_driver.os, "fstat", side_effect=root_owned_fstat),
+            mock.patch.object(hetzner_driver.os, "fstat", side_effect=owner_owned_fstat),
             self.assertRaisesRegex(
                 hetzner_driver.HetznerDriverError, "active scheduler"
             ),
         ):
             hetzner_driver._verify_durable_reaper_lease(self.config)
+
+    def _write_reaper_lease(self, *, age: int = 0, scheduler_id: str | None = None) -> Path:
+        now = time.time() - age
+        payload = {
+            "version": 1,
+            "project_identity": TEST_PROJECT_IDENTITY,
+            "install_scope": hetzner_driver.install_scope(self.config),
+            "config_digest": hetzner_driver._reaper_config_digest(self.config),
+            "scheduler": {
+                "kind": "cron",
+                "id": scheduler_id or self.config.hetzner_reaper_scheduler_id,
+                "active": True,
+            },
+            "issued_at": _iso(now),
+            "expires_at": _iso(now + 300),
+        }
+        path = Path(self.config.hetzner_reaper_lease_file)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        path.chmod(0o600)
+        return path
+
+    @_GETEUID_POSIX_SKIP
+    def test_owner_protected_parent_chain_predicate(self) -> None:
+        owner = os.getuid()
+        foreign = owner + 10000
+        cases = (
+            (owner, 0o755, None, True),
+            (0, 0o755, None, True),
+            (0, 0o1777, None, True),
+            (owner, 0o775, None, False),
+            (foreign, 0o755, None, False),
+            (foreign, 0o755, foreign, True),
+        )
+        for uid, mode, explicit_owner, accepted in cases:
+            with self.subTest(uid=uid, mode=oct(mode), owner_uid=explicit_owner), mock.patch.object(
+                hetzner_driver.os, "stat",
+                return_value=mock.Mock(st_uid=uid, st_mode=stat.S_IFDIR | mode),
+            ):
+                if accepted:
+                    hetzner_driver._require_owner_protected_parent_chain(
+                        Path("/owner-controlled"), label="test lease", owner_uid=explicit_owner,
+                    )
+                else:
+                    with self.assertRaisesRegex(hetzner_driver.HetznerDriverError, "owner-controlled"):
+                        hetzner_driver._require_owner_protected_parent_chain(
+                            Path("/owner-controlled"), label="test lease", owner_uid=explicit_owner,
+                        )
+
+    @_GETEUID_POSIX_SKIP
+    def test_reaper_lease_is_refused_when_group_readable(self) -> None:
+        path = self._write_reaper_lease()
+        path.chmod(0o640)
+        with self.assertRaises(hetzner_driver.HetznerDriverError) as raised:
+            hetzner_driver._verify_durable_reaper_lease(self.config)
+        self.assertEqual(
+            str(raised.exception),
+            "durable reaper lease must be owner-owned, regular, single-link, "
+            "bounded, and private (0600)",
+        )
+
+    @_GETEUID_POSIX_SKIP
+    def test_reaper_lease_is_refused_when_configured_under_etc(self) -> None:
+        home = self.tmp / "home"
+        home.mkdir(mode=0o700)
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            default = _config_text(self.tmp / "default", CONFIG_TOML)
+            self.assertEqual(
+                default.hetzner_reaper_lease_file,
+                str(home / ".local/state/ai-agents-skills/hetzner-reaper-lease.json"),
+            )
+            expanded = _config_text(
+                self.tmp / "expanded",
+                CONFIG_TOML.replace("[hetzner]", '[hetzner]\nreaper_lease_file = "~/lease.json"'),
+            )
+            self.assertEqual(expanded.hetzner_reaper_lease_file, str(home / "lease.json"))
+        link = self.tmp / "legacy-lease-parent"
+        link.symlink_to("/etc", target_is_directory=True)
+        for index, parent in enumerate(("/etc", "/usr", "/opt", str(link))):
+            with self.subTest(parent=parent):
+                with self.assertRaises(ValueError) as raised:
+                    _config_text(
+                        self.tmp / f"refused-{index}",
+                        CONFIG_TOML.replace(
+                            "[hetzner]", f'[hetzner]\nreaper_lease_file = "{parent}/reaper-lease.json"',
+                        ),
+                    )
+                self.assertEqual(
+                    str(raised.exception),
+                    "reaper lease path must be owner-controlled; move it under $HOME "
+                    "(default ~/.local/state/ai-agents-skills/hetzner-reaper-lease.json)",
+                )
+
+    @_GETEUID_POSIX_SKIP
+    def test_reaper_lease_binding_mismatch_message(self) -> None:
+        self.config.hetzner_reaper_scheduler_id = "cron:user:me"
+        self._write_reaper_lease(scheduler_id="cron:user:other")
+        with self.assertRaises(hetzner_driver.HetznerDriverError) as raised:
+            hetzner_driver._verify_durable_reaper_lease(self.config)
+        self.assertEqual(str(raised.exception), "durable reaper lease is not bound to the active scheduler")
+
+    @_GETEUID_POSIX_SKIP
+    def test_doctor_reports_reaper_lease_field(self) -> None:
+        state_root = self.tmp / "doctor-must-not-create-state"
+        for state in ("missing", "stale", "fresh"):
+            with self.subTest(state=state):
+                if state != "missing":
+                    self._write_reaper_lease(age=1800 if state == "stale" else 0)
+                before = {path.relative_to(self.tmp) for path in self.tmp.rglob("*")}
+                output = io.StringIO()
+                with mock.patch.object(hetzner_driver, "_load", return_value=(self.config, state_root)), contextlib.redirect_stdout(output):
+                    result = hetzner_driver.main(["doctor"])
+                self.assertEqual(result, 0)
+                self.assertEqual({path.relative_to(self.tmp) for path in self.tmp.rglob("*")}, before)
+                lease = json.loads(output.getvalue())["reaper_lease"]
+                self.assertEqual(set(lease), {"present", "fresh", "age_seconds", "scheduler_kind", "scheduler_id", "error"})
+                if state == "missing":
+                    self.assertFalse(lease["present"])
+                    self.assertFalse(lease["fresh"])
+                    self.assertIsNone(lease["error"])
+                elif state == "stale":
+                    self.assertFalse(lease["present"])
+                    self.assertFalse(lease["fresh"])
+                    self.assertEqual(lease["error"], "durable reaper lease is stale or expired")
+                else:
+                    self.assertTrue(lease["present"])
+                    self.assertTrue(lease["fresh"])
+                    self.assertIsNone(lease["error"])
+                    self.assertIsInstance(lease["age_seconds"], int)
+                    self.assertLessEqual(lease["age_seconds"], 2)
+                    self.assertEqual(lease["scheduler_kind"], "cron")
+                    self.assertEqual(lease["scheduler_id"], self.config.hetzner_reaper_scheduler_id)
 
     @_BUNDLE_POSIX_SKIP
     def test_up_confirm_reserves_budget_and_keeps_token_off_argv(self) -> None:
@@ -3754,6 +3886,9 @@ class HetznerReaperTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
+        self.tmp.chmod(0o700)
+        previous_umask = os.umask(0o077)
+        self.addCleanup(os.umask, previous_umask)
         self.config = _config(self.tmp)
         self.state = self.tmp / "state"
         self._prev_runner = hetzner_driver.COMMAND_RUNNER
@@ -3797,13 +3932,12 @@ class HetznerReaperTests(unittest.TestCase):
         )["required_confirmation"]
 
     @_GETEUID_POSIX_SKIP
-    def test_root_attestation_publishes_agent_readable_root_only_writable_lease(self) -> None:
+    def test_user_attestation_publishes_owner_private_lease(self) -> None:
         lease_path = Path(self.config.hetzner_reaper_lease_file)
         with (
-            mock.patch.object(hetzner_reaper.os, "geteuid", return_value=0),
             mock.patch.object(
                 hetzner_driver,
-                "_require_root_protected_parent_chain",
+                "_require_owner_protected_parent_chain",
             ) as protected_chain,
         ):
             payload = hetzner_reaper.write_reaper_lease(
@@ -3812,13 +3946,35 @@ class HetznerReaperTests(unittest.TestCase):
                 scheduler_id=self.config.hetzner_reaper_scheduler_id,
             )
 
-        self.assertEqual(stat.S_IMODE(lease_path.stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(lease_path.stat().st_mode), 0o600)
         self.assertEqual(
             json.loads(lease_path.read_text(encoding="utf-8")), payload
         )
         protected_chain.assert_called_once_with(
             lease_path.parent, label="reaper lease"
         )
+
+    @_GETEUID_POSIX_SKIP
+    def test_scheduler_kind_systemd_user_round_trips(self) -> None:
+        args = hetzner_reaper.build_parser().parse_args([
+            "attest", "--scheduler-kind", "systemd-user", "--scheduler-id", self.config.hetzner_reaper_scheduler_id,
+        ])
+        payload = hetzner_reaper.write_reaper_lease(
+            config=self.config, scheduler_kind=args.scheduler_kind, scheduler_id=args.scheduler_id,
+        )
+        evidence = hetzner_driver._verify_durable_reaper_lease(self.config)
+        self.assertEqual(payload["scheduler"]["kind"], "systemd-user")
+        self.assertEqual(evidence["scheduler"], {"kind": "systemd-user", "id": self.config.hetzner_reaper_scheduler_id})
+
+    @_GETEUID_POSIX_SKIP
+    def test_write_reaper_lease_refuses_euid_zero(self) -> None:
+        before = list(self.tmp.rglob("*"))
+        with mock.patch.object(hetzner_reaper.os, "geteuid", return_value=0), self.assertRaises(hetzner_reaper.HetznerReaperError) as raised:
+            hetzner_reaper.write_reaper_lease(
+                config=self.config, scheduler_kind="cron", scheduler_id=self.config.hetzner_reaper_scheduler_id,
+            )
+        self.assertEqual(str(raised.exception), "reaper lease publication runs as the agent user, not root")
+        self.assertEqual(list(self.tmp.rglob("*")), before)
 
     @_STATE_DACL_SKIP
     def test_reaper_deletes_expired_poweredoff_orphans_keeps_active(self) -> None:
