@@ -1,160 +1,276 @@
+"""The credential-bearing launch gate of ``run_skill.sh``.
+
+A credential-bearing command starts only when the launcher that is running is
+owner-controlled: owned by the invoking user or root, no group or other write
+bit, not a symlink, a single hard link unless root owns it, and every ancestor
+directory up to the runtime root the same (``trusted_metadata``).  Both the
+installed layout (``<runtime>/run_skill.sh``) and the source checkout
+(``<runtime>/runners/run_skill.sh``) pass.  No path pattern and no root
+ownership is required anywhere.
+
+The foreign-owner refusal (a launcher owned by another user) is not producible
+by an unprivileged test: such a test cannot create a file it does not own, and
+``trusted_metadata`` reads the owner from ``stat``.  That arm is stated here and
+not tested.  Every fixture is created with an explicit mode under ``umask 077``
+because the host umask decides what ``mkdir`` and ``open`` would otherwise leave
+behind (0002 on the machine this was written on gives group-writable trees).
+"""
+
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-RUN_SKILL = Path(__file__).resolve().parents[1] / "canonical" / "runtime" / "runners" / "run_skill.sh"
-PIN = "0" * 40
-COMPONENT_PREFIX = "/usr/local/libexec/coding-system/components/ai-agents-skills"
+from tests import os_child_env
 
-# Root ownership cannot be produced by an unprivileged test, so the harness below
-# stubs exactly that one predicate and leaves every other decision the gate makes
-# -- the component path shape, the manifest, the symlink refusal, the containment
-# walk -- running against a real tree.  Without this the gate has no test at all
-# that can distinguish it from an unconditional refusal: both smoke harnesses
-# rewrite ``credential_runtime_enforcement`` to 0 before any case runs.
-_STUB = """
-root_owned_metadata() {
-  local candidate="$1" expected_type="$2"
-  if [ "$expected_type" = file ]; then [ -f "$candidate" ]; else [ -d "$candidate" ]; fi
-}
-"""
+REPO = Path(__file__).resolve().parents[1]
+RUN_SKILL = REPO / "canonical" / "runtime" / "runners" / "run_skill.sh"
+SECRET_LOADER = REPO / "canonical" / "runtime" / "runners" / "load_secret_env.py"
+GATE_FUNCTIONS = (
+    "trusted_metadata",
+    "trusted_runtime_file_chain",
+    "trusted_credential_launcher",
+)
+RETIRED_NAMES = (
+    "trusted_credential_runtime_generation",
+    "root_owned_metadata",
+    "credential_runtime_enforcement",
+    "allow_managed_selector_advisory",
+    "/usr/local/libexec",
+    "python-closure",
+)
+COMMAND_REL = "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh"
+COMMAND_BODY = "#!/usr/bin/env bash\necho launched\n"
+LAUNCHER_REFUSAL = "credential-bearing launch requires an owner-controlled launcher"
+COMMAND_CHAIN_REFUSAL = (
+    "credential-bearing launch requires an owner-controlled managed command chain"
+)
 
 
-def _gate_source() -> str:
-    text = RUN_SKILL.read_text(encoding="utf-8")
-    start = text.index("trusted_credential_runtime_generation() {")
+def _function_source(text: str, name: str) -> str:
+    """Return one top-level bash function, ``name() {`` through its closing ``}``."""
+    start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + len("\n}\n")
     return text[start:end]
 
 
-@unittest.skipIf(os.name == "nt", "run_skill.sh is not a native Windows target")
-class CredentialRuntimeGateTests(unittest.TestCase):
-    """The gate that refuses a credential launch from an untrusted runtime copy."""
+def _gate_source() -> str:
+    text = RUN_SKILL.read_text(encoding="utf-8")
+    return "".join(_function_source(text, name) for name in GATE_FUNCTIONS)
 
-    def _component(self, tmp: Path, *, pin: str = PIN) -> tuple[Path, Path, Path]:
-        """Build a component generation whose paths mirror the real prefix."""
-        component_root = tmp / pin
-        runtime = component_root / "canonical" / "runtime"
-        command = runtime / "workspace" / "skills" / "send-email" / "run_send_email.sh"
-        command.parent.mkdir(parents=True)
-        command.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-        (component_root / "manifest").mkdir(parents=True)
-        (component_root / "manifest" / "credential-runtime.json").write_text("{}\n", encoding="utf-8")
-        return component_root, runtime, command
 
-    def test_a_well_formed_generation_is_accepted(self) -> None:
-        # Without this case the suite could not tell the gate apart from a
-        # function that refuses unconditionally.
-        with tempfile.TemporaryDirectory() as raw:
-            tmp = Path(raw)
-            _, runtime, command = self._component(tmp)
-            self.assertEqual(self._decide_in_place(tmp, runtime, command), "accept")
+def _mkdir(path: Path, mode: int = 0o755) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(mode)
+    return path
 
-    def _decide_in_place(self, tmp: Path, runtime: Path, command: Path) -> str:
-        """Decide with the gate's literal prefix pointed at the temporary tree."""
-        gate = _gate_source().replace(COMPONENT_PREFIX, str(tmp))
+
+def _write(path: Path, text: str, mode: int) -> Path:
+    _mkdir(path.parent)
+    path.write_text(text, encoding="utf-8")
+    path.chmod(mode)
+    return path
+
+
+class _OwnerControlledFixtures(unittest.TestCase):
+    def setUp(self) -> None:
+        previous = os.umask(0o077)
+        self.addCleanup(os.umask, previous)
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name).resolve()
+        self.root.chmod(0o700)
+
+
+@unittest.skipIf(os.name == "nt", "the credential gate is POSIX-only")
+class CredentialLauncherGateTests(_OwnerControlledFixtures):
+    """The three gate functions, extracted verbatim and decided in place."""
+
+    def _decide(self, *, script_path: Path, runtime_parent_real: Path, runtime_real: Path) -> str:
         script = (
             "set -uo pipefail\n"
-            + _STUB
-            + f'runtime_real="{runtime}"\n'
-            + f'workspace_real="{runtime / "workspace"}"\n'
-            + f'command_path="{command}"\n'
-            + gate
-            + "if trusted_credential_runtime_generation; then echo accept; else echo refuse; fi\n"
+            f"script_path={shlex.quote(str(script_path))}\n"
+            f"runtime_parent_real={shlex.quote(str(runtime_parent_real))}\n"
+            f"runtime_real={shlex.quote(str(runtime_real))}\n"
+            + _gate_source()
+            + "if trusted_credential_launcher; then echo accept; else echo refuse; fi\n"
         )
         completed = subprocess.run(
-            ["bash", "-c", script], check=False, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=30
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
         )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
         return completed.stdout.strip()
 
-    def test_a_same_uid_runtime_copy_is_refused(self) -> None:
-        # The production case: an ordinary install under the user's own home.
-        with tempfile.TemporaryDirectory() as raw:
-            tmp = Path(raw)
-            runtime = tmp / "home" / ".local" / "share" / "ai-agents-skills" / "runtime"
-            command = runtime / "workspace" / "skills" / "send-email" / "run_send_email.sh"
-            command.parent.mkdir(parents=True)
-            command.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-            self.assertEqual(self._decide_in_place(tmp, runtime, command), "refuse")
+    def _installed_layout(self) -> tuple[Path, Path]:
+        runtime = _mkdir(self.root / "runtime")
+        launcher = _write(runtime / "run_skill.sh", "#!/bin/bash -p\n", 0o755)
+        return runtime, launcher
 
-    def test_a_missing_component_manifest_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            tmp = Path(raw)
-            component_root, runtime, command = self._component(tmp)
-            (component_root / "manifest" / "credential-runtime.json").unlink()
-            self.assertEqual(self._decide_in_place(tmp, runtime, command), "refuse")
+    def _source_layout(self) -> tuple[Path, Path, Path]:
+        runtime = _mkdir(self.root / "checkout" / "runtime")
+        runners = _mkdir(runtime / "runners")
+        launcher = _write(runners / "run_skill.sh", "#!/bin/bash -p\n", 0o755)
+        return runtime, runners, launcher
 
-    def test_a_symlink_anywhere_in_the_generation_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            tmp = Path(raw)
-            component_root, runtime, command = self._component(tmp)
-            real = component_root / "canonical" / "real-runtime"
-            shutil.move(str(runtime), str(real))
-            runtime.symlink_to(real)
-            self.assertEqual(self._decide_in_place(tmp, runtime, command), "refuse")
+    def test_the_retired_generation_gate_is_gone(self) -> None:
+        text = RUN_SKILL.read_text(encoding="utf-8")
+        for name in RETIRED_NAMES:
+            self.assertNotIn(name, text)
+        for name in GATE_FUNCTIONS:
+            self.assertIn(f"{name}() {{", text)
+        self.assertIn(LAUNCHER_REFUSAL, text)
 
-    def test_a_command_outside_the_generation_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            tmp = Path(raw)
-            _, runtime, _ = self._component(tmp)
-            outside = tmp / "elsewhere" / "run_send_email.sh"
-            outside.parent.mkdir(parents=True)
-            outside.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-            self.assertEqual(self._decide_in_place(tmp, runtime, outside), "refuse")
+    def test_the_installed_layout_is_accepted(self) -> None:
+        runtime, launcher = self._installed_layout()
+        verdict = self._decide(script_path=launcher, runtime_parent_real=runtime, runtime_real=runtime)
+        self.assertEqual(verdict, "accept")
 
-    def test_a_generation_whose_directory_name_is_not_a_pin_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            tmp = Path(raw)
-            _, runtime, command = self._component(tmp, pin="latest")
-            self.assertEqual(self._decide_in_place(tmp, runtime, command), "refuse")
+    def test_the_source_checkout_layout_is_accepted(self) -> None:
+        runtime, runners, launcher = self._source_layout()
+        verdict = self._decide(script_path=launcher, runtime_parent_real=runners, runtime_real=runtime)
+        self.assertEqual(verdict, "accept")
+
+    def test_a_group_writable_launcher_is_refused(self) -> None:
+        runtime, launcher = self._installed_layout()
+        launcher.chmod(0o775)
+        verdict = self._decide(script_path=launcher, runtime_parent_real=runtime, runtime_real=runtime)
+        self.assertEqual(verdict, "refuse")
+
+    def test_a_group_writable_runtime_root_is_refused(self) -> None:
+        runtime, launcher = self._installed_layout()
+        runtime.chmod(0o775)
+        verdict = self._decide(script_path=launcher, runtime_parent_real=runtime, runtime_real=runtime)
+        self.assertEqual(verdict, "refuse")
+
+    def test_a_group_writable_runners_directory_is_refused(self) -> None:
+        runtime, runners, launcher = self._source_layout()
+        runners.chmod(0o775)
+        verdict = self._decide(script_path=launcher, runtime_parent_real=runners, runtime_real=runtime)
+        self.assertEqual(verdict, "refuse")
+
+    def test_a_symlinked_launcher_is_refused(self) -> None:
+        runtime = _mkdir(self.root / "runtime")
+        real = _write(self.root / "elsewhere" / "run_skill.sh", "#!/bin/bash -p\n", 0o755)
+        link = runtime / "run_skill.sh"
+        link.symlink_to(real)
+        verdict = self._decide(script_path=link, runtime_parent_real=runtime, runtime_real=runtime)
+        self.assertEqual(verdict, "refuse")
+
+    def test_a_hard_linked_launcher_is_refused(self) -> None:
+        runtime, launcher = self._installed_layout()
+        os.link(launcher, self.root / "run_skill.copy")
+        self.assertEqual(launcher.stat().st_nlink, 2)
+        verdict = self._decide(script_path=launcher, runtime_parent_real=runtime, runtime_real=runtime)
+        self.assertEqual(verdict, "refuse")
+
+    def test_a_launcher_outside_the_runtime_is_refused(self) -> None:
+        runtime = _mkdir(self.root / "runtime")
+        elsewhere = _mkdir(self.root / "elsewhere")
+        launcher = _write(elsewhere / "run_skill.sh", "#!/bin/bash -p\n", 0o755)
+        verdict = self._decide(script_path=launcher, runtime_parent_real=elsewhere, runtime_real=runtime)
+        self.assertEqual(verdict, "refuse")
+
+    def test_a_missing_launcher_is_refused(self) -> None:
+        runtime = _mkdir(self.root / "runtime")
+        verdict = self._decide(
+            script_path=runtime / "run_skill.sh",
+            runtime_parent_real=runtime,
+            runtime_real=runtime,
+        )
+        self.assertEqual(verdict, "refuse")
 
 
-@unittest.skipIf(os.name == "nt", "run_skill.sh is not a native Windows target")
-class CredentialRuntimeGateCallSiteTests(unittest.TestCase):
-    """The launch path that consults the gate, with enforcement left switched on.
+@unittest.skipIf(os.name == "nt", "the credential gate is POSIX-only")
+@unittest.skipUnless(os.path.isfile("/usr/bin/python3"), "the credential branch needs /usr/bin/python3")
+class CredentialLauncherCallSiteTests(_OwnerControlledFixtures):
+    """The whole launcher, executed directly so its ``#!/bin/bash -p`` applies.
 
-    Every other runner test rewrites ``credential_runtime_enforcement`` to 0 in its
-    ephemeral copy, so nothing else in the suite ever reaches this branch.
+    The command is an armed credential-bearing wrapper replaced by a stub that
+    prints ``launched``; rc 0 with that line proves the branch ran through the
+    gate, the command-chain check, the attested Python and the secret loader.
     """
 
-    def test_an_ordinary_install_refuses_a_credential_bearing_launch(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            runtime = root / ".local" / "share" / "ai-agents-skills" / "runtime"
-            command = runtime / "workspace" / "skills" / "axiom-axle-mcp" / "run_axiom_axle_mcp.sh"
-            command.parent.mkdir(parents=True)
-            command.write_text("#!/usr/bin/env bash\necho launched\n", encoding="utf-8")
-            command.chmod(0o755)
-            runner = runtime / "run_skill.sh"
-            shutil.copy2(RUN_SKILL, runner)
-            runner.chmod(0o755)
-            self.assertIn(
-                "credential_runtime_enforcement=1",
-                runner.read_text(encoding="utf-8"),
-                "the runner under test must keep enforcement on",
-            )
+    def _stage(self, runtime: Path, *, source_layout: bool) -> Path:
+        _mkdir(runtime)
+        runners = _mkdir(runtime / "runners") if source_layout else runtime
+        launcher = runners / "run_skill.sh"
+        shutil.copy2(RUN_SKILL, launcher)
+        launcher.chmod(0o755)
+        loader = runners / "load_secret_env.py"
+        shutil.copy2(SECRET_LOADER, loader)
+        loader.chmod(0o644)
+        workspace = runtime if source_layout else _mkdir(runtime / "workspace")
+        _mkdir(workspace / "skills")
+        _write(workspace / COMMAND_REL, COMMAND_BODY, 0o755)
+        return launcher
 
-            completed = subprocess.run(
-                ["bash", str(runner), "skills/axiom-axle-mcp/run_axiom_axle_mcp.sh"],
-                check=False,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                timeout=60,
-            )
+    def _stage_installed(self) -> tuple[Path, Path]:
+        runtime = self.root / ".local" / "share" / "ai-agents-skills" / "runtime"
+        return runtime, self._stage(runtime, source_layout=False)
 
-            self.assertEqual(completed.returncode, 127, completed.stderr)
-            self.assertIn(
-                "credential-bearing launch requires a root-owned exact AAS component generation",
-                completed.stderr,
-            )
-            self.assertNotIn("launched", completed.stdout)
+    def _launch(self, launcher: Path) -> subprocess.CompletedProcess[str]:
+        env = {
+            **os_child_env(),
+            "HOME": str(self.root),
+            "PATH": "/usr/bin:/bin",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        return subprocess.run(
+            [str(launcher), COMMAND_REL],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(self.root),
+            timeout=60,
+            check=False,
+        )
+
+    def test_an_owner_controlled_installed_launcher_runs_the_command(self) -> None:
+        _runtime, launcher = self._stage_installed()
+        completed = self._launch(launcher)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("launched", completed.stdout)
+
+    def test_an_owner_controlled_source_checkout_runs_the_command(self) -> None:
+        launcher = self._stage(self.root / "checkout" / "runtime", source_layout=True)
+        completed = self._launch(launcher)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("launched", completed.stdout)
+
+    def test_a_group_writable_launcher_is_refused_before_the_command(self) -> None:
+        _runtime, launcher = self._stage_installed()
+        launcher.chmod(0o775)
+        completed = self._launch(launcher)
+        self.assertEqual(completed.returncode, 127, completed.stderr)
+        self.assertIn(LAUNCHER_REFUSAL, completed.stderr)
+        self.assertNotIn("launched", completed.stdout)
+
+    def test_a_symlinked_launcher_is_refused_before_the_command(self) -> None:
+        runtime, launcher = self._stage_installed()
+        real = runtime / "run_skill.real"
+        launcher.rename(real)
+        launcher.symlink_to(real)
+        completed = self._launch(launcher)
+        self.assertEqual(completed.returncode, 127, completed.stderr)
+        self.assertIn(LAUNCHER_REFUSAL, completed.stderr)
+        self.assertNotIn("launched", completed.stdout)
+
+    def test_a_group_writable_command_chain_is_refused(self) -> None:
+        runtime, launcher = self._stage_installed()
+        (runtime / "workspace" / "skills").chmod(0o775)
+        completed = self._launch(launcher)
+        self.assertEqual(completed.returncode, 127, completed.stderr)
+        self.assertIn(COMMAND_CHAIN_REFUSAL, completed.stderr)
+        self.assertNotIn("launched", completed.stdout)
 
 
 if __name__ == "__main__":
