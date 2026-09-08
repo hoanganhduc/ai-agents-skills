@@ -2140,16 +2140,13 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     self.assertEqual(payload["auth_status"], "present")
                 if command == ("config-snippet", "--backend", "api"):
                     command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
-                    self.assertTrue(command_payload["command"].endswith("run_lean_explore_mcp.sh"))
-                    self.assertEqual(command_payload["args"], ["serve", "--backend", "api"])
-                    self.assertEqual(command_payload["env"]["LEANEXPLORE_API_KEY"], "<LEANEXPLORE_API_KEY>")
-                    self.assertEqual(
-                        command_payload["env"]["AAS_LEANEXPLORE_SITE_PACKAGES"],
-                        "<ABSOLUTE_LEANEXPLORE_1_2_1_SITE_PACKAGES>",
-                    )
+                    self.assertTrue(command_payload["command"].endswith("/run_skill.sh"))
+                    self.assertEqual(command_payload["args"][:2], ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve"])
+                    self.assertEqual(command_payload["env"]["LEANEXPLORE_API_KEY"], "<set from your secret store>")
+                    self.assertNotIn("AAS_LEANEXPLORE_SITE_PACKAGES", command_payload["env"])
                 if command == ("config-snippet", "--backend", "local"):
                     command_payload = payload["local_stdio_mcp_config"]["mcpServers"]["lean-explore"]
-                    self.assertEqual(command_payload["args"], ["serve", "--backend", "local"])
+                    self.assertEqual(command_payload["args"], ["skills/lean-explore-mcp/run_lean_explore_mcp.sh", "serve", "--backend", "local"])
                     self.assertNotIn("LEANEXPLORE_API_KEY", command_payload["env"])
 
             self.assertFalse(marker.exists())
@@ -2174,19 +2171,6 @@ class RuntimeIntegrationTests(unittest.TestCase):
             wrapper = skill_dir / "run_lean_explore_mcp.sh"
             helper = skill_dir / "lean_explore_mcp.py"
             shutil.copy2(source_dir / wrapper.name, wrapper)
-            # An ephemeral copy can never be root-owned, so patch the flag the
-            # wrapper documents for exactly this case.  The argv and environment
-            # claims under test do not depend on the generation gate.
-            wrapper_text = wrapper.read_text(encoding="utf-8")
-            self.assertIn("lean_explore_exact_generation_enforcement=1", wrapper_text)
-            wrapper.write_text(
-                wrapper_text.replace(
-                    "lean_explore_exact_generation_enforcement=1",
-                    "lean_explore_exact_generation_enforcement=0",
-                    1,
-                ),
-                encoding="utf-8",
-            )
             wrapper.chmod(0o755)
             marker = root / "child-ready"
             capture_marker = root / "key-captured"
@@ -2463,53 +2447,39 @@ class RuntimeIntegrationTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "LeanExplore private-FD adapter is POSIX-only")
     def test_lean_explore_121_adapter_performs_real_offline_mcp_handshake(self) -> None:
-        helper = (
-            Path(__file__).resolve().parents[1]
-            / "canonical"
-            / "runtime"
-            / "skills"
-            / "lean-explore-mcp"
-            / "lean_explore_mcp.py"
-        )
-        candidates: list[Path] = []
-        configured = os.environ.get("AAS_LEANEXPLORE_TEST_SITE_PACKAGES", "")
-        if configured:
-            candidates.append(Path(configured))
-        closure_root = (
-            Path.home()
-            / ".local/share/coding-system/python-closure/lean-explore"
-        )
-        candidates.extend(sorted((closure_root / "lib").glob("python*/site-packages")))
-        site_packages = next(
-            (
-                candidate
-                for candidate in candidates
-                if candidate.is_dir()
-                and any(candidate.glob("lean_explore-1.2.1.dist-info"))
-            ),
-            None,
-        )
-        if site_packages is None:
-            self.skipTest("an exact lean-explore 1.2.1 site-packages closure is unavailable")
+        from tests.test_lean_explore_venv_serve import COMMAND, stage_lean_runtime
 
-        closure_fd = os.open(closure_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        key_read, key_write = os.pipe()
-        canary = b"LEANEXPLORE-OFFLINE-HANDSHAKE-CANARY"
-        os.write(key_write, canary)
-        os.close(key_write)
+        venv = Path(os.environ.get("AAS_SKILL_VENV") or Path.home() / ".agents_skills_venv")
+        if not any(venv.glob("lib/python3.*/site-packages/lean_explore-1.2.1.dist-info")):
+            self.skipTest("an exact lean-explore 1.2.1 skill Python venv is unavailable")
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        root.chmod(0o700)
+        previous_umask = os.umask(0o077)
+        try:
+            home = root / "home"
+            home.mkdir(mode=0o700)
+            launcher = stage_lean_runtime(root)
+            canary = b"LEANEXPLORE-OFFLINE-HANDSHAKE-CANARY"
+            secrets = root / "skill-secrets.env"
+            secrets.write_text("LEANEXPLORE_API_KEY=" + canary.decode("ascii") + "\n", encoding="utf-8")
+            secrets.chmod(0o600)
+        finally:
+            os.umask(previous_umask)
         env = {
-            "HOME": str(Path.home()),
+            "HOME": str(home),
             "PATH": "/usr/bin:/bin",
             "LANG": "C.UTF-8",
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONUTF8": "1",
             "PYTHONIOENCODING": "utf-8",
-            "AAS_LEANEXPLORE_CLOSURE_FD": str(closure_fd),
-            "AAS_LEANEXPLORE_SITE_RELATIVE": str(site_packages.relative_to(closure_root)),
-            "AAS_LEANEXPLORE_KEY_FD": str(key_read),
+            "AAS_SKILL_VENV": str(venv),
+            "AAS_SKILL_SECRETS_FILE": str(secrets),
         }
         process = subprocess.Popen(
-            ["/usr/bin/python3", "-I", str(helper), "serve", "--backend", "api"],
+            ["/bin/bash", str(launcher), COMMAND, "serve", "--backend", "api"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -2517,11 +2487,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             encoding="utf-8",
             errors="replace",
             env=env,
-            pass_fds=(closure_fd, key_read),
             bufsize=1,
         )
-        os.close(closure_fd)
-        os.close(key_read)
         try:
             if Path(f"/proc/{process.pid}/cmdline").is_file():
                 self.assertNotIn(canary, Path(f"/proc/{process.pid}/cmdline").read_bytes())
