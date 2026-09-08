@@ -58,35 +58,42 @@ class SmokeCoverageRegistersAgreeTests(unittest.TestCase):
         self.skills = manifests["skills"]["skills"]
         self.runtime = manifests["runtime"]["skills"]
 
-    def _declared(self) -> set[str]:
+    def _declared(self, status: str = "offline-smoke") -> set[str]:
         return {
             slug
             for slug, spec in self.skills.items()
-            if "offline-smoke" in (spec.get("verification") or [])
+            if status in (spec.get("verification") or [])
         }
 
-    def _covered(self) -> set[str]:
+    def _covered(self, status: str = "offline-smoke") -> set[str]:
         return {
             slug
             for slug, spec in self.runtime.items()
             if ((spec or {}).get("smoke_coverage") or {}).get("status")
-            == "offline-smoke"
+            == status
         }
 
     def test_the_two_smoke_registers_name_the_same_skills(self) -> None:
-        declared, covered = self._declared(), self._covered()
-        self.assertEqual(
-            covered - declared,
-            set(),
-            "runtime.yaml records offline smoke coverage that skills.yaml "
-            "does not claim",
-        )
-        self.assertEqual(
-            declared - covered,
-            set(),
-            "skills.yaml claims offline smoke coverage that runtime.yaml "
-            "does not record",
-        )
+        for status in ("offline-smoke", "venv-smoke"):
+            with self.subTest(status=status):
+                declared, covered = self._declared(status), self._covered(status)
+                self.assertEqual(
+                    covered - declared,
+                    set(),
+                    f"runtime.yaml records {status} coverage that skills.yaml does not claim",
+                )
+                self.assertEqual(
+                    declared - covered,
+                    set(),
+                    f"skills.yaml claims {status} coverage that runtime.yaml does not record",
+                )
+
+    def test_the_venv_comparison_detects_a_missing_declaration(self) -> None:
+        self.runtime["example"] = {"smoke_coverage": {"status": "venv-smoke"}}
+        self.skills["example"] = {"verification": ["file-exists"]}
+        self.assertEqual(self._covered("venv-smoke") - self._declared("venv-smoke"), {"example"})
+        self.skills["example"]["verification"].append("venv-smoke")
+        self.assertEqual(self._declared("venv-smoke"), self._covered("venv-smoke"))
 
     def test_the_comparison_is_not_vacuous(self) -> None:
         """Both sides must be populated, or agreement means nothing."""
@@ -111,7 +118,7 @@ class SmokeCoverageRegistersAgreeTests(unittest.TestCase):
     def test_only_implemented_verification_tokens_are_declared(self) -> None:
         """`skills.yaml` validates presence, not content, so a typo would ship."""
 
-        known = {"file-exists", "metadata-valid", "agent-visible", "offline-smoke"}
+        known = {"file-exists", "metadata-valid", "agent-visible", "offline-smoke", "venv-smoke"}
         used = {
             token
             for spec in self.skills.values()
