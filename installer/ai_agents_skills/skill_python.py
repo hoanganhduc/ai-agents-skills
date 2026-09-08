@@ -432,15 +432,50 @@ def preflight_tree(venv: Path) -> list[str]:
 
 
 def normalize_modes(venv: Path) -> int:
-    """Clear the group/other write bits below ``venv``; return how many entries changed."""
+    """Harden directories before descending, and change only bound, non-symlink inodes."""
     changed = 0
-    for path, info in _walk_entries(venv):
-        if stat.S_ISLNK(info.st_mode):
-            continue
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+
+    def normalize_opened(descriptor: int, path: Path, expected: os.stat_result | None = None) -> None:
+        nonlocal changed
+        info = os.fstat(descriptor)
+        is_directory = stat.S_ISDIR(info.st_mode)
+        if (
+            info.st_uid != os.getuid()
+            or not (is_directory or stat.S_ISREG(info.st_mode))
+            or (not is_directory and info.st_nlink != 1)
+        ):
+            raise SkillPythonError(f"skill Python venv entry cannot be normalized safely: {path}")
+        if expected is not None and (
+            info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)
+        ) != (expected.st_dev, expected.st_ino, stat.S_IFMT(expected.st_mode)):
+            raise SkillPythonError(f"skill Python venv entry changed during mode normalization: {path}")
         mode = stat.S_IMODE(info.st_mode)
         if mode & 0o022:
-            os.chmod(path, mode & ~0o022)
+            os.fchmod(descriptor, mode & ~0o022)
             changed += 1
+        if is_directory:
+            for name in sorted(os.listdir(descriptor)):
+                observed = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                if stat.S_ISLNK(observed.st_mode):
+                    continue
+                if not (stat.S_ISDIR(observed.st_mode) or stat.S_ISREG(observed.st_mode)):
+                    raise SkillPythonError(f"skill Python venv entry cannot be normalized safely: {path / name}")
+                child_flags = flags | (os.O_DIRECTORY if stat.S_ISDIR(observed.st_mode) else 0)
+                child = os.open(name, child_flags, dir_fd=descriptor)
+                try:
+                    normalize_opened(child, path / name, observed)
+                finally:
+                    os.close(child)
+
+    try:
+        descriptor = os.open(venv, flags | os.O_DIRECTORY)
+        try:
+            normalize_opened(descriptor, venv)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise SkillPythonError(f"skill Python venv changed or could not be opened during mode normalization: {venv}") from exc
     return changed
 
 
