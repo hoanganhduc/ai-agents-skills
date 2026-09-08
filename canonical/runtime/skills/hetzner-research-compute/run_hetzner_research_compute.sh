@@ -219,6 +219,29 @@ unset COPILOT_PROVIDER_BEARER_TOKEN DEEPSEEK_API_KEY GEMINI_API_KEY
 unset GH_TOKEN GITHUB_TOKEN GOOGLE_API_KEY GROK_API_KEY KIMI_API_KEY
 unset MOONSHOT_API_KEY OPENAI_API_KEY OPENCODE_API_KEY XAI_API_KEY
 
+# Skill Python venv: the launcher admitted AAS_RUNTIME_PYTHON_PREFIX (run_skill.sh
+# skill_python_prefix).  Re-check the two facts this wrapper relies on, then run
+# the attested binary under the venv's argv[0] so CPython reads <prefix>/pyvenv.cfg.
+# The interpreter executed is still "$PYTHON"; the venv supplies argv[0], PATH and
+# site-packages.
+python_argv0="$PYTHON"
+if [ -n "${AAS_RUNTIME_PYTHON_PREFIX:-}" ]; then
+  prefix="$AAS_RUNTIME_PYTHON_PREFIX"
+  case "$prefix" in /*) ;; *) prefix="" ;; esac
+  if [ -z "$prefix" ] || [ -L "$prefix/pyvenv.cfg" ] || [ ! -f "$prefix/pyvenv.cfg" ] \
+     || [ ! -L "$prefix/bin/python" ] || ! [ "$prefix/bin/python" -ef "$PYTHON" ]; then
+    printf 'AAS_RUNTIME_PYTHON_PREFIX does not name a venv of the selected Python\n' >&2
+    exit 127
+  fi
+  python_argv0="$prefix/bin/python"
+  export PATH="$prefix/bin:$PATH"
+fi
+
+loader_argv0=()
+if [ -n "${AAS_RUNTIME_PYTHON_PREFIX:-}" ]; then
+  loader_argv0=(--exec-argv0 "$python_argv0")
+fi
+
 command=("$PYTHON" -I "$ROOT/hetzner_research_compute.py" "$@")
 if [ -n "$compute_pointer" ]; then
   secret_loader="$(resolve_secret_loader || true)"
@@ -243,6 +266,7 @@ if [ -n "$compute_pointer" ]; then
     --retain-env AAS_HETZNER_SCP_BIN
     --retain-env AAS_HETZNER_RSYNC_BIN
     --retain-env AAS_HETZNER_SSH_KEYGEN_BIN
+    "${loader_argv0[@]}"
     -- "${command[@]}"
   )
 else
@@ -251,4 +275,7 @@ else
   unset KAGGLE_API_TOKEN KAGGLE_CONFIG_DIR
 fi
 
-exec "${command[@]}"
+if [ -n "$compute_pointer" ]; then
+  exec "${command[@]}"
+fi
+exec -a "$python_argv0" "${command[@]}"
