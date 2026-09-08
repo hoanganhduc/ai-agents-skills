@@ -5,10 +5,8 @@ set -euo pipefail
 # Capture the one authorized credential with shell builtins, then remove every
 # credential-bearing variable before path, interpreter, or helper discovery.
 lean_explore_api_key="${LEANEXPLORE_API_KEY:-}"
-lean_explore_site_packages="${AAS_LEANEXPLORE_SITE_PACKAGES:-}"
 unset LEANEXPLORE_API_KEY AAS_SECRETS_FILE OPENCLAW_SECRETS_FILE
-unset AAS_LEANEXPLORE_SITE_PACKAGES AAS_LEANEXPLORE_KEY_FD AAS_LEANEXPLORE_SITE_FD
-unset AAS_LEANEXPLORE_CLOSURE_FD AAS_LEANEXPLORE_SITE_RELATIVE
+unset AAS_LEANEXPLORE_KEY_FD AAS_LEANEXPLORE_SITE_FD
 unset AAS_LEANEXPLORE_WRAPPER_PATH
 unset AAS_SKILL_SECRETS_FILE AAS_COMPUTE_SECRETS_FILE AAS_PROVIDER_SECRETS_FILE
 unset AAS_CALIBRE_SECRETS_FILE AAS_ZOTERO_SECRETS_FILE
@@ -56,9 +54,6 @@ case "$script_path" in */*) script_parent="${script_path%/*}" ;; *) script_paren
 SCRIPT_DIR="$(cd -- "$script_parent" && builtin pwd -P)"
 SCRIPT="$SCRIPT_DIR/lean_explore_mcp.py"
 WRAPPER="$SCRIPT_DIR/run_lean_explore_mcp.sh"
-# Patchable only in ephemeral test copies; production credential launches use
-# the root-owned exact CSR generation.
-lean_explore_exact_generation_enforcement=1
 
 trusted_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links actual_type current_uid
@@ -79,25 +74,6 @@ trusted_metadata() {
     [ "$owner" = 0 ] || [ "$links" -eq 1 ] || return 1
   else
     [ "$actual_type" = directory ] || return 1
-  fi
-}
-
-root_owned_metadata() {
-  local candidate="$1" expected_type="$2" metadata owner mode links actual_type
-  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
-    /usr/bin/stat -Lf '%u:%Lp:%l:%HT' "$candidate" 2>/dev/null || true)"
-  IFS=: read -r owner mode links actual_type <<< "$metadata"
-  case "$actual_type" in
-    "Regular File") actual_type="regular file" ;;
-    Directory) actual_type=directory ;;
-  esac
-  [ "$owner" = 0 ] || return 1
-  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
-  (( (8#$mode & 8#022) == 0 )) || return 1
-  if [ "$expected_type" = file ]; then
-    [ "$actual_type" = "regular file" ] && [ "$links" = 1 ]
-  else
-    [ "$actual_type" = directory ]
   fi
 }
 
@@ -128,11 +104,6 @@ trusted_directory_chain() {
 
 if [ ! -f "$SCRIPT" ] || [ -L "$SCRIPT" ] || ! trusted_metadata "$SCRIPT" file; then
   printf 'runtime helper is unavailable or untrusted.\n' >&2
-  exit 127
-fi
-if [ "$lean_explore_exact_generation_enforcement" -eq 1 ] && \
-   [ -n "$lean_explore_api_key" ] && ! root_owned_metadata "$SCRIPT" file; then
-  printf 'credential-bearing LeanExplore launch requires an immutable exact-generation helper.\n' >&2
   exit 127
 fi
 
@@ -191,46 +162,35 @@ else
   fi
 fi
 
+# Skill Python venv: the launcher admitted AAS_RUNTIME_PYTHON_PREFIX (run_skill.sh
+# skill_python_prefix).  Re-check the two facts this wrapper relies on, then run
+# the attested binary under the venv's argv[0] so CPython reads <prefix>/pyvenv.cfg.
+# The interpreter executed is still "$PYTHON"; the venv supplies argv[0], PATH and
+# site-packages.
+python_argv0="$PYTHON"
+if [ -n "${AAS_RUNTIME_PYTHON_PREFIX:-}" ]; then
+  prefix="$AAS_RUNTIME_PYTHON_PREFIX"
+  case "$prefix" in /*) ;; *) prefix="" ;; esac
+  if [ -z "$prefix" ] || [ -L "$prefix/pyvenv.cfg" ] || [ ! -f "$prefix/pyvenv.cfg" ] \
+     || [ ! -L "$prefix/bin/python" ] || ! [ "$prefix/bin/python" -ef "$PYTHON" ]; then
+    printf 'AAS_RUNTIME_PYTHON_PREFIX does not name a venv of the selected Python\n' >&2
+    exit 127
+  fi
+  python_argv0="$prefix/bin/python"
+  export PATH="$prefix/bin:$PATH"
+fi
+
 if [ "${1:-}" = serve ]; then
-  if [ -z "$lean_explore_site_packages" ]; then
-    printf 'LeanExplore MCP serve requires AAS_LEANEXPLORE_SITE_PACKAGES for exact 1.2.1.\n' >&2
+  [ -n "${AAS_RUNTIME_PYTHON_PREFIX:-}" ] || {
+    printf 'LeanExplore MCP serve requires the admitted skill Python venv; run: make provision-skill-python ARGS="--skills lean-explore-mcp --apply"\n' >&2
     exit 78
-  fi
-  case "$lean_explore_site_packages" in
-    /*/site-packages) ;;
-    *) printf 'LeanExplore site-packages must be an absolute site-packages directory.\n' >&2; exit 78 ;;
-  esac
-  current_uid="$(/usr/bin/id -u)"
-  passwd_record="$(/usr/bin/getent passwd "$current_uid" 2>/dev/null || true)"
-  IFS=: read -r _ _ _ _ _ account_home _ <<< "$passwd_record"
-  if [ -z "$account_home" ] || [ "${account_home#/}" = "$account_home" ]; then
-    printf 'LeanExplore could not resolve the account home.\n' >&2
-    exit 78
-  fi
-  closure_root="$account_home/.local/share/coding-system/python-closure/lean-explore"
-  case "$lean_explore_site_packages" in
-    "$closure_root"/lib/python3.[0-9]/site-packages|"$closure_root"/lib/python3.[0-9][0-9]/site-packages|"$closure_root"/lib/python3.[0-9][0-9][0-9]/site-packages) ;;
-    *) printf 'LeanExplore requires the exact CSR lean-explore closure path.\n' >&2; exit 78 ;;
-  esac
-  if [ ! -d "$closure_root" ] || [ -L "$closure_root" ] || \
-     ! root_owned_metadata "$closure_root" directory || \
-     [ ! -f "$closure_root/.coding-system-python-closure.json" ] || \
-     ! root_owned_metadata "$closure_root/.coding-system-python-closure.json" file; then
-    printf 'LeanExplore CSR closure root or marker is unavailable or untrusted.\n' >&2
-    exit 78
-  fi
-  exec {AAS_LEANEXPLORE_CLOSURE_FD}<"$closure_root"
-  if [ -e "/proc/self/fd/$AAS_LEANEXPLORE_CLOSURE_FD" ]; then
-    lean_explore_bound_root="/proc/self/fd/$AAS_LEANEXPLORE_CLOSURE_FD"
-  elif [ -e "/dev/fd/$AAS_LEANEXPLORE_CLOSURE_FD" ]; then
-    lean_explore_bound_root="/dev/fd/$AAS_LEANEXPLORE_CLOSURE_FD"
-  else
-    printf 'LeanExplore closure cannot be descriptor-bound on this host.\n' >&2
-    exit 78
-  fi
-  [ "$lean_explore_bound_root" -ef "$closure_root" ] || exit 78
-  AAS_LEANEXPLORE_SITE_RELATIVE="${lean_explore_site_packages#"$closure_root"/}"
-  export AAS_LEANEXPLORE_CLOSURE_FD AAS_LEANEXPLORE_SITE_RELATIVE
+  }
+  # the shared snippet (§3c) above has already validated the prefix and set python_argv0/PATH
+  dist_count=0
+  for d in "$AAS_RUNTIME_PYTHON_PREFIX"/lib/python3.*/site-packages/lean_explore-1.2.1.dist-info; do
+    [ -d "$d" ] && dist_count=$((dist_count + 1))
+  done
+  [ "$dist_count" -eq 1 ] || { printf 'LeanExplore MCP serve requires exactly one lean_explore-1.2.1.dist-info in the skill Python venv (found %s)\n' "$dist_count" >&2; exit 78; }
 fi
 
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
@@ -239,4 +199,4 @@ if [ -n "$lean_explore_api_key" ]; then
   export AAS_LEANEXPLORE_KEY_FD
 fi
 export AAS_LEANEXPLORE_WRAPPER_PATH="$WRAPPER"
-exec "$PYTHON" -I "$SCRIPT" "$@"
+exec -a "$python_argv0" "$PYTHON" -I "$SCRIPT" "$@"
