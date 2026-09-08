@@ -881,11 +881,9 @@ class RuntimeIntegrationTests(unittest.TestCase):
             os.umask(previous_umask)
 
     def test_installed_runtime_smoke_runs_a_credential_bearing_contract(self) -> None:
-        # The scratch copy is ephemeral, so it can never be the root-owned
-        # component generation the credential gate requires. Left enforcing, the
-        # gate exits 127 before the offline contract runs and every
-        # credential-bearing skill reports as a skill failure -- the contract is
-        # never exercised at all. The relaxation belongs to the copy only.
+        # The credential gate is owner-controlled: the installed runtime is
+        # never patched, and the owner-controlled scratch copy passes the live
+        # gate, so the offline contract of a credential-bearing skill really runs.
         platform = current_platform(None)
         if platform == "windows":
             self.skipTest("the credential gate is POSIX-only")
@@ -918,10 +916,9 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 ]
                 self.assertTrue(executed, result)
                 installed_runner = root / ".codex" / "runtime" / "run_skill.sh"
-                self.assertIn(
-                    "credential_runtime_enforcement=1",
-                    installed_runner.read_text(encoding="utf-8"),
-                )
+                installed_text = installed_runner.read_text(encoding="utf-8")
+                self.assertIn("trusted_credential_launcher", installed_text)
+                self.assertNotIn("credential_runtime_enforcement", installed_text)
         finally:
             os.umask(previous_umask)
 

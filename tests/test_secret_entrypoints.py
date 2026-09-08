@@ -114,14 +114,6 @@ class PosixSecretEntrypointTests(unittest.TestCase):
     @staticmethod
     def _copy_test_runner(destination: Path) -> None:
         shutil.copy2(RUNTIME_SOURCE / "runners" / "run_skill.sh", destination)
-        destination.write_text(
-            destination.read_text(encoding="utf-8").replace(
-                "credential_runtime_enforcement=1",
-                "credential_runtime_enforcement=0",
-                1,
-            ),
-            encoding="utf-8",
-        )
 
     def _stage_entrypoint(
         self,
@@ -967,7 +959,12 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 127)
                 self.assertFalse(marker.exists())
 
-    def test_outer_runner_allows_advisory_selector_only_for_stdlib_credentials(self) -> None:
+    def test_outer_runner_refuses_every_non_attested_runtime_selector(self) -> None:
+        """The managed-selector advisory is gone: the outer runner refuses an
+        ``AAS_RUNTIME_PYTHON`` that is not the attested system binary for every
+        credential-bearing skill, stdlib-only or not, before the wrapper or any
+        Python starts.  A different name for the same binary (``-ef``) is still
+        accepted, which the two stdlib wrappers prove end to end."""
         cases = (
             (
                 "send-email",
@@ -975,7 +972,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 "send_email.py",
                 "SEND_EMAIL_SECRETS_FILE",
                 "{}\n",
-                True,
+                ("closure", "alias"),
             ),
             (
                 "remote-bridge",
@@ -983,7 +980,7 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 "remote_bridge.py",
                 "REMOTE_BRIDGE_SECRETS_FILE",
                 "{}\n",
-                True,
+                ("closure", "alias"),
             ),
             (
                 "zotero",
@@ -991,66 +988,84 @@ class PosixSecretEntrypointTests(unittest.TestCase):
                 "zot.py",
                 "AAS_ZOTERO_SECRETS_FILE",
                 '{"ZOTERO_API_KEY":"selected"}\n',
-                False,
+                ("closure",),
             ),
         )
-        for skill, wrapper_name, entrypoint, pointer, authority_body, accepted in cases:
-            with self.subTest(skill=skill), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                wrapper = self._stage_entrypoint(
-                    root,
-                    skill=skill,
-                    wrapper=wrapper_name,
-                    python_entrypoint=entrypoint,
-                )
-                program = wrapper.parent / entrypoint
-                program.write_text(
-                    "import json, os\n"
-                    "print(json.dumps({'runtime': os.environ.get('AAS_RUNTIME_PYTHON')}))\n",
-                    encoding="utf-8",
-                )
-                program.chmod(0o644)
-                runtime = wrapper.parents[3]
-                runner = runtime / "run_skill.sh"
-                self._copy_test_runner(runner)
-                runner.chmod(0o755)
-                authority = self._private_file(root, "authority.json", authority_body)
-                selected = (
-                    root
-                    / ".local/share/coding-system/python-closure/shared/bin/python"
-                )
-                selected.parent.mkdir(parents=True)
-                marker = root / "managed-selector-ran"
-                selected.write_text(
-                    f"#!/bin/sh\ntouch {marker}\nexit 99\n",
-                    encoding="utf-8",
-                )
-                selected.chmod(0o755)
-                env = self._env(root)
-                env.update(
-                    {
-                        "AAS_RUNTIME_PYTHON": str(selected),
-                        pointer: str(authority),
-                    }
-                )
-                relative = f"skills/{skill}/{wrapper_name}"
-                completed = subprocess.run(
-                    ["bash", str(runner), relative, "selftest"],
-                    check=False,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    capture_output=True,
-                    env=env,
-                    timeout=30,
-                )
-                if accepted:
-                    self.assertEqual(completed.returncode, 0, completed.stderr)
-                    runtime_value = json.loads(completed.stdout)["runtime"]
-                    self.assertRegex(runtime_value, r"^/(?:proc/self|dev)/fd/[0-9]+$")
-                else:
-                    self.assertEqual(completed.returncode, 127)
-                self.assertFalse(marker.exists())
+        for skill, wrapper_name, entrypoint, pointer, authority_body, selectors in cases:
+            for selector in selectors:
+                with self.subTest(
+                    skill=skill, selector=selector
+                ), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    wrapper = self._stage_entrypoint(
+                        root,
+                        skill=skill,
+                        wrapper=wrapper_name,
+                        python_entrypoint=entrypoint,
+                    )
+                    program = wrapper.parent / entrypoint
+                    program.write_text(
+                        "import json, os\n"
+                        "print(json.dumps({'runtime': os.environ.get('AAS_RUNTIME_PYTHON')}))\n",
+                        encoding="utf-8",
+                    )
+                    program.chmod(0o644)
+                    runtime = wrapper.parents[3]
+                    runner = runtime / "run_skill.sh"
+                    self._copy_test_runner(runner)
+                    runner.chmod(0o755)
+                    authority = self._private_file(root, "authority.json", authority_body)
+                    marker = root / "managed-selector-ran"
+                    if selector == "closure":
+                        # The retired advisory accepted exactly this string for the
+                        # stdlib wrappers; it now names an arbitrary program.
+                        selected = (
+                            root
+                            / ".local/share/coding-system/python-closure/shared/bin/python"
+                        )
+                        selected.parent.mkdir(parents=True)
+                        selected.write_text(
+                            f"#!/bin/sh\ntouch {marker}\nexit 99\n",
+                            encoding="utf-8",
+                        )
+                        selected.chmod(0o755)
+                    else:
+                        selected = root / "python-alias"
+                        selected.symlink_to(_SYSTEM_PYTHON)
+                    env = self._env(root)
+                    env.update(
+                        {
+                            "AAS_RUNTIME_PYTHON": str(selected),
+                            pointer: str(authority),
+                        }
+                    )
+                    relative = f"skills/{skill}/{wrapper_name}"
+                    completed = subprocess.run(
+                        ["bash", str(runner), relative, "selftest"],
+                        check=False,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        capture_output=True,
+                        env=env,
+                        timeout=30,
+                    )
+                    if selector == "closure":
+                        self.assertEqual(completed.returncode, 127, completed.stderr)
+                        self.assertIn(
+                            "AAS_RUNTIME_PYTHON must name the attested system Python",
+                            completed.stderr,
+                        )
+                        self.assertIn(
+                            "credential-bearing launch requires the attested system Python runtime",
+                            completed.stderr,
+                        )
+                        self.assertEqual(completed.stdout, "")
+                    else:
+                        self.assertEqual(completed.returncode, 0, completed.stderr)
+                        runtime_value = json.loads(completed.stdout)["runtime"]
+                        self.assertRegex(runtime_value, r"^/(?:proc/self|dev)/fd/[0-9]+$")
+                    self.assertFalse(marker.exists())
 
     def test_secret_pointer_without_resolved_python_uses_trusted_system_python(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

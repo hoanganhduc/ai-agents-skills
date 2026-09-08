@@ -44,10 +44,9 @@ case "$script_path" in
   */*) runtime_parent="${script_path%/*}" ;;
   *) runtime_parent=. ;;
 esac
-# Installed runtimes place this launcher at the runtime root.  CSR's immutable
-# exact-pin generation retains the canonical source layout, where the launcher
-# lives in ``runners/`` beside ``workspace/``.  Credential launches use only
-# the latter; mutable installed copies remain available for noncredential work.
+# Installed runtimes place this launcher at the runtime root.  A source checkout
+# keeps it in ``runners/`` beside ``workspace/``.  Both layouts are accepted for
+# credential launches when the launcher is owner-controlled (trusted_credential_launcher).
 runtime_parent_real="$(cd -- "$runtime_parent" && builtin pwd -P)"
 source_layout=0
 if [ "${runtime_parent_real##*/}" = runners ] && \
@@ -131,7 +130,6 @@ default_private_projection() {
 }
 
 credential_contract=0
-allow_managed_selector_advisory=0
 projection_pointer_env=AAS_UNUSED_SECRETS_FILE
 projection_format=env
 projection_no_load=1
@@ -204,7 +202,6 @@ case "$command_rel" in
     ;;
   skills/send-email/run_send_email.sh|skills/send-email/send_email.py)
     credential_contract=1
-    allow_managed_selector_advisory=1
     [ -n "$email_pointer" ] && export SEND_EMAIL_SECRETS_FILE="$email_pointer"
     projection_pointer_env=SEND_EMAIL_SECRETS_FILE
     projection_retain_pointer=1
@@ -212,7 +209,6 @@ case "$command_rel" in
     ;;
   skills/remote-bridge/run_remote_bridge.sh|skills/remote-bridge/remote_bridge.py|skills/remote-bridge/dispatch_aas.py)
     credential_contract=1
-    allow_managed_selector_advisory=1
     [ -n "$remote_pointer" ] && export REMOTE_BRIDGE_SECRETS_FILE="$remote_pointer"
     projection_pointer_env=REMOTE_BRIDGE_SECRETS_FILE
     projection_retain_pointer=1
@@ -289,60 +285,6 @@ if [ "$credential_contract" -eq 0 ] && { [ -n "$compute_pointer" ] || [ -n "$pro
   credential_contract=1
 fi
 
-# This literal is intentionally patchable only in ephemeral unit-test copies.
-# Production launchers must execute credential consumers from CSR's root-owned,
-# content-addressed AAS component generation, never a same-UID runtime copy.
-credential_runtime_enforcement=1
-
-root_owned_metadata() {
-  local candidate="$1" expected_type="$2" metadata owner mode links actual_type
-  metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
-    /usr/bin/stat -Lf '%u:%Lp:%l:%HT' "$candidate" 2>/dev/null || true)"
-  IFS=: read -r owner mode links actual_type <<< "$metadata"
-  case "$actual_type" in
-    "Regular File") actual_type="regular file" ;;
-    Directory) actual_type=directory ;;
-  esac
-  [ "$owner" = 0 ] || return 1
-  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
-  (( (8#$mode & 8#022) == 0 )) || return 1
-  [[ "$links" =~ ^[0-9]+$ ]] || return 1
-  if [ "$expected_type" = file ]; then
-    [ "$actual_type" = "regular file" ] && [ "$links" -eq 1 ]
-  else
-    [ "$actual_type" = directory ]
-  fi
-}
-
-trusted_credential_runtime_generation() {
-  local component_root manifest current expected
-  # The pattern is anchored at both ends, so the captured pin is by construction the
-  # last segment of the component root stripped below. Re-comparing the two reads as
-  # a second check but cannot fail, which is worse than no check: it makes the pin
-  # look validated against something. The regex is the validation.
-  if ! [[ "$runtime_real" =~ ^/usr/local/libexec/coding-system/components/ai-agents-skills/[0-9a-f]{40}/canonical/runtime$ ]]; then
-    return 1
-  fi
-  component_root="${runtime_real%/canonical/runtime}"
-  manifest="$component_root/manifest/credential-runtime.json"
-  root_owned_metadata "$manifest" file || return 1
-  for expected in "$runtime_real" "$workspace_real" "$command_path"; do
-    current="$expected"
-    while :; do
-      [ ! -L "$current" ] || return 1
-      if [ "$current" = "$command_path" ]; then
-        root_owned_metadata "$current" file || return 1
-      else
-        root_owned_metadata "$current" directory || return 1
-      fi
-      [ "$current" = "$component_root" ] && break
-      current="${current%/*}"
-      [ -n "$current" ] || return 1
-      case "$current/" in "$component_root"/|"$component_root"/*) ;; *) return 1 ;; esac
-    done
-  done
-}
-
 trusted_metadata() {
   local candidate="$1" expected_type="$2" metadata owner mode links current_uid
   metadata="$(/usr/bin/stat -Lc '%u:%a:%h:%F' -- "$candidate" 2>/dev/null || \
@@ -395,8 +337,23 @@ trusted_runtime_file_chain() {
   done
 }
 
+# A credential-bearing launch runs only from a launcher the invoking user or root
+# owns, that no group or other can write, that is not a symlink or a hard link,
+# and whose ancestors up to the runtime root are owner-controlled the same way
+# (trusted_metadata rule).  The command chain, the secret loader, the broker and
+# the system Python are checked separately below.  This does not defend against
+# a process running as the same uid: that process already owns the secret
+# authorities this launcher loads.
+trusted_credential_launcher() {
+  local launcher
+  [ ! -L "$script_path" ] || return 1
+  launcher="$runtime_parent_real/${script_path##*/}"
+  [ -f "$launcher" ] || return 1
+  trusted_runtime_file_chain "$launcher"
+}
+
 system_python_path() {
-  local candidate canonical current configured managed_selector
+  local candidate canonical current configured
   candidate=/usr/bin/python3
   [ -x "$candidate" ] || return 1
   canonical="$(/usr/bin/readlink -f -- "$candidate")"
@@ -410,18 +367,8 @@ system_python_path() {
   done
   configured="${AAS_RUNTIME_PYTHON:-}"
   if [ -n "$configured" ] && [ ! "$configured" -ef "$canonical" ] 2>/dev/null; then
-    managed_selector=""
-    case "${HOME:-}" in
-      /*) managed_selector="$HOME/.local/share/coding-system/python-closure/shared/bin/python" ;;
-    esac
-    # CSR may render the managed selector before its closure lock is qualified.
-    # Credential projection itself is stdlib-only, so accept only that exact
-    # declarative selector while continuing to execute descriptor-bound system
-    # Python.  The unqualified/caller-owned path is never opened.
-    if [ "$allow_managed_selector_advisory" -ne 1 ] || \
-       [ -z "$managed_selector" ] || [ "$configured" != "$managed_selector" ]; then
-      return 1
-    fi
+    printf 'AAS_RUNTIME_PYTHON must name the attested system Python\n' >&2
+    return 1
   fi
   printf '%s\n' "$canonical"
 }
@@ -511,9 +458,8 @@ if [ "$credential_contract" -eq 1 ]; then
     printf 'credential-bearing launch refuses an external runtime workspace\n' >&2
     exit 127
   fi
-  if [ "$credential_runtime_enforcement" -eq 1 ] && \
-     ! trusted_credential_runtime_generation; then
-    printf 'credential-bearing launch requires a root-owned exact AAS component generation\n' >&2
+  if ! trusted_credential_launcher; then
+    printf 'credential-bearing launch requires an owner-controlled launcher\n' >&2
     exit 127
   fi
   if ! trusted_command_chain; then

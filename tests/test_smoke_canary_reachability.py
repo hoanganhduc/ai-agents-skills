@@ -19,17 +19,18 @@ from installer.ai_agents_skills.manifest import load_manifests  # noqa: E402
 # so no canary can be delivered to the process at all:
 #
 #   autonomous-research-loop-runtime -- any pointer sets ``arl_credential_broker=1``
-#     and the broker refuses its own dependency outside an exact generation
-#     ("untrusted broker dependency: load_secret_env.py").
-#   lean-explore-mcp -- a populated secrets file makes the skill take the
-#     credential-bearing branch, which refuses without an immutable
-#     exact-generation helper.
+#     and the broker's ``_load_module_file`` still requires a root-owned
+#     dependency ("untrusted broker dependency: load_secret_env.py"), which an
+#     owner-controlled scratch copy can never be.
+#   lean-explore-mcp -- a populated secrets file makes the wrapper take its
+#     credential-bearing branch, whose ``root_owned_metadata`` gate refuses a
+#     helper the invoking user owns.
 #
 # These are recorded rather than silently tolerated, and the second test below
 # retires an entry automatically the moment its canary does become reachable.
 UNREACHABLE_BY_DESIGN = {
-    "autonomous-research-loop-runtime": "any secrets pointer activates the ARL credential broker",
-    "lean-explore-mcp": "the credential branch requires an immutable exact-generation helper",
+    "autonomous-research-loop-runtime": "the ARL credential broker still requires a root-owned dependency",
+    "lean-explore-mcp": "the wrapper's credential branch still requires a root-owned helper",
 }
 
 
@@ -85,12 +86,6 @@ def reachable_canaries(
 
         runner = runtime / "run_skill.sh"
         shutil.copy2(ROOT / "canonical" / "runtime" / "runners" / "run_skill.sh", runner)
-        runner.write_text(
-            runner.read_text(encoding="utf-8").replace(
-                "credential_runtime_enforcement=1", "credential_runtime_enforcement=0", 1
-            ),
-            encoding="utf-8",
-        )
         runner.chmod(0o755)
         shutil.copy2(
             ROOT / "canonical" / "runtime" / "runners" / "load_secret_env.py",
